@@ -49,25 +49,29 @@ Status definitions:
 - **Partial**: useful code is implemented, but phase exit criteria are not met.
 - **Not started**: no production implementation has been merged.
 - **Pending validation**: implementation exists, but the required adversarial,
-  performance, soak, or mixed-version evidence is incomplete.
+  performance, or soak evidence is incomplete.
 
 | Phase | Status | Implemented | Remaining work |
 |---|---|---|---|
 | 0. Baseline | Partial | Immutable source commits and static feature comparison are recorded | Archive golden ConfigParam cells and record CPU, memory, bandwidth, finality, and database-growth baselines |
-| 1. ConfigParam30 | Partial | TON `#22` bit layout, protocol parsing, supported-version gate, and `#21` round-trip test | Resolve historical old-`#22` ambiguity; add golden, truncated, invalid, and mixed-version activation tests |
-| 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened | Add boundary vectors, corruption/compression-bomb corpus, fuzzing, and peak-memory measurements |
+| 1. ConfigParam30 | Pending validation | TON `#22` bit layout, protocol parsing, reserved-flag rejection, supported-version gate, all four ConfigParam29 constructors, current `#21` round-trip coverage, and `#22` golden/truncated/invalid/future-version tests | Switch the first-testnet zerostate fixture to `#22` when the v2 release gates are met |
+| 2. Candidate codec | Partial | Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened; raw, legacy LZ4, improved compression, exact-limit, truncation, trailing-byte, corruption, mode-mismatch, and 0.5 MiB high-compression-ratio tests added | Add configured-maximum candidate vectors, broader compression-bomb corpus, fuzzing, and peak-memory measurements |
 | 3. Block-sync overlay | Partial | Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
 | 4. Observer and relay | Pending validation | Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Add authorization, eviction, removal/liveness, query-abuse, and relay-loop tests |
 | 5. Plumtree | Pending validation | Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Add transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding tests |
 | 6. Structural refactoring | Not started | TOS session-specific database paths were reviewed at a high level | Perform semantic DB-name comparison only if required after protocol features stabilize |
-| Activation | Not started | Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, define proposal/rollback procedure, and run mixed-version plus 72-hour multi-region soak |
+| Activation | Not started | Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, write v2 into the first-testnet zerostate, define rollback procedure, and run a 72-hour multi-region soak |
 
 Implemented work to date:
 
 - `simplex_config_v2#22` uses the reference five-bit flags, two-bit
   `protocol_version`, and `use_quic` layout.
-- The legacy `simplex_config#21` layout remains supported and is still emitted
-  by the repository zerostate generator.
+- The current `simplex_config#21` layout remains available because the
+  pre-testnet zerostate generator still emits it. It is current development
+  input.
+- TON's `simplex_config_v2#22` is the sole authoritative `#22` layout. The
+  pre-merge TOS draft layout has never been deployed and is not decoded.
+  Non-zero reserved flags are rejected.
 - Protocol version 1 has a dedicated block-sync overlay.
 - The pre-existing TOS candidate codec in
   `validator-session/candidate-serializer.cpp` has additional negative-size,
@@ -162,26 +166,30 @@ Validation completed for the current working tree:
   protocol-message loss, repeated process restarts, and repeated temporary
   single-node network isolation. Each scenario enforces a minimum finalized
   height, so lack of progress is a test failure.
+- ConfigParam30 tests pin the protocol-v2 `#22` cell hash, decode it through
+  the production configuration loader, reject reserved flags, truncation and
+  zero leader-window size, and confirm that a future version is unsupported.
+- ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
+  through the production loader, including catchain IDs, protocol version,
+  QUIC selection, and the maximum-block-height coefficient.
+- Candidate-codec tests round-trip raw, legacy LZ4, and improved-structure
+  payloads and reject mode mismatch, undersized limits, inconsistent declared
+  size, truncation, trailing compressed bytes, and corrupted improved payloads.
+- A 0.5 MiB multi-cell BOC with greater than 8:1 compression verifies that the
+  exact configured limit succeeds, a one-byte-smaller limit fails, and an
+  oversized declared output is rejected before decompression.
 - `git diff --check` passes.
 
 These fault-injected tests exercise the Simplex consensus simulator, not the
 full-node Plumtree transport or manager reconciliation. They therefore do not
 satisfy the transport-specific impairment, adversarial, performance, fuzzing,
-mixed-version, or soak requirements listed later in this guide.
+or soak requirements listed later in this guide.
 
 ## 2. Current Architectural Differences
 
 ### 2.1 ConfigParam30 wire format
 
-Before this merge, TOS defined `simplex_config_v2#22` with seven flag bits
-followed by `use_quic`:
-
-```tlb
-simplex_config_v2#22 flags:(## 7) use_quic:Bool ...
-```
-
-The pinned TON reference, and TOS after the first merge tranche, assign two of
-those bits to `protocol_version`:
+TOS uses the pinned TON `simplex_config_v2#22` layout:
 
 ```tlb
 simplex_config_v2#22
@@ -190,17 +198,8 @@ simplex_config_v2#22
   use_quic:Bool ...
 ```
 
-Both layouts consume the same eight bits after the constructor tag, but divide
-them differently. The pre-merge generated TOS decoder read seven `flags` bits
-and one Boolean; the new TOS and reference decoders read five `flags` bits, two
-protocol-version bits, and one Boolean. Some cells can therefore parse under
-both layouts while assigning different meanings to those bits.
-
-Repository-wide search found production and test zerostate generation using
-the unambiguous legacy `#21` constructor and found no TOS producer for the old
-`#22` layout. Historical externally generated `#22` cells with non-zero flag
-bits remain potentially ambiguous and must be inventoried before an on-chain
-v2 configuration is proposed.
+The five-bit flags, two-bit protocol version, and one-bit QUIC layout is the
+only supported `#22` interpretation.
 
 The pinned TON reference uses `protocol_version` to gate features:
 
@@ -210,8 +209,7 @@ The pinned TON reference uses `protocol_version` to gate features:
 | 1 | Block-sync overlay |
 | 2 or later | New database names, observers in the private overlay, and Plumtree broadcast; `enable_block_sync()` is false |
 
-TOS must define an explicit migration and activation policy before adopting
-this layout. A parser change alone is not sufficient.
+The first-testnet zerostate and validator binaries must use this same layout.
 
 ### 2.2 Reference features and current TOS status
 
@@ -224,16 +222,15 @@ this layout. A parser change alone is not sufficient.
 - A dedicated block-candidate synchronization overlay is now present for
   protocol version 1.
 - Candidate caching through `ManagerFacade::cache_block_candidate` by a
-  non-validator `BlockSyncObserver` when protocol version 1 is active remains
-  unported because current TOS consensus groups require a validator identity.
+  non-validator `BlockSyncObserver` is implemented for protocol version 1.
 - Candidate relay through `ManagerFacade::send_block_candidate_broadcast`
   with custom, fast-sync, and public broadcast mode bits is now present behind
   the protocol-version-2 feature gate. Its downstream public-shard and
   fast-sync candidate paths now use Plumtree when selected by ConfigParam30.
 - Protocol-version-gated Plumtree overlay support and its TL messages are now
   present. Public and fast-sync candidate propagation plus public, fast-sync,
-  and custom-overlay finality propagation are integrated. Observer support and
-  the required focused security, impairment, mixed-version, and soak tests
+  and custom-overlay finality propagation are integrated. Observer support is
+  implemented; the required focused security, impairment, and soak tests
   remain incomplete, so Plumtree is not yet an activatable TOS protocol
   feature.
 - TOS already uses session-specific consensus database paths. Reference v2
@@ -271,20 +268,18 @@ TOS.
 
 1. **Merge by feature, not by directory.** Do not copy or replace the complete
    `validator/consensus` tree.
-2. **Preserve consensus safety before compatibility.** An upstream behavior
-   must not remove a stricter TOS validation rule without a written safety
-   analysis.
+2. **Preserve consensus safety.** An upstream behavior must not remove a
+   stricter TOS validation rule without a written safety analysis.
 3. **Gate network-visible behavior.** New wire formats, overlay behavior, and
    broadcast algorithms must be activated through an on-chain version or an
    equally deterministic network-wide mechanism.
-4. **Maintain deterministic mixed-version behavior.** Before activation, old
-   and new binaries must agree on the active rules. After activation,
-   unsupported binaries must fail clearly rather than continue under a
-   different interpretation.
+4. **Keep the first deployment deterministic.** The zerostate generator,
+   validator, and public tooling must encode and decode exactly the same
+   protocol version and configuration.
 5. **Bound all untrusted inputs.** Candidate payload sizes, decompression
    output, queue sizes, slot gaps, and cache retention must have explicit
    limits.
-6. **Keep changes reviewable.** Schema migration, payload codec, block sync,
+6. **Keep changes reviewable.** Schema definition, payload codec, block sync,
    observer support, and Plumtree must be separate changes.
 7. **Keep the 400 ms target controlled by on-chain configuration.** The
    verified TOS repository zerostate generator writes 400 ms for both
@@ -314,30 +309,27 @@ missing.
 - Existing TOS consensus and local-network tests pass.
 - A fresh local network sustains the configured block interval.
 
-### Phase 1: ConfigParam30 compatibility and protocol versioning
+### Phase 1: ConfigParam30 format and protocol versioning
 
-**Current status: Partial.** Schema parsing and runtime version rejection are
-implemented, but historical `#22` ambiguity, golden vectors, malformed-cell
-coverage, and mixed-version activation tests remain open.
+**Current status: Pending validation.** Schema parsing, reserved-flag
+rejection, runtime version rejection, a `#22` golden hash, and malformed,
+reserved-flag, zero-slot, future-version, and all four ConfigParam29
+constructor tests are implemented. The final first-testnet zerostate fixture
+remains open until the v2 release gates are met.
 
-Design the ConfigParam30 migration before changing the TL-B schema. The design
-must answer:
+The pre-testnet format design must answer:
 
-- How is the legacy TOS `#22` layout distinguished from the new layout?
-- Is a new constructor required to avoid ambiguity?
 - What value is returned when ConfigParam30 is absent?
-- Which on-chain proposal activates each protocol version?
+- Which protocol version is written into the first testnet zerostate?
 - How do validators reject unsupported future versions?
-- Can tooling round-trip both legacy and new cells without changing bits?
+- Can tooling round-trip every currently supported cell without changing bits?
 
-Using a new constructor is preferable if the legacy and upstream layouts cannot
-be distinguished unambiguously. Reusing `#22` must only be allowed after tests
-prove that no legacy TOS cell can be silently decoded with shifted fields.
+TON's current `#22` layout is authoritative and the first testnet starts
+directly from it.
 
 Implement:
 
 - Explicit protocol-version parsing and validation.
-- Legacy TOS config decoding for historical data and tooling.
 - Strict rejection of unknown active versions.
 - Parsing tests for all supported ConfigParam29 constructors.
 - Golden serialized-cell tests for every supported ConfigParam30 layout.
@@ -347,15 +339,18 @@ Do not enable block sync or Plumtree in this phase.
 **Exit criteria**
 
 - Golden vectors decode identically on all supported platforms.
-- Legacy TOS configurations remain readable.
-- Invalid, truncated, ambiguous, and future-version cells are rejected.
-- A mixed-binary network behaves identically before activation.
+- The first-testnet zerostate and validator decode the same ConfigParam30.
+- Invalid, truncated, reserved-flag, and future-version cells are rejected.
 
 ### Phase 2: Candidate payload codec
 
 **Current status: Partial.** The codec and additional resource-bound checks are
-implemented. The required boundary corpus, fuzzing, compression-abuse, and
-peak-memory evidence is not complete.
+implemented. Deterministic tests cover raw, legacy LZ4, improved-structure
+compression, exact configured limits, wrong declared size, truncation,
+trailing bytes, corruption, compression-mode mismatch, and a valid 0.5 MiB
+high-compression-ratio candidate. Configured-maximum candidate vectors,
+fuzzing, a broader compression-abuse corpus, and peak-memory evidence are not
+complete.
 
 Port the reference combined candidate payload design:
 
@@ -368,8 +363,8 @@ Port the reference combined candidate payload design:
 - Reject negative legacy size fields and unsafe integer conversions.
 - Reject malformed BOCs, trailing data, compression bombs, and inconsistent
   size declarations.
-- Keep raw payload compatibility only when explicitly required by the selected
-  protocol version.
+- Accept the raw payload form only when selected by the active protocol
+  version.
 
 The codec must be independent of transport so that the same validation applies
 to QUIC, overlay, relay, and test inputs.
@@ -540,12 +535,9 @@ New actors and network paths must expose enough metrics to diagnose:
 
 | Area | Scenario | Expected result |
 |---|---|---|
-| Configuration | Legacy TOS ConfigParam30 | Decodes according to the legacy definition |
+| Configuration | First-testnet ConfigParam30 | Decodes exactly according to TON's current `#22` definition |
 | Configuration | New supported protocol version | Decodes deterministically and gates only documented features |
 | Configuration | Unknown future version | Rejected before joining consensus |
-| Upgrade | Old and new binaries before activation | Same consensus behavior |
-| Upgrade | Activation boundary | All upgraded validators switch at the same chain state |
-| Upgrade | Unsupported validator after activation | Fails clearly and does not produce divergent messages |
 | Payload | Maximum valid candidate | Accepted within CPU and memory budgets |
 | Payload | Compression bomb | Rejected before excessive allocation |
 | Payload | Corrupt BOC or compressed stream | Rejected without crash |
@@ -593,11 +585,11 @@ Recommended Testnet-0 goals:
 
 Before public Testnet-1, the following should be complete:
 
-- An unambiguous ConfigParam30 protocol-version migration.
+- A single ConfigParam30 protocol-version format shared by the zerostate,
+  validators, and tooling.
 - Candidate payload compression with strict resource bounds.
 - A feature-gated block-sync overlay.
 - Observer cache support, if observers are part of Testnet-1 operations.
-- Mixed-version upgrade and activation tests.
 - Regression coverage for all TOS-specific safety changes.
 - A multi-region soak test of at least 72 hours without unexplained consensus
   stalls, divergence, or unbounded resource growth.
@@ -610,7 +602,7 @@ after its own release gates are satisfied.
 Use small, ordered pull requests:
 
 1. Baseline documentation and golden configuration fixtures.
-2. ConfigParam30 parser and compatibility tests.
+2. ConfigParam30 parser and validation tests.
 3. Protocol-version feature-gate plumbing.
 4. Candidate payload codec and fuzz tests.
 5. Block-sync overlay core.
@@ -623,7 +615,7 @@ Each pull request must include:
 
 - The upstream commit hash and source files used.
 - A description of adapted versus copied behavior.
-- Consensus and wire-compatibility impact.
+- Consensus and wire-format impact.
 - Resource limits introduced or changed.
 - Tests added and their results.
 - Metrics added.
@@ -655,14 +647,13 @@ votes, certificates, or protocol versions.
 
 The selective Simplex2 merge is complete when:
 
-- ConfigParam30 has one documented, unambiguous interpretation at every chain
-  height.
+- ConfigParam30 has one documented interpretation in the first-testnet
+  zerostate, validator, and tooling.
 - Candidate payload processing is bounded and fuzz-tested.
 - Block sync improves recovery without weakening authentication or liveness.
 - Observer and broadcast features cannot influence consensus authority.
 - TOS-specific certificate and recovery checks, misbehavior reporting,
   metric-actor integration, and transport behavior are preserved.
-- Mixed-version activation has been rehearsed successfully.
 - The full test matrix and 72-hour multi-region soak pass.
 - Operators have documented deployment, monitoring, and rollback procedures.
 

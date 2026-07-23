@@ -401,6 +401,12 @@ td::optional<tos::NewConsensusConfig> Config::get_new_consensus_config(tos::Work
   auto consensus_config = get_consensus_config();
 
   if (gen::NewConsensusConfig::Record_simplex_config v1; gen::unpack_cell(c2, v1)) {
+    // All flag bits in the #21 constructor are reserved. Accepting
+    // non-zero values would silently assign meaning to a configuration that
+    // no supported TOS implementation defines.
+    if (v1.flags != 0) {
+      return {};
+    }
     return tos::NewConsensusConfig{
         .max_block_size = consensus_config.max_block_size,
         .max_collated_data_size = consensus_config.max_collated_data_size,
@@ -415,6 +421,12 @@ td::optional<tos::NewConsensusConfig> Config::get_new_consensus_config(tos::Work
             },
     };
   } else if (gen::NewConsensusConfig::Record_simplex_config_v2 v2; gen::unpack_cell(c2, v2)) {
+    // The five flag bits in TON's #22 layout are reserved as well. The two
+    // protocol-version bits are intentionally separate and are checked by
+    // protocol_version_supported() before a validator group starts.
+    if (v2.flags != 0) {
+      return {};
+    }
     tos::NewConsensusConfig config{
         .max_block_size = consensus_config.max_block_size,
         .max_collated_data_size = consensus_config.max_collated_data_size,

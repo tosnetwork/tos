@@ -7,6 +7,7 @@
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
 #include "block/block.h"
+#include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "consensus/simplex/bus.h"
 #include "consensus/utils.h"
@@ -17,6 +18,8 @@
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
 #include "validator-session/candidate-serializer.h"
+#include "vm/boc-compression.h"
+#include "vm/boc.h"
 
 #include "block-auto.h"
 
@@ -940,6 +943,129 @@ int main(int argc, char *argv[]) {
   CHECK(NewConsensusConfig{.protocol_version = 1}.protocol_version_supported());
   CHECK(NewConsensusConfig{.protocol_version = 1}.enable_block_sync());
 
+  auto wrap_config_param30 = [](td::Ref<vm::Cell> simplex) {
+    vm::CellBuilder all;
+    CHECK(all.store_long_bool(0x10, 8));
+    CHECK(all.store_bool_bool(true));
+    CHECK(all.store_ref_bool(simplex));
+    CHECK(all.store_bool_bool(true));
+    CHECK(all.store_ref_bool(std::move(simplex)));
+
+    vm::Dictionary config_dict{32};
+    CHECK(config_dict.set_ref(td::BitArray<32>{30}, all.finalize()));
+    return std::move(config_dict).extract_root_cell();
+  };
+
+  auto decode_config_param30 = [&](td::Ref<vm::Cell> simplex) {
+    block::Config config{wrap_config_param30(std::move(simplex))};
+    CHECK(config.unpack().is_ok());
+    return config.get_new_consensus_config(masterchainId);
+  };
+
+  auto decode_config_param29 = []<typename Record>(const Record& record) {
+    td::Ref<vm::Cell> cell;
+    CHECK(block::gen::t_ConsensusConfig.cell_pack(cell, record));
+    vm::Dictionary config_dict{32};
+    CHECK(config_dict.set_ref(td::BitArray<32>{29}, std::move(cell)));
+    block::Config config{std::move(config_dict).extract_root_cell()};
+    CHECK(config.unpack().is_ok());
+    return config.get_consensus_config();
+  };
+
+  auto check_common_consensus_config = [](const ValidatorSessionConfig& config) {
+    CHECK(config.round_candidates == 3);
+    CHECK(config.next_candidate_delay == 2.0);
+    CHECK(config.catchain_opts.idle_timeout == 16.0);
+    CHECK(config.max_round_attempts == 3);
+    CHECK(config.round_attempt_duration == 8);
+    CHECK(config.catchain_opts.max_deps == 4);
+    CHECK(config.max_block_size == 2U * 1024U * 1024U);
+    CHECK(config.max_collated_data_size == 3U * 1024U * 1024U);
+  };
+
+  {
+    block::gen::ConsensusConfig::Record_consensus_config encoded{
+        .round_candidates = 3,
+        .next_candidate_delay_ms = 2000,
+        .consensus_timeout_ms = 16000,
+        .fast_attempts = 3,
+        .attempt_duration = 8,
+        .catchain_max_deps = 4,
+        .max_block_bytes = 2U * 1024U * 1024U,
+        .max_collated_bytes = 3U * 1024U * 1024U,
+    };
+    auto decoded = decode_config_param29(encoded);
+    check_common_consensus_config(decoded);
+    CHECK(!decoded.new_catchain_ids);
+    CHECK(decoded.proto_version == 0);
+    CHECK(!decoded.use_quic);
+  }
+
+  {
+    block::gen::ConsensusConfig::Record_consensus_config_new encoded{
+        .flags = 0,
+        .new_catchain_ids = true,
+        .round_candidates = 3,
+        .next_candidate_delay_ms = 2000,
+        .consensus_timeout_ms = 16000,
+        .fast_attempts = 3,
+        .attempt_duration = 8,
+        .catchain_max_deps = 4,
+        .max_block_bytes = 2U * 1024U * 1024U,
+        .max_collated_bytes = 3U * 1024U * 1024U,
+    };
+    auto decoded = decode_config_param29(encoded);
+    check_common_consensus_config(decoded);
+    CHECK(decoded.new_catchain_ids);
+    CHECK(decoded.proto_version == 0);
+    CHECK(!decoded.use_quic);
+  }
+
+  {
+    block::gen::ConsensusConfig::Record_consensus_config_v3 encoded{
+        .flags = 0,
+        .new_catchain_ids = true,
+        .round_candidates = 3,
+        .next_candidate_delay_ms = 2000,
+        .consensus_timeout_ms = 16000,
+        .fast_attempts = 3,
+        .attempt_duration = 8,
+        .catchain_max_deps = 4,
+        .max_block_bytes = 2U * 1024U * 1024U,
+        .max_collated_bytes = 3U * 1024U * 1024U,
+        .proto_version = 5,
+    };
+    auto decoded = decode_config_param29(encoded);
+    check_common_consensus_config(decoded);
+    CHECK(decoded.new_catchain_ids);
+    CHECK(decoded.proto_version == 5);
+    CHECK(!decoded.use_quic);
+  }
+
+  {
+    block::gen::ConsensusConfig::Record_consensus_config_v4 encoded{
+        .flags = 0,
+        .use_quic = true,
+        .new_catchain_ids = true,
+        .round_candidates = 3,
+        .next_candidate_delay_ms = 2000,
+        .consensus_timeout_ms = 16000,
+        .fast_attempts = 3,
+        .attempt_duration = 8,
+        .catchain_max_deps = 4,
+        .max_block_bytes = 2U * 1024U * 1024U,
+        .max_collated_bytes = 3U * 1024U * 1024U,
+        .proto_version = 6,
+        .catchain_max_blocks_coeff = 7,
+    };
+    auto decoded = decode_config_param29(encoded);
+    check_common_consensus_config(decoded);
+    CHECK(decoded.new_catchain_ids);
+    CHECK(decoded.proto_version == 6);
+    CHECK(decoded.use_quic);
+    CHECK(decoded.catchain_opts.max_block_height_coeff == 1400);
+  }
+
   {
     block::gen::NewConsensusConfig::Record_simplex_config encoded{
         .flags = 0,
@@ -982,6 +1108,140 @@ int main(int argc, char *argv[]) {
     CHECK(decoded.use_quic);
     CHECK(decoded.slots_per_leader_window == 4);
     CHECK(!NewConsensusConfig{.protocol_version = decoded.protocol_version}.protocol_version_supported());
+    CHECK(td::Bits256{cell->get_hash().bits()} ==
+          from_hex("3ED02F907E6EC7625EC062FF3B88B46CBA4E39681821D5ED1A976B2BCEFB2C43"));
+
+    auto loaded = decode_config_param30(cell);
+    CHECK(loaded);
+    CHECK(loaded.value().protocol_version == 2);
+    CHECK(loaded.value().slots_per_leader_window == 4);
+  }
+
+  {
+    vm::CellBuilder empty_dictionary;
+    CHECK(empty_dictionary.store_bool_bool(false));
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 reserved_flags{
+        .flags = 1,
+        .protocol_version = 0,
+        .use_quic = false,
+        .slots_per_leader_window = 4,
+        .noncritical_params = vm::load_cell_slice_ref(empty_dictionary.finalize()),
+    };
+    td::Ref<vm::Cell> cell;
+    CHECK(block::gen::t_NewConsensusConfig.cell_pack(cell, reserved_flags));
+    CHECK(!decode_config_param30(std::move(cell)));
+  }
+
+  {
+    vm::CellBuilder empty_dictionary;
+    CHECK(empty_dictionary.store_bool_bool(false));
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 future{
+        .flags = 0,
+        .protocol_version = 3,
+        .use_quic = false,
+        .slots_per_leader_window = 4,
+        .noncritical_params = vm::load_cell_slice_ref(empty_dictionary.finalize()),
+    };
+    td::Ref<vm::Cell> cell;
+    CHECK(block::gen::t_NewConsensusConfig.cell_pack(cell, future));
+    auto loaded = decode_config_param30(std::move(cell));
+    CHECK(loaded);
+    CHECK(loaded.value().protocol_version == 3);
+    CHECK(!loaded.value().protocol_version_supported());
+  }
+
+  {
+    auto truncated = vm::CellBuilder().store_long(0x22, 8).store_long(0, 5).finalize();
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 decoded;
+    CHECK(!block::gen::t_NewConsensusConfig.cell_unpack(truncated, decoded));
+    CHECK(!decode_config_param30(std::move(truncated)));
+  }
+
+  {
+    vm::CellBuilder invalid_slots;
+    CHECK(invalid_slots.store_long_bool(0x22, 8));
+    CHECK(invalid_slots.store_long_bool(0, 5));
+    CHECK(invalid_slots.store_long_bool(0, 2));
+    CHECK(invalid_slots.store_bool_bool(false));
+    CHECK(invalid_slots.store_long_bool(0, 32));
+    CHECK(invalid_slots.store_bool_bool(false));
+    auto cell = invalid_slots.finalize();
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 decoded;
+    CHECK(!block::gen::t_NewConsensusConfig.cell_unpack(cell, decoded));
+    CHECK(!decode_config_param30(std::move(cell)));
+  }
+
+  {
+    auto block_root = vm::CellBuilder().store_long(0x12345678, 32).store_long(0xabcdef, 24).finalize();
+    auto collated_root = vm::CellBuilder().store_long(0x87654321, 32).finalize();
+    auto block_data = vm::std_boc_serialize(block_root, 31).move_as_ok();
+    auto collated_data = vm::std_boc_serialize_multi({collated_root}, 2).move_as_ok();
+    auto src = from_hex("1111111111111111111111111111111111111111111111111111111111111111");
+    auto root_hash = td::Bits256{block_root->get_hash().bits()};
+
+    auto candidate = create_tl_object<tos_api::validatorSession_candidate>(
+        src, 7, root_hash, block_data.clone(), collated_data.clone());
+
+    auto raw = validatorsession::serialize_candidate(candidate, false).move_as_ok();
+    auto raw_decoded =
+        validatorsession::deserialize_candidate(raw, false, static_cast<int>(raw.size())).move_as_ok();
+    CHECK(raw_decoded->src_ == src);
+    CHECK(raw_decoded->round_ == 7);
+    CHECK(raw_decoded->root_hash_ == root_hash);
+    CHECK(raw_decoded->data_.as_slice() == block_data.as_slice());
+    CHECK(raw_decoded->collated_data_.as_slice() == collated_data.as_slice());
+    CHECK(validatorsession::deserialize_candidate(raw, true, static_cast<int>(raw.size())).is_error());
+
+    size_t decompressed_size = 0;
+    auto compressed = validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size,
+                                                                 "test", root_hash)
+                          .move_as_ok();
+    CHECK(decompressed_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+    auto compressed_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, static_cast<int>(decompressed_size), compressed.clone());
+    const int legacy_limit =
+        static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
+    auto legacy_decoded =
+        validatorsession::deserialize_candidate(compressed_envelope, true, legacy_limit).move_as_ok();
+    CHECK(legacy_decoded->data_.as_slice() == block_data.as_slice());
+    CHECK(legacy_decoded->collated_data_.as_slice() == collated_data.as_slice());
+    CHECK(validatorsession::deserialize_candidate(compressed_envelope, true, static_cast<int>(decompressed_size) - 1)
+              .is_error());
+
+    auto wrong_size = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, static_cast<int>(decompressed_size) - 1, compressed.clone());
+    CHECK(validatorsession::deserialize_candidate(wrong_size, true, legacy_limit).is_error());
+
+    td::BufferSlice with_trailing_byte(compressed.size() + 1);
+    std::memcpy(with_trailing_byte.data(), compressed.data(), compressed.size());
+    with_trailing_byte.data()[compressed.size()] = '\0';
+    auto trailing = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, static_cast<int>(decompressed_size), std::move(with_trailing_byte));
+    CHECK(validatorsession::deserialize_candidate(trailing, true, legacy_limit + 1).is_error());
+
+    auto truncated = compressed.clone();
+    truncated.truncate(truncated.size() - 1);
+    auto truncated_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 7, root_hash, static_cast<int>(decompressed_size), std::move(truncated));
+    CHECK(validatorsession::deserialize_candidate(truncated_envelope, true, legacy_limit).is_error());
+
+    auto improved =
+        vm::boc_compress({block_root, collated_root}, vm::CompressionAlgorithm::ImprovedStructureLZ4).move_as_ok();
+    auto improved_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, improved.clone());
+    auto improved_decoded =
+        validatorsession::deserialize_candidate(improved_envelope, true, 1 << 20).move_as_ok();
+    CHECK(improved_decoded->data_.as_slice() == block_data.as_slice());
+    CHECK(improved_decoded->collated_data_.as_slice() == collated_data.as_slice());
+    CHECK(validatorsession::deserialize_candidate(improved_envelope, true,
+                                                  static_cast<int>(improved.size()) - 1)
+              .is_error());
+
+    auto corrupt_improved = improved.clone();
+    corrupt_improved.data()[corrupt_improved.size() / 2] ^= 0x5a;
+    auto corrupt_improved_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, std::move(corrupt_improved));
+    CHECK(validatorsession::deserialize_candidate(corrupt_improved_envelope, true, 1 << 20).is_error());
   }
 
   {
@@ -989,6 +1249,53 @@ int main(int argc, char *argv[]) {
         0, td::Bits256{}, 0, td::Bits256{}, -1, td::BufferSlice{});
     CHECK(validatorsession::deserialize_candidate(invalid, true, 1024).is_error());
     CHECK(validatorsession::deserialize_candidate(invalid, true, -1).is_error());
+  }
+
+  {
+    std::vector<td::Ref<vm::Cell>> level;
+    level.reserve(4096);
+    for (td::uint32 i = 0; i < 4096; ++i) {
+      level.push_back(vm::CellBuilder().store_long(i, 32).store_zeroes(900).finalize());
+    }
+    while (level.size() > 1) {
+      std::vector<td::Ref<vm::Cell>> next;
+      next.reserve((level.size() + 3) / 4);
+      for (size_t i = 0; i < level.size(); i += 4) {
+        vm::CellBuilder parent;
+        for (size_t j = i; j < std::min(i + 4, level.size()); ++j) {
+          CHECK(parent.store_ref_bool(level[j]));
+        }
+        next.push_back(parent.finalize());
+      }
+      level = std::move(next);
+    }
+
+    auto large_block_data = vm::std_boc_serialize(level.front(), 31).move_as_ok();
+    auto collated_root = vm::CellBuilder().store_long(0xc011a7ed, 32).finalize();
+    auto collated_data = vm::std_boc_serialize_multi({collated_root}, 2).move_as_ok();
+    auto root_hash = td::Bits256{level.front()->get_hash().bits()};
+    size_t decompressed_size = 0;
+    auto compressed = validatorsession::compress_candidate_data(large_block_data, collated_data, decompressed_size,
+                                                                 "compression-ratio-test", root_hash)
+                          .move_as_ok();
+    CHECK(decompressed_size > 400U * 1024U);
+    CHECK(compressed.size() * 8U < decompressed_size);
+    CHECK(decompressed_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+
+    auto src = from_hex("2222222222222222222222222222222222222222222222222222222222222222");
+    auto envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 9, root_hash, static_cast<int>(decompressed_size), compressed.clone());
+    const int exact_limit =
+        static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
+    auto decoded = validatorsession::deserialize_candidate(envelope, true, exact_limit).move_as_ok();
+    CHECK(decoded->data_.as_slice() == large_block_data.as_slice());
+    CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
+    CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1)
+              .is_error());
+
+    auto oversized_declaration = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, src, 9, root_hash, exact_limit + 1, compressed.clone());
+    CHECK(validatorsession::deserialize_candidate(oversized_declaration, true, exact_limit).is_error());
   }
 
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
