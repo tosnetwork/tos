@@ -300,6 +300,7 @@ class BridgeImpl final : public IValidatorGroup {
     td::actor::Runtime runtime;
     BlockAccepter::register_in(runtime);
     BlockProducer::register_in(runtime);
+    BlockSyncOverlay::register_in(runtime);
     BlockValidator::register_in(runtime);
     PrivateOverlay::register_in(runtime);
     TraceCollector::register_in(runtime);
@@ -462,6 +463,9 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
     std::string db_root, td::actor::ActorId<ValidatorManager> validator_manager,
     td::actor::ActorId<CollationManager> collation_manager, bool create_session, bool allow_unsafe_self_blocks_resync,
     td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard) {
+  LOG_CHECK(config.protocol_version_supported())
+      << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
+      << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
   auto name_with_seqno =
       std::string(name.begin(), name.end()) + "." + std::to_string(validator_set->get_catchain_seqno());
   consensus::BridgeCreationParams params{

@@ -9,6 +9,8 @@
 #include "td/utils/overloaded.h"
 #include "validator-session/candidate-serializer.h"
 
+#include <limits>
+
 #include "bus.h"
 #include "checksum.h"
 
@@ -154,9 +156,13 @@ td::Result<CandidateRef> Candidate::deserialize(td::Slice data, const Bus& bus, 
     auto slot = static_cast<td::uint32>(block_broadcast.slot_);
     TRY_STATUS(set_check_leader(slot));
 
+    const td::uint64 max_candidate_payload = static_cast<td::uint64>(bus.config.max_block_size) +
+                                             bus.config.max_collated_data_size + 1024;
+    if (max_candidate_payload > static_cast<td::uint64>(std::numeric_limits<int>::max())) {
+      return td::Status::Error("configured candidate payload limit exceeds the codec range");
+    }
     TRY_RESULT(candidate, validatorsession::deserialize_candidate(
-                              block_broadcast.candidate_, true,
-                              bus.config.max_block_size + bus.config.max_collated_data_size + 1024));
+                              block_broadcast.candidate_, true, static_cast<int>(max_candidate_payload)));
 
     if (!candidate->src_.is_zero()) {
       return td::Status::Error("src field of the candidate broadcast must be null");

@@ -5,6 +5,7 @@
  */
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <random>
 #include <vector>
@@ -47,7 +48,11 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     std::vector<td::Bits256> overlay_nodes_tl;
     std::map<PublicKeyHash, td::uint32> authorized_keys;
 
-    td::uint32 max_broadcast_size = bus.config.max_block_size + bus.config.max_collated_data_size + (1 << 20);
+    const td::uint64 max_broadcast_size_wide = static_cast<td::uint64>(bus.config.max_block_size) +
+                                               bus.config.max_collated_data_size + (1U << 20);
+    LOG_CHECK(max_broadcast_size_wide <= std::numeric_limits<td::uint32>::max())
+        << "Configured consensus broadcast limit overflows uint32";
+    const td::uint32 max_broadcast_size = static_cast<td::uint32>(max_broadcast_size_wide);
     for (const auto& peer : bus.validator_set) {
       adnl_id_to_peer_[peer.adnl_id] = peer;
       short_id_to_peer_[peer.short_id] = peer;
@@ -130,6 +135,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
   template <>
   void handle(BusHandle, std::shared_ptr<const CandidateGenerated> event) {
+    if (owning_bus()->config.enable_block_sync()) {
+      return;
+    }
     td::BufferSlice extra = create_serialize_tl_object<tos_api::consensus_broadcastExtra>(event->candidate->id.slot);
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_with_extra, local_id_.adnl_id,
                             overlay_id_, local_id_.short_id, 0, event->candidate->serialize(), std::move(extra));
@@ -231,6 +239,10 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   }
 
   void on_overlay_broadcast(PublicKeyHash src, td::BufferSlice data, td::BufferSlice extra) {
+    if (owning_bus()->config.enable_block_sync()) {
+      LOG(WARNING) << "Dropping candidate broadcast in the consensus overlay while block sync is enabled";
+      return;
+    }
     if (src == local_id_.short_id) {
       return;
     }
@@ -275,6 +287,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
   td::actor::Task<> precheck_broadcast(PublicKeyHash src, td::Bits256 broadcast_id, td::BufferSlice extra,
                                        bool signature_checked) {
+    if (owning_bus()->config.enable_block_sync()) {
+      co_return td::Status::Error("Precheck failed: candidate broadcasts use the block-sync overlay");
+    }
     auto parsed_extra = fetch_tl_object<tos_api::consensus_broadcastExtra>(extra, true);
     if (parsed_extra.is_error()) {
       co_return parsed_extra.move_as_error_prefix("Precheck failed: Failed to parse broadcast extra: ");

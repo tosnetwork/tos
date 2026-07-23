@@ -20,6 +20,8 @@
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
 
+#include <limits>
+
 #include "candidate-serializer.h"
 #include "validator-session-types.h"
 
@@ -46,6 +48,9 @@ td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::val
   size_t decompressed_size;
   TRY_RESULT(compressed, compress_candidate_data(block->data_, block->collated_data_, decompressed_size,
                                                  k_called_from_validator_session, block->root_hash_))
+  if (decompressed_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return td::Status::Error("candidate decompressed size does not fit into the wire format");
+  }
   return create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
       0, block->src_, block->round_, block->root_hash_, (int)decompressed_size, std::move(compressed));
 }
@@ -53,6 +58,9 @@ td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::val
 td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candidate(td::Slice data,
                                                                                      bool compression_enabled,
                                                                                      int max_decompressed_data_size) {
+  if (max_decompressed_data_size < 0) {
+    return td::Status::Error("maximum decompressed candidate size is negative");
+  }
   if (!compression_enabled) {
     auto t_decompression_start = td::Time::now();
     TRY_RESULT(res, fetch_tl_object<tos_api::validatorSession_candidate>(data, true));
@@ -72,8 +80,11 @@ td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candi
               },
               [&](tos_api::validatorSession_compressedCandidate& c) {
                 res = [&]() -> td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> {
-                  if (c.decompressed_size_ > max_decompressed_data_size) {
-                    return td::Status::Error("decompressed size is too big");
+                  if (c.decompressed_size_ < 0 || c.decompressed_size_ > max_decompressed_data_size) {
+                    return td::Status::Error("invalid decompressed candidate size");
+                  }
+                  if (c.data_.size() > static_cast<size_t>(max_decompressed_data_size)) {
+                    return td::Status::Error("compressed candidate data is too big");
                   }
                   TRY_RESULT(p,
                              decompress_candidate_data(c.data_, false, c.decompressed_size_, max_decompressed_data_size,
@@ -84,7 +95,7 @@ td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candi
               },
               [&](tos_api::validatorSession_compressedCandidateV2& c) {
                 res = [&]() -> td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> {
-                  if (static_cast<int>(c.data_.size()) > max_decompressed_data_size) {
+                  if (c.data_.size() > static_cast<size_t>(max_decompressed_data_size)) {
                     return td::Status::Error("Compressed data is too big");
                   }
                   TRY_RESULT(p, decompress_candidate_data(c.data_, true, 0, max_decompressed_data_size,
@@ -123,6 +134,12 @@ td::Result<td::BufferSlice> compress_candidate_data(td::Slice block, td::Slice c
 td::Result<std::pair<td::BufferSlice, td::BufferSlice>> decompress_candidate_data(
     td::Slice compressed, bool improved_compression, int decompressed_size, int max_decompressed_size,
     std::string called_from, td::Bits256 root_hash) {
+  if (max_decompressed_size < 0 || decompressed_size < 0 || decompressed_size > max_decompressed_size) {
+    return td::Status::Error("invalid candidate decompression size");
+  }
+  if (compressed.size() > static_cast<size_t>(max_decompressed_size)) {
+    return td::Status::Error("compressed candidate exceeds the configured size limit");
+  }
   std::vector<td::Ref<vm::Cell>> roots;
   auto t_decompression_start = td::Time::now();
   if (!improved_compression) {

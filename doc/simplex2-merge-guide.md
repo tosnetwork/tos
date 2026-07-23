@@ -36,18 +36,36 @@ feature gates, actor registration, and visible call paths; it does not by
 itself prove runtime correctness, liveness, security, performance, or deployed
 on-chain behavior.
 
+### 1.2 Merge implementation status
+
+The first merge tranche has now been implemented in TOS:
+
+- `simplex_config_v2#22` uses the reference five-bit flags, two-bit
+  `protocol_version`, and `use_quic` layout.
+- The legacy `simplex_config#21` layout remains supported and is still emitted
+  by the repository zerostate generator.
+- Protocol version 1 has a dedicated block-sync overlay.
+- The pre-existing TOS candidate codec in
+  `validator-session/candidate-serializer.cpp` has additional negative-size,
+  integer-width, compressed-input, and decompression-bound checks.
+- Protocol version 2 remains deliberately unsupported at validator startup.
+  Its observer and Plumtree dependencies have not been ported.
+
+This is a staged implementation, not completion of all phases in this guide.
+
 ## 2. Current Architectural Differences
 
 ### 2.1 ConfigParam30 wire format
 
-TOS currently defines `simplex_config_v2#22` with seven flag bits followed by
-`use_quic`:
+Before this merge, TOS defined `simplex_config_v2#22` with seven flag bits
+followed by `use_quic`:
 
 ```tlb
 simplex_config_v2#22 flags:(## 7) use_quic:Bool ...
 ```
 
-The pinned TON reference assigns two of those bits to `protocol_version`:
+The pinned TON reference, and TOS after the first merge tranche, assign two of
+those bits to `protocol_version`:
 
 ```tlb
 simplex_config_v2#22
@@ -57,12 +75,16 @@ simplex_config_v2#22
 ```
 
 Both layouts consume the same eight bits after the constructor tag, but divide
-them differently. The generated TOS decoder reads seven `flags` bits and one
-Boolean; the reference decoder reads five `flags` bits, two protocol-version
-bits, and one Boolean. The TOS configuration loader does not use its decoded
-`flags` value. Therefore, some cells can parse successfully in both
-implementations while producing different field values. A direct schema
-replacement without compatibility tests is unsafe.
+them differently. The pre-merge generated TOS decoder read seven `flags` bits
+and one Boolean; the new TOS and reference decoders read five `flags` bits, two
+protocol-version bits, and one Boolean. Some cells can therefore parse under
+both layouts while assigning different meanings to those bits.
+
+Repository-wide search found production and test zerostate generation using
+the unambiguous legacy `#21` constructor and found no TOS producer for the old
+`#22` layout. Historical externally generated `#22` cells with non-zero flag
+bits remain potentially ambiguous and must be inventoried before an on-chain
+v2 configuration is proposed.
 
 The pinned TON reference uses `protocol_version` to gate features:
 
@@ -75,23 +97,28 @@ The pinned TON reference uses `protocol_version` to gate features:
 TOS must define an explicit migration and activation policy before adopting
 this layout. A parser change alone is not sufficient.
 
-### 2.2 Upstream features not fully present in TOS
+### 2.2 Reference features and current TOS status
 
-- Candidate payload encoding that combines block and collated-data BOCs and
-  uses LZ4 for the legacy compressed candidate form. The decoder checks the
-  declared decompressed size against a caller-provided maximum. The reference
-  code also accepts an improved compressed-candidate form through the BOC
-  compression API. This observation is not a proof that every size path is
-  safe: TOS must separately validate negative legacy size values, integer
-  conversions, allocation timing, and compressed-input limits.
-- A dedicated block-candidate synchronization overlay.
+- Candidate payload encoding was already present in TOS under
+  `validator-session/candidate-serializer.cpp`. It combines block and
+  collated-data BOCs, uses LZ4 for the legacy compressed form, and accepts the
+  improved BOC-compression form. The first merge tranche added checks for
+  negative size values, integer conversion, compressed input, and configured
+  decompression bounds.
+- A dedicated block-candidate synchronization overlay is now present for
+  protocol version 1.
 - Candidate caching through `ManagerFacade::cache_block_candidate` by a
-  non-validator `BlockSyncObserver` when protocol version 1 is active.
+  non-validator `BlockSyncObserver` when protocol version 1 is active remains
+  unported because current TOS consensus groups require a validator identity.
 - Candidate relay through `ManagerFacade::send_block_candidate_broadcast`
   with custom, fast-sync, and public broadcast mode bits when Plumtree is
-  enabled.
-- Protocol-version-gated Plumtree broadcast.
-- Protocol-version-gated network and database behavior.
+  enabled remains unported.
+- Protocol-version-gated Plumtree broadcast remains unported. The reference
+  implementation spans the overlay, full-node, manager, downloader, TL, and
+  consensus layers; it must not be represented as enabled by a relay-only port.
+- TOS already uses session-specific consensus database paths. Reference v2
+  database naming must be compared semantically before any further DB-path
+  change.
 
 The block-sync overlay creates a private overlay whose authorized-key map is
 built from the validator set. Its broadcast precheck rejects a source that is
@@ -492,8 +519,8 @@ the pinned commits. Line numbers are navigation aids and may move after edits.
 | Generated TOS v2 decoder layout | `crypto/block/block-auto.cpp:18085` | N/A |
 | TOS ConfigParam30 loader | `crypto/block/mc-config.cpp:417` | `crypto/block/mc-config.cpp:376` |
 | Protocol-version feature gates | N/A | `ton/ton-types.h:504` |
-| Payload codec and size checks | No matching consensus payload module | `validator/consensus/payload.cpp:25` |
-| Block-sync private overlay and precheck | No matching module | `validator/consensus/block-sync-overlay.cpp:29` |
+| Payload codec and size checks | `validator-session/candidate-serializer.cpp:32` | `validator/consensus/payload.cpp:25` |
+| Block-sync private overlay and precheck | `validator/consensus/block-sync-overlay.cpp:28` | `validator/consensus/block-sync-overlay.cpp:29` |
 | Observer caching and candidate relay | No matching actors | `validator/consensus/bridge.cpp:155` |
 | Database-name and observer identity gates | N/A | `validator/validator-group.cpp:90` |
 | Too-new certificate rejection | `validator/consensus/simplex/pool.cpp:438` | Comparison target: `validator/consensus/simplex/pool.cpp:459` |

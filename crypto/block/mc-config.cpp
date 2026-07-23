@@ -419,6 +419,7 @@ td::optional<tos::NewConsensusConfig> Config::get_new_consensus_config(tos::Work
         .max_block_size = consensus_config.max_block_size,
         .max_collated_data_size = consensus_config.max_collated_data_size,
 
+        .protocol_version = v2.protocol_version,
         .slots_per_leader_window = v2.slots_per_leader_window,
     };
 

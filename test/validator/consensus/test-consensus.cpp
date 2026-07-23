@@ -16,6 +16,7 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
+#include "validator-session/candidate-serializer.h"
 
 #include "block-auto.h"
 
@@ -895,6 +896,61 @@ td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdEx
 
 int main(int argc, char *argv[]) {
   CHECK(NewConsensusConfig{}.noncritical_params.target_rate == std::chrono::milliseconds{400});
+  CHECK(NewConsensusConfig{}.protocol_version_supported());
+  CHECK(!NewConsensusConfig{}.enable_block_sync());
+  CHECK(NewConsensusConfig{.protocol_version = 1}.protocol_version_supported());
+  CHECK(NewConsensusConfig{.protocol_version = 1}.enable_block_sync());
+
+  {
+    block::gen::NewConsensusConfig::Record_simplex_config encoded{
+        .flags = 0,
+        .use_quic = false,
+        .target_rate_ms = 400,
+        .slots_per_leader_window = 4,
+        .first_block_timeout_ms = 1000,
+        .max_leader_window_desync = 250,
+    };
+    td::Ref<vm::Cell> cell;
+    CHECK(block::gen::t_NewConsensusConfig.cell_pack(cell, encoded));
+
+    block::gen::NewConsensusConfig::Record_simplex_config decoded;
+    CHECK(block::gen::t_NewConsensusConfig.cell_unpack(cell, decoded));
+    CHECK(decoded.flags == encoded.flags);
+    CHECK(decoded.use_quic == encoded.use_quic);
+    CHECK(decoded.target_rate_ms == encoded.target_rate_ms);
+    CHECK(decoded.slots_per_leader_window == encoded.slots_per_leader_window);
+    CHECK(decoded.first_block_timeout_ms == encoded.first_block_timeout_ms);
+    CHECK(decoded.max_leader_window_desync == encoded.max_leader_window_desync);
+  }
+
+  {
+    vm::CellBuilder empty_dictionary;
+    CHECK(empty_dictionary.store_bool_bool(false));
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 encoded{
+        .flags = 0,
+        .protocol_version = 2,
+        .use_quic = true,
+        .slots_per_leader_window = 4,
+        .noncritical_params = vm::load_cell_slice_ref(empty_dictionary.finalize()),
+    };
+    td::Ref<vm::Cell> cell;
+    CHECK(block::gen::t_NewConsensusConfig.cell_pack(cell, encoded));
+
+    block::gen::NewConsensusConfig::Record_simplex_config_v2 decoded;
+    CHECK(block::gen::t_NewConsensusConfig.cell_unpack(cell, decoded));
+    CHECK(decoded.flags == 0);
+    CHECK(decoded.protocol_version == 2);
+    CHECK(decoded.use_quic);
+    CHECK(decoded.slots_per_leader_window == 4);
+    CHECK(!NewConsensusConfig{.protocol_version = decoded.protocol_version}.protocol_version_supported());
+  }
+
+  {
+    auto invalid = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
+        0, td::Bits256{}, 0, td::Bits256{}, -1, td::BufferSlice{});
+    CHECK(validatorsession::deserialize_candidate(invalid, true, 1024).is_error());
+    CHECK(validatorsession::deserialize_candidate(invalid, true, -1).is_error());
+  }
 
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   td::set_default_failure_signal_handler().ensure();
