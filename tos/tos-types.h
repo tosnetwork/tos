@@ -544,7 +544,7 @@ struct NewConsensusConfig {
   // When adding a new noncritical parameters, also add it to consensus.simplex.noncriticalParams TL scheme
   // clang-format off
 #define ENUMERATE_NONCRITICAL_PARAMS(uint32_fn, double_fn, duration_fn) \
-  duration_fn(0, target_rate, 2'400)                                    \
+  duration_fn(0, target_rate, 400)                                      \
   duration_fn(1, first_block_timeout, 1'000)                            \
   double_fn(2, first_block_timeout_multiplier, 1.2)                     \
   duration_fn(3, first_block_timeout_cap, 100'000)                      \

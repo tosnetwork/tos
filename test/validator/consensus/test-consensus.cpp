@@ -894,6 +894,8 @@ td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdEx
 }  // namespace
 
 int main(int argc, char *argv[]) {
+  CHECK(NewConsensusConfig{}.noncritical_params.target_rate == std::chrono::milliseconds{400});
+
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   td::set_default_failure_signal_handler().ensure();
 
