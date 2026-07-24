@@ -84,6 +84,7 @@ struct Settings {
   double packet_loss = 0.0;
   std::size_t isolate_node = 0;
   td::uint32 isolate_broadcasts = 0;
+  td::optional<std::size_t> outbound_drop_node;
   double bandwidth_mb_s = 100.0;
   td::uint32 broadcast_count = 5;
   td::uint64 seed = 1;
@@ -263,6 +264,7 @@ void print_usage() {
                "  --packet-loss N           Deterministic per-message loss ratio in [0,1] (default 0)\n"
                "  --isolate-node N          Zero-based node isolated temporarily (default 0)\n"
                "  --isolate-broadcasts N    Number of initial broadcasts to isolate that node (default 0)\n"
+               "  --drop-outbound-node N    Node that receives but drops every outbound message\n"
                "  --bandwidth-mb N          Per-message bandwidth model in MB/s (default 100)\n"
                "  --broadcast-count N       Sequential broadcasts to send on the same overlay graph (default 5)\n"
                "  --seed N                  Deterministic payload/key seed label (default 1)\n";
@@ -312,6 +314,9 @@ td::Result<Settings> parse_args(int argc, char **argv) {
     } else if (arg == "--isolate-broadcasts") {
       TRY_RESULT(value, read_value(arg));
       settings.isolate_broadcasts = static_cast<td::uint32>(std::stoul(value));
+    } else if (arg == "--drop-outbound-node") {
+      TRY_RESULT(value, read_value(arg));
+      settings.outbound_drop_node = static_cast<std::size_t>(std::stoull(value));
     } else if (arg == "--bandwidth-mb") {
       TRY_RESULT(value, read_value(arg));
       settings.bandwidth_mb_s = std::stod(value);
@@ -363,6 +368,10 @@ int main(int argc, char **argv) {
     std::cerr << "--isolate-node is outside the graph\n";
     return 2;
   }
+  if (settings.outbound_drop_node && settings.outbound_drop_node.value() >= graph.nodes.size()) {
+    std::cerr << "--drop-outbound-node is outside the graph\n";
+    return 2;
+  }
 
   std::vector<std::size_t> validators;
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
@@ -394,6 +403,7 @@ int main(int argc, char **argv) {
   network->received_bytes_by_node.assign(graph.nodes.size(), 0);
   network->tx_free_at_by_node.assign(graph.nodes.size(), 0.0);
   network->rx_free_at_by_node.assign(graph.nodes.size(), 0.0);
+  network->set_outbound_drop_node(settings.outbound_drop_node);
   network->geo_by_node.reserve(graph.nodes.size());
   for (const auto &node : graph.nodes) {
     network->geo_by_node.push_back(SimGeoPoint{node.has_geo, node.lat, node.lon});
@@ -509,7 +519,10 @@ int main(int argc, char **argv) {
   std::cout << ", broadcasts=" << settings.broadcast_count
             << ", payload=" << format_bytes(static_cast<double>(settings.payload_bytes))
             << ", packet_loss=" << settings.packet_loss
-            << ", isolate_broadcasts=" << settings.isolate_broadcasts << "\n";
+            << ", isolate_broadcasts=" << settings.isolate_broadcasts
+            << ", selective_drop=" << (settings.outbound_drop_node ? std::to_string(settings.outbound_drop_node.value())
+                                                                    : std::string("none"))
+            << "\n";
   print_table_header();
   std::cout.flush();
   for (td::uint32 broadcast_index = 0; broadcast_index < settings.broadcast_count; ++broadcast_index) {

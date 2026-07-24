@@ -725,6 +725,8 @@ add_test(NAME plumtree-graph-sim-simple-loss
   COMMAND plumtree-graph-sim --smoke --broadcast-mode simple --packet-loss 0.08 --broadcast-count 5 --seed 17)
 add_test(NAME plumtree-graph-sim-partition-recovery
   COMMAND plumtree-graph-sim --smoke --isolate-node 11 --isolate-broadcasts 2 --broadcast-count 3 --seed 23)
+add_test(NAME plumtree-graph-sim-selective-forwarding
+  COMMAND plumtree-graph-sim --smoke --drop-outbound-node 4 --broadcast-count 5 --seed 29)
 add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-catchain test/test-catchain.cpp)
 target_link_libraries(test-catchain overlay tdutils tdactor adnl adnltest rldp tl_api dht

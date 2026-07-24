@@ -211,9 +211,26 @@ bool SimNetwork::is_partitioned(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort
          (dst_it != node_by_adnl.end() && dst_it->second == isolated_node.value());
 }
 
+bool SimNetwork::is_selectively_dropped(adnl::AdnlNodeIdShort src, td::int32 message_type) const {
+  if (!outbound_drop_node) {
+    return false;
+  }
+  if (message_type != tos_api::overlay_broadcastPlumtreeFec::ID &&
+      message_type != tos_api::overlay_broadcastPlumtreeSimple::ID) {
+    return false;
+  }
+  auto src_it = node_by_adnl.find(src);
+  return src_it != node_by_adnl.end() && src_it->second == outbound_drop_node.value();
+}
+
 void SimNetwork::set_isolated_node(td::optional<std::size_t> node_index) {
   std::lock_guard<std::mutex> lock(mutex);
   isolated_node = node_index;
+}
+
+void SimNetwork::set_outbound_drop_node(td::optional<std::size_t> node_index) {
+  std::lock_guard<std::mutex> lock(mutex);
+  outbound_drop_node = node_index;
 }
 
 namespace {
@@ -258,10 +275,13 @@ void SimNetwork::enqueue_event(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort 
     sent_bytes_by_node[src_it->second] += bytes;
   }
   auto partitioned = is_partitioned(src, dst);
-  if (partitioned || should_drop()) {
+  auto selectively_dropped = is_selectively_dropped(src, type);
+  if (partitioned || selectively_dropped || should_drop()) {
     if (promise) {
-      promise.set_error(td::Status::Error(
-          ErrorCode::timeout, td::Slice(partitioned ? "simulated network partition" : "simulated packet loss")));
+      auto reason = partitioned          ? "simulated network partition"
+                    : selectively_dropped ? "simulated selective forwarding"
+                                          : "simulated packet loss";
+      promise.set_error(td::Status::Error(ErrorCode::timeout, td::Slice(reason)));
     }
     return;
   }

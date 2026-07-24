@@ -109,9 +109,11 @@ struct SimNetwork {
   std::vector<double> tx_free_at_by_node;
   std::vector<double> rx_free_at_by_node;
   td::optional<std::size_t> isolated_node;
+  td::optional<std::size_t> outbound_drop_node;
   mutable std::mutex mutex;
 
   void set_isolated_node(td::optional<std::size_t> node_index);
+  void set_outbound_drop_node(td::optional<std::size_t> node_index);
   double now_s() const;
   double propagation_latency_s(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst);
   void enqueue(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data);
@@ -129,6 +131,7 @@ struct SimNetwork {
 
  private:
   bool is_partitioned(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst) const;
+  bool is_selectively_dropped(adnl::AdnlNodeIdShort src, td::int32 message_type) const;
   bool should_drop();
   void enqueue_event(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data, SimEventKind kind,
                      td::Promise<td::BufferSlice> promise);
