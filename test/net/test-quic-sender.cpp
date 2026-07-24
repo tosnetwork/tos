@@ -414,12 +414,15 @@ tos::quic::QuicServer::Options small_stream_limit_options(size_t max_streams_bid
 }
 
 struct RawQuicEndpointState {
-  void remember_connection(tos::quic::QuicConnectionId cid, bool is_outbound) {
+  void remember_connection(tos::quic::QuicConnectionId cid, td::SecureString local_public_key,
+                            td::SecureString peer_public_key, bool is_outbound) {
     std::lock_guard guard(mutex);
     if (is_outbound) {
       outbound_cid = cid;
+      outbound_local_public_key = local_public_key.as_slice().str();
     } else {
       inbound_cid = cid;
+      inbound_local_public_key = local_public_key.as_slice().str();
     }
   }
 
@@ -463,9 +466,16 @@ struct RawQuicEndpointState {
     return inbound_cid;
   }
 
+  std::optional<std::string> get_inbound_local_public_key() const {
+    std::lock_guard guard(mutex);
+    return inbound_local_public_key;
+  }
+
   mutable std::mutex mutex;
   std::optional<tos::quic::QuicConnectionId> outbound_cid;
   std::optional<tos::quic::QuicConnectionId> inbound_cid;
+  std::optional<std::string> outbound_local_public_key;
+  std::optional<std::string> inbound_local_public_key;
   std::unordered_set<tos::quic::QuicStreamID> locally_opened_streams;
   std::unordered_set<tos::quic::QuicStreamID> closed_streams;
   size_t closed_stream_count = 0;
@@ -481,9 +491,10 @@ class RawQuicCallback final : public tos::quic::QuicServer::Callback {
     server_ = server;
   }
 
-  td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString,
+  td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString local_public_key,
+                          td::SecureString peer_public_key,
                           bool is_outbound) override {
-    state_->remember_connection(cid, is_outbound);
+    state_->remember_connection(cid, std::move(local_public_key), std::move(peer_public_key), is_outbound);
     return td::Status::OK();
   }
 
@@ -561,10 +572,10 @@ class RawQuicTestRunner final : public td::actor::Actor {
   }
 
   td::actor::Task<std::pair<tos::quic::QuicConnectionId, tos::quic::QuicConnectionId>> connect(
-      RawQuicEndpoint& client, RawQuicEndpoint& server) {
+      RawQuicEndpoint& client, RawQuicEndpoint& server, td::Slice sni = td::Slice("")) {
     auto outbound_cid_result =
         co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), server.port,
-                                clone_quic_key(client.key), td::Slice("tos"), td::Slice(""))
+                                clone_quic_key(client.key), td::Slice("tos"), sni)
             .wrap();
     LOG_CHECK(outbound_cid_result.is_ok()) << "connect failed: " << outbound_cid_result.error();
     auto outbound_cid = outbound_cid_result.move_as_ok();
@@ -1019,6 +1030,68 @@ TEST(QuicStreamLimits, MoreThan1024SequentialStreamsWorkWithSmallLimit) {
     }
 
     ASSERT_EQ(client.state->get_local_closed_stream_count(), stream_count);
+    co_return td::Unit{};
+  });
+}
+
+namespace {
+
+std::string pubkey_bytes(const td::Ed25519::PrivateKey& key) {
+  return key.get_public_key().move_as_ok().as_octet_string().as_slice().str();
+}
+
+tos::adnl::AdnlNodeIdShort short_id_from_key(const td::Ed25519::PrivateKey& key) {
+  return tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
+      .compute_short_id();
+}
+
+}  // namespace
+
+TEST(QuicSniDispatch, ClientSniSelectsAdditionalIdentity) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto server = co_await t.create_endpoint(quic_test_options());
+    auto extra_key = make_quic_key(server.port * 31 + 1);
+    auto extra_id = short_id_from_key(extra_key);
+    td::actor::send_closure(server.server, &tos::quic::QuicServer::add_identity, extra_id,
+                            clone_quic_key(extra_key));
+    co_await td::actor::Yield{};
+    co_await t.connect(client, server, tos::quic::ServerIdentity::sni(extra_id));
+    ASSERT_TRUE(server.state->get_inbound_local_public_key().has_value());
+    ASSERT_EQ(*server.state->get_inbound_local_public_key(), pubkey_bytes(extra_key));
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSniDispatch, NoSniFallsBackToDefaultIdentity) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto server = co_await t.create_endpoint(quic_test_options());
+    auto extra_key = make_quic_key(server.port * 31 + 2);
+    td::actor::send_closure(server.server, &tos::quic::QuicServer::add_identity, short_id_from_key(extra_key),
+                            clone_quic_key(extra_key));
+    co_await td::actor::Yield{};
+    co_await t.connect(client, server);
+    ASSERT_TRUE(server.state->get_inbound_local_public_key().has_value());
+    ASSERT_EQ(*server.state->get_inbound_local_public_key(), pubkey_bytes(server.key));
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSniDispatch, UnknownSniFailsHandshake) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto server = co_await t.create_endpoint(quic_test_options());
+    auto bogus_id = short_id_from_key(make_quic_key(server.port * 31 + 3));
+    auto bogus_sni = tos::quic::ServerIdentity::sni(bogus_id);
+    auto result = co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"),
+                                          server.port, clone_quic_key(client.key), td::Slice("tos"),
+                                          td::Slice(bogus_sni))
+                       .wrap();
+    LOG_CHECK(result.is_ok()) << "connect failed before handshake: " << result.error();
+    static_cast<void>(result.move_as_ok());
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    ASSERT_TRUE(!server.state->get_inbound_local_public_key().has_value());
     co_return td::Unit{};
   });
 }

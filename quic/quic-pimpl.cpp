@@ -774,14 +774,7 @@ td::SecureString QuicConnectionPImpl::extract_peer_ed25519_key() const {
 }
 
 td::SecureString QuicConnectionPImpl::extract_local_ed25519_key() const {
-  // OpenSSL does not expose the selected local RPK through a public getter;
-  // the server identity is selected from the SNI snapshot, so derive it from
-  // the certificate currently installed on the SSL object.
-  X509* cert = SSL_get_certificate(ssl_.get());
-  if (!cert) {
-    return {};
-  }
-  EVP_PKEY* key = X509_get0_pubkey(cert);
+  EVP_PKEY* key = SSL_get_privatekey(ssl_.get());
   if (!key || EVP_PKEY_id(key) != EVP_PKEY_ED25519) {
     return {};
   }
@@ -797,6 +790,10 @@ td::SecureString QuicConnectionPImpl::extract_local_ed25519_key() const {
 int QuicConnectionPImpl::on_handshake_completed() {
   callback_->on_handshake_completed({.peer_public_key = extract_peer_ed25519_key(),
                                      .local_public_key = extract_local_ed25519_key()});
+  if (ssl_ctx_) {
+    SSL_CTX_set_tlsext_servername_arg(ssl_ctx_.get(), nullptr);
+  }
+  server_identities_.clear();
   return 0;
 }
 
