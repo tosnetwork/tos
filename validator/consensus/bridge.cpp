@@ -140,7 +140,10 @@ class DbImpl : public Db {
     return std::nullopt;
   }
   std::vector<std::pair<td::BufferSlice, td::BufferSlice>> get_by_prefix(td::uint32 prefix) const override {
-    td::uint32 prefix2 = prefix + 1;
+    // RocksDB compares the raw little-endian key bytes lexicographically.
+    // Increment the numeric constructor ID in that byte order so the end of
+    // the range remains correct when the low byte carries.
+    td::uint32 prefix2 = td::bswap32(td::bswap32(prefix) + 1);
     td::Slice begin{(const char*)&prefix, 4};
     td::Slice end{(const char*)&prefix2, 4};
     std::vector<std::pair<td::BufferSlice, td::BufferSlice>> result;
