@@ -374,18 +374,51 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro(adnl::AdnlNodeIdShort sr
   auto size = data.size();
   auto magic = get_magic(data);
   auto R = co_await send_message_coro_inner(src, dst, std::move(data)).wrap();
-  LOG_IF(INFO, R.is_error()) << "Failed to send message: " << src << " -> " << dst << " size=" << size
-                             << " magic=" << td::format::as_hex(magic) << " " << R.error();
+  if (R.is_error()) {
+    // Idle expiry races with queued broadcasts are normal for a datagram
+    // transport.  Keep these at DEBUG so a burst cannot fill journald; real
+    // protocol/serialization failures remain visible at WARNING.
+    auto message = R.error().message().str();
+    if (message == "connection closed" || message == "Connection not found") {
+      LOG(DEBUG) << "Failed to send message: " << src << " -> " << dst << " size=" << size
+                 << " magic=" << td::format::as_hex(magic) << " " << R.error();
+    } else {
+      LOG(WARNING) << "Failed to send message: " << src << " -> " << dst << " size=" << size
+                   << " magic=" << td::format::as_hex(magic) << " " << R.error();
+    }
+  }
   co_return td::Unit{};
 }
 
 td::actor::Task<td::Unit> QuicSender::send_message_coro_inner(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                               td::BufferSlice data) {
-  auto conn = co_await find_or_create_connection({src, dst});
-  td::BufferSlice wire_data = create_serialize_tl_object<tos_api::quic_message>(std::move(data));
-  co_await td::actor::ask(conn->server, &QuicServer::send_stream, conn->cid, StreamOptions{get_peer_mtu(src, dst)},
-                          std::move(wire_data), true);
-  co_return td::Unit{};
+  // A connection can be closed between find_or_create_connection() and the
+  // actor message that queues the stream.  This is expected during QUIC idle
+  // expiry, but retrying on a fresh connection prevents a burst of consensus
+  // messages from all failing against the stale CID.
+  for (int attempt = 0; attempt != 2; ++attempt) {
+    auto path = AdnlPath{src, dst};
+    auto conn = co_await find_or_create_connection(path);
+    td::BufferSlice wire_data = create_serialize_tl_object<tos_api::quic_message>(data.clone());
+    auto result = co_await td::actor::ask(conn->server, &QuicServer::send_stream, conn->cid,
+                                          StreamOptions{get_peer_mtu(src, dst)}, std::move(wire_data), true)
+                             .wrap();
+    if (result.is_ok()) {
+      co_return td::Unit{};
+    }
+
+    // Remove only the entry that points at the failed connection.  A newer
+    // connection may already have replaced it while the ask was in flight.
+    if (attempt == 0) {
+      auto it = outbound_.find(path);
+      if (it != outbound_.end() && it->second == conn) {
+        outbound_.erase(it);
+      }
+      continue;
+    }
+    co_return result.move_as_error();
+  }
+  co_return td::Status::Error("message send retry exhausted");
 }
 
 td::actor::Task<td::BufferSlice> QuicSender::send_query_coro(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,

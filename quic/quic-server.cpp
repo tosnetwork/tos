@@ -378,6 +378,16 @@ td::Status QuicServer::send_invalid_token_connection_close(const VersionCid &pac
       td::Slice(reinterpret_cast<const char *>(datagram.data()), static_cast<size_t>(datagram_size)));
 }
 
+void QuicServer::send_connection_close(ConnectionState &state, const UdpMessageBuffer &msg) {
+  if (msg.storage.empty()) {
+    return;
+  }
+  auto status = send_stateless_datagram("connection close", state.remote_address, msg.storage);
+  if (status.is_error()) {
+    LOG(WARNING) << "failed to send connection close for " << state << ": " << status;
+  }
+}
+
 std::shared_ptr<QuicServer::ConnectionState> QuicServer::find_connection(const QuicConnectionId &cid) {
   if (auto it = connections_.find(cid); it != connections_.end()) {
     return it->second;
@@ -694,11 +704,11 @@ void QuicServer::drain_ingress() {
     }
 
     for (size_t i = 0; i < cnt; i++) {
+      bytes_budget -= std::max<size_t>(ingress_messages_[i].data.size(), 256);
       if (ingress_errors_[i].is_error()) {
         LOG(DEBUG) << "dropping inbound packet from " << ingress_msg_[i].address << ": " << ingress_errors_[i];
         continue;
       }
-      bytes_budget -= ingress_messages_[i].data.size();
       ingress_msg_[i].storage = ingress_messages_[i].data;
       ingress_stats_.bytes += ingress_msg_[i].storage.size();
       const size_t segment_size = ingress_messages_[i].gso_size;
@@ -714,9 +724,18 @@ void QuicServer::drain_ingress() {
         if (!state) {
           return;
         }
-        if (auto handle_status = state->impl().handle_ingress(packet); handle_status.is_error()) {
-          LOG(WARNING) << "failed to handle ingress from " << *state << ":  " << handle_status;
-          on_connection_closed(state->cid);  // TODO: probably we have to tell here to quic that connection is closed
+        std::array<char, NGTCP2_MAX_UDP_PAYLOAD_SIZE> close_buffer;
+        UdpMessageBuffer close_msg;
+        close_msg.storage = td::MutableSlice(close_buffer.data(), close_buffer.size());
+        auto handle_status = state->impl().handle_ingress(packet, close_msg);
+        if (handle_status.is_error()) {
+          if (ngtcp2_err_is_fatal(handle_status.code())) {
+            LOG(WARNING) << "failed to handle ingress from " << *state << ": " << handle_status;
+          } else {
+            LOG(DEBUG) << "closing connection after ingress from " << *state << ": " << handle_status;
+          }
+          send_connection_close(*state, close_msg);
+          on_connection_closed(state->cid);
           return;
         }
         on_connection_updated(*state);
@@ -828,7 +847,8 @@ void QuicServer::flush_egress() {
   auto active_count = active_connections_.size();
   auto total_count = connections_.size();
 
-  while (!active_connections_.empty()) {
+  td::int64 bytes_budget = 10 << 20;
+  while (!active_connections_.empty() && bytes_budget > 0) {
     size_t batch_count = 0;
     while (batch_count < kEgressBatch && produce_next_egress(batch_count)) {
       batch_count++;
@@ -842,6 +862,7 @@ void QuicServer::flush_egress() {
       egress_messages_[i].to = &egress_batches_[i].address;
       egress_messages_[i].data = egress_batches_[i].storage;
       egress_messages_[i].gso_size = gso_enabled_ ? egress_batches_[i].gso_size : 0;
+      bytes_budget -= std::max<size_t>(egress_messages_[i].data.size(), 256);
     }
 
     // Debug: log sendmmsg batch details (every 64 batches)
@@ -875,6 +896,9 @@ void QuicServer::flush_egress() {
     if (!flush_pending()) {
       return;  // blocked, will continue on next wakeup
     }
+  }
+  if (bytes_budget <= 0) {
+    yield();
   }
 }
 

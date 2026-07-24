@@ -199,6 +199,7 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
                                                                            const td::IPAddress &remote_address);
   td::Result<QuicConnectionId> verify_retry_token(const VersionCid &packet, const td::IPAddress &remote_address) const;
   td::Status send_stateless_datagram(td::Slice packet_kind, const td::IPAddress &remote_address, td::Slice data);
+  void send_connection_close(ConnectionState &state, const UdpMessageBuffer &msg);
   td::Status send_retry(const VersionCid &packet, const td::IPAddress &remote_address);
   td::Status send_invalid_token_connection_close(const VersionCid &packet, const td::IPAddress &remote_address);
 

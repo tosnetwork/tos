@@ -489,19 +489,42 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
   return td::Status::OK();
 }
 
-td::Status QuicConnectionPImpl::handle_ingress(const UdpMessageBuffer& msg_in) {
+void QuicConnectionPImpl::write_connection_close(UdpMessageBuffer& close_out, int liberr) {
+  ngtcp2_ccerr err{};
+  if (liberr == NGTCP2_ERR_CRYPTO) {
+    ngtcp2_ccerr_set_tls_alert(&err, ngtcp2_conn_get_tls_alert(conn()), nullptr, 0);
+  } else {
+    ngtcp2_ccerr_set_liberr(&err, liberr, nullptr, 0);
+  }
+  auto path = make_path();
+  ngtcp2_pkt_info pi{};
+  auto n = ngtcp2_conn_write_connection_close(conn(), &path, &pi,
+                                              reinterpret_cast<uint8_t*>(close_out.storage.data()),
+                                              close_out.storage.size(), &err, now_ts());
+  if (n > 0) {
+    commit_write(close_out, static_cast<size_t>(n), 0, path);
+  } else {
+    close_out.storage.truncate(0);
+  }
+}
+
+td::Status QuicConnectionPImpl::handle_ingress(const UdpMessageBuffer& msg_in, UdpMessageBuffer& close_out) {
   ngtcp2_path path = make_path(msg_in.address);
   ngtcp2_pkt_info pi{};
   int rv = ngtcp2_conn_read_pkt(conn(), &path, &pi, reinterpret_cast<uint8_t*>(msg_in.storage.data()),
                                 msg_in.storage.size(), now_ts());
   if (rv == 0) {
+    close_out.storage.truncate(0);
     return td::Status::OK();
   }
-  if (rv == NGTCP2_ERR_DROP_CONN || ngtcp2_err_is_fatal(rv)) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_read_pkt failed: " << rv
-                                       << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
+  if (rv == NGTCP2_ERR_DROP_CONN || rv == NGTCP2_ERR_RETRY || rv == NGTCP2_ERR_DRAINING ||
+      rv == NGTCP2_ERR_CLOSING) {
+    close_out.storage.truncate(0);
+  } else {
+    write_connection_close(close_out, rv);
   }
-  return td::Status::OK();
+  return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << rv
+                                          << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
 }
 
 ngtcp2_conn_info QuicConnectionPImpl::get_conn_info() const {
