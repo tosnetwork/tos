@@ -30,6 +30,41 @@ add_test(
             --net-gremlin-downtime 0.1:0.2 --net-gremlin-times 4 --min-finalized-blocks 5
 )
 add_test(
+    NAME test-consensus-simplex2-malicious-observer
+    COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --malicious-observer-attack
+            --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-relay-loop
+    COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --relay-loop-test
+            --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-adaptive-byzantine
+    COMMAND test-consensus --duration 7 --n-nodes 7 --target-rate-ms 100
+            --net-ping 0.005:0.02 --adaptive-byzantine-n 2
+            --adaptive-byzantine-period 0.35 --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-manager-ingress-adversarial
+    COMMAND test-consensus --duration 7 --n-nodes 7 --target-rate-ms 100
+            --net-ping 0.005:0.02 --malicious-observer-attack
+            --relay-loop-test --adaptive-byzantine-n 2
+            --adaptive-byzantine-period 0.35 --min-finalized-blocks 5
+)
+add_test(
+    NAME test-consensus-simplex2-candidate-relay-eviction
+    COMMAND test-consensus --candidate-relay-eviction-test
+)
+add_test(
+    NAME test-consensus-simplex2-query-abuse
+    COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
+            --net-ping 0.005:0.02 --query-abuse-test
+            --min-finalized-blocks 5
+)
+add_test(
     NAME test-consensus-simplex2-codec-boundary
     COMMAND test-consensus --configured-maximum-candidate-test
 )

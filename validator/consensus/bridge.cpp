@@ -5,8 +5,8 @@
  */
 
 #include "td/db/RocksDb.h"
-#include "td/utils/LRUCache.h"
 #include "td/utils/port/path.h"
+#include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "validator/consensus/simplex/bus.h"
@@ -252,17 +252,16 @@ class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td
       return;
     }
     const auto &block = std::get<BlockCandidate>(candidate->block);
-    if (sent_candidates_.contains(block.id)) {
+    if (!sent_candidates_.should_relay(block.id)) {
       return;
     }
-    sent_candidates_.put(block.id, td::Unit{});
     constexpr int mode = fullnode::FullNode::broadcast_mode_custom | fullnode::FullNode::broadcast_mode_fast_sync |
                          fullnode::FullNode::broadcast_mode_public;
     td::actor::send_closure(bus.manager, &ManagerFacade::send_block_candidate_broadcast, block.id, block.data.clone(),
                             mode);
   }
 
-  td::LRUCache<BlockIdExt, td::Unit> sent_candidates_{256};
+  CandidateRelayDeduplicator sent_candidates_;
   BlockSeqno last_mc_finalized_seqno_ = 0;
 };
 

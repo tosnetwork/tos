@@ -63,10 +63,10 @@ itself says **Completed ✅**.
 | 1. ConfigParam30 | Coding complete ✅ | ✅ TON `#22` bit layout, first-testnet zerostate generation, protocol-v2 support, reserved-flag rejection, all four ConfigParam29 constructors, legacy `#21` decode coverage, and `#22` golden/truncated/invalid/future-version tests | Complete release validation |
 | 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
-| 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
-| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, deduplicated CandidateReceived/FinalizeBlock fallback relay, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, and a selective data-forwarding fault, and fault-injected Simplex consensus tests are adapted to TOS | Run end-to-end manager-ingress error propagation, eviction, relay-loop, actual membership churn, Byzantine selective-forwarding, and release-scale packet-loss and partition validation |
+| 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, bounded candidate caching, deterministic malicious-observer rejection, relay-loop, 256-entry LRU eviction, per-ADNL query-abuse checks, and a real seven-process observer-membership churn run | Complete production-overlay malicious-observer validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, deduplicated CandidateReceived/FinalizeBlock fallback relay, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, a selective data-forwarding fault, adaptive two-of-seven selective-forwarding validation, and fault-injected Simplex consensus tests adapted to TOS | Run production `ValidatorManagerImpl` ingress attacks and release-scale packet-loss, partition, and performance validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
-| Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
+| Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3; a fail-closed local/SSH multi-region soak driver is implemented | Complete phases 1–5 exit criteria, define rollback procedure, and actually run and pass the 72-hour multi-region soak |
 
 **Coding conclusion:** the planned production implementation for phases 1–5
 and first-testnet activation is coding complete ✅ at this snapshot. The
@@ -94,8 +94,20 @@ Completed targeted validation:
 - [x] ✅ Overlay privacy-rule authorization and AnySender rejection cases
 - [x] ✅ FEC and simple 20-broadcast 256 KiB performance stress runs
 - [x] ✅ Manager-ingress tasks now use observable detached completion logging
-- [ ] End-to-end manager-ingress, authorization, eviction, relay-loop,
-  membership-churn, Byzantine, performance, and multi-region validation
+- [x] ✅ Non-validator observer votes are rejected and the repeated-source ban
+  path is exercised in the deterministic runtime
+- [x] ✅ Candidate relay duplicate-arrival/loop suppression is exercised
+- [x] ✅ Candidate relay retains its newest LRU entry and evicts its oldest
+  entry after the configured 256-item bound
+- [x] ✅ CandidateResolver accepts ordinary observer queries and rejects a
+  same-ADNL burst after the configured one-second rate limit
+- [x] ✅ Adaptive two-of-seven Byzantine selective forwarding retains liveness
+- [x] ✅ Real seven-process observer-group creation, rotation, destruction, and
+  continued finalization are exercised
+- [ ] Production `ValidatorManagerImpl` ingress attacks,
+  production-overlay malicious-observer injection, release-scale performance,
+  and an actually completed
+  72-hour multi-region run
 
 ### Completed implementation work ✅
 
@@ -569,12 +581,18 @@ interfaces, keeping integration changes small.
 
 ### Phase 4: Observer cache and candidate relay ✅
 
-**Current status: Coding complete ✅ / pending validation.** Candidate relay, observer creation,
-optional validator identity, private-overlay membership, read-only Pool and
-CandidateResolver operation, arbitrary-member candidate queries, and bounded
-in-memory candidate retention are implemented behind their protocol gates.
-Authorization, eviction, removal/liveness, query-abuse, and relay-loop tests
-remain open.
+**Current status: Coding complete ✅ / pending validation.** Candidate relay,
+observer creation, optional validator identity, private-overlay membership,
+read-only Pool and CandidateResolver operation, arbitrary-member candidate
+queries, and bounded in-memory candidate retention are implemented behind
+their protocol gates. Deterministic tests now cover rejection and temporary
+banning of votes from an overlay member without validator authority,
+candidate-relay duplicate-arrival suppression, the exact 256-entry LRU
+eviction policy used by the production relay actor, and CandidateResolver's
+per-ADNL query rate limiter. A real seven-process run with
+four shard validators exercises observer-group creation, repeated session
+rotation, destruction, and continued finalization. Malicious-observer
+injection through the production private overlay remains open.
 
 Add non-voting observers only after the block-sync overlay is stable.
 
@@ -607,15 +625,21 @@ transport, bounded manager reconciliation, proof construction, and existing
 broadcast validation integration are ported. Short fault-injected Simplex
 consensus tests cover protocol-message loss, process restart, and temporary
 single-node isolation with explicit liveness thresholds. Transport-specific
-runtime coverage for end-to-end candidate/finality arrival ordering,
-manager-ingress invalid signatures, eviction, relay loops, actual membership
-churn, and adaptive Byzantine selective forwarding remains open. Overlay
-privacy-rule authorization and local performance regression are covered
-directly; production capacity and multi-region soak evidence remain open.
+runtime coverage now includes candidate-relay duplicate-arrival suppression,
+real process-level observer membership churn, and deterministic adaptive
+Byzantine selective forwarding. The deterministic manager-facade boundary
+also mutates finalized block IDs, signatures, and validator-set hashes and
+requires their rejection. This does not instantiate the production
+`ValidatorManagerImpl` network-ingress path, so full manager-ingress attack
+coverage and cache eviction remain open. Overlay privacy-rule authorization
+and local performance regression are covered directly; production capacity
+and multi-region soak evidence remain open.
 Deterministic short simulator tests now cover packet loss, temporary
-single-node isolation, rotating temporary outages, and one static selective
-data-forwarding omission. Actual membership churn, release-scale packet-loss
-and partition, security, and performance evidence remain open.
+single-node isolation, rotating temporary outages, one static selective
+data-forwarding omission, and a rotating attacker that selectively suppresses
+traffic from two of seven nodes while following the observed leader. Real
+process-level membership churn is covered; release-scale packet-loss,
+partition, security, and performance evidence remain open.
 
 TON commit `208c0ded`'s end-to-end shard-block-description path is adapted:
 Plumtree suppresses the legacy accept-block broadcast, validators generate the
@@ -722,6 +746,61 @@ Run the matrix with at least:
 - Clean start, rolling restart, crash restart, and network partition.
 - Honest operation, one Byzantine validator, and the maximum tolerated
   Byzantine population.
+
+### 6.1 Release-validation implementation status
+
+The following status distinguishes a test driver that exists from a release
+gate that has actually accumulated its required evidence.
+
+| Validation item | Implementation | Latest evidence at this snapshot | Release status |
+|---|---|---|---|
+| Real observer membership churn | ✅ `test/integration/test_simplex2_release.py observer-churn` starts DHT plus seven real validator-engine processes, with four shard validators and short group lifetimes | ✅ 2026-07-24: all nodes progressed from masterchain height 14 to 96; 15 observer groups were created and started, 12 were destroyed, and 15 session identities were observed | Targeted test passed ✅ |
+| Malicious observer | ✅ `test-consensus --malicious-observer-attack` injects repeated validly encoded votes whose authenticated ADNL source has no validator identity | ✅ Five-node test passed and continued past five finalized blocks | Deterministic authority-boundary test passed ✅; production-overlay injection remains open |
+| Candidate relay loop | ✅ `test-consensus --relay-loop-test` delivers the same candidate twice and verifies that `CandidateBroadcastRelay` emits no duplicate | ✅ Five-node test passed and exercised the relay path | Targeted test passed ✅ |
+| Candidate relay eviction | ✅ The production `CandidateRelayDeduplicator` policy is filled past its 256-ID bound; the newest ID must remain suppressed and the oldest must become relayable | ✅ Boundary test passed | Targeted bounded-cache test passed ✅ |
+| Observer query abuse | ✅ `test-consensus --query-abuse-test` floods the production CandidateResolver actor through its Bus from one observer ADNL identity | ✅ Normal requests were accepted, excess requests were rejected, and consensus continued past five finalized blocks | Targeted rate-limit test passed ✅ |
+| Adaptive Byzantine forwarding | ✅ `test-consensus --adaptive-byzantine-n 2` rotates selected attackers, includes the observed leader, and selectively omits protocol, candidate, and query forwarding | ✅ Seven-node/two-attacker test passed and continued past five finalized blocks | Deterministic liveness test passed ✅ |
+| Combined manager boundary attack | ✅ `test-consensus-simplex2-manager-ingress-adversarial` combines malicious-observer, relay-loop, adaptive-forwarding, finalized-block-ID mutation, signature mutation, and validator-set-hash mutation checks | ✅ Combined seven-node test passed | Manager-facade boundary passed ✅; production `ValidatorManagerImpl` ingress remains open |
+| Plumtree impairment/performance simulation | ✅ FEC and simple graph simulations cover loss, partition recovery, rotating outage, selective forwarding, and 20 broadcasts of 256 KiB at 1 MiB/s with jitter | ✅ All 11 `plumtree-graph-sim-*` tests passed on 2026-07-24 | Deterministic simulation passed ✅; production capacity remains open |
+| Multi-region network | ✅ `scripts/simplex2-soak.py` supports an SSH inventory, per-region labels, optional explicit `tc netem`, finalized-hash comparison, stalls, restarts, resource caps, and growth limits | Not run against supplied remote hosts | Pending real multi-region execution |
+| 72-hour soak | ✅ The same driver defaults to 72 hours and marks shorter or single-region runs as release-gate ineligible | ✅ A 16-second, three-local-node harness smoke passed on 2026-07-24; growth-rate gates were intentionally not evaluated over that short interval | Pending actual 72-hour execution |
+
+The deterministic adversarial tests can be repeated with:
+
+```sh
+cmake --build build -j64 --target test-consensus
+ctest --test-dir build -j4 --output-on-failure \
+  -R '^test-consensus-simplex2-(malicious-observer|relay-loop|candidate-relay-eviction|query-abuse|adaptive-byzantine|manager-ingress-adversarial)$'
+```
+
+The real observer churn test can be repeated with:
+
+```sh
+uv run python test/integration/test_simplex2_release.py observer-churn \
+  --duration 32 --group-lifetime 8 --validators 7 \
+  --shard-validators 4 --base-port 22000 --threads 2
+```
+
+Run the local monitor smoke without changing the validator services:
+
+```sh
+python3 scripts/simplex2-soak.py \
+  --local-systemd-nodes 3 --duration 60 --interval 10
+```
+
+For the release gate, replace the example host names in
+`doc/examples/simplex2-soak-inventory.json`, verify passwordless SSH and
+service/data-directory values, and then run:
+
+```sh
+python3 scripts/simplex2-soak.py \
+  --inventory doc/examples/simplex2-soak-inventory.json
+```
+
+`--apply-netem` is intentionally opt-in because it changes remote network
+queuing. The driver removes every qdisc that it successfully applied on normal
+completion or interruption. A run shorter than 72 hours or spanning fewer
+than two region labels cannot set `release_gate_eligible` to true.
 
 ## 7. Testnet Release Gates
 

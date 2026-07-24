@@ -10,7 +10,9 @@
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "consensus/simplex/bus.h"
+#include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
+#include "consensus/candidate-relay-policy.h"
 #include "overlay/overlays.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
@@ -111,6 +113,12 @@ std::pair<size_t, size_t> NET_GREMLIN_N = {1, 1};
 size_t NET_GREMLIN_TIMES = 1000000000;
 bool NET_GREMLIN_KILLS_LEADER = false;
 
+size_t ADAPTIVE_BYZANTINE_N = 0;
+double ADAPTIVE_BYZANTINE_PERIOD = 0.5;
+bool MALICIOUS_OBSERVER_ATTACK = false;
+bool RELAY_LOOP_TEST = false;
+bool QUERY_ABUSE_TEST = false;
+
 std::pair<double, double> DB_DELAY = {0.0, 0.0};
 std::pair<double, double> COLLATION_TIME = {0.0, 0.0};
 std::pair<double, double> VALIDATION_TIME = {0.0, 0.0};
@@ -143,6 +151,13 @@ class TestOverlay : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  td::actor::Task<> set_adaptive_byzantine_nodes(std::vector<size_t> nodes, td::uint64 epoch) {
+    adaptive_byzantine_nodes_.clear();
+    adaptive_byzantine_nodes_.insert(nodes.begin(), nodes.end());
+    adaptive_byzantine_epoch_ = epoch;
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> send_message(PeerValidator src, size_t src_instance_idx, size_t dst_idx, td::BufferSlice message);
   td::actor::Task<> send_candidate(PeerValidator src, size_t src_instance_idx, size_t dst_idx, CandidateRef candidate);
   td::actor::Task<td::BufferSlice> send_query(PeerValidator src, size_t src_instance_idx, size_t dst_idx,
@@ -154,6 +169,8 @@ class TestOverlay : public td::actor::Actor {
     bool disabled = false;
   };
   std::vector<std::vector<Instance>> nodes_;
+  std::set<size_t> adaptive_byzantine_nodes_;
+  td::uint64 adaptive_byzantine_epoch_ = 0;
 
   Instance &get_inst(size_t idx, size_t instance_idx) {
     if (nodes_.size() <= idx) {
@@ -174,6 +191,16 @@ class TestOverlay : public td::actor::Actor {
     }
     co_await td::actor::coro_sleep(td::Timestamp::in(td::Random::fast(NET_PING.first, NET_PING.second)));
     co_return td::Unit{};
+  }
+
+  bool drop_byzantine_forward(size_t src_idx, size_t dst_idx, td::uint64 kind) const {
+    if (!adaptive_byzantine_nodes_.contains(src_idx)) {
+      return false;
+    }
+    // Retain one deterministic third of the destinations.  The selected
+    // sources and retained peer subset rotate every epoch, modelling an
+    // adaptive omission attacker without relying on nondeterministic loss.
+    return (src_idx + dst_idx + adaptive_byzantine_epoch_ + kind) % 3 != 0;
   }
 };
 
@@ -263,6 +290,11 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
 
   void receive_candidate(CandidateRef candidate) {
     owning_bus().publish<CandidateReceived>(candidate);
+    if (RELAY_LOOP_TEST) {
+      // Model a candidate returning through a second transport/relay path.
+      // CandidateBroadcastRelay must still emit it at most once.
+      owning_bus().publish<CandidateReceived>(candidate);
+    }
   }
 
   td::actor::Task<td::BufferSlice> receive_query(PeerValidator src, td::BufferSlice query) {
@@ -306,6 +338,9 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
 
 td::actor::Task<> TestOverlay::send_message(PeerValidator src, size_t src_instance_idx, size_t dst_idx,
                                             td::BufferSlice message) {
+  if (drop_byzantine_forward(src.idx.value(), dst_idx, 0)) {
+    co_return td::Status::Error("adaptive Byzantine protocol-message omission");
+  }
   co_await before_receive(src.idx.value(), src_instance_idx, dst_idx, false);
   for (const auto &instance : nodes_[dst_idx]) {
     if (instance.actor.empty() || instance.disabled) {
@@ -318,6 +353,9 @@ td::actor::Task<> TestOverlay::send_message(PeerValidator src, size_t src_instan
 
 td::actor::Task<> TestOverlay::send_candidate(PeerValidator src, size_t src_instance_idx, size_t dst_idx,
                                               CandidateRef candidate) {
+  if (drop_byzantine_forward(src.idx.value(), dst_idx, 1)) {
+    co_return td::Status::Error("adaptive Byzantine candidate omission");
+  }
   co_await before_receive(src.idx.value(), src_instance_idx, dst_idx, true);
   for (const auto &instance : nodes_[dst_idx]) {
     if (instance.actor.empty() || instance.disabled) {
@@ -330,6 +368,9 @@ td::actor::Task<> TestOverlay::send_candidate(PeerValidator src, size_t src_inst
 
 td::actor::Task<td::BufferSlice> TestOverlay::send_query(PeerValidator src, size_t src_instance_idx, size_t dst_idx,
                                                          td::BufferSlice message) {
+  if (drop_byzantine_forward(src.idx.value(), dst_idx, 2)) {
+    co_return td::Status::Error("adaptive Byzantine query omission");
+  }
   if (nodes_[dst_idx].empty()) {
     co_return td::Status::Error("no instances");
   }
@@ -457,6 +498,7 @@ class TestManagerFacade : public ManagerFacade {
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
+  void send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) override;
 
  private:
   size_t node_idx_;
@@ -554,6 +596,18 @@ class TestConsensus : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  void on_candidate_relay(size_t node_idx, size_t instance_idx, BlockIdExt block_id) {
+    auto key = std::make_tuple(node_idx, instance_idx, block_id);
+    auto &count = candidate_relay_counts_[key];
+    ++count;
+    ++candidate_relay_total_;
+    if (count > 1) {
+      relay_loop_detected_ = true;
+      LOG(ERROR) << "Candidate relay emitted duplicate block " << block_id.to_str() << " from node #" << node_idx
+                 << "." << instance_idx;
+    }
+  }
+
   td::actor::Task<> wait_block_accepted(BlockIdExt block_id) {
     if (block_id == FIRST_PARENT) {
       co_return td::Unit{};
@@ -643,6 +697,15 @@ class TestConsensus : public td::actor::Actor {
     if (NET_GREMLIN_PERIOD.first >= 0.0) {
       run_net_gremlin().start().detach();
     }
+    if (ADAPTIVE_BYZANTINE_N != 0) {
+      run_adaptive_byzantine().start().detach();
+    }
+    if (MALICIOUS_OBSERVER_ATTACK) {
+      run_malicious_observer_attack().start().detach();
+    }
+    if (QUERY_ABUSE_TEST) {
+      run_query_abuse_test().start().detach();
+    }
 
     run_write_status().start().detach();
 
@@ -673,6 +736,7 @@ class TestConsensus : public td::actor::Actor {
     BlockAccepter::register_in(runtime);
     BlockProducer::register_in(runtime);
     BlockValidator::register_in(runtime);
+    CandidateBroadcastRelay::register_in(runtime);
     runtime.register_actor<TestOverlayNode>("PrivateOverlay");
     simplex::CandidateResolver::register_in(runtime);
     simplex::Consensus::register_in(runtime);
@@ -694,8 +758,12 @@ class TestConsensus : public td::actor::Actor {
     bus->keyring = keyring_.get();
     bus->validator_opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
     bus->validator_set = validators_;
+    for (const auto &validator : validators_) {
+      bus->all_validators.push_back(validator.adnl_id);
+    }
     bus->total_weight = total_weight_;
     bus->local_id = validators_[node_idx];
+    bus->local_adnl_id = nodes_[node_idx].adnl_id;
     bus->config = NewConsensusConfig{
         .max_block_size = 1 << 20,
         .max_collated_data_size = 1 << 20,
@@ -836,6 +904,80 @@ class TestConsensus : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  td::actor::Task<> run_adaptive_byzantine() {
+    td::uint64 epoch = 0;
+    while (!finishing_) {
+      std::vector<size_t> selected;
+      if (last_accepted_block_leader_idx_) {
+        selected.push_back(*last_accepted_block_leader_idx_);
+      }
+      for (size_t offset = 0; selected.size() < ADAPTIVE_BYZANTINE_N && offset < N_NODES; ++offset) {
+        size_t candidate = (epoch + offset) % N_NODES;
+        if (std::find(selected.begin(), selected.end(), candidate) == selected.end()) {
+          selected.push_back(candidate);
+        }
+      }
+      co_await td::actor::ask(test_overlay, &TestOverlay::set_adaptive_byzantine_nodes, selected, epoch);
+      ++adaptive_byzantine_epochs_;
+      ++epoch;
+      co_await td::actor::coro_sleep(td::Timestamp::in(ADAPTIVE_BYZANTINE_PERIOD));
+    }
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> run_malicious_observer_attack() {
+    // Wait until Pool has consumed Start, then inject a syntactically valid
+    // vote from an authenticated overlay member that has no validator
+    // identity.  Repeating it also exercises the temporary-ban fast path.
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    td::Bits256 observer_bits;
+    td::Random::secure_bytes(observer_bits.as_slice());
+    auto observer = adnl::AdnlNodeIdShort{observer_bits};
+    td::BufferSlice fake_signature(64);
+    std::memset(fake_signature.data(), 0x5a, fake_signature.size());
+    auto vote = create_serialize_tl_object<simplex::tl::vote>(
+        simplex::SkipVote{0}.to_tl(), std::move(fake_signature));
+    for (int repeat = 0; repeat < 2; ++repeat) {
+      for (auto &node : nodes_) {
+        for (auto &inst : node.instances) {
+          if (inst.status == Instance::Running) {
+            inst.bus.publish<IncomingProtocolMessage>(std::nullopt, observer, vote.clone());
+            ++malicious_observer_messages_;
+          }
+        }
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> run_query_abuse_test() {
+    // A private-overlay observer may query candidates, but one ADNL identity
+    // must not exceed candidate_resolve_rate_limit within the one-second
+    // window.
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    td::Bits256 observer_bits;
+    td::Random::secure_bytes(observer_bits.as_slice());
+    auto observer = adnl::AdnlNodeIdShort{observer_bits};
+    auto &bus = nodes_[0].instances[0].bus;
+    const auto limit = bus->config.noncritical_params.candidate_resolve_rate_limit;
+    for (td::uint32 index = 0; index < limit + 3; ++index) {
+      CandidateId id{.slot = 1000000 + index, .hash = td::Bits256{}};
+      auto data = create_serialize_tl_object<tos_api::consensus_simplex_requestCandidate>(
+          id.to_tl(), true, true);
+      auto request = std::make_shared<IncomingOverlayRequest>(
+          std::nullopt, observer, std::move(data));
+      auto result = co_await bus.publish(std::move(request)).wrap();
+      if (result.is_ok()) {
+        ++query_abuse_accepted_;
+      } else {
+        ++query_abuse_rejected_;
+      }
+    }
+    query_abuse_completed_ = true;
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> finalize() {
     finishing_ = true;
     LOG(WARNING) << "TEST FINISHED";
@@ -858,6 +1000,26 @@ class TestConsensus : public td::actor::Actor {
       co_return td::Status::Error(
           PSTRING() << "finalized only " << last_accepted_block_.seqno() << " blocks, expected at least "
                     << MIN_FINALIZED_BLOCKS);
+    }
+    if (MALICIOUS_OBSERVER_ATTACK && malicious_observer_messages_ == 0) {
+      co_return td::Status::Error("malicious observer attack was not injected");
+    }
+    if (ADAPTIVE_BYZANTINE_N != 0 && adaptive_byzantine_epochs_ < 2) {
+      co_return td::Status::Error("adaptive Byzantine membership did not rotate");
+    }
+    if (RELAY_LOOP_TEST && relay_loop_detected_) {
+      co_return td::Status::Error("candidate relay loop was not deduplicated");
+    }
+    if (RELAY_LOOP_TEST && candidate_relay_total_ == 0) {
+      co_return td::Status::Error("candidate relay path was not exercised");
+    }
+    if (QUERY_ABUSE_TEST &&
+        (!query_abuse_completed_ ||
+         query_abuse_accepted_ != NewConsensusConfig{}.noncritical_params.candidate_resolve_rate_limit ||
+         query_abuse_rejected_ != 3)) {
+      co_return td::Status::Error(
+          PSTRING() << "candidate query rate limit was not enforced: accepted=" << query_abuse_accepted_
+                    << " rejected=" << query_abuse_rejected_);
     }
     co_return td::Unit{};
   }
@@ -895,6 +1057,14 @@ class TestConsensus : public td::actor::Actor {
   std::map<BlockSeqno, td::Ref<BlockData>> accepted_blocks_;
   BlockIdExt last_accepted_block_ = FIRST_PARENT;
   td::optional<size_t> last_accepted_block_leader_idx_;
+  std::map<std::tuple<size_t, size_t, BlockIdExt>, size_t> candidate_relay_counts_;
+  size_t candidate_relay_total_ = 0;
+  size_t malicious_observer_messages_ = 0;
+  size_t adaptive_byzantine_epochs_ = 0;
+  bool relay_loop_detected_ = false;
+  size_t query_abuse_accepted_ = 0;
+  size_t query_abuse_rejected_ = 0;
+  bool query_abuse_completed_ = false;
   bool finishing_ = false;
 };
 
@@ -962,6 +1132,10 @@ td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdEx
   co_return co_await td::actor::ask(test_consensus_, &TestConsensus::wait_block_data, block_id);
 }
 
+void TestManagerFacade::send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) {
+  td::actor::send_closure(test_consensus_, &TestConsensus::on_candidate_relay, node_idx_, instance_idx_, id);
+}
+
 td::BufferSlice make_large_candidate_boc(td::uint32 leaf_count, td::uint32 salt, bool multi_root,
                                          td::Bits256 &root_hash) {
   std::vector<td::Ref<vm::Cell>> level;
@@ -1017,6 +1191,22 @@ void test_configured_maximum_candidate() {
   CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
   CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1)
             .is_error());
+}
+
+void test_candidate_relay_eviction() {
+  constexpr size_t capacity = 256;
+  CandidateRelayDeduplicator deduplicator{capacity};
+  std::vector<BlockIdExt> block_ids;
+  block_ids.reserve(capacity + 1);
+  for (size_t index = 0; index <= capacity; ++index) {
+    block_ids.emplace_back(BlockId{SHARD, static_cast<BlockSeqno>(1000000 + index)}, td::Bits256{}, td::Bits256{});
+    CHECK(deduplicator.should_relay(block_ids.back()));
+  }
+
+  CHECK(!deduplicator.should_relay(block_ids.back()));
+  CHECK(deduplicator.should_relay(block_ids.front()));
+  CHECK(!deduplicator.should_relay(block_ids.front()));
+  CHECK(deduplicator.should_relay(block_ids[1]));
 }
 
 }  // namespace
@@ -1454,6 +1644,7 @@ int main(int argc, char *argv[]) {
   td::set_default_failure_signal_handler().ensure();
 
   bool run_configured_maximum_candidate_test = false;
+  bool run_candidate_relay_eviction_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1573,6 +1764,32 @@ int main(int argc, char *argv[]) {
                        });
   p.add_option('\0', "net-gremlin-kills-leader", "network gremlin always disables the current leader",
                [&]() { NET_GREMLIN_KILLS_LEADER = true; });
+  p.add_checked_option('\0', "adaptive-byzantine-n",
+                       "number of adaptively selected nodes that selectively omit forwarding (default: 0)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT_ASSIGN(ADAPTIVE_BYZANTINE_N, td::to_integer_safe<size_t>(arg));
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "adaptive-byzantine-period",
+                       "seconds between adaptive Byzantine-set rotations (default: 0.5)", [&](td::Slice arg) {
+                         ADAPTIVE_BYZANTINE_PERIOD = td::to_double(arg);
+                         if (ADAPTIVE_BYZANTINE_PERIOD <= 0.0) {
+                           return td::Status::Error(PSTRING() << "invalid adaptive Byzantine period " << arg);
+                         }
+                         return td::Status::OK();
+                       });
+  p.add_option('\0', "malicious-observer-attack",
+               "inject repeated protocol votes from a member with no validator identity",
+               [&]() { MALICIOUS_OBSERVER_ATTACK = true; });
+  p.add_option('\0', "relay-loop-test",
+               "duplicate candidate arrival events and require candidate-relay deduplication",
+               [&]() { RELAY_LOOP_TEST = true; });
+  p.add_option('\0', "query-abuse-test",
+               "flood candidate queries from one observer and require rate limiting",
+               [&]() { QUERY_ABUSE_TEST = true; });
+  p.add_option('\0', "candidate-relay-eviction-test",
+               "fill the candidate-relay LRU and verify oldest-entry eviction",
+               [&]() { run_candidate_relay_eviction_test = true; });
   p.add_checked_option('\0', "db-delay", "delay before db values are stored to disk (range, default: 0)",
                        [&](td::Slice arg) {
                          TRY_RESULT_ASSIGN(DB_DELAY, parse_range(arg));
@@ -1603,7 +1820,12 @@ int main(int argc, char *argv[]) {
     test_configured_maximum_candidate();
     return 0;
   }
+  if (run_candidate_relay_eviction_test) {
+    test_candidate_relay_eviction();
+    return 0;
+  }
   CHECK(N_DOUBLE_NODES <= N_NODES);
+  CHECK(ADAPTIVE_BYZANTINE_N < N_NODES);
 
   td::actor::Scheduler scheduler({7});
   td::actor::ActorOwn<TestConsensus> test;
