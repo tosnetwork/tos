@@ -107,7 +107,12 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
   void init_pool_state(Bus& bus) {
     auto pool_state_str = bus.db->get(pool_state_key);
     if (pool_state_str.has_value()) {
-      auto pool_state = fetch_tl_object<tl::db_poolState>(*pool_state_str, true).move_as_ok();
+      auto pool_state_result = fetch_tl_object<tl::db_poolState>(*pool_state_str, true);
+      if (pool_state_result.is_error()) {
+        LOG(WARNING) << "Simplex db: ignoring malformed pool state: " << pool_state_result.error();
+        return;
+      }
+      auto pool_state = pool_state_result.move_as_ok();
       first_nonannounced_window_ = pool_state->first_nonannounced_window_;
       bus.first_nonannounced_window = first_nonannounced_window_;
     }
@@ -185,15 +190,25 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
         continue;
       }
 
-      saved_votes.insert(key->vote_hash_);
-
+      bool value_valid = true;
       auto append_our_vote = [&](tl::db_ourVote& vote) {
         our_votes.push_back(OurVote{vote.seqno_, Vote::from_tl(*vote.vote_)});
       };
       auto append_cert = [&](tl::db_cert& vote) {
-        certs.push_back(Certificate<Vote>::from_tl(std::move(*vote.cert_), bus).move_as_ok());
+        auto cert_result = Certificate<Vote>::from_tl(std::move(*vote.cert_), bus);
+        if (cert_result.is_error()) {
+          LOG(WARNING) << "Simplex db init_votes: invalid certificate for key vote_hash 0x"
+                       << key->vote_hash_.to_hex() << ": " << cert_result.error();
+          value_valid = false;
+          return;
+        }
+        certs.push_back(cert_result.move_as_ok());
       };
       tos_api::downcast_call(*value, td::overloaded(append_our_vote, append_cert));
+      if (!value_valid) {
+        continue;
+      }
+      saved_votes.insert(key->vote_hash_);
     }
     std::sort(our_votes.begin(), our_votes.end());
     if (!our_votes.empty()) {

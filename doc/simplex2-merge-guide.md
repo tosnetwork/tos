@@ -182,6 +182,11 @@ Completed targeted validation:
   instead of dereferencing an empty database result.
 - State-resolver generation-time extraction now propagates malformed candidate
   errors through the task result instead of aborting on `move_as_ok()`.
+- Simplex pool-state startup now ignores and reports a malformed persisted
+  window record instead of aborting validator initialization.
+- Persisted Simplex certificates are now validated during bootstrap and
+  malformed certificate payloads are skipped with diagnostics rather than
+  aborting startup.
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,
