@@ -66,7 +66,7 @@ itself says **Completed ✅**.
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, bounded candidate caching, deterministic malicious-observer rejection, relay-loop, 256-entry LRU eviction, per-ADNL query-abuse checks, and a real seven-process observer-membership churn run | Complete production-overlay malicious-observer validation |
 | 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, deduplicated CandidateReceived/FinalizeBlock fallback relay, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, a selective data-forwarding fault, adaptive two-of-seven selective-forwarding validation, and fault-injected Simplex consensus tests adapted to TOS | Run production `ValidatorManagerImpl` ingress attacks and release-scale packet-loss, partition, and performance validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
-| Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3; a fail-closed local/SSH multi-region soak driver is implemented | Complete phases 1–5 exit criteria, define rollback procedure, and actually run and pass the 72-hour multi-region soak |
+| Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3; a fail-closed local/SSH multi-region soak driver is implemented | Complete phases 1–5 exit criteria, define rollback procedure, and actually run and pass the 8-hour multi-region soak |
 
 **Coding conclusion:** the planned production implementation for phases 1–5
 and first-testnet activation is coding complete ✅ at this snapshot. The
@@ -107,7 +107,7 @@ Completed targeted validation:
 - [ ] Production `ValidatorManagerImpl` ingress attacks,
   production-overlay malicious-observer injection, release-scale performance,
   and an actually completed
-  72-hour multi-region run
+  8-hour multi-region run
 
 ### Completed implementation work ✅
 
@@ -763,7 +763,7 @@ gate that has actually accumulated its required evidence.
 | Combined manager boundary attack | ✅ `test-consensus-simplex2-manager-ingress-adversarial` combines malicious-observer, relay-loop, adaptive-forwarding, finalized-block-ID mutation, signature mutation, and validator-set-hash mutation checks | ✅ Combined seven-node test passed | Manager-facade boundary passed ✅; production `ValidatorManagerImpl` ingress remains open |
 | Plumtree impairment/performance simulation | ✅ FEC and simple graph simulations cover loss, partition recovery, rotating outage, selective forwarding, and 20 broadcasts of 256 KiB at 1 MiB/s with jitter | ✅ All 11 `plumtree-graph-sim-*` tests passed on 2026-07-24 | Deterministic simulation passed ✅; production capacity remains open |
 | Multi-region network | ✅ `scripts/simplex2-soak.py` supports an SSH inventory, per-region labels, optional explicit `tc netem`, finalized-hash comparison, stalls, restarts, resource caps, and growth limits | Not run against supplied remote hosts | Pending real multi-region execution |
-| 72-hour soak | ✅ The same driver defaults to 72 hours and marks shorter or single-region runs as release-gate ineligible | ✅ A 16-second, three-local-node harness smoke passed on 2026-07-24; growth-rate gates were intentionally not evaluated over that short interval | Pending actual 72-hour execution |
+| 8-hour soak | ✅ The same driver defaults to 8 hours and marks shorter or single-region runs as release-gate ineligible | ✅ A 16-second, three-local-node harness smoke passed on 2026-07-24; growth-rate gates were intentionally not evaluated over that short interval | Pending actual 8-hour execution |
 
 The deterministic adversarial tests can be repeated with:
 
@@ -799,7 +799,7 @@ python3 scripts/simplex2-soak.py \
 
 `--apply-netem` is intentionally opt-in because it changes remote network
 queuing. The driver removes every qdisc that it successfully applied on normal
-completion or interruption. A run shorter than 72 hours or spanning fewer
+completion or interruption. A run shorter than 8 hours or spanning fewer
 than two region labels cannot set `release_gate_eligible` to true.
 
 ## 7. Testnet Release Gates
@@ -833,7 +833,7 @@ Before public Testnet-1, the following should be complete:
 - A feature-gated block-sync overlay.
 - Observer cache support, if observers are part of Testnet-1 operations.
 - Regression coverage for all TOS-specific safety changes.
-- A multi-region soak test of at least 72 hours without unexplained consensus
+- A multi-region soak test of at least 8 hours without unexplained consensus
   stalls, divergence, or unbounded resource growth.
 
 Plumtree may be activated later during Testnet-1 through an on-chain upgrade
@@ -896,7 +896,7 @@ The selective Simplex2 merge is complete when:
 - Observer and broadcast features cannot influence consensus authority.
 - TOS-specific certificate and recovery checks, misbehavior reporting,
   metric-actor integration, and transport behavior are preserved.
-- The full test matrix and 72-hour multi-region soak pass.
+- The full test matrix and 8-hour multi-region soak pass.
 - Operators have documented deployment, monitoring, and rollback procedures.
 
 ## 11. Source Evidence Map

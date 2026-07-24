@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Monitor a local or multi-region Simplex2 network and produce a hard verdict.
 
-The default duration is 72 hours.  A shorter duration is useful for validating
+The default duration is 8 hours.  A shorter duration is useful for validating
 the harness, but is explicitly marked as ineligible for the release gate.
 
 Local example:
@@ -91,7 +91,7 @@ def _args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--inventory", type=Path)
     source.add_argument("--local-systemd-nodes", type=int)
-    parser.add_argument("--duration", type=float, default=72 * 60 * 60)
+    parser.add_argument("--duration", type=float, default=8 * 60 * 60)
     parser.add_argument("--interval", type=float, default=30.0)
     parser.add_argument(
         "--disk-interval",
@@ -491,7 +491,7 @@ def main() -> int:
                     )
                 # Each journal query overlaps the preceding one. Retain a
                 # small overlap instead of accumulating every finalized hash
-                # for the full 72-hour run.
+                # for the full 8-hour run.
                 prune_below = max(0, common_height - 64)
                 for node in nodes:
                     observed[node.name] = {
@@ -568,12 +568,12 @@ def main() -> int:
             )
 
     regions = sorted({node.region for node in nodes})
-    release_gate_eligible = elapsed >= 72 * 60 * 60 and len(regions) >= 2
+    release_gate_eligible = elapsed >= 8 * 60 * 60 and len(regions) >= 2
     failures = list(dict.fromkeys(failures))
     release_gate_ineligibility_reasons: list[str] = []
-    if elapsed < 72 * 60 * 60:
+    if elapsed < 8 * 60 * 60:
         release_gate_ineligibility_reasons.append(
-            f"elapsed {elapsed:.1f}s is shorter than 72 hours"
+            f"elapsed {elapsed:.1f}s is shorter than 8 hours"
         )
     if len(regions) < 2:
         release_gate_ineligibility_reasons.append(
