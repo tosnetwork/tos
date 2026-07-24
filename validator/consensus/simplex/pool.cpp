@@ -316,7 +316,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
   static bool should_be_spawned(const Bus& bus) {
-    return bus.is_validator() || bus.config.observers_in_private_overlay();
+    return bus.is_validator() || !bus.config.enable_block_sync();
   }
 
   void start_up() override {
@@ -613,6 +613,28 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     standstill_resolution_notification_.set_value({});
     reschedule_standstill_resolution();
+  }
+
+  template <>
+  td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
+    if (query->slot < first_nonfinalized_slot_) {
+      co_return td::Status::Error("Slot is already finalized");
+    }
+    if (query->slot > now_ + params_.max_leader_window_desync * slots_per_leader_window_) {
+      co_return td::Status::Error("Slot is too far in the future");
+    }
+    if (query->signature_checked) {
+      auto [it, inserted] = seen_broadcasts_.emplace(query->slot, query->broadcast_id);
+      if (!inserted && it->second != query->broadcast_id) {
+        co_return td::Status::Error("Duplicate broadcast");
+      }
+    } else {
+      auto it = seen_broadcasts_.find(query->slot);
+      if (it != seen_broadcasts_.end() && it->second != query->broadcast_id) {
+        co_return td::Status::Error("Duplicate broadcast");
+      }
+    }
+    co_return td::Unit{};
   }
 
  private:
@@ -1052,6 +1074,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   std::map<adnl::AdnlNodeIdShort, td::Timestamp> bad_signature_bans_;
 
   std::vector<Request> requests_;
+
+  std::map<td::uint32, td::Bits256> seen_broadcasts_;
 
   // Candidates observed via CandidateReceived, keyed by CandidateId.
   // Used by QueryValidatorGroupInfo to return block-level metadata.

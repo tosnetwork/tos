@@ -25,11 +25,15 @@ class SimplexCollatorSchedule : public CollatorSchedule {
   td::uint32 leaders_count_;
 };
 
+void provide_schedule(Bus& bus) {
+  auto validators = static_cast<td::uint32>(bus.validator_set.size());
+  bus.collator_schedule = td::make_ref<SimplexCollatorSchedule>(bus.config.slots_per_leader_window, validators);
+}
+
 }  // namespace
 
-void Bus::populate_collator_schedule() {
-  auto validators = static_cast<td::uint32>(validator_set.size());
-  collator_schedule = td::make_ref<SimplexCollatorSchedule>(config.slots_per_leader_window, validators);
+void DefaultCollatorSchedule::provide_for(td::actor::Runtime& runtime) {
+  runtime.register_provider(provide_schedule);
 }
 
 }  // namespace tos::validator::consensus::simplex

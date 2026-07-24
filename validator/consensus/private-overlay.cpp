@@ -46,9 +46,6 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     overlays_ = bus.overlays;
     local_adnl_id_ = bus.local_adnl_id;
     adnl_sender_ = bus.adnl_sender;
-    params_ = bus.config.noncritical_params;
-    slots_per_leader_window_ = bus.config.slots_per_leader_window;
-
     std::vector<adnl::AdnlNodeIdShort> validator_nodes;
     std::vector<td::Bits256> overlay_nodes_tl;
     std::map<PublicKeyHash, td::uint32> authorized_keys;
@@ -182,49 +179,6 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     td::BufferSlice extra = create_serialize_tl_object<tos_api::consensus_broadcastExtra>(event->candidate->id.slot);
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_with_extra, local_adnl_id_, overlay_id_,
                             owning_bus()->local_id->short_id, 0, event->candidate->serialize(), std::move(extra));
-  }
-
-  template <>
-  void handle(BusHandle, std::shared_ptr<const NoncriticalParamsUpdated> event) {
-    params_ = event->params;
-  }
-
-  template <>
-  void handle(BusHandle, std::shared_ptr<const FinalizeBlock> event) {
-    td::uint32 slot = event->candidate->id.slot;
-    first_nonfinalized_slot_ = slot + 1;
-    // Purge dedup entries for slots that are now finalized and
-    // cannot appear again in any future broadcast precheck.
-    seen_broadcasts_.erase(seen_broadcasts_.begin(), seen_broadcasts_.lower_bound(first_nonfinalized_slot_));
-  }
-
-  // V-021: PrecheckCandidateBroadcast handler relocated from
-  // simplex::PoolImpl to this actor, which owns broadcast-deduplication
-  // state and is the natural home for broadcast-level validity checks.
-  template <>
-  td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
-    if (query->slot < first_nonfinalized_slot_) {
-      co_return td::Status::Error("Slot is already finalized");
-    }
-    // Use first_nonfinalized_slot_ as a conservative lower bound for
-    // the current slot: now_ >= first_nonfinalized_slot_ always holds,
-    // so this check only admits slightly more broadcasts than the pool
-    // would — never fewer.
-    if (query->slot > first_nonfinalized_slot_ + params_.max_leader_window_desync * slots_per_leader_window_) {
-      co_return td::Status::Error("Slot is too far in the future");
-    }
-    if (query->signature_checked) {
-      auto [it, inserted] = seen_broadcasts_.emplace(query->slot, query->broadcast_id);
-      if (!inserted && it->second != query->broadcast_id) {
-        co_return td::Status::Error("Duplicate broadcast");
-      }
-    } else {
-      auto it = seen_broadcasts_.find(query->slot);
-      if (it != seen_broadcasts_.end() && it->second != query->broadcast_id) {
-        co_return td::Status::Error("Duplicate broadcast");
-      }
-    }
-    co_return td::Unit{};
   }
 
  private:
@@ -394,11 +348,6 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
   std::mt19937 gossip_rng_{td::Random::fast_uint32()};
 
-  // Broadcast deduplication state (V-021).
-  NewConsensusConfig::NoncriticalParams params_;
-  td::uint32 slots_per_leader_window_ = 1;
-  td::uint32 first_nonfinalized_slot_ = 0;
-  std::map<td::uint32, td::Bits256> seen_broadcasts_;
 };
 
 }  // namespace

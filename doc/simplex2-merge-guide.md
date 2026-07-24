@@ -65,7 +65,7 @@ itself says **Completed ✅**.
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
 | 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding validation |
-| 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
+| 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
 | Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
 
 **Coding conclusion:** the planned production implementation for merge phases
@@ -80,6 +80,7 @@ Coding checklist:
 - [x] ✅ Phase 4 observer cache and candidate relay
 - [x] ✅ Phase 5 Plumtree candidate/finality integration
 - [x] ✅ Required payload and collator-schedule structural separation
+- [x] ✅ BusRuntime conditional actor spawning and provider registration
 - [x] ✅ First-testnet `#22` zerostate and protocol-v2 activation
 - [ ] Adversarial, performance, multi-region soak, and release evidence
 
@@ -186,6 +187,8 @@ Release validation is intentionally still staged.
   payloads, 0.5 relative latency jitter, and a 1 MB/s per-message bandwidth
   model, delivered every broadcast to all 12 expected nodes.
 - The complete `test-consensus` target builds.
+- The `test-runtime` suite passes all eight cases, including the upstream
+  provider-order test used by the default collator-schedule injection path.
 - The `validator` library and complete `validator-engine` executable build
   after the consensus payload and collator-schedule separation.
 - A ten-second multi-node consensus simulation at a 100 ms test target
@@ -207,6 +210,15 @@ Release validation is intentionally still staged.
 - The isolated tostester zerostate regression passes both cases: it generates
   and deserializes the complete masterchain/shard zerostate through the dynamic
   `#22` path and confirms the canonical 5,000,000,000 TOS total supply.
+- The real `test/integration/test_basic.py` topology passes with two initial
+  validators and their observer groups. It starts from a freshly generated
+  protocol-v2 zerostate, produces masterchain and base-workchain blocks,
+  returns validator actor statistics, deploys and funds a workchain wallet,
+  and shuts down cleanly.
+- That integration run also exercises BusRuntime's `should_be_spawned`
+  filtering. In particular, the Simplex Pool and block-sync observer remain
+  mutually exclusive providers of candidate-broadcast prechecks instead of
+  being instantiated together.
 - ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
   through the production loader, including catchain IDs, protocol version,
   QUIC selection, and the maximum-block-height coefficient.

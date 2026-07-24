@@ -187,8 +187,6 @@ class Bus : public td::actor::Bus {
     stop_promise.set_value(td::Unit());
   }
 
-  virtual void populate_collator_schedule() = 0;
-
   bool is_validator() const {
     return local_id.has_value();
   }
