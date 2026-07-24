@@ -171,6 +171,12 @@ Completed targeted validation:
 - Candidate relay actor lifetime follows the consensus baseline: validators
   and private-overlay observers host the actor, while each event still checks
   the Plumtree ConfigParam30 gate before forwarding.
+- Simplex state resolution is likewise scoped to validators and configured
+  private-overlay observers; public block-sync observers do not start the
+  state-resolver actor.
+- Legacy Simplex performance records now tolerate manager-acknowledgement
+  lag, using finality observation as the completion timestamp instead of
+  dereferencing an absent manager-acceptance value.
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,

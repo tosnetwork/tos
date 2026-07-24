@@ -201,7 +201,11 @@ validatorsession::ValidatorSessionStats::Producer flow_to_legacy_stats(const Flo
       .approved_33pct_at = *flow.validation_finished,
       .approved_66pct_at = *flow.notarize_cert_observed,
       .signed_33pct_at = *flow.finalize_cert_observed,
-      .signed_66pct_at = *flow.manager_accepted,
+      // Manager acceptance is intentionally not required for a normal flow:
+      // cleanup can emit a completed consensus round before the manager has
+      // acknowledged it.  Keep the legacy metric monotonic by using the
+      // finality observation as the completion timestamp in that case.
+      .signed_66pct_at = flow.manager_accepted.value_or(*flow.finalize_cert_observed),
   };
 }
 
