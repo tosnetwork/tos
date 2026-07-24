@@ -177,6 +177,11 @@ Completed targeted validation:
 - Legacy Simplex performance records now tolerate manager-acknowledgement
   lag, using finality observation as the completion timestamp instead of
   dereferencing an absent manager-acceptance value.
+- Candidate-resolver DB recovery now handles an index entry whose content
+  record is missing, logs the inconsistency, and falls back to peer resolution
+  instead of dereferencing an empty database result.
+- State-resolver generation-time extraction now propagates malformed candidate
+  errors through the task result instead of aborting on `move_as_ok()`.
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,

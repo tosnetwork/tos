@@ -305,7 +305,14 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     if (state.candidate_in_db) {
       auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
-      auto data = bus.db->get(std::move(contents_key)).value();
+      auto data_r = bus.db->get(std::move(contents_key));
+      if (!data_r.has_value()) {
+        LOG(WARNING) << "Simplex candidate-resolver: candidate data for " << id
+                     << " is indexed in DB but the content record is missing";
+        state.candidate_in_db = false;
+        co_return false;
+      }
+      auto data = std::move(*data_r);
       // Round 140 MEDIUM fix: validate that the deserialized
       // candidate's id matches the requested id, mirroring the
       // network-path gate at CandidateAndCert::from_tl above.

@@ -157,7 +157,13 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     if (candidate->is_empty()) {
       co_return co_await resolve_state(candidate->parent_id);
     }
-    auto gen_utime_exact = get_candidate_gen_utime_exact(std::get<BlockCandidate>(candidate->block)).move_as_ok();
+    auto gen_utime_result = get_candidate_gen_utime_exact(std::get<BlockCandidate>(candidate->block));
+    if (gen_utime_result.is_error()) {
+      LOG(WARNING) << "Simplex state-resolver: candidate " << *id
+                   << " has invalid generation time: " << gen_utime_result.error();
+      co_return gen_utime_result.move_as_error();
+    }
+    auto gen_utime_exact = gen_utime_result.move_as_ok();
 
     if (is_finalized(*id)) {
       auto genesis = co_await genesis_.get();
