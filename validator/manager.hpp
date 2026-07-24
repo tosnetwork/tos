@@ -336,6 +336,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) override;
   void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) override;
   td::actor::Task<> validated_accepted_block_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno);
+  td::actor::Task<> generate_shard_block_description(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set);
 
   //void create_validate_block(BlockId block, td::BufferSlice data, td::Promise<Block> promise) = 0;
   void sync_complete(td::Promise<td::Unit> promise) override;

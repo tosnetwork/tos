@@ -39,7 +39,7 @@ struct BlockProofRoot {
   UnixTime gen_utime;
 };
 
-td::Result<BlockProofRoot> generate_block_proof_root(BlockIdExt id, td::Ref<vm::Cell> block_root) {
+td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref<vm::Cell> block_root) {
   if (block_root.is_null()) {
     return td::Status::Error("block root is null");
   }
@@ -392,7 +392,7 @@ td::Result<td::BufferSlice> WaitBlockData::generate_proof(BlockIdExt id, td::Ref
     return td::Status::Error(ErrorCode::notready, "masterchain state is not ready");
   }
 
-  TRY_RESULT(proof_root, generate_block_proof_root(id, std::move(block_root)));
+  TRY_RESULT(proof_root, generate_block_proof_root_impl(id, std::move(block_root)));
   TRY_RESULT(config, state->get_config_holder());
   auto vset =
       config->get_validator_set(id.shard_full(), proof_root.gen_utime, signatures->get_catchain_seqno());
@@ -408,8 +408,14 @@ td::Result<td::BufferSlice> WaitBlockData::generate_proof_link(BlockIdExt id, td
   if (id.is_masterchain()) {
     return td::Status::Error("cannot create proof link for masterchain block");
   }
-  TRY_RESULT(proof_root, generate_block_proof_root(id, std::move(block_root)));
+  TRY_RESULT(proof_root, generate_block_proof_root_impl(id, std::move(block_root)));
   return serialize_block_proof(id, std::move(proof_root.proof), false);
+}
+
+td::Result<td::Ref<vm::Cell>> WaitBlockData::generate_block_proof_root(BlockIdExt id,
+                                                                       td::Ref<vm::Cell> block_root) {
+  TRY_RESULT(proof_root, generate_block_proof_root_impl(id, std::move(block_root)));
+  return std::move(proof_root.proof);
 }
 
 }  // namespace validator

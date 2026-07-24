@@ -447,7 +447,7 @@ void ValidatorGroup::accept_block_query(BlockIdExt block_id, td::Ref<BlockData> 
   });
 
   run_accept_block_query(block_id, std::move(block), std::move(prev), validator_set_, std::move(sig_set),
-                         send_broadcast_mode, 0, monitoring_shard_, manager_, std::move(P));
+                         send_broadcast_mode, 0, true, monitoring_shard_, manager_, std::move(P));
 }
 
 void ValidatorGroup::skip_round(td::uint32 round_id) {

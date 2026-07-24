@@ -645,6 +645,9 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   td::actor::Task<> standstill_resolution_task() {
     auto &bus = *owning_bus();
+    if (!bus.is_validator()) {
+      co_return td::Unit{};
+    }
 
     // At time `now`, we are allowed to send
     // `egress_quota + (now - quota_time) * max_egress_bytes_per_s` bytes.

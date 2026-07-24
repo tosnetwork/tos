@@ -22,6 +22,7 @@
 #include "block/signature-set.h"
 #include "block/validator-set.h"
 #include "common/errorcode.h"
+#include "downloaders/wait-block-data.hpp"
 #include "vm/boc.h"
 #include "vm/cells.h"
 #include "vm/cells/MerkleProof.h"
@@ -566,6 +567,124 @@ void ValidateShardTopBlockDescr::start_up() {
   }
   CHECK(descr_->is_valid());
   finish_query();
+}
+
+namespace {
+
+struct GeneratedProofRoot {
+  Ref<vm::Cell> proof;
+  UnixTime gen_utime;
+};
+
+td::actor::Task<GeneratedProofRoot> get_proof_root(BlockHandle handle, td::Timestamp timeout,
+                                                   td::actor::ActorId<ValidatorManager> manager) {
+  auto proof = co_await td::actor::ask(manager, &ValidatorManager::wait_block_proof_link, handle, timeout);
+  auto header_info = CO_TRY(proof->get_basic_header_info());
+  block::gen::BlockProof::Record rec;
+  CHECK(block::gen::unpack_cell(CO_TRY(proof->get_root_cell()), rec));
+  Ref<vm::Cell> proof_root = rec.root;
+  Ref<vm::Cell> block_root = CO_TRY(vm::MerkleProof::virtualize(rec.root));
+  try {
+    block::gen::Block::Record block;
+    block::gen::BlockExtra::Record extra;
+    if (!(block::gen::unpack_cell(block_root, block) && block::gen::unpack_cell(block.extra, extra))) {
+      co_return td::Status::Error("failed to unpack block header");
+    }
+    co_return GeneratedProofRoot{std::move(proof_root), header_info.utime};
+  } catch (vm::VmVirtError&) {
+    // Legacy proof links can omit BlockExtra. Rebuild their proof root from
+    // the locally validated block data.
+  }
+  auto block = co_await td::actor::ask(manager, &ValidatorManager::wait_block_data, handle, 0, timeout);
+  auto new_proof_root = CO_TRY(WaitBlockData::generate_block_proof_root(block->block_id(), block->root_cell()));
+  co_return GeneratedProofRoot{std::move(new_proof_root), header_info.utime};
+}
+
+}  // namespace
+
+td::actor::Task<td::BufferSlice> generate_shard_block_description(
+    BlockIdExt block_id, Ref<block::BlockSignatureSet> signatures, td::Timestamp timeout,
+    td::actor::ActorId<ValidatorManager> manager) {
+  co_await td::actor::become_lightweight();
+  if (block_id.is_masterchain()) {
+    co_return td::Status::Error("block is from masterchain");
+  }
+  if (signatures.is_null() || !signatures->is_final()) {
+    co_return td::Status::Error("signatures are not final");
+  }
+
+  auto handle = co_await td::actor::ask(manager, &ValidatorManager::get_block_handle, block_id, true);
+  co_await td::actor::ask(manager, &ValidatorManager::wait_block_state, handle, 0, timeout, false);
+  auto first_proof = co_await get_proof_root(handle, timeout, manager);
+  Ref<vm::Cell> block_root = CO_TRY(vm::MerkleProof::virtualize(first_proof.proof));
+  std::vector<BlockIdExt> prev;
+  BlockIdExt mc_ref;
+  bool after_split = false;
+  CO_TRY(block::unpack_block_prev_blk_try(block_root, block_id, prev, mc_ref, after_split));
+
+  Ref<MasterchainState> mc_state = co_await td::actor::ask(manager, &ValidatorManager::get_top_masterchain_state);
+  if (mc_state->get_seqno() < mc_ref.seqno()) {
+    mc_state = Ref<MasterchainState>{
+        co_await td::actor::ask(manager, &ValidatorManager::wait_block_state_short, mc_ref, 0, timeout, false)};
+  }
+  ShardIdFull shard = block_id.shard_full();
+  auto config = CO_TRY(mc_state->get_config_holder());
+  Ref<block::ValidatorSet> validator_set =
+      config->get_validator_set(shard, first_proof.gen_utime, signatures->get_catchain_seqno());
+  if (validator_set.is_null() ||
+      validator_set->get_catchain_seqno() != signatures->get_catchain_seqno() ||
+      validator_set->get_validator_set_hash() != signatures->get_validator_set_hash()) {
+    co_return td::Status::Error("validator set mismatch");
+  }
+
+  auto ancestor = mc_state->get_shard_from_config(shard, false);
+  BlockSeqno ancestors_seqno;
+  if (ancestor.is_null()) {
+    ancestor = mc_state->get_shard_from_config(shard_child(shard, true));
+    auto ancestor2 = mc_state->get_shard_from_config(shard_child(shard, false));
+    if (ancestor.is_null() || ancestor2.is_null()) {
+      co_return td::Status::Error("cannot retrieve information about block ancestors");
+    }
+    ancestors_seqno = std::max(ancestor->top_block_id().seqno(), ancestor2->top_block_id().seqno());
+  } else if (ancestor->shard() == shard || shard_is_parent(ancestor->shard(), shard)) {
+    ancestors_seqno = ancestor->top_block_id().seqno();
+  } else {
+    co_return td::Status::Error("cannot retrieve information about block ancestors");
+  }
+  if (block_id.seqno() <= ancestors_seqno) {
+    co_return td::Status::Error("block already finalized in masterchain");
+  }
+
+  std::vector<Ref<vm::Cell>> proof_roots = {std::move(first_proof.proof)};
+  while (true) {
+    if (!handle->inited_prev()) {
+      co_return td::Status::Error(PSTRING() << "prev block for " << handle->id().to_str() << " is not known");
+    }
+    handle = co_await td::actor::ask(manager, &ValidatorManager::get_block_handle, handle->one_prev(true), true);
+    if (handle->id().seqno() <= ancestors_seqno) {
+      break;
+    }
+    proof_roots.push_back((co_await get_proof_root(handle, timeout, manager)).proof);
+    if (proof_roots.size() > 8) {
+      co_return td::Status::Error("too long chain");
+    }
+  }
+
+  Ref<vm::Cell> root;
+  for (size_t i = proof_roots.size() - 1; i > 0; --i) {
+    vm::CellBuilder cb;
+    CHECK(cb.store_ref_bool(proof_roots[i]) && (root.is_null() || cb.store_ref_bool(root)) && cb.finalize_to(root));
+  }
+
+  Ref<vm::Cell> signatures_cell = CO_TRY(signatures->serialize(validator_set));
+  vm::CellBuilder cb;
+  Ref<vm::Cell> td_cell;
+  CHECK(cb.store_long_bool(0xd5, 8) && block::tlb::t_BlockIdExt.pack(cb, block_id) && cb.store_bool_bool(true) &&
+        cb.store_ref_bool(signatures_cell) && cb.store_long_bool(proof_roots.size(), 8) &&
+        cb.store_ref_bool(proof_roots[0]) && (root.is_null() || cb.store_ref_bool(std::move(root))) &&
+        cb.finalize_to(td_cell));
+  CHECK(block::gen::t_TopBlockDescr.validate_ref(td_cell));
+  co_return CO_TRY(vm::std_boc_serialize(td_cell, 0));
 }
 
 }  // namespace validator

@@ -64,13 +64,13 @@ itself says **Completed ✅**.
 | 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
-| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, validator-side shard-block-description generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
 | Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
 
-**Coding conclusion:** the planned production implementation for merge phases
-1–5 and first-testnet activation is complete ✅ at this snapshot. The overall
-Simplex2 release is not complete because validation/release gates remain open.
+**Coding conclusion:** the planned production implementation for phases 1–5
+and first-testnet activation is coding complete ✅ at this snapshot. The
+overall Simplex2 release still requires the validation and release gates below.
 
 Coding checklist:
 
@@ -78,7 +78,7 @@ Coding checklist:
 - [x] ✅ Phase 2 consensus payload API and bounded candidate codec
 - [x] ✅ Phase 3 block-sync overlay
 - [x] ✅ Phase 4 observer cache and candidate relay
-- [x] ✅ Phase 5 Plumtree candidate/finality integration
+- [x] ✅ Phase 5 Plumtree candidate/finality and validator-side shard-block-description integration
 - [x] ✅ Required payload and collator-schedule structural separation
 - [x] ✅ BusRuntime conditional actor spawning and provider registration
 - [x] ✅ First-testnet `#22` zerostate and protocol-v2 activation
@@ -197,6 +197,9 @@ Release validation is intentionally still staged.
   protocol-message loss, repeated process restarts, and repeated temporary
   single-node network isolation. Each scenario enforces a minimum finalized
   height, so lack of progress is a test failure.
+- Those five-node scenarios now set protocol version 2 explicitly and assert
+  that finalized blocks suppress the legacy shard-block-description broadcast,
+  covering the consensus-to-accept-block feature gate.
 - ConfigParam30 tests pin the protocol-v2 `#22` cell hash, decode it through
   the production configuration loader, reject reserved flags, truncation and
   zero leader-window size, and confirm that a future version is unsupported.
@@ -219,6 +222,9 @@ Release validation is intentionally still staged.
   filtering. In particular, the Simplex Pool and block-sync observer remain
   mutually exclusive providers of candidate-broadcast prechecks instead of
   being instantiated together.
+- The same two-validator integration topology passes after enabling
+  validator-side shard-block-description generation and retaining TOS's
+  `gen_utime`-sensitive validator-set selection.
 - ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
   through the production loader, including catchain IDs, protocol version,
   QUIC selection, and the maximum-block-height coefficient.
@@ -526,6 +532,17 @@ single-node isolation with explicit liveness thresholds. Transport-specific
 runtime coverage for arrival ordering, invalid signatures, authorization,
 eviction, relay loops, packet loss, partition, churn, and selective forwarding
 remains open, as do security and release-grade performance evidence.
+
+TON commit `208c0ded`'s end-to-end shard-block-description path is adapted:
+Plumtree suppresses the legacy accept-block broadcast, validators generate the
+description locally from validated finality signatures, proof links are
+rebuilt from validated block data when a legacy proof omits `BlockExtra`, and
+the generated chain is bounded to eight proof roots. Header catchain sequence
+and validator-set hash must match the signature set even when signatures were
+checked earlier. Unlike current TON, TOS retains its time-sensitive
+validator-set API and selects the set using the proved block's `gen_utime`;
+this preserves TOS semantics instead of importing the unrelated API
+refactoring.
 
 Integrate Plumtree as an independently gated feature. Test it against the
 existing TOS certificate and candidate propagation mechanisms.
