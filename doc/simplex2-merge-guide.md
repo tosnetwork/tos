@@ -39,7 +39,7 @@ on-chain behavior.
 ### 1.2 Merge implementation status
 
 Progress snapshot: 2026-07-23. The implementation is based on TOS commit
-`ed8fae404d90b4063547bcc095d2915fe743e416`. The pinned TON comparison reference
+`23136287cf6cc06994074e4b99b3694b703bac4a`. The pinned TON comparison reference
 remains `bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
 
 Status definitions:
@@ -201,6 +201,9 @@ Release validation is intentionally still staged.
   `flags=0`, `protocol_version=2`, `use_quic=true`, four slots per leader, and
   explicit 400/1000/250 noncritical parameters. The validator accepts v2 and
   continues to reject protocol version 3.
+- The dedicated `test-consensus-simplex2-genesis-config` CTest pins that Fift
+  cell to hash
+  `6ADBFE8D74E95D62C7E2FC6F4615C7C628B476E1D06142F8A532F619BDD28814`.
 - ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
   through the production loader, including catchain IDs, protocol version,
   QUIC selection, and the maximum-block-height coefficient.

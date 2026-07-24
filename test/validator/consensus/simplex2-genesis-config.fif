@@ -1,0 +1,14 @@
+// Golden first-testnet ConfigParam30 leaf for Simplex protocol v2.
+// Keep this encoding synchronized with crypto/smartcont/gen-zerostate.fif
+// and test/tostester/src/tostester/zerostate.py.
+
+"Config.fif" include
+
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 250 32 u, b> <s 10 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
+
+hashu 0x6ADBFE8D74E95D62C7E2FC6F4615C7C628B476E1D06142F8A532F619BDD28814
+= not abort"unexpected Simplex v2 genesis cell hash"
