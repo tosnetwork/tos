@@ -54,6 +54,7 @@
 
 #include "checksum.h"
 #include "fabric.h"
+#include "finality-cache-policy.h"
 #include "get-next-key-blocks.h"
 #include "import-db-slice-local.hpp"
 #include "import-db-slice.hpp"
@@ -639,7 +640,8 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
   }
 
   auto cached = pending_block_finality_.get_if_exists(finality.block_id, false);
-  if (cached && cached->sig_set->is_final() >= finality.sig_set->is_final()) {
+  if (!should_replace_pending_finality(cached != nullptr, cached != nullptr && cached->sig_set->is_final(),
+                                       finality.sig_set->is_final())) {
     co_return td::Unit{};
   }
 

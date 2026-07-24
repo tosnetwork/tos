@@ -17,6 +17,7 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
+#include "validator/finality-cache-policy.h"
 #include "validator-session/candidate-serializer.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
@@ -921,6 +922,29 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
     auto tampered_id = id;
     tampered_id.id.seqno++;
     CHECK(decoded_signatures->check_signatures(validator_set_, tampered_id).is_error());
+
+    auto tampered_signature_tl = signatures->tl();
+    CHECK(tampered_signature_tl->get_id() == tos_api::tosNode_signatureSet_simplex::ID);
+    auto *tampered_signature =
+        static_cast<tos_api::tosNode_signatureSet_simplex *>(tampered_signature_tl.get());
+    CHECK(!tampered_signature->signatures_.empty());
+    CHECK(!tampered_signature->signatures_.front()->signature_.empty());
+    auto original_signature = tampered_signature->signatures_.front()->signature_.as_slice();
+    td::BufferSlice tampered_signature_bytes(original_signature.size());
+    std::memcpy(tampered_signature_bytes.data(), original_signature.data(), original_signature.size());
+    tampered_signature_bytes.data()[0] ^= 0x01;
+    tampered_signature->signatures_.front()->signature_ = std::move(tampered_signature_bytes);
+    auto tampered_signature_set = block::BlockSignatureSet::fetch(tampered_signature_tl);
+    CHECK(tampered_signature_set.not_null());
+    CHECK(tampered_signature_set->check_signatures(validator_set_, id).is_error());
+
+    auto wrong_validator_set_tl = signatures->tl();
+    auto *wrong_validator_set =
+        static_cast<tos_api::tosNode_signatureSet_simplex *>(wrong_validator_set_tl.get());
+    wrong_validator_set->validator_set_hash_ ^= 0x01;
+    auto wrong_validator_set_signatures = block::BlockSignatureSet::fetch(wrong_validator_set_tl);
+    CHECK(wrong_validator_set_signatures.not_null());
+    CHECK(wrong_validator_set_signatures->check_signatures(validator_set_, id).is_error());
   }
   td::actor::ask(test_consensus_, &TestConsensus::on_block_accepted, node_idx_, instance_idx_, data, creator_idx,
                  signatures)
@@ -997,6 +1021,13 @@ void test_configured_maximum_candidate() {
 }  // namespace
 
 int main(int argc, char *argv[]) {
+  CHECK(should_replace_pending_finality(false, false, false));
+  CHECK(should_replace_pending_finality(false, false, true));
+  CHECK(!should_replace_pending_finality(true, false, false));
+  CHECK(should_replace_pending_finality(true, false, true));
+  CHECK(!should_replace_pending_finality(true, true, false));
+  CHECK(!should_replace_pending_finality(true, true, true));
+
   CHECK(NewConsensusConfig{}.noncritical_params.target_rate == std::chrono::milliseconds{400});
   CHECK(NewConsensusConfig{}.protocol_version_supported());
   CHECK(!NewConsensusConfig{}.enable_block_sync());

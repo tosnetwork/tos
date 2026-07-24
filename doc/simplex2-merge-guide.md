@@ -64,7 +64,7 @@ itself says **Completed ✅**.
 | 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
-| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, validator-side shard-block-description generation, the upstream graph simulator with deterministic packet loss, temporary node isolation, and a selective data-forwarding fault, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, churn, Byzantine selective-forwarding, and release-scale packet-loss and partition validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, and a selective data-forwarding fault, and fault-injected Simplex consensus tests are adapted to TOS | Run end-to-end candidate/finality arrival ordering, manager-ingress invalid-signature, authorization, eviction, relay-loop, actual membership churn, Byzantine selective-forwarding, and release-scale packet-loss and partition validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
 | Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
 
@@ -83,6 +83,16 @@ Coding checklist:
 - [x] ✅ BusRuntime conditional actor spawning and provider registration
 - [x] ✅ First-testnet `#22` zerostate and protocol-v2 activation
 - [ ] Adversarial, performance, multi-region soak, and release evidence
+
+Completed targeted validation:
+
+- [x] ✅ Finality-cache duplicate, upgrade, and downgrade precedence
+- [x] ✅ Finality signature mutation and validator-set-hash rejection
+- [x] ✅ FEC and simple Plumtree packet-loss simulations
+- [x] ✅ FEC and simple Plumtree temporary and rotating outage simulations
+- [x] ✅ FEC and simple Plumtree static selective-forwarding simulations
+- [ ] End-to-end manager-ingress, authorization, eviction, relay-loop,
+  membership-churn, Byzantine, performance, and multi-region validation
 
 ### Completed implementation work ✅
 
@@ -157,7 +167,8 @@ Coding checklist:
   current transport model can temporarily isolate one node, but does not model
   multi-component partitions, churn, or general Byzantine behavior. It can
   suppress outbound Plumtree data messages from one node while retaining
-  control and repair traffic.
+  control and repair traffic, and can rotate a temporary outage across nodes
+  between broadcasts.
 - The downloader can construct a masterchain `BlockProof` from a final
   signature set and the matching masterchain state. The shared proof-root
   builder validates the block root hash, header identity and shard flags,
@@ -184,6 +195,15 @@ Release validation is intentionally still staged.
   during the consensus simulation, including block ID, finality flag, catchain
   sequence number, validator-set hash, cryptographic signature verification,
   and rejection against a tampered block ID.
+- ✅ Real finality signature sets produced by the consensus simulation reject a
+  bit-flipped signature and a mismatched validator-set hash through the
+  production `BlockSignatureSet` verifier. The negative copies use independent
+  buffers and do not mutate the live consensus certificate.
+- ✅ The manager's finality-cache policy is exercised for empty-cache
+  insertion, duplicate approve/final sets, approve-to-final upgrade, and
+  final-to-approve downgrade rejection. The production manager calls the same
+  tested policy function. End-to-end candidate/finality ordering with real
+  block proof construction remains a separate integration test.
 - The CTest FEC and simple-mode Plumtree smoke simulations pass on a 12-node,
   four-validator topology.
 - ✅ Deterministic short CTests exercise the same topology with 10 percent
@@ -198,8 +218,14 @@ Release validation is intentionally still staged.
   evidence.
 - ✅ A deterministic selective-forwarding CTest suppresses outbound Plumtree data
   messages from one non-validator while leaving its control and repair traffic
-  intact. Five sequential FEC broadcasts still reach all 12 nodes. This covers
-  one static omission fault, not adaptive or general Byzantine forwarding.
+  intact. Five sequential broadcasts in both FEC and simple mode still reach
+  all 12 nodes. This covers one static omission fault, not adaptive or general
+  Byzantine forwarding.
+- ✅ A deterministic rotating-outage CTest isolates a different non-validator
+  during each of four broadcasts in both FEC and simple mode, requires
+  delivery to the other 11 nodes in every affected round, then heals all nodes
+  and requires 12-of-12 delivery. This tests repeated availability changes,
+  not overlay membership churn.
 - A 20-broadcast stress run in both FEC and simple modes, using 256 KiB
   payloads, 0.5 relative latency jitter, and a 1 MB/s per-message bandwidth
   model, delivered every broadcast to all 12 expected nodes.
@@ -547,12 +573,14 @@ transport, bounded manager reconciliation, proof construction, and existing
 broadcast validation integration are ported. Short fault-injected Simplex
 consensus tests cover protocol-message loss, process restart, and temporary
 single-node isolation with explicit liveness thresholds. Transport-specific
-runtime coverage for arrival ordering, invalid signatures, authorization,
-eviction, relay loops, churn, and Byzantine selective forwarding remains open.
-Deterministic short simulator tests now cover packet loss and temporary
-single-node isolation plus one static selective data-forwarding omission, but
-release-scale packet-loss and partition, security, and performance evidence
-remain open.
+runtime coverage for end-to-end candidate/finality arrival ordering,
+manager-ingress invalid signatures, authorization, eviction, relay loops,
+churn, and Byzantine selective forwarding remains open. Finality-cache
+precedence and signature-verifier mutation cases are now covered directly.
+Deterministic short simulator tests now cover packet loss, temporary
+single-node isolation, rotating temporary outages, and one static selective
+data-forwarding omission. Actual membership churn, release-scale packet-loss
+and partition, security, and performance evidence remain open.
 
 TON commit `208c0ded`'s end-to-end shard-block-description path is adapted:
 Plumtree suppresses the legacy accept-block broadcast, validators generate the

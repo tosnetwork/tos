@@ -84,6 +84,7 @@ struct Settings {
   double packet_loss = 0.0;
   std::size_t isolate_node = 0;
   td::uint32 isolate_broadcasts = 0;
+  bool rotate_isolated_node = false;
   td::optional<std::size_t> outbound_drop_node;
   double bandwidth_mb_s = 100.0;
   td::uint32 broadcast_count = 5;
@@ -264,6 +265,7 @@ void print_usage() {
                "  --packet-loss N           Deterministic per-message loss ratio in [0,1] (default 0)\n"
                "  --isolate-node N          Zero-based node isolated temporarily (default 0)\n"
                "  --isolate-broadcasts N    Number of initial broadcasts to isolate that node (default 0)\n"
+               "  --rotate-isolated-node    Isolate the next node on each affected broadcast\n"
                "  --drop-outbound-node N    Node that receives but drops every outbound message\n"
                "  --bandwidth-mb N          Per-message bandwidth model in MB/s (default 100)\n"
                "  --broadcast-count N       Sequential broadcasts to send on the same overlay graph (default 5)\n"
@@ -314,6 +316,8 @@ td::Result<Settings> parse_args(int argc, char **argv) {
     } else if (arg == "--isolate-broadcasts") {
       TRY_RESULT(value, read_value(arg));
       settings.isolate_broadcasts = static_cast<td::uint32>(std::stoul(value));
+    } else if (arg == "--rotate-isolated-node") {
+      settings.rotate_isolated_node = true;
     } else if (arg == "--drop-outbound-node") {
       TRY_RESULT(value, read_value(arg));
       settings.outbound_drop_node = static_cast<std::size_t>(std::stoull(value));
@@ -520,6 +524,7 @@ int main(int argc, char **argv) {
             << ", payload=" << format_bytes(static_cast<double>(settings.payload_bytes))
             << ", packet_loss=" << settings.packet_loss
             << ", isolate_broadcasts=" << settings.isolate_broadcasts
+            << ", rotate_isolation=" << settings.rotate_isolated_node
             << ", selective_drop=" << (settings.outbound_drop_node ? std::to_string(settings.outbound_drop_node.value())
                                                                     : std::string("none"))
             << "\n";
@@ -527,11 +532,14 @@ int main(int argc, char **argv) {
   std::cout.flush();
   for (td::uint32 broadcast_index = 0; broadcast_index < settings.broadcast_count; ++broadcast_index) {
     auto isolated = broadcast_index < settings.isolate_broadcasts;
-    network->set_isolated_node(isolated ? td::optional<std::size_t>(settings.isolate_node)
+    auto isolated_node = settings.rotate_isolated_node
+                             ? (settings.isolate_node + static_cast<std::size_t>(broadcast_index)) % graph.nodes.size()
+                             : settings.isolate_node;
+    network->set_isolated_node(isolated ? td::optional<std::size_t>(isolated_node)
                                         : td::optional<std::size_t>());
     auto broadcast_expected_delivery = expected_delivery;
     if (isolated) {
-      broadcast_expected_delivery[settings.isolate_node] = false;
+      broadcast_expected_delivery[isolated_node] = false;
     }
     td::BufferSlice payload(settings.payload_bytes);
     fill_payload(payload.as_slice(), settings.seed + static_cast<td::uint64>(broadcast_index) * 0x9e3779b97f4a7c15ULL);
