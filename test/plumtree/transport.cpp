@@ -188,6 +188,34 @@ double SimNetwork::propagation_latency_s(adnl::AdnlNodeIdShort src, adnl::AdnlNo
   return std::max(0.0, latency_ms) / 1000.0;
 }
 
+bool SimNetwork::should_drop() {
+  auto loss = std::clamp(packet_loss, 0.0, 1.0);
+  if (loss == 0.0) {
+    return false;
+  }
+  random_state += 0x6d2b79f5u;
+  td::uint32 value = random_state;
+  value = (value ^ (value >> 15)) * (value | 1u);
+  value ^= value + ((value ^ (value >> 7)) * (value | 61u));
+  auto random = static_cast<double>(value ^ (value >> 14)) / 4294967296.0;
+  return random < loss;
+}
+
+bool SimNetwork::is_partitioned(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst) const {
+  if (!isolated_node) {
+    return false;
+  }
+  auto src_it = node_by_adnl.find(src);
+  auto dst_it = node_by_adnl.find(dst);
+  return (src_it != node_by_adnl.end() && src_it->second == isolated_node.value()) ||
+         (dst_it != node_by_adnl.end() && dst_it->second == isolated_node.value());
+}
+
+void SimNetwork::set_isolated_node(td::optional<std::size_t> node_index) {
+  std::lock_guard<std::mutex> lock(mutex);
+  isolated_node = node_index;
+}
+
 namespace {
 
 void set_response_result(td::Promise<td::BufferSlice> promise, td::Result<td::BufferSlice> result,
@@ -228,6 +256,14 @@ void SimNetwork::enqueue_event(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort 
   auto src_it = node_by_adnl.find(src);
   if (src_it != node_by_adnl.end() && src_it->second < sent_bytes_by_node.size()) {
     sent_bytes_by_node[src_it->second] += bytes;
+  }
+  auto partitioned = is_partitioned(src, dst);
+  if (partitioned || should_drop()) {
+    if (promise) {
+      promise.set_error(td::Status::Error(
+          ErrorCode::timeout, td::Slice(partitioned ? "simulated network partition" : "simulated packet loss")));
+    }
+    return;
   }
   auto tx_start = now;
   auto tx_delay = static_cast<double>(bytes) / std::max(1.0, bandwidth_bytes_s);

@@ -64,7 +64,7 @@ itself says **Completed ✅**.
 | 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
-| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, validator-side shard-block-description generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, validator-side shard-block-description generation, the upstream graph simulator with deterministic packet loss and temporary node isolation, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, churn, selective-forwarding, and release-scale packet-loss and partition validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
 | Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
 
@@ -152,9 +152,10 @@ Coding checklist:
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,
-  bandwidth limits, sequential broadcasts, delivery latency, traffic, and duplicate
-  accounting. Its current transport model does not inject packet loss,
-  partitions, churn, or Byzantine behavior.
+  bandwidth limits, deterministic per-message packet loss, sequential
+  broadcasts, delivery latency, traffic, and duplicate accounting. Its
+  current transport model can temporarily isolate one node, but does not model
+  multi-component partitions, churn, or Byzantine behavior.
 - The downloader can construct a masterchain `BlockProof` from a final
   signature set and the matching masterchain state. The shared proof-root
   builder validates the block root hash, header identity and shard flags,
@@ -183,6 +184,16 @@ Release validation is intentionally still staged.
   and rejection against a tampered block ID.
 - The CTest FEC and simple-mode Plumtree smoke simulations pass on a 12-node,
   four-validator topology.
+- Deterministic short CTests exercise the same topology with 10 percent
+  per-message loss in FEC mode and 8 percent per-message loss in simple mode;
+  five sequential broadcasts in each case reach all 12 expected nodes. These
+  simulator checks are not substitutes for release-scale or multi-region
+  packet-loss validation.
+- A deterministic partition-recovery CTest isolates one node for the first two
+  broadcasts, verifies propagation to the other 11 nodes, heals the link, and
+  requires the third broadcast to reach all 12 nodes. This is a short
+  single-node isolation check, not multi-component or multi-region partition
+  evidence.
 - A 20-broadcast stress run in both FEC and simple modes, using 256 KiB
   payloads, 0.5 relative latency jitter, and a 1 MB/s per-message bandwidth
   model, delivered every broadcast to all 12 expected nodes.
@@ -530,8 +541,10 @@ broadcast validation integration are ported. Short fault-injected Simplex
 consensus tests cover protocol-message loss, process restart, and temporary
 single-node isolation with explicit liveness thresholds. Transport-specific
 runtime coverage for arrival ordering, invalid signatures, authorization,
-eviction, relay loops, packet loss, partition, churn, and selective forwarding
-remains open, as do security and release-grade performance evidence.
+eviction, relay loops, churn, and selective forwarding remains open.
+Deterministic short simulator tests now cover packet loss and temporary
+single-node isolation, but release-scale packet-loss and partition, security,
+and performance evidence remain open.
 
 TON commit `208c0ded`'s end-to-end shard-block-description path is adapted:
 Plumtree suppresses the legacy accept-block broadcast, validators generate the

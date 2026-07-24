@@ -93,6 +93,7 @@ struct SimNetwork {
   double geo_alpha_ms = 3.554;
   double geo_beta_ms_per_km = 0.008963;
   double jitter = 0.1;
+  double packet_loss = 0.0;
   double bandwidth_bytes_s = 100000000.0;
   td::actor::ActorId<OverlayManager> overlay_manager;
   std::map<adnl::AdnlNodeIdShort, std::size_t> node_by_adnl;
@@ -107,8 +108,10 @@ struct SimNetwork {
   std::vector<td::uint64> received_bytes_by_node;
   std::vector<double> tx_free_at_by_node;
   std::vector<double> rx_free_at_by_node;
+  td::optional<std::size_t> isolated_node;
   mutable std::mutex mutex;
 
+  void set_isolated_node(td::optional<std::size_t> node_index);
   double now_s() const;
   double propagation_latency_s(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst);
   void enqueue(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data);
@@ -125,6 +128,8 @@ struct SimNetwork {
   std::vector<td::uint64> received_bytes_by_node_snapshot() const;
 
  private:
+  bool is_partitioned(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst) const;
+  bool should_drop();
   void enqueue_event(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data, SimEventKind kind,
                      td::Promise<td::BufferSlice> promise);
 };

@@ -81,6 +81,9 @@ struct Settings {
   std::size_t payload_bytes = 32768;
   td::uint32 plumtree_neighbours = 20;
   double jitter = 0.1;
+  double packet_loss = 0.0;
+  std::size_t isolate_node = 0;
+  td::uint32 isolate_broadcasts = 0;
   double bandwidth_mb_s = 100.0;
   td::uint32 broadcast_count = 5;
   td::uint64 seed = 1;
@@ -257,6 +260,9 @@ void print_usage() {
                "  --payload-bytes N         Broadcast payload size (default 32768)\n"
                "  --plumtree-neighbours N   Plumtree active neighbour target (default 20)\n"
                "  --jitter N                Relative latency jitter, same as JS simulator (default 0.1)\n"
+               "  --packet-loss N           Deterministic per-message loss ratio in [0,1] (default 0)\n"
+               "  --isolate-node N          Zero-based node isolated temporarily (default 0)\n"
+               "  --isolate-broadcasts N    Number of initial broadcasts to isolate that node (default 0)\n"
                "  --bandwidth-mb N          Per-message bandwidth model in MB/s (default 100)\n"
                "  --broadcast-count N       Sequential broadcasts to send on the same overlay graph (default 5)\n"
                "  --seed N                  Deterministic payload/key seed label (default 1)\n";
@@ -297,6 +303,15 @@ td::Result<Settings> parse_args(int argc, char **argv) {
     } else if (arg == "--jitter") {
       TRY_RESULT(value, read_value(arg));
       settings.jitter = std::stod(value);
+    } else if (arg == "--packet-loss") {
+      TRY_RESULT(value, read_value(arg));
+      settings.packet_loss = std::stod(value);
+    } else if (arg == "--isolate-node") {
+      TRY_RESULT(value, read_value(arg));
+      settings.isolate_node = static_cast<std::size_t>(std::stoull(value));
+    } else if (arg == "--isolate-broadcasts") {
+      TRY_RESULT(value, read_value(arg));
+      settings.isolate_broadcasts = static_cast<td::uint32>(std::stoul(value));
     } else if (arg == "--bandwidth-mb") {
       TRY_RESULT(value, read_value(arg));
       settings.bandwidth_mb_s = std::stod(value);
@@ -312,6 +327,9 @@ td::Result<Settings> parse_args(int argc, char **argv) {
   }
   if (settings.graph_path.empty()) {
     settings.smoke = true;
+  }
+  if (settings.packet_loss < 0.0 || settings.packet_loss > 1.0) {
+    return td::Status::Error("--packet-loss must be in [0,1]");
   }
   return settings;
 }
@@ -341,6 +359,10 @@ int main(int argc, char **argv) {
     std::cerr << "graph has no usable nodes\n";
     return 2;
   }
+  if (settings.isolate_broadcasts != 0 && settings.isolate_node >= graph.nodes.size()) {
+    std::cerr << "--isolate-node is outside the graph\n";
+    return 2;
+  }
 
   std::vector<std::size_t> validators;
   for (std::size_t i = 0; i < graph.nodes.size(); ++i) {
@@ -365,6 +387,7 @@ int main(int argc, char **argv) {
   network->geo_alpha_ms = graph.geo_alpha_ms;
   network->geo_beta_ms_per_km = graph.geo_beta_ms_per_km;
   network->jitter = settings.jitter;
+  network->packet_loss = settings.packet_loss;
   network->bandwidth_bytes_s = std::max(1.0, settings.bandwidth_mb_s * 1000000.0);
   network->random_state = static_cast<td::uint32>(settings.seed);
   network->sent_bytes_by_node.assign(graph.nodes.size(), 0);
@@ -484,15 +507,24 @@ int main(int argc, char **argv) {
             << ", senders=" << validators.size() << ", tree_slots=" << opts.plumtree_fec_options_.tree_slots_
             << ", expected=" << expected_delivered << ", unreachable=" << (graph.nodes.size() - expected_delivered);
   std::cout << ", broadcasts=" << settings.broadcast_count
-            << ", payload=" << format_bytes(static_cast<double>(settings.payload_bytes)) << "\n";
+            << ", payload=" << format_bytes(static_cast<double>(settings.payload_bytes))
+            << ", packet_loss=" << settings.packet_loss
+            << ", isolate_broadcasts=" << settings.isolate_broadcasts << "\n";
   print_table_header();
   std::cout.flush();
   for (td::uint32 broadcast_index = 0; broadcast_index < settings.broadcast_count; ++broadcast_index) {
+    auto isolated = broadcast_index < settings.isolate_broadcasts;
+    network->set_isolated_node(isolated ? td::optional<std::size_t>(settings.isolate_node)
+                                        : td::optional<std::size_t>());
+    auto broadcast_expected_delivery = expected_delivery;
+    if (isolated) {
+      broadcast_expected_delivery[settings.isolate_node] = false;
+    }
     td::BufferSlice payload(settings.payload_bytes);
     fill_payload(payload.as_slice(), settings.seed + static_cast<td::uint64>(broadcast_index) * 0x9e3779b97f4a7c15ULL);
     auto payload_hash = td::sha256_bits256(payload.as_slice());
     auto broadcast_id = payload_hash;
-    delivery->start_broadcast(payload_hash, expected_delivery, td::Time::now(),
+    delivery->start_broadcast(payload_hash, std::move(broadcast_expected_delivery), td::Time::now(),
                               settings.broadcast_mode == BroadcastMode::Simple);
     auto sent_bytes_before = network->sent_bytes_count();
     auto payload_deliveries_before = network->payload_deliveries_count();
