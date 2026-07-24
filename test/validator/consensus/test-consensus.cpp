@@ -999,6 +999,9 @@ int main(int argc, char *argv[]) {
   CHECK(!NewConsensusConfig{}.enable_block_sync());
   CHECK(NewConsensusConfig{.protocol_version = 1}.protocol_version_supported());
   CHECK(NewConsensusConfig{.protocol_version = 1}.enable_block_sync());
+  CHECK(NewConsensusConfig{.protocol_version = 2}.protocol_version_supported());
+  CHECK(NewConsensusConfig{.protocol_version = 2}.enable_plumtree_broadcast());
+  CHECK(!NewConsensusConfig{.protocol_version = 3}.protocol_version_supported());
 
   auto wrap_config_param30 = [](td::Ref<vm::Cell> simplex) {
     vm::CellBuilder all;
@@ -1164,7 +1167,7 @@ int main(int argc, char *argv[]) {
     CHECK(decoded.protocol_version == 2);
     CHECK(decoded.use_quic);
     CHECK(decoded.slots_per_leader_window == 4);
-    CHECK(!NewConsensusConfig{.protocol_version = decoded.protocol_version}.protocol_version_supported());
+    CHECK(NewConsensusConfig{.protocol_version = decoded.protocol_version}.protocol_version_supported());
     CHECK(td::Bits256{cell->get_hash().bits()} ==
           from_hex("3ED02F907E6EC7625EC062FF3B88B46CBA4E39681821D5ED1A976B2BCEFB2C43"));
 

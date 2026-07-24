@@ -39,12 +39,15 @@ on-chain behavior.
 ### 1.2 Merge implementation status
 
 Progress snapshot: 2026-07-23. The implementation is based on TOS commit
-`d945f0dec6f7128e8c1dca713e874e1ecb34a4ce`. The pinned TON comparison reference
+`ed8fae404d90b4063547bcc095d2915fe743e416`. The pinned TON comparison reference
 remains `bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
 
 Status definitions:
 
 - **Completed ✅**: implemented and covered by the validation stated here.
+- **Coding complete ✅ / pending validation**: the planned production code is
+  merged, but the phase's adversarial, performance, or soak exit criteria are
+  not yet satisfied.
 - **Partial**: useful code is implemented, but phase exit criteria are not met.
 - **Not started**: no production implementation has been merged.
 - **Pending validation**: implementation exists, but the required adversarial,
@@ -57,21 +60,35 @@ itself says **Completed ✅**.
 | Phase | Status | Completed ✅ | Remaining work |
 |---|---|---|---|
 | 0. Baseline | Partial | ✅ Immutable source commits and static feature comparison are recorded | Archive golden ConfigParam cells and record CPU, memory, bandwidth, finality, and database-growth baselines |
-| 1. ConfigParam30 | Pending validation | ✅ TON `#22` bit layout, protocol parsing, reserved-flag rejection, supported-version gate, all four ConfigParam29 constructors, current `#21` round-trip coverage, and `#22` golden/truncated/invalid/future-version tests | Switch the first-testnet zerostate fixture to `#22` when the v2 release gates are met |
-| 2. Candidate codec | Partial | ✅ Existing combined BOC/LZ4/improved codec verified; negative-size and integer/size bounds hardened; raw, legacy LZ4, improved compression, exact-limit, malformed-input, mode-mismatch, high-compression-ratio, and configured-maximum tests added | Expand the compression-abuse corpus, add fuzzing, and collect repeatable peak-memory measurements |
-| 3. Block-sync overlay | Partial | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Add recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth tests |
-| 4. Observer and relay | Pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Add authorization, eviction, removal/liveness, query-abuse, and relay-loop tests |
-| 5. Plumtree | Pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Add transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding tests |
-| 6. Structural refactoring | Not started | ✅ TOS session-specific database paths were reviewed at a high level | Perform semantic DB-name comparison only if required after protocol features stabilize |
-| Activation | Not started | ✅ Protocol v2 is parsed but validator startup rejects it explicitly | Complete phases 1–5 exit criteria, write v2 into the first-testnet zerostate, define rollback procedure, and run a 72-hour multi-region soak |
+| 1. ConfigParam30 | Coding complete ✅ | ✅ TON `#22` bit layout, first-testnet zerostate generation, protocol-v2 support, reserved-flag rejection, all four ConfigParam29 constructors, legacy `#21` decode coverage, and `#22` golden/truncated/invalid/future-version tests | Complete release validation |
+| 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
+| 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
+| 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation, proof generation, the upstream graph simulator, and fault-injected Simplex consensus tests are adapted to TOS | Run transport-specific finality ordering, invalid-signature, authorization, eviction, relay-loop, packet-loss, partition, churn, and selective-forwarding validation |
+| 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
+| Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
+
+**Coding conclusion:** the planned production implementation for merge phases
+1–5 and first-testnet activation is complete ✅ at this snapshot. The overall
+Simplex2 release is not complete because validation/release gates remain open.
+
+Coding checklist:
+
+- [x] ✅ Phase 1 configuration schema, parsing, and version gates
+- [x] ✅ Phase 2 consensus payload API and bounded candidate codec
+- [x] ✅ Phase 3 block-sync overlay
+- [x] ✅ Phase 4 observer cache and candidate relay
+- [x] ✅ Phase 5 Plumtree candidate/finality integration
+- [x] ✅ Required payload and collator-schedule structural separation
+- [x] ✅ First-testnet `#22` zerostate and protocol-v2 activation
+- [ ] Adversarial, performance, multi-region soak, and release evidence
 
 ### Completed implementation work ✅
 
 - `simplex_config_v2#22` uses the reference five-bit flags, two-bit
   `protocol_version`, and `use_quic` layout.
-- The current `simplex_config#21` layout remains available because the
-  pre-testnet zerostate generator still emits it. It is current development
-  input.
+- The legacy `simplex_config#21` layout remains decodable for tooling and
+  regression coverage, but the first-testnet zerostate now emits only `#22`.
 - TON's `simplex_config_v2#22` is the sole authoritative `#22` layout. The
   pre-merge TOS draft layout has never been deployed and is not decoded.
   Non-zero reserved flags are rejected.
@@ -87,9 +104,8 @@ itself says **Completed ✅**.
   `simplex/collator-schedule.cpp`, matching TON's source-level separation while
   retaining TOS's existing bus initialization interface.
 - The protocol-version-2 candidate relay actor has been adapted to the
-  existing TOS manager and full-node broadcast APIs. It remains unreachable
-  while protocol version 2 is startup-gated and must not be treated as
-  Plumtree support.
+  existing TOS manager and full-node broadcast APIs and is selected by the
+  first-testnet protocol-v2 configuration.
 - The consensus bus now represents the local validator identity as optional,
   and validator-authority actors have explicit validator-only spawn gates.
   A non-voting `BlockSyncObserver` actor can cache candidates delivered by the
@@ -123,8 +139,7 @@ itself says **Completed ✅**.
   current or next validator set selected for the advertised catchain sequence.
   Invalid signatures cannot occupy the pending-finality cache, and a final
   signature set can upgrade a cached approve set while duplicates and
-  downgrades are ignored. The implementation is still startup-gated with
-  protocol version 2.
+  downgrades are ignored.
 - Candidate, finality, and complete-block network ingress now preserves
   whether a message came from the public, fast-sync, or custom overlay.
   Locally emitted finality is tagged as consensus-overlay ingress before it is
@@ -145,11 +160,12 @@ itself says **Completed ✅**.
   Merkle update shape, and key-block configuration before serializing either a
   full proof or proof link. Candidate/finality reconciliation now consumes
   this helper before invoking the existing broadcast validator.
-- Protocol version 2 remains deliberately unsupported at validator startup.
-  Observer support and transport-specific finality security/runtime tests are
+- Validator startup supports protocol versions 0–2 and rejects version 3.
+  Observer and transport-specific finality security/runtime validation remains
   incomplete.
 
-This is a staged implementation, not completion of all phases in this guide.
+The production and first-testnet activation coding tranches are complete ✅.
+Release validation is intentionally still staged.
 
 ### Completed validation evidence ✅
 
@@ -181,6 +197,10 @@ This is a staged implementation, not completion of all phases in this guide.
 - ConfigParam30 tests pin the protocol-v2 `#22` cell hash, decode it through
   the production configuration loader, reject reserved flags, truncation and
   zero leader-window size, and confirm that a future version is unsupported.
+- The first-testnet Fift encoding constructs a valid `#22` cell with
+  `flags=0`, `protocol_version=2`, `use_quic=true`, four slots per leader, and
+  explicit 400/1000/250 noncritical parameters. The validator accepts v2 and
+  continues to reject protocol version 3.
 - ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
   through the production loader, including catchain IDs, protocol version,
   QUIC selection, and the maximum-block-height coefficient.
@@ -329,13 +349,13 @@ missing.
 - Existing TOS consensus and local-network tests pass.
 - A fresh local network sustains the configured block interval.
 
-### Phase 1: ConfigParam30 format and protocol versioning
+### Phase 1: ConfigParam30 format and protocol versioning ✅
 
-**Current status: Pending validation.** Schema parsing, reserved-flag
+**Current status: Coding complete ✅.** Schema parsing, reserved-flag
 rejection, runtime version rejection, a `#22` golden hash, and malformed,
 reserved-flag, zero-slot, future-version, and all four ConfigParam29
-constructor tests are implemented. The final first-testnet zerostate fixture
-remains open until the v2 release gates are met.
+constructor tests are implemented. The first-testnet zerostate writes `#22`
+with protocol version 2 and QUIC enabled, and validator startup accepts v2.
 
 The pre-testnet format design must answer:
 
@@ -362,9 +382,9 @@ Do not enable block sync or Plumtree in this phase.
 - The first-testnet zerostate and validator decode the same ConfigParam30.
 - Invalid, truncated, reserved-flag, and future-version cells are rejected.
 
-### Phase 2: Candidate payload codec
+### Phase 2: Candidate payload codec ✅
 
-**Current status: Partial.** The codec and additional resource-bound checks are
+**Current status: Coding complete ✅ / pending validation.** The codec and additional resource-bound checks are
 implemented. Deterministic tests cover raw, legacy LZ4, improved-structure
 compression, exact configured limits, wrong declared size, truncation,
 trailing bytes, corruption, compression-mode mismatch, and a valid 0.5 MiB
@@ -408,9 +428,9 @@ to QUIC, overlay, relay, and test inputs.
 - Corpus fuzzing completes without crash, timeout, or excessive allocation.
 - Candidate propagation bandwidth improves or remains within the agreed limit.
 
-### Phase 3: Block-sync overlay
+### Phase 3: Block-sync overlay ✅
 
-**Current status: Partial.** The protocol-v1 overlay and its primary
+**Current status: Coding complete ✅ / pending validation.** The protocol-v1 overlay and its primary
 authorization and collator checks are implemented. Recovery, impairment,
 restart, saturation, and resource-pressure exit tests remain open.
 
@@ -446,9 +466,9 @@ interfaces, keeping integration changes small.
 - Recovery time improves in the target impairment scenarios.
 - Consensus traffic remains live under block-sync saturation tests.
 
-### Phase 4: Observer cache and candidate relay
+### Phase 4: Observer cache and candidate relay ✅
 
-**Current status: Pending validation.** Candidate relay, observer creation,
+**Current status: Coding complete ✅ / pending validation.** Candidate relay, observer creation,
 optional validator identity, private-overlay membership, read-only Pool and
 CandidateResolver operation, arbitrary-member candidate queries, and bounded
 in-memory candidate retention are implemented behind their protocol gates.
@@ -475,9 +495,9 @@ overlay traffic. Trust must be re-established at every boundary.
 - Validator recovery works with multiple observers and with no observers.
 - Cache eviction and relay loops are tested.
 
-### Phase 5: Plumtree broadcast
+### Phase 5: Plumtree broadcast ✅
 
-**Current status: Pending validation.** The overlay protocol core and TL schema are
+**Current status: Coding complete ✅ / pending validation.** The overlay protocol core and TL schema are
 implemented and build successfully. Public-overlay and fast-sync candidate
 paths are integrated and the complete validator engine links. The graph
 simulator and its FEC/simple smoke tests are ported. Finality and downloader
@@ -505,8 +525,9 @@ worse than the existing mechanism under the test matrix.
 
 ### Phase 6: Optional structural refactoring
 
-**Current status: Not started.** No structural refactor is required for the
-currently completed tranches.
+**Current status: Optional; no activation blocker.** The consensus payload
+boundary and collator-schedule source separation are complete ✅. No additional
+structural refactor is required for the currently completed tranches.
 
 Only after the feature ports are stable should TOS consider upstream structural
 changes such as network-state management, database naming, or collator-schedule

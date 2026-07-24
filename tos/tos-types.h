@@ -536,10 +536,7 @@ struct ValidatorSessionConfig {
 };
 
 struct NewConsensusConfig {
-  // Protocol version 2 also requires TON's Plumtree/full-node observer
-  // subsystem. Keep it parseable at the TL-B layer, but do not let a
-  // validator start with v2 until that subsystem is ported and tested.
-  static constexpr td::uint32 MAX_SUPPORTED_PROTOCOL_VERSION = 1;
+  static constexpr td::uint32 MAX_SUPPORTED_PROTOCOL_VERSION = 2;
 
   td::uint32 max_block_size = (4 << 20);
   td::uint32 max_collated_data_size = (4 << 20);

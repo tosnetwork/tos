@@ -24,9 +24,10 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
+EXPECTED_SIMPLEX_PROTOCOL_VERSION = 2
 
 
-def test_genesis_simplex_parameters_match_ton_mainnet_pacing():
+def test_genesis_simplex_parameters_use_v2_with_ton_mainnet_pacing():
     simplex = SimplexConsensusConfig()
     actual = (
         simplex.target_block_rate_ms,
@@ -37,8 +38,10 @@ def test_genesis_simplex_parameters_match_ton_mainnet_pacing():
     assert actual == EXPECTED_SIMPLEX_PARAMS
 
     genesis = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
-    encoded = " ".join(map(str, EXPECTED_SIMPLEX_PARAMS)) + " make-simplex-params"
-    assert genesis.count(encoded) == 2
+    assert genesis.count("<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>") == 2
+    assert genesis.count("<b 400 32 u, b> <s 0 rot 8 udict! drop") == 2
+    assert simplex.protocol_version == EXPECTED_SIMPLEX_PROTOCOL_VERSION
+    assert simplex.use_quic
 
 
 def test_local_genesis_total_supply_is_exactly_five_billion_tos(tmp_path):

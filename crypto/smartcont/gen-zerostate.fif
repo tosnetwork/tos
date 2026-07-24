@@ -172,11 +172,19 @@ config.special!
 250 250 1000 1 true config.catchain_params!
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
 3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
-// ConfigParam 30: Simplex consensus aligned with the current TON mainnet
-// on-chain target rate (400 ms per slot/block).
-// target-rate-ms slots-per-leader-window first-block-timeout-ms max-leader-window-desync
-400 4 1000 250 make-simplex-params
-400 4 1000 250 make-simplex-params
+// ConfigParam 30: first-testnet Simplex v2 (#22), with the 400 ms target
+// encoded as noncritical parameter 0. Reserved flags are zero, protocol
+// version is 2, QUIC is enabled, and each leader owns four slots.
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 250 32 u, b> <s 10 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 250 32 u, b> <s 10 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 config.new_consensus_params_all!
 
 
