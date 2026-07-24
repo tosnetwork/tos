@@ -204,6 +204,9 @@ Release validation is intentionally still staged.
 - The dedicated `test-consensus-simplex2-genesis-config` CTest pins that Fift
   cell to hash
   `6ADBFE8D74E95D62C7E2FC6F4615C7C628B476E1D06142F8A532F619BDD28814`.
+- The isolated tostester zerostate regression passes both cases: it generates
+  and deserializes the complete masterchain/shard zerostate through the dynamic
+  `#22` path and confirms the canonical 5,000,000,000 TOS total supply.
 - ConfigParam29 tests cover constructors `#d6`, `#d7`, `#d8`, and `#d9`
   through the production loader, including catchain IDs, protocol version,
   QUIC selection, and the maximum-block-height coefficient.
