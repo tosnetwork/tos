@@ -64,13 +64,8 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   };
   class Callback {
    public:
-    virtual td::Status on_connected(QuicConnectionId, td::SecureString, bool) {
-      return td::Status::Error("on_connected callback is not implemented");
-    }
     virtual td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
-                                    td::SecureString peer_public_key, bool is_outbound) {
-      return on_connected(cid, std::move(peer_public_key), is_outbound);
-    }
+                                    td::SecureString peer_public_key, bool is_outbound) = 0;
     virtual td::Status on_stream(QuicConnectionId cid, QuicStreamID sid, td::BufferSlice data, bool is_end) = 0;
     virtual void on_closed(QuicConnectionId cid) = 0;
     virtual void on_stream_closed(QuicConnectionId cid, QuicStreamID sid) = 0;
@@ -81,11 +76,7 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     virtual td::Timestamp next_alarm() const {
       return td::Timestamp::never();
     }
-    virtual void set_peer_mtu_callback(std::function<td::uint64(adnl::AdnlNodeIdShort)>) {
-    }
-    virtual void set_peer_mtu_callback(std::function<td::uint64(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort)> f) {
-      set_peer_mtu_callback([f = std::move(f)](adnl::AdnlNodeIdShort peer_id) { return f({}, peer_id); });
-    }
+    virtual void set_peer_mtu_callback(std::function<td::uint64(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort)> f) = 0;
     virtual ~Callback() = default;
   };
 
@@ -96,9 +87,8 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   td::Result<QuicStreamID> send_stream(QuicConnectionId cid, std::variant<QuicStreamID, StreamOptions> stream,
                                        td::BufferSlice data, bool is_end);
 
-  td::Result<QuicConnectionId> connect(td::Slice host, int port, td::Ed25519::PrivateKey client_key, td::Slice alpn);
-  td::Result<QuicConnectionId> connect_with_sni(td::Slice host, int port, td::Ed25519::PrivateKey client_key,
-                                                td::Slice alpn, td::Slice sni);
+  td::Result<QuicConnectionId> connect(td::Slice host, int port, td::Ed25519::PrivateKey client_key, td::Slice alpn,
+                                       td::Slice sni);
 
   void shutdown_stream(QuicConnectionId cid, QuicStreamID sid);
   void on_connection_closed(QuicConnectionId cid);
@@ -118,12 +108,6 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
                                                             td::Slice alpn = "tos", td::Slice bind_host = "0.0.0.0");
   static td::Result<td::actor::ActorOwn<QuicServer>> create(int port, std::unique_ptr<Callback> callback,
                                                             td::uint64 default_mtu, ServerIdentity identity,
-                                                            td::Slice alpn, td::Slice bind_host, Options options);
-  static td::Result<td::actor::ActorOwn<QuicServer>> create(int port, td::Ed25519::PrivateKey server_key,
-                                                            std::unique_ptr<Callback> callback, td::uint64 default_mtu,
-                                                            td::Slice alpn, td::Slice bind_host);
-  static td::Result<td::actor::ActorOwn<QuicServer>> create(int port, td::Ed25519::PrivateKey server_key,
-                                                            std::unique_ptr<Callback> callback, td::uint64 default_mtu,
                                                             td::Slice alpn, td::Slice bind_host, Options options);
 
   struct Stats {

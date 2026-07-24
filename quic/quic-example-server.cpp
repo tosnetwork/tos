@@ -19,7 +19,8 @@ class QuicHttpServer : public td::actor::Actor {
     explicit ServerCallback(td::actor::ActorId<QuicHttpServer> server) : server_(std::move(server)) {
     }
 
-    td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString public_key, bool is_outbound) override {
+    td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString public_key,
+                            bool is_outbound) override {
       td::actor::send_closure(server_, &QuicHttpServer::on_connected, cid, std::move(public_key));
       return td::Status::OK();
     }
@@ -40,7 +41,7 @@ class QuicHttpServer : public td::actor::Actor {
     void on_stream_closed(tos::quic::QuicConnectionId cid, tos::quic::QuicStreamID sid) override {
     }
 
-    void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort)> f) override {
+    void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort)> f) override {
     }
 
    private:
@@ -60,7 +61,9 @@ class QuicHttpServer : public td::actor::Actor {
     auto public_key_b64 = td::base64_encode(public_key_r.ok().as_octet_string().as_slice());
 
     auto cb = std::make_unique<ServerCallback>(actor_id(this));
-    auto R = tos::quic::QuicServer::create(port_, std::move(server_key_), std::move(cb), 1 << 20, alpn_.as_slice(),
+    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(public_key_r.ok()))).compute_short_id();
+    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = std::move(server_key_)};
+    auto R = tos::quic::QuicServer::create(port_, std::move(cb), 1 << 20, std::move(identity), alpn_.as_slice(),
                                            bind_host_.as_slice());
     if (R.is_error()) {
       LOG(ERROR) << "failed to start QUIC server: " << R.error();

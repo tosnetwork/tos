@@ -481,7 +481,8 @@ class RawQuicCallback final : public tos::quic::QuicServer::Callback {
     server_ = server;
   }
 
-  td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, bool is_outbound) override {
+  td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString,
+                          bool is_outbound) override {
     state_->remember_connection(cid, is_outbound);
     return td::Status::OK();
   }
@@ -501,7 +502,7 @@ class RawQuicCallback final : public tos::quic::QuicServer::Callback {
     state_->remember_closed_stream(sid);
   }
 
-  void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort)>) override {
+  void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort)>) override {
   }
 
  private:
@@ -546,7 +547,10 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
     auto callback = std::make_unique<RawQuicCallback>(state);
     auto* callback_ptr = callback.get();
-    auto server_result = tos::quic::QuicServer::create(port, clone_quic_key(key), std::move(callback), 4096, "tos",
+    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
+                        .compute_short_id();
+    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = clone_quic_key(key)};
+    auto server_result = tos::quic::QuicServer::create(port, std::move(callback), 4096, std::move(identity), "tos",
                                                        "127.0.0.1", options);
     ASSERT_TRUE(server_result.is_ok());
     auto server = server_result.move_as_ok();
@@ -560,7 +564,7 @@ class RawQuicTestRunner final : public td::actor::Actor {
       RawQuicEndpoint& client, RawQuicEndpoint& server) {
     auto outbound_cid_result =
         co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), server.port,
-                                clone_quic_key(client.key), td::Slice("tos"))
+                                clone_quic_key(client.key), td::Slice("tos"), td::Slice(""))
             .wrap();
     LOG_CHECK(outbound_cid_result.is_ok()) << "connect failed: " << outbound_cid_result.error();
     auto outbound_cid = outbound_cid_result.move_as_ok();

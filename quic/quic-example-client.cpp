@@ -15,7 +15,8 @@ class QuicTester : public td::actor::Actor {
     explicit Callback(td::actor::ActorId<QuicTester> tester) : tester_(std::move(tester)) {
     }
 
-    td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString public_key, bool is_outbound) override {
+    td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString public_key,
+                            bool is_outbound) override {
       auto public_key_b64 = td::base64_encode(public_key.as_slice());
       LOG(INFO) << "connected";
       LOG(INFO) << "server public key: " << public_key_b64;
@@ -43,7 +44,7 @@ class QuicTester : public td::actor::Actor {
     void on_stream_closed(tos::quic::QuicConnectionId cid, tos::quic::QuicStreamID sid) override {
     }
 
-    void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort)> f) override {
+    void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort)> f) override {
     }
 
    private:
@@ -62,8 +63,11 @@ class QuicTester : public td::actor::Actor {
     }
 
     auto cb = std::make_unique<Callback>(actor_id(this));
-    auto R = tos::quic::QuicServer::create(local_port_, std::move(client_key_), std::move(cb), 1 << 20,
-                                           alpn_.as_slice(), "0.0.0.0");
+    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(client_key_.get_public_key().move_as_ok())))
+                        .compute_short_id();
+    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = std::move(client_key_)};
+    auto R = tos::quic::QuicServer::create(local_port_, std::move(cb), 1 << 20, std::move(identity), alpn_.as_slice(),
+                                           "0.0.0.0");
     if (R.is_error()) {
       LOG(ERROR) << "failed to start local QUIC client: " << R.error();
       std::exit(1);
@@ -79,7 +83,7 @@ class QuicTester : public td::actor::Actor {
     }
 
     send_closure(server_, &tos::quic::QuicServer::connect, host_.as_slice(), port_, client_key_copy_r.move_as_ok(),
-                 alpn_.as_slice());
+                 alpn_.as_slice(), td::Slice(""));
   }
 
   void on_connected(tos::quic::QuicConnectionId cid) {
