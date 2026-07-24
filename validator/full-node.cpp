@@ -663,9 +663,12 @@ void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast final
   if (send_to_custom) {
     send_block_finality_broadcast_to_custom_overlays(finality);
   }
-  td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_finality_broadcast, std::move(finality),
-                 source)
-      .detach();
+  // Start the manager task explicitly so failures are surfaced instead of
+  // being silently discarded by Task::detach().  Broadcast ingress is
+  // best-effort, but an unavailable manager must remain observable.
+  std::move(td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_finality_broadcast,
+                           std::move(finality), source))
+      .detach("full-node finality broadcast");
 }
 
 void FullNodeImpl::process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
@@ -674,9 +677,9 @@ void FullNodeImpl::process_block_candidate_broadcast(BlockIdExt block_id, Catcha
   if (send_to_custom) {
     send_block_candidate_broadcast_to_custom_overlays(block_id, cc_seqno, validator_set_hash, data);
   }
-  td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_candidate_broadcast, block_id, cc_seqno,
-                 std::move(data), source)
-      .detach();
+  std::move(td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_candidate_broadcast, block_id,
+                           cc_seqno, std::move(data), source))
+      .detach("full-node candidate broadcast");
 }
 
 void FullNodeImpl::process_shard_block_info_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,

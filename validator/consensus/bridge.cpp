@@ -5,6 +5,7 @@
  */
 
 #include "td/db/RocksDb.h"
+#include "td/utils/LRUCache.h"
 #include "td/utils/port/path.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
@@ -201,7 +202,11 @@ class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
   static bool should_be_spawned(const Bus& bus) {
-    return bus.config.enable_plumtree_broadcast();
+    // Keep the relay actor available for validators and private-overlay
+    // observers, matching the consensus actor lifecycle.  Plumtree remains a
+    // per-event transport gate below, so disabling it does not cause an
+    // unnecessary candidate broadcast.
+    return bus.is_validator() || bus.config.observers_in_private_overlay();
   }
 
   template <>
@@ -211,16 +216,51 @@ class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td
 
   template <>
   void handle(BusHandle bus, std::shared_ptr<const CandidateReceived> event) {
-    if (event->candidate->is_empty()) {
+    if (!bus->config.enable_plumtree_broadcast()) {
       return;
     }
+    send_candidate(*bus, event->candidate);
+  }
 
+  template <>
+  void handle(BusHandle bus, std::shared_ptr<const FinalizeBlock> event) {
+    if (!bus->config.enable_plumtree_broadcast()) {
+      return;
+    }
+    // A candidate may be finalized without its CandidateReceived event reaching
+    // this relay. Re-broadcast recent non-empty candidates as a bounded
+    // recovery path; older candidates are already covered by normal sync.
+    if (event->candidate->is_empty() ||
+        (last_mc_finalized_seqno_ >= 2 &&
+         event->candidate->block_id().seqno() + 4 <= last_mc_finalized_seqno_)) {
+      return;
+    }
+    send_candidate(*bus, event->candidate);
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const BlockFinalizedInMasterchain> event) {
+    last_mc_finalized_seqno_ = std::max(last_mc_finalized_seqno_, event->block.seqno());
+  }
+
+ private:
+  void send_candidate(const Bus &bus, const CandidateRef &candidate) {
+    if (candidate->is_empty()) {
+      return;
+    }
+    const auto &block = std::get<BlockCandidate>(candidate->block);
+    if (sent_candidates_.contains(block.id)) {
+      return;
+    }
+    sent_candidates_.put(block.id, td::Unit{});
     constexpr int mode = fullnode::FullNode::broadcast_mode_custom | fullnode::FullNode::broadcast_mode_fast_sync |
                          fullnode::FullNode::broadcast_mode_public;
-    const auto& block = std::get<BlockCandidate>(event->candidate->block);
-    td::actor::send_closure(bus->manager, &ManagerFacade::send_block_candidate_broadcast, block.id, block.data.clone(),
+    td::actor::send_closure(bus.manager, &ManagerFacade::send_block_candidate_broadcast, block.id, block.data.clone(),
                             mode);
   }
+
+  td::LRUCache<BlockIdExt, td::Unit> sent_candidates_{256};
+  BlockSeqno last_mc_finalized_seqno_ = 0;
 };
 
 struct BridgeCreationParams {

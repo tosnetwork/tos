@@ -20,7 +20,7 @@ The current comparison was verified directly against these local commits:
 
 | Repository | Commit |
 |---|---|
-| TOS (`~/tos`) | `51e810a935328fe7c3490d8cff02f2849d83c4e4` |
+| TOS (`~/tos`) | `94615dc6d` |
 | TON reference (`~/ton-c`) | `bbc3bc6d52abbe3a7f852b22050708166fdaafbc` |
 
 Statements in Section 2 describe only those revisions. Later upstream changes
@@ -38,8 +38,8 @@ on-chain behavior.
 
 ### 1.2 Merge implementation status
 
-Progress snapshot: 2026-07-23. The implementation is based on TOS commit
-`23136287cf6cc06994074e4b99b3694b703bac4a`. The pinned TON comparison reference
+Progress snapshot: 2026-07-24. The implementation is based on TOS commit
+`94615dc6d`. The pinned TON comparison reference
 remains `bbc3bc6d52abbe3a7f852b22050708166fdaafbc`.
 
 Status definitions:
@@ -64,7 +64,7 @@ itself says **Completed ✅**.
 | 2. Candidate codec | Coding complete ✅ / pending validation | ✅ Consensus-layer payload API, combined BOC/LZ4/improved codec, negative-size and integer/size hardening, malformed-input rejection, high-compression-ratio coverage, and configured-maximum coverage | Expand the compression-abuse corpus and collect repeatable peak-memory evidence |
 | 3. Block-sync overlay | Coding complete ✅ / pending validation | ✅ Protocol-v1 private overlay, validator authorization, expected-collator precheck, payload bounds, and misbehavior reporting | Run recovery, restart, duplicate/reorder, partition, flood, queue-pressure, and bandwidth validation |
 | 4. Observer and relay | Coding complete ✅ / pending validation | ✅ Protocol-v2 candidate relay, manager/full-node broadcast API adaptation, optional validator/ADNL message identity, validator-only authority gates, protocol-v1 block-sync observers, independently keyed manager observer-group lifecycle, read-only observer Pool/CandidateResolver operation, arbitrary-member candidate queries, and bounded candidate caching | Run authorization, eviction, removal/liveness, query-abuse, and relay-loop validation |
-| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, and a selective data-forwarding fault, and fault-injected Simplex consensus tests are adapted to TOS | Run end-to-end candidate/finality arrival ordering, manager-ingress invalid-signature, authorization, eviction, relay-loop, actual membership churn, Byzantine selective-forwarding, and release-scale packet-loss and partition validation |
+| 5. Plumtree | Coding complete ✅ / pending validation | ✅ Overlay core, TL messages, eager/lazy peers, FEC trees, repair, AnySender authorization, statistics, public, fast-sync, and custom-overlay candidate/finality paths, bounded candidate/finality reconciliation with tested finality-cache precedence, proof generation, validator-side shard-block-description generation, cryptographic finality-signature mutation checks, deduplicated CandidateReceived/FinalizeBlock fallback relay, the upstream graph simulator with deterministic packet loss, temporary and rotating node isolation, and a selective data-forwarding fault, and fault-injected Simplex consensus tests are adapted to TOS | Run end-to-end manager-ingress error propagation, eviction, relay-loop, actual membership churn, Byzantine selective-forwarding, and release-scale packet-loss and partition validation |
 | 6. Structural refactoring | Optional; no activation blocker | ✅ Consensus payload boundary and collator-schedule file separation are aligned; BusRuntime conditionally spawns actors through `should_be_spawned` as required by the Simplex2 actor topology; TOS session-specific database paths were reviewed at a high level | Perform further semantic DB/network-state refactoring only if later evidence requires it |
 | Activation | Coding complete ✅ / pending release validation | ✅ The first-testnet zerostate writes `#22` with protocol v2 and QUIC enabled; validator startup supports versions 0–2 and rejects version 3 | Complete phases 1–5 exit criteria, define rollback procedure, and run a 72-hour multi-region soak |
 
@@ -93,6 +93,7 @@ Completed targeted validation:
 - [x] ✅ FEC and simple Plumtree static selective-forwarding simulations
 - [x] ✅ Overlay privacy-rule authorization and AnySender rejection cases
 - [x] ✅ FEC and simple 20-broadcast 256 KiB performance stress runs
+- [x] ✅ Manager-ingress tasks now use observable detached completion logging
 - [ ] End-to-end manager-ingress, authorization, eviction, relay-loop,
   membership-churn, Byzantine, performance, and multi-region validation
 
@@ -161,6 +162,15 @@ Completed targeted validation:
   only when the local identity is not configured as a block sender for that
   overlay. The existing per-block relay caches remain the final duplicate-loop
   guard.
+- Candidate relay deduplicates block IDs, tracks the latest finalized
+  masterchain sequence, and re-broadcasts a recent non-empty candidate when a
+  `FinalizeBlock` event arrives without a prior `CandidateReceived` event.
+- Full-node candidate and finality ingress starts manager tasks with labeled
+  detached completion logging, so actor/task failures are visible while the
+  broadcast path remains best-effort.
+- Candidate relay actor lifetime follows the consensus baseline: validators
+  and private-overlay observers host the actor, while each event still checks
+  the Plumtree ConfigParam30 gate before forwarding.
 - The upstream Plumtree graph simulator is adapted to TOS. It exercises the
   real overlay actor, Plumtree implementation, TL messages, signatures, repair
   query transport, deterministic graph topology, geographic latency/jitter,
