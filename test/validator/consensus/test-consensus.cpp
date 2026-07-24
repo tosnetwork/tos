@@ -11,6 +11,7 @@
 #include "block/validator-set.h"
 #include "consensus/simplex/bus.h"
 #include "consensus/utils.h"
+#include "overlay/overlays.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
 #include "td/db/MemoryKeyValue.h"
@@ -1021,6 +1022,18 @@ void test_configured_maximum_candidate() {
 }  // namespace
 
 int main(int argc, char *argv[]) {
+  {
+    auto authorized = from_hex("1111111111111111111111111111111111111111111111111111111111111111");
+    auto unauthorized = from_hex("2222222222222222222222222222222222222222222222222222222222222222");
+    std::map<PublicKeyHash, td::uint32> keys{{PublicKeyHash{authorized}, 1024}};
+    overlay::OverlayPrivacyRules rules{1024, overlay::CertificateFlags::AllowFec, std::move(keys)};
+    CHECK(rules.check_rules(PublicKeyHash{authorized}, 512, true, true) == overlay::BroadcastCheckResult::Allowed);
+    CHECK(rules.check_rules(PublicKeyHash{authorized}, 2048, true, true) == overlay::BroadcastCheckResult::Forbidden);
+    CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 512, true, true) == overlay::BroadcastCheckResult::Forbidden);
+    CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 512, true, false) == overlay::BroadcastCheckResult::NeedCheck);
+    CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 2048, false, false) == overlay::BroadcastCheckResult::Forbidden);
+  }
+
   CHECK(should_replace_pending_finality(false, false, false));
   CHECK(should_replace_pending_finality(false, false, true));
   CHECK(!should_replace_pending_finality(true, false, false));

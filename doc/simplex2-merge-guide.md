@@ -91,6 +91,8 @@ Completed targeted validation:
 - [x] ✅ FEC and simple Plumtree packet-loss simulations
 - [x] ✅ FEC and simple Plumtree temporary and rotating outage simulations
 - [x] ✅ FEC and simple Plumtree static selective-forwarding simulations
+- [x] ✅ Overlay privacy-rule authorization and AnySender rejection cases
+- [x] ✅ FEC and simple 20-broadcast 256 KiB performance stress runs
 - [ ] End-to-end manager-ingress, authorization, eviction, relay-loop,
   membership-churn, Byzantine, performance, and multi-region validation
 
@@ -199,6 +201,9 @@ Release validation is intentionally still staged.
   bit-flipped signature and a mismatched validator-set hash through the
   production `BlockSignatureSet` verifier. The negative copies use independent
   buffers and do not mutate the live consensus certificate.
+- ✅ Overlay privacy rules reject unauthorized AnySender broadcasts, enforce
+  authorized-key size limits, and distinguish authenticated `NeedCheck` traffic
+  from trusted and forbidden traffic.
 - ✅ The manager's finality-cache policy is exercised for empty-cache
   insertion, duplicate approve/final sets, approve-to-final upgrade, and
   final-to-approve downgrade rejection. The production manager calls the same
@@ -229,6 +234,9 @@ Release validation is intentionally still staged.
 - A 20-broadcast stress run in both FEC and simple modes, using 256 KiB
   payloads, 0.5 relative latency jitter, and a 1 MB/s per-message bandwidth
   model, delivered every broadcast to all 12 expected nodes.
+- ✅ The same 20-broadcast FEC and simple stress profiles run as CTests and
+  complete successfully. They provide a deterministic local performance
+  regression gate, not production capacity or multi-region evidence.
 - The complete `test-consensus` target builds.
 - The `test-runtime` suite passes all eight cases, including the upstream
   provider-order test used by the default collator-schedule injection path.
@@ -574,9 +582,10 @@ broadcast validation integration are ported. Short fault-injected Simplex
 consensus tests cover protocol-message loss, process restart, and temporary
 single-node isolation with explicit liveness thresholds. Transport-specific
 runtime coverage for end-to-end candidate/finality arrival ordering,
-manager-ingress invalid signatures, authorization, eviction, relay loops,
-churn, and Byzantine selective forwarding remains open. Finality-cache
-precedence and signature-verifier mutation cases are now covered directly.
+manager-ingress invalid signatures, eviction, relay loops, actual membership
+churn, and adaptive Byzantine selective forwarding remains open. Overlay
+privacy-rule authorization and local performance regression are covered
+directly; production capacity and multi-region soak evidence remain open.
 Deterministic short simulator tests now cover packet loss, temporary
 single-node isolation, rotating temporary outages, and one static selective
 data-forwarding omission. Actual membership churn, release-scale packet-loss

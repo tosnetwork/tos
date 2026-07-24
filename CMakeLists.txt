@@ -736,6 +736,12 @@ add_test(NAME plumtree-graph-sim-simple-selective-forwarding
 add_test(NAME plumtree-graph-sim-simple-rotating-outage
   COMMAND plumtree-graph-sim --smoke --broadcast-mode simple --isolate-node 4
           --isolate-broadcasts 4 --rotate-isolated-node --broadcast-count 5 --seed 41)
+add_test(NAME plumtree-graph-sim-fec-stress
+  COMMAND plumtree-graph-sim --smoke --payload-bytes 262144 --jitter 0.5
+          --bandwidth-mb 1 --broadcast-count 20 --seed 43)
+add_test(NAME plumtree-graph-sim-simple-stress
+  COMMAND plumtree-graph-sim --smoke --broadcast-mode simple --payload-bytes 262144
+          --jitter 0.5 --bandwidth-mb 1 --broadcast-count 20 --seed 47)
 add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-catchain test/test-catchain.cpp)
 target_link_libraries(test-catchain overlay tdutils tdactor adnl adnltest rldp tl_api dht
