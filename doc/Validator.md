@@ -23,6 +23,37 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 - persistent database directory
 - Fift scripts directory
 
+## Production Hardware Requirements
+
+The following requirements apply to a normal TOS validator participating in
+consensus. They assume a 64-bit Ubuntu 22.04 or 24.04 host, a validator
+binary built with the production configuration, and a node that is not also
+running unrelated workloads.
+
+| Resource | Minimum configuration | Recommended production configuration |
+|----------|-----------------------|---------------------------------------|
+| CPU | 2 physical or virtual cores | 4 or more vCPUs |
+| Memory | 4 GB RAM | 8 GB RAM or more |
+| Storage | 100 GB SSD | 200–500 GB NVMe SSD |
+| Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 100 Mbps symmetric bandwidth; at least 2 TB monthly transfer |
+| Operating system | Ubuntu 22.04 or 24.04, 64-bit | Ubuntu 24.04, 64-bit, with a dedicated host or VPS |
+
+The minimum configuration is suitable for initial synchronization and a
+lightly loaded testnet validator. It is not a capacity guarantee for a busy
+production network. Operators must leave free disk capacity for the RocksDB
+database, logs, snapshots, temporary synchronization data, and future chain
+growth; do not provision a disk that is already close to full.
+
+For CPU-intensive mining, collation, or other workloads running alongside
+validation, use at least 8 vCPUs and increase memory and storage based on the
+measured workload. A GPU is not required for ordinary validator
+synchronization or consensus participation.
+
+Monitor CPU, RSS, database size, disk free space, network transfer, and block
+height continuously. If the node is expected to retain a long archive or
+serve public full-node queries, provision substantially more storage than the
+minimum or recommended values above.
+
 ## Starting the Validator Engine
 
 ```bash
