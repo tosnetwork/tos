@@ -25,6 +25,7 @@
 #include "td/utils/port/Clocks.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/port/path.h"
 #include "vm/cells/CellTraits.h"
 #include "vm/cells/DataCell.h"
@@ -76,6 +77,7 @@ bool memory_diagnostics_enabled() {
 }
 
 void record_state_mmap(td::uint64 bytes) {
+  td::memory_tracker_alloc(td::MemoryTrackerCategory::StateSync, bytes);
   auto current = g_state_mmap_stats.current_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
   auto peak = g_state_mmap_stats.peak_bytes.load(std::memory_order_relaxed);
   while (current > peak &&
@@ -93,6 +95,7 @@ void record_state_mmap(td::uint64 bytes) {
 }
 
 void record_state_unmap(td::uint64 bytes) {
+  td::memory_tracker_free(td::MemoryTrackerCategory::StateSync, bytes);
   g_state_mmap_stats.current_bytes.fetch_sub(bytes, std::memory_order_relaxed);
   g_state_mmap_stats.active_mappings.fetch_sub(1, std::memory_order_relaxed);
   g_state_mmap_stats.unmap_count.fetch_add(1, std::memory_order_relaxed);

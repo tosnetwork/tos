@@ -23,6 +23,7 @@ extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp
 #include "td/utils/base64.h"
 #include "td/utils/format.h"
 #include "td/utils/misc.h"
+#include "td/utils/memory-tracker.h"
 #include "validator/validator.h"
 #include "vm/cells/ExtCell.h"
 #include "vm/cellslice.h"
@@ -123,6 +124,18 @@ void trim_allocator_after_cache_drop(std::optional<td::uint64> rss_before_drop) 
       LOG(WARNING) << "CellDB V2 allocator trim released approx "
                    << td::format::as_size(*rss_before_drop - *rss_after) << " RSS";
     }
+    auto &tracker = td::memory_tracker_stats();
+    auto log_tracker = [&](td::MemoryTrackerCategory category, const char *name) {
+      auto &stats = tracker[static_cast<size_t>(category)];
+      LOG(INFO) << "memory tracker category=" << name
+                << " current_bytes=" << stats.current_bytes.load(std::memory_order_relaxed)
+                << " peak_bytes=" << stats.peak_bytes.load(std::memory_order_relaxed)
+                << " alloc_count=" << stats.alloc_count.load(std::memory_order_relaxed)
+                << " free_count=" << stats.free_count.load(std::memory_order_relaxed);
+    };
+    log_tracker(td::MemoryTrackerCategory::CellDb, "CellDb");
+    log_tracker(td::MemoryTrackerCategory::StateSync, "StateSync");
+    log_tracker(td::MemoryTrackerCategory::Network, "Network");
   }
 }
 
@@ -867,9 +880,18 @@ struct CellInfoStorage {
 
   void on_cell_created() {
     size_t new_size = size_.fetch_add(1, std::memory_order_relaxed) + 1;
+    td::memory_tracker_alloc(td::MemoryTrackerCategory::CellDb, sizeof(CellInfo));
     size_t prev_peak = peak_size_.load(std::memory_order_relaxed);
     while (new_size > prev_peak &&
            !peak_size_.compare_exchange_weak(prev_peak, new_size, std::memory_order_relaxed)) {
+    }
+  }
+
+ public:
+  ~CellInfoStorage() {
+    auto count = size_.load(std::memory_order_relaxed);
+    if (count != 0) {
+      td::memory_tracker_free(td::MemoryTrackerCategory::CellDb, count * sizeof(CellInfo));
     }
   }
 

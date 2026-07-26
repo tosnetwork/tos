@@ -853,6 +853,33 @@ void CellDbIn::flush_db_stats() {
     ss << "tos.celldb." << key << " " << value << "\n";
   }
 
+  // Diagnostic only: rocksdb.block-cache-usage/-pinned-usage report the
+  // block cache's *actual current* occupancy, unlike the cumulative
+  // tickers above (hit/miss/add counts, reset every flush). This is here
+  // to answer a specific open question from the node3 RSS investigation
+  // (see doc/celldb-v2-node3-rss-growth-2026-07-26.md): whether steady
+  // jemalloc allocated-byte growth, independent of the CellDB V2 app-level
+  // cache, comes from the RocksDB block cache exceeding its configured
+  // --celldb-cache-size capacity, and whether that's because entries are
+  // pinned (held by a live Cache::Handle/iterator, hence unevictable
+  // regardless of capacity) rather than simply mis-sized.
+  if (auto* rocks_db = dynamic_cast<td::RocksDb*>(cell_db_.get())) {
+    if (auto raw_db = rocks_db->raw_db()) {
+      std::string value;
+      auto add_property = [&](const char* property) {
+        if (raw_db->GetProperty(property, &value)) {
+          ss << property << " " << value << "\n";
+        }
+      };
+      add_property("rocksdb.block-cache-capacity");
+      add_property("rocksdb.block-cache-usage");
+      add_property("rocksdb.block-cache-pinned-usage");
+      add_property("rocksdb.cur-size-all-mem-tables");
+      add_property("rocksdb.estimate-table-readers-mem");
+      add_property("rocksdb.num-snapshots");
+    }
+  }
+
   auto stats =
       td::RocksDb::statistics_to_string(statistics_) + snapshot_statistics_->to_string() + ss.as_cslice().str();
   td::actor::send_closure(parent_, &CellDb::flush_db_stats, std::move(stats));
