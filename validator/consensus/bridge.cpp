@@ -156,6 +156,13 @@ class DbImpl : public Db {
         .ensure();
     return result;
   }
+  td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
+    auto result = co_await writer_.get(std::move(key));
+    if (result.status == td::KeyValueReader::GetStatus::Ok) {
+      co_return std::move(result.value);
+    }
+    co_return std::nullopt;
+  }
   td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) override {
     auto result = co_await writer_.set(std::move(key), std::move(value)).wrap();
     if (result.is_error() && result.error().code() != ErrorCode::cancelled) {

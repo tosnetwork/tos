@@ -170,6 +170,10 @@ class Db {
   // `set` waits for syncing data to disk
   virtual std::optional<td::BufferSlice> get(td::Slice key) const = 0;
   virtual std::vector<std::pair<td::BufferSlice, td::BufferSlice>> get_by_prefix(td::uint32 prefix) const = 0;
+  // Point lookup against the current database state. Unlike get(), this sees
+  // successful writes performed by this process. Keep it asynchronous so the
+  // RocksDB access remains serialized through KeyValueAsync.
+  virtual td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const = 0;
   virtual td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) = 0;
   virtual td::actor::Task<> close() = 0;
 };

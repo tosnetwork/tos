@@ -10,6 +10,7 @@
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "consensus/simplex/bus.h"
+#include "consensus/simplex/completed-lru.h"
 #include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
 #include "consensus/candidate-relay-policy.h"
@@ -118,6 +119,7 @@ double ADAPTIVE_BYZANTINE_PERIOD = 0.5;
 bool MALICIOUS_OBSERVER_ATTACK = false;
 bool RELAY_LOOP_TEST = false;
 bool QUERY_ABUSE_TEST = false;
+double CATCH_UP_DOWNTIME = -1.0;
 
 std::pair<double, double> DB_DELAY = {0.0, 0.0};
 std::pair<double, double> COLLATION_TIME = {0.0, 0.0};
@@ -512,6 +514,8 @@ class TestDbImpl : public consensus::Db {
   struct DbInner {
     std::map<td::BufferSlice, td::BufferSlice> map;
     std::mutex mutex;
+    size_t latest_get_count = 0;
+    size_t latest_found_count = 0;
   };
 
   explicit TestDbImpl(std::shared_ptr<DbInner> db) : db_(std::move(db)) {
@@ -538,6 +542,16 @@ class TestDbImpl : public consensus::Db {
       result.emplace_back(it->first.clone(), it->second.clone());
     }
     return result;
+  }
+  td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
+    std::scoped_lock lock(db_->mutex);
+    ++db_->latest_get_count;
+    auto it = db_->map.find(key);
+    if (it == db_->map.end()) {
+      co_return std::nullopt;
+    }
+    ++db_->latest_found_count;
+    co_return it->second.clone();
   }
   td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) override {
     co_await td::actor::coro_sleep(td::Timestamp::in(td::Random::fast(DB_DELAY.first, DB_DELAY.second)));
@@ -705,6 +719,9 @@ class TestConsensus : public td::actor::Actor {
     }
     if (QUERY_ABUSE_TEST) {
       run_query_abuse_test().start().detach();
+    }
+    if (CATCH_UP_DOWNTIME >= 0.0) {
+      run_catch_up_test().start().detach();
     }
 
     run_write_status().start().detach();
@@ -978,6 +995,36 @@ class TestConsensus : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  td::actor::Task<> run_catch_up_test() {
+    // Keep one validator fully offline while the remaining quorum advances,
+    // then restart it with its existing DB. Tiny cache limits in the CTest
+    // command force StateResolver to use both completed-entry eviction and
+    // the live finalized-key lookup while replaying the missing history.
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.5));
+    catch_up_node_idx_ = N_NODES - 1;
+    auto& instance = nodes_[catch_up_node_idx_].instances[0];
+    const BlockSeqno stopped_at = instance.last_accepted_block;
+    co_await stop_instance(catch_up_node_idx_, 0);
+    co_await td::actor::coro_sleep(td::Timestamp::in(CATCH_UP_DOWNTIME));
+    catch_up_target_ = last_accepted_block_.seqno();
+    if (catch_up_target_ < stopped_at + 8) {
+      catch_up_error_ = PSTRING() << "chain advanced only " << (catch_up_target_ - stopped_at)
+                                  << " blocks during catch-up downtime";
+      co_return td::Unit{};
+    }
+
+    start_instance(catch_up_node_idx_, 0);
+    catch_up_restarted_ = true;
+    while (!finishing_) {
+      if (instance.last_accepted_block >= catch_up_target_) {
+        catch_up_completed_ = true;
+        co_return td::Unit{};
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> finalize() {
     finishing_ = true;
     LOG(WARNING) << "TEST FINISHED";
@@ -1021,6 +1068,35 @@ class TestConsensus : public td::actor::Actor {
           PSTRING() << "candidate query rate limit was not enforced: accepted=" << query_abuse_accepted_
                     << " rejected=" << query_abuse_rejected_);
     }
+    if (CATCH_UP_DOWNTIME >= 0.0) {
+      if (!catch_up_error_.empty()) {
+        co_return td::Status::Error(catch_up_error_);
+      }
+      if (!catch_up_restarted_ || !catch_up_completed_) {
+        co_return td::Status::Error(
+            PSTRING() << "catch-up node did not reach restart target " << catch_up_target_
+                      << " (restarted=" << catch_up_restarted_ << ", completed=" << catch_up_completed_ << ")");
+      }
+      const auto caught_up_height = nodes_[catch_up_node_idx_].instances[0].last_accepted_block;
+      if (caught_up_height + 2 < last_accepted_block_.seqno()) {
+        co_return td::Status::Error(PSTRING() << "catch-up node ended at " << caught_up_height
+                                             << " while network finalized " << last_accepted_block_.seqno());
+      }
+      size_t latest_get_count = 0;
+      size_t latest_found_count = 0;
+      for (const auto& node : nodes_) {
+        for (const auto& instance : node.instances) {
+          std::scoped_lock lock(instance.db_inner->mutex);
+          latest_get_count += instance.db_inner->latest_get_count;
+          latest_found_count += instance.db_inner->latest_found_count;
+        }
+      }
+      if (latest_found_count == 0) {
+        co_return td::Status::Error("catch-up test never recovered an evicted finalized ID through live DB lookup");
+      }
+      LOG(WARNING) << "StateResolver live DB lookup coverage: gets=" << latest_get_count
+                   << " found=" << latest_found_count;
+    }
     co_return td::Unit{};
   }
 
@@ -1063,6 +1139,11 @@ class TestConsensus : public td::actor::Actor {
   size_t adaptive_byzantine_epochs_ = 0;
   bool relay_loop_detected_ = false;
   size_t query_abuse_accepted_ = 0;
+  size_t catch_up_node_idx_ = 0;
+  BlockSeqno catch_up_target_ = 0;
+  bool catch_up_restarted_ = false;
+  bool catch_up_completed_ = false;
+  std::string catch_up_error_;
   size_t query_abuse_rejected_ = 0;
   bool query_abuse_completed_ = false;
   bool finishing_ = false;
@@ -1207,6 +1288,33 @@ void test_candidate_relay_eviction() {
   CHECK(deduplicator.should_relay(block_ids.front()));
   CHECK(!deduplicator.should_relay(block_ids.front()));
   CHECK(deduplicator.should_relay(block_ids[1]));
+}
+
+void test_state_resolver_completed_lru() {
+  simplex::CompletedLru<int> lru{3};
+  CHECK(lru.capacity() == 3);
+  CHECK(!lru.touch(1).has_value());
+  CHECK(!lru.touch(2).has_value());
+  CHECK(!lru.touch(3).has_value());
+  CHECK(lru.size() == 3);
+
+  // A hit makes 1 most-recent, so inserting 4 must evict 2.
+  CHECK(!lru.touch(1).has_value());
+  auto evicted = lru.touch(4);
+  CHECK(evicted.has_value() && *evicted == 2);
+  CHECK(lru.contains(1));
+  CHECK(!lru.contains(2));
+  CHECK(lru.contains(3));
+  CHECK(lru.contains(4));
+
+  // Explicit removal is used by resolver failure paths.
+  lru.erase(3);
+  CHECK(lru.size() == 2);
+  CHECK(!lru.contains(3));
+  CHECK(!lru.touch(5).has_value());
+  evicted = lru.touch(6);
+  CHECK(evicted.has_value() && *evicted == 1);
+  CHECK(lru.size() == lru.capacity());
 }
 
 }  // namespace
@@ -1645,6 +1753,7 @@ int main(int argc, char *argv[]) {
 
   bool run_configured_maximum_candidate_test = false;
   bool run_candidate_relay_eviction_test = false;
+  bool run_state_resolver_cache_unit_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1790,6 +1899,18 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "candidate-relay-eviction-test",
                "fill the candidate-relay LRU and verify oldest-entry eviction",
                [&]() { run_candidate_relay_eviction_test = true; });
+  p.add_option('\0', "state-resolver-cache-unit-test",
+               "verify completed-entry LRU ordering, bounds and failure removal",
+               [&]() { run_state_resolver_cache_unit_test = true; });
+  p.add_checked_option('\0', "catch-up-downtime",
+                       "stop one validator for this many seconds, then require it to catch up",
+                       [&](td::Slice arg) {
+                         CATCH_UP_DOWNTIME = td::to_double(arg);
+                         if (CATCH_UP_DOWNTIME < 0.0) {
+                           return td::Status::Error(PSTRING() << "invalid catch-up downtime " << arg);
+                         }
+                         return td::Status::OK();
+                       });
   p.add_checked_option('\0', "db-delay", "delay before db values are stored to disk (range, default: 0)",
                        [&](td::Slice arg) {
                          TRY_RESULT_ASSIGN(DB_DELAY, parse_range(arg));
@@ -1824,8 +1945,13 @@ int main(int argc, char *argv[]) {
     test_candidate_relay_eviction();
     return 0;
   }
+  if (run_state_resolver_cache_unit_test) {
+    test_state_resolver_completed_lru();
+    return 0;
+  }
   CHECK(N_DOUBLE_NODES <= N_NODES);
   CHECK(ADAPTIVE_BYZANTINE_N < N_NODES);
+  CHECK(CATCH_UP_DOWNTIME < 0.0 || N_NODES >= 4);
 
   td::actor::Scheduler scheduler({7});
   td::actor::ActorOwn<TestConsensus> test;
