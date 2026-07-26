@@ -256,6 +256,74 @@ cache, growing live shard-state working set during sync, or a per-message
 buffer in networking/consensus) and would need its own investigation —
 out of scope for this document's fix.
 
+## Second leak root-caused, fix attempted and then ROLLED BACK after a live regression
+
+Follow-up investigation used `jeprof` (jemalloc heap profiling, `prof:true`
+via a temporary systemd override, never committed to the repo config) to
+symbolize live allocations on node3. A single snapshot's top self-allocator
+was `rocksdb::BlockFetcher::PrepareBufferForBlockFromFile` (~1.4 GiB), which
+looked alarming but was a red herring: a direct read of
+`rocksdb.block-cache-usage` / `rocksdb.block-cache-pinned-usage` via a new
+diagnostic added to `validator/db/celldb.cpp`'s `flush_db_stats()` (still
+present, harmless, read-only) showed the RocksDB block cache sitting almost
+exactly at its configured 1 GiB capacity with negligible (96 B) pinned
+usage — i.e. **healthy and properly bounded, not the leak**.
+
+A `jeprof --base` diff between two dumps ~10 minutes apart (which cancels
+out anything already-stable, like the now-confirmed-healthy block cache)
+isolated the *actually growing* allocations to a call chain rooted in
+`tos::validator::consensus::simplex::StateResolverImpl` resolving
+historical chain state via archived blocks. Reading
+`validator/consensus/simplex/state-resolver.cpp` found the real bug:
+`state_cache_` (`std::map<ParentId, CachedState>`) and `finalized_blocks_`
+(`std::map<CandidateId, FinalizedBlock>`) are only ever erased on the
+resolution-*failure* path — on success (the normal case) an entry is kept
+forever, one per resolved candidate, for the life of the process. This is
+the same bug *class* as the CellDB V2 issue (a cache with no eviction on
+the success path) but in a completely unrelated subsystem.
+
+A fix was written mirroring the finalization-frontier pruning pattern
+already used by `PoolImpl::received_candidates_` in `pool.cpp` (erase
+entries for slots strictly before the newly-finalized slot, skipping any
+entry still in flight to avoid a dangling reference across a `co_await`
+suspension point). It built cleanly, passed all 11
+`test-consensus-simplex2-*` ctest scenarios (including restart/gremlin and
+byzantine scenarios) plus a manual 100+-finalized-block stress run, and was
+deployed to node3.
+
+**On live deployment, node3 exhibited a severe, previously-unseen
+oscillating memory pattern**: RSS spiked to 33-36 GiB within ~10 minutes
+(vs. a prior worst case of 7.2 GiB over ~2 hours), fell back to ~7.7 GiB,
+then spiked again to ~17-22 GiB and stayed there — with jemalloc's own
+`allocated` metric (not just resident/fragmentation) swinging by double-
+digit GiB within single one-minute sampling intervals, and with *no*
+correlated CellDB V2 cache-drop events during the worst of it (ruling that
+mechanism out as the cause of this specific spike). Thread count stayed
+flat at 19 throughout, ruling out a thread-explosion. This pattern —
+recurring large spikes rather than a one-off settling burst — did not
+resolve on its own within ~15 minutes of observation.
+
+Given the temporal correlation with the deploy, and a plausible mechanism
+(pruning `finalized_blocks_`/`state_cache_` too eagerly could force
+`resolve_state_inner`'s fast path — the `is_finalized()` shortcut using
+already-finalized state — to fall back to the slow recursive path more
+often, which could amplify cost significantly during any catch-up/replay
+burst), **the fix was rolled back** (`git restore
+validator/consensus/simplex/state-resolver.cpp`, rebuild, redeploy) rather
+than risk leaving an unverified change live with a worse failure mode than
+the slow leak it was meant to fix. Node3 was restarted on the reverted
+binary to check whether the oscillating pattern was specific to the fix.
+
+**Status: the `state_cache_`/`finalized_blocks_` unbounded-growth bug in
+`state-resolver.cpp` is real and root-caused (see above), but the fix is
+NOT currently applied anywhere** — it was reverted after the live
+regression and needs rework (most likely: prune more conservatively, e.g.
+lag the frontier further behind the latest finalized slot, or confirm
+whether the fast-path/slow-path cost amplification theory is actually what
+happened) plus a stress test that specifically exercises heavy catch-up
+under pruning before it's tried again. The read-only RocksDB block-cache
+diagnostics added to `celldb.cpp` remain in place and are harmless.
+
 ## Deployment note
 
 Verifying this fix required copying the updated
