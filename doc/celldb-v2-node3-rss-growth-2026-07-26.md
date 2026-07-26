@@ -10,6 +10,14 @@ two independent bugs in the V2 CellDb reader cache
 verified against a live restart of node3. Changes are uncommitted pending
 review.
 
+**Update:** a longer live observation (see "Follow-up observation" below)
+found that after these two bugs are fixed, the CellDB V2 cache itself
+behaves correctly (bounded, and purges measurably release memory), but
+total process RSS still climbs afterward at a steady rate driven by a
+separate, not-yet-root-caused source of live allocation. The bugs fixed
+here are confirmed real and confirmed fixed; they are not necessarily the
+only contributor to node3's total memory growth.
+
 ## Scope
 
 In scope:
@@ -203,6 +211,50 @@ insertion volume. Post-sync steady state is unaffected and stays well
 under the cap. If this matters in practice (e.g. very large initial-sync
 windows), a follow-up could check the `force_drop_cache_` flag more
 eagerly during bulk sync rather than only at block-commit boundaries.
+
+## Follow-up observation (2026-07-26, later in the same session) — a separate, still-unexplained growth source
+
+A third restart of node3 was left running longer to see whether RSS
+eventually plateaus. The CellDB V2 fix continued to behave correctly: TTL-
+driven drops stayed small and well-bounded (`cache=40050`, `cache=44469`,
+`cache=39800`, all `force_drop=false`, all well under the 100,000 cap),
+and each purge measurably released a few MB of RSS
+(`released approx 8308KB / 20MB / 8552KB / 8876KB RSS`).
+
+However, total process RSS kept climbing afterward (to ~3.69 GiB by
+`11:48`), which raised the question of whether the reclaim mechanism is
+actually working or whether something else is still leaking. Pulling the
+periodic `JEMALLOC_STATS` log line (`stats.allocated` — jemalloc's count of
+bytes actually handed out and still live, which is a stronger signal than
+RSS because it is not inflated by not-yet-purged fragmentation) shows a
+steady, roughly linear increase that is independent of the CellDB V2 drop
+events:
+
+```
+11:36:33 allocated=2,649,447,864 (~2.47 GiB)
+11:40:33 allocated=2,912,344,288 (~2.71 GiB)
+11:44:33 allocated=3,163,351,792 (~2.95 GiB)
+11:48:33 allocated=3,418,509,096 (~3.18 GiB)
+11:51:33 allocated=3,611,922,704 (~3.36 GiB)
+```
+
+That is ~710 MiB of growth in `stats.allocated` over 15 minutes
+(~47 MiB/min), while the CellDB V2 cache itself stayed under ~45,000
+entries the entire time and its drops only ever released single-digit-to-
+tens-of-MB. This confirms the growth is **not** fragmentation and **not**
+the bug fixed in this document — it is a genuinely separate source of live
+anonymous allocation elsewhere in the process.
+
+This is not yet root-caused. The leading (unverified) hypothesis is that
+this is the RocksDB CellDb block cache (`--celldb-cache-size 1073741824`,
+1 GiB) still warming up toward its configured cap during initial sync,
+which would be expected/benign and should plateau once `allocated` growth
+is roughly 1 GiB above its post-restart baseline. If growth continues
+linearly well past that point, it indicates a second, independent
+unbounded-cache bug elsewhere (candidates: another uncapped in-memory
+cache, growing live shard-state working set during sync, or a per-message
+buffer in networking/consensus) and would need its own investigation —
+out of scope for this document's fix.
 
 ## Deployment note
 
