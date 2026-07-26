@@ -30,19 +30,122 @@ consensus. They assume a 64-bit Ubuntu 22.04 or 24.04 host, a validator
 binary built with the production configuration, and a node that is not also
 running unrelated workloads.
 
-| Resource | Minimum configuration | Recommended production configuration |
+| Resource | Testnet / development minimum | Recommended production configuration (TON-aligned) |
 |----------|-----------------------|---------------------------------------|
-| CPU | 2 physical or virtual cores | 4 or more vCPUs |
-| Memory | 4 GB RAM | 8 GB RAM or more |
-| Storage | 100 GB SSD | 200–500 GB NVMe SSD |
-| Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 100 Mbps symmetric bandwidth; at least 2 TB monthly transfer |
-| Operating system | Ubuntu 22.04 or 24.04, 64-bit | Ubuntu 24.04, 64-bit, with a dedicated host or VPS |
+| CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower TON baseline |
+| Memory | 4 GB RAM | 128 GB RAM |
+| Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
+| Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
+| Operating system | Ubuntu 22.04 or 24.04, 64-bit | Ubuntu 22.04 or 24.04, 64-bit, on a dedicated host |
 
-The minimum configuration is suitable for initial synchronization and a
-lightly loaded testnet validator. It is not a capacity guarantee for a busy
+The production values are aligned with the TON-derived validator-engine,
+consensus, storage, and peer-to-peer operating model used by TOS. The testnet
+minimum is not a production capacity guarantee.
+
+The testnet minimum is suitable for initial synchronization and a lightly
+loaded development network. It is not a capacity guarantee for a busy
 production network. Operators must leave free disk capacity for the RocksDB
 database, logs, snapshots, temporary synchronization data, and future chain
 growth; do not provision a disk that is already close to full.
+
+### Production operating profile
+
+For a production validator, use one validator process per physical host. Do
+not colocate several validators on the same machine unless the deployment is
+explicitly a lab or testnet. The production baseline is:
+
+- 16 dedicated CPU cores (32 hardware threads preferred)
+- 128 GB ECC RAM
+- two enterprise NVMe devices, each 1.92 TB or larger
+- sustained 1 Gbps symmetric connectivity and a fixed public IP
+- redundant power, UPS, remote console, and hardware monitoring
+
+The storage devices should provide predictable low-latency random I/O, not
+just a high sequential benchmark. Keep separate capacity for the database,
+temporary synchronization files, snapshots, and logs. Maintain at least 25%
+free space on each device and replace a device before it reaches its
+endurance or capacity limit.
+
+### State retention and garbage collection
+
+TOS validators are not archival nodes by default. Retention must be bounded so
+that old state and archive data do not grow without limit. The validator
+engine exposes these controls:
+
+```text
+--state-ttl <seconds>    state retention; default 86400 seconds
+--archive-ttl <seconds>  archive retention; default 7 * 86400 seconds
+--permanent-celldb       disable CellDB garbage collection (archival only)
+```
+
+Use the default TTLs for an ordinary validator unless a documented recovery,
+compliance, or archival requirement justifies longer retention. Do not enable
+`--permanent-celldb` on a consensus validator: it disables the storage
+garbage-collection path and can cause unbounded disk growth.
+
+Garbage collection requires free disk space and a healthy database. Monitor
+the GC masterchain position, database size, archive size, and free space; a
+validator that is behind the GC watermark must catch up before old state can
+be deleted.
+
+### CellDB and memory policy
+
+Keep CellDB on RocksDB for production. The normal profile is:
+
+```text
+--celldb-cache-size 1073741824
+```
+
+`--celldb-direct-io` may be evaluated only with a deliberately large CellDB
+cache and a measured workload; the engine does not use direct I/O for small
+cache settings. Do not enable it blindly.
+
+Do not use `--celldb-in-memory` or `--celldb-preload-all` on a normal
+validator. Those modes deliberately trade large amounts of RAM for startup
+or read performance and are intended only for controlled benchmarks or
+dedicated high-memory archival deployments. If memory pressure is observed,
+reduce the CellDB cache, disable diagnostic session logs, and verify that GC
+is advancing before applying a hard process memory limit.
+
+The operating system may report database mappings and allocator arenas as
+resident memory. Track both RSS and allocator statistics before concluding
+that the database itself has leaked memory.
+
+### Logging and observability
+
+Production logging must be bounded. Use log rotation for validator, session,
+and journald output; do not leave `-v3` and unbounded `--session-logs` enabled
+indefinitely on a production host. Preserve enough logs to diagnose consensus
+and networking faults, but cap retention and alert on rapid growth.
+
+At minimum, collect the following per validator:
+
+- finalized masterchain height and height lag against peers
+- process RSS, allocator resident/allocated bytes, and swap usage
+- CellDB cache size, RocksDB write stalls, compaction status, and database size
+- archive/state size and GC watermark
+- CPU utilization, validator thread count, disk latency, and free space
+- peer/session counts, overlay traffic, and reconnect/error rates
+
+The engine has built-in CellDB statistics and optional jemalloc statistics.
+Enable the jemalloc build only for diagnostics, and use the runtime statistics
+signal during an incident rather than enabling expensive profiling on every
+production node.
+
+### Resource limits and upgrades
+
+Use systemd cgroup limits only as a safety net. A hard `MemoryMax` or strict
+`CPUQuota` can interrupt block validation and cause a validator to fall behind.
+Prefer alerting and controlled cache/log reductions; apply a limit only after
+measuring the node's normal and peak working set.
+
+Before an upgrade or configuration change:
+
+1. Confirm at least two other validators are healthy and synchronized.
+2. Record the current masterchain height, database size, RSS, and GC watermark.
+3. Stop one validator gracefully and retain its database and logs.
+4. Upgrade and restart it, then verify finalized blocks and height convergence.
+5. Roll out the change to the remaining validators one at a time.
 
 For CPU-intensive mining, collation, or other workloads running alongside
 validation, use at least 8 vCPUs and increase memory and storage based on the
