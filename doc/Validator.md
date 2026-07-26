@@ -107,6 +107,25 @@ example:
 The default remains 16 GiB; this option only lowers the minimum and does not
 force the cache above `--celldb-cache-size`.
 
+The V2 Cell reader also has an independent entry-count limit. For a low-memory
+test node, use for example:
+
+```text
+--celldb-cell-cache-max-size 100000
+```
+
+The default is 1,000,000 Cell entries. Lowering this value bounds the in-memory
+Cell object cache; it may increase cache misses and disk reads, but does not
+change consensus correctness. To enable the additional arena, mmap, and V2
+Cell-cache diagnostics temporarily, set:
+
+```text
+TOS_MEMORY_DIAGNOSTICS=1
+```
+
+When the variable is unset (the normal production setting), those diagnostic
+logs are disabled.
+
 `--celldb-direct-io` may be evaluated only with a deliberately large CellDB
 cache and a measured workload; the engine does not use direct I/O for small
 cache settings. Do not enable it blindly.
