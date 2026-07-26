@@ -32,6 +32,8 @@
 #include "vm/db/DynamicBagOfCellsDb.h"
 
 #include <atomic>
+#include <cstdlib>
+#include <string_view>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -54,6 +56,55 @@ namespace validator {
 namespace fullnode {
 
 namespace {
+
+struct StateMmapStats {
+  std::atomic<td::uint64> current_bytes{0};
+  std::atomic<td::uint64> peak_bytes{0};
+  std::atomic<td::uint64> active_mappings{0};
+  std::atomic<td::uint64> map_count{0};
+  std::atomic<td::uint64> unmap_count{0};
+};
+
+StateMmapStats g_state_mmap_stats;
+
+bool memory_diagnostics_enabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("TOS_MEMORY_DIAGNOSTICS");
+    return value != nullptr && std::string_view(value) == "1";
+  }();
+  return enabled;
+}
+
+void record_state_mmap(td::uint64 bytes) {
+  auto current = g_state_mmap_stats.current_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
+  auto peak = g_state_mmap_stats.peak_bytes.load(std::memory_order_relaxed);
+  while (current > peak &&
+         !g_state_mmap_stats.peak_bytes.compare_exchange_weak(peak, current, std::memory_order_relaxed)) {
+  }
+  g_state_mmap_stats.active_mappings.fetch_add(1, std::memory_order_relaxed);
+  g_state_mmap_stats.map_count.fetch_add(1, std::memory_order_relaxed);
+  if (memory_diagnostics_enabled()) {
+    LOG(INFO) << "state mmap stats current_bytes=" << current << " peak_bytes="
+              << g_state_mmap_stats.peak_bytes.load(std::memory_order_relaxed)
+              << " active_mappings=" << g_state_mmap_stats.active_mappings.load(std::memory_order_relaxed)
+              << " map_count=" << g_state_mmap_stats.map_count.load(std::memory_order_relaxed)
+              << " unmap_count=" << g_state_mmap_stats.unmap_count.load(std::memory_order_relaxed);
+  }
+}
+
+void record_state_unmap(td::uint64 bytes) {
+  g_state_mmap_stats.current_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+  g_state_mmap_stats.active_mappings.fetch_sub(1, std::memory_order_relaxed);
+  g_state_mmap_stats.unmap_count.fetch_add(1, std::memory_order_relaxed);
+  if (memory_diagnostics_enabled()) {
+    LOG(INFO) << "state mmap stats current_bytes="
+              << g_state_mmap_stats.current_bytes.load(std::memory_order_relaxed)
+              << " peak_bytes=" << g_state_mmap_stats.peak_bytes.load(std::memory_order_relaxed)
+              << " active_mappings=" << g_state_mmap_stats.active_mappings.load(std::memory_order_relaxed)
+              << " map_count=" << g_state_mmap_stats.map_count.load(std::memory_order_relaxed)
+              << " unmap_count=" << g_state_mmap_stats.unmap_count.load(std::memory_order_relaxed);
+  }
+}
 
 // Threshold above which the downloader streams chunks into a tempfile
 // instead of allocating a single contiguous BufferSlice. Sized so typical
@@ -401,6 +452,7 @@ class MmapHandle {
     h.file_ = file;
     h.data_ = static_cast<const char *>(view);
     h.data_size_ = static_cast<std::size_t>(expected_size);
+    record_state_mmap(expected_size);
     return h;
   }
 #else
@@ -446,6 +498,7 @@ class MmapHandle {
     h.data_ = static_cast<const char *>(addr);
     h.data_size_ = static_cast<std::size_t>(expected_size);
     h.fd_ = fd;
+    record_state_mmap(expected_size);
     return h;
   }
 #endif
@@ -459,6 +512,7 @@ class MmapHandle {
         LOG(WARNING) << "UnmapViewOfFile failed: GetLastError=" << err;
       }
       view_ = nullptr;
+      record_state_unmap(data_size_);
     }
     if (mapping_ != nullptr) {
       if (!::CloseHandle(mapping_)) {
@@ -481,6 +535,7 @@ class MmapHandle {
         auto err = errno;
         LOG(WARNING) << "munmap failed: " << std::strerror(err) << " (errno=" << err << ")";
       }
+      record_state_unmap(data_size_);
     }
     if (fd_ >= 0) {
       auto rc = ::close(fd_);

@@ -96,6 +96,17 @@ Keep CellDB on RocksDB for production. The normal profile is:
 --celldb-cache-size 1073741824
 ```
 
+TON-compatible builds use a 16 GiB minimum cache when the two-level index/filter
+is enabled. Low-memory test nodes can override that floor explicitly, for
+example:
+
+```text
+--celldb-cache-size 1073741824 --celldb-cache-min-size 536870912
+```
+
+The default remains 16 GiB; this option only lowers the minimum and does not
+force the cache above `--celldb-cache-size`.
+
 `--celldb-direct-io` may be evaluated only with a deliberately large CellDB
 cache and a measured workload; the engine does not use direct I/O for small
 cache settings. Do not enable it blindly.

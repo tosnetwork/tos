@@ -132,6 +132,9 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   td::optional<td::uint64> get_celldb_cache_size() const override {
     return celldb_cache_size_;
   }
+  td::optional<td::uint64> get_celldb_cache_min_size() const override {
+    return celldb_cache_min_size_;
+  }
   bool get_celldb_direct_io() const override {
     return celldb_direct_io_;
   }
@@ -264,6 +267,15 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_celldb_cache_size(td::uint64 value) override {
     celldb_cache_size_ = value;
   }
+  void set_celldb_cache_min_size(td::uint64 value) override {
+    celldb_cache_min_size_ = value;
+  }
+  td::uint64 get_celldb_cell_cache_max_size() const override {
+    return celldb_cell_cache_max_size_;
+  }
+  void set_celldb_cell_cache_max_size(td::uint64 value) override {
+    celldb_cell_cache_max_size_ = value;
+  }
   void set_celldb_direct_io(bool value) override {
     celldb_direct_io_ = value;
   }
@@ -370,6 +382,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool disable_rocksdb_stats_;
   bool nonfinal_ls_queries_enabled_ = false;
   td::optional<td::uint64> celldb_cache_size_;
+  td::optional<td::uint64> celldb_cache_min_size_;
+  td::uint64 celldb_cell_cache_max_size_{1000000};
   bool celldb_direct_io_ = false;
   bool celldb_preload_all_ = false;
   bool celldb_in_memory_ = false;

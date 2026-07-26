@@ -1,4 +1,6 @@
 #include <optional>
+#include <cstdlib>
+#include <string_view>
 
 #include "td/utils/HashMap.h"
 #include "td/utils/HashSet.h"
@@ -23,6 +25,13 @@
 
 namespace vm {
 namespace {
+bool memory_diagnostics_enabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("TOS_MEMORY_DIAGNOSTICS");
+    return value != nullptr && std::string_view(value) == "1";
+  }();
+  return enabled;
+}
 constexpr bool use_dense_hash_map = true;
 
 template <class F>
@@ -111,12 +120,17 @@ class ArenaPrunnedCellCreator : public ExtCellCreator {
     };
     std::vector<std::unique_ptr<char, Deleter>> arena;
     td::uint64 arena_generation{0};
+    td::uint64 allocated_batches{0};
+    td::uint64 released_batches{0};
+    td::uint64 peak_bytes{0};
 
     td::MutableSlice alloc_batch() {
       auto batch = Deleter::alloc();
       auto res = td::MutableSlice(batch.get(), Deleter::batch_size);
       std::lock_guard<std::mutex> guard(mutex);
       arena.emplace_back(std::move(batch));
+      ++allocated_batches;
+      peak_bytes = std::max(peak_bytes, static_cast<td::uint64>(arena.size()) * Deleter::batch_size);
       return res;
     }
 
@@ -135,6 +149,11 @@ class ArenaPrunnedCellCreator : public ExtCellCreator {
     void clear() {
       std::lock_guard<std::mutex> guard(mutex);
       arena_generation++;
+      released_batches += arena.size();
+      if (memory_diagnostics_enabled()) {
+        LOG(INFO) << "Cell arena stats current_bytes=0 peak_bytes=" << peak_bytes
+                  << " allocated_batches=" << allocated_batches << " released_batches=" << released_batches;
+      }
       td::reset_to_empty(arena);
     }
   };

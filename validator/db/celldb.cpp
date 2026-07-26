@@ -340,8 +340,11 @@ void CellDbIn::start_up() {
         .extra_threads = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u),
         .executor = {},
         .cache_ttl_max = 2000,
-        .cache_size_max = 1000000};
-    size_t min_rocksdb_cache = std::max(size_t{1} << 30, boc_v2_options->cache_size_max * 5000);
+        .cache_size_max = static_cast<size_t>(opts_->get_celldb_cell_cache_max_size())};
+    auto o_min_cache_size = opts_->get_celldb_cache_min_size();
+    size_t min_rocksdb_cache = o_min_cache_size
+                                   ? static_cast<size_t>(o_min_cache_size.value())
+                                   : std::max(size_t{1} << 30, boc_v2_options->cache_size_max * 5000);
     if (!o_celldb_cache_size || o_celldb_cache_size.value() < min_rocksdb_cache) {
       LOG(WARNING) << "Increase CellDb block cache size to " << td::format::as_size(min_rocksdb_cache) << " from "
                    << td::format::as_size(o_celldb_cache_size.value());
@@ -366,7 +369,9 @@ void CellDbIn::start_up() {
   db_options.two_level_index_and_filter =
       db_options.enable_bloom_filter && opts_->state_ttl() >= 60 * 60 * 24 * 30;  // 30 days
   if (db_options.two_level_index_and_filter && !opts_->get_celldb_in_memory()) {
-    o_celldb_cache_size = std::max<td::uint64>(o_celldb_cache_size ? o_celldb_cache_size.value() : 0UL, 16UL << 30);
+    auto o_min_cache_size = opts_->get_celldb_cache_min_size();
+    auto min_cache_size = o_min_cache_size ? o_min_cache_size.value() : (16UL << 30);
+    o_celldb_cache_size = std::max<td::uint64>(o_celldb_cache_size ? o_celldb_cache_size.value() : 0UL, min_cache_size);
   }
 
   if (o_celldb_cache_size) {

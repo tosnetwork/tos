@@ -1,4 +1,6 @@
 #include <optional>
+#include <cstdlib>
+#include <string_view>
 
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/base64.h"
@@ -13,6 +15,14 @@
 
 namespace vm {
 namespace {
+
+bool memory_diagnostics_enabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("TOS_MEMORY_DIAGNOSTICS");
+    return value != nullptr && std::string_view(value) == "1";
+  }();
+  return enabled;
+}
 
 // Very stupid Vector/MpmcQueue
 template <class T>
@@ -986,9 +996,16 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
       td::PerfWarningTimer timer(PSTRING() << "celldb_v2: reset reader, TTL=" << cell_db_reader_ttl_ << "/"
                                            << options_.cache_ttl_max << ", cache_size=" << cache_size
                                            << ", force_drop_cache=" << force_drop_cache);
+      if (memory_diagnostics_enabled()) {
+        LOG(INFO) << "CellDB V2 cache drop before_size=" << cache_size << " ttl=" << cell_db_reader_ttl_
+                  << " max_size=" << options_.cache_size_max << " force_drop=" << force_drop_cache;
+      }
       cache_stats_.apply_diff(cell_db_reader_->get_stats());
       cell_db_reader_->drop_cache();
       cell_db_reader_ = {};
+      if (memory_diagnostics_enabled()) {
+        LOG(INFO) << "CellDB V2 cache drop complete before_size=" << cache_size;
+      }
       meta_db_fixup_ = {};
       cell_db_reader_ttl_ = 0;
     }

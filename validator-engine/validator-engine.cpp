@@ -1774,6 +1774,10 @@ td::Status ValidatorEngine::load_global_config() {
   if (celldb_cache_size_) {
     validator_options_.write().set_celldb_cache_size(celldb_cache_size_.value());
   }
+  if (celldb_cache_min_size_) {
+    validator_options_.write().set_celldb_cache_min_size(celldb_cache_min_size_.value());
+  }
+  validator_options_.write().set_celldb_cell_cache_max_size(celldb_cell_cache_max_size_);
   if (!celldb_cache_size_ || celldb_cache_size_.value() < (30ULL << 30)) {
     celldb_direct_io_ = false;
   }
@@ -6095,6 +6099,26 @@ int main(int argc, char *argv[]) {
           return td::Status::Error("celldb-cache-size should be positive");
         }
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_celldb_cache_size, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "celldb-cache-min-size", "minimum CellDb RocksDb block cache size in bytes (default: 16G)",
+      [&](td::Slice s) -> td::Status {
+        TRY_RESULT(v, td::to_integer_safe<td::uint64>(s));
+        if (v == 0) {
+          return td::Status::Error("celldb-cache-min-size should be positive");
+        }
+        acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_celldb_cache_min_size, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "celldb-cell-cache-max-size", "maximum V2 Cell reader cache entries (default: 1000000)",
+      [&](td::Slice s) -> td::Status {
+        TRY_RESULT(v, td::to_integer_safe<td::uint64>(s));
+        if (v == 0) {
+          return td::Status::Error("celldb-cell-cache-max-size should be positive");
+        }
+        acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_celldb_cell_cache_max_size, v); });
         return td::Status::OK();
       });
   p.add_option('\0', "celldb-direct-io",

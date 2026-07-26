@@ -19,13 +19,29 @@
 */
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <string_view>
 
 #include "openssl/digest.hpp"
+#include "td/utils/logging.h"
 #include "vm/cells/DataCell.h"
 
 namespace vm {
 
 namespace {
+
+std::atomic<td::uint64> data_cell_arena_batches{0};
+std::atomic<td::uint64> data_cell_arena_bytes{0};
+std::atomic<td::uint64> data_cell_arena_peak_bytes{0};
+
+bool memory_diagnostics_enabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("TOS_MEMORY_DIAGNOSTICS");
+    return value != nullptr && std::string_view(value) == "1";
+  }();
+  return enabled;
+}
 
 class CellChecker {
  public:
@@ -326,6 +342,16 @@ char* allocate_in_arena(size_t size) {
   auto aligned_size = (size + 7) / 8 * 8;
   if (batch.size() < aligned_size) {
     batch = td::MutableSlice(new char[batch_size], batch_size);
+    auto batches = data_cell_arena_batches.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto bytes = data_cell_arena_bytes.fetch_add(batch_size, std::memory_order_relaxed) + batch_size;
+    auto peak = data_cell_arena_peak_bytes.load(std::memory_order_relaxed);
+    while (bytes > peak &&
+           !data_cell_arena_peak_bytes.compare_exchange_weak(peak, bytes, std::memory_order_relaxed)) {
+    }
+    if (memory_diagnostics_enabled()) {
+      LOG(INFO) << "DataCell arena stats batches=" << batches << " current_bytes=" << bytes
+                << " peak_bytes=" << data_cell_arena_peak_bytes.load(std::memory_order_relaxed);
+    }
   }
   auto res = batch.begin();
   batch.remove_prefix(aligned_size);
