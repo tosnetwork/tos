@@ -426,7 +426,12 @@ struct [[nodiscard]] StartedTask {
     [](auto self, std::string description) -> Task<Unit> {
       co_await become_lightweight();
       auto r = co_await std::move(self).wrap();
-      LOG_IF(ERROR, r.is_error()) << "Detached task <" << description << "> failed: " << r.error();
+      // Cancellation is an expected outcome for detached work, including
+      // duplicate Simplex vote persistence after a retry or broadcast replay.
+      // Keep real failures at ERROR while avoiding misleading error noise for
+      // the normal cancelled path.
+      LOG_IF(ERROR, r.is_error() && r.error().code() != 653)  // td::Status cancellation code
+          << "Detached task <" << description << "> failed: " << r.error();
       co_return td::Unit{};
     }(std::move(*this), std::move(description))
                                                   .start_immediate()
