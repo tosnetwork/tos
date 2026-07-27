@@ -30,9 +30,12 @@
 #include "rocksdb/utilities/optimistic_transaction_db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb/write_buffer_manager.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/memory-tracker.h"
 #include "td/utils/misc.h"
+
+#include <cstdlib>
 
 namespace td {
 struct RocksDb::MemoryDiagnosticsState {
@@ -40,6 +43,65 @@ struct RocksDb::MemoryDiagnosticsState {
 };
 
 namespace {
+struct ProcessRocksDbMemoryOptions {
+  td::optional<size_t> write_buffer_size;
+  td::optional<td::int64> transaction_history_size;
+  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager;
+};
+
+td::optional<size_t> positive_size_from_env(const char *name) {
+  const char *value = std::getenv(name);
+  if (value == nullptr) {
+    return {};
+  }
+  auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+  if (parsed.is_error() || parsed.ok() == 0) {
+    LOG(WARNING) << "Ignoring invalid " << name << "=" << value << "; expected a positive byte count";
+    return {};
+  }
+  return parsed.move_as_ok();
+}
+
+bool bool_from_env(const char *name, bool default_value) {
+  const char *value = std::getenv(name);
+  if (value == nullptr) {
+    return default_value;
+  }
+  auto parsed = td::to_integer_safe<int>(td::Slice(value));
+  if (parsed.is_error() || (parsed.ok() != 0 && parsed.ok() != 1)) {
+    LOG(WARNING) << "Ignoring invalid " << name << "=" << value << "; expected 0 or 1";
+    return default_value;
+  }
+  return parsed.ok() == 1;
+}
+
+const ProcessRocksDbMemoryOptions &process_memory_options() {
+  static const ProcessRocksDbMemoryOptions options = [] {
+    ProcessRocksDbMemoryOptions result;
+    result.write_buffer_size = positive_size_from_env("TOS_ROCKSDB_WRITE_BUFFER_SIZE");
+    auto transaction_history_size = positive_size_from_env("TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE");
+    if (transaction_history_size) {
+      result.transaction_history_size = static_cast<td::int64>(transaction_history_size.value());
+    }
+    auto global_write_buffer_size = positive_size_from_env("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE");
+    if (global_write_buffer_size) {
+      auto allow_stall = bool_from_env("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL", true);
+      result.write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(
+          global_write_buffer_size.value(), std::shared_ptr<rocksdb::Cache>(), allow_stall);
+      LOG(WARNING) << "Enabled process-wide RocksDB write-buffer budget: limit="
+                   << global_write_buffer_size.value() << " allow_stall=" << allow_stall;
+    }
+    if (result.write_buffer_size || result.transaction_history_size) {
+      LOG(WARNING) << "Enabled RocksDB memory overrides: write_buffer_size="
+                   << (result.write_buffer_size ? result.write_buffer_size.value() : 0)
+                   << " transaction_history_size="
+                   << (result.transaction_history_size ? result.transaction_history_size.value() : 0);
+    }
+    return result;
+  }();
+  return options;
+}
+
 static Status from_rocksdb(const rocksdb::Status &status) {
   if (status.ok()) {
     return Status::OK();
@@ -77,6 +139,29 @@ Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
   rocksdb::Options db_options;
   db_options.merge_operator = options.merge_operator;
   db_options.compaction_filter = options.compaction_filter;
+
+  const auto &process_options = process_memory_options();
+  if (!options.write_buffer_size && process_options.write_buffer_size) {
+    options.write_buffer_size = process_options.write_buffer_size;
+  }
+  if (!options.no_transactions && !options.max_write_buffer_size_to_maintain &&
+      process_options.transaction_history_size) {
+    options.max_write_buffer_size_to_maintain = process_options.transaction_history_size;
+  }
+  if (!options.write_buffer_manager && process_options.write_buffer_manager) {
+    options.write_buffer_manager = process_options.write_buffer_manager;
+  }
+  if (options.write_buffer_size) {
+    db_options.write_buffer_size = options.write_buffer_size.value();
+  }
+  if (options.max_write_buffer_size_to_maintain) {
+    if (!options.no_transactions && options.max_write_buffer_size_to_maintain.value() <= 0) {
+      return Status::Error("OptimisticTransactionDB requires a positive max_write_buffer_size_to_maintain; "
+                           "use no_transactions=true to disable transaction history");
+    }
+    db_options.max_write_buffer_size_to_maintain = options.max_write_buffer_size_to_maintain.value();
+  }
+  db_options.write_buffer_manager = options.write_buffer_manager;
 
   static auto default_cache = rocksdb::NewLRUCache(1 << 30);
   if (!options.no_block_cache && options.block_cache == nullptr) {
@@ -160,6 +245,11 @@ std::shared_ptr<rocksdb::Cache> RocksDb::create_cache(size_t capacity) {
   return rocksdb::NewLRUCache(capacity);
 }
 
+std::shared_ptr<rocksdb::WriteBufferManager> RocksDb::create_write_buffer_manager(size_t capacity,
+                                                                                  bool allow_stall) {
+  return std::make_shared<rocksdb::WriteBufferManager>(capacity, nullptr, allow_stall);
+}
+
 std::unique_ptr<KeyValueReader> RocksDb::snapshot() {
   auto res = std::make_unique<RocksDb>(clone());
   res->begin_snapshot().ensure();
@@ -197,6 +287,12 @@ std::string RocksDb::memory_stats() const {
     if (db_->GetIntProperty(property.name, &value)) {
       builder << " " << property.label << "=" << value;
     }
+  }
+  if (options_.write_buffer_manager && options_.write_buffer_manager->enabled()) {
+    builder << " write_buffer_manager_bytes=" << options_.write_buffer_manager->memory_usage()
+            << " write_buffer_manager_mutable_bytes="
+            << options_.write_buffer_manager->mutable_memtable_memory_usage()
+            << " write_buffer_manager_limit_bytes=" << options_.write_buffer_manager->buffer_size();
   }
   return builder.as_cslice().str();
 }

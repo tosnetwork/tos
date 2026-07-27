@@ -1,0 +1,13 @@
+[Unit]
+Description=Correlate TOS node3 RSS growth with RocksDB MemTable growth
+After=tos-validator@3.service
+
+[Service]
+Type=oneshot
+User=tomi
+Group=tomi
+ExecStart=/home/tomi/tos/scripts/node3_rss_rocksdb_monitor.sh tos-validator@3.service /home/tomi/tos/test/integration/.network/node3/memory-monitor
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true

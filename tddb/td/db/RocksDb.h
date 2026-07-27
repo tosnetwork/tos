@@ -45,6 +45,7 @@ class Snapshot;
 class Statistics;
 class MergeOperator;
 class CompactionFilter;
+class WriteBufferManager;
 }  // namespace rocksdb
 
 namespace td {
@@ -76,6 +77,15 @@ struct RocksDbOptions {
   bool no_block_cache = false;
   bool enable_bloom_filter = false;
   bool two_level_index_and_filter = false;
+
+  // Leave unset to use RocksDB's defaults (or the process-wide environment
+  // overrides documented in RocksDb::open). These controls are intentionally
+  // independent: write_buffer_size bounds one mutable memtable, while
+  // max_write_buffer_size_to_maintain bounds flushed memtables retained for
+  // OptimisticTransactionDB conflict checks.
+  td::optional<size_t> write_buffer_size;
+  td::optional<td::int64> max_write_buffer_size_to_maintain;
+  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager;
 };
 
 class RocksDb : public KeyValue {
@@ -119,6 +129,8 @@ class RocksDb : public KeyValue {
   static void reset_statistics(const std::shared_ptr<rocksdb::Statistics> &statistics);
 
   static std::shared_ptr<rocksdb::Cache> create_cache(size_t capacity);
+  static std::shared_ptr<rocksdb::WriteBufferManager> create_write_buffer_manager(size_t capacity,
+                                                                                  bool allow_stall);
 
   RocksDb(RocksDb &&);
   RocksDb &operator=(RocksDb &&);

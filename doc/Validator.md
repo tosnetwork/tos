@@ -126,6 +126,37 @@ TOS_MEMORY_DIAGNOSTICS=1
 When the variable is unset (the normal production setting), those diagnostic
 logs are disabled.
 
+RocksDB write buffers are separate from both the CellDB block cache and the V2
+Cell-object cache. A validator opens several RocksDB databases, so leaving
+each database at its independent default can produce a long RSS warm-up even
+though every individual MemTable is finite. TOS supports one shared,
+process-wide write-buffer budget:
+
+```text
+TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
+TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE=16777216
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1
+```
+
+All sizes are byte counts. This low-memory test profile uses a 16 MiB mutable
+MemTable target, a 16 MiB conflict-history target for databases that actually
+use optimistic transactions, and a 256 MiB aggregate budget shared by all
+RocksDB instances in the validator process. CellDB, StateDB, and WalletIndexDb
+use atomic write batches rather than RocksDB transactions and therefore do
+not retain transaction-conflict history.
+
+`TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1` makes the aggregate limit an
+enforced back-pressure threshold: RocksDB may briefly delay writers while a
+MemTable is flushed instead of continuing to allocate. Arena allocation and
+flush granularity can cause a small transient overshoot. Set it to `0` only
+after measuring the workload; the manager will still request earlier flushes,
+but the configured value is then only a soft target.
+Values that are too small increase flush/compaction frequency and can delay
+consensus database commits. Apply this profile first to one validator and
+monitor write stalls, disk latency, finalized-height lag, and RSS before a
+rolling deployment.
+
 Simplex CandidateResolver retains a bounded recent finalized-slot window. The
 default is 4,096 slots. A low-memory test node can use a smaller window:
 

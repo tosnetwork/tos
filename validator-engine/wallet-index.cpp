@@ -109,7 +109,11 @@ td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::open(std::string path)
   if (mkdir_status.is_error() && mkdir_status.message() != td::Slice{"File exists"}) {
     LOG(WARNING) << "wc0-index: mkdir " << path << " returned: " << mkdir_status.message();
   }
-  auto db_r = td::RocksDb::open(path);
+  td::RocksDbOptions options;
+  // WalletIndexDb uses one atomic WriteBatch per indexed block. It does not
+  // use transactions and therefore does not need retained conflict history.
+  options.no_transactions = true;
+  auto db_r = td::RocksDb::open(path, std::move(options));
   if (db_r.is_error()) {
     return td::Status::Error(PSTRING() << "wc0-index: cannot open RocksDB at " << path << ": "
                                        << db_r.error().message());

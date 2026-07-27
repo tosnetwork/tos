@@ -1,6 +1,15 @@
-# Node3 Residual Growth: Two Candidate Sources Found via Heap Profiling, Not Yet Root-Caused (2026-07-26)
+# Node3 Residual Growth: Investigation Record (2026-07-26)
 
 ## Status
+
+**Superseded for the final residual-growth diagnosis.** The later
+[Node3 RocksDB MemTable root-cause report](node3-rocksdb-memtable-growth-fix-2026-07-27.md)
+uses per-database RocksDB counters plus a new jemalloc differential profile
+to identify 98.2% of the final ~3.8 MiB/min net live growth as aggregate
+`rocksdb::MemTable::Add` allocation. That report documents the shared
+process-wide bound and the removal of unused transaction history. This file
+remains the investigation record for the earlier, larger wallet-index flush
+and archive-backlog bugs.
 
 This is a follow-up to
 [state-resolver-cache-leak-2026-07-26.md](state-resolver-cache-leak-2026-07-26.md),
@@ -583,14 +592,14 @@ investigation is considered closed.
    re-profiling" above) — memtable/flush chain confirmed eliminated, archive
    chain confirmed as a downstream effect (dropped to ~0), both across two
    consistent rounds. Total residual growth per window down ~55%.
-3b. **New, smaller open item**: the remaining ~19-22 MiB/min residual isn't
-   yet confirmed as fully benign — it's spread across ordinary-looking
-   network/consensus traffic with no dominant chain, which is consistent
-   with healthy churn but not proven to net to zero over a longer window.
-   A longer-duration diff (an hour or more, comparable to the original
-   multi-hour observation that first motivated this whole investigation)
-   would clarify whether it's genuinely flat/oscillating or has a small
-   residual slope worth chasing further.
+3b. ~~Identify the final residual container~~ **Done in the follow-up
+   report linked at the top of this file.** Once the larger Bug A backlog was
+   removed and the process reached a cleaner observation window, a new
+   differential profile attributed 98.2% of the remaining ~3.8 MiB/min net
+   allocation to `rocksdb::MemTable::Add`, not to network/consensus
+   containers. TOS now has a shared process-wide RocksDB write-buffer budget
+   and no longer retains optimistic-transaction history for CellDB, StateDB,
+   or WalletIndexDb.
 4. Bug B had **no test coverage at all** — only built, never run. Progress:
    - ~~Unit-test the marker key/value encoding round-trip~~ **Done**:
      `test/test-wallet-index.cpp` (registered as ctest target

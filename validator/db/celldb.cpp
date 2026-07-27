@@ -322,6 +322,10 @@ void CellDbIn::start_up() {
 
   CellDbBase::start_up();
   td::RocksDbOptions db_options;
+  // CellDB uses atomic WriteBatch commits, never RocksDB transactions. Opening
+  // it as OptimisticTransactionDB retained 128 MiB of flushed memtables solely
+  // for conflict checks that can never occur.
+  db_options.no_transactions = true;
   if (!opts_->get_disable_rocksdb_stats()) {
     statistics_ = td::RocksDb::create_statistics();
     statistics_flush_at_ = td::Timestamp::in(60.0);
@@ -387,6 +391,7 @@ void CellDbIn::start_up() {
 
   if (opts_->get_celldb_in_memory()) {
     td::RocksDbOptions read_db_options;
+    read_db_options.no_transactions = true;
     read_db_options.use_direct_reads = true;
     read_db_options.no_block_cache = true;
     read_db_options.block_cache = {};
