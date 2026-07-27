@@ -77,6 +77,11 @@ struct RocksDbOptions {
   bool no_block_cache = false;
   bool enable_bloom_filter = false;
   bool two_level_index_and_filter = false;
+  // Marks databases on the block-validation/finalization path. When
+  // TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE is configured, these databases use
+  // a separate shared WriteBufferManager; background archive, DHT, overlay,
+  // or wallet-index writes cannot consume or trigger this manager's budget.
+  bool critical_write_path = false;
 
   // Leave unset to use RocksDB's defaults (or the process-wide environment
   // overrides documented in RocksDb::open). These controls are intentionally

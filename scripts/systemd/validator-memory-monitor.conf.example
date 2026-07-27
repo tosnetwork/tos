@@ -1,0 +1,5 @@
+# Install as /etc/tos/validator-memory-monitor.conf and adjust both paths for
+# the host. The templated service appends the validator instance name to the
+# output directory.
+TOS_MEMORY_MONITOR_SCRIPT=/opt/tos/scripts/validator_rss_rocksdb_monitor.sh
+TOS_MEMORY_MONITOR_OUTPUT_DIR=/var/lib/tos/validator-memory-monitor

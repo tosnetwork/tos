@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <optional>
 
@@ -12,6 +13,24 @@
 #include "td/utils/check.h"
 
 namespace tos::validator::consensus::simplex {
+
+// Snapshot of every lifetime condition that must hold before
+// CandidateResolver may erase a map entry. Keeping this predicate outside the
+// actor makes the exact finalization/network/persistence interleavings
+// deterministic to test without weakening the production invariant.
+struct CandidateEvictionState {
+  size_t active_operations = 0;
+  size_t resolve_waiters = 0;
+  size_t store_waiters = 0;
+  bool notar_store_in_flight = false;
+  bool candidate_durable = true;
+  bool notar_durable = true;
+
+  bool can_evict() const {
+    return active_operations == 0 && resolve_waiters == 0 && store_waiters == 0 &&
+           !notar_store_in_flight && candidate_durable && notar_durable;
+  }
+};
 
 // Keeps a bounded number of finalized slots in CandidateResolver. Entries in
 // newer, non-finalized slots are never selected by this policy.

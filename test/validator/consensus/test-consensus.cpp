@@ -1319,10 +1319,7 @@ void test_state_resolver_completed_lru() {
 }
 
 void test_candidate_resolver_retention() {
-  struct State {
-    bool active = false;
-    bool durable = true;
-  };
+  using State = simplex::CandidateEvictionState;
 
   simplex::CandidateRetentionPolicy policy{4};
   CHECK(policy.first_retained_slot() == 0);
@@ -1334,10 +1331,10 @@ void test_candidate_resolver_retention() {
   for (td::uint32 slot = 4; slot <= 11; ++slot) {
     states.emplace(CandidateId{slot, {}}, State{});
   }
-  states.find(CandidateId{5, {}})->second.active = true;
-  states.find(CandidateId{6, {}})->second.durable = false;
+  states.find(CandidateId{5, {}})->second.active_operations = 1;
+  states.find(CandidateId{6, {}})->second.candidate_durable = false;
 
-  auto can_evict = [](const State& state) { return !state.active && state.durable; };
+  auto can_evict = [](const State& state) { return state.can_evict(); };
   CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 1);
   CHECK(!states.contains(CandidateId{4, {}}));
   CHECK(states.contains(CandidateId{5, {}}));
@@ -1346,8 +1343,8 @@ void test_candidate_resolver_retention() {
 
   // Entries protected by an in-flight operation or incomplete persistence
   // survive the first pass and are removed by a later pass once safe.
-  states.find(CandidateId{5, {}})->second.active = false;
-  states.find(CandidateId{6, {}})->second.durable = true;
+  states.find(CandidateId{5, {}})->second.active_operations = 0;
+  states.find(CandidateId{6, {}})->second.candidate_durable = true;
   CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 2);
   CHECK(states.size() == 5);
 
@@ -1358,6 +1355,52 @@ void test_candidate_resolver_retention() {
   CHECK(policy.first_retained_slot() == 17);
   CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 5);
   CHECK(states.empty());
+}
+
+void test_candidate_resolver_interleaving() {
+  using State = simplex::CandidateEvictionState;
+  auto can_evict = [](const State& state) { return state.can_evict(); };
+  // Deterministic same-tick interleaving:
+  //   1. finalization moves the entry outside the retained window while a
+  //      network resolution coroutine still owns a reference;
+  //   2. the response arrives, but candidate/certificate persistence and
+  //      waiter resumption complete in separate turns;
+  //   3. only the final completion turn makes the entry erasable.
+  simplex::CandidateRetentionPolicy interleaving_policy{2};
+  std::map<CandidateId, State> interleaved;
+  const CandidateId old_id{8, {}};
+  const CandidateId boundary_id{9, {}};
+  auto& old = interleaved[old_id];
+  old.active_operations = 1;
+  interleaved[boundary_id] = {};
+
+  interleaving_policy.observe_finalized(10);
+  CHECK(interleaving_policy.first_retained_slot() == 9);
+  CHECK(simplex::prune_candidate_states(interleaved, interleaving_policy.first_retained_slot(), can_evict) == 0);
+
+  // Network response returned, but both payloads still need durable storage.
+  old.active_operations = 0;
+  old.candidate_durable = false;
+  old.notar_durable = false;
+  old.notar_store_in_flight = true;
+  CHECK(simplex::prune_candidate_states(interleaved, interleaving_policy.first_retained_slot(), can_evict) == 0);
+
+  // Candidate persistence completed in the same scheduler tick; the detached
+  // certificate store and resolution waiter still protect the map entry.
+  old.candidate_durable = true;
+  old.notar_store_in_flight = false;
+  old.resolve_waiters = 1;
+  CHECK(simplex::prune_candidate_states(interleaved, interleaving_policy.first_retained_slot(), can_evict) == 0);
+
+  old.notar_durable = true;
+  old.resolve_waiters = 0;
+  old.store_waiters = 1;
+  CHECK(simplex::prune_candidate_states(interleaved, interleaving_policy.first_retained_slot(), can_evict) == 0);
+
+  old.store_waiters = 0;
+  CHECK(simplex::prune_candidate_states(interleaved, interleaving_policy.first_retained_slot(), can_evict) == 1);
+  CHECK(!interleaved.contains(old_id));
+  CHECK(interleaved.contains(boundary_id));
 }
 
 }  // namespace
@@ -1798,6 +1841,7 @@ int main(int argc, char *argv[]) {
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
+  bool run_candidate_resolver_interleaving_unit_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1949,6 +1993,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
+  p.add_option('\0', "candidate-resolver-interleaving-unit-test",
+               "verify finalization/network/persistence eviction interleavings",
+               [&]() { run_candidate_resolver_interleaving_unit_test = true; });
   p.add_checked_option('\0', "catch-up-downtime",
                        "stop one validator for this many seconds, then require it to catch up",
                        [&](td::Slice arg) {
@@ -1998,6 +2045,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_candidate_resolver_retention_unit_test) {
     test_candidate_resolver_retention();
+    return 0;
+  }
+  if (run_candidate_resolver_interleaving_unit_test) {
+    test_candidate_resolver_interleaving();
     return 0;
   }
   CHECK(N_DOUBLE_NODES <= N_NODES);

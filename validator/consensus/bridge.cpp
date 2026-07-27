@@ -126,7 +126,9 @@ class DbImpl : public Db {
  public:
   explicit DbImpl(std::string path) {
     td::mkpath(path).ensure();
-    auto rocksdb = td::RocksDb::open(path).ensure().move_as_ok();
+    td::RocksDbOptions db_options;
+    db_options.critical_write_path = true;
+    auto rocksdb = td::RocksDb::open(path, std::move(db_options)).ensure().move_as_ok();
     reader_ = rocksdb.snapshot();
     writer_ = td::KeyValueAsync<td::BufferSlice, td::BufferSlice>(std::make_shared<td::RocksDb>(std::move(rocksdb)));
   }

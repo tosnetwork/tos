@@ -393,18 +393,25 @@ The following release checks were completed:
    removal of old completed entries.
 2. The same test verifies that active and non-durable entries survive pruning
    and are removed by a later pass when safe.
-3. Startup on node3 loaded only the retained recent window into
+3. A separate deterministic interleaving test advances finalization across
+   the eviction boundary, then steps through network-response, candidate
+   persistence, certificate persistence, resolve-waiter, and store-waiter
+   completion. It invokes the same extracted `CandidateEvictionState`
+   predicate used by production and verifies that erasure becomes legal only
+   after the final owner releases the entry.
+4. Startup on node3 loaded only the retained recent window into
    CandidateResolver.
-4. An 8-slot offline catch-up test exercised retrieval after in-memory
+5. An 8-slot offline catch-up test exercised retrieval after in-memory
    eviction through `get_latest()`.
-5. All 14 registered `test-consensus-simplex2-*` tests passed, including loss,
+6. All 15 registered `test-consensus-simplex2-*` tests passed, including loss,
    restart, partition, malicious observer, relay loop, adaptive Byzantine,
-   manager-ingress adversarial, query abuse, cache, and catch-up cases.
-6. The 8-slot catch-up scenario additionally passed three consecutive
+   manager-ingress adversarial, deterministic CandidateResolver interleaving,
+   query abuse, cache, and catch-up cases.
+7. The 8-slot catch-up scenario additionally passed three consecutive
    standalone runs.
-7. The final binary was deployed only to node3 with
+8. The final binary was deployed only to node3 with
    `TOS_MEMORY_DIAGNOSTICS=1`; node1 and node2 were not restarted.
-8. Node3 was observed through a complete 1,024-slot turnover and confirmed:
+9. Node3 was observed through a complete 1,024-slot turnover and confirmed:
    - CandidateResolver entry counts plateau;
    - notarization and candidate signature counts plateau;
    - live 16 KiB slab count plateaus or oscillates;

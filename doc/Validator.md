@@ -90,18 +90,24 @@ be deleted.
 
 ### CellDB and memory policy
 
-Keep CellDB on RocksDB for production. The normal profile is:
+Keep CellDB on RocksDB for production. The production profile uses the
+TON-compatible cache floor; omit both cache-size overrides:
 
 ```text
---celldb-cache-size 1073741824
+# no --celldb-cache-size override
+# no --celldb-cache-min-size override
 ```
 
-TON-compatible builds use a 16 GiB minimum cache when the two-level index/filter
-is enabled. Low-memory test nodes can override that floor explicitly, for
-example:
+When the two-level index/filter is enabled, the production default floor is
+16 GiB. The validator CLI's nominal `--celldb-cache-size` default is 1 GiB, but
+CellDB raises the effective cache to that 16 GiB floor unless an explicit
+minimum override is supplied.
+
+The 1 GiB value used on node3 is a low-memory test profile, not a production
+recommendation:
 
 ```text
---celldb-cache-size 1073741824 --celldb-cache-min-size 536870912
+--celldb-cache-size 1073741824 --celldb-cache-min-size 1073741824
 ```
 
 The default remains 16 GiB; this option only lowers the minimum and does not
@@ -129,8 +135,12 @@ logs are disabled.
 RocksDB write buffers are separate from both the CellDB block cache and the V2
 Cell-object cache. A validator opens several RocksDB databases, so leaving
 each database at its independent default can produce a long RSS warm-up even
-though every individual MemTable is finite. TOS supports one shared,
-process-wide write-buffer budget:
+though every individual MemTable is finite.
+
+The global domain covers every `td::RocksDb` opened in the validator process,
+including CellDB, StateDB, WalletIndexDb, Simplex, Catchain, archive indexes,
+DHT, ADNL/overlay databases, and any future caller that uses the common
+wrapper:
 
 ```text
 TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
@@ -156,6 +166,43 @@ Values that are too small increase flush/compaction frequency and can delay
 consensus database commits. Apply this profile first to one validator and
 monitor write stalls, disk latency, finalized-height lag, and RSS before a
 rolling deployment.
+
+Do not use the global stalling domain when archive or network-index traffic
+must be unable to delay block finalization. TOS also provides an independent
+consensus-critical domain:
+
+```text
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1
+```
+
+With only these two variables set, the shared domain covers CellDB, StateDB,
+the Simplex consensus database, and Catchain. WalletIndexDb, archive indexes,
+DHT, ADNL, and overlay databases remain outside that domain, so their flush
+pressure cannot consume its budget or trigger its write stall. This separation
+does not eliminate contention on the underlying storage device; monitor disk
+latency and finalized-height lag during rollout. Setting both critical and
+global domains creates two independent managers: critical databases use the
+critical manager and all remaining databases use the global manager.
+
+The per-database `TOS_ROCKSDB_WRITE_BUFFER_SIZE` and
+`TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE` overrides apply regardless of manager
+domain. Memory diagnostics report `write_buffer_manager_domain=critical`,
+`global`, or `explicit` for every database. The validator monitor additionally
+reports flush-pending databases, running flushes, pending compaction bytes,
+delayed writes, stopped writes, and warns once for every unknown database path.
+These environment variables are read once when the process opens its first
+RocksDB instance; restart the validator after changing them.
+
+The reusable monitor is `scripts/validator_rss_rocksdb_monitor.sh`. The
+templated systemd examples under `scripts/systemd/` require a host-specific
+`/etc/tos/validator-memory-monitor.conf`; they contain no repository path,
+validator instance, or user-account assumption. For direct use, pass the
+systemd unit and optional output directory explicitly, for example:
+
+```text
+scripts/validator_rss_rocksdb_monitor.sh tos-validator@INSTANCE.service /var/lib/tos/validator-memory-monitor/INSTANCE
+```
 
 Simplex CandidateResolver retains a bounded recent finalized-slot window. The
 default is 4,096 slots. A low-memory test node can use a smaller window:

@@ -297,11 +297,16 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
   size_t state_evictions_ = 0;
 
   static bool can_evict(const CandidateState& state) {
-    const bool candidate_durable = !state.candidate_and_cert.candidate.has_value() || state.candidate_in_db ||
-                                   state.candidate_stored;
-    const bool notar_durable = !state.candidate_and_cert.notar_cert.has_value() || state.notar_stored;
-    return state.active_operations == 0 && state.resolve_awaiters.empty() && state.store_awaiters.empty() &&
-           !state.notar_store_in_flight && candidate_durable && notar_durable;
+    const CandidateEvictionState eviction_state{
+        .active_operations = state.active_operations,
+        .resolve_waiters = state.resolve_awaiters.size(),
+        .store_waiters = state.store_awaiters.size(),
+        .notar_store_in_flight = state.notar_store_in_flight,
+        .candidate_durable = !state.candidate_and_cert.candidate.has_value() || state.candidate_in_db ||
+                             state.candidate_stored,
+        .notar_durable = !state.candidate_and_cert.notar_cert.has_value() || state.notar_stored,
+    };
+    return eviction_state.can_evict();
   }
 
   void begin_operation(CandidateState& state) {

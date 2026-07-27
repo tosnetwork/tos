@@ -227,6 +227,7 @@ void StateDb::start_up() {
   // StateDb serializes atomic WriteBatch commits and never starts a RocksDB
   // transaction, so transaction conflict history is pure retained memory.
   db_options.no_transactions = true;
+  db_options.critical_write_path = true;
   kv_ = std::make_shared<td::RocksDb>(td::RocksDb::open(db_path_, std::move(db_options)).move_as_ok());
 
   std::string value;

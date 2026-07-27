@@ -72,7 +72,9 @@ history in TOS call sites that only use atomic `WriteBatch` commits.
 
 - `write_buffer_size`;
 - `max_write_buffer_size_to_maintain`;
-- a shared `rocksdb::WriteBufferManager`.
+- a shared `rocksdb::WriteBufferManager`;
+- `critical_write_path`, which selects the isolated critical manager when it
+  is configured.
 
 `td::RocksDb::open()` also recognizes:
 
@@ -81,11 +83,22 @@ TOS_ROCKSDB_WRITE_BUFFER_SIZE
 TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE
 TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE
 TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL
 ```
 
-One static `WriteBufferManager` is constructed for the process and passed to
-every subsequently opened RocksDB instance. With `ALLOW_STALL=1`, RocksDB
-flushes earlier as the mutable working set approaches the target and applies
+The global manager covers every `td::RocksDb` instance in the process. The
+critical manager is an independent optional domain used only by CellDB,
+StateDB, Simplex, and Catchain. When both are configured, critical databases
+use the critical domain and archive, DHT, ADNL/overlay, wallet-index, and other
+databases use the global domain. This prevents a background flush storm from
+consuming the consensus write-buffer budget or initiating its write stall.
+
+Up to two static `WriteBufferManager` instances are constructed for the
+process: the optional consensus-critical domain and the optional global
+background domain. Each subsequently opened RocksDB instance is assigned to
+at most one of them. With `ALLOW_STALL=1`, RocksDB flushes earlier as the
+mutable working set approaches the target and applies
 write back-pressure if total tracked MemTable memory reaches the limit.
 
 The memory diagnostic line now reports:
@@ -94,10 +107,17 @@ The memory diagnostic line now reports:
 write_buffer_manager_bytes
 write_buffer_manager_mutable_bytes
 write_buffer_manager_limit_bytes
+write_buffer_manager_domain
+memtable_flush_pending
+running_flushes
+pending_compaction_bytes
+actual_delayed_write_rate
+write_stopped
 ```
 
 These values are process-wide and therefore repeat on each per-database
-diagnostic line.
+diagnostic line when that database belongs to a manager domain. The flush,
+compaction, delayed-write, and stopped-write values are per database.
 
 ### Removing unused transaction history
 
@@ -115,21 +135,31 @@ Databases used through `KeyValueAsync` or explicit
 
 ## Test coverage
 
-`test-tddb` contains a targeted `RocksDbMemoryBounds` regression test. It
-exercises:
+`test-tddb` contains targeted `RocksDbMemoryBounds` and
+`RocksDbCriticalMemoryDomain` regression tests. They exercise:
 
 - a non-transactional database under a small shared write-buffer manager;
 - flush and release without retained transaction history;
 - the exported shared-manager diagnostic values;
-- an optimistic-transaction database with an explicit bounded history.
+- an optimistic-transaction database with an explicit bounded history;
+- simultaneous critical and global managers, including correct database
+  assignment, independent limits, and diagnostic domain names.
 
 Validation completed before deployment:
 
 - `ninja -C build -j64 test-tddb validator-engine test-consensus`;
 - all 10 `test-tddb` cases passed;
-- all 14 `test-consensus-simplex2-*` CTest scenarios passed;
+- all 15 `test-consensus-simplex2-*` CTest scenarios passed, including the
+  deterministic CandidateResolver finalization/network/persistence
+  interleaving test;
 - the same suites passed with aggressive 4 MiB per-DB buffers/history and a
   64 MiB global manager limit.
+
+`test-wallet-index` also passes with the WAL-only marker path. This is
+correctness coverage, not a controlled before/after throughput benchmark.
+Node3 supplies a useful live canary because it continuously indexes applied
+workchain blocks, but a numerical WalletIndex latency or throughput claim
+still requires a dedicated sustained-load comparison.
 
 ## Node3 live configuration
 
@@ -202,6 +232,73 @@ restarted on the same executable hash with the RocksDB limits and lightweight
 `TOS_MEMORY_DIAGNOSTICS=1` counters still enabled, and resumed obtaining
 finalization certificates. The existing heap dumps were retained as the raw
 evidence for this report.
+
+### PR review follow-up: isolated critical-domain canary
+
+The merge review correctly noted that static analysis could not establish the
+live RSS effect or the write-stall coupling of one global manager. The
+follow-up implementation therefore added an independent critical domain and
+deployed this critical-only profile to node3:
+
+```text
+TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
+TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE=16777216
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1
+```
+
+The final executable started at `2026-07-27 10:54:03 UTC`. Its SHA-256 matched
+the file mapped by the running process:
+
+```text
+8b7c9fcfba42912caac40e5e8cbf0fe181369e67b06002753e522bfe88a744b9
+```
+
+The executable linked Ubuntu's `libjemalloc.so.2` version 5.2.1. The actual
+target process repeatedly returned `result=ok` from
+`mallctl("arena.4096.purge")`. Two examples from the post-catch-up steady
+period were:
+
+| Cache drop (UTC) | Cache entries | RSS before | RSS after | Immediate release |
+|---|---:|---:|---:|---:|
+| 11:06:02 | 41,700 | 2,513 MiB | 2,505 MiB | about 8.3 MiB |
+| 11:12:50 | 41,293 | 2,518 MiB | 2,509 MiB | about 9.0 MiB |
+
+Those drops are separated by 408 seconds and have the same TTL-triggered cache
+phase. Their before-drop endpoints differ by about 5 MiB
+(approximately 0.73 MiB/min), while their after-purge endpoints differ by
+about 4 MiB (approximately 0.59 MiB/min). This is materially lower than the
+old approximately 3.8 MiB/min residual slope.
+
+The formal monitor window from `10:55:53` through `11:12:57 UTC` contained 17
+samples from one PID. It included the normal restart warm-up, during which the
+1,024-entry CandidateResolver and StateResolver caches filled from empty and
+then began evicting. Consequently, the raw start-to-end RSS delta is not a
+steady-state comparison. By the last sample, the monitor's ten-minute RSS
+rate had fallen to 2.06 MiB/min, of which 1.57 MiB/min was concurrent bounded
+MemTable turnover; the phase-matched cache-drop comparison above removes that
+sawtooth.
+
+Operational safety results for the same window:
+
+- the critical manager peaked at about 42 MiB total and 40 MiB mutable against
+  its 256 MiB limit;
+- every sample reported zero flush-pending databases, running flushes,
+  pending compaction bytes, delayed-write databases, and write-stopped
+  databases;
+- CellDB, StateDB, and both active Simplex databases reported
+  `write_buffer_manager_domain=critical`; archive, overlay, and WalletIndexDb
+  reported no manager domain;
+- node1, node2, and node3 reported the same finalized masterchain slot
+  (`127496`) at `11:13:15 UTC`;
+- node3 remained on one PID with `NRestarts=0`, and no error-priority or
+  WalletIndex failure appeared after the observation baseline.
+
+This is a successful single-node canary, not a production multi-region load
+test. It demonstrates working domain assignment, no observed write-stall or
+finalized-height coupling, and a functioning jemalloc purge on the deployed
+binary. It does not provide a controlled before/after WalletIndex throughput
+number or prove behavior under production storage saturation.
 
 ## Operational interpretation
 

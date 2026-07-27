@@ -46,7 +46,8 @@ namespace {
 struct ProcessRocksDbMemoryOptions {
   td::optional<size_t> write_buffer_size;
   td::optional<td::int64> transaction_history_size;
-  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager;
+  std::shared_ptr<rocksdb::WriteBufferManager> global_write_buffer_manager;
+  std::shared_ptr<rocksdb::WriteBufferManager> critical_write_buffer_manager;
 };
 
 td::optional<size_t> positive_size_from_env(const char *name) {
@@ -86,10 +87,18 @@ const ProcessRocksDbMemoryOptions &process_memory_options() {
     auto global_write_buffer_size = positive_size_from_env("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE");
     if (global_write_buffer_size) {
       auto allow_stall = bool_from_env("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL", true);
-      result.write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(
+      result.global_write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(
           global_write_buffer_size.value(), std::shared_ptr<rocksdb::Cache>(), allow_stall);
-      LOG(WARNING) << "Enabled process-wide RocksDB write-buffer budget: limit="
+      LOG(WARNING) << "Enabled global RocksDB write-buffer budget: limit="
                    << global_write_buffer_size.value() << " allow_stall=" << allow_stall;
+    }
+    auto critical_write_buffer_size = positive_size_from_env("TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE");
+    if (critical_write_buffer_size) {
+      auto allow_stall = bool_from_env("TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL", true);
+      result.critical_write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(
+          critical_write_buffer_size.value(), std::shared_ptr<rocksdb::Cache>(), allow_stall);
+      LOG(WARNING) << "Enabled consensus-critical RocksDB write-buffer budget: limit="
+                   << critical_write_buffer_size.value() << " allow_stall=" << allow_stall;
     }
     if (result.write_buffer_size || result.transaction_history_size) {
       LOG(WARNING) << "Enabled RocksDB memory overrides: write_buffer_size="
@@ -148,8 +157,11 @@ Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
       process_options.transaction_history_size) {
     options.max_write_buffer_size_to_maintain = process_options.transaction_history_size;
   }
-  if (!options.write_buffer_manager && process_options.write_buffer_manager) {
-    options.write_buffer_manager = process_options.write_buffer_manager;
+  if (!options.write_buffer_manager && options.critical_write_path &&
+      process_options.critical_write_buffer_manager) {
+    options.write_buffer_manager = process_options.critical_write_buffer_manager;
+  } else if (!options.write_buffer_manager && process_options.global_write_buffer_manager) {
+    options.write_buffer_manager = process_options.global_write_buffer_manager;
   }
   if (options.write_buffer_size) {
     db_options.write_buffer_size = options.write_buffer_size.value();
@@ -279,6 +291,11 @@ std::string RocksDb::memory_stats() const {
       {"rocksdb.estimate-table-readers-mem", "table_readers_bytes"},
       {"rocksdb.block-cache-usage", "block_cache_bytes"},
       {"rocksdb.block-cache-pinned-usage", "block_cache_pinned_bytes"},
+      {"rocksdb.mem-table-flush-pending", "memtable_flush_pending"},
+      {"rocksdb.num-running-flushes", "running_flushes"},
+      {"rocksdb.estimate-pending-compaction-bytes", "pending_compaction_bytes"},
+      {"rocksdb.actual-delayed-write-rate", "actual_delayed_write_rate"},
+      {"rocksdb.is-write-stopped", "write_stopped"},
   };
   td::StringBuilder builder;
   builder << "db=" << db_->GetName();
@@ -293,6 +310,14 @@ std::string RocksDb::memory_stats() const {
             << " write_buffer_manager_mutable_bytes="
             << options_.write_buffer_manager->mutable_memtable_memory_usage()
             << " write_buffer_manager_limit_bytes=" << options_.write_buffer_manager->buffer_size();
+    const auto &process_options = process_memory_options();
+    if (options_.write_buffer_manager == process_options.critical_write_buffer_manager) {
+      builder << " write_buffer_manager_domain=critical";
+    } else if (options_.write_buffer_manager == process_options.global_write_buffer_manager) {
+      builder << " write_buffer_manager_domain=global";
+    } else {
+      builder << " write_buffer_manager_domain=explicit";
+    }
   }
   return builder.as_cslice().str();
 }
