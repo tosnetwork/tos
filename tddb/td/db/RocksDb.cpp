@@ -390,6 +390,10 @@ Status RocksDb::flush() {
   return from_rocksdb(db_->Flush({}));
 }
 
+Status RocksDb::flush_wal(bool sync) {
+  return from_rocksdb(db_->FlushWAL(sync));
+}
+
 Status RocksDb::begin_snapshot() {
   snapshot_.reset(db_->GetSnapshot());
   if (options_.snapshot_statistics) {

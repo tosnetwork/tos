@@ -21,18 +21,55 @@ constexpr uint8_t kJettonTag = 0x10;        // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
-constexpr uint8_t kIncompleteBlockTag = 0x1E;  // 0x1E + seqno_be(8)
+// 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32) -> sentinel(1)
+// The full BlockIdExt is in the key, not split key/value: if a position could
+// ever be re-applied with a different hash (e.g. some reorg/hardfork path),
+// keying by position alone would let a new marker silently overwrite an old
+// one's hash instead of being a distinct entry.
+constexpr uint8_t kIncompleteBlockTag = 0x1E;
+// Legacy key length: every binary before this change (including production
+// binaries currently running, and this file's own first cut of the
+// full-BlockIdExt redesign) used tag + seqno_be(8) only, no workchain/shard/
+// hash. A node that ever had a real indexing failure under an older binary
+// can have real markers in this format on disk. Recognized distinctly below
+// so they surface loudly instead of being silently discarded as generic
+// "malformed" — see doc/node3-residual-leak-archive-memtable-2026-07-26.md.
+constexpr size_t kLegacySeqnoOnlyKeyLen = 1 + 8;
 
 constexpr size_t kOwnerPairKeyLen = 1 + 32 + 32;
 constexpr size_t kEventKeyLen = 1 + 32 + 8;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
-constexpr size_t kIncompleteBlockKeyLen = 1 + 8;
+constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
+constexpr size_t kIncompleteBlockValueLen = 1;
+
+void put_u32_be(char* out, uint32_t v) {
+  for (int i = 3; i >= 0; --i) {
+    out[i] = static_cast<char>(v & 0xff);
+    v >>= 8;
+  }
+}
+
+uint32_t get_u32_be(const char* p) {
+  uint32_t v = 0;
+  for (int i = 0; i < 4; ++i) {
+    v = (v << 8) | static_cast<uint8_t>(p[i]);
+  }
+  return v;
+}
 
 void put_u64_be(char* out, uint64_t v) {
   for (int i = 7; i >= 0; --i) {
     out[i] = static_cast<char>(v & 0xff);
     v >>= 8;
   }
+}
+
+uint64_t get_u64_be(const char* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; ++i) {
+    v = (v << 8) | static_cast<uint8_t>(p[i]);
+  }
+  return v;
 }
 
 void make_owner_pair_key(uint8_t tag, const HashKey& owner, const HashKey& other,
@@ -53,9 +90,13 @@ void make_event_key(const HashKey& account, uint64_t lt, char out[kEventKeyLen])
   put_u64_be(out + 1 + 32, lt);
 }
 
-void make_incomplete_block_key(uint64_t seqno, char out[kIncompleteBlockKeyLen]) {
+void make_incomplete_block_key(const tos::BlockIdExt& block_id, char out[kIncompleteBlockKeyLen]) {
   out[0] = static_cast<char>(kIncompleteBlockTag);
-  put_u64_be(out + 1, seqno);
+  put_u32_be(out + 1, static_cast<uint32_t>(block_id.id.workchain));
+  put_u64_be(out + 1 + 4, block_id.id.shard);
+  put_u32_be(out + 1 + 4 + 8, block_id.id.seqno);
+  std::memcpy(out + 1 + 4 + 8 + 4, block_id.root_hash.as_slice().data(), 32);
+  std::memcpy(out + 1 + 4 + 8 + 4 + 32, block_id.file_hash.as_slice().data(), 32);
 }
 
 // Module-scope singleton, owned here; lifetime managed by set_wallet_index_db.
@@ -243,32 +284,72 @@ td::Result<bool> WalletIndexDb::get_nft_owner(const HashKey& nft, HashKey& owner
 
 // --- crash-recovery markers ---
 
-td::Status WalletIndexDb::put_incomplete_block(uint64_t seqno) {
+td::Status WalletIndexDb::put_incomplete_block(const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
-  make_incomplete_block_key(seqno, key);
-  char val[1] = {0};
-  auto s = db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, 1});
+  make_incomplete_block_key(block_id, key);
+  char val[kIncompleteBlockValueLen] = {0};
+  auto s = db_->set(td::Slice{key, kIncompleteBlockKeyLen}, td::Slice{val, kIncompleteBlockValueLen});
   if (s.is_error()) return s;
   // The marker must be durable before the block's entries: a marker that survives
-  // a crash flags a block whose indexing never committed.
-  return db_->flush();
+  // a crash flags a block whose indexing never committed. A WAL sync is enough
+  // for that (manual_wal_flush=true means writes aren't synced by default) —
+  // no need for a full memtable flush.
+  return db_->flush_wal(true);
 }
 
-td::Status WalletIndexDb::delete_incomplete_block(uint64_t seqno) {
+td::Status WalletIndexDb::delete_incomplete_block(const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
-  make_incomplete_block_key(seqno, key);
+  make_incomplete_block_key(block_id, key);
   // Joins the open write batch (if any), so the marker disappears atomically
   // with the block's entries.
   return db_->erase(td::Slice{key, kIncompleteBlockKeyLen});
 }
 
-td::Result<bool> WalletIndexDb::has_incomplete_block(uint64_t seqno) {
+td::Result<bool> WalletIndexDb::has_incomplete_block(const tos::BlockIdExt& block_id) {
   char key[kIncompleteBlockKeyLen];
-  make_incomplete_block_key(seqno, key);
+  make_incomplete_block_key(block_id, key);
   std::string value;
   auto status = db_->get(td::Slice{key, kIncompleteBlockKeyLen}, value);
   if (status.is_error()) return status.move_as_error();
   return status.move_as_ok() != td::KeyValue::GetStatus::NotFound;
+}
+
+td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(const tos::BlockIdExt&)> cb) {
+  // [0x1E, 0x1F) — the marker tag is a single byte, so the exclusive upper
+  // bound is just tag+1; no carry-chain needed (unlike for_each_with_prefix,
+  // which also handles multi-byte prefixes). Marker values are a sentinel
+  // byte, not a BOC cell, so this deliberately doesn't route through
+  // for_each_with_prefix (which BOC-deserializes every value).
+  char begin[1] = {static_cast<char>(kIncompleteBlockTag)};
+  char end[1] = {static_cast<char>(kIncompleteBlockTag + 1)};
+  return db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
+                                [&](td::Slice key, td::Slice value) -> td::Status {
+    if (key.size() == kLegacySeqnoOnlyKeyLen) {
+      // A pre-full-BlockIdExt marker: not enough information here (no
+      // shard, no hash) to safely resolve to one specific block, so it
+      // can't be auto-recovered. Surface it loudly rather than silently
+      // dropping it — an operator needs to check whether this seqno's
+      // block actually has incomplete jetton/NFT data.
+      LOG(ERROR) << "wc0-index: found a legacy seqno-only incomplete-block marker (seqno="
+                 << get_u64_be(key.data() + 1) << ") predating full-BlockIdExt markers; cannot"
+                 << " auto-recover it — verify this block's index data manually, then delete the"
+                 << " raw key if it's stale";
+      return td::Status::OK();
+    }
+    if (key.size() != kIncompleteBlockKeyLen || value.size() != kIncompleteBlockValueLen) {
+      LOG(WARNING) << "wc0-index: skipping malformed incomplete-block entry (key " << key.size()
+                   << "B, value " << value.size() << "B)";
+      return td::Status::OK();
+    }
+    tos::WorkchainId workchain = static_cast<tos::WorkchainId>(get_u32_be(key.data() + 1));
+    tos::ShardId shard = get_u64_be(key.data() + 1 + 4);
+    tos::BlockSeqno seqno = get_u32_be(key.data() + 1 + 4 + 8);
+    tos::RootHash root_hash;
+    tos::FileHash file_hash;
+    root_hash.as_slice().copy_from(td::Slice{key.data() + 1 + 4 + 8 + 4, 32});
+    file_hash.as_slice().copy_from(td::Slice{key.data() + 1 + 4 + 8 + 4 + 32, 32});
+    return cb(tos::BlockIdExt{workchain, shard, seqno, root_hash, file_hash});
+  });
 }
 
 // --- per-block batched writes ---
@@ -288,12 +369,11 @@ td::Status WalletIndexDb::commit_batch() {
     return td::Status::Error("wc0-index: no batch open");
   }
   batch_open_ = false;
-  auto s = db_->commit_write_batch();
-  if (s.is_error()) return s;
-  // td::RocksDb opens with manual WAL flush and its destructor does not flush, so
-  // one explicit flush() per block is required for durability across restart
-  // (see EvmRpcCacheDb).
-  return db_->flush();
+  // commit_write_batch() issues the write with WriteOptions.sync=true, which
+  // (combined with manual_wal_flush=true) already syncs the WAL for this
+  // write — an additional flush() here would be a redundant, much more
+  // expensive full memtable flush.
+  return db_->commit_write_batch();
 }
 
 void WalletIndexDb::abort_batch() {

@@ -287,8 +287,7 @@ void ApplyBlock::applied_set() {
     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
     if (block_.not_null()) {
       try {
-        g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id().id.workchain,
-                               handle_->id().id.seqno);
+        g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id());
       } catch (...) {
         // Indexing must never affect block application.
       }
@@ -300,7 +299,7 @@ void ApplyBlock::applied_set() {
               return;
             }
             try {
-              g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id.id.workchain, id.id.seqno);
+              g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id);
             } catch (...) {
               // Indexing must never affect block application.
             }

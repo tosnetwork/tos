@@ -102,6 +102,10 @@ class RocksDb : public KeyValue {
   Status commit_transaction() override;
   Status abort_transaction() override;
   Status flush() override;
+  // Sync the WAL only (no memtable flush / no new SST). Much cheaper than
+  // flush() when only write-ahead durability is needed, e.g. under
+  // manual_wal_flush=true where per-write WAL syncing is otherwise disabled.
+  Status flush_wal(bool sync);
 
   Status begin_snapshot();
   Status end_snapshot();

@@ -38,6 +38,7 @@
 #include "auto/tl/tos_api_json.h"
 #include "dht/dht.h"
 #include "metrics/prometheus-exporter.h"
+#include "tos/tos-types.h"
 #include "json-rpc-server.h"
 #include "quic/quic-sender.h"
 #include "rldp/rldp.h"
@@ -500,6 +501,17 @@ class ValidatorEngine : public td::actor::Actor {
 
   void start_validator();
   void started_validator();
+  // Crash-recovery: re-index any wc=0 block left flagged incomplete by the
+  // wc0 wallet-index writer (see wallet-index.h's 0x1E marker). Fired once,
+  // right after validator_manager_ exists; a pure local-db lookup, safe to
+  // queue immediately (no network-sync dependency). Processes wc0_recovery_markers_
+  // one at a time via recover_wc0_index_step() re-sending itself a message
+  // through the actor scheduler (not a self-capturing closure) — avoids both
+  // a reference cycle and unbounded concurrent lookups.
+  void recover_wc0_index();
+  void recover_wc0_index_step();
+  std::vector<tos::BlockIdExt> wc0_recovery_markers_;
+  size_t wc0_recovery_index_ = 0;
 
   void start_full_node();
   void started_full_node();

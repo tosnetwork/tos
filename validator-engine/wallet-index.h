@@ -22,6 +22,7 @@
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/bits.h"
+#include "tos/tos-types.h"
 #include "vm/cells.h"
 
 namespace td {
@@ -75,12 +76,30 @@ class WalletIndexDb {
   // the writer wants: the pre-block owner.
   td::Result<bool> get_nft_owner(const HashKey& nft, HashKey& owner);
 
-  // --- Crash-recovery marker: 0x1E + block_seqno_be(8) ---
-  // put_incomplete_block is durable on return (flushed); delete_incomplete_block
+  // --- Crash-recovery marker: 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4)
+  //     + root_hash(32) + file_hash(32) -> sentinel(1) ---
+  // Keyed off the full BlockIdExt (workchain+shard+seqno+both hashes), not
+  // seqno alone: a different shard can reuse the same seqno after a
+  // split/merge, so seqno by itself is not a unique identifier, and if the
+  // same position were ever re-applied with a different hash, a
+  // position-only key would let the new marker silently overwrite the old
+  // one instead of being a distinct entry. Keying on the full id also means
+  // recovery already has everything needed for an exact get_block_handle()
+  // lookup — no separate account/shard-prefix search that could resolve to
+  // the wrong shard's block.
+  // put_incomplete_block is durable on return (WAL-synced); delete_incomplete_block
   // joins the open write batch when one is active.
-  td::Status put_incomplete_block(uint64_t seqno);
-  td::Status delete_incomplete_block(uint64_t seqno);
-  td::Result<bool> has_incomplete_block(uint64_t seqno);
+  td::Status put_incomplete_block(const tos::BlockIdExt& block_id);
+  td::Status delete_incomplete_block(const tos::BlockIdExt& block_id);
+  td::Result<bool> has_incomplete_block(const tos::BlockIdExt& block_id);
+  // Crash-recovery scan: calls `cb(block_id)` for every currently-recorded
+  // incomplete-block marker. Markers are only ever left behind by a crash
+  // mid-block or a parse failure (see wallet-index-writer.cpp); callers are
+  // expected to re-fetch and re-index each flagged block, then
+  // delete_incomplete_block() on success — and to leave the marker in place
+  // (not delete it) if re-indexing is itself incomplete, e.g. post-apply
+  // state isn't available, so a later attempt can still backfill it.
+  td::Status for_each_incomplete_block(std::function<td::Status(const tos::BlockIdExt& block_id)> cb);
 
   // --- Per-block batched writes ---
   // Writers must hold write_mutex() across begin_batch()..commit_batch()/abort_batch():
@@ -90,7 +109,9 @@ class WalletIndexDb {
   std::mutex& write_mutex() { return write_mutex_; }
   // Route subsequent put_/erase_ calls into an atomic batch.
   td::Status begin_batch();
-  // Atomically commit the batch and flush the WAL (single fsync per block).
+  // Atomically commit the batch and sync the WAL for it (one of two WAL
+  // syncs per block — the other is put_incomplete_block()'s own sync,
+  // durable before this one, before indexing even starts).
   td::Status commit_batch();
   // Drop the batch (e.g. after a parse error) so no partial block is written.
   void abort_batch();
