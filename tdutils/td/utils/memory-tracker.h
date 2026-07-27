@@ -70,7 +70,7 @@ inline const char *memory_tracker_category_name(MemoryTrackerCategory category) 
     case MemoryTrackerCategory::StateSync:
       return "StateSync";
     case MemoryTrackerCategory::Network:
-      return "AdnlQueue";
+      return "Network";
     case MemoryTrackerCategory::QuicInbound:
       return "QuicInbound";
     case MemoryTrackerCategory::QuicOutbound:

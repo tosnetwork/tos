@@ -430,7 +430,7 @@ struct [[nodiscard]] StartedTask {
       // duplicate Simplex vote persistence after a retry or broadcast replay.
       // Keep real failures at ERROR while avoiding misleading error noise for
       // the normal cancelled path.
-      LOG_IF(ERROR, r.is_error() && r.error().code() != 653)  // td::Status cancellation code
+      LOG_IF(ERROR, r.is_error() && r.error().code() != /* ErrorCode::cancelled */ 653)
           << "Detached task <" << description << "> failed: " << r.error();
       co_return td::Unit{};
     }(std::move(*this), std::move(description))
