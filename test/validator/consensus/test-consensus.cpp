@@ -12,6 +12,7 @@
 #include "consensus/simplex/bus.h"
 #include "consensus/simplex/candidate-retention.h"
 #include "consensus/simplex/completed-lru.h"
+#include "consensus/simplex/finalized-slot-dedup.h"
 #include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
 #include "consensus/candidate-relay-policy.h"
@@ -1403,6 +1404,40 @@ void test_candidate_resolver_interleaving() {
   CHECK(interleaved.contains(boundary_id));
 }
 
+void test_simplex_db_finalized_slot_dedup() {
+  simplex::FinalizedSlotDedup<int> dedup;
+  CHECK(dedup.insert(10, 100));
+  CHECK(dedup.insert(10, 101));
+  CHECK(dedup.insert(11, 110));
+  CHECK(dedup.insert(13, 130));
+  CHECK(!dedup.insert(99, 100));
+  CHECK(dedup.size() == 4);
+  CHECK(dedup.slot_count() == 3);
+
+  CHECK(dedup.prune_through(10) == 2);
+  CHECK(!dedup.contains(100));
+  CHECK(!dedup.contains(101));
+  CHECK(dedup.contains(110));
+  CHECK(dedup.contains(130));
+  CHECK(dedup.size() == 2);
+  CHECK(dedup.slot_count() == 2);
+
+  // Older and repeated finalization notifications are idempotent.
+  CHECK(dedup.prune_through(9) == 0);
+  CHECK(dedup.prune_through(10) == 0);
+  CHECK(!dedup.insert(10, 102));
+  CHECK(!dedup.insert(8, 80));
+  CHECK(dedup.size() == 2);
+  CHECK(dedup.prune_through(12) == 1);
+  CHECK(dedup.size() == 1);
+  CHECK(dedup.contains(130));
+
+  CHECK(dedup.insert(14, 140));
+  CHECK(dedup.prune_through(20) == 2);
+  CHECK(dedup.size() == 0);
+  CHECK(dedup.slot_count() == 0);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[]) {
@@ -1842,6 +1877,7 @@ int main(int argc, char *argv[]) {
   bool run_state_resolver_cache_unit_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
+  bool run_simplex_db_finalized_slot_dedup_unit_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1996,6 +2032,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "candidate-resolver-interleaving-unit-test",
                "verify finalization/network/persistence eviction interleavings",
                [&]() { run_candidate_resolver_interleaving_unit_test = true; });
+  p.add_option('\0', "simplex-db-finalized-slot-dedup-unit-test",
+               "verify finalized-slot pruning for persisted vote and certificate hashes",
+               [&]() { run_simplex_db_finalized_slot_dedup_unit_test = true; });
   p.add_checked_option('\0', "catch-up-downtime",
                        "stop one validator for this many seconds, then require it to catch up",
                        [&](td::Slice arg) {
@@ -2049,6 +2088,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_candidate_resolver_interleaving_unit_test) {
     test_candidate_resolver_interleaving();
+    return 0;
+  }
+  if (run_simplex_db_finalized_slot_dedup_unit_test) {
+    test_simplex_db_finalized_slot_dedup();
     return 0;
   }
   CHECK(N_DOUBLE_NODES <= N_NODES);

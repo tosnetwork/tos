@@ -71,6 +71,10 @@ add_test(
     COMMAND test-consensus --candidate-resolver-interleaving-unit-test
 )
 add_test(
+    NAME test-consensus-simplex2-db-finalized-slot-dedup-unit
+    COMMAND test-consensus --simplex-db-finalized-slot-dedup-unit-test
+)
+add_test(
     NAME test-consensus-simplex2-state-resolver-catch-up
     COMMAND test-consensus --duration 8 --n-nodes 5 --target-rate-ms 50
             --net-ping 0.002:0.01 --catch-up-downtime 2.5

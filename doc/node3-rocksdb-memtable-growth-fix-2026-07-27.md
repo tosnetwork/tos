@@ -300,6 +300,67 @@ finalized-height coupling, and a functioning jemalloc purge on the deployed
 binary. It does not provide a controlled before/after WalletIndex throughput
 number or prove behavior under production storage saturation.
 
+### Follow-up: the approximately 2.02 MiB/min short window
+
+A later ten-minute RSS window reported approximately 2.02 MiB/min. This was
+investigated with a profiling build instead of treating the short-window
+slope as proof of another leak. By then, the main validator
+CandidateResolver and StateResolver caches had reached their configured
+limits and were evicting. `stats.allocated` also fell across some one-minute
+samples, which already ruled out one object graph retaining memory at a
+constant rate.
+
+A differential heap profile from `12:19:52` to `12:27:42 UTC` reported
+38.4 MiB of sampled net live allocation. The meaningful endpoint stacks
+were:
+
+- approximately 20.0 MiB in one in-flight
+  `FullNodeShardImpl::process_block_candidate_broadcast` →
+  `deserialize_block_candidate_broadcast` → `td::lz4_decompress` chain;
+- approximately 9.3 MiB in ordinary `rocksdb::MemTable::Add` allocation;
+- approximately 7.4 MiB in archive-read and `BlockQ`/state-cache turnover.
+
+These are cumulative call paths and must not be added as independent owners.
+The 20 MiB decompression sample was transient: the process-wide
+`BufferAllocator` live counter moved only from approximately 427.6 MiB to
+428.6 MiB over the corresponding interval and subsequently oscillated. The
+RocksDB bytes remained inside the configured write-buffer policy. No
+repeatable final container retained the whole short-window RSS slope.
+
+The source audit did find two smaller, genuinely unbounded Simplex containers:
+
+1. `SimplexDb` kept every historical vote and certificate hash in
+   `saved_votes`, although finalized slots can no longer be submitted to the
+   pool.
+2. `SimplexPool` kept every successfully prechecked broadcast ID in
+   `seen_broadcasts_`, keyed by slot, without finalization cleanup.
+
+Both are now finalized-slot bounded. `SimplexDb` indexes hashes by referenced
+slot, prunes through every `FinalizationObserved`, and remembers the
+finalization high-water mark so a delayed event cannot reinsert an old slot.
+`SimplexPool` erases prechecked broadcast IDs through the finalized slot.
+The diagnostic counter is gated by `TOS_MEMORY_DIAGNOSTICS=1`.
+
+All 16 `test-consensus-simplex2-*` tests passed, including a new deterministic
+test covering duplicate hashes, repeated and out-of-order finalization, the
+retention boundary, and delayed insertion for an already-finalized slot.
+
+Node3 was deployed with executable SHA-256
+`8c969eca29cca3e9d8479dff08e70d4a325a8b1046cab5feb44beb5a12cad35a`
+at `12:30:51 UTC`. On the first real database scan, the new code discarded
+544,840 historical hashes from the active validator group and 274,718 from
+the observer group. Both then reported:
+
+```text
+saved_vote_hashes=0 active_slots=0
+```
+
+The node resumed finalizing both groups with one PID, zero service restarts,
+and no error-priority journal entry in the initial live-validation window.
+This proves the two unbounded containers are now bounded; it does not turn
+ordinary minute-scale MemTable, cache, and in-flight-buffer oscillation into
+a numerically flat RSS line.
+
 ## Operational interpretation
 
 RSS is not expected to be numerically flat each minute. Mutable MemTables grow
