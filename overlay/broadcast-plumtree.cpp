@@ -40,6 +40,7 @@
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
 #include "td/utils/port/Clocks.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/tl_helpers.h"
 #include "tl-utils/common-utils.hpp"
 
@@ -384,6 +385,11 @@ class BroadcastsPlumtree::Impl {
     slots_.resize(options_.tree_slots_);
     options_.stats_epoch_duration_ = std::max(options_.stats_epoch_duration_, 1.0);
   }
+  ~Impl() {
+    if (tracked_payload_bytes_ != 0) {
+      td::memory_tracker_free(td::MemoryTrackerCategory::Plumtree, tracked_payload_bytes_);
+    }
+  }
 
   void init_sender(td::actor::ActorId<adnl::AdnlSenderInterface> sender) {
     sender_ = sender;
@@ -441,6 +447,8 @@ class BroadcastsPlumtree::Impl {
   std::size_t active_repair_queries_ = 0;
   td::ListNode lru_;
   td::ListNode simple_lru_;
+  td::Timestamp next_memory_diagnostics_at_;
+  td::uint64 tracked_payload_bytes_ = 0;
 
   td::Status validate_control_fields(const td::Bits256 &broadcast_id, td::uint32 part_index,
                                      td::uint32 tree_index) const;
@@ -517,9 +525,69 @@ class BroadcastsPlumtree::Impl {
 
   void stats_sync_epoch();
   void stats_tick(OverlayImpl *overlay);
+  void maybe_log_memory_diagnostics();
   void stats_forward(OverlayImpl *overlay, const tos_api::overlay_plumtreeStatsRecord &record,
                      const adnl::AdnlNodeIdShort &from);
 };
+
+void BroadcastsPlumtree::Impl::maybe_log_memory_diagnostics() {
+  if (!td::memory_tracker_enabled() ||
+      (next_memory_diagnostics_at_ && !next_memory_diagnostics_at_.is_in_past())) {
+    return;
+  }
+  next_memory_diagnostics_at_ = td::Timestamp::in(60.0);
+
+  td::uint64 payload_bytes = 0;
+  size_t fec_parts = 0;
+  size_t tree_parts = 0;
+  size_t decoder_parts = 0;
+  size_t decoders = 0;
+  for (const auto &[_, broadcast] : broadcasts_) {
+    decoders += broadcast->decoder ? 1 : 0;
+    decoder_parts += broadcast->decoder_parts.size();
+    fec_parts += broadcast->parts_by_index.size();
+    tree_parts += broadcast->tree_parts.size();
+    for (const auto &[__, part] : broadcast->parts_by_index) {
+      payload_bytes += part.size();
+    }
+    for (const auto &[__, part] : broadcast->tree_parts) {
+      payload_bytes += part.signature.size();
+    }
+  }
+
+  for (const auto &[_, broadcast] : simple_broadcasts_) {
+    payload_bytes += broadcast->data.size();
+    payload_bytes += broadcast->part.signature.size();
+  }
+
+  size_t eager_peers = 0;
+  size_t pending_feedback = 0;
+  for (const auto &slot : slots_) {
+    eager_peers += slot.eager.size();
+    pending_feedback += slot.pending_feedback.size();
+  }
+
+  if (payload_bytes > tracked_payload_bytes_) {
+    td::memory_tracker_alloc(td::MemoryTrackerCategory::Plumtree, payload_bytes - tracked_payload_bytes_);
+  } else if (payload_bytes < tracked_payload_bytes_) {
+    td::memory_tracker_free(td::MemoryTrackerCategory::Plumtree, tracked_payload_bytes_ - payload_bytes);
+  }
+  tracked_payload_bytes_ = payload_bytes;
+
+  LOG(WARNING) << "MEMORY_DIAGNOSTICS plumtree"
+               << " fec_broadcasts=" << broadcasts_.size()
+               << " simple_broadcasts=" << simple_broadcasts_.size()
+               << " payload_bytes=" << payload_bytes
+               << " fec_parts=" << fec_parts
+               << " tree_parts=" << tree_parts
+               << " decoders=" << decoders
+               << " decoder_parts=" << decoder_parts
+               << " missing_parts=" << missing_parts_.size()
+               << " active_repair_queries=" << active_repair_queries_
+               << " eager_peers=" << eager_peers
+               << " pending_feedback=" << pending_feedback
+               << " stats_records=" << stats_epoch_.store.size();
+}
 
 td::Status BroadcastsPlumtree::Impl::validate_control_fields(const td::Bits256 &broadcast_id, td::uint32 part_index,
                                                              td::uint32 tree_index) const {
@@ -2101,6 +2169,7 @@ void BroadcastsPlumtree::Impl::gc(OverlayImpl *overlay) {
     CHECK(simple_broadcasts_.erase(broadcast_id));
     overlay->register_delivered_broadcast(broadcast_id);
   }
+  maybe_log_memory_diagnostics();
 }
 
 BroadcastsPlumtree::BroadcastsPlumtree(PlumtreeFecOptions options, bool is_original_sender)

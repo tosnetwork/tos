@@ -63,6 +63,10 @@ add_test(
     COMMAND test-consensus --state-resolver-cache-unit-test
 )
 add_test(
+    NAME test-consensus-simplex2-candidate-resolver-retention-unit
+    COMMAND test-consensus --candidate-resolver-retention-unit-test
+)
+add_test(
     NAME test-consensus-simplex2-state-resolver-catch-up
     COMMAND test-consensus --duration 8 --n-nodes 5 --target-rate-ms 50
             --net-ping 0.002:0.01 --catch-up-downtime 2.5
@@ -71,7 +75,7 @@ add_test(
 set_tests_properties(
     test-consensus-simplex2-state-resolver-catch-up
     PROPERTIES ENVIRONMENT
-        "TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES=8"
+        "TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=8"
 )
 add_test(
     NAME test-consensus-simplex2-query-abuse

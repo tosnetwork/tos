@@ -31,9 +31,14 @@
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/misc.h"
 
 namespace td {
+struct RocksDb::MemoryDiagnosticsState {
+  std::atomic<td::uint64> next_log_at{0};
+};
+
 namespace {
 static Status from_rocksdb(const rocksdb::Status &status) {
   if (status.ok()) {
@@ -64,10 +69,8 @@ RocksDb::~RocksDb() {
 }
 
 RocksDb RocksDb::clone() const {
-  if (transaction_db_) {
-    return RocksDb{transaction_db_, options_};
-  }
-  return RocksDb{db_, options_};
+  return transaction_db_ ? RocksDb{transaction_db_, options_, memory_diagnostics_}
+                         : RocksDb{db_, options_, memory_diagnostics_};
 }
 
 Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
@@ -170,6 +173,50 @@ std::string RocksDb::stats() const {
   return out;
 }
 
+std::string RocksDb::memory_stats() const {
+  if (!db_) {
+    return "";
+  }
+  struct Property {
+    const char *name;
+    const char *label;
+  };
+  static constexpr Property properties[] = {
+      {"rocksdb.cur-size-active-mem-table", "active_memtable_bytes"},
+      {"rocksdb.cur-size-all-mem-tables", "all_memtable_bytes"},
+      {"rocksdb.size-all-mem-tables", "all_memtable_reserved_bytes"},
+      {"rocksdb.num-immutable-mem-table", "immutable_memtables"},
+      {"rocksdb.estimate-table-readers-mem", "table_readers_bytes"},
+      {"rocksdb.block-cache-usage", "block_cache_bytes"},
+      {"rocksdb.block-cache-pinned-usage", "block_cache_pinned_bytes"},
+  };
+  td::StringBuilder builder;
+  builder << "db=" << db_->GetName();
+  for (const auto &property : properties) {
+    td::uint64 value = 0;
+    if (db_->GetIntProperty(property.name, &value)) {
+      builder << " " << property.label << "=" << value;
+    }
+  }
+  return builder.as_cslice().str();
+}
+
+void RocksDb::maybe_log_memory_stats() const {
+  if (!memory_tracker_enabled() || !memory_diagnostics_) {
+    return;
+  }
+  auto now = static_cast<td::uint64>(td::Time::now());
+  auto next = memory_diagnostics_->next_log_at.load(std::memory_order_relaxed);
+  if (now < next ||
+      !memory_diagnostics_->next_log_at.compare_exchange_strong(next, now + 60, std::memory_order_relaxed)) {
+    return;
+  }
+  auto current = memory_stats();
+  if (!current.empty()) {
+    LOG(WARNING) << "MEMORY_DIAGNOSTICS rocksdb " << current;
+  }
+}
+
 Result<RocksDb::GetStatus> RocksDb::get(Slice key, std::string &value) {
   if (options_.no_reads) {
     return td::Status::Error("trying to read from write-only database");
@@ -231,6 +278,7 @@ Result<std::vector<RocksDb::GetStatus>> RocksDb::get_multi(td::Span<Slice> keys,
 }
 
 Status RocksDb::set(Slice key, Slice value) {
+  maybe_log_memory_stats();
   if (write_batch_) {
     return from_rocksdb(write_batch_->Put(to_rocksdb(key), to_rocksdb(value)));
   }
@@ -240,6 +288,7 @@ Status RocksDb::set(Slice key, Slice value) {
   return from_rocksdb(db_->Put({}, to_rocksdb(key), to_rocksdb(value)));
 }
 Status RocksDb::merge(Slice key, Slice value) {
+  maybe_log_memory_stats();
   if (write_batch_) {
     return from_rocksdb(write_batch_->Merge(to_rocksdb(key), to_rocksdb(value)));
   }
@@ -253,6 +302,7 @@ Status RocksDb::run_gc() {
 }
 
 Status RocksDb::erase(Slice key) {
+  maybe_log_memory_stats();
   if (write_batch_) {
     return from_rocksdb(write_batch_->Delete(to_rocksdb(key)));
   }
@@ -361,6 +411,7 @@ Status RocksDb::begin_transaction() {
 }
 
 Status RocksDb::commit_write_batch() {
+  maybe_log_memory_stats();
   CHECK(write_batch_);
   auto write_batch = std::move(write_batch_);
   rocksdb::WriteOptions options;
@@ -369,6 +420,7 @@ Status RocksDb::commit_write_batch() {
 }
 
 Status RocksDb::commit_transaction() {
+  maybe_log_memory_stats();
   CHECK(transaction_);
   auto transaction = std::move(transaction_);
   return from_rocksdb(transaction->Commit());
@@ -412,12 +464,21 @@ Status RocksDb::end_snapshot() {
   return td::Status::OK();
 }
 
-RocksDb::RocksDb(std::shared_ptr<rocksdb::OptimisticTransactionDB> db, RocksDbOptions options)
-    : transaction_db_{db}, db_(std::move(db)), options_(std::move(options)) {
+RocksDb::RocksDb(std::shared_ptr<rocksdb::OptimisticTransactionDB> db, RocksDbOptions options,
+                 std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics)
+    : transaction_db_{db}
+    , db_(std::move(db))
+    , options_(std::move(options))
+    , memory_diagnostics_(memory_diagnostics ? std::move(memory_diagnostics)
+                                            : std::make_shared<MemoryDiagnosticsState>()) {
 }
 
-RocksDb::RocksDb(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options)
-    : db_(std::move(db)), options_(std::move(options)) {
+RocksDb::RocksDb(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options,
+                 std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics)
+    : db_(std::move(db))
+    , options_(std::move(options))
+    , memory_diagnostics_(memory_diagnostics ? std::move(memory_diagnostics)
+                                            : std::make_shared<MemoryDiagnosticsState>()) {
 }
 
 void RocksDbSnapshotStatistics::begin_snapshot(const rocksdb::Snapshot *snapshot) {

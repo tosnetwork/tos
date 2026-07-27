@@ -21,6 +21,7 @@
 #include <new>
 
 #include "td/utils/buffer.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/port/thread_local.h"
 
 // fixes https://bugs.llvm.org/show_bug.cgi?id=33723 for clang >= 3.6 + c++11 + libc++
@@ -35,9 +36,21 @@ namespace td {
 TD_THREAD_LOCAL BufferAllocator::BufferRawTls *BufferAllocator::buffer_raw_tls;  // static zero-initialized
 
 std::atomic<size_t> BufferAllocator::buffer_mem;
+std::atomic<size_t> BufferAllocator::raw_buffer_count;
+std::atomic<size_t> BufferAllocator::small_slab_count;
+std::atomic<size_t> BufferAllocator::small_slab_bytes;
 
 size_t BufferAllocator::get_buffer_mem() {
   return buffer_mem;
+}
+
+BufferAllocator::MemoryStats BufferAllocator::get_memory_stats() {
+  return {
+      buffer_mem.load(std::memory_order_relaxed),
+      raw_buffer_count.load(std::memory_order_relaxed),
+      small_slab_count.load(std::memory_order_relaxed),
+      small_slab_bytes.load(std::memory_order_relaxed),
+  };
 }
 
 BufferAllocator::WriterPtr BufferAllocator::create_writer(size_t size) {
@@ -98,6 +111,13 @@ void BufferAllocator::dec_ref_cnt(BufferRaw *ptr) {
   if (left == 1) {
     auto buf_size = max(sizeof(BufferRaw), TD_OFFSETOF(BufferRaw, data_) + ptr->data_size_);
     buffer_mem -= buf_size;
+    if (memory_tracker_enabled()) {
+      raw_buffer_count.fetch_sub(1, std::memory_order_relaxed);
+      if (ptr->data_size_ == 4096 * 4) {
+        small_slab_count.fetch_sub(1, std::memory_order_relaxed);
+        small_slab_bytes.fetch_sub(buf_size, std::memory_order_relaxed);
+      }
+    }
     ptr->~BufferRaw();
     delete[] ptr;
   }
@@ -111,6 +131,13 @@ BufferRaw *BufferAllocator::create_buffer_raw(size_t size) {
     buf_size = sizeof(BufferRaw);
   }
   buffer_mem += buf_size;
+  if (memory_tracker_enabled()) {
+    raw_buffer_count.fetch_add(1, std::memory_order_relaxed);
+    if (size == 4096 * 4) {
+      small_slab_count.fetch_add(1, std::memory_order_relaxed);
+      small_slab_bytes.fetch_add(buf_size, std::memory_order_relaxed);
+    }
+  }
   auto *buffer_raw = reinterpret_cast<BufferRaw *>(new char[buf_size]);
   return new (buffer_raw) BufferRaw(size);
 }

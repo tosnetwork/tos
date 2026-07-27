@@ -10,6 +10,7 @@
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "consensus/simplex/bus.h"
+#include "consensus/simplex/candidate-retention.h"
 #include "consensus/simplex/completed-lru.h"
 #include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
@@ -1317,6 +1318,48 @@ void test_state_resolver_completed_lru() {
   CHECK(lru.size() == lru.capacity());
 }
 
+void test_candidate_resolver_retention() {
+  struct State {
+    bool active = false;
+    bool durable = true;
+  };
+
+  simplex::CandidateRetentionPolicy policy{4};
+  CHECK(policy.first_retained_slot() == 0);
+  policy.observe_finalized(10);
+  CHECK(policy.latest_finalized_slot() == 10);
+  CHECK(policy.first_retained_slot() == 7);
+
+  std::map<CandidateId, State> states;
+  for (td::uint32 slot = 4; slot <= 11; ++slot) {
+    states.emplace(CandidateId{slot, {}}, State{});
+  }
+  states.find(CandidateId{5, {}})->second.active = true;
+  states.find(CandidateId{6, {}})->second.durable = false;
+
+  auto can_evict = [](const State& state) { return !state.active && state.durable; };
+  CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 1);
+  CHECK(!states.contains(CandidateId{4, {}}));
+  CHECK(states.contains(CandidateId{5, {}}));
+  CHECK(states.contains(CandidateId{6, {}}));
+  CHECK(states.contains(CandidateId{7, {}}));
+
+  // Entries protected by an in-flight operation or incomplete persistence
+  // survive the first pass and are removed by a later pass once safe.
+  states.find(CandidateId{5, {}})->second.active = false;
+  states.find(CandidateId{6, {}})->second.durable = true;
+  CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 2);
+  CHECK(states.size() == 5);
+
+  // Older finalization notifications cannot move the window backwards.
+  policy.observe_finalized(9);
+  CHECK(policy.first_retained_slot() == 7);
+  policy.observe_finalized(20);
+  CHECK(policy.first_retained_slot() == 17);
+  CHECK(simplex::prune_candidate_states(states, policy.first_retained_slot(), can_evict) == 5);
+  CHECK(states.empty());
+}
+
 }  // namespace
 
 int main(int argc, char *argv[]) {
@@ -1754,6 +1797,7 @@ int main(int argc, char *argv[]) {
   bool run_configured_maximum_candidate_test = false;
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
+  bool run_candidate_resolver_retention_unit_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -1902,6 +1946,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "state-resolver-cache-unit-test",
                "verify completed-entry LRU ordering, bounds and failure removal",
                [&]() { run_state_resolver_cache_unit_test = true; });
+  p.add_option('\0', "candidate-resolver-retention-unit-test",
+               "verify finalized-window pruning and in-flight retention",
+               [&]() { run_candidate_resolver_retention_unit_test = true; });
   p.add_checked_option('\0', "catch-up-downtime",
                        "stop one validator for this many seconds, then require it to catch up",
                        [&](td::Slice arg) {
@@ -1947,6 +1994,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_state_resolver_cache_unit_test) {
     test_state_resolver_completed_lru();
+    return 0;
+  }
+  if (run_candidate_resolver_retention_unit_test) {
+    test_candidate_resolver_retention();
     return 0;
   }
   CHECK(N_DOUBLE_NODES <= N_NODES);

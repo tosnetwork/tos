@@ -126,6 +126,19 @@ TOS_MEMORY_DIAGNOSTICS=1
 When the variable is unset (the normal production setting), those diagnostic
 logs are disabled.
 
+Simplex CandidateResolver retains a bounded recent finalized-slot window. The
+default is 4,096 slots. A low-memory test node can use a smaller window:
+
+```text
+TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=1024
+```
+
+Candidates and notarization certificates outside the window are recovered
+from persistent storage. Reducing the window lowers the steady-state consensus
+working set but can increase database reads and writes during catch-up. Keep
+the default on production validators unless a smaller value has passed
+restart, partition, and offline catch-up testing for the target workload.
+
 `--celldb-direct-io` may be evaluated only with a deliberately large CellDB
 cache and a measured workload; the engine does not use direct I/O for small
 cache settings. Do not enable it blindly.

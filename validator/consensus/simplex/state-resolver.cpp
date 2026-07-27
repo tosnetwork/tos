@@ -9,6 +9,8 @@
 #include "td/actor/coro_utils.h"
 #include "td/utils/memory-tracker.h"
 
+#include <unordered_set>
+
 #include "bus.h"
 #include "completed-lru.h"
 
@@ -59,6 +61,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     // entire chain lifetime.
     LOG(INFO) << "Simplex state-resolver cache limits: states=" << state_cache_lru_.capacity()
               << " finalized=" << finalized_blocks_lru_.capacity();
+    if (td::memory_tracker_enabled()) {
+      alarm_timestamp() = td::Timestamp::in(60.0);
+    }
+  }
+
+  void alarm() override {
+    maybe_log_cache_stats(true);
+    alarm_timestamp() = td::Timestamp::in(60.0);
   }
 
   void tear_down() override {
@@ -152,7 +162,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     CHECK(it->second.promises.empty());
     state_cache_.erase(it);
     ++state_cache_evictions_;
-    maybe_log_cache_stats();
+    maybe_log_cache_stats(false);
   }
 
   td::actor::Task<bool> is_finalized(CandidateId id, bool skip_db_for_newer_slot = false) {
@@ -252,20 +262,45 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     CHECK(it->second.waiters.empty());
     finalized_blocks_.erase(it);
     ++finalized_cache_evictions_;
-    maybe_log_cache_stats();
+    maybe_log_cache_stats(false);
   }
 
-  void maybe_log_cache_stats() const {
+  void maybe_log_cache_stats(bool force) const {
     if (!td::memory_tracker_enabled()) {
       return;
     }
     const size_t total_evictions = state_cache_evictions_ + finalized_cache_evictions_;
-    if (total_evictions == 1 || total_evictions % 1024 == 0) {
+    if (force || total_evictions == 1 || total_evictions % 1024 == 0) {
+      std::unordered_set<const BlockData*> unique_blocks;
+      size_t state_block_bytes = 0;
+      size_t state_inflight = 0;
+      size_t state_waiters = 0;
+      for (const auto& [_, entry] : state_cache_) {
+        state_inflight += entry.started && !entry.result.has_value();
+        state_waiters += entry.promises.size();
+        if (!entry.result.has_value()) {
+          continue;
+        }
+        for (const auto& block : entry.result->state->block_data()) {
+          if (unique_blocks.insert(block.get()).second) {
+            state_block_bytes += block->data().size();
+          }
+        }
+      }
+      size_t finalized_inflight = 0;
+      size_t finalized_waiters = 0;
+      for (const auto& [_, entry] : finalized_blocks_) {
+        finalized_inflight += entry.started && !entry.done;
+        finalized_waiters += entry.waiters.size();
+      }
       LOG(WARNING) << "MEMORY_DIAGNOSTICS simplex-state-resolver"
                    << " state_cache=" << state_cache_.size() << "/" << state_cache_lru_.capacity()
                    << " state_evictions=" << state_cache_evictions_
+                   << " state_inflight=" << state_inflight << " state_waiters=" << state_waiters
+                   << " unique_state_blocks=" << unique_blocks.size() << " state_block_bytes=" << state_block_bytes
                    << " finalized_cache=" << finalized_blocks_.size() << "/" << finalized_blocks_lru_.capacity()
                    << " finalized_evictions=" << finalized_cache_evictions_
+                   << " finalized_inflight=" << finalized_inflight << " finalized_waiters=" << finalized_waiters
                    << " finalized_db_hits=" << finalized_db_hits_ << " finalized_db_misses=" << finalized_db_misses_
                    << " finalized_db_skips=" << finalized_db_skips_;
     }

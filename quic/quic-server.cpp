@@ -441,6 +441,7 @@ void QuicServer::collect_stats(td::Promise<Stats> P) {
     stats.summary = stats.summary + entry;
     stats.per_conn[id] = entry;
   }
+  stats.callback_memory = callback_->memory_stats();
   return P.set_value(std::move(stats));
 }
 

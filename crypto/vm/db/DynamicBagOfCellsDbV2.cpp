@@ -127,11 +127,11 @@ void trim_allocator_after_cache_drop(std::optional<td::uint64> rss_before_drop) 
     auto &tracker = td::memory_tracker_stats();
     auto log_tracker = [&](td::MemoryTrackerCategory category, const char *name) {
       auto &stats = tracker[static_cast<size_t>(category)];
-      LOG(INFO) << "memory tracker category=" << name
-                << " current_bytes=" << stats.current_bytes.load(std::memory_order_relaxed)
-                << " peak_bytes=" << stats.peak_bytes.load(std::memory_order_relaxed)
-                << " alloc_count=" << stats.alloc_count.load(std::memory_order_relaxed)
-                << " free_count=" << stats.free_count.load(std::memory_order_relaxed);
+      LOG(WARNING) << "memory tracker category=" << name
+                   << " current_bytes=" << stats.current_bytes.load(std::memory_order_relaxed)
+                   << " peak_bytes=" << stats.peak_bytes.load(std::memory_order_relaxed)
+                   << " alloc_count=" << stats.alloc_count.load(std::memory_order_relaxed)
+                   << " free_count=" << stats.free_count.load(std::memory_order_relaxed);
     };
     log_tracker(td::MemoryTrackerCategory::CellDb, "CellDb");
     log_tracker(td::MemoryTrackerCategory::StateSync, "StateSync");

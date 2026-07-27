@@ -19,8 +19,12 @@
 */
 #pragma once
 
+#include <atomic>
+#include <limits>
+
 #include "td/actor/core/ActorMessage.h"
 #include "td/utils/MpscLinkQueue.h"
+#include "td/utils/memory-tracker.h"
 
 namespace td {
 namespace actor {
@@ -55,15 +59,48 @@ class ActorMailbox {
   ~ActorMailbox() {
     clear();
   }
-  void push(ActorMessage message) {
+  bool push(ActorMessage message) {
+    auto log_growth = on_push();
     gdb::hook_message_pushed_to_mailbox(*this, message, [&] { queue_.push(std::move(message)); });
+    return log_growth;
   }
-  void push_unsafe(ActorMessage message) {
+  bool push_unsafe(ActorMessage message) {
+    auto log_growth = on_push();
     gdb::hook_message_pushed_to_mailbox(*this, message, [&] { queue_.push_unsafe(std::move(message)); });
+    return log_growth;
   }
 
   td::MpscLinkQueue<ActorMessage>::Reader &reader() {
     return reader_;
+  }
+
+  ActorMessage read() {
+    auto message = reader_.read();
+    if (message && td::memory_tracker_enabled()) {
+      auto previous = current_messages_.fetch_sub(1, std::memory_order_relaxed);
+      if (previous == 1 && growth_since_drain_.exchange(false, std::memory_order_relaxed)) {
+        drained_since_log_.store(true, std::memory_order_relaxed);
+      }
+    }
+    return message;
+  }
+
+  bool delay(ActorMessage message) {
+    auto log_growth = on_push();
+    reader_.delay(std::move(message));
+    return log_growth;
+  }
+
+  uint64 current_messages() const {
+    return current_messages_.load(std::memory_order_relaxed);
+  }
+
+  uint64 peak_messages() const {
+    return peak_messages_.load(std::memory_order_relaxed);
+  }
+
+  bool take_drained_since_log() {
+    return drained_since_log_.exchange(false, std::memory_order_relaxed);
   }
 
   void pop_all() {
@@ -75,14 +112,41 @@ class ActorMailbox {
 
   void clear() {
     pop_all();
-    while (reader_.read()) {
+    while (read()) {
       // skip
     }
   }
 
  private:
+  bool on_push() {
+    if (!td::memory_tracker_enabled()) {
+      return false;
+    }
+    auto current = current_messages_.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto peak = peak_messages_.load(std::memory_order_relaxed);
+    while (current > peak &&
+           !peak_messages_.compare_exchange_weak(peak, current, std::memory_order_relaxed)) {
+    }
+    auto threshold = next_log_threshold_.load(std::memory_order_relaxed);
+    while (current >= threshold) {
+      auto next = threshold > (std::numeric_limits<uint64>::max() / 2)
+                      ? std::numeric_limits<uint64>::max()
+                      : threshold * 2;
+      if (next_log_threshold_.compare_exchange_weak(threshold, next, std::memory_order_relaxed)) {
+        growth_since_drain_.store(true, std::memory_order_relaxed);
+        return true;
+      }
+    }
+    return false;
+  }
+
   td::MpscLinkQueue<ActorMessage> queue_;
   td::MpscLinkQueue<ActorMessage>::Reader reader_;
+  std::atomic<uint64> current_messages_{0};
+  std::atomic<uint64> peak_messages_{0};
+  std::atomic<uint64> next_log_threshold_{64};
+  std::atomic<bool> growth_since_drain_{false};
+  std::atomic<bool> drained_since_log_{false};
 };
 }  // namespace core
 }  // namespace actor

@@ -57,7 +57,15 @@ void ActorExecutor::send_immediate(ActorMessage message) {
   }
   if (message.is_big()) {
     gdb::hook_message_delayed(actor_info_.mailbox(), message,
-                              [&]() { actor_info_.mailbox().reader().delay(std::move(message)); });
+                              [&]() {
+                                if (actor_info_.mailbox().delay(std::move(message))) {
+                                  LOG(WARNING) << "MEMORY_DIAGNOSTICS actor-mailbox actor="
+                                               << actor_info_.get_name()
+                                               << " current_messages="
+                                               << actor_info_.mailbox().current_messages()
+                                               << " peak_messages=" << actor_info_.mailbox().peak_messages();
+                                }
+                              });
     pending_signals_.add_signal(ActorSignals::Message);
     actor_execute_context_.set_pause();
     return;
@@ -87,7 +95,11 @@ void ActorExecutor::send(ActorMessage message) {
     return send_immediate(std::move(message));
   }
   //LOG(ERROR) << "AE::send delayed";
-  actor_info_.mailbox().push(std::move(message));
+  if (actor_info_.mailbox().push(std::move(message))) {
+    LOG(WARNING) << "MEMORY_DIAGNOSTICS actor-mailbox actor=" << actor_info_.get_name()
+                 << " current_messages=" << actor_info_.mailbox().current_messages()
+                 << " peak_messages=" << actor_info_.mailbox().peak_messages();
+  }
   pending_signals_.add_signal(ActorSignals::Message);
 }
 
@@ -275,14 +287,19 @@ bool ActorExecutor::flush_one_signal(ActorSignals& signals) {
 }
 
 bool ActorExecutor::flush_one_message() {
-  auto message = actor_info_.mailbox().reader().read();
+  auto message = actor_info_.mailbox().read();
+  if (actor_info_.mailbox().take_drained_since_log()) {
+    LOG(WARNING) << "MEMORY_DIAGNOSTICS actor-mailbox-drained actor=" << actor_info_.get_name()
+                 << " current_messages=" << actor_info_.mailbox().current_messages()
+                 << " peak_messages=" << actor_info_.mailbox().peak_messages();
+  }
   //LOG(ERROR) << "flush one message " << !!message << " " << actor_info_.get_name();
   if (!message) {
     pending_signals_.clear_signal(ActorSignals::Message);
     return false;
   }
   if (message.is_big() && !options_.from_queue) {
-    actor_info_.mailbox().reader().delay(std::move(message));
+    actor_info_.mailbox().delay(std::move(message));
     actor_execute_context_.set_pause();
     return false;
   }

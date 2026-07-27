@@ -61,7 +61,10 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       fail_stream(state, status.clone());
       return status;
     }
-    td::actor::send_closure(sender_, &QuicSender::on_stream_complete, cid, sid, state.extract());
+    auto complete_data = state.extract();
+    auto memory_token = state.take_memory_token();
+    td::actor::send_closure(sender_, &QuicSender::on_stream_complete, cid, sid, std::move(complete_data),
+                            std::move(memory_token));
     return td::Status::OK();
   }
 
@@ -103,6 +106,17 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     get_peer_mtu_ = std::move(f);
   }
 
+  MemoryStats memory_stats() const override {
+    MemoryStats result;
+    for (const auto &[_, connection] : connections_) {
+      result.inbound_streams += connection.streams.size();
+      for (const auto &[__, stream] : connection.streams) {
+        result.inbound_stream_bytes += stream.buffered_bytes();
+      }
+    }
+    return result;
+  }
+
  private:
   struct StreamState : public td::HeapNode {
     QuicConnectionId cid;
@@ -114,6 +128,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     void append(td::BufferSlice data) {
       CHECK(!failed_);
       if (!data.empty()) {
+        memory_token_.add(data.size());
         builder_.append(std::move(data));
       }
     }
@@ -148,12 +163,21 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return builder_.extract();
     }
 
+    td::MemoryTrackerToken take_memory_token() {
+      return std::move(memory_token_);
+    }
+
+    size_t buffered_bytes() const {
+      return builder_.size();
+    }
+
     void set_options(StreamOptions options) {
       options_ = options;
     }
 
    private:
     td::BufferBuilder builder_;
+    td::MemoryTrackerToken memory_token_{td::MemoryTrackerCategory::QuicInbound, 0};
     StreamOptions options_;
     bool failed_{false};
   };
@@ -226,7 +250,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       timeout_heap_.erase(&state);
     }
     state.mark_failed();
-    td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error));
+    td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error),
+                            td::MemoryTrackerToken{});
   }
 };
 
@@ -323,6 +348,8 @@ td::actor::Task<QuicSender::Stats> QuicSender::collect_stats() {
   for (auto &[_, server] : servers_by_port_) {
     auto serv_stats = co_await td::actor::ask(server, &QuicServer::collect_stats);
     stats.summary = stats.summary + Stats::Entry{.server_stats = serv_stats.summary};
+    stats.inbound_streams += serv_stats.callback_memory.inbound_streams;
+    stats.inbound_stream_bytes += serv_stats.callback_memory.inbound_stream_bytes;
     for (auto &[id, conn_stats] : serv_stats.per_conn) {
       if (!by_cid_.contains(id))
         continue;
@@ -371,9 +398,40 @@ void QuicSender::start_up() {
   alarm_timestamp() = td::Timestamp::now();
 }
 
+void QuicSender::alarm() {
+  alarm_timestamp() = td::Timestamp::in(60.0);
+  if (td::memory_tracker_enabled()) {
+    log_memory_diagnostics().start_immediate().detach("quic:memory-diagnostics");
+  }
+}
+
+td::actor::Task<> QuicSender::log_memory_diagnostics() {
+  auto stats = co_await collect_stats();
+  size_t responses = 0;
+  size_t waiting_ready = 0;
+  for (const auto &[_, connection] : by_cid_) {
+    responses += connection->responses.size();
+    waiting_ready += connection->waiting_ready.size();
+  }
+  const auto &impl = stats.summary.server_stats.impl_stats;
+  LOG(WARNING) << "MEMORY_DIAGNOSTICS quic"
+               << " outbound_connections=" << outbound_.size()
+               << " inbound_connections=" << inbound_.size()
+               << " connection_ids=" << by_cid_.size()
+               << " pending_responses=" << responses
+               << " waiting_ready=" << waiting_ready
+               << " open_sids=" << impl.open_sids
+               << " unsent_bytes=" << impl.bytes_unsent
+               << " unacked_bytes=" << impl.bytes_unacked
+               << " inbound_streams=" << stats.inbound_streams
+               << " inbound_stream_bytes=" << stats.inbound_stream_bytes;
+  co_return td::Unit{};
+}
+
 td::actor::Task<td::Unit> QuicSender::send_message_coro(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                         td::BufferSlice data) {
   auto size = data.size();
+  td::MemoryTrackerToken memory_token(td::MemoryTrackerCategory::QuicOutbound, size);
   auto magic = get_magic(data);
   auto R = co_await send_message_coro_inner(src, dst, std::move(data)).wrap();
   if (R.is_error()) {
@@ -426,6 +484,7 @@ td::actor::Task<td::Unit> QuicSender::send_message_coro_inner(adnl::AdnlNodeIdSh
 td::actor::Task<td::BufferSlice> QuicSender::send_query_coro(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                              std::string name, td::Timestamp timeout,
                                                              td::BufferSlice data, std::optional<td::uint64> limit) {
+  td::MemoryTrackerToken memory_token(td::MemoryTrackerCategory::QuicOutbound, data.size());
   auto conn = co_await find_or_create_connection({src, dst});
   auto query_size = data.size();
   auto query_magic = get_magic(data);
@@ -444,6 +503,7 @@ td::actor::Task<td::BufferSlice> QuicSender::send_query_coro(adnl::AdnlNodeIdSho
   CHECK(conn->responses.emplace(stream_id, std::move(answer_promise)).second);
   conn = nullptr;  // don't keep connection, it may disconnect during our wait
   co_await td::actor::ask(server, &QuicServer::send_stream, cid, stream_id, std::move(wire_data), true);
+  memory_token.reset();
   co_return co_await std::move(future);
 }
 
@@ -632,7 +692,10 @@ void QuicSender::on_connected(td::actor::ActorId<QuicServer> server, QuicConnect
   finish_connection_init(connection, td::Unit{});
 }
 
-void QuicSender::on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> r_data) {
+void QuicSender::on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id,
+                                    td::Result<td::BufferSlice> r_data,
+                                    td::MemoryTrackerToken memory_token) {
+  (void)memory_token;
   auto it = by_cid_.find(cid);
   if (it == by_cid_.end()) {
     LOG(ERROR) << "Unknown CID:" << cid << " SID:" << stream_id;

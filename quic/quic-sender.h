@@ -7,6 +7,7 @@
 #include "keyring/keyring.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/coro_task.h"
+#include "td/utils/memory-tracker.h"
 
 #include "quic-server.h"
 
@@ -46,6 +47,8 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
 
     Entry summary = {.server_stats = {.total_conns = 0}};
     std::map<AdnlPath, Entry> per_path;
+    size_t inbound_streams = 0;
+    size_t inbound_stream_bytes = 0;
 
     [[nodiscard]] std::vector<metrics::MetricFamily> dump() const;
   };
@@ -90,6 +93,8 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
   std::map<adnl::AdnlNodeIdShort, td::Ed25519::PrivateKey> local_keys_;
 
   void start_up() override;
+  void alarm() override;
+  td::actor::Task<> log_memory_diagnostics();
 
   td::actor::Task<td::Unit> send_message_coro(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                               td::BufferSlice data);
@@ -112,7 +117,8 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
 
   void on_connected(td::actor::ActorId<QuicServer> server, QuicConnectionId cid, adnl::AdnlNodeIdShort local_id,
                     adnl::AdnlNodeIdShort peer_id, bool is_outbound);
-  void on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> data);
+  void on_stream_complete(QuicConnectionId cid, QuicStreamID stream_id, td::Result<td::BufferSlice> data,
+                          td::MemoryTrackerToken memory_token);
   void on_stream_closed(QuicConnectionId cid, QuicStreamID stream_id);
   void on_closed(QuicConnectionId cid);
 

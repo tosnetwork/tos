@@ -51,6 +51,7 @@
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/misc.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/overloaded.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/rlimit.h"
@@ -1468,10 +1469,31 @@ class JemallocStatsWriter : public td::actor::Actor {
       LOG(WARNING) << "JEMALLOC_STATS : [ timestamp=" << (tos::UnixTime)td::Clocks::system()
                    << " allocated=" << s.allocated << " active=" << s.active << " metadata=" << s.metadata
                    << " resident=" << s.resident << " ]";
+      if (td::memory_tracker_enabled()) {
+        auto buffer_stats = td::BufferAllocator::get_memory_stats();
+        buffer_peak_bytes_ = std::max(buffer_peak_bytes_, buffer_stats.live_bytes);
+        LOG(WARNING) << "MEMORY_DIAGNOSTICS buffer live_bytes=" << buffer_stats.live_bytes
+                     << " sampled_peak_bytes=" << buffer_peak_bytes_
+                     << " live_raw_buffers=" << buffer_stats.live_raw_buffers
+                     << " live_small_slabs=" << buffer_stats.live_small_slabs
+                     << " live_small_slab_bytes=" << buffer_stats.live_small_slab_bytes;
+        auto &tracker = td::memory_tracker_stats();
+        for (size_t i = 0; i < static_cast<size_t>(td::MemoryTrackerCategory::Count); ++i) {
+          auto category = static_cast<td::MemoryTrackerCategory>(i);
+          auto &entry = tracker[i];
+          LOG(WARNING) << "MEMORY_DIAGNOSTICS tracker category=" << td::memory_tracker_category_name(category)
+                       << " current_bytes=" << entry.current_bytes.load(std::memory_order_relaxed)
+                       << " peak_bytes=" << entry.peak_bytes.load(std::memory_order_relaxed)
+                       << " alloc_count=" << entry.alloc_count.load(std::memory_order_relaxed)
+                       << " free_count=" << entry.free_count.load(std::memory_order_relaxed);
+        }
+      }
     }
   }
 
  private:
+  size_t buffer_peak_bytes_{0};
+
   struct JemallocStats {
     size_t allocated, active, metadata, resident;
   };

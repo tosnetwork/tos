@@ -64,6 +64,11 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   };
   class Callback {
    public:
+    struct MemoryStats {
+      size_t inbound_streams = 0;
+      size_t inbound_stream_bytes = 0;
+    };
+
     virtual td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
                                     td::SecureString peer_public_key, bool is_outbound) = 0;
     virtual td::Status on_stream(QuicConnectionId cid, QuicStreamID sid, td::BufferSlice data, bool is_end) = 0;
@@ -77,6 +82,9 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
       return td::Timestamp::never();
     }
     virtual void set_peer_mtu_callback(std::function<td::uint64(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort)> f) = 0;
+    virtual MemoryStats memory_stats() const {
+      return {};
+    }
     virtual ~Callback() = default;
   };
 
@@ -136,6 +144,7 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
 
     Entry summary = {.total_conns = 0};
     std::unordered_map<QuicConnectionId, Entry> per_conn = {};
+    Callback::MemoryStats callback_memory;
   };
 
   void collect_stats(td::Promise<Stats> P);
