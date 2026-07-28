@@ -1319,6 +1319,39 @@ void test_state_resolver_completed_lru() {
   CHECK(lru.size() == lru.capacity());
 }
 
+void test_state_resolver_inflight_admission() {
+  simplex::InflightAdmission admission{3};
+  CHECK(admission.capacity() == 3);
+  CHECK(admission.count() == 0);
+
+  CHECK(admission.try_admit());
+  CHECK(admission.try_admit());
+  CHECK(admission.try_admit());
+  CHECK(admission.count() == 3);
+
+  // At capacity: a new distinct id must be rejected rather than silently
+  // growing the underlying map past its configured bound.
+  CHECK(!admission.try_admit());
+  CHECK(!admission.try_admit());
+  CHECK(admission.count() == 3);
+
+  // Releasing (an in-flight resolution completing, success or failure) frees
+  // exactly one slot for the next admission.
+  admission.release();
+  CHECK(admission.count() == 2);
+  CHECK(admission.try_admit());
+  CHECK(admission.count() == 3);
+  CHECK(!admission.try_admit());
+
+  admission.release();
+  admission.release();
+  admission.release();
+  CHECK(admission.count() == 0);
+  CHECK(admission.try_admit());
+  CHECK(admission.try_admit());
+  CHECK(admission.count() == 2);
+}
+
 void test_candidate_resolver_retention() {
   using State = simplex::CandidateEvictionState;
 
@@ -1875,6 +1908,7 @@ int main(int argc, char *argv[]) {
   bool run_configured_maximum_candidate_test = false;
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
+  bool run_state_resolver_inflight_admission_unit_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
@@ -2026,6 +2060,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "state-resolver-cache-unit-test",
                "verify completed-entry LRU ordering, bounds and failure removal",
                [&]() { run_state_resolver_cache_unit_test = true; });
+  p.add_option('\0', "state-resolver-inflight-admission-unit-test",
+               "verify in-flight resolution admission control bounds concurrent pending entries",
+               [&]() { run_state_resolver_inflight_admission_unit_test = true; });
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
@@ -2080,6 +2117,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_state_resolver_cache_unit_test) {
     test_state_resolver_completed_lru();
+    return 0;
+  }
+  if (run_state_resolver_inflight_admission_unit_test) {
+    test_state_resolver_inflight_admission();
     return 0;
   }
   if (run_candidate_resolver_retention_unit_test) {
