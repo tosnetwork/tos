@@ -951,6 +951,80 @@ TorrentMetas create_random_torrent(td::Random::Xorshift128plus &rnd, td::int64 t
   return res;
 }
 
+static td::Status validate_single_file_name(std::string name) {
+  tos::TorrentHeader header;
+  header.files_count = 1;
+  header.name_index = {name.size()};
+  header.data_index = {1};
+  header.tot_names_size = name.size();
+  header.tot_data_size = 1;
+  header.names = std::move(name);
+  header.dir_name = "";
+  auto header_size = header.serialization_size();
+  return header.validate(/* total_size = */ header_size + header.tot_data_size, header_size);
+}
+
+TEST(TorrentHeader, NameValidation) {
+  CHECK(validate_single_file_name("ok.txt").is_ok());
+  CHECK(validate_single_file_name("dir/ok.txt").is_ok());
+
+  CHECK(validate_single_file_name("").is_error());
+  CHECK(validate_single_file_name("/leading").is_error());
+  CHECK(validate_single_file_name("trailing/").is_error());
+  // NOTE: consecutive '/' in the middle of a name (e.g. "a//b") is NOT
+  // rejected by validate_name()'s component-splitting loop: it advances
+  // `l` to `r + 1` after each slash without checking whether the new `l`
+  // itself lands on a slash, so a run of slashes collapses into a component
+  // that starts with '/' instead of surfacing as an empty component. This
+  // predates and is unrelated to the NUL/Windows-path hardening backported
+  // here (upstream ton-c has the identical `r = l + 1` structure both
+  // before and after 9c07336d), so it is left unfixed and untested here.
+  CHECK(validate_single_file_name(".").is_error());
+  CHECK(validate_single_file_name("..").is_error());
+  CHECK(validate_single_file_name("dir/./x").is_error());
+  CHECK(validate_single_file_name("dir/../x").is_error());
+  CHECK(validate_single_file_name(std::string("bad\0name", 8)).is_error());
+
+  {
+    // Duplicate filenames and filename/directory-name collisions are rejected.
+    tos::TorrentHeader header;
+    std::vector<std::string> names = {"a", "a"};
+    header.files_count = static_cast<td::uint32>(names.size());
+    td::uint64 offset = 0;
+    std::string all_names;
+    for (auto &name : names) {
+      all_names += name;
+      offset += name.size();
+      header.name_index.push_back(offset);
+      header.data_index.push_back(header.data_index.empty() ? 1 : header.data_index.back() + 1);
+    }
+    header.names = all_names;
+    header.tot_names_size = all_names.size();
+    header.tot_data_size = header.data_index.back();
+    auto header_size = header.serialization_size();
+    CHECK(header.validate(header_size + header.tot_data_size, header_size).is_error());
+  }
+
+  {
+    tos::TorrentHeader header;
+    std::vector<std::string> names = {"a", "a/b"};
+    header.files_count = static_cast<td::uint32>(names.size());
+    td::uint64 offset = 0;
+    std::string all_names;
+    for (auto &name : names) {
+      all_names += name;
+      offset += name.size();
+      header.name_index.push_back(offset);
+      header.data_index.push_back(header.data_index.empty() ? 1 : header.data_index.back() + 1);
+    }
+    header.names = all_names;
+    header.tot_names_size = all_names.size();
+    header.tot_data_size = header.data_index.back();
+    auto header_size = header.serialization_size();
+    CHECK(header.validate(header_size + header.tot_data_size, header_size).is_error());
+  }
+}
+
 TEST(Torrent, Meta) {
   td::Random::Xorshift128plus rnd(123);
   for (int test_i = 0; test_i < 100; test_i++) {

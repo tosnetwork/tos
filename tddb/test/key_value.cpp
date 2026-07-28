@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cstdlib>
+
 #include "td/db/KeyValue.h"
 #include "td/db/KeyValueAsync.h"
 #include "td/db/RocksDb.h"
@@ -25,8 +27,6 @@
 #include "td/utils/buffer.h"
 #include "td/utils/optional.h"
 #include "td/utils/tests.h"
-
-#include <cstdlib>
 
 namespace {
 
@@ -52,6 +52,144 @@ void write_batches(td::RocksDb &db, size_t batches, size_t entries_per_batch, si
 }
 
 }  // namespace
+
+namespace {
+// Fake reader used to verify PrefixedKeyValueReader::get_multi forwards
+// each key with the correct, distinct prefix. The old implementation stored
+// Slices pointing into PSLICE() temporaries reused from a stack allocator
+// arena, so by the time get_multi ran, every entry silently aliased the last
+// key's bytes instead of its own.
+class FakeKeyValueReader : public td::KeyValueReader {
+ public:
+  td::Result<GetStatus> get(td::Slice key, std::string &value) override {
+    value = key.str();
+    return GetStatus::Ok;
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string> *values) override {
+    last_keys_.clear();
+    values->clear();
+    std::vector<GetStatus> statuses;
+    for (auto &key : keys) {
+      last_keys_.push_back(key.str());
+      values->push_back(key.str());
+      statuses.push_back(GetStatus::Ok);
+    }
+    return statuses;
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return 0;
+  }
+
+  std::vector<std::string> last_keys_;
+};
+
+// Same purpose as FakeKeyValueReader above, but implementing the full
+// td::KeyValue interface so PrefixedKeyValue::get_multi (as opposed to
+// PrefixedKeyValueReader::get_multi) can be exercised: it has the identical
+// Slice-lifetime bug pattern, fixed the same way.
+class FakeKeyValue : public td::KeyValue {
+ public:
+  td::Result<GetStatus> get(td::Slice key, std::string &value) override {
+    value = key.str();
+    return GetStatus::Ok;
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string> *values) override {
+    last_keys_.clear();
+    values->clear();
+    std::vector<GetStatus> statuses;
+    for (auto &key : keys) {
+      last_keys_.push_back(key.str());
+      values->push_back(key.str());
+      statuses.push_back(GetStatus::Ok);
+    }
+    return statuses;
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return 0;
+  }
+  td::Status set(td::Slice key, td::Slice value) override {
+    return td::Status::OK();
+  }
+  td::Status erase(td::Slice key) override {
+    return td::Status::OK();
+  }
+  td::Status begin_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status commit_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status abort_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status begin_transaction() override {
+    return td::Status::OK();
+  }
+  td::Status commit_transaction() override {
+    return td::Status::OK();
+  }
+  td::Status abort_transaction() override {
+    return td::Status::OK();
+  }
+  std::unique_ptr<td::KeyValueReader> snapshot() override {
+    return nullptr;
+  }
+
+  std::vector<std::string> last_keys_;
+};
+}  // namespace
+
+TEST(KeyValue, PrefixedGetMulti) {
+  auto fake = std::make_shared<FakeKeyValueReader>();
+  td::PrefixedKeyValueReader reader(fake, "pfx:");
+
+  std::vector<std::string> key_storage = {"aaa", "bbb", "ccc", "ddd"};
+  std::vector<td::Slice> keys;
+  for (auto &k : key_storage) {
+    keys.push_back(k);
+  }
+
+  std::vector<std::string> values;
+  auto r_statuses = reader.get_multi(keys, &values);
+  r_statuses.ensure();
+  auto statuses = r_statuses.move_as_ok();
+
+  ASSERT_EQ(key_storage.size(), fake->last_keys_.size());
+  ASSERT_EQ(key_storage.size(), values.size());
+  ASSERT_EQ(key_storage.size(), statuses.size());
+  for (size_t i = 0; i < key_storage.size(); i++) {
+    std::string expected = "pfx:" + key_storage[i];
+    ASSERT_EQ(expected, fake->last_keys_[i]);
+    ASSERT_EQ(expected, values[i]);
+    ASSERT_EQ(td::int32(td::KeyValueReader::GetStatus::Ok), td::int32(statuses[i]));
+  }
+}
+
+TEST(KeyValue, PrefixedKeyValueGetMulti) {
+  auto fake = std::make_shared<FakeKeyValue>();
+  td::PrefixedKeyValue kv(fake, "pfx:");
+
+  std::vector<std::string> key_storage = {"aaa", "bbb", "ccc", "ddd"};
+  std::vector<td::Slice> keys;
+  for (auto &k : key_storage) {
+    keys.push_back(k);
+  }
+
+  std::vector<std::string> values;
+  auto r_statuses = kv.get_multi(keys, &values);
+  r_statuses.ensure();
+  auto statuses = r_statuses.move_as_ok();
+
+  ASSERT_EQ(key_storage.size(), fake->last_keys_.size());
+  ASSERT_EQ(key_storage.size(), values.size());
+  ASSERT_EQ(key_storage.size(), statuses.size());
+  for (size_t i = 0; i < key_storage.size(); i++) {
+    std::string expected = "pfx:" + key_storage[i];
+    ASSERT_EQ(expected, fake->last_keys_[i]);
+    ASSERT_EQ(expected, values[i]);
+    ASSERT_EQ(td::int32(td::KeyValueReader::GetStatus::Ok), td::int32(statuses[i]));
+  }
+}
 
 TEST(KeyValue, simple) {
   td::Slice db_name = "testdb";
@@ -210,15 +348,13 @@ TEST(KeyValue, RocksDbMemoryBounds) {
 
   td::RocksDb::destroy("testdb-memory-nontx").ignore();
   td::RocksDb::destroy("testdb-memory-tx").ignore();
-  auto write_buffer_manager =
-      td::RocksDb::create_write_buffer_manager(global_write_buffer_size, true);
+  auto write_buffer_manager = td::RocksDb::create_write_buffer_manager(global_write_buffer_size, true);
   td::RocksDbOptions no_transaction_options;
   no_transaction_options.no_transactions = true;
   no_transaction_options.write_buffer_size = write_buffer_size;
   no_transaction_options.write_buffer_manager = write_buffer_manager;
   {
-    auto no_transaction_db =
-        td::RocksDb::open("testdb-memory-nontx", std::move(no_transaction_options)).move_as_ok();
+    auto no_transaction_db = td::RocksDb::open("testdb-memory-nontx", std::move(no_transaction_options)).move_as_ok();
 
     write_batches(no_transaction_db, 32, 16, 1024);
     no_transaction_db.flush().ensure();
@@ -226,8 +362,7 @@ TEST(KeyValue, RocksDbMemoryBounds) {
     ASSERT_TRUE(rocksdb_memory_stat(no_transaction_stats, "all_memtable_reserved_bytes") < (512 << 10));
     ASSERT_TRUE(rocksdb_memory_stat(no_transaction_stats, "write_buffer_manager_bytes") <
                 (2 * global_write_buffer_size));
-    ASSERT_EQ(rocksdb_memory_stat(no_transaction_stats, "write_buffer_manager_limit_bytes"),
-              global_write_buffer_size);
+    ASSERT_EQ(rocksdb_memory_stat(no_transaction_stats, "write_buffer_manager_limit_bytes"), global_write_buffer_size);
 
     td::RocksDbOptions transaction_options;
     transaction_options.write_buffer_size = write_buffer_size;
@@ -246,10 +381,8 @@ TEST(KeyValue, RocksDbMemoryBounds) {
     transaction_db.flush().ensure();
     auto transaction_stats = transaction_db.memory_stats();
     ASSERT_TRUE(rocksdb_memory_stat(transaction_stats, "all_memtable_reserved_bytes") < (1024 << 10));
-    ASSERT_EQ(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_limit_bytes"),
-              global_write_buffer_size);
-    ASSERT_TRUE(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_bytes") <
-                (2 * global_write_buffer_size));
+    ASSERT_EQ(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_limit_bytes"), global_write_buffer_size);
+    ASSERT_TRUE(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_bytes") < (2 * global_write_buffer_size));
   }
 
   td::RocksDb::destroy("testdb-memory-nontx").ensure();
@@ -271,24 +404,21 @@ TEST(KeyValue, RocksDbCriticalMemoryDomain) {
     td::RocksDbOptions critical_options;
     critical_options.no_transactions = true;
     critical_options.critical_write_path = true;
-    auto critical_db =
-        td::RocksDb::open("testdb-memory-critical", std::move(critical_options)).move_as_ok();
+    auto critical_db = td::RocksDb::open("testdb-memory-critical", std::move(critical_options)).move_as_ok();
     const auto critical_stats = critical_db.memory_stats();
     ASSERT_TRUE(critical_stats.find("write_buffer_manager_domain=critical") != std::string::npos);
     ASSERT_EQ(rocksdb_memory_stat(critical_stats, "write_buffer_manager_limit_bytes"), expected_limit);
 
     td::RocksDbOptions background_options;
     background_options.no_transactions = true;
-    auto background_db =
-        td::RocksDb::open("testdb-memory-background", std::move(background_options)).move_as_ok();
+    auto background_db = td::RocksDb::open("testdb-memory-background", std::move(background_options)).move_as_ok();
     const auto background_stats = background_db.memory_stats();
     ASSERT_TRUE(background_stats.find("write_buffer_manager_domain=critical") == std::string::npos);
     if (configured_global_limit != nullptr) {
       const auto expected_global_limit =
           td::to_integer_safe<td::uint64>(td::Slice(configured_global_limit)).move_as_ok();
       ASSERT_TRUE(background_stats.find("write_buffer_manager_domain=global") != std::string::npos);
-      ASSERT_EQ(rocksdb_memory_stat(background_stats, "write_buffer_manager_limit_bytes"),
-                expected_global_limit);
+      ASSERT_EQ(rocksdb_memory_stat(background_stats, "write_buffer_manager_limit_bytes"), expected_global_limit);
     }
   }
   td::RocksDb::destroy("testdb-memory-critical").ensure();

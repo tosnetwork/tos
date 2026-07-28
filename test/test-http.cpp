@@ -303,6 +303,52 @@ int main(int argc, char *argv[]) {
     dump_reader(ro);
   }
 
+  {
+    // HttpRequest::create rejects bad characters in the URL.
+    CHECK(tos::http::HttpRequest::create("GET", "/ok/path", "HTTP/1.1").is_ok());
+    CHECK(tos::http::HttpRequest::create("GET", "/bad\rpath", "HTTP/1.1").is_error());
+    CHECK(tos::http::HttpRequest::create("GET", "/bad\npath", "HTTP/1.1").is_error());
+    CHECK(tos::http::HttpRequest::create("GET", std::string("/bad\0path", 9), "HTTP/1.1").is_error());
+    CHECK(tos::http::HttpRequest::create("GET", "/bad path", "HTTP/1.1").is_error());
+  }
+
+  {
+    // HttpResponse::create rejects bad characters in the reason phrase.
+    CHECK(tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).is_ok());
+    CHECK(tos::http::HttpResponse::create("HTTP/1.1", 200, "OK with spaces", false, false).is_ok());
+    CHECK(tos::http::HttpResponse::create("HTTP/1.1", 200, "bad\rreason", false, false).is_error());
+    CHECK(tos::http::HttpResponse::create("HTTP/1.1", 200, "bad\nreason", false, false).is_error());
+    CHECK(tos::http::HttpResponse::create("HTTP/1.1", 200, std::string("bad\0reason", 10), false, false).is_error());
+  }
+
+  {
+    // HttpHeader::basic_check rejects bad characters, including embedded NUL.
+    tos::http::HttpHeader h;
+    h.name = "X-Ok";
+    h.value = "value";
+    CHECK(h.basic_check().is_ok());
+
+    h.name = std::string("X-Bad\0Name", 10);
+    h.value = "value";
+    CHECK(h.basic_check().is_error());
+
+    h.name = "X-Ok";
+    h.value = std::string("bad\0value", 9);
+    CHECK(h.basic_check().is_error());
+
+    h.name = "X-Ok";
+    h.value = "bad\rvalue";
+    CHECK(h.basic_check().is_error());
+
+    h.name = "X-Ok";
+    h.value = "bad\nvalue";
+    CHECK(h.basic_check().is_error());
+
+    h.name = "X:Bad";
+    h.value = "value";
+    CHECK(h.basic_check().is_error());
+  }
+
   std::_Exit(0);
   return 0;
 }

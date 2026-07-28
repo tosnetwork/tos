@@ -29,6 +29,18 @@ namespace tos {
 
 namespace rldp2 {
 
+namespace detail {
+
+void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_answer_size, td::BufferSlice data) {
+  if (data.size() <= max_answer_size) {
+    promise.set_value(std::move(data));
+  } else {
+    promise.set_error(td::Status::Error("received too big answer"));
+  }
+}
+
+}  // namespace detail
+
 struct RldpIn::Connection {
   td::actor::ActorOwn<RldpConnectionActor> actor;
   td::Timestamp remove_at;
@@ -119,7 +131,7 @@ void RldpIn::send_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
   send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
   send_closure(connection, &RldpConnectionActor::send, transfer_id, std::move(B), timeout);
 
-  queries_.emplace(response_transfer_id, std::move(promise));
+  queries_.emplace(response_transfer_id, OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
 }
 
 void RldpIn::answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
@@ -175,7 +187,7 @@ void RldpIn::receive_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
   if (r_data.is_error()) {
     auto it = queries_.find(transfer_id);
     if (it != queries_.end()) {
-      it->second.set_error(r_data.move_as_error());
+      it->second.promise.set_error(r_data.move_as_error());
       queries_.erase(it);
     } else {
       VLOG(RLDP_INFO) << "received error to unknown transfer_id " << transfer_id << " " << r_data.error();
@@ -187,12 +199,21 @@ void RldpIn::receive_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
   //LOG(ERROR) << "RECEIVE MESSAGE " << data.size();
   auto F = fetch_tl_object<tos_api::rldp_Message>(std::move(data), true);
   if (F.is_error()) {
-    VLOG(RLDP_INFO) << "failed to parse rldp packet [" << source << "->" << local_id << "]: " << F.move_as_error();
+    VLOG(RLDP_INFO) << "failed to parse rldp packet [" << source << "->" << local_id << "]: " << F.error();
+    if (auto it = queries_.find(transfer_id); it != queries_.end()) {
+      it->second.promise.set_error(F.move_as_error_prefix("received invalid rldp query answer: "));
+      queries_.erase(it);
+    }
     return;
   }
 
   tos_api::downcast_call(*F.move_as_ok().get(),
                          [&](auto &obj) { this->process_message(source, local_id, transfer_id, obj); });
+
+  if (auto it = queries_.find(transfer_id); it != queries_.end()) {
+    it->second.promise.set_error(td::Status::Error("received invalid rldp query answer"));
+    queries_.erase(it);
+  }
 }
 
 void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort local_id, TransferId transfer_id,
@@ -230,7 +251,7 @@ void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
                              tos_api::rldp_answer &message) {
   auto it = queries_.find(transfer_id);
   if (it != queries_.end()) {
-    it->second.set_value(std::move(message.data_));
+    detail::complete_out_query(std::move(it->second.promise), it->second.max_answer_size, std::move(message.data_));
     queries_.erase(it);
   } else {
     VLOG(RLDP_INFO) << "received answer to unknown query " << message.query_id_;

@@ -43,6 +43,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/utils/BufferedFd.h"
 #include "td/utils/FileLog.h"
+#include "td/utils/LRUCache.h"
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
@@ -52,6 +53,7 @@
 #include "toslib/toslib/ToslibClientWrapper.h"
 
 #include "DNSResolver.h"
+#include "PeerCapabilityRouting.h"
 #include "git.h"
 
 #if TD_DARWIN || TD_LINUX
@@ -87,20 +89,22 @@ class RldpDispatcher : public tos::adnl::AdnlSenderInterface {
   }
 
   void set_supports_rldp2(tos::adnl::AdnlNodeIdShort dst, bool supports) {
-    if (supports) {
-      supports_rldp2_.insert(dst);
-    } else {
-      supports_rldp2_.erase(dst);
-    }
+    supports_rldp2_.put(dst, supports);
   }
 
  private:
   td::actor::ActorId<tos::rldp::Rldp> rldp_;
   td::actor::ActorId<tos::rldp2::Rldp> rldp2_;
-  std::set<tos::adnl::AdnlNodeIdShort> supports_rldp2_;
+  // Independently bounded to the same capacity as RldpHttpProxy::peer_capabilities_,
+  // not synchronized with it: td::LRUCache has no eviction callback, so this
+  // dispatcher-local cache tracks its own LRU order (by dispatch() calls) rather
+  // than mirroring peer_capabilities_'s evictions. Both stay bounded, but a peer
+  // can be evicted from one cache while still resident in the other.
+  td::LRUCache<tos::adnl::AdnlNodeIdShort, bool> supports_rldp2_{10000};
 
-  td::actor::ActorId<tos::adnl::AdnlSenderInterface> dispatch(tos::adnl::AdnlNodeIdShort dst) const {
-    if (supports_rldp2_.count(dst)) {
+  td::actor::ActorId<tos::adnl::AdnlSenderInterface> dispatch(tos::adnl::AdnlNodeIdShort dst) {
+    auto *supports = supports_rldp2_.get_if_exists(dst);
+    if (supports && *supports) {
       return rldp2_;
     }
     return rldp_;
@@ -181,7 +185,6 @@ const std::string PROXY_SITE_VERISON_HEADER_NAME = "Tos-Proxy-Site-Version";
 const std::string PROXY_ENTRY_VERISON_HEADER_NAME = "Tos-Proxy-Entry-Version";
 const std::string PROXY_VERSION_HEADER = PSTRING() << "Commit: " << GitMetadata::CommitSHA1()
                                                    << ", Date: " << GitMetadata::CommitDate();
-const td::uint64 CAPABILITY_RLDP2 = 1;
 const td::uint64 CAPABILITIES = 1;
 
 using RegisteredPayloadSenderGuard =
@@ -1363,18 +1366,40 @@ class RldpHttpProxy : public td::actor::Actor {
   }
 
   void update_peer_capabilities(tos::adnl::AdnlNodeIdShort peer, td::uint64 capabilities) {
-    auto &c = peer_capabilities_[peer];
+    auto &c = peer_capabilities_.get(peer);
     if (c.capabilities != capabilities) {
       LOG(DEBUG) << "Update capabilities of peer " << peer << " : " << capabilities;
     }
     c.capabilities = capabilities;
     c.received = true;
-    td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
-                            capabilities & CAPABILITY_RLDP2);
+    tos::rldp_http_proxy::detail::resync_dispatcher_capability(
+        c.received, c.capabilities, [&](bool supports_rldp2) {
+          td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer, supports_rldp2);
+        });
   }
 
   void ask_peer_capabilities(tos::adnl::AdnlNodeIdShort peer) {
-    auto &c = peer_capabilities_[peer];
+    auto &c = peer_capabilities_.get(peer);
+    // peer_capabilities_ and RldpDispatcher::supports_rldp2_ are two
+    // independently-bounded LRUs (see their declarations below and in
+    // RldpDispatcher) driven by different access patterns -- supports_rldp2_
+    // is touched on every dispatch() call, peer_capabilities_ roughly once
+    // per request -- so either can evict a peer while the other still
+    // remembers it. Resync unconditionally on every ask, in both
+    // directions:
+    //   - if peer_capabilities_ still has received=true (dispatcher evicted
+    //     the peer), re-assert the known value into the dispatcher;
+    //   - if peer_capabilities_ itself was evicted (or never populated), `c`
+    //     is a fresh received=false entry here, even though the dispatcher
+    //     might still hold a stale `true` from before eviction -- writing
+    //     `false` (via `c.received && ...` below) clears that stale value
+    //     immediately instead of leaving it in place until a fresh probe
+    //     happens to succeed (which may never happen, e.g. if the peer is
+    //     offline and every probe attempt errors out).
+    tos::rldp_http_proxy::detail::resync_dispatcher_capability(
+        c.received, c.capabilities, [&](bool supports_rldp2) {
+          td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer, supports_rldp2);
+        });
     if (!c.received && c.retry_at.is_in_past()) {
       c.retry_at = td::Timestamp::in(30.0);
       auto send_query = [&, this, SelfId = actor_id(this)](const tos::adnl::AdnlNodeIdShort &local_id) {
@@ -1453,7 +1478,7 @@ class RldpHttpProxy : public td::actor::Actor {
     bool received = false;
     td::Timestamp retry_at = td::Timestamp::now();
   };
-  std::map<tos::adnl::AdnlNodeIdShort, PeerCapabilities> peer_capabilities_;
+  td::LRUCache<tos::adnl::AdnlNodeIdShort, PeerCapabilities> peer_capabilities_{10000};
 };
 
 void TcpToRldpRequestSender::resolve(std::string host) {
