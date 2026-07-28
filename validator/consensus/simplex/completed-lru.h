@@ -70,4 +70,44 @@ class CompletedLru {
   std::map<Key, typename std::list<Key>::iterator> positions_;
 };
 
+// Bounds the number of concurrently in-flight (started, not-yet-completed)
+// operations for a resolver whose completed results are separately bounded by
+// a CompletedLru. CompletedLru deliberately never tracks in-flight entries
+// (see above), so without this a caller can accumulate an unbounded number of
+// distinct pending map entries whenever resolution is slow or stuck -- e.g. a
+// permanently-unresolvable ancestor that repeatedly times out. Call
+// try_admit() before creating a new pending entry and release() exactly once
+// when that entry's operation finishes (success or failure).
+class InflightAdmission {
+ public:
+  explicit InflightAdmission(size_t max_inflight) : max_inflight_(max_inflight) {
+    CHECK(max_inflight_ > 0);
+  }
+
+  bool try_admit() {
+    if (count_ >= max_inflight_) {
+      return false;
+    }
+    ++count_;
+    return true;
+  }
+
+  void release() {
+    CHECK(count_ > 0);
+    --count_;
+  }
+
+  size_t count() const {
+    return count_;
+  }
+
+  size_t capacity() const {
+    return max_inflight_;
+  }
+
+ private:
+  size_t max_inflight_;
+  size_t count_ = 0;
+};
+
 }  // namespace tos::validator::consensus::simplex

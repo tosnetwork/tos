@@ -63,6 +63,10 @@ add_test(
     COMMAND test-consensus --state-resolver-cache-unit-test
 )
 add_test(
+    NAME test-consensus-simplex2-state-resolver-inflight-admission-unit
+    COMMAND test-consensus --state-resolver-inflight-admission-unit-test
+)
+add_test(
     NAME test-consensus-simplex2-candidate-resolver-retention-unit
     COMMAND test-consensus --candidate-resolver-retention-unit-test
 )

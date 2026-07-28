@@ -7,6 +7,7 @@
 #include "consensus/utils.h"
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_utils.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/memory-tracker.h"
 
 #include <unordered_set>
@@ -27,6 +28,16 @@ namespace {
 
 constexpr size_t DEFAULT_STATE_CACHE_MAX_ENTRIES = 1024;
 constexpr size_t DEFAULT_FINALIZED_CACHE_MAX_ENTRIES = 4096;
+// Bounds the number of concurrently in-flight (started, unresolved)
+// resolve_state()/finalize_blocks() operations, independent of the
+// completed-entry LRU caps above. Without this, a single permanently-stuck
+// ancestor (e.g. local state that never becomes available) lets every new
+// candidate that recurses back through it accumulate its own unbounded
+// pending map entry until the stuck ancestor finally times out and the whole
+// backlog cascades free -- only to start piling up again on the very next
+// candidate. See MEMORY_DIAGNOSTICS simplex-state-resolver "state_inflight".
+constexpr size_t DEFAULT_STATE_INFLIGHT_MAX = 4096;
+constexpr size_t DEFAULT_FINALIZED_INFLIGHT_MAX = 4096;
 
 size_t cache_limit_from_env(const char* name, size_t default_value) {
   const char* value = std::getenv(name);
@@ -123,9 +134,18 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   CompletedLru<ParentId> state_cache_lru_{
       cache_limit_from_env("TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES", DEFAULT_STATE_CACHE_MAX_ENTRIES)};
   size_t state_cache_evictions_ = 0;
+  InflightAdmission state_inflight_{
+      cache_limit_from_env("TOS_SIMPLEX_STATE_INFLIGHT_MAX", DEFAULT_STATE_INFLIGHT_MAX)};
+  size_t state_admission_rejections_ = 0;
   std::optional<td::uint32> latest_finalized_slot_;
 
   td::actor::Task<ResolvedState> resolve_state(ParentId id) {
+    if (!state_cache_.contains(id) && !state_inflight_.try_admit()) {
+      ++state_admission_rejections_;
+      co_return td::Status::Error(
+          ErrorCode::notready, PSTRING() << "Simplex state-resolver: too many concurrent state resolutions ("
+                                         << state_inflight_.count() << "/" << state_inflight_.capacity() << ")");
+    }
     CachedState& entry = state_cache_[id];
     if (entry.result.has_value()) {
       touch_state_cache(id);
@@ -135,6 +155,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     entry.promises.push_back(std::move(promise));
     if (!entry.started) {
       entry.started = true;
+      SCOPE_EXIT {
+        state_inflight_.release();
+      };
       auto result = co_await resolve_state_inner(id).wrap();
       for (auto& p : entry.promises) {
         p.set_result(result.clone());
@@ -247,6 +270,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   CompletedLru<CandidateId> finalized_blocks_lru_{
       cache_limit_from_env("TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES", DEFAULT_FINALIZED_CACHE_MAX_ENTRIES)};
   size_t finalized_cache_evictions_ = 0;
+  InflightAdmission finalized_inflight_{
+      cache_limit_from_env("TOS_SIMPLEX_FINALIZED_INFLIGHT_MAX", DEFAULT_FINALIZED_INFLIGHT_MAX)};
+  size_t finalized_admission_rejections_ = 0;
   size_t finalized_db_hits_ = 0;
   size_t finalized_db_misses_ = 0;
   size_t finalized_db_skips_ = 0;
@@ -297,10 +323,15 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                    << " state_cache=" << state_cache_.size() << "/" << state_cache_lru_.capacity()
                    << " state_evictions=" << state_cache_evictions_
                    << " state_inflight=" << state_inflight << " state_waiters=" << state_waiters
+                   << " state_inflight_admission=" << state_inflight_.count() << "/" << state_inflight_.capacity()
+                   << " state_admission_rejections=" << state_admission_rejections_
                    << " unique_state_blocks=" << unique_blocks.size() << " state_block_bytes=" << state_block_bytes
                    << " finalized_cache=" << finalized_blocks_.size() << "/" << finalized_blocks_lru_.capacity()
                    << " finalized_evictions=" << finalized_cache_evictions_
                    << " finalized_inflight=" << finalized_inflight << " finalized_waiters=" << finalized_waiters
+                   << " finalized_inflight_admission=" << finalized_inflight_.count() << "/"
+                   << finalized_inflight_.capacity()
+                   << " finalized_admission_rejections=" << finalized_admission_rejections_
                    << " finalized_db_hits=" << finalized_db_hits_ << " finalized_db_misses=" << finalized_db_misses_
                    << " finalized_db_skips=" << finalized_db_skips_;
     }
@@ -311,6 +342,13 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     if (co_await is_finalized(id)) {
       co_return td::Unit{};
     }
+    if (!finalized_blocks_.contains(id) && !finalized_inflight_.try_admit()) {
+      ++finalized_admission_rejections_;
+      co_return td::Status::Error(ErrorCode::notready,
+                                  PSTRING() << "Simplex state-resolver: too many concurrent finalizations ("
+                                            << finalized_inflight_.count() << "/" << finalized_inflight_.capacity()
+                                            << ")");
+    }
     FinalizedBlock& state = finalized_blocks_[id];
     if (state.done) {
       touch_finalized_cache(id);
@@ -320,6 +358,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     state.waiters.push_back(std::move(promise));
     if (!state.started) {
       state.started = true;
+      SCOPE_EXIT {
+        finalized_inflight_.release();
+      };
       auto result = co_await finalize_blocks_inner(id, final_cert, final_candidate).wrap();
       for (auto& p : state.waiters) {
         p.set_result(result.clone());
