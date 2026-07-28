@@ -64,6 +64,20 @@ struct ResolveCandidate {
   std::string contents_to_string() const;
 };
 
+// Purely local query answered from Pool's own in-memory slot state -- no
+// network round-trip, no candidate resolution. Lets StateResolver check
+// whether a slot has already been skip-certified (and, if so, which real
+// ancestor to build on top of) before ever attempting ResolveCandidate,
+// which has nothing to find for a slot that timed out without any leader
+// ever broadcasting so much as an empty-candidate placeholder.
+struct QuerySlotSkipped {
+  using ReturnType = std::optional<ParentId>;
+
+  td::uint32 slot;
+
+  std::string contents_to_string() const;
+};
+
 struct StoreCandidate {
   using ReturnType = td::Unit;
 
@@ -119,7 +133,7 @@ class Bus : public consensus::Bus {
   using Parent = consensus::Bus;
   using Events = td::TypeList<BroadcastVote, NotarizationObserved, FinalizationObserved, LeaderWindowObserved,
                               WaitForParent, ResolveCandidate, StoreCandidate, ResolveState, SaveCertificate,
-                              QueryValidatorGroupInfo>;
+                              QueryValidatorGroupInfo, QuerySlotSkipped>;
 
   Bus() = default;
 

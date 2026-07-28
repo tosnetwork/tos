@@ -46,6 +46,17 @@ namespace {
 using BlockSignatureSetRef = td::Ref<block::BlockSignatureSet>;
 
 constexpr td::uint32 DEFAULT_CANDIDATE_RETENTION_SLOTS = 4096;
+// Bounds resolve_candidate_inner()'s peer-query retry loop. Without this, a
+// CandidateId that no peer can ever supply -- e.g. a slot that was
+// skip-certified via timeout, which never had any candidate (not even an
+// empty placeholder) broadcast for it -- is retried forever with a growing
+// (but capped) per-attempt timeout, never giving up. That in turn leaves the
+// StateResolver call that triggered this resolution permanently in-flight.
+// This is defense-in-depth: QuerySlotSkipped in state-resolver.cpp already
+// avoids ever starting this loop for a definitively skip-certified slot, but
+// any other reason a candidate can't be found (bug, malicious withholding,
+// partition) should still fail cleanly rather than retry indefinitely.
+constexpr int DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS = 16;
 
 td::uint32 candidate_retention_slots_from_env() {
   const char* value = std::getenv("TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS");
@@ -58,6 +69,21 @@ td::uint32 candidate_retention_slots_from_env() {
                     "TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS="
                  << value;
     return DEFAULT_CANDIDATE_RETENTION_SLOTS;
+  }
+  return parsed.move_as_ok();
+}
+
+int candidate_resolve_max_attempts_from_env() {
+  const char* value = std::getenv("TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS");
+  if (value == nullptr) {
+    return DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS;
+  }
+  auto parsed = td::to_integer_safe<int>(td::Slice(value));
+  if (parsed.is_error() || parsed.ok() <= 0) {
+    LOG(WARNING) << "Simplex candidate-resolver: ignoring invalid "
+                    "TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS="
+                 << value;
+    return DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS;
   }
   return parsed.move_as_ok();
 }
@@ -619,8 +645,15 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
 
     std::chrono::duration<double> timeout = params_.candidate_resolve_timeout;
+    int attempts_remaining = candidate_resolve_max_attempts_from_env();
 
     while (!state.candidate_and_cert.is_complete()) {
+      if (attempts_remaining-- <= 0) {
+        co_return td::Status::Error(
+            ErrorCode::notready, PSTRING() << "Simplex candidate-resolver: giving up resolving " << id
+                                           << " after repeated attempts; no peer supplied it");
+      }
+
       auto cooldown_wait = td::Timestamp::in(params_.candidate_resolve_cooldown);
 
       auto request_tl = state.candidate_and_cert.make_request(id);
