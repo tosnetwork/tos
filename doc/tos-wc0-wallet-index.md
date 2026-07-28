@@ -26,8 +26,11 @@ separate indexer dependency.
   index. The hook runs post-apply deliberately: data stored for unfinalized
   candidate broadcasts (`set_block_data` also fires for those) must never reach
   the index. All of a block's entries are written in one atomic RocksDB write
-  batch (single WAL flush per block), serialized by a mutex because apply actors
-  run concurrently. Best-effort, off the consensus path (a failed write only
+  batch, serialized by a mutex because apply actors run concurrently. Each block
+  costs two WAL syncs, not one: a crash-recovery marker is durably written
+  before indexing starts (see below), and the entry batch is synced
+  separately on commit — collapsing these would leave a mid-index crash with
+  no durable trace. Best-effort, off the consensus path (a failed write only
   degrades RPC for that block, never blocks consensus).
 - **Reader (JSON-RPC):** new methods `getAccountJettons`, `getAccountNfts`,
   `getAccountEvents` range-scan the index (`for_each_in_range`, never a full table

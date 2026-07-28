@@ -90,11 +90,132 @@ be deleted.
 
 ### CellDB and memory policy
 
-Keep CellDB on RocksDB for production. The normal profile is:
+Keep CellDB on RocksDB for production. The production profile uses the
+TON-compatible cache floor; omit both cache-size overrides:
 
 ```text
---celldb-cache-size 1073741824
+# no --celldb-cache-size override
+# no --celldb-cache-min-size override
 ```
+
+When the two-level index/filter is enabled, the production default floor is
+16 GiB. The validator CLI's nominal `--celldb-cache-size` default is 1 GiB, but
+CellDB raises the effective cache to that 16 GiB floor unless an explicit
+minimum override is supplied.
+
+The 1 GiB value used on node3 is a low-memory test profile, not a production
+recommendation:
+
+```text
+--celldb-cache-size 1073741824 --celldb-cache-min-size 1073741824
+```
+
+The default remains 16 GiB; this option only lowers the minimum and does not
+force the cache above `--celldb-cache-size`.
+
+The V2 Cell reader also has an independent entry-count limit. For a low-memory
+test node, use for example:
+
+```text
+--celldb-cell-cache-max-size 100000
+```
+
+The default is 1,000,000 Cell entries. Lowering this value bounds the in-memory
+Cell object cache; it may increase cache misses and disk reads, but does not
+change consensus correctness. To enable the additional arena, mmap, and V2
+Cell-cache diagnostics temporarily, set:
+
+```text
+TOS_MEMORY_DIAGNOSTICS=1
+```
+
+When the variable is unset (the normal production setting), those diagnostic
+logs are disabled.
+
+RocksDB write buffers are separate from both the CellDB block cache and the V2
+Cell-object cache. A validator opens several RocksDB databases, so leaving
+each database at its independent default can produce a long RSS warm-up even
+though every individual MemTable is finite.
+
+The global domain covers every `td::RocksDb` opened in the validator process,
+including CellDB, StateDB, WalletIndexDb, Simplex, Catchain, archive indexes,
+DHT, ADNL/overlay databases, and any future caller that uses the common
+wrapper:
+
+```text
+TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
+TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE=16777216
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1
+```
+
+All sizes are byte counts. This low-memory test profile uses a 16 MiB mutable
+MemTable target, a 16 MiB conflict-history target for databases that actually
+use optimistic transactions, and a 256 MiB aggregate budget shared by all
+RocksDB instances in the validator process. CellDB, StateDB, and WalletIndexDb
+use atomic write batches rather than RocksDB transactions and therefore do
+not retain transaction-conflict history.
+
+`TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1` makes the aggregate limit an
+enforced back-pressure threshold: RocksDB may briefly delay writers while a
+MemTable is flushed instead of continuing to allocate. Arena allocation and
+flush granularity can cause a small transient overshoot. Set it to `0` only
+after measuring the workload; the manager will still request earlier flushes,
+but the configured value is then only a soft target.
+Values that are too small increase flush/compaction frequency and can delay
+consensus database commits. Apply this profile first to one validator and
+monitor write stalls, disk latency, finalized-height lag, and RSS before a
+rolling deployment.
+
+Do not use the global stalling domain when archive or network-index traffic
+must be unable to delay block finalization. TOS also provides an independent
+consensus-critical domain:
+
+```text
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1
+```
+
+With only these two variables set, the shared domain covers CellDB, StateDB,
+the Simplex consensus database, and Catchain. WalletIndexDb, archive indexes,
+DHT, ADNL, and overlay databases remain outside that domain, so their flush
+pressure cannot consume its budget or trigger its write stall. This separation
+does not eliminate contention on the underlying storage device; monitor disk
+latency and finalized-height lag during rollout. Setting both critical and
+global domains creates two independent managers: critical databases use the
+critical manager and all remaining databases use the global manager.
+
+The per-database `TOS_ROCKSDB_WRITE_BUFFER_SIZE` and
+`TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE` overrides apply regardless of manager
+domain. Memory diagnostics report `write_buffer_manager_domain=critical`,
+`global`, or `explicit` for every database. The validator monitor additionally
+reports flush-pending databases, running flushes, pending compaction bytes,
+delayed writes, stopped writes, and warns once for every unknown database path.
+These environment variables are read once when the process opens its first
+RocksDB instance; restart the validator after changing them.
+
+The reusable monitor is `scripts/validator_rss_rocksdb_monitor.sh`. The
+templated systemd examples under `scripts/systemd/` require a host-specific
+`/etc/tos/validator-memory-monitor.conf`; they contain no repository path,
+validator instance, or user-account assumption. For direct use, pass the
+systemd unit and optional output directory explicitly, for example:
+
+```text
+scripts/validator_rss_rocksdb_monitor.sh tos-validator@INSTANCE.service /var/lib/tos/validator-memory-monitor/INSTANCE
+```
+
+Simplex CandidateResolver retains a bounded recent finalized-slot window. The
+default is 4,096 slots. A low-memory test node can use a smaller window:
+
+```text
+TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=1024
+```
+
+Candidates and notarization certificates outside the window are recovered
+from persistent storage. Reducing the window lowers the steady-state consensus
+working set but can increase database reads and writes during catch-up. Keep
+the default on production validators unless a smaller value has passed
+restart, partition, and offline catch-up testing for the target workload.
 
 `--celldb-direct-io` may be evaluated only with a deliberately large CellDB
 cache and a measured workload; the engine does not use direct I/O for small

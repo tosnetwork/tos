@@ -63,6 +63,8 @@ int main() {
 
   tos::adnl::AdnlNodeIdShort src;
   tos::adnl::AdnlNodeIdShort dst;
+  std::atomic<bool> network_manager_ready{false};
+  std::atomic<bool> adnl_subscription_ready{false};
 
   td::actor::Scheduler scheduler({7});
 
@@ -93,6 +95,7 @@ int main() {
 
     td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::add_node_id, src, true, false);
     td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::add_node_id, dst, false, true);
+    td::actor::send_lambda(network_manager, [&] { network_manager_ready.store(true, std::memory_order_release); });
   });
 
   {
@@ -217,7 +220,26 @@ int main() {
       std::atomic<td::uint32> &remaining_;
     };
     td::actor::send_closure(adnl, &tos::adnl::Adnl::subscribe, dst, "1", std::make_unique<Callback>(remaining));
+    td::actor::send_lambda(adnl, [&] { adnl_subscription_ready.store(true, std::memory_order_release); });
   });
+
+  // TestLoopbackNetworkManager drops packets whose source/destination allow
+  // lists are not installed yet.  The manager and ADNL actors have independent
+  // mailboxes, so sending immediately after enqueueing setup can race with
+  // either mailbox and lose the first test packet.  Wait for FIFO barriers in
+  // both actors instead of hiding the race with a test retry.
+  auto setup_timeout = td::Timestamp::in(10.0);
+  while (!network_manager_ready.load(std::memory_order_acquire) ||
+         !adnl_subscription_ready.load(std::memory_order_acquire)) {
+    if (!scheduler.run(0.1)) {
+      LOG(FATAL) << "actor scheduler stopped before ADNL test setup completed";
+    }
+    if (setup_timeout.is_in_past()) {
+      LOG(FATAL) << "timed out waiting for ADNL test setup: network_manager_ready="
+                 << network_manager_ready.load(std::memory_order_acquire)
+                 << " adnl_subscription_ready=" << adnl_subscription_ready.load(std::memory_order_acquire);
+    }
+  }
 
   LOG(ERROR) << "Ed25519 version is " << td::Ed25519::version();
   LOG(ERROR) << "testing delivering of all packets";

@@ -26,6 +26,33 @@
 #include "td/utils/optional.h"
 #include "td/utils/tests.h"
 
+#include <cstdlib>
+
+namespace {
+
+td::uint64 rocksdb_memory_stat(const std::string &stats, td::Slice name) {
+  auto prefix = name.str() + "=";
+  auto begin = stats.find(prefix);
+  CHECK(begin != std::string::npos);
+  begin += prefix.size();
+  auto end = stats.find(' ', begin);
+  auto value = stats.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+  return td::to_integer_safe<td::uint64>(value).move_as_ok();
+}
+
+void write_batches(td::RocksDb &db, size_t batches, size_t entries_per_batch, size_t value_size) {
+  std::string value(value_size, 'x');
+  for (size_t batch = 0; batch < batches; ++batch) {
+    db.begin_write_batch().ensure();
+    for (size_t entry = 0; entry < entries_per_batch; ++entry) {
+      db.set(PSLICE() << batch << ":" << entry, value).ensure();
+    }
+    db.commit_write_batch().ensure();
+  }
+}
+
+}  // namespace
+
 TEST(KeyValue, simple) {
   td::Slice db_name = "testdb";
   td::RocksDb::destroy(db_name).ignore();
@@ -176,6 +203,97 @@ class KeyValueBenchmark : public td::Benchmark {
  private:
   td::optional<td::RocksDb> db_;
 };
+
+TEST(KeyValue, RocksDbMemoryBounds) {
+  constexpr size_t write_buffer_size = 64 << 10;
+  constexpr size_t global_write_buffer_size = 512 << 10;
+
+  td::RocksDb::destroy("testdb-memory-nontx").ignore();
+  td::RocksDb::destroy("testdb-memory-tx").ignore();
+  auto write_buffer_manager =
+      td::RocksDb::create_write_buffer_manager(global_write_buffer_size, true);
+  td::RocksDbOptions no_transaction_options;
+  no_transaction_options.no_transactions = true;
+  no_transaction_options.write_buffer_size = write_buffer_size;
+  no_transaction_options.write_buffer_manager = write_buffer_manager;
+  {
+    auto no_transaction_db =
+        td::RocksDb::open("testdb-memory-nontx", std::move(no_transaction_options)).move_as_ok();
+
+    write_batches(no_transaction_db, 32, 16, 1024);
+    no_transaction_db.flush().ensure();
+    auto no_transaction_stats = no_transaction_db.memory_stats();
+    ASSERT_TRUE(rocksdb_memory_stat(no_transaction_stats, "all_memtable_reserved_bytes") < (512 << 10));
+    ASSERT_TRUE(rocksdb_memory_stat(no_transaction_stats, "write_buffer_manager_bytes") <
+                (2 * global_write_buffer_size));
+    ASSERT_EQ(rocksdb_memory_stat(no_transaction_stats, "write_buffer_manager_limit_bytes"),
+              global_write_buffer_size);
+
+    td::RocksDbOptions transaction_options;
+    transaction_options.write_buffer_size = write_buffer_size;
+    transaction_options.max_write_buffer_size_to_maintain = static_cast<td::int64>(write_buffer_size);
+    transaction_options.write_buffer_manager = write_buffer_manager;
+    auto transaction_db = td::RocksDb::open("testdb-memory-tx", std::move(transaction_options)).move_as_ok();
+
+    std::string value(1024, 'y');
+    for (size_t batch = 0; batch < 32; ++batch) {
+      transaction_db.begin_transaction().ensure();
+      for (size_t entry = 0; entry < 16; ++entry) {
+        transaction_db.set(PSLICE() << batch << ":" << entry, value).ensure();
+      }
+      transaction_db.commit_transaction().ensure();
+    }
+    transaction_db.flush().ensure();
+    auto transaction_stats = transaction_db.memory_stats();
+    ASSERT_TRUE(rocksdb_memory_stat(transaction_stats, "all_memtable_reserved_bytes") < (1024 << 10));
+    ASSERT_EQ(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_limit_bytes"),
+              global_write_buffer_size);
+    ASSERT_TRUE(rocksdb_memory_stat(transaction_stats, "write_buffer_manager_bytes") <
+                (2 * global_write_buffer_size));
+  }
+
+  td::RocksDb::destroy("testdb-memory-nontx").ensure();
+  td::RocksDb::destroy("testdb-memory-tx").ensure();
+}
+
+TEST(KeyValue, RocksDbCriticalMemoryDomain) {
+  const char *configured_limit = std::getenv("TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE");
+  if (configured_limit == nullptr) {
+    return;
+  }
+  const auto expected_limit = td::to_integer_safe<td::uint64>(td::Slice(configured_limit)).move_as_ok();
+  const char *configured_global_limit = std::getenv("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE");
+
+  td::RocksDb::destroy("testdb-memory-critical").ignore();
+  td::RocksDb::destroy("testdb-memory-background").ignore();
+
+  {
+    td::RocksDbOptions critical_options;
+    critical_options.no_transactions = true;
+    critical_options.critical_write_path = true;
+    auto critical_db =
+        td::RocksDb::open("testdb-memory-critical", std::move(critical_options)).move_as_ok();
+    const auto critical_stats = critical_db.memory_stats();
+    ASSERT_TRUE(critical_stats.find("write_buffer_manager_domain=critical") != std::string::npos);
+    ASSERT_EQ(rocksdb_memory_stat(critical_stats, "write_buffer_manager_limit_bytes"), expected_limit);
+
+    td::RocksDbOptions background_options;
+    background_options.no_transactions = true;
+    auto background_db =
+        td::RocksDb::open("testdb-memory-background", std::move(background_options)).move_as_ok();
+    const auto background_stats = background_db.memory_stats();
+    ASSERT_TRUE(background_stats.find("write_buffer_manager_domain=critical") == std::string::npos);
+    if (configured_global_limit != nullptr) {
+      const auto expected_global_limit =
+          td::to_integer_safe<td::uint64>(td::Slice(configured_global_limit)).move_as_ok();
+      ASSERT_TRUE(background_stats.find("write_buffer_manager_domain=global") != std::string::npos);
+      ASSERT_EQ(rocksdb_memory_stat(background_stats, "write_buffer_manager_limit_bytes"),
+                expected_global_limit);
+    }
+  }
+  td::RocksDb::destroy("testdb-memory-critical").ensure();
+  td::RocksDb::destroy("testdb-memory-background").ensure();
+}
 
 TEST(KeyValue, Bench) {
   td::bench(KeyValueBenchmark());

@@ -20,6 +20,7 @@
 #pragma once
 #include "interfaces/block.h"
 #include "tos/tos-types.h"
+#include "td/utils/memory-tracker.h"
 #include "vm/db/StaticBagOfCellsDb.h"
 
 namespace tos {
@@ -32,6 +33,7 @@ class BlockQ : public BlockData {
   BlockIdExt id_;
   td::Ref<vm::Cell> root_;
   std::shared_ptr<vm::StaticBagOfCellsDb> boc_;
+  td::MemoryTrackerToken memory_token_;
   //
   BlockQ(const BlockQ& other);
   td::Status init();

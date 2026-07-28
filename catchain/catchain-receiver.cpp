@@ -544,8 +544,12 @@ void CatChainReceiverImpl::start_up() {
   CHECK(root_block_);
 
   if (!opts_.debug_disable_db) {
+    td::RocksDbOptions db_options;
+    db_options.critical_write_path = true;
     std::shared_ptr<td::KeyValue> kv = std::make_shared<td::RocksDb>(
-        td::RocksDb::open(db_root_ + "/catchainreceiver" + db_suffix_ + td::base64url_encode(as_slice(incarnation_)))
+        td::RocksDb::open(
+            db_root_ + "/catchainreceiver" + db_suffix_ + td::base64url_encode(as_slice(incarnation_)),
+            std::move(db_options))
             .move_as_ok());
     db_ = DbType{std::move(kv)};
 

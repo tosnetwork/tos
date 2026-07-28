@@ -673,6 +673,9 @@ target_link_libraries(test-storage PRIVATE storage tos_db memprof tl_api tl-util
 add_executable(test-rocksdb test/test-rocksdb.cpp)
 target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
 
+add_executable(test-wallet-index test/test-td-main.cpp test/test-wallet-index.cpp validator-engine/wallet-index.cpp)
+target_link_libraries(test-wallet-index PRIVATE tos_crypto tddb memprof tdutils)
+
 add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
 target_link_libraries(test-tddb PRIVATE tdutils tddb ${CMAKE_THREAD_LIBS_INIT} memprof)
 
@@ -1049,12 +1052,15 @@ tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
+tos_test(test-wallet-index)
 tos_test(test-quorum)
 tos_test(test-catchain)
 tos_test(test-emulator)
 
 tos_test(test-fec)
 tos_test(test-tddb ${TEST_OPTIONS})
+set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
+  "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_test(test-db ${TEST_OPTIONS})
 
 add_subdirectory(test)

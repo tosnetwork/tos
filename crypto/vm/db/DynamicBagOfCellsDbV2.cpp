@@ -1,9 +1,29 @@
 #include <optional>
+#include <cstdio>
+#include <cstdlib>
+#include <string_view>
+#include <unistd.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+// Weak: always resolvable on glibc, so this never actually falls back to
+// null, but declaring it this way keeps it symmetric with mallctl below.
+extern "C" int malloc_trim(size_t) __attribute__((weak));
+#endif
+// This file is compiled once into the shared tos_crypto static library,
+// which is linked into binaries that enable TOS_USE_JEMALLOC (validator-engine,
+// mintless-proof-generator) and binaries that don't (plain glibc malloc), so
+// there is no single compile-time macro we can gate on here. Declaring
+// mallctl as a weak symbol lets us detect at *runtime*, per final binary,
+// whether jemalloc actually replaced malloc/free: the symbol resolves to
+// jemalloc's real implementation when the final link pulls in libjemalloc,
+// and to a null function pointer when it doesn't.
+extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) __attribute__((weak));
 
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/base64.h"
 #include "td/utils/format.h"
 #include "td/utils/misc.h"
+#include "td/utils/memory-tracker.h"
 #include "validator/validator.h"
 #include "vm/cells/ExtCell.h"
 #include "vm/cellslice.h"
@@ -13,6 +33,111 @@
 
 namespace vm {
 namespace {
+
+bool memory_diagnostics_enabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("TOS_MEMORY_DIAGNOSTICS");
+    return value != nullptr && std::string_view(value) == "1";
+  }();
+  return enabled;
+}
+
+// Portable (allocator-agnostic) resident set size of the current process,
+// read straight from the kernel rather than from any allocator's own
+// bookkeeping -- this is what we actually care about for "did the drop
+// give memory back to the OS", independent of whether glibc or jemalloc is
+// live.
+std::optional<td::uint64> read_self_rss_bytes() {
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f == nullptr) {
+    return std::nullopt;
+  }
+  unsigned long long size_pages = 0, resident_pages = 0;
+  int matched = fscanf(f, "%llu %llu", &size_pages, &resident_pages);
+  fclose(f);
+  if (matched != 2) {
+    return std::nullopt;
+  }
+  long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) {
+    return std::nullopt;
+  }
+  return static_cast<td::uint64>(resident_pages) * static_cast<td::uint64>(page_size);
+}
+
+std::string format_bytes_opt(std::optional<td::uint64> value) {
+  if (!value) {
+    return "n/a";
+  }
+  return PSTRING() << td::format::as_size(*value);
+}
+
+// Releases memory freed by a cache drop back to the OS.
+//
+// This is only ever called from DynamicBagOfCellsDbImplV2::set_loader(),
+// i.e. on a cache-reset event (a handful of times per hour at typical TTL
+// settings) -- never on the per-cell insertion hot path -- so an eager,
+// synchronous purge here is cheap relative to how rarely it runs.
+//
+// Why not just glibc malloc_trim(): a drop here means DynamicBagOfCellsDb
+// just released the shared_ptr<CellInfoStorage> holding up to
+// cache_size_max_ CellInfo/DataCell objects. If this binary links jemalloc
+// (TOS_USE_JEMALLOC=ON, e.g. validator-engine), jemalloc -- not glibc --
+// owns every one of those allocations, because linking it replaces the
+// process-wide malloc/free/realloc symbols. glibc's malloc_trim(0) can only
+// see and release glibc's own (in that case entirely unused) arenas; calling
+// it after a jemalloc-owned free is a silent no-op that looks like the
+// drop "didn't work" when in fact the memory was released just fine at the
+// C++ level and is sitting as dirty/muzzy pages inside a jemalloc arena.
+// jemalloc's "arenas.purge" is the equivalent call for that allocator: it
+// forces an immediate return of dirty/muzzy pages to the OS, bypassing
+// dirty_decay_ms/muzzy_decay_ms and not depending on a background_thread
+// being configured to eventually get around to it.
+void trim_allocator_after_cache_drop(std::optional<td::uint64> rss_before_drop) {
+  const char *method = "unavailable";
+  std::string result_desc = "unavailable";
+  if (mallctl != nullptr) {
+    method = "jemalloc_arena.4096.purge";
+    // "arena.4096.purge" -- 4096 is jemalloc's MALLCTL_ARENAS_ALL constant
+    // (see MALLCTL_ARENAS_ALL in <jemalloc/jemalloc.h>), which addresses all
+    // arenas merged. The plain "arenas.purge" name (without an arena index)
+    // does not exist in jemalloc 5.x and returns ENOENT -- confirmed against
+    // the linked libjemalloc 5.2.1 here. We don't include jemalloc.h just
+    // for this constant since this file is compiled into tos_db for targets
+    // that don't necessarily have jemalloc-dev headers available.
+    int err = mallctl("arena.4096.purge", nullptr, nullptr, nullptr, 0);
+    result_desc = (err == 0) ? "ok" : (PSTRING() << "error(" << err << ")");
+  }
+#if defined(__GLIBC__)
+  else if (malloc_trim != nullptr) {  // NOLINT(readability-else-after-return)
+    method = "glibc_malloc_trim";
+    result_desc = (malloc_trim(0) != 0) ? "released" : "no-op";
+  }
+#endif
+
+  if (memory_diagnostics_enabled()) {
+    auto rss_after = read_self_rss_bytes();
+    LOG(WARNING) << "CellDB V2 allocator trim method=" << method << " result=" << result_desc
+                 << " rss_before=" << format_bytes_opt(rss_before_drop)
+                 << " rss_after=" << format_bytes_opt(rss_after);
+    if (rss_before_drop && rss_after && *rss_before_drop > *rss_after) {
+      LOG(WARNING) << "CellDB V2 allocator trim released approx "
+                   << td::format::as_size(*rss_before_drop - *rss_after) << " RSS";
+    }
+    auto &tracker = td::memory_tracker_stats();
+    auto log_tracker = [&](td::MemoryTrackerCategory category, const char *name) {
+      auto &stats = tracker[static_cast<size_t>(category)];
+      LOG(WARNING) << "memory tracker category=" << name
+                   << " current_bytes=" << stats.current_bytes.load(std::memory_order_relaxed)
+                   << " peak_bytes=" << stats.peak_bytes.load(std::memory_order_relaxed)
+                   << " alloc_count=" << stats.alloc_count.load(std::memory_order_relaxed)
+                   << " free_count=" << stats.free_count.load(std::memory_order_relaxed);
+    };
+    log_tracker(td::MemoryTrackerCategory::CellDb, "CellDb");
+    log_tracker(td::MemoryTrackerCategory::StateSync, "StateSync");
+    log_tracker(td::MemoryTrackerCategory::Network, "Network");
+  }
+}
 
 // Very stupid Vector/MpmcQueue
 template <class T>
@@ -664,6 +789,8 @@ struct CellInfoStorage {
 
     if (!created) {
       info.cell->set_data_cell(std::move(cell));
+    } else {
+      on_cell_created();
     }
     return info;
   }
@@ -689,6 +816,9 @@ struct CellInfoStorage {
 
     auto hash = cell->get_hash();
     auto [info, created] = lock(hash.as_slice())->hash_table.emplace(hash.as_slice(), std::move(cell));
+    if (created) {
+      on_cell_created();
+    }
     if (our_ext_cell) {
       stats.ext_cells_load.inc();
       if (info.cell->is_loaded()) {
@@ -708,16 +838,27 @@ struct CellInfoStorage {
     LOG(ERROR) << "===========END   DUMP===========";
   }
 
-  size_t cache_size() {
-    size_t res = 0;
-    for (auto &bucket : buckets_) {
-      std::lock_guard guard(bucket.mutex);
-      res += bucket.hash_table.size();
-    }
-    return res;
+  // O(1): backed by an atomic counter maintained by on_cell_created(),
+  // rather than a full scan over every bucket's mutex. This is called on
+  // the insertion hot path (see enforce_cache_limit in CellDbReaderImpl),
+  // so a per-call scan across all 8192 bucket locks would turn every single
+  // cell load into an 8192-mutex operation.
+  size_t cache_size() const {
+    return size_.load(std::memory_order_relaxed);
+  }
+  size_t peak_cache_size() const {
+    return peak_size_.load(std::memory_order_relaxed);
   }
   bool force_drop_cache() {
     return force_drop_cache_.load(std::memory_order_relaxed);
+  }
+  // Returns true only for the caller that actually flips the flag from
+  // false to true, so callers can log a single "limit reached" event
+  // instead of once per insertion for the remainder of the reader's life
+  // (cache_size() stays >= max_size until the next set_loader() reset).
+  bool mark_force_drop_cache() {
+    bool expected = false;
+    return force_drop_cache_.compare_exchange_strong(expected, true, std::memory_order_relaxed);
   }
 
  private:
@@ -726,7 +867,6 @@ struct CellInfoStorage {
     CellHashTable<CellInfo> hash_table;
   };
   constexpr static size_t buckets_n = 8192;
-  std::array<Bucket, buckets_n> bucket_;
 
   struct Unlock {
     void operator()(Bucket *bucket) const {
@@ -735,6 +875,25 @@ struct CellInfoStorage {
   };
   std::array<Bucket, buckets_n> buckets_{};
   std::atomic<bool> force_drop_cache_{false};
+  std::atomic<size_t> size_{0};
+  std::atomic<size_t> peak_size_{0};
+
+  void on_cell_created() {
+    size_t new_size = size_.fetch_add(1, std::memory_order_relaxed) + 1;
+    td::memory_tracker_alloc(td::MemoryTrackerCategory::CellDb, sizeof(CellInfo));
+    size_t prev_peak = peak_size_.load(std::memory_order_relaxed);
+    while (new_size > prev_peak &&
+           !peak_size_.compare_exchange_weak(prev_peak, new_size, std::memory_order_relaxed)) {
+    }
+  }
+
+ public:
+  ~CellInfoStorage() {
+    auto count = size_.load(std::memory_order_relaxed);
+    if (count != 0) {
+      td::memory_tracker_free(td::MemoryTrackerCategory::CellDb, count * sizeof(CellInfo));
+    }
+  }
 
   std::unique_ptr<Bucket, Unlock> lock(Bucket &bucket) {
     bucket.mutex.lock();
@@ -986,15 +1145,25 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
       td::PerfWarningTimer timer(PSTRING() << "celldb_v2: reset reader, TTL=" << cell_db_reader_ttl_ << "/"
                                            << options_.cache_ttl_max << ", cache_size=" << cache_size
                                            << ", force_drop_cache=" << force_drop_cache);
+      ++cache_drop_count_;
+      std::optional<td::uint64> rss_before_drop;
+      if (memory_diagnostics_enabled()) {
+        rss_before_drop = read_self_rss_bytes();
+        LOG(WARNING) << "CellDB V2 cache drop before_size=" << cache_size
+                     << " peak_size=" << cell_db_reader_->peak_cache_size() << " ttl=" << cell_db_reader_ttl_
+                     << " max_size=" << options_.cache_size_max << " force_drop=" << force_drop_cache
+                     << " drop_count=" << cache_drop_count_ << " rss_before=" << format_bytes_opt(rss_before_drop);
+      }
       cache_stats_.apply_diff(cell_db_reader_->get_stats());
       cell_db_reader_->drop_cache();
       cell_db_reader_ = {};
+      trim_allocator_after_cache_drop(rss_before_drop);
       meta_db_fixup_ = {};
       cell_db_reader_ttl_ = 0;
     }
 
     if (loader) {
-      cell_db_reader_ = std::make_shared<CellDbReaderImpl>(std::move(loader));
+      cell_db_reader_ = std::make_shared<CellDbReaderImpl>(std::move(loader), options_.cache_size_max);
       cell_db_reader_ttl_ = 0;
     }
 
@@ -1024,8 +1193,10 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
     res.named_stats = std::move(ps);
     res.named_stats.stats_int["cache.size"] = cell_db_reader_ ? cell_db_reader_->cache_size() : 0;
     res.named_stats.stats_int["cache.size_max"] = options_.cache_size_max;
+    res.named_stats.stats_int["cache.peak_size"] = cell_db_reader_ ? cell_db_reader_->peak_cache_size() : 0;
     res.named_stats.stats_int["cache.ttl"] = cell_db_reader_ttl_;
     res.named_stats.stats_int["cache.ttl_max"] = options_.cache_ttl_max;
+    res.named_stats.stats_int["cache.drop_count"] = cache_drop_count_;
     return res;
   }
 
@@ -1039,13 +1210,21 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
                            public ExtCellCreator,
                            public std::enable_shared_from_this<CellDbReaderImpl> {
    public:
-    explicit CellDbReaderImpl(std::unique_ptr<CellLoader> cell_loader) : cell_loader_(std::move(cell_loader)) {
+    explicit CellDbReaderImpl(std::unique_ptr<CellLoader> cell_loader, size_t cache_size_max)
+        : cell_loader_(std::move(cell_loader)), cache_size_max_(cache_size_max) {
     }
 
     size_t cache_size() const {
       // NOT thread safe
       if (internal_storage_) {
         return internal_storage_->cache_size();
+      }
+      return 0;
+    }
+    size_t peak_cache_size() const {
+      // NOT thread safe
+      if (internal_storage_) {
+        return internal_storage_->peak_cache_size();
       }
       return 0;
     }
@@ -1071,6 +1250,7 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
     }
     CellInfo *register_ext_cell_inner(Ref<DynamicBocExtCell> ext_cell, CellInfoStorage &storage) {
       auto &info = storage.create_cell_info(std::move(ext_cell), this, stats_);
+      enforce_cache_limit(storage);
       return &info;
     }
 
@@ -1260,8 +1440,31 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
         return load_result.cell_;
       }
       auto &cell_info = storage->create_cell_info_from_db(std::move(load_result.cell()), load_result.refcnt());
+      enforce_cache_limit(*storage);
       return cell_info.cell->load_cell().move_as_ok().data_cell;
     }
+
+    // Called on every insertion (see register_ext_cell_inner / load_cell_slow_path)
+    // so the cache is bounded at the actual insertion boundary instead of only
+    // being checked periodically in DynamicBagOfCellsDbImplV2::set_loader() --
+    // that periodic check alone let cache_size grow ~10x past cache_size_max_
+    // between checks. We don't evict synchronously here (an in-flight commit
+    // may still need cells it just read), we just flag the reader for reset at
+    // the next set_loader() call, which is the same mechanism already used for
+    // "cell cached from another db" (see force_drop_cache_ above).
+    void enforce_cache_limit(CellInfoStorage &storage) {
+      if (storage.cache_size() >= cache_size_max_ && storage.mark_force_drop_cache()) {
+        // mark_force_drop_cache() only returns true for the first caller to
+        // cross the line, so this fires once per reader instead of once per
+        // insertion for the remainder of its (now-doomed) lifetime.
+        if (memory_diagnostics_enabled()) {
+          LOG(WARNING) << "CellDB V2 cache limit reached size=" << storage.cache_size()
+                       << " max_size=" << cache_size_max_ << " peak_size=" << storage.peak_cache_size();
+        }
+      }
+    }
+
+    size_t cache_size_max_;
   };
 
   CreateV2Options options_;
@@ -1277,6 +1480,7 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
 
   std::shared_ptr<CellDbReaderImpl> cell_db_reader_;
   size_t cell_db_reader_ttl_{0};
+  size_t cache_drop_count_{0};
   td::NamedStats cache_stats_;
   CommitStats stats_;
   bool dbg{false};

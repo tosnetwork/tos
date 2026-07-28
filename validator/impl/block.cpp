@@ -27,10 +27,16 @@ namespace validator {
 
 using td::Ref;
 
-BlockQ::BlockQ(const BlockQ& other) : data_(other.data_.clone()), id_(other.id_), root_(other.root_), boc_(other.boc_) {
+BlockQ::BlockQ(const BlockQ& other)
+    : data_(other.data_.clone()),
+      id_(other.id_),
+      root_(other.root_),
+      boc_(other.boc_),
+      memory_token_(td::MemoryTrackerCategory::BlockData, data_.size()) {
 }
 
-BlockQ::BlockQ(BlockIdExt id, td::BufferSlice data) : data_(std::move(data)), id_(id) {
+BlockQ::BlockQ(BlockIdExt id, td::BufferSlice data)
+    : data_(std::move(data)), id_(id), memory_token_(td::MemoryTrackerCategory::BlockData, data_.size()) {
 }
 
 BlockQ::~BlockQ() {

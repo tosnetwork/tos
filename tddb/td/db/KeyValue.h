@@ -123,6 +123,9 @@ class KeyValue : public KeyValueReader {
   virtual std::string stats() const {
     return "";
   }
+  virtual std::string memory_stats() const {
+    return "";
+  }
   virtual Status flush() {
     return Status::OK();
   }
@@ -182,6 +185,9 @@ class PrefixedKeyValue : public KeyValue {
 
   std::string stats() const override {
     return kv_->stats();
+  }
+  std::string memory_stats() const override {
+    return kv_->memory_stats();
   }
   Status flush() override {
     return kv_->flush();

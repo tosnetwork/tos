@@ -1,0 +1,14 @@
+[Service]
+# Bound per-database MemTables and keep consensus-critical databases in a
+# separate shared domain. Transactional databases retain a 16 MiB history window;
+# CellDB, StateDB, and WalletIndexDb are opened without transactions and retain
+# no flushed MemTable history.
+Environment=TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
+Environment=TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE=16777216
+Environment=TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=268435456
+Environment=TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1
+
+# Optional: put all remaining RocksDB instances in a second, independent
+# background domain. Do not reuse the critical domain for these databases.
+# Environment=TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=268435456
+# Environment=TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1

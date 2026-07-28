@@ -1,0 +1,12 @@
+[Unit]
+Description=Correlate TOS validator %i RSS growth with RocksDB MemTable growth
+After=tos-validator@%i.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/tos/validator-memory-monitor.conf
+ExecStart=/usr/bin/env bash -c 'exec "$TOS_MEMORY_MONITOR_SCRIPT" "tos-validator@%i.service" "$TOS_MEMORY_MONITOR_OUTPUT_DIR/%i"'
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true

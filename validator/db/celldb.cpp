@@ -322,6 +322,11 @@ void CellDbIn::start_up() {
 
   CellDbBase::start_up();
   td::RocksDbOptions db_options;
+  // CellDB uses atomic WriteBatch commits, never RocksDB transactions. Opening
+  // it as OptimisticTransactionDB retained 128 MiB of flushed memtables solely
+  // for conflict checks that can never occur.
+  db_options.no_transactions = true;
+  db_options.critical_write_path = true;
   if (!opts_->get_disable_rocksdb_stats()) {
     statistics_ = td::RocksDb::create_statistics();
     statistics_flush_at_ = td::Timestamp::in(60.0);
@@ -340,8 +345,11 @@ void CellDbIn::start_up() {
         .extra_threads = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u),
         .executor = {},
         .cache_ttl_max = 2000,
-        .cache_size_max = 1000000};
-    size_t min_rocksdb_cache = std::max(size_t{1} << 30, boc_v2_options->cache_size_max * 5000);
+        .cache_size_max = static_cast<size_t>(opts_->get_celldb_cell_cache_max_size())};
+    auto o_min_cache_size = opts_->get_celldb_cache_min_size();
+    size_t min_rocksdb_cache = o_min_cache_size
+                                   ? static_cast<size_t>(o_min_cache_size.value())
+                                   : std::max(size_t{1} << 30, boc_v2_options->cache_size_max * 5000);
     if (!o_celldb_cache_size || o_celldb_cache_size.value() < min_rocksdb_cache) {
       LOG(WARNING) << "Increase CellDb block cache size to " << td::format::as_size(min_rocksdb_cache) << " from "
                    << td::format::as_size(o_celldb_cache_size.value());
@@ -366,7 +374,9 @@ void CellDbIn::start_up() {
   db_options.two_level_index_and_filter =
       db_options.enable_bloom_filter && opts_->state_ttl() >= 60 * 60 * 24 * 30;  // 30 days
   if (db_options.two_level_index_and_filter && !opts_->get_celldb_in_memory()) {
-    o_celldb_cache_size = std::max<td::uint64>(o_celldb_cache_size ? o_celldb_cache_size.value() : 0UL, 16UL << 30);
+    auto o_min_cache_size = opts_->get_celldb_cache_min_size();
+    auto min_cache_size = o_min_cache_size ? o_min_cache_size.value() : (16UL << 30);
+    o_celldb_cache_size = std::max<td::uint64>(o_celldb_cache_size ? o_celldb_cache_size.value() : 0UL, min_cache_size);
   }
 
   if (o_celldb_cache_size) {
@@ -382,6 +392,8 @@ void CellDbIn::start_up() {
 
   if (opts_->get_celldb_in_memory()) {
     td::RocksDbOptions read_db_options;
+    read_db_options.no_transactions = true;
+    read_db_options.critical_write_path = true;
     read_db_options.use_direct_reads = true;
     read_db_options.no_block_cache = true;
     read_db_options.block_cache = {};
@@ -846,6 +858,33 @@ void CellDbIn::flush_db_stats() {
   td::StringBuilder ss;
   for (auto& [key, value] : celldb_stats) {
     ss << "tos.celldb." << key << " " << value << "\n";
+  }
+
+  // Diagnostic only: rocksdb.block-cache-usage/-pinned-usage report the
+  // block cache's *actual current* occupancy, unlike the cumulative
+  // tickers above (hit/miss/add counts, reset every flush). This is here
+  // to answer a specific open question from the node3 RSS investigation
+  // (see doc/celldb-v2-node3-rss-growth-2026-07-26.md): whether steady
+  // jemalloc allocated-byte growth, independent of the CellDB V2 app-level
+  // cache, comes from the RocksDB block cache exceeding its configured
+  // --celldb-cache-size capacity, and whether that's because entries are
+  // pinned (held by a live Cache::Handle/iterator, hence unevictable
+  // regardless of capacity) rather than simply mis-sized.
+  if (auto* rocks_db = dynamic_cast<td::RocksDb*>(cell_db_.get())) {
+    if (auto raw_db = rocks_db->raw_db()) {
+      std::string value;
+      auto add_property = [&](const char* property) {
+        if (raw_db->GetProperty(property, &value)) {
+          ss << property << " " << value << "\n";
+        }
+      };
+      add_property("rocksdb.block-cache-capacity");
+      add_property("rocksdb.block-cache-usage");
+      add_property("rocksdb.block-cache-pinned-usage");
+      add_property("rocksdb.cur-size-all-mem-tables");
+      add_property("rocksdb.estimate-table-readers-mem");
+      add_property("rocksdb.num-snapshots");
+    }
   }
 
   auto stats =

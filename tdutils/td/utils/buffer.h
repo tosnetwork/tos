@@ -52,6 +52,13 @@ struct BufferRaw {
 
 class BufferAllocator {
  public:
+  struct MemoryStats {
+    size_t live_bytes;
+    size_t live_raw_buffers;
+    size_t live_small_slabs;
+    size_t live_small_slab_bytes;
+  };
+
   class DeleteWriterPtr {
    public:
     void operator()(BufferRaw *ptr) {
@@ -80,6 +87,7 @@ class BufferAllocator {
   static ReaderPtr create_reader(const ReaderPtr &raw);
 
   static size_t get_buffer_mem();
+  static MemoryStats get_memory_stats();
 
   static void clear_thread_local();
 
@@ -104,6 +112,9 @@ class BufferAllocator {
   static BufferRaw *create_buffer_raw(size_t size);
 
   static std::atomic<size_t> buffer_mem;
+  static std::atomic<size_t> raw_buffer_count;
+  static std::atomic<size_t> small_slab_count;
+  static std::atomic<size_t> small_slab_bytes;
 };
 
 using BufferWriterPtr = BufferAllocator::WriterPtr;

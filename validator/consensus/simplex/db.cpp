@@ -5,6 +5,7 @@
  */
 
 #include "bus.h"
+#include "finalized-slot-dedup.h"
 
 namespace tos::validator::consensus::simplex {
 
@@ -53,14 +54,32 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
   }
 
   template <>
+  void handle(BusHandle, std::shared_ptr<const FinalizationObserved> event) {
+    saved_vote_hash_evictions_ += saved_vote_hashes_.prune_through(event->id.slot);
+  }
+
+  void start_up() override {
+    if (td::memory_tracker_enabled()) {
+      alarm_timestamp() = td::Timestamp::in(60.0);
+    }
+  }
+
+  void alarm() override {
+    LOG(WARNING) << "MEMORY_DIAGNOSTICS simplex-db saved_vote_hashes=" << saved_vote_hashes_.size()
+                 << " active_slots=" << saved_vote_hashes_.slot_count()
+                 << " evictions=" << saved_vote_hash_evictions_;
+    alarm_timestamp() = td::Timestamp::in(60.0);
+  }
+
+  template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<BroadcastVote> event) {
+    auto referenced_slot = event->vote.referenced_slot();
     auto vote = event->vote.to_tl();
     auto hash = sha256_bits256(serialize_tl_object(vote, true));
 
-    if (saved_votes.contains(hash)) {
+    if (!saved_vote_hashes_.insert(referenced_slot, hash)) {
       co_return td::Status::Error(cancelled, "Vote was already casted");
     }
-    saved_votes.insert(hash);
 
     auto key = create_serialize_tl_object<tl::db_key_vote>(hash);
     auto value = create_serialize_tl_object<tl::db_ourVote>(std::move(vote), next_seqno_++);
@@ -76,13 +95,13 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
 
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<SaveCertificate> event) {
+    auto referenced_slot = event->cert->vote.referenced_slot();
     auto cert = event->cert->to_tl();
     auto hash = sha256_bits256(serialize_tl_object(cert, true));
 
-    if (saved_votes.contains(hash)) {
+    if (!saved_vote_hashes_.insert(referenced_slot, hash)) {
       co_return td::Status::Error(cancelled, "Certificate was already saved");
     }
-    saved_votes.insert(hash);
 
     auto key = create_serialize_tl_object<tl::db_key_vote>(hash);
     auto value = create_serialize_tl_object<tl::db_cert>(std::move(cert));
@@ -192,7 +211,11 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
 
       bool value_valid = true;
       auto append_our_vote = [&](tl::db_ourVote& vote) {
-        our_votes.push_back(OurVote{vote.seqno_, Vote::from_tl(*vote.vote_)});
+        auto parsed_vote = Vote::from_tl(*vote.vote_);
+        if (!saved_vote_hashes_.insert(parsed_vote.referenced_slot(), key->vote_hash_)) {
+          ++saved_vote_hash_evictions_;
+        }
+        our_votes.push_back(OurVote{vote.seqno_, std::move(parsed_vote)});
       };
       auto append_cert = [&](tl::db_cert& vote) {
         auto cert_result = Certificate<Vote>::from_tl(std::move(*vote.cert_), bus);
@@ -202,13 +225,20 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
           value_valid = false;
           return;
         }
-        certs.push_back(cert_result.move_as_ok());
+        auto cert = cert_result.move_as_ok();
+        auto referenced_slot = cert->vote.referenced_slot();
+        if (!saved_vote_hashes_.insert(referenced_slot, key->vote_hash_)) {
+          ++saved_vote_hash_evictions_;
+        }
+        if (std::holds_alternative<FinalizeVote>(cert->vote.vote)) {
+          saved_vote_hash_evictions_ += saved_vote_hashes_.prune_through(referenced_slot);
+        }
+        certs.push_back(std::move(cert));
       };
       tos_api::downcast_call(*value, td::overloaded(append_our_vote, append_cert));
       if (!value_valid) {
         continue;
       }
-      saved_votes.insert(key->vote_hash_);
     }
     std::sort(our_votes.begin(), our_votes.end());
     if (!our_votes.empty()) {
@@ -220,7 +250,8 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
   }
 
   const td::BufferSlice pool_state_key = create_serialize_tl_object<tl::db_key_poolState>();
-  std::set<Bits256> saved_votes;
+  FinalizedSlotDedup<Bits256> saved_vote_hashes_;
+  size_t saved_vote_hash_evictions_ = 0;
   td::uint32 first_nonannounced_window_ = 0;
   td::int64 next_seqno_ = 0;
 };

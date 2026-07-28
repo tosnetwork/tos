@@ -398,22 +398,42 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
 
 }  // namespace
 
-void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, int workchain, unsigned seqno) {
+void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root, tos::BlockIdExt block_id) {
   auto* db = wallet_index_db();
   if (db == nullptr || block_root.is_null()) {
     return;
   }
   // Index the basechain (wc=0) for now; masterchain accounts are handled later.
-  if (workchain != 0) {
+  if (block_id.id.workchain != 0) {
     return;
   }
+  auto seqno = block_id.id.seqno;
   // Block-apply actors can run concurrently and the write batch below is a single
   // unsynchronized object — serialize whole-block passes.
   std::lock_guard<std::mutex> guard(db->write_mutex());
   // W3 crash recovery: durably mark the block in-progress before indexing; the
   // marker delete joins the batch, so it disappears atomically with the entries.
   // A marker left behind on restart flags a block whose indexing never committed.
-  db->put_incomplete_block(seqno).ignore();
+  // Keyed off the full block id (not just seqno): a different shard can reuse
+  // the same seqno after a split/merge, and the marker must identify exactly
+  // this block for crash recovery to re-fetch the right one.
+  //
+  // If this write itself fails (or its WAL sync fails), there is no safety
+  // net for a crash during the indexing below — skip indexing this pass
+  // rather than proceed without one. This hook fires exactly once per block
+  // (from ApplyBlock::applied_set), so skipping here leaves this specific
+  // block's index entries permanently missing — nothing re-triggers it
+  // automatically. That's logged at ERROR (not swallowed) so it's visible,
+  // consistent with the "best-effort, never blocks consensus" tradeoff
+  // already documented for this feature; a stronger guarantee would need an
+  // in-memory retry queue or a full-index-rebuild path, neither of which
+  // exists today.
+  auto marker_status = db->put_incomplete_block(block_id);
+  if (marker_status.is_error()) {
+    LOG(ERROR) << "wc0-index: failed to durably mark block seqno=" << seqno
+              << " in-progress, skipping indexing this pass: " << marker_status.message();
+    return;
+  }
   bool batch_open = db->begin_batch().is_ok();
   bool ok = false;
   std::set<td::Bits256> jetton_candidates, nft_candidates;
@@ -458,8 +478,10 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
   }
   if (ok) {
     // Indexing completed for this block; clear the in-progress marker and commit
-    // the block's entries atomically (one WAL flush per block).
-    db->delete_incomplete_block(seqno).ignore();
+    // the block's entries atomically. This is the second of two necessary WAL
+    // syncs per block — the first was put_incomplete_block()'s own sync,
+    // durable before indexing started; this one covers the entries themselves.
+    db->delete_incomplete_block(block_id).ignore();
     auto s = db->commit_batch();
     if (s.is_error()) {
       LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();

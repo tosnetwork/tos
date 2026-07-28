@@ -45,6 +45,7 @@ class Snapshot;
 class Statistics;
 class MergeOperator;
 class CompactionFilter;
+class WriteBufferManager;
 }  // namespace rocksdb
 
 namespace td {
@@ -76,6 +77,20 @@ struct RocksDbOptions {
   bool no_block_cache = false;
   bool enable_bloom_filter = false;
   bool two_level_index_and_filter = false;
+  // Marks databases on the block-validation/finalization path. When
+  // TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE is configured, these databases use
+  // a separate shared WriteBufferManager; background archive, DHT, overlay,
+  // or wallet-index writes cannot consume or trigger this manager's budget.
+  bool critical_write_path = false;
+
+  // Leave unset to use RocksDB's defaults (or the process-wide environment
+  // overrides documented in RocksDb::open). These controls are intentionally
+  // independent: write_buffer_size bounds one mutable memtable, while
+  // max_write_buffer_size_to_maintain bounds flushed memtables retained for
+  // OptimisticTransactionDB conflict checks.
+  td::optional<size_t> write_buffer_size;
+  td::optional<td::int64> max_write_buffer_size_to_maintain;
+  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager;
 };
 
 class RocksDb : public KeyValue {
@@ -102,18 +117,25 @@ class RocksDb : public KeyValue {
   Status commit_transaction() override;
   Status abort_transaction() override;
   Status flush() override;
+  // Sync the WAL only (no memtable flush / no new SST). Much cheaper than
+  // flush() when only write-ahead durability is needed, e.g. under
+  // manual_wal_flush=true where per-write WAL syncing is otherwise disabled.
+  Status flush_wal(bool sync);
 
   Status begin_snapshot();
   Status end_snapshot();
 
   std::unique_ptr<KeyValueReader> snapshot() override;
   std::string stats() const override;
+  std::string memory_stats() const override;
 
   static std::shared_ptr<rocksdb::Statistics> create_statistics();
   static std::string statistics_to_string(const std::shared_ptr<rocksdb::Statistics> &statistics);
   static void reset_statistics(const std::shared_ptr<rocksdb::Statistics> &statistics);
 
   static std::shared_ptr<rocksdb::Cache> create_cache(size_t capacity);
+  static std::shared_ptr<rocksdb::WriteBufferManager> create_write_buffer_manager(size_t capacity,
+                                                                                  bool allow_stall);
 
   RocksDb(RocksDb &&);
   RocksDb &operator=(RocksDb &&);
@@ -127,6 +149,8 @@ class RocksDb : public KeyValue {
   std::shared_ptr<rocksdb::OptimisticTransactionDB> transaction_db_;
   std::shared_ptr<rocksdb::DB> db_;
   RocksDbOptions options_;
+  struct MemoryDiagnosticsState;
+  std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics_;
 
   std::unique_ptr<rocksdb::Transaction> transaction_;
   std::unique_ptr<rocksdb::WriteBatch> write_batch_;
@@ -139,7 +163,10 @@ class RocksDb : public KeyValue {
   };
   std::unique_ptr<const rocksdb::Snapshot, UnreachableDeleter> snapshot_;
 
-  explicit RocksDb(std::shared_ptr<rocksdb::OptimisticTransactionDB> db, RocksDbOptions options);
-  explicit RocksDb(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options);
+  explicit RocksDb(std::shared_ptr<rocksdb::OptimisticTransactionDB> db, RocksDbOptions options,
+                   std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics = {});
+  explicit RocksDb(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options,
+                   std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics = {});
+  void maybe_log_memory_stats() const;
 };
 }  // namespace td

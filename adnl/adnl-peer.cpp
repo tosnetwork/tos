@@ -22,6 +22,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/base64.h"
 #include "td/utils/overloaded.h"
+#include "td/utils/memory-tracker.h"
 
 #include "adnl-local-id.h"
 #include "adnl-peer.h"
@@ -279,6 +280,7 @@ void AdnlPeerPairImpl::deliver_message(AdnlMessage message) {
 void AdnlPeerPairImpl::send_messages_from_queue() {
   while (!out_messages_queue_.empty() && out_messages_queue_.front().second.is_in_past()) {
     out_messages_queue_total_size_ -= out_messages_queue_.front().first.size();
+    td::memory_tracker_free(td::MemoryTrackerCategory::Network, out_messages_queue_.front().first.size());
     add_expired_msg_stats(out_messages_queue_.front().first.size());
     out_messages_queue_.pop_front();
     VLOG(ADNL_NOTICE) << this << ": dropping OUT message: message in queue expired";
@@ -347,6 +349,7 @@ void AdnlPeerPairImpl::send_messages_from_queue() {
       auto &M = out_messages_queue_.front().first;
       if (!is_direct && (M.flags() & Adnl::SendFlags::direct_only)) {
         out_messages_queue_total_size_ -= M.size();
+        td::memory_tracker_free(td::MemoryTrackerCategory::Network, M.size());
         out_messages_queue_.pop_front();
         continue;
       }
@@ -354,6 +357,7 @@ void AdnlPeerPairImpl::send_messages_from_queue() {
       if (s + M.size() <= AdnlNetworkManager::get_mtu()) {
         s += M.size();
         out_messages_queue_total_size_ -= M.size();
+        td::memory_tracker_free(td::MemoryTrackerCategory::Network, M.size());
         packet.add_message(M.release());
         out_messages_queue_.pop_front();
         skip_init_packet_ = false;
@@ -436,6 +440,7 @@ void AdnlPeerPairImpl::send_messages(std::vector<OutboundAdnlMessage> messages) 
   }
   for (auto &m : new_vec) {
     out_messages_queue_total_size_ += m.size();
+    td::memory_tracker_alloc(td::MemoryTrackerCategory::Network, m.size());
     out_messages_queue_.emplace_back(std::move(m), td::Timestamp::in(message_in_queue_ttl_));
   }
   send_messages_from_queue();

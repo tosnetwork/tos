@@ -1024,6 +1024,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     while (!skip_intervals_.empty() && *skip_intervals_.begin() <= id.slot) {
       skip_intervals_.erase(skip_intervals_.begin());
     }
+    seen_broadcasts_.erase(seen_broadcasts_.begin(), seen_broadcasts_.upper_bound(id.slot));
 
     state_->notify_finalized(id.slot);
 
