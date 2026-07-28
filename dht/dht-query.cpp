@@ -33,7 +33,15 @@ namespace dht {
 
 void DhtQuery::send_queries() {
   while (pending_queries_.size() > k_ * 2) {
-    pending_queries_.erase(--pending_queries_.end());
+    // The trimmed entry is guaranteed to still be in `nodes_` and not
+    // referenced by `result_list_` or an in-flight query (it is only ever
+    // dispatched, and thus removed from `pending_queries_`, right below),
+    // so it is safe to drop from `nodes_` here too. Without this, `nodes_`
+    // would grow without bound across query rounds/replies, since add_nodes()
+    // never caps it directly.
+    auto it = --pending_queries_.end();
+    nodes_.erase(*it);
+    pending_queries_.erase(it);
   }
   VLOG(DHT_EXTRA_DEBUG) << this << ": sending new queries. active=" << active_queries_ << " max_active=" << a_;
   while (pending_queries_.size() > 0 && active_queries_ < a_) {
@@ -89,7 +97,12 @@ void DhtQuery::finish_query(adnl::AdnlNodeIdShort id, bool success) {
   if (success) {
     result_list_.insert(id_xor);
     if (result_list_.size() > k_) {
-      result_list_.erase(--result_list_.end());
+      // Same reasoning as the pending_queries_ trim above: an entry falling
+      // off the k_-nearest result list is no longer referenced anywhere, so
+      // it can be dropped from nodes_ as well.
+      auto it = --result_list_.end();
+      nodes_.erase(*it);
+      result_list_.erase(it);
     }
   } else {
     NodeInfo &info = nodes_[id_xor];

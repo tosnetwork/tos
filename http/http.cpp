@@ -147,6 +147,12 @@ td::Result<std::unique_ptr<HttpRequest>> HttpRequest::create(std::string method,
     return td::Status::Error(PSTRING() << "unsupported http method '" << method << "'");
   }
 
+  for (char c : url) {
+    if (c == '\r' || c == '\n' || c == '\0' || c == ' ') {
+      return td::Status::Error("bad character in url");
+    }
+  }
+
   return std::make_unique<HttpRequest>(std::move(method), std::move(url), std::move(proto_version));
 }
 
@@ -206,9 +212,8 @@ td::Status HttpRequest::add_header(HttpHeader header) {
     // input.  This gate keeps the wire layer self-consistent with
     // its declared max.
     if (len > max_payload_size()) {
-      return td::Status::Error(
-          PSLICE() << "Content-Length " << len
-                   << " exceeds max payload size " << max_payload_size());
+      return td::Status::Error(PSLICE() << "Content-Length " << len << " exceeds max payload size "
+                                        << max_payload_size());
     }
     content_length_ = len;
     found_content_length_ = true;
@@ -304,11 +309,8 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
         // round 152), so checking the running total against it
         // gives a deterministic "too large" reject the same way
         // Content-Length does.
-        if (ready_bytes_ > high_watermark_ ||
-            size > high_watermark_ - ready_bytes_) {
-          return td::Status::Error(
-              PSLICE() << "chunked request body exceeds max payload size "
-                       << high_watermark_);
+        if (ready_bytes_ > high_watermark_ || size > high_watermark_ - ready_bytes_) {
+          return td::Status::Error(PSLICE() << "chunked request body exceeds max payload size " << high_watermark_);
         }
         cur_chunk_size_ = size;
         state_ = ParseState::reading_chunk_data;
@@ -917,6 +919,12 @@ td::Result<std::unique_ptr<HttpResponse>> HttpResponse::create(std::string proto
     return td::Status::Error(PSTRING() << "bad status code '" << code << "'");
   }
 
+  for (char c : reason) {
+    if (c == '\r' || c == '\n' || c == '\0') {
+      return td::Status::Error("bad character in reason");
+    }
+  }
+
   return std::make_unique<HttpResponse>(std::move(proto_version), code, std::move(reason), force_no_payload, keep_alive,
                                         is_tunnel);
 }
@@ -970,9 +978,8 @@ td::Status HttpResponse::add_header(HttpHeader header) {
     // serving an oversize response on an outbound HTTP client
     // connection.
     if (len > max_payload_size()) {
-      return td::Status::Error(
-          PSLICE() << "Content-Length " << len
-                   << " exceeds max payload size " << max_payload_size());
+      return td::Status::Error(PSLICE() << "Content-Length " << len << " exceeds max payload size "
+                                        << max_payload_size());
     }
     content_length_ = len;
     found_content_length_ = true;
@@ -1031,12 +1038,12 @@ tl_object_ptr<tos_api::http_response> HttpResponse::store_tl() {
 
 td::Status HttpHeader::basic_check() {
   for (auto &c : name) {
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':') {
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':' || c == '\0') {
       return td::Status::Error("bad character in header name");
     }
   }
   for (auto &c : value) {
-    if (c == '\r' || c == '\n') {
+    if (c == '\r' || c == '\n' || c == '\0') {
       return td::Status::Error("bad character in header value");
     }
   }

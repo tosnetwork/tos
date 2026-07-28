@@ -520,6 +520,23 @@ TEST(base64, main) {
   REGRESSION_VERIFY(os.str());
 }
 
+TEST(base64, short_inputs) {
+  // Regression test: buff_base64_encode used `i < orig_size - 2` with orig_size
+  // an unsigned std::size_t, which underflows for orig_size in {0, 1, 2} and
+  // reads/writes far past the buffer. Verify round-trip for the smallest sizes
+  // straddling that boundary, in both standard and URL-safe alphabets.
+  std::string data;
+  for (int len = 0; len <= 8; len++) {
+    for (bool url : {false, true}) {
+      std::string encoded = td::str_base64_encode(data, url);
+      CHECK(td::is_valid_base64(encoded, true));
+      std::string decoded = td::str_base64_decode(encoded, true);
+      CHECK(decoded == data);
+    }
+    data.push_back(static_cast<char>(len));
+  }
+}
+
 void check_bits256_scan(std::ostream& stream, td::Bits256 a, td::Bits256 b) {
   auto c = a ^ b;
   auto bit = c.count_leading_zeroes();

@@ -1199,6 +1199,27 @@ class CoroSpec final : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  // coro_sleep's internal helper actor must stop() itself after completing the
+  // promise, instead of staying alive forever. Regression-test both that many
+  // sequential sleeps complete correctly (no hang, no double-completion CHECK
+  // failure) and that concurrently-awaited sleeps all resolve cleanly.
+  Task<td::Unit> coro_sleep_actor_lifetime() {
+    LOG(INFO) << "=== coro_sleep_actor_lifetime ===";
+
+    for (int i = 0; i < 20; i++) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.001));
+    }
+
+    std::vector<td::actor::StartedTask<td::Unit>> tasks;
+    for (int i = 0; i < 20; i++) {
+      tasks.push_back(td::actor::coro_sleep(td::Timestamp::in(0.001)));
+    }
+    co_await td::actor::all(std::move(tasks));
+
+    LOG(INFO) << "coro_sleep_actor_lifetime completed";
+    co_return td::Unit{};
+  }
+
   // Master runner
   Task<td::Unit> run_all() {
     LOG(ERROR) << "Run tests";
@@ -1225,6 +1246,7 @@ class CoroSpec final : public td::actor::Actor {
     co_await co_return_empty_braces();
     co_await actor_ref_uaf();  // UAF test - demonstrates need for ActorRef
     co_await actor_task_unwrap_bug();
+    co_await coro_sleep_actor_lifetime();
 
     (void)co_await ask(logger_, &TestLogger::log, std::string("All tests passed"));
     co_return td::Unit();

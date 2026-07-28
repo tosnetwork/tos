@@ -114,6 +114,40 @@ int main(int argc, char *argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   td::set_default_failure_signal_handler().ensure();
 
+  {
+    // OverlayNode::clone() must preserve every field, including flags_.
+    auto pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};
+    auto pub = pk.compute_public_key();
+    auto self_id = tos::adnl::AdnlNodeIdShort{pub.compute_short_id()};
+
+    auto overlay_id_full = tos::create_serialize_tl_object<tos::tos_api::pub_overlay>(td::BufferSlice("clone-test"));
+    tos::overlay::OverlayIdFull overlay_id(overlay_id_full.clone());
+    auto overlay_id_short = overlay_id.compute_short_id();
+
+    const td::uint32 kFlags = 0x5;
+    tos::overlay::OverlayNode node(self_id, overlay_id_short, kFlags);
+    node.update_signature("test-signature");
+
+    auto cert_pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};
+    tos::overlay::OverlayMemberCertificate cert(cert_pk.compute_public_key(), 7, 42, 1000000,
+                                                td::BufferSlice("cert-signature"));
+    node.update_certificate(std::move(cert));
+
+    auto cloned = node.clone();
+
+    CHECK(cloned.overlay_id() == node.overlay_id());
+    CHECK(cloned.flags() == node.flags());
+    CHECK(cloned.flags() == kFlags);
+    CHECK(cloned.version() == node.version());
+    CHECK(cloned.signature().as_slice() == node.signature().as_slice());
+
+    auto orig_cert_tl = tos::serialize_tl_object(node.certificate()->tl(), true);
+    auto cloned_cert_tl = tos::serialize_tl_object(cloned.certificate()->tl(), true);
+    CHECK(orig_cert_tl.as_slice() == cloned_cert_tl.as_slice());
+
+    LOG(WARNING) << "OverlayNode::clone() flags/version/signature/certificate check passed";
+  }
+
   std::string db_root_ = "tmp-dir-test-catchain";
   td::rmrf(db_root_).ignore();
   td::mkdir(db_root_).ensure();
