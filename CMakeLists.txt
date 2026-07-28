@@ -759,6 +759,9 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)
 
+add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
+target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
+
 add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # Link tos_crypto for vm::std_boc_serialize / std_boc_deserialize, used by
 # the OnDisk corruption regression to assemble a known-good shard-state BoC
@@ -1058,6 +1061,7 @@ tos_test(test-validator-session-state)
 tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
+tos_test(test-msg-envelope)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-wallet-index)
