@@ -226,48 +226,99 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   td::actor::Task<ResolvedState> resolve_state_inner(ParentId id) {
-    if (!id.has_value()) {
+    std::vector<CandidateRef> candidates_to_apply;
+    std::optional<double> gen_utime_exact;
+    std::optional<ChainStateRef> state;
+    bool reconstruct_from_candidate_data = false;
+
+    // Resolve the whole ancestor walk inside one admitted operation. Empty
+    // candidates do not change ChainState, and full candidates can be applied
+    // oldest-to-newest after an available finalized anchor (or genesis) is
+    // found. The old recursive implementation created one independently
+    // admitted state-cache entry per candidate; a quiet shard with more than
+    // 4096 empty candidates therefore failed deterministically after a cold
+    // restart.
+    //
+    // CandidateId parents are strictly older (enforced on candidate ingress),
+    // so this loop is finite. Only full candidates that must be replayed are
+    // retained; an arbitrarily long empty run remains constant-memory.
+    while (id.has_value()) {
+      // A previous resolution may already have cached an ancestor reached
+      // through a newer empty candidate. Reuse it directly; otherwise every
+      // newly finalized empty candidate would rescan the same historical run.
+      auto cached = state_cache_.find(id);
+      if (cached != state_cache_.end() && cached->second.result.has_value()) {
+        if (!gen_utime_exact.has_value()) {
+          gen_utime_exact = cached->second.result->gen_utime_exact;
+        }
+        state = cached->second.result->state;
+        touch_state_cache(id);
+        break;
+      }
+
+      // A slot that timed out into a skip certificate never had a Candidate
+      // object. Pool's available_base jumps directly past the skip run.
+      if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(id->slot)) {
+        id = *skip_base;
+        continue;
+      }
+
+      auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
+      if (candidate->is_empty()) {
+        id = candidate->parent_id;
+        continue;
+      }
+
+      const auto& block_candidate = std::get<BlockCandidate>(candidate->block);
+      auto candidate_gen_utime = get_candidate_gen_utime_exact(block_candidate);
+      if (candidate_gen_utime.is_error()) {
+        LOG(WARNING) << "Simplex state-resolver: candidate " << *id
+                     << " has invalid generation time: " << candidate_gen_utime.error();
+        co_return candidate_gen_utime.move_as_error();
+      }
+      if (!gen_utime_exact.has_value()) {
+        gen_utime_exact = candidate_gen_utime.move_as_ok();
+      }
+
+      if (!reconstruct_from_candidate_data && co_await is_finalized(*id, true)) {
+        auto genesis = co_await genesis_.get();
+        auto manager_state =
+            co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
+                                              {candidate->block_id()}, genesis->state->min_mc_block_id())
+                .wrap();
+        if (manager_state.is_ok()) {
+          state = manager_state.move_as_ok();
+          break;
+        }
+        if (manager_state.error().code() != ErrorCode::timeout &&
+            manager_state.error().code() != ErrorCode::notready) {
+          co_return manager_state.move_as_error();
+        }
+
+        // A finalized consensus candidate can temporarily be absent from the
+        // manager's block/state indexes during cold-start replay. Restarting
+        // the entire ancestor walk on that transient timeout is both
+        // needlessly expensive and, for a long empty chain, a liveness bug.
+        // Reconstruct it from its already validated candidate data instead.
+        LOG(WARNING) << "Simplex state-resolver: finalized anchor " << *id
+                     << " is not available from manager (" << manager_state.error()
+                     << "); reconstructing it from candidate data";
+        reconstruct_from_candidate_data = true;
+      }
+
+      candidates_to_apply.push_back(std::move(candidate));
+      id = candidates_to_apply.back()->parent_id;
+    }
+
+    if (!state.has_value()) {
       auto genesis = co_await genesis_.get();
-      auto state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                                     genesis->state->block_ids(), genesis->state->min_mc_block_id());
-      co_return ResolvedState{state, std::nullopt};
+      state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
+                                               genesis->state->block_ids(), genesis->state->min_mc_block_id());
     }
-
-    // A slot that timed out into a skip certificate never had any candidate
-    // -- not even an empty placeholder -- broadcast for it, so ResolveCandidate
-    // has nothing to find there and would otherwise retry indefinitely (see
-    // CandidateResolverImpl::resolve_candidate_inner). Pool already tracks
-    // exactly which slots are skip-certified and, via available_base, the
-    // real ancestor to build on past any run of them; consult that purely
-    // local knowledge before ever attempting network/DB candidate resolution.
-    if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(id->slot)) {
-      co_return co_await resolve_state(*skip_base);
+    for (auto it = candidates_to_apply.rbegin(); it != candidates_to_apply.rend(); ++it) {
+      state = (*state)->apply(std::get<BlockCandidate>((*it)->block));
     }
-
-    auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
-    if (candidate->is_empty()) {
-      co_return co_await resolve_state(candidate->parent_id);
-    }
-    auto gen_utime_result = get_candidate_gen_utime_exact(std::get<BlockCandidate>(candidate->block));
-    if (gen_utime_result.is_error()) {
-      LOG(WARNING) << "Simplex state-resolver: candidate " << *id
-                   << " has invalid generation time: " << gen_utime_result.error();
-      co_return gen_utime_result.move_as_error();
-    }
-    auto gen_utime_exact = gen_utime_result.move_as_ok();
-
-    if (co_await is_finalized(*id, true)) {
-      auto genesis = co_await genesis_.get();
-      auto state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                                     {candidate->block_id()}, genesis->state->min_mc_block_id());
-      co_return ResolvedState{state, gen_utime_exact};
-    }
-
-    auto prev_data_state = co_await resolve_state(candidate->parent_id);
-    co_return ResolvedState{
-        .state = prev_data_state.state->apply(std::get<BlockCandidate>(candidate->block)),
-        .gen_utime_exact = gen_utime_exact,
-    };
+    co_return ResolvedState{*state, gen_utime_exact};
   }
 
   // ===== Block finalization =====

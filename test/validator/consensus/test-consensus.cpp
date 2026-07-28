@@ -30,6 +30,8 @@
 
 #include "block-auto.h"
 
+#include <atomic>
+
 using namespace tos;
 using namespace tos::validator;
 using namespace tos::validator::consensus;
@@ -121,6 +123,9 @@ double ADAPTIVE_BYZANTINE_PERIOD = 0.5;
 bool MALICIOUS_OBSERVER_ATTACK = false;
 bool RELAY_LOOP_TEST = false;
 bool QUERY_ABUSE_TEST = false;
+bool EMPTY_CHAIN_RESTART_TEST = false;
+std::atomic<bool> EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE = false;
+std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES = 0;
 double CATCH_UP_DOWNTIME = -1.0;
 
 std::pair<double, double> DB_DELAY = {0.0, 0.0};
@@ -571,6 +576,9 @@ class TestDbImpl : public consensus::Db {
 };
 
 class TestConsensus : public td::actor::Actor {
+ private:
+  struct Instance;
+
  public:
   td::actor::Task<> run() {
     auto result = co_await run_inner().wrap();
@@ -601,10 +609,12 @@ class TestConsensus : public td::actor::Actor {
     if (last_accepted_block_.seqno() < seqno && signatures->is_final()) {
       last_accepted_block_ = block_id;
       last_accepted_block_leader_idx_ = creator_idx;
-      for (Node &node : nodes_) {
-        for (Instance &inst : node.instances) {
-          if (inst.status == Instance::Running) {
-            inst.bus.publish<BlockFinalizedInMasterchain>(block_id);
+      if (!EMPTY_CHAIN_RESTART_TEST) {
+        for (Node &node : nodes_) {
+          for (Instance &inst : node.instances) {
+            if (inst.status == Instance::Running) {
+              inst.bus.publish<BlockFinalizedInMasterchain>(block_id);
+            }
           }
         }
       }
@@ -725,10 +735,25 @@ class TestConsensus : public td::actor::Actor {
     if (CATCH_UP_DOWNTIME >= 0.0) {
       run_catch_up_test().start().detach();
     }
+    if (EMPTY_CHAIN_RESTART_TEST) {
+      run_empty_chain_restart_test().start().detach();
+    }
 
-    run_write_status().start().detach();
+    if (!EMPTY_CHAIN_RESTART_TEST) {
+      run_write_status().start().detach();
+    }
 
-    co_await td::actor::coro_sleep(td::Timestamp::in(DURATION));
+    if (EMPTY_CHAIN_RESTART_TEST) {
+      auto deadline = td::Timestamp::in(DURATION);
+      while (!empty_chain_restart_completed_ && empty_chain_restart_error_.empty() && !deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+      if (!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) {
+        empty_chain_restart_error_ = "timed out waiting for the empty-chain restart test";
+      }
+    } else {
+      co_await td::actor::coro_sleep(td::Timestamp::in(DURATION));
+    }
 
     co_return co_await finalize();
   }
@@ -1027,12 +1052,120 @@ class TestConsensus : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  size_t candidate_record_count(const Instance& instance) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    const td::uint32 prefix = tos_api::consensus_simplex_db_key_candidate::ID;
+    size_t result = 0;
+    for (const auto& [key, _] : instance.db_inner->map) {
+      if (key.size() >= sizeof(prefix) && std::memcmp(key.data(), &prefix, sizeof(prefix)) == 0) {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  size_t trailing_empty_candidate_count(const Instance& instance) const {
+    std::vector<td::BufferSlice> serialized_candidates;
+    {
+      std::scoped_lock lock(instance.db_inner->mutex);
+      const td::uint32 prefix = tos_api::consensus_simplex_db_key_candidate::ID;
+      for (const auto& [key, value] : instance.db_inner->map) {
+        if (key.size() >= sizeof(prefix) && std::memcmp(key.data(), &prefix, sizeof(prefix)) == 0) {
+          serialized_candidates.push_back(value.clone());
+        }
+      }
+    }
+
+    std::map<CandidateId, CandidateRef> candidates;
+    for (const auto& serialized : serialized_candidates) {
+      auto candidate = Candidate::deserialize(serialized, *instance.bus).move_as_ok();
+      candidates.emplace(candidate->id, std::move(candidate));
+    }
+    if (candidates.empty()) {
+      return 0;
+    }
+
+    size_t result = 0;
+    auto candidate = candidates.rbegin()->second;
+    while (candidate->is_empty()) {
+      ++result;
+      CHECK(candidate->parent_id.has_value());
+      auto it = candidates.find(*candidate->parent_id);
+      CHECK(it != candidates.end());
+      candidate = it->second;
+    }
+    return result;
+  }
+
+  td::actor::Task<> run_empty_chain_restart_test() {
+    // Keep the manager's masterchain-finalized watermark at genesis.  After
+    // the first few real blocks, BlockProducer will therefore finalize only
+    // empty candidates.  Build a chain longer than the production admission
+    // limit, restart with a cold StateResolver, and require candidate
+    // production to resume.
+    constexpr size_t EMPTY_CHAIN_LENGTH = 4096 + 32;
+    auto& instance = nodes_[0].instances[0];
+    auto build_deadline = td::Timestamp::in(DURATION * 0.75);
+    while (candidate_record_count(instance) < EMPTY_CHAIN_LENGTH && !build_deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    auto before_restart = candidate_record_count(instance);
+    if (before_restart < EMPTY_CHAIN_LENGTH) {
+      empty_chain_restart_error_ =
+          PSTRING() << "built only " << before_restart << " candidates before the restart";
+      co_return td::Unit{};
+    }
+    auto empty_chain_length = trailing_empty_candidate_count(instance);
+    if (empty_chain_length <= 4096) {
+      empty_chain_restart_error_ =
+          PSTRING() << "built only " << empty_chain_length << " consecutive empty candidates before the restart";
+      co_return td::Unit{};
+    }
+
+    // The production incident also had a finalized full-candidate anchor
+    // whose block/state lookup timed out during cold-start replay. Force that
+    // condition so the resolver must reconstruct the anchor from candidate
+    // data instead of restarting the entire 4096+ ancestor walk.
+    EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE = true;
+    co_await stop_instance(0, 0);
+    auto stopped_count = candidate_record_count(instance);
+    start_instance(0, 0);
+
+    const size_t RECOVERY_CANDIDATES = SLOTS_PER_LEADER_WINDOW * 2;
+    auto recovery_deadline = td::Timestamp::in(DURATION * 0.25);
+    while (candidate_record_count(instance) < stopped_count + RECOVERY_CANDIDATES &&
+           !recovery_deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    auto after_restart = candidate_record_count(instance);
+    if (after_restart < stopped_count + RECOVERY_CANDIDATES) {
+      empty_chain_restart_error_ =
+          PSTRING() << "candidate production did not resume after resolving " << stopped_count
+                    << " persisted candidates; count after restart=" << after_restart;
+      co_return td::Unit{};
+    }
+    if (EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES == 0) {
+      empty_chain_restart_error_ = "missing-manager-anchor fallback was not exercised";
+      co_return td::Unit{};
+    }
+    if (EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES > 2) {
+      empty_chain_restart_error_ =
+          PSTRING() << "manager anchor was retried " << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES
+                    << " times after recovery; completed-ancestor cache was not reused";
+      co_return td::Unit{};
+    }
+    LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
+                 << " consecutive empty candidates: records " << stopped_count << " -> " << after_restart;
+    empty_chain_restart_completed_ = true;
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> finalize() {
     finishing_ = true;
     LOG(WARNING) << "TEST FINISHED";
     std::vector<td::actor::Task<>> tasks;
     for (size_t idx = 0; idx < N_NODES; ++idx) {
-      for (size_t i = 0; i < nodes_[i].instances.size(); ++i) {
+      for (size_t i = 0; i < nodes_[idx].instances.size(); ++i) {
         tasks.push_back(stop_instance(idx, i));
       }
     }
@@ -1099,6 +1232,14 @@ class TestConsensus : public td::actor::Actor {
       LOG(WARNING) << "StateResolver live DB lookup coverage: gets=" << latest_get_count
                    << " found=" << latest_found_count;
     }
+    if (EMPTY_CHAIN_RESTART_TEST) {
+      if (!empty_chain_restart_error_.empty()) {
+        co_return td::Status::Error(empty_chain_restart_error_);
+      }
+      if (!empty_chain_restart_completed_) {
+        co_return td::Status::Error("long empty-chain restart did not complete");
+      }
+    }
     co_return td::Unit{};
   }
 
@@ -1148,6 +1289,8 @@ class TestConsensus : public td::actor::Actor {
   std::string catch_up_error_;
   size_t query_abuse_rejected_ = 0;
   bool query_abuse_completed_ = false;
+  bool empty_chain_restart_completed_ = false;
+  std::string empty_chain_restart_error_;
   bool finishing_ = false;
 };
 
@@ -1208,10 +1351,18 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
                                                                             td::Timestamp timeout) {
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+    ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
+    co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor state");
+  }
   co_return co_await td::actor::ask(test_consensus_, &TestConsensus::wait_block_state_root, block_id);
 }
 
 td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdExt block_id, td::Timestamp timeout) {
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+    ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
+    co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor data");
+  }
   co_return co_await td::actor::ask(test_consensus_, &TestConsensus::wait_block_data, block_id);
 }
 
@@ -2054,6 +2205,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "query-abuse-test",
                "flood candidate queries from one observer and require rate limiting",
                [&]() { QUERY_ABUSE_TEST = true; });
+  p.add_option('\0', "empty-chain-restart-test",
+               "restart after more than 4096 consecutive empty candidates and require recovery",
+               [&]() { EMPTY_CHAIN_RESTART_TEST = true; });
   p.add_option('\0', "candidate-relay-eviction-test",
                "fill the candidate-relay LRU and verify oldest-entry eviction",
                [&]() { run_candidate_relay_eviction_test = true; });
@@ -2138,6 +2292,12 @@ int main(int argc, char *argv[]) {
   CHECK(N_DOUBLE_NODES <= N_NODES);
   CHECK(ADAPTIVE_BYZANTINE_N < N_NODES);
   CHECK(CATCH_UP_DOWNTIME < 0.0 || N_NODES >= 4);
+  CHECK(!EMPTY_CHAIN_RESTART_TEST || N_NODES == 1);
+  if (EMPTY_CHAIN_RESTART_TEST) {
+    // Thousands of per-candidate WARNING lines dominate this stress test's
+    // runtime and do not add coverage.
+    SET_VERBOSITY_LEVEL(verbosity_ERROR);
+  }
 
   td::actor::Scheduler scheduler({7});
   td::actor::ActorOwn<TestConsensus> test;

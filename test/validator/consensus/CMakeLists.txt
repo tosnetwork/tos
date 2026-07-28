@@ -90,6 +90,11 @@ set_tests_properties(
         "TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=8"
 )
 add_test(
+    NAME test-consensus-simplex2-empty-chain-restart
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+)
+add_test(
     NAME test-consensus-simplex2-query-abuse
     COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
             --net-ping 0.005:0.02 --query-abuse-test
