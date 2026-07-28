@@ -3563,12 +3563,12 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
                           out_msg_id.to_hex(352) +
                           " contains a MsgEnvelope distinct from that stored in the new queue");
     }
+    unsigned long long emitted_lt;
+    REJECT_UNLESS(block::tlb::t_MsgEnvelope.get_emitted_lt(vm::load_cell_slice(q_msg_env), emitted_lt));
+    REJECT_UNLESS_MSG(emitted_lt <= enqueued_lt, PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352)
+                                                           << " has emitted_lt " << emitted_lt
+                                                           << " greater than enqueued_lt " << enqueued_lt);
   }
-  unsigned long long emitted_lt;
-  REJECT_UNLESS(block::tlb::t_MsgEnvelope.get_emitted_lt(vm::load_cell_slice(q_msg_env), emitted_lt));
-  REJECT_UNLESS_MSG(emitted_lt <= enqueued_lt, PSTRING() << "EnqueuedMsg with key " << out_msg_id.to_hex(352)
-                                                         << " has emitted_lt " << emitted_lt
-                                                         << " greater than enqueued_lt " << enqueued_lt);
   // in all cases above, we have to check that all 352-bit key is correct (including first 96 bits)
   // otherwise we might not be able to correctly recover OutMsgQueue entries starting from OutMsgDescr later
   // or we might have several OutMsgQueue entries with different 352-bit keys all having the same last 256 bits (with the message hash)
