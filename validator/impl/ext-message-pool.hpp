@@ -16,13 +16,14 @@
 */
 #pragma once
 
+#include <deque>
 #include <set>
 
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/PersistentTreap.h"
 
-#include "external-message.hpp"
+#include "ext-message-checker.hpp"
 
 namespace tos::validator {
 
@@ -56,6 +57,9 @@ class ExtMessagePool : public td::actor::Actor {
   std::vector<std::pair<std::string, std::string>> prepare_stats();
 
   void alarm() override;
+  void start_up() override {
+    alarm_timestamp().relax(admission_stats_at_);
+  }
 
  private:
   struct MessageId {
@@ -82,7 +86,6 @@ class ExtMessagePool : public td::actor::Actor {
     bool active = true;
     td::Timestamp reactivate_at;
     td::Timestamp delete_at;
-    td::optional<td::uint32> msg_seqno;
 
     auto address() const {
       return std::make_pair(message->wc(), message->addr());
@@ -150,32 +153,37 @@ class ExtMessagePool : public td::actor::Actor {
 
   td::Timestamp cleanup_mempool_at_ = td::Timestamp::now();
 
-  void add_message_to_mempool(td::Ref<ExtMessage> message, int priority, td::optional<td::uint32> msg_seqno);
+  void add_message_to_mempool(td::Ref<ExtMessage> message, int priority);
   bool erase_message(int priority, const MessageId &id);
 
-  struct WalletMessageInfo {
-    td::uint32 valid_until;
-    td::Promise<td::Unit> allow_broadcast_promise;
-  };
-  struct WalletInfo {
-    std::map<td::uint32, WalletMessageInfo> messages;
-    ~WalletInfo() {
-      for (auto &[_, message] : messages) {
-        if (message.allow_broadcast_promise) {
-          message.allow_broadcast_promise.set_error(td::Status::Error("wallet is no longer valid"));
-        }
-      }
-    }
-    void process_messages(td::uint32 wallet_seqno, UnixTime utime);
-  };
-  std::map<std::pair<WorkchainId, StdSmcAddress>, WalletInfo> wallets_;
+  // Parallel admission workers own the expensive, pool-independent validation stages. Shared
+  // counters, mempool indexes and callback mutation remain serialized on this pool actor.
+  std::vector<td::actor::ActorOwn<ExtMessageChecker>> checkers_;
+  std::vector<size_t> checker_inflight_;
+  size_t next_checker_{0};
+  void init_checkers();
 
-  td::actor::Task<CheckResult> check_message(td::Ref<ExtMessage> message, td::optional<td::uint32> &msg_seqno,
-                                              td::optional<PublicKeyHash> source_peer = {});
-  td::Result<td::uint32> check_message_to_wallet(td::Ref<ExtMessage> message, const WalletMessageProcessor *wallet,
-                                                 block::Account acc, UnixTime utime, LogicalTime lt,
-                                                 std::unique_ptr<block::ConfigInfo> config,
-                                                 td::Promise<td::Unit> allow_broadcast_promise);
+  size_t inflight_checks_{0};
+  std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
+  void release_check_slot();
+
+  double check_completion_rate_{2000.0};
+  td::uint64 completions_in_rate_window_{0};
+  double rate_window_start_{td::Time::now()};
+  size_t max_admission_waiters();
+
+  struct AdmissionWindowStats {
+    td::uint64 in{0};
+    td::uint64 admitted{0};
+    td::uint64 rejected{0};
+    td::uint64 checked{0};
+    double check_time{0};
+    ExtMessageChecker::StageTimings timings;
+    td::Timestamp window_start = td::Timestamp::now();
+  };
+  AdmissionWindowStats admission_window_;
+  td::Timestamp admission_stats_at_ = td::Timestamp::in(ADMISSION_STATS_PERIOD);
+  void log_admission_stats();
 
   std::vector<std::unique_ptr<ExtMsgCallback>> callbacks_;
 
@@ -183,7 +191,11 @@ class ExtMessagePool : public td::actor::Actor {
   static constexpr size_t MAX_EXT_MSG_PER_ADDR = 3 * 10;
   static constexpr size_t PER_ADDRESS_LIMIT = 256;
   static constexpr size_t SOFT_MEMPOOL_LIMIT = 1024;
-  static constexpr td::uint32 MAX_WALLET_SEQNO_DIFF = 16;
+  static constexpr size_t NUM_CHECKERS = 24;
+  static constexpr size_t MAX_INFLIGHT_CHECKS = 8 * NUM_CHECKERS;
+  static constexpr size_t MAX_ADMISSION_WAITERS = 50000;
+  static constexpr double MAX_ADMISSION_QUEUE_DELAY = 5.0;
+  static constexpr double ADMISSION_STATS_PERIOD = 5.0;
 };
 
 }  // namespace tos::validator

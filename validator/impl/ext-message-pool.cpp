@@ -14,99 +14,146 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
-#include "td/utils/Random.h"
+#include <vector>
 
-#include "block/workchain-execution-dispatch.h"
-#include "config.hpp"
+#include "td/utils/Random.h"
+#include "td/utils/Timer.h"
+
 #include "ext-message-pool.hpp"
 #include "external-message.hpp"
 #include "fabric.h"
-#include "transaction.h"
-
-#include <unordered_set>
-#include <vector>
 
 namespace tos::validator {
 
-namespace {
-
-td::Result<std::optional<block::ResolvedWorkchainExecution>> resolve_message_workchain_execution(
-    const td::Ref<MasterchainState>& state, WorkchainId wc) {
-  if (state.is_null()) {
-    return td::Status::Error(ErrorCode::notready, "masterchain state is not ready");
+void ExtMessagePool::init_checkers() {
+  checker_inflight_.assign(NUM_CHECKERS, 0);
+  for (size_t i = 0; i < NUM_CHECKERS; ++i) {
+    checkers_.push_back(td::actor::create_actor<ExtMessageChecker>(PSTRING() << "extmsgcheck" << i, manager_));
   }
-  TRY_RESULT(holder, state->get_config_holder());
-  auto* holder_q = dynamic_cast<const ConfigHolderQ*>(holder.get());
-  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
-    return td::Status::Error("masterchain config holder does not expose block::Config");
-  }
-  const block::Config& config = *holder_q->get_config();
-  return block::default_workchain_execution_registry().resolve_workchain(
-      config.get_workchain_list(), wc, config);
 }
 
-td::Status reject_special_cells_for_custom_compute(td::Ref<vm::Cell> root,
-                                                   block::SizeLimitsConfig::ExtMsgLimits limits) {
-  std::unordered_set<const vm::Cell*> visited;
-  std::vector<td::Ref<vm::Cell>> stack{std::move(root)};
-  const size_t cells_from_size = static_cast<size_t>(limits.max_size) / 64u;
-  const size_t max_scanned_cells =
-      std::min(static_cast<size_t>(65536), std::max(static_cast<size_t>(4096), cells_from_size));
-  size_t popped = 0;
-  while (!stack.empty()) {
-    auto cell = std::move(stack.back());
-    stack.pop_back();
-    if (cell.is_null() || !visited.insert(cell.get()).second) {
-      continue;
-    }
-    if (++popped > max_scanned_cells) {
-      return td::Status::Error("external message tree too large for special-cell scan");
-    }
-    bool special = false;
-    vm::CellSlice cs;
-    try {
-      cs = vm::load_cell_slice_special(cell, special);
-    } catch (...) {
-      return td::Status::Error("external message tree contains an unloadable cell");
-    }
-    if (special) {
-      return td::Status::Error("external message tree contains a special cell");
-    }
-    for (unsigned i = 0, n = cs.size_refs(); i < n; ++i) {
-      stack.push_back(cs.prefetch_ref(i));
-    }
-  }
-  return td::Status::OK();
-}
-
-}  // namespace
-
-td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(td::BufferSlice data,
-                                                                                        int priority,
-                                                                                        bool add_to_mempool,
-                                                                                        td::optional<PublicKeyHash> source_peer) {
+td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(
+    td::BufferSlice data, int priority, bool add_to_mempool, td::optional<PublicKeyHash> source_peer) {
+  // Keep the transport-facing API stable. Admission is currently global rather than peer-specific.
+  (void)source_peer;
+  ++admission_window_.in;
   if (last_masterchain_state_.is_null()) {
+    ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "not ready");
   }
-  auto message = co_await create_ext_message(std::move(data), last_masterchain_state_->get_ext_msg_limits());
+  if (checkers_.empty()) {
+    init_checkers();
+  }
+  while (inflight_checks_ >= MAX_INFLIGHT_CHECKS) {
+    if (admission_waiters_.size() >= max_admission_waiters()) {
+      ++admission_window_.rejected;
+      co_return td::Status::Error(ErrorCode::notready, "too many pending external message checks");
+    }
+    auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+    admission_waiters_.push_back(std::move(promise));
+    co_await std::move(task);
+  }
+  ++inflight_checks_;
+  SCOPE_EXIT {
+    release_check_slot();
+  };
+
+  size_t worker = next_checker_++ % checkers_.size();
+  ++checker_inflight_[worker];
+  td::Timer check_timer;
+  auto checked_result = co_await td::actor::ask(checkers_[worker].get(), &ExtMessageChecker::check, std::move(data),
+                                                last_masterchain_state_->get_ext_msg_limits(), last_masterchain_state_)
+                            .wrap();
+  --checker_inflight_[worker];
+  admission_window_.check_time += check_timer.elapsed();
+  ++admission_window_.checked;
+  if (checked_result.is_error()) {
+    ++total_check_ext_messages_error_;
+    ++admission_window_.rejected;
+    co_return checked_result.move_as_error();
+  }
+  auto checked = checked_result.move_as_ok();
+  admission_window_.timings.parse += checked.timings.parse;
+  admission_window_.timings.fetch_state += checked.timings.fetch_state;
+  admission_window_.timings.lookup += checked.timings.lookup;
+  admission_window_.timings.vm += checked.timings.vm;
+
+  auto message = checked.message;
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
-  if (checked_ext_msg_counter_.get_msg_count(wc, addr) >= MAX_EXT_MSG_PER_ADDR) {
-    co_return td::Status::Error(PSTRING() << "too many external messages to address " << wc << ":" << addr.to_hex());
-  }
-  td::optional<td::uint32> msg_seqno;
-  auto result = co_await check_message(message, msg_seqno, std::move(source_peer)).wrap();
+  auto finalize = [&]() -> td::Result<CheckResult> {
+    if (checked_ext_msg_counter_.get_msg_count(wc, addr) >= MAX_EXT_MSG_PER_ADDR) {
+      return td::Status::Error(PSTRING() << "too many external messages to address " << wc << ":" << addr.to_hex());
+    }
+    auto [wait_allow_broadcast, allow_broadcast_promise] = td::actor::StartedTask<>::make_bridge();
+    allow_broadcast_promise.set_value(td::Unit{});
+    if (checked_ext_msg_counter_.inc_msg_count(wc, addr) > MAX_EXT_MSG_PER_ADDR) {
+      return td::Status::Error(PSTRING() << "too many external messages to address " << wc << ":" << addr.to_hex());
+    }
+    return CheckResult{std::move(message), std::move(wait_allow_broadcast)};
+  };
+  auto result = finalize();
   ++(result.is_ok() ? total_check_ext_messages_ok_ : total_check_ext_messages_error_);
+  ++(result.is_ok() ? admission_window_.admitted : admission_window_.rejected);
   if (result.is_error()) {
     co_return result.move_as_error();
   }
-  if (checked_ext_msg_counter_.inc_msg_count(wc, addr) > MAX_EXT_MSG_PER_ADDR) {
-    co_return td::Status::Error(PSTRING() << "too many external messages to address " << wc << ":" << addr.to_hex());
-  }
   if (add_to_mempool) {
-    add_message_to_mempool(message, priority, msg_seqno);
+    add_message_to_mempool(checked.message, priority);
   }
   co_return result.move_as_ok();
+}
+
+size_t ExtMessagePool::max_admission_waiters() {
+  double now = td::Time::now();
+  double window = now - rate_window_start_;
+  if (window >= 1.0) {
+    if (window <= 10.0) {
+      check_completion_rate_ =
+          0.5 * check_completion_rate_ + 0.5 * static_cast<double>(completions_in_rate_window_) / window;
+    }
+    completions_in_rate_window_ = 0;
+    rate_window_start_ = now;
+  }
+  double cap = check_completion_rate_ * MAX_ADMISSION_QUEUE_DELAY;
+  return static_cast<size_t>(td::clamp(cap, 512.0, static_cast<double>(MAX_ADMISSION_WAITERS)));
+}
+
+void ExtMessagePool::release_check_slot() {
+  ++completions_in_rate_window_;
+  --inflight_checks_;
+  if (!admission_waiters_.empty()) {
+    auto waiter = std::move(admission_waiters_.front());
+    admission_waiters_.pop_front();
+    waiter.set_value(td::Unit{});
+  }
+}
+
+void ExtMessagePool::log_admission_stats() {
+  auto &window = admission_window_;
+  double elapsed = td::Time::now() - window.window_start.at();
+  if (window.in > 0 && elapsed > 0) {
+    size_t busy_workers = 0;
+    size_t inflight = 0;
+    for (size_t count : checker_inflight_) {
+      busy_workers += count > 0;
+      inflight += count;
+    }
+    char buffer[320];
+    snprintf(buffer, sizeof(buffer),
+             "ext admission: in=%.0f/s admitted=%.0f/s rejected=%.0f/s busy_workers=%zu/%zu inflight=%zu wait_q=%zu "
+             "avg_check_ms=%.2f (parse=%.2f state=%.2f lookup=%.2f vm=%.2f)",
+             static_cast<double>(window.in) / elapsed, static_cast<double>(window.admitted) / elapsed,
+             static_cast<double>(window.rejected) / elapsed, busy_workers, checkers_.size(), inflight,
+             admission_waiters_.size(),
+             window.checked ? window.check_time / static_cast<double>(window.checked) * 1e3 : 0.0,
+             window.checked ? window.timings.parse / static_cast<double>(window.checked) * 1e3 : 0.0,
+             window.checked ? window.timings.fetch_state / static_cast<double>(window.checked) * 1e3 : 0.0,
+             window.checked ? window.timings.lookup / static_cast<double>(window.checked) * 1e3 : 0.0,
+             window.checked ? window.timings.vm / static_cast<double>(window.checked) * 1e3 : 0.0);
+    LOG(INFO) << buffer;
+  }
+  window = AdmissionWindowStats{};
 }
 
 void ExtMessagePool::install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback) {
@@ -290,6 +337,11 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
 }
 
 void ExtMessagePool::alarm() {
+  if (admission_stats_at_.is_in_past()) {
+    log_admission_stats();
+    admission_stats_at_ = td::Timestamp::in(ADMISSION_STATS_PERIOD);
+  }
+  alarm_timestamp().relax(admission_stats_at_);
   if (cleanup_mempool_at_.is_in_past()) {
     // The previous alarm only swept
     // masterchain (-1) and basechain (0). Use the workchain-agnostic
@@ -307,8 +359,7 @@ void ExtMessagePool::alarm() {
   });
 }
 
-void ExtMessagePool::add_message_to_mempool(td::Ref<ExtMessage> message, int priority,
-                                            td::optional<td::uint32> msg_seqno) {
+void ExtMessagePool::add_message_to_mempool(td::Ref<ExtMessage> message, int priority) {
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
   auto &msgs = ext_msgs_[priority];
@@ -318,7 +369,6 @@ void ExtMessagePool::add_message_to_mempool(td::Ref<ExtMessage> message, int pri
     return;
   }
   auto msg = std::make_shared<MempoolMsg>(message);
-  msg->msg_seqno = msg_seqno;
   MessageId id{message->shard(), message->hash()};
   auto address = msg->address();
   auto it = msgs.ext_addr_messages_.find(address);
@@ -352,146 +402,6 @@ void ExtMessagePool::add_message_to_mempool(td::Ref<ExtMessage> message, int pri
     }
     return false;
   });
-}
-
-td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::Ref<ExtMessage> message,
-                                                                           td::optional<td::uint32> &msg_seqno,
-                                                                           td::optional<PublicKeyHash> source_peer) {
-  WorkchainId wc = message->wc();
-  StdSmcAddress addr = message->addr();
-
-  auto execution_res = resolve_message_workchain_execution(last_masterchain_state_, wc);
-  if (execution_res.is_error()) {
-    co_return execution_res.move_as_error_prefix("cannot resolve workchain execution for external message: ");
-  }
-  auto execution = execution_res.move_as_ok();
-  if (execution.has_value() &&
-      !block::workchain_engine_key_is_tvm(block::workchain_engine_key_from_descriptor(execution->descriptor))) {
-    if (!execution->descriptor.accept_msgs) {
-      co_return td::Status::Error(PSTRING() << "configured workchain " << wc
-                                            << " does not accept external messages");
-    }
-    auto special_scan = reject_special_cells_for_custom_compute(
-        message->root_cell(), last_masterchain_state_->get_ext_msg_limits());
-    if (special_scan.is_error()) {
-      co_return special_scan.move_as_error();
-    }
-    auto policy = execution->executor->account_policy(execution->descriptor, *execution->engine_config);
-    if (!policy.accepts_external_inbound) {
-      co_return td::Status::Error("configured workchain engine does not accept external inbound messages");
-    }
-    auto policy_status = block::validate_account_execution_policy_supported(policy);
-    if (policy_status.is_error()) {
-      co_return policy_status.move_as_error_prefix("configured workchain engine policy is not supported: ");
-    }
-    if (policy.kind == block::AccountExecutionPolicyKind::SingletonExecutor) {
-      if (std::memcmp(addr.data(), policy.singleton_address.value().data(), 32) != 0) {
-        co_return td::Status::Error(
-            PSTRING() << "ext-msg destination is not the configured singleton executor for workchain " << wc);
-      }
-    }
-    auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
-    promise.set_value(td::Unit{});
-    co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
-  }
-
-  auto [shard_acc, utime, lt, config] = co_await run_fetch_account_state(wc, addr, manager_);
-  bool special = wc == masterchainId && config->is_special_smartcontract(addr);
-  block::Account acc;
-  if (!acc.unpack(shard_acc, utime, special)) {
-    co_return td::Status::Error(PSLICE() << "Failed to unpack account state");
-  }
-  acc.block_lt = lt;
-
-  auto [wait_allow_broadcast, allow_broadcast_promise] = td::actor::StartedTask<>::make_bridge();
-  CheckResult check_result{.message = message, .wait_allow_broadcast = std::move(wait_allow_broadcast)};
-
-  const WalletMessageProcessor *wallet =
-      acc.code.not_null() ? WalletMessageProcessor::get(acc.code->get_hash().bits()) : nullptr;
-  if (wallet != nullptr) {
-    msg_seqno = co_await check_message_to_wallet(message, wallet, std::move(acc), utime, lt, std::move(config),
-                                                 std::move(allow_broadcast_promise));
-    co_return check_result;
-  }
-  wallets_.erase({wc, addr});
-  co_await ExtMessageQ::run_message_on_account(wc, &acc, utime, lt + 1, message->root_cell(), std::move(config));
-  allow_broadcast_promise.set_value(td::Unit{});
-  co_return check_result;
-}
-
-td::Result<td::uint32> ExtMessagePool::check_message_to_wallet(td::Ref<ExtMessage> message,
-                                                               const WalletMessageProcessor *wallet, block::Account acc,
-                                                               UnixTime utime, LogicalTime lt,
-                                                               std::unique_ptr<block::ConfigInfo> config,
-                                                               td::Promise<td::Unit> allow_broadcast_promise) {
-  WorkchainId wc = message->wc();
-  StdSmcAddress addr = message->addr();
-  LOG(DEBUG) << "Checking external message to " << wc << ":" << addr.to_hex() << ", " << wallet->name();
-  TRY_RESULT(wallet_seqno, wallet->get_wallet_seqno(acc.data));
-  auto &wallet_info = wallets_[{wc, addr}];
-  SCOPE_EXIT {
-    if (wallet_info.messages.empty()) {
-      wallets_.erase({wc, addr});
-    }
-  };
-  wallet_info.process_messages(wallet_seqno, utime);
-  TRY_RESULT(parsed_message, wallet->parse_message(message->root_cell()));
-  auto [msg_seqno, msg_valid_until] = parsed_message;
-  LOG(DEBUG) << "External message to " << wallet->name() << ": msg_seqno=" << msg_seqno
-             << ", msg_ttl=" << msg_valid_until << ", wallet_seqno=" << wallet_seqno;
-  if (msg_valid_until <= (UnixTime)td::Clocks::system()) {
-    return td::Status::Error("valid_until is in the past");
-  }
-  if (msg_seqno < wallet_seqno) {
-    return td::Status::Error(PSTRING() << "Too old seqno: msg_seqno=" << msg_seqno
-                                       << ", wallet_seqno=" << wallet_seqno);
-  }
-  if (msg_seqno - wallet_seqno > MAX_WALLET_SEQNO_DIFF) {
-    return td::Status::Error(PSTRING() << "Too new seqno: msg_seqno=" << msg_seqno
-                                       << ", wallet_seqno=" << wallet_seqno);
-  }
-  if (wallet_info.messages.contains(msg_seqno)) {
-    return td::Status::Error(PSTRING() << "Duplicate msg_seqno " << msg_seqno);
-  }
-  TRY_RESULT_ASSIGN(acc.data, wallet->set_wallet_seqno(acc.data, msg_seqno));
-  acc.storage_dict_hash = acc.orig_storage_dict_hash = {};
-  TRY_STATUS(ExtMessageQ::run_message_on_account(wc, &acc, utime, lt + 1, message->root_cell(), std::move(config)));
-  wallet_info.messages[msg_seqno] =
-      WalletMessageInfo{.valid_until = msg_valid_until, .allow_broadcast_promise = std::move(allow_broadcast_promise)};
-  wallet_info.process_messages(wallet_seqno, utime);
-  LOG(DEBUG) << "Checked external message to " << wc << ":" << addr.to_hex() << ", " << wallet->name();
-  return msg_seqno;
-}
-
-void ExtMessagePool::WalletInfo::process_messages(td::uint32 wallet_seqno, UnixTime utime) {
-  for (auto it = messages.begin(); it != messages.end();) {
-    auto &[seqno, message] = *it;
-    if (seqno < wallet_seqno) {
-      if (message.allow_broadcast_promise) {
-        message.allow_broadcast_promise.set_error(
-            td::Status::Error(PSTRING() << "Too old seqno: msg_seqno=" << seqno << ", wallet_seqno=" << wallet_seqno));
-      }
-      it = messages.erase(it);
-      continue;
-    }
-    if (message.valid_until <= utime) {
-      if (message.allow_broadcast_promise) {
-        message.allow_broadcast_promise.set_error(td::Status::Error("valid_until is in the past"));
-      }
-      it = messages.erase(it);
-      continue;
-    }
-    ++it;
-  }
-  for (td::uint32 seqno = wallet_seqno;; ++seqno) {
-    auto it = messages.find(seqno);
-    if (it == messages.end()) {
-      break;
-    }
-    if (it->second.allow_broadcast_promise) {
-      it->second.allow_broadcast_promise.set_value(td::Unit{});
-    }
-  }
 }
 
 size_t ExtMessagePool::CheckedExtMsgCounter::get_msg_count(WorkchainId wc, StdSmcAddress addr) {
