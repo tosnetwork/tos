@@ -53,6 +53,7 @@
 #include "toslib/toslib/ToslibClientWrapper.h"
 
 #include "DNSResolver.h"
+#include "PeerCapabilityRouting.h"
 #include "git.h"
 
 #if TD_DARWIN || TD_LINUX
@@ -184,7 +185,6 @@ const std::string PROXY_SITE_VERISON_HEADER_NAME = "Tos-Proxy-Site-Version";
 const std::string PROXY_ENTRY_VERISON_HEADER_NAME = "Tos-Proxy-Entry-Version";
 const std::string PROXY_VERSION_HEADER = PSTRING() << "Commit: " << GitMetadata::CommitSHA1()
                                                    << ", Date: " << GitMetadata::CommitDate();
-const td::uint64 CAPABILITY_RLDP2 = 1;
 const td::uint64 CAPABILITIES = 1;
 
 using RegisteredPayloadSenderGuard =
@@ -1372,8 +1372,10 @@ class RldpHttpProxy : public td::actor::Actor {
     }
     c.capabilities = capabilities;
     c.received = true;
-    td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
-                            capabilities & CAPABILITY_RLDP2);
+    tos::rldp_http_proxy::detail::resync_dispatcher_capability(
+        c.received, c.capabilities, [&](bool supports_rldp2) {
+          td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer, supports_rldp2);
+        });
   }
 
   void ask_peer_capabilities(tos::adnl::AdnlNodeIdShort peer) {
@@ -1394,8 +1396,10 @@ class RldpHttpProxy : public td::actor::Actor {
     //     immediately instead of leaving it in place until a fresh probe
     //     happens to succeed (which may never happen, e.g. if the peer is
     //     offline and every probe attempt errors out).
-    td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
-                            c.received && (c.capabilities & CAPABILITY_RLDP2));
+    tos::rldp_http_proxy::detail::resync_dispatcher_capability(
+        c.received, c.capabilities, [&](bool supports_rldp2) {
+          td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer, supports_rldp2);
+        });
     if (!c.received && c.retry_at.is_in_past()) {
       c.retry_at = td::Timestamp::in(30.0);
       auto send_query = [&, this, SelfId = actor_id(this)](const tos::adnl::AdnlNodeIdShort &local_id) {
