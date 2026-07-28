@@ -48,6 +48,10 @@ std::string ResolveCandidate::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
 
+std::string QuerySlotSkipped::contents_to_string() const {
+  return PSTRING() << "{slot=" << slot << "}";
+}
+
 std::string StoreCandidate::contents_to_string() const {
   return PSTRING() << "{id=" << candidate->id << "}";
 }

@@ -233,6 +233,17 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       co_return ResolvedState{state, std::nullopt};
     }
 
+    // A slot that timed out into a skip certificate never had any candidate
+    // -- not even an empty placeholder -- broadcast for it, so ResolveCandidate
+    // has nothing to find there and would otherwise retry indefinitely (see
+    // CandidateResolverImpl::resolve_candidate_inner). Pool already tracks
+    // exactly which slots are skip-certified and, via available_base, the
+    // real ancestor to build on past any run of them; consult that purely
+    // local knowledge before ever attempting network/DB candidate resolution.
+    if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(id->slot)) {
+      co_return co_await resolve_state(*skip_base);
+    }
+
     auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
     if (candidate->is_empty()) {
       co_return co_await resolve_state(candidate->parent_id);

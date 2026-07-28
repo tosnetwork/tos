@@ -526,6 +526,20 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   }
 
   template <>
+  td::actor::Task<std::optional<ParentId>> process(BusHandle, std::shared_ptr<QuerySlotSkipped> query) {
+    auto slot = state_->slot_at(query->slot);
+    if (!slot.has_value() || !slot->state->is_skipped()) {
+      co_return std::nullopt;
+    }
+    // available_base already accounts for any run of skips leading up to this
+    // slot (handle_typed_saved_certificate(SkipCertRef) propagates it forward
+    // past each skip-certified slot), so this jumps straight to the real
+    // ancestor rather than requiring the caller to walk the skip run one slot
+    // at a time.
+    co_return slot->state->available_base;
+  }
+
+  template <>
   td::actor::Task<QueryValidatorGroupInfo::Result> process(BusHandle,
                                                            std::shared_ptr<QueryValidatorGroupInfo>) {
     QueryValidatorGroupInfo::Result result;
