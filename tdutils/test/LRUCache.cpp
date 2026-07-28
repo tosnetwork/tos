@@ -106,14 +106,64 @@ TEST(LRUCache, independent_lru_pair_desync_and_resync) {
 
   // Without the fix, an ask_peer_capabilities() that only re-queries when
   // `!received` would never repopulate `dispatch`, so target_peer would be
-  // silently and permanently downgraded to RLDP1. The fix re-asserts the
-  // already-known value into `dispatch` on every ask, self-healing exactly
-  // this kind of eviction.
+  // silently and permanently downgraded to RLDP1. The fix unconditionally
+  // re-asserts `received && supports_rldp2` into `dispatch` on every ask,
+  // self-healing exactly this kind of eviction.
   cap = &capabilities.get(target_peer);
-  if (cap->received) {
-    dispatch.put(target_peer, cap->supports_rldp2);
-  }
+  dispatch.put(target_peer, cap->received && cap->supports_rldp2);
   auto *resynced = dispatch.get_if_exists(target_peer);
   CHECK(resynced != nullptr);
   CHECK(*resynced == true);
+}
+
+TEST(LRUCache, independent_lru_pair_reverse_desync_and_resync) {
+  // Mirror image of independent_lru_pair_desync_and_resync above: this time
+  // `capabilities` (peer_capabilities_) evicts target_peer first, while
+  // `dispatch` (supports_rldp2_) still holds a stale `true` from before the
+  // eviction. An earlier version of the ask_peer_capabilities() fix only
+  // handled the `received=true` case (re-asserting a known value), so on
+  // the *next* ask -- where `capabilities.get(target_peer)` returns a fresh
+  // received=false entry -- it took no action at all, leaving the stale
+  // `true` in `dispatch` in place indefinitely (worse: if the resulting
+  // fresh capability probe then fails or the peer is offline, `received`
+  // never becomes true again, so the stale `true` in `dispatch` would
+  // persist forever). The fix must positively write `false` into `dispatch`
+  // whenever `capabilities` doesn't (yet, or anymore) have a received
+  // value, not merely skip touching `dispatch`.
+  struct Capability {
+    bool received = false;
+    bool supports_rldp2 = false;
+  };
+  const td::uint64 capacity = 3;
+  td::LRUCache<int, Capability> capabilities(capacity);
+  td::LRUCache<int, bool> dispatch(capacity);
+
+  const int target_peer = 0;
+  capabilities.put(target_peer, Capability{/* received = */ true, /* supports_rldp2 = */ true});
+  dispatch.put(target_peer, true);
+
+  // Simulate `capabilities` being evicted by `capacity` other peers' probe
+  // responses landing (touches `capabilities` only) without target_peer
+  // being dispatched to in between (touches `dispatch` only) -- this evicts
+  // target_peer from `capabilities` but leaves `dispatch` untouched, still
+  // holding the stale `true`.
+  for (int other = 1; other <= static_cast<int>(capacity); other++) {
+    capabilities.put(other, Capability{/* received = */ true, /* supports_rldp2 = */ false});
+  }
+  CHECK(capabilities.get_if_exists(target_peer) == nullptr);
+  auto *stale = dispatch.get_if_exists(target_peer, /* update = */ false);
+  CHECK(stale != nullptr);
+  CHECK(*stale == true);
+
+  // The next ask_peer_capabilities(target_peer) call: `capabilities.get()`
+  // creates a fresh, default (received=false) entry, since it was evicted.
+  auto &cap = capabilities.get(target_peer);
+  CHECK(!cap.received);
+
+  // The fix must unconditionally resync, writing `false` here because
+  // `received` is false -- not skip the write and leave the stale `true`.
+  dispatch.put(target_peer, cap.received && cap.supports_rldp2);
+  auto *resynced = dispatch.get_if_exists(target_peer);
+  CHECK(resynced != nullptr);
+  CHECK(*resynced == false);
 }

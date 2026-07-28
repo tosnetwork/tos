@@ -1378,19 +1378,25 @@ class RldpHttpProxy : public td::actor::Actor {
 
   void ask_peer_capabilities(tos::adnl::AdnlNodeIdShort peer) {
     auto &c = peer_capabilities_.get(peer);
-    if (c.received) {
-      // peer_capabilities_ and RldpDispatcher::supports_rldp2_ are two
-      // independently-bounded LRUs (see their declarations below and in
-      // RldpDispatcher) driven by different access patterns, so
-      // supports_rldp2_ can evict this peer -- silently falling back to
-      // RLDP1 -- while peer_capabilities_ still has `received=true` and
-      // therefore never re-queries to repopulate it. Re-asserting the
-      // already-known value here, on every call (i.e. on every request to
-      // this peer), keeps supports_rldp2_ from staying permanently stale
-      // after such an eviction, without requiring a fresh network probe.
-      td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
-                              c.capabilities & CAPABILITY_RLDP2);
-    } else if (c.retry_at.is_in_past()) {
+    // peer_capabilities_ and RldpDispatcher::supports_rldp2_ are two
+    // independently-bounded LRUs (see their declarations below and in
+    // RldpDispatcher) driven by different access patterns -- supports_rldp2_
+    // is touched on every dispatch() call, peer_capabilities_ roughly once
+    // per request -- so either can evict a peer while the other still
+    // remembers it. Resync unconditionally on every ask, in both
+    // directions:
+    //   - if peer_capabilities_ still has received=true (dispatcher evicted
+    //     the peer), re-assert the known value into the dispatcher;
+    //   - if peer_capabilities_ itself was evicted (or never populated), `c`
+    //     is a fresh received=false entry here, even though the dispatcher
+    //     might still hold a stale `true` from before eviction -- writing
+    //     `false` (via `c.received && ...` below) clears that stale value
+    //     immediately instead of leaving it in place until a fresh probe
+    //     happens to succeed (which may never happen, e.g. if the peer is
+    //     offline and every probe attempt errors out).
+    td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
+                            c.received && (c.capabilities & CAPABILITY_RLDP2));
+    if (!c.received && c.retry_at.is_in_past()) {
       c.retry_at = td::Timestamp::in(30.0);
       auto send_query = [&, this, SelfId = actor_id(this)](const tos::adnl::AdnlNodeIdShort &local_id) {
         td::actor::send_closure(
