@@ -621,12 +621,23 @@ td::Result<bool> Config::config_del_collator(tos::adnl::AdnlNodeIdShort addr, to
   if (!shard.is_valid_ext()) {
     return td::Status::Error(PSTRING() << "invalid shard: " << shard.to_str());
   }
-  auto &shards = collators[addr];
+  // Use find() rather than operator[] here: unlike config_add_collator, this
+  // is a delete path, so an addr with no existing entry should be a no-op,
+  // not insert a permanent empty vector into `collators` for every distinct
+  // (typo'd or already-removed) address ever passed in.
+  auto it_addr = collators.find(addr);
+  if (it_addr == collators.end()) {
+    return false;
+  }
+  auto &shards = it_addr->second;
   auto it = std::find(shards.begin(), shards.end(), shard);
   if (it == shards.end()) {
     return false;
   }
   shards.erase(it);
+  if (shards.empty()) {
+    collators.erase(it_addr);
+  }
   return true;
 }
 
@@ -1401,6 +1412,13 @@ class CheckDhtServerStatusQuery : public td::actor::Actor {
     result_.resize(n.size(), false);
 
     pending_ = n.size();
+    if (pending_ == 0) {
+      // With zero DHT nodes configured, the loop below never runs, so
+      // got_result() (the only caller of finish_query()) would never fire
+      // and this query -- and its promise -- would hang forever.
+      finish_query();
+      return;
+    }
     for (td::uint32 i = 0; i < n.size(); i++) {
       auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), idx = i](td::Result<td::BufferSlice> R) {
         td::actor::send_closure(SelfId, &CheckDhtServerStatusQuery::got_result, idx, R.is_ok());

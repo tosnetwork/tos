@@ -384,7 +384,10 @@ bool DhtUpdateRuleOverlayNodes::check_is_acceptable(const tos::dht::DhtValue &va
   auto L = F.move_as_ok();
   auto now = td::Clocks::system();
   for (auto &node : L->nodes_) {
-    if (node->version_ + 600 > now) {
+    // node->version_ is a peer-supplied int32; comparing as `version_ > now - 600`
+    // instead of `version_ + 600 > now` avoids signed-integer-overflow UB for a
+    // version_ near INT32_MAX (the subtraction happens in double, not int32).
+    if (node->version_ > now - 600) {
       return true;
     }
   }
