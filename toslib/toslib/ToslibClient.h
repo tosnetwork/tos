@@ -60,8 +60,15 @@ td::Result<tos::ManualDns::EntryData> to_dns_entry_data(toslib_api::dns_EntryDat
 td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_cell);
 
 namespace detail {
+inline constexpr td::uint16 max_library_depth = 512;
+inline constexpr td::uint32 max_smc_missing_library_fetches = 8;
+
 td::Status validate_liteserver_block_id(const tos::BlockIdExt& expected, const tos::BlockIdExt& actual);
-td::Status validate_liteserver_transaction_page(bool incomplete, size_t transaction_count);
+td::Status validate_liteserver_transaction_page(td::Status proof_status, bool incomplete, size_t transaction_count);
+td::Status validate_liteserver_transaction_result(size_t transaction_count);
+td::Status validate_previous_block_count(size_t previous_block_count);
+td::Status validate_library_depth(td::uint16 library_depth);
+td::Status validate_missing_library_fetch_count(bool missing_library, td::uint32 missing_library_fetches);
 }  // namespace detail
 
 class ToslibClient : public td::actor::Actor {
@@ -360,7 +367,8 @@ class ToslibClient : public td::actor::Actor {
   void process_new_libraries(
       td::Result<tos::lite_api::object_ptr<tos::lite_api::liteServer_libraryResult>> r_libraries);
   void perform_smc_execution(td::Ref<tos::SmartContract> smc, tos::SmartContract::Args args,
-                             td::Promise<object_ptr<toslib_api::smc_runResult>>&& promise);
+                             td::Promise<object_ptr<toslib_api::smc_runResult>>&& promise,
+                             td::uint32 missing_library_fetches = 0);
 
   void do_dns_request(std::string name, td::Bits256 category, td::int32 ttl, td::optional<tos::BlockIdExt> block_id,
                       block::StdAddress address, td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise);

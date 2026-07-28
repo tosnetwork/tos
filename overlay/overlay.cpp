@@ -859,11 +859,8 @@ td::actor::Task<OverlayNode> OverlayImpl::get_self_node_coro() {
       self_node_future_ = std::make_shared<td::actor::SharedFuture<OverlayNode>>(get_self_node_inner().start());
     }
     auto future = self_node_future_;
-    auto result = co_await future->get().wrap();
+    auto result = co_await td::actor::await_shared_future(self_node_future_).wrap();
     if (result.is_error()) {
-      if (self_node_future_ == future) {
-        self_node_future_.reset();
-      }
       co_return result.move_as_error();
     }
     auto node = result.move_as_ok();

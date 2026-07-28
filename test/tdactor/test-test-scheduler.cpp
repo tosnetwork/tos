@@ -1,9 +1,41 @@
 #include "td/actor/TestScheduler.h"
+#include "td/actor/SharedFuture.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/tests.h"
 
 namespace td::actor {
 namespace {
+
+Task<int> fail_shared_future_attempt(int& attempts) {
+  ++attempts;
+  co_return td::Status::Error("expected failure");
+}
+
+TEST(SharedFuture, FailedResultIsEvictedAndRetried) {
+  TestScheduler ts;
+  ts.run([&]() -> Task<Unit> {
+    std::shared_ptr<SharedFuture<int>> cache;
+    int attempts = 0;
+
+    auto get = [&]() -> Task<int> {
+      if (!cache) {
+        cache = std::make_shared<SharedFuture<int>>(fail_shared_future_attempt(attempts).start());
+      }
+      co_return co_await await_shared_future(cache);
+    };
+
+    auto first = co_await get().wrap();
+    EXPECT(first.is_error());
+    EXPECT(!cache);
+    EXPECT_EQ(attempts, 1);
+
+    auto second = co_await get().wrap();
+    EXPECT(second.is_error());
+    EXPECT(!cache);
+    EXPECT_EQ(attempts, 2);
+    co_return td::Unit{};
+  });
+}
 
 TEST(TestScheduler, BasicActorStartUp) {
   static bool started = false;

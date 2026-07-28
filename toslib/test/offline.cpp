@@ -85,9 +85,29 @@ TEST(Toslib, RejectsMaliciousLiteserverResponses) {
 
   ASSERT_TRUE(detail::validate_liteserver_block_id(expected, expected).is_ok());
   ASSERT_TRUE(detail::validate_liteserver_block_id(expected, wrong).is_error());
-  ASSERT_TRUE(detail::validate_liteserver_transaction_page(false, 0).is_ok());
-  ASSERT_TRUE(detail::validate_liteserver_transaction_page(true, 1).is_ok());
-  ASSERT_TRUE(detail::validate_liteserver_transaction_page(true, 0).is_error());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), false, 0).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), true, 1).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), true, 0).is_error());
+  ASSERT_TRUE(
+      detail::validate_liteserver_transaction_page(td::Status::Error("invalid proof"), true, 1).is_error());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_result(1).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_result(0).is_error());
+  ASSERT_TRUE(detail::validate_previous_block_count(0).is_error());
+  ASSERT_TRUE(detail::validate_previous_block_count(1).is_ok());
+  ASSERT_TRUE(detail::validate_previous_block_count(2).is_ok());
+  ASSERT_TRUE(detail::validate_previous_block_count(3).is_error());
+}
+
+TEST(Toslib, BoundsMissingLibraryFetches) {
+  ASSERT_TRUE(detail::validate_library_depth(detail::max_library_depth).is_ok());
+  ASSERT_TRUE(detail::validate_library_depth(detail::max_library_depth + 1).is_error());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(false, 100).is_ok());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(true, 0).is_ok());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(
+                        true, detail::max_smc_missing_library_fetches - 1)
+                  .is_ok());
+  ASSERT_TRUE(
+      detail::validate_missing_library_fetch_count(true, detail::max_smc_missing_library_fetches).is_error());
 }
 
 TEST(Toslib, InvalidPrivateKeyEncryptionReturnsError) {

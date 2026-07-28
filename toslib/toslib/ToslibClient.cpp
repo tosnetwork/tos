@@ -74,9 +74,38 @@ td::Status validate_liteserver_block_id(const tos::BlockIdExt& expected, const t
   return td::Status::OK();
 }
 
-td::Status validate_liteserver_transaction_page(bool incomplete, size_t transaction_count) {
+td::Status validate_liteserver_transaction_page(td::Status proof_status, bool incomplete, size_t transaction_count) {
+  TRY_STATUS(std::move(proof_status));
   if (incomplete && transaction_count == 0) {
     return td::Status::Error("Got 0 transactions with `incomplete` flag");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_liteserver_transaction_result(size_t transaction_count) {
+  if (transaction_count == 0) {
+    return td::Status::Error("Transaction list is empty");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_previous_block_count(size_t previous_block_count) {
+  if (previous_block_count != 1 && previous_block_count != 2) {
+    return td::Status::Error("Block has invalid number of previous blocks");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_library_depth(td::uint16 library_depth) {
+  if (library_depth > max_library_depth) {
+    return td::Status::Error("Library depth is too big");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_missing_library_fetch_count(bool missing_library, td::uint32 missing_library_fetches) {
+  if (missing_library && missing_library_fetches >= max_smc_missing_library_fetches) {
+    return td::Status::Error(400, "Too many missing libraries");
   }
   return td::Status::OK();
 }
@@ -2135,6 +2164,7 @@ class RunEmulator : public ToslibQueryActor {
                       return status.move_as_error();
                     }
 
+                    TRY_STATUS(detail::validate_previous_block_count(prev_blocks.size()));
                     tos::BlockIdExt prev_block;
                     if (prev_blocks.size() == 1 || tos::shard_is_ancestor(prev_blocks[0].id.shard, shard_id)) {
                       prev_block = std::move(prev_blocks[0]);
@@ -2154,6 +2184,10 @@ class RunEmulator : public ToslibQueryActor {
                     return err.as_status("error processing header");
                   } catch (vm::VmVirtError& err) {
                     return err.as_status("error processing header");
+                  } catch (std::exception& err) {
+                    return td::Status::Error(PSLICE() << "exception while processing header: " << err.what());
+                  } catch (...) {
+                    return td::Status::Error("unknown exception while processing header");
                   }
                 }));
           });
@@ -2199,9 +2233,9 @@ class RunEmulator : public ToslibQueryActor {
 
           auto bTxes = maybe_bTxes.move_as_ok();
 
-          self->check(
-              check_block_transactions_proof(bTxes, mode, lt, self->request_.address.addr, root_hash, req_count));
-          auto page_status = detail::validate_liteserver_transaction_page(bTxes->incomplete_, bTxes->ids_.size());
+          auto page_status = detail::validate_liteserver_transaction_page(
+              check_block_transactions_proof(bTxes, mode, lt, self->request_.address.addr, root_hash, req_count),
+              bTxes->incomplete_, bTxes->ids_.size());
           if (page_status.is_error()) {
             self->check(std::move(page_status));
             return;
@@ -2241,8 +2275,10 @@ class RunEmulator : public ToslibQueryActor {
     auto actor_id = actor_id_++;
     actors_[actor_id] = td::actor::create_actor<GetTransactionHistory>(
         "GetTransactionHistory", client_.get_client(), request_.address, lt, hash, 1, actor_shared(this, actor_id),
-        promise.wrap(
-            [](auto&& transactions) mutable { return std::move(transactions.transactions.front().transaction); }));
+        promise.wrap([](auto&& transactions) mutable -> td::Result<td::Ref<vm::Cell>> {
+          TRY_STATUS(detail::validate_liteserver_transaction_result(transactions.transactions.size()));
+          return std::move(transactions.transactions.front().transaction);
+        }));
   }
 
   void start_up() override {
@@ -2384,8 +2420,17 @@ class RunEmulator : public ToslibQueryActor {
 
         promise_.set_value(td::make_unique<AccountState>(address, std::move(raw), 0));
       }
+    } catch (vm::VmError& err) {
+      check(td::Status::Error(PSLICE() << "VM error while emulating transaction: " << err.get_msg()));
+      return;
     } catch (vm::VmVirtError& err) {
       check(td::Status::Error(PSLICE() << "virtualization error while emulating transaction: " << err.get_msg()));
+      return;
+    } catch (std::exception& err) {
+      check(td::Status::Error(PSLICE() << "exception while emulating transaction: " << err.what()));
+      return;
+    } catch (...) {
+      check(td::Status::Error("unknown exception while emulating transaction"));
       return;
     }
     stopped_ = true;
@@ -5125,6 +5170,9 @@ void ToslibClient::get_libraries(tos::BlockIdExt blkid, std::vector<td::Bits256>
               return ToslibError::Internal(PSLICE() << "library hash mismatch data " << lib->hash_.to_hex()
                                                     << " != proof " << libdescr.lib->get_hash().to_hex());
             }
+            if (detail::validate_library_depth(contents.ok()->get_depth()).is_error()) {
+              return ToslibError::Internal("library depth is too big");
+            }
 
             result_entries.push_back(
                 toslib_api::make_object<toslib_api::smc_libraryEntry>(lib->hash_, lib->data_.as_slice().str()));
@@ -5139,6 +5187,11 @@ void ToslibClient::get_libraries(tos::BlockIdExt blkid, std::vector<td::Bits256>
         } catch (vm::VmVirtError& err) {
           return ToslibError::Internal(PSLICE() << "virtualization error while checking getLibrariesWithProof proof: "
                                                 << err.get_msg());
+        } catch (std::exception& err) {
+          return ToslibError::Internal(PSLICE()
+                                       << "exception while checking getLibrariesWithProof proof: " << err.what());
+        } catch (...) {
+          return ToslibError::Internal("unknown exception while checking getLibrariesWithProof proof");
         }
       }));
 }
@@ -5287,6 +5340,10 @@ void ToslibClient::process_new_libraries(
           LOG(WARNING) << "hash mismatch for library " << lr->hash_.to_hex();
           continue;
         }
+        if (detail::validate_library_depth(contents.ok()->get_depth()).is_error()) {
+          LOG(WARNING) << "library depth is too big";
+          return;
+        }
         libraries.set_ref(lr->hash_, contents.move_as_ok());
         updated = true;
         LOG(DEBUG) << "registered library " << lr->hash_.to_hex();
@@ -5301,10 +5358,18 @@ void ToslibClient::process_new_libraries(
 }
 
 void ToslibClient::perform_smc_execution(td::Ref<tos::SmartContract> smc, tos::SmartContract::Args args,
-                                         td::Promise<object_ptr<toslib_api::smc_runResult>>&& promise) {
+                                         td::Promise<object_ptr<toslib_api::smc_runResult>>&& promise,
+                                         td::uint32 missing_library_fetches) {
   args.set_libraries(libraries);
 
   auto res = smc->run_get_method(args);
+
+  auto missing_library_status =
+      detail::validate_missing_library_fetch_count(static_cast<bool>(res.missing_library), missing_library_fetches);
+  if (missing_library_status.is_error()) {
+    promise.set_error(std::move(missing_library_status));
+    return;
+  }
 
   // smc.runResult gas_used:int53 stack:vector<tvm.StackEntry> exit_code:int32 = smc.RunResult;
   auto R = to_toslib_api(res.stack);
@@ -5320,8 +5385,8 @@ void ToslibClient::perform_smc_execution(td::Ref<tos::SmartContract> smc, tos::S
     std::vector<td::Bits256> req = {hash};
     client_.send_query(
         tos::lite_api::liteServer_getLibraries(std::move(req)),
-        [self = this, res = std::move(res), res_stack = std::move(res_stack), hash, smc = std::move(smc),
-         args = std::move(args), promise = std::move(promise)](
+        [self = this, res = std::move(res), res_stack = std::move(res_stack), hash, missing_library_fetches,
+         smc = std::move(smc), args = std::move(args), promise = std::move(promise)](
             td::Result<tos::lite_api::object_ptr<tos::lite_api::liteServer_libraryResult>> r_libraries) mutable {
           if (r_libraries.is_error()) {
             LOG(WARNING) << "cannot obtain missing library: " << r_libraries.move_as_error().to_string();
@@ -5336,6 +5401,10 @@ void ToslibClient::perform_smc_execution(td::Ref<tos::SmartContract> smc, tos::S
             if (contents.is_ok() && contents.ok().not_null()) {
               if (contents.ok()->get_hash().bits().compare(lr->hash_.cbits(), 256)) {
                 LOG(WARNING) << "hash mismatch for library " << lr->hash_.to_hex();
+                continue;
+              }
+              if (detail::validate_library_depth(contents.ok()->get_depth()).is_error()) {
+                LOG(WARNING) << "library depth is too big";
                 continue;
               }
               found |= (lr->hash_ == hash);
@@ -5354,7 +5423,8 @@ void ToslibClient::perform_smc_execution(td::Ref<tos::SmartContract> smc, tos::S
             promise.set_value(
                 toslib_api::make_object<toslib_api::smc_runResult>(res.gas_used, std::move(res_stack), res.code));
           } else {
-            self->perform_smc_execution(std::move(smc), std::move(args), std::move(promise));
+            self->perform_smc_execution(std::move(smc), std::move(args), std::move(promise),
+                                        missing_library_fetches + 1);
           }
         });
   } else {
@@ -6193,8 +6263,9 @@ td::Status check_lookup_block_proof(lite_api_ptr<tos::lite_api::liteServer_looku
           block::gen::Block::Record blk;
           block::gen::BlockExtra::Record extra;
           block::gen::McBlockExtra::Record mc_extra;
-          if (!tlb::unpack_cell(block_root, blk) || !tlb::unpack_cell(blk.extra, extra) || !extra.custom->have_refs() ||
-              !tlb::unpack_cell(extra.custom->prefetch_ref(), mc_extra)) {
+          if (!tlb::unpack_cell(block_root, blk) || !tlb::unpack_cell(blk.extra, extra) || extra.custom.is_null() ||
+              !extra.custom->have_refs() || !tlb::unpack_cell(extra.custom->prefetch_ref(), mc_extra) ||
+              mc_extra.shard_hashes.is_null()) {
             return td::Status::Error("cannot unpack block header");
           }
           block::ShardConfig shards(mc_extra.shard_hashes->prefetch_ref());
@@ -6210,7 +6281,7 @@ td::Status check_lookup_block_proof(lite_api_ptr<tos::lite_api::liteServer_looku
           if (S.is_error()) {
             return S;
           }
-          CHECK(prev.size() == 1 || prev.size() == 2);
+          TRY_STATUS(detail::validate_previous_block_count(prev.size()));
           bool found = prev_id == prev[0] || (prev.size() == 2 && prev_id == prev[1]);
           if (!found) {
             return td::Status::Error("invalid proof chain: prev block is not in prev blocks list");
@@ -6218,8 +6289,14 @@ td::Status check_lookup_block_proof(lite_api_ptr<tos::lite_api::liteServer_looku
         }
         cur_id = prev_id;
       }
+    } catch (vm::VmError& err) {
+      return err.as_status();
     } catch (vm::VmVirtError& err) {
       return err.as_status();
+    } catch (std::exception& err) {
+      return td::Status::Error(PSLICE() << "exception while checking lookupBlock proof: " << err.what());
+    } catch (...) {
+      return td::Status::Error("unknown exception while checking lookupBlock proof");
     }
     if (cur_id.id.workchain != blkid.workchain || !tos::shard_contains(cur_id.id.shard, blkid.shard)) {
       return td::Status::Error("response block has incorrect workchain/shard");
@@ -6304,6 +6381,10 @@ td::Status check_lookup_block_proof(lite_api_ptr<tos::lite_api::liteServer_looku
     return td::Status::Error(PSLICE() << "error while checking lookupBlock proof: " << err.get_msg());
   } catch (vm::VmVirtError& err) {
     return td::Status::Error(PSLICE() << "virtualization error while checking lookupBlock proof: " << err.get_msg());
+  } catch (std::exception& err) {
+    return td::Status::Error(PSLICE() << "exception while checking lookupBlock proof: " << err.what());
+  } catch (...) {
+    return td::Status::Error("unknown exception while checking lookupBlock proof");
   }
 
   return td::Status::OK();
