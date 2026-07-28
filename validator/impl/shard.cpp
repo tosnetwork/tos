@@ -25,6 +25,7 @@
 #include "vm/cells/MerkleUpdate.h"
 #include "vm/cellslice.h"
 #include "vm/db/StaticBagOfCellsDb.h"
+#include "vm/excno.hpp"
 
 #include "message-queue.hpp"
 #include "shard.hpp"
@@ -371,7 +372,7 @@ td::Status MasterchainStateQ::mc_init() {
   if (err.is_error()) {
     return err;
   }
-  return mc_reinit();
+  return TRY_VM(mc_reinit());
 }
 
 td::Status MasterchainStateQ::mc_reinit() {
@@ -405,19 +406,12 @@ td::Status MasterchainStateQ::apply_block(BlockIdExt id, td::Ref<BlockData> bloc
     return err;
   }
   config_.reset();
-  err = mc_reinit();
+  err = TRY_VM(mc_reinit());
   if (err.is_error()) {
     LOG(ERROR) << "cannot extract masterchain-specific state data from newly-computed state for block "
                << id.id.to_str() << " : " << err.to_string();
   }
   return err;
-}
-
-td::Status MasterchainStateQ::prepare() {
-  if (config_) {
-    return td::Status::OK();
-  }
-  return mc_reinit();
 }
 
 Ref<block::ValidatorSet> MasterchainStateQ::compute_validator_set(ShardIdFull shard,
