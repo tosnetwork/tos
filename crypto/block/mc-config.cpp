@@ -1208,7 +1208,7 @@ ShardConfig::ShardConfig(const ShardConfig& other)
 
 bool ShardConfig::get_shard_hash_raw_from(vm::Dictionary& dict, vm::CellSlice& cs, tos::ShardIdFull id,
                                           tos::ShardIdFull& true_id, bool exact, Ref<vm::Cell>* leaf) {
-  if (id.is_masterchain() || !id.is_valid()) {
+  if (id.is_masterchain() || !id.is_valid_ext()) {
     return false;
   }
   auto root = dict.lookup_ref(td::BitArray<32>{id.workchain});
