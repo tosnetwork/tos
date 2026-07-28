@@ -20,10 +20,29 @@
 #pragma once
 
 #include "adnl/adnl-sender-ex.h"
+#include "td/actor/PromiseFuture.h"
+#include "td/utils/buffer.h"
 
 namespace tos {
 
 namespace rldp2 {
+
+// Completes an outbound query's promise against a received answer, enforcing
+// the max_answer_size the caller originally declared to send_query_ex.
+//
+// This is only ever called from RldpIn::process_message(rldp_answer&) in
+// rldp.cpp, where it is provably unreachable via any RLDP2-wire-protocol-
+// compliant sender: RldpConnection::receive_raw_obj (RldpConnection.cpp)
+// checks the sender-declared total_size against this same max_answer_size
+// before accepting any part of a transfer, and InboundTransfer::try_finish
+// only ever completes with exactly total_size_ bytes, so a reassembled
+// message.data_ can never exceed max_answer_size in practice -- a malicious
+// peer that tries to answer bigger just gets that part dropped before
+// reassembly. Exposed here as a free function (rather than kept private to
+// RldpIn) purely so its boundary behavior can still be unit-tested directly,
+// without needing to fabricate a wire-level scenario the transport layer's
+// own accounting makes impossible.
+void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_answer_size, td::BufferSlice data);
 
 class Rldp : public adnl::AdnlSenderEx {
  public:

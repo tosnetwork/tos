@@ -40,6 +40,51 @@
 int main() {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
 
+  {
+    // Direct unit test of tos::rldp2::complete_out_query's boundary behavior
+    // (rldp2/rldp.h), which enforces OutQuery::max_answer_size against
+    // a received rldp_answer. This check is provably unreachable via any
+    // RLDP2-wire-protocol-compliant sender -- see the comment on
+    // complete_out_query for why -- so it can't be exercised end-to-end by
+    // a malicious raw-wire peer (confirmed experimentally: a peer that tries
+    // to answer bigger than the query's declared max_answer_size gets its
+    // own reply dropped by RldpConnection's total_size accounting before it
+    // is ever reassembled). This unit-tests the logic directly instead.
+    LOG(ERROR) << "testing OutQuery answer-size boundary directly";
+
+    auto run = [](td::uint64 max_answer_size, size_t data_size) -> td::Result<td::BufferSlice> {
+      td::Result<td::BufferSlice> result;
+      auto P = td::PromiseCreator::lambda([&](td::Result<td::BufferSlice> R) { result = std::move(R); });
+      tos::rldp2::complete_out_query(std::move(P), max_answer_size, td::BufferSlice(data_size));
+      return result;
+    };
+
+    {
+      auto r = run(10, 10);
+      CHECK(r.is_ok());
+      CHECK(r.ok_ref().size() == 10);
+    }
+    {
+      auto r = run(10, 11);
+      CHECK(r.is_error());
+    }
+    {
+      auto r = run(0, 0);
+      CHECK(r.is_ok());
+    }
+    {
+      auto r = run(0, 1);
+      CHECK(r.is_error());
+    }
+    {
+      auto r = run(1'000'000, 200'000);
+      CHECK(r.is_ok());
+      CHECK(r.ok_ref().size() == 200'000);
+    }
+
+    LOG(ERROR) << "success";
+  }
+
   std::string db_root_ = "tmp-dir-test-rldp2";
   td::rmrf(db_root_).ignore();
   td::mkdir(db_root_).ensure();
