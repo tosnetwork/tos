@@ -460,12 +460,22 @@ void OverlayImpl::alarm() {
 
   if (overlay_type_ != OverlayType::FixedMemberList) {
     if (has_valid_membership_certificate()) {
-      auto P = get_random_peer();
-      if (P) {
+      auto send_random_peers_query = [&](const adnl::AdnlNodeIdShort &peer) {
         if (overlay_type_ == OverlayType::Public) {
-          send_random_peers(P->get_id(), {});
+          send_random_peers(peer, {});
         } else {
-          send_random_peers_v2(P->get_id(), {});
+          send_random_peers_v2(peer, {});
+        }
+      };
+      auto neighbour_id = adnl::AdnlNodeIdShort::zero();
+      if (auto neighbour = get_random_neighbour_peer()) {
+        neighbour_id = neighbour->get_id();
+        send_random_peers_query(neighbour_id);
+      }
+      if (auto peer = get_random_peer()) {
+        auto peer_id = peer->get_id();
+        if (peer_id != neighbour_id) {
+          send_random_peers_query(peer_id);
         }
       }
     } else {
@@ -840,26 +850,46 @@ BroadcastCheckResult OverlayImpl::check_source_eligible(PublicKey source, const 
 }
 
 void OverlayImpl::get_self_node(td::Promise<OverlayNode> promise) {
+  td::actor::send_closure(actor_id(this), &OverlayImpl::get_self_node_coro, std::move(promise));
+}
+
+td::actor::Task<OverlayNode> OverlayImpl::get_self_node_coro() {
+  for (size_t iter = 0;; ++iter) {
+    if (!self_node_future_) {
+      self_node_future_ = std::make_shared<td::actor::SharedFuture<OverlayNode>>(get_self_node_inner().start());
+    }
+    auto future = self_node_future_;
+    auto result = co_await future->get().wrap();
+    if (result.is_error()) {
+      if (self_node_future_ == future) {
+        self_node_future_.reset();
+      }
+      co_return result.move_as_error();
+    }
+    auto node = result.move_as_ok();
+    auto now = static_cast<td::int32>(td::Clocks::system());
+    if ((node.version() >= now - 5 && node.flags() == peer_list_.local_member_flags_ &&
+         *node.certificate() == peer_list_.cert_) ||
+        iter > 0) {
+      co_return node;
+    }
+    if (self_node_future_ == future) {
+      self_node_future_.reset();
+    }
+  }
+}
+
+td::actor::Task<OverlayNode> OverlayImpl::get_self_node_inner() {
+  VLOG(OVERLAY_DEBUG) << "get_self_node_inner: start";
   OverlayNode s{local_id_, overlay_id_, peer_list_.local_member_flags_};
   auto to_sign = s.to_sign();
-  auto P = td::PromiseCreator::lambda(
-      [oid = print_id(), s = std::move(s), cert = peer_list_.cert_,
-       promise = std::move(promise)](td::Result<std::pair<td::BufferSlice, PublicKey>> R) mutable {
-        if (R.is_error()) {
-          auto S = R.move_as_error();
-          LOG(ERROR) << oid << ": failed to get self node: " << S;
-          promise.set_error(std::move(S));
-          return;
-        }
-        auto V = R.move_as_ok();
-        s.update_signature(std::move(V.first));
-        s.update_adnl_id(adnl::AdnlNodeIdFull{V.second});
-        s.update_certificate(std::move(cert));
-        promise.set_value(std::move(s));
-      });
-
-  td::actor::send_closure(keyring_, &keyring::Keyring::sign_add_get_public_key, local_id_.pubkey_hash(),
-                          std::move(to_sign), std::move(P));
+  auto [signature, key] = co_await td::actor::ask(keyring_, &keyring::Keyring::sign_add_get_public_key,
+                                                  local_id_.pubkey_hash(), std::move(to_sign));
+  s.update_signature(std::move(signature));
+  s.update_adnl_id(adnl::AdnlNodeIdFull{std::move(key)});
+  s.update_certificate(peer_list_.cert_);
+  VLOG(OVERLAY_DEBUG) << "get_self_node_inner: signed";
+  co_return s;
 }
 
 void OverlayImpl::send_new_fec_broadcast_part(PublicKeyHash local_id, Overlay::BroadcastDataHash data_hash,

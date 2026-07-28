@@ -311,13 +311,13 @@ class StaticBagOfCellsDbLazyImpl : public StaticBagOfCellsDb {
       return td::Status::Error(PSTRING() << "bag-of-cell error: invalid offset_byte_size " << info_.offset_byte_size);
     }
     char arr[8];
-    td::RwMutex::ReadLock guard;
+    std::unique_lock<std::mutex> guard;
     if (info_.has_index) {
       TRY_RESULT(new_offset_view, data_.view(td::MutableSlice(arr, info_.offset_byte_size),
                                              info_.index_offset + (td::int64)idx * info_.offset_byte_size));
       offset_view = new_offset_view;
     } else {
-      std::lock_guard guard(index_mutex_);
+      guard = std::unique_lock(index_mutex_);
       offset_view = td::Slice(index_data_).substr((td::int64)idx * info_.offset_byte_size, info_.offset_byte_size);
     }
 

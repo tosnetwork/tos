@@ -220,7 +220,7 @@ bool SignedPromise::unpack(td::Ref<vm::Cell> cell) try {
     return false;
   }
   td::SecureString signature(64);
-  if (!cs.prefetch_bytes(signature.as_mutable_slice()) || !cs.empty_ext()) {
+  if (!cs.fetch_bytes(signature.as_mutable_slice()) || !cs.empty_ext()) {
     return false;
   }
   o_signature = std::move(signature);

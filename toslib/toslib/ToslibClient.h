@@ -59,6 +59,11 @@ td::Result<toslib_api::object_ptr<toslib_api::dns_EntryData>> to_toslib_api(
 td::Result<tos::ManualDns::EntryData> to_dns_entry_data(toslib_api::dns_EntryData& entry_data);
 td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_cell);
 
+namespace detail {
+td::Status validate_liteserver_block_id(const tos::BlockIdExt& expected, const tos::BlockIdExt& actual);
+td::Status validate_liteserver_transaction_page(bool incomplete, size_t transaction_count);
+}  // namespace detail
+
 class ToslibClient : public td::actor::Actor {
  public:
   template <class T>

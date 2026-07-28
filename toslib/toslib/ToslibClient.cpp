@@ -64,6 +64,25 @@ template <class Type>
 using toslib_api_ptr = tos::toslib_api::object_ptr<Type>;
 
 namespace toslib {
+
+namespace detail {
+
+td::Status validate_liteserver_block_id(const tos::BlockIdExt& expected, const tos::BlockIdExt& actual) {
+  if (expected != actual) {
+    return td::Status::Error("Liteserver responded with wrong block");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_liteserver_transaction_page(bool incomplete, size_t transaction_count) {
+  if (incomplete && transaction_count == 0) {
+    return td::Status::Error("Got 0 transactions with `incomplete` flag");
+  }
+  return td::Status::OK();
+}
+
+}  // namespace detail
+
 namespace int_api {
 struct GetAccountState {
   block::StdAddress address;
@@ -1663,6 +1682,10 @@ class GetMasterchainBlockSignatures : public td::actor::Actor {
 
   void got_block_id(tos::BlockIdExt id) {
     block_id_ = id;
+    if (block_id_.id != block_id_short_) {
+      abort(td::Status::Error("got incorrect block header from liteserver"));
+      return;
+    }
     client_.send_query(
         tos::lite_api::liteServer_getBlockProof(0x1001, tos::create_tl_lite_block_id(prev_block_id_),
                                                 tos::create_tl_lite_block_id(block_id_)),
@@ -2178,6 +2201,11 @@ class RunEmulator : public ToslibQueryActor {
 
           self->check(
               check_block_transactions_proof(bTxes, mode, lt, self->request_.address.addr, root_hash, req_count));
+          auto page_status = detail::validate_liteserver_transaction_page(bTxes->incomplete_, bTxes->ids_.size());
+          if (page_status.is_error()) {
+            self->check(std::move(page_status));
+            return;
+          }
 
           std::int64_t last_lt = 0;
           for (auto& id : bTxes->ids_) {
@@ -3586,7 +3614,8 @@ td::Result<td::Ref<vm::Cell>> create_ext_message_checked(const block::StdAddress
   if (body.is_null()) {
     return td::Status::Error("Failed to create external message: body is empty");
   }
-  auto message = tos::GenericAccount::create_ext_message(address, std::move(new_state), std::move(body));
+  TRY_RESULT(message, TRY_VM(td::Result<td::Ref<vm::Cell>>(
+                          tos::GenericAccount::create_ext_message(address, std::move(new_state), std::move(body)))));
   if (message.is_null()) {
     return td::Status::Error("Failed to create external message");
   }
@@ -6397,12 +6426,14 @@ td::Status ToslibClient::do_request(const toslib_api::blocks_getTransactions& re
     after = nullptr;
   }
 
+  auto block_id = tos::create_block_id(block);
   client_.send_query(
       tos::lite_api::liteServer_listBlockTransactions(std::move(block), request.mode_, request.count_, std::move(after),
                                                       reverse_mode, check_proof),
-      promise.wrap([root_hash, req_count = request.count_, start_addr, start_lt,
+      promise.wrap([block_id, root_hash, req_count = request.count_, start_addr, start_lt,
                     mode = request.mode_](lite_api_ptr<tos::lite_api::liteServer_blockTransactions>&& bTxes)
                        -> td::Result<object_ptr<toslib_api::blocks_transactions>> {
+        TRY_STATUS(detail::validate_liteserver_block_id(block_id, tos::create_block_id(bTxes->id_)));
         TRY_STATUS(check_block_transactions_proof(bTxes, mode, start_lt, start_addr, root_hash, req_count));
 
         toslib_api::blocks_transactions r;

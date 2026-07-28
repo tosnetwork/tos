@@ -618,7 +618,7 @@ endif()
 
 #TESTS
 add_executable(test-ed25519 test/test-td-main.cpp ${ED25519_TEST_SOURCE})
-target_link_libraries(test-ed25519 PRIVATE tos_crypto)
+target_link_libraries(test-ed25519 PRIVATE tos_crypto keys)
 
 add_executable(test-vm test/test-td-main.cpp ${TOSVM_TEST_SOURCE})
 target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
@@ -715,6 +715,8 @@ add_test(
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
+add_executable(test-overlay-peer-cleanup test/test-td-main.cpp test/test-overlay-peer-cleanup.cpp)
+target_link_libraries(test-overlay-peer-cleanup PRIVATE overlay tdutils tdactor adnl tl_api dht)
 add_executable(plumtree-graph-sim
   test/plumtree/plumtree-graph-sim.cpp
   test/plumtree/graph.cpp
@@ -1060,6 +1062,7 @@ tos_test(test-dht)
 tos_test(test-rldp)
 tos_test(test-rldp2)
 tos_test(test-rldp-http-proxy-routing)
+tos_test(test-overlay-peer-cleanup)
 tos_test(test-validator-session-state)
 tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)

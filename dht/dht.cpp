@@ -705,26 +705,46 @@ void DhtMemberImpl::send_store(DhtValue value, td::Promise<td::Unit> promise) {
 }
 
 void DhtMemberImpl::get_self_node(td::Promise<DhtNode> promise) {
-  auto P = td::PromiseCreator::lambda([promise = std::move(promise), id = id_, keyring = keyring_,
-                                       client_only = client_only_,
-                                       network_id = network_id_](td::Result<adnl::AdnlNode> R) mutable {
-    R.ensure();
-    auto node = R.move_as_ok();
-    auto version = static_cast<td::int32>(td::Clocks::system());
-    td::BufferSlice B = serialize_tl_object(
-        DhtNode{node.pub_id(), node.addr_list(), version, network_id, td::BufferSlice{}}.tl(), true);
-    if (!client_only) {
-      CHECK(node.addr_list().size() > 0);
+  td::actor::send_closure(actor_id(this), &DhtMemberImpl::get_self_node_coro, std::move(promise));
+}
+
+td::actor::Task<DhtNode> DhtMemberImpl::get_self_node_coro() {
+  for (size_t iter = 0;; ++iter) {
+    if (!self_node_future_) {
+      self_node_future_ = std::make_shared<td::actor::SharedFuture<DhtNode>>(get_self_node_inner().start());
     }
-    auto P = td::PromiseCreator::lambda([promise = std::move(promise), node = std::move(node), version,
-                                         network_id](td::Result<td::BufferSlice> R) mutable {
-      R.ensure();
-      DhtNode n{node.pub_id(), node.addr_list(), version, network_id, R.move_as_ok()};
-      promise.set_result(std::move(n));
-    });
-    td::actor::send_closure(keyring, &keyring::Keyring::sign_message, id.pubkey_hash(), std::move(B), std::move(P));
-  });
-  td::actor::send_closure(adnl_, &adnl::Adnl::get_self_node, id_, std::move(P));
+    auto future = self_node_future_;
+    auto result = co_await future->get().wrap();
+    if (result.is_error()) {
+      if (self_node_future_ == future) {
+        self_node_future_.reset();
+      }
+      co_return result.move_as_error();
+    }
+    auto node = result.move_as_ok();
+    auto now = static_cast<td::int32>(td::Clocks::system());
+    if (node.version() >= now - 5 || iter > 0) {
+      co_return node;
+    }
+    if (self_node_future_ == future) {
+      self_node_future_.reset();
+    }
+  }
+}
+
+td::actor::Task<DhtNode> DhtMemberImpl::get_self_node_inner() {
+  VLOG(DHT_DEBUG) << "get_self_node_inner: start";
+  auto node = co_await td::actor::ask(adnl_, &adnl::Adnl::get_self_node, id_);
+  auto version = static_cast<td::int32>(td::Clocks::system());
+  td::BufferSlice data =
+      serialize_tl_object(DhtNode{node.pub_id(), node.addr_list(), version, network_id_, td::BufferSlice{}}.tl(), true);
+  if (!client_only_) {
+    CHECK(node.addr_list().size() > 0);
+  }
+  auto signature =
+      co_await td::actor::ask(keyring_, &keyring::Keyring::sign_message, id_.pubkey_hash(), std::move(data));
+  VLOG(DHT_DEBUG) << "get_self_node_inner: signed";
+  co_return DhtNode{node.pub_id(), node.addr_list(), version, network_id_, std::move(signature)};
 }
 
 td::Result<std::shared_ptr<DhtGlobalConfig>> Dht::create_global_config(tl_object_ptr<tos_api::dht_config_Global> conf) {

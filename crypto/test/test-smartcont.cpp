@@ -1864,6 +1864,9 @@ TEST(Smartcont, DnsManual) {
   ASSERT_EQ("b.a", ManualDns::decode_name("a\0b"));
   ASSERT_EQ("", ManualDns::decode_name(""));
 
+  ASSERT_TRUE(ManualDns::resolve_args_raw(std::string(127, 'a'), td::Bits256::zero()).is_ok());
+  ASSERT_TRUE(ManualDns::resolve_args_raw(std::string(128, 'a'), td::Bits256::zero()).is_error());
+
   auto key = td::Ed25519::generate_private_key().move_as_ok();
 
   auto manual = ManualDns::create(ManualDns::create_init_data_fast(key.get_public_key().move_as_ok(), 123), -1);
@@ -1953,6 +1956,28 @@ TEST(Smartcont, DnsManual) {
 }
 
 using namespace tos::pchan;
+
+TEST(Smartcont, PaymentChannelSignedPromiseRoundTrip) {
+  auto private_key = td::Ed25519::generate_private_key().move_as_ok();
+  auto public_key = private_key.get_public_key().move_as_ok();
+  auto cell = SignedPromiseBuilder()
+                  .channel_id(0x123456789abcdef0ULL)
+                  .promise_A(17)
+                  .promise_B(42)
+                  .with_key(&private_key)
+                  .finalize();
+  ASSERT_TRUE(cell.not_null());
+
+  SignedPromise decoded;
+  ASSERT_TRUE(decoded.unpack(std::move(cell)));
+  ASSERT_EQ(decoded.promise.channel_id, 0x123456789abcdef0ULL);
+  ASSERT_EQ(decoded.promise.promise_A, 17u);
+  ASSERT_EQ(decoded.promise.promise_B, 42u);
+  ASSERT_TRUE(decoded.o_signature);
+  auto promise = decoded.promise.serialize();
+  ASSERT_TRUE(promise.not_null());
+  ASSERT_TRUE(public_key.verify_signature(promise->get_hash().as_slice(), decoded.o_signature.value()).is_ok());
+}
 
 template <class T>
 struct ValidateState {
