@@ -27,6 +27,8 @@ namespace tos {
 
 namespace rldp2 {
 
+namespace detail {
+
 // Completes an outbound query's promise against a received answer, enforcing
 // the max_answer_size the caller originally declared to send_query_ex.
 //
@@ -41,8 +43,11 @@ namespace rldp2 {
 // reassembly. Exposed here as a free function (rather than kept private to
 // RldpIn) purely so its boundary behavior can still be unit-tested directly,
 // without needing to fabricate a wire-level scenario the transport layer's
-// own accounting makes impossible.
+// own accounting makes impossible. Lives in `detail` since it is an
+// implementation aid for tests, not part of the Rldp public interface.
 void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_answer_size, td::BufferSlice data);
+
+}  // namespace detail
 
 class Rldp : public adnl::AdnlSenderEx {
  public:

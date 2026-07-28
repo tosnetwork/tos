@@ -29,6 +29,8 @@ namespace tos {
 
 namespace rldp2 {
 
+namespace detail {
+
 void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_answer_size, td::BufferSlice data) {
   if (data.size() <= max_answer_size) {
     promise.set_value(std::move(data));
@@ -36,6 +38,8 @@ void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_ans
     promise.set_error(td::Status::Error("received too big answer"));
   }
 }
+
+}  // namespace detail
 
 struct RldpIn::Connection {
   td::actor::ActorOwn<RldpConnectionActor> actor;
@@ -247,7 +251,7 @@ void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
                              tos_api::rldp_answer &message) {
   auto it = queries_.find(transfer_id);
   if (it != queries_.end()) {
-    complete_out_query(std::move(it->second.promise), it->second.max_answer_size, std::move(message.data_));
+    detail::complete_out_query(std::move(it->second.promise), it->second.max_answer_size, std::move(message.data_));
     queries_.erase(it);
   } else {
     VLOG(RLDP_INFO) << "received answer to unknown query " << message.query_id_;

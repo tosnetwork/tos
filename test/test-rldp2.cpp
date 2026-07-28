@@ -41,10 +41,10 @@ int main() {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
 
   {
-    // Direct unit test of tos::rldp2::complete_out_query's boundary behavior
-    // (rldp2/rldp.h), which enforces OutQuery::max_answer_size against
-    // a received rldp_answer. This check is provably unreachable via any
-    // RLDP2-wire-protocol-compliant sender -- see the comment on
+    // Direct unit test of tos::rldp2::detail::complete_out_query's boundary
+    // behavior (rldp2/rldp.h), which enforces OutQuery::max_answer_size
+    // against a received rldp_answer. This check is provably unreachable via
+    // any RLDP2-wire-protocol-compliant sender -- see the comment on
     // complete_out_query for why -- so it can't be exercised end-to-end by
     // a malicious raw-wire peer (confirmed experimentally: a peer that tries
     // to answer bigger than the query's declared max_answer_size gets its
@@ -55,7 +55,7 @@ int main() {
     auto run = [](td::uint64 max_answer_size, size_t data_size) -> td::Result<td::BufferSlice> {
       td::Result<td::BufferSlice> result;
       auto P = td::PromiseCreator::lambda([&](td::Result<td::BufferSlice> R) { result = std::move(R); });
-      tos::rldp2::complete_out_query(std::move(P), max_answer_size, td::BufferSlice(data_size));
+      tos::rldp2::detail::complete_out_query(std::move(P), max_answer_size, td::BufferSlice(data_size));
       return result;
     };
 
