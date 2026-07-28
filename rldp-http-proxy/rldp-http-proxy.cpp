@@ -1378,7 +1378,19 @@ class RldpHttpProxy : public td::actor::Actor {
 
   void ask_peer_capabilities(tos::adnl::AdnlNodeIdShort peer) {
     auto &c = peer_capabilities_.get(peer);
-    if (!c.received && c.retry_at.is_in_past()) {
+    if (c.received) {
+      // peer_capabilities_ and RldpDispatcher::supports_rldp2_ are two
+      // independently-bounded LRUs (see their declarations below and in
+      // RldpDispatcher) driven by different access patterns, so
+      // supports_rldp2_ can evict this peer -- silently falling back to
+      // RLDP1 -- while peer_capabilities_ still has `received=true` and
+      // therefore never re-queries to repopulate it. Re-asserting the
+      // already-known value here, on every call (i.e. on every request to
+      // this peer), keeps supports_rldp2_ from staying permanently stale
+      // after such an eviction, without requiring a fresh network probe.
+      td::actor::send_closure(rldp_dispatcher_, &RldpDispatcher::set_supports_rldp2, peer,
+                              c.capabilities & CAPABILITY_RLDP2);
+    } else if (c.retry_at.is_in_past()) {
       c.retry_at = td::Timestamp::in(30.0);
       auto send_query = [&, this, SelfId = actor_id(this)](const tos::adnl::AdnlNodeIdShort &local_id) {
         td::actor::send_closure(
