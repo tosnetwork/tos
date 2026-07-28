@@ -82,6 +82,61 @@ class FakeKeyValueReader : public td::KeyValueReader {
 
   std::vector<std::string> last_keys_;
 };
+
+// Same purpose as FakeKeyValueReader above, but implementing the full
+// td::KeyValue interface so PrefixedKeyValue::get_multi (as opposed to
+// PrefixedKeyValueReader::get_multi) can be exercised: it has the identical
+// Slice-lifetime bug pattern, fixed the same way.
+class FakeKeyValue : public td::KeyValue {
+ public:
+  td::Result<GetStatus> get(td::Slice key, std::string &value) override {
+    value = key.str();
+    return GetStatus::Ok;
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string> *values) override {
+    last_keys_.clear();
+    values->clear();
+    std::vector<GetStatus> statuses;
+    for (auto &key : keys) {
+      last_keys_.push_back(key.str());
+      values->push_back(key.str());
+      statuses.push_back(GetStatus::Ok);
+    }
+    return statuses;
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return 0;
+  }
+  td::Status set(td::Slice key, td::Slice value) override {
+    return td::Status::OK();
+  }
+  td::Status erase(td::Slice key) override {
+    return td::Status::OK();
+  }
+  td::Status begin_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status commit_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status abort_write_batch() override {
+    return td::Status::OK();
+  }
+  td::Status begin_transaction() override {
+    return td::Status::OK();
+  }
+  td::Status commit_transaction() override {
+    return td::Status::OK();
+  }
+  td::Status abort_transaction() override {
+    return td::Status::OK();
+  }
+  std::unique_ptr<td::KeyValueReader> snapshot() override {
+    return nullptr;
+  }
+
+  std::vector<std::string> last_keys_;
+};
 }  // namespace
 
 TEST(KeyValue, PrefixedGetMulti) {
@@ -96,6 +151,32 @@ TEST(KeyValue, PrefixedGetMulti) {
 
   std::vector<std::string> values;
   auto r_statuses = reader.get_multi(keys, &values);
+  r_statuses.ensure();
+  auto statuses = r_statuses.move_as_ok();
+
+  ASSERT_EQ(key_storage.size(), fake->last_keys_.size());
+  ASSERT_EQ(key_storage.size(), values.size());
+  ASSERT_EQ(key_storage.size(), statuses.size());
+  for (size_t i = 0; i < key_storage.size(); i++) {
+    std::string expected = "pfx:" + key_storage[i];
+    ASSERT_EQ(expected, fake->last_keys_[i]);
+    ASSERT_EQ(expected, values[i]);
+    ASSERT_EQ(td::int32(td::KeyValueReader::GetStatus::Ok), td::int32(statuses[i]));
+  }
+}
+
+TEST(KeyValue, PrefixedKeyValueGetMulti) {
+  auto fake = std::make_shared<FakeKeyValue>();
+  td::PrefixedKeyValue kv(fake, "pfx:");
+
+  std::vector<std::string> key_storage = {"aaa", "bbb", "ccc", "ddd"};
+  std::vector<td::Slice> keys;
+  for (auto &k : key_storage) {
+    keys.push_back(k);
+  }
+
+  std::vector<std::string> values;
+  auto r_statuses = kv.get_multi(keys, &values);
   r_statuses.ensure();
   auto statuses = r_statuses.move_as_ok();
 
