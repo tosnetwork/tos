@@ -7,10 +7,34 @@ about 0.5 GiB after restart to over 4 GiB within roughly 45 minutes, with
 RssFile flat at 30-35 MiB and no swap/huge pages involved. Root cause was
 two independent bugs in the V2 CellDb reader cache
 (`crypto/vm/db/DynamicBagOfCellsDbV2.cpp`). Both are fixed, built, and
-verified against a live restart of node3. Changes are uncommitted pending
-review.
+verified against live restarts of node3.
 
-**Update:** a longer live observation (see "Follow-up observation" below)
+### Current status (2026-07-29)
+
+**Resolved.** The CellDB V2 bugs described here remain fixed, and the later
+anonymous-memory growth is no longer an open independent leak. The earlier
+roughly 34 MiB/min unattributed period coincided with the workchain-0
+standstill and its pathological state-resolution retry cycle. After PR #15,
+PR #16, and `1c137fa44` (`Fix Simplex recovery across long empty candidate
+chains`) were deployed together from current `main`, workchain 0 resumed
+collation and the residual live-allocation slope disappeared:
+
+- no `Standstill detected` event occurred in the 00:36-00:46 UTC window;
+- StateResolver stayed at `state_cache=1024/1024`,
+  `finalized_cache=4096/4096`, with both in-flight counts at zero;
+- `BufferAllocator` live bytes stayed between 590.6 and 591.2 MB from
+  00:38-00:47 UTC;
+- a `jeprof --base` comparison from 00:26 to 00:47 UTC showed only 37.2 MB
+  net growth (about 1.8 MiB/min), entirely in ordinary RocksDB
+  MemTable/SkipList/Arena write paths rather than CellDB, StateResolver,
+  Overlay, or Plumtree retention.
+
+The remaining RocksDB delta is normal fill/flush-cycle allocation, not the
+unbounded anonymous-RSS signature investigated here. The sections below retain
+the original chronology and measurements.
+
+**Historical update (2026-07-26):** a longer live observation (see
+"Follow-up observation" below)
 found that after these two bugs are fixed, the CellDB V2 cache itself
 behaves correctly (bounded, and purges measurably release memory), but
 total process RSS still climbs afterward at a steady rate driven by a
@@ -212,7 +236,7 @@ under the cap. If this matters in practice (e.g. very large initial-sync
 windows), a follow-up could check the `force_drop_cache_` flag more
 eagerly during bulk sync rather than only at block-commit boundaries.
 
-## Follow-up observation (2026-07-26, later in the same session) — a separate, still-unexplained growth source
+## Historical follow-up (2026-07-26) — separate growth source later resolved
 
 A third restart of node3 was left running longer to see whether RSS
 eventually plateaus. The CellDB V2 fix continued to behave correctly: TTL-
@@ -314,15 +338,24 @@ than risk leaving an unverified change live with a worse failure mode than
 the slow leak it was meant to fix. Node3 was restarted on the reverted
 binary to check whether the oscillating pattern was specific to the fix.
 
-**Status: the `state_cache_`/`finalized_blocks_` unbounded-growth bug in
-`state-resolver.cpp` is real and root-caused (see above), but the fix is
-NOT currently applied anywhere** — it was reverted after the live
+**Historical status at the end of 2026-07-26:** the
+`state_cache_`/`finalized_blocks_` unbounded-growth bug in
+`state-resolver.cpp` was real and root-caused (see above), but that first fix
+was not left deployed — it was reverted after the live
 regression and needs rework (most likely: prune more conservatively, e.g.
 lag the frontier further behind the latest finalized slot, or confirm
 whether the fast-path/slow-path cost amplification theory is actually what
 happened) plus a stress test that specifically exercises heavy catch-up
 under pruning before it's tried again. The read-only RocksDB block-cache
 diagnostics added to `celldb.cpp` remain in place and are harmless.
+
+That historical status is superseded by the bounded completed-cache/live-DB
+implementation documented in
+[state-resolver-cache-leak-2026-07-26.md](state-resolver-cache-leak-2026-07-26.md),
+the in-flight admission and skip-certified-slot fixes in PR #15/#16, and the
+long-empty-chain recovery fix `1c137fa44`. Their combined 2026-07-29 live
+validation is recorded in
+[workchain0-standstill-investigation-2026-07-28.md](workchain0-standstill-investigation-2026-07-28.md).
 
 ## Deployment note
 

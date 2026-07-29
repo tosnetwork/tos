@@ -19,6 +19,7 @@
 */
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "vm/excno.hpp"
 
 #include "GenericAccount.h"
 namespace tos {
@@ -57,6 +58,18 @@ td::Ref<vm::Cell> GenericAccount::get_init_state(const td::Ref<vm::Cell>& code,
       .store_ref(std::move(data))
       .finalize();
 }
+
+td::Result<td::Ref<vm::Cell>> GenericAccount::get_init_state_checked(const td::Ref<vm::Cell>& code,
+                                                                     const td::Ref<vm::Cell>& data) noexcept {
+  return TRY_VM(([&]() -> td::Result<td::Ref<vm::Cell>> {
+    vm::CellBuilder cb;
+    if (!(cb.store_zeroes_bool(2) && cb.store_maybe_ref(code) && cb.store_maybe_ref(data) && cb.store_zeroes_bool(1))) {
+      return td::Status::Error("Failed to build StateInit");
+    }
+    return cb.finalize();
+  })());
+}
+
 block::StdAddress GenericAccount::get_address(tos::WorkchainId workchain_id,
                                               const td::Ref<vm::Cell>& init_state) noexcept {
   if (init_state.is_null()) {
@@ -164,6 +177,28 @@ td::Ref<vm::Cell> GenericAccount::create_ext_message(const block::StdAddress& ad
 
   return res;
 }
+
+td::Result<td::Ref<vm::Cell>> GenericAccount::create_ext_message_checked(const block::StdAddress& address,
+                                                                         const td::Ref<vm::Cell>& code,
+                                                                         const td::Ref<vm::Cell>& data,
+                                                                         td::Ref<vm::Cell> body) noexcept {
+  return TRY_VM(([&]() -> td::Result<td::Ref<vm::Cell>> {
+    if (body.is_null()) {
+      return td::Status::Error("Failed to create external message: body is empty");
+    }
+    td::Ref<vm::Cell> new_state;
+    if (code.not_null() || data.not_null()) {
+      TRY_RESULT(state, get_init_state_checked(code, data));
+      new_state = std::move(state);
+    }
+    auto message = create_ext_message(address, std::move(new_state), std::move(body));
+    if (message.is_null()) {
+      return td::Status::Error("Failed to create external message");
+    }
+    return message;
+  })());
+}
+
 td::Result<td::Ed25519::PublicKey> GenericAccount::get_public_key(const SmartContract& sc) {
   auto answer = sc.run_get_method("get_public_key");
   if (!answer.success) {

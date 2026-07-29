@@ -1,20 +1,26 @@
-# StateResolver Maps Bounded and Live-Validated; Residual Growth Open (2026-07-26)
+# StateResolver Maps Bounded and Live-Validated; Residual Growth Resolved (updated 2026-07-29)
 
 ## Status
 
-**The two unbounded StateResolver maps are fixed and their eviction behavior
-has been validated on node3. The validator's total live-allocation growth is
-not fully fixed.** During a 33-minute live observation, both caches reached
-their configured limits and continued evicting without a restart, crash, or
-the 17–36 GiB oscillation caused by the earlier bad fix. However,
-`stats.allocated` still increased by about 34 MiB/min after both state caches
-were bounded. That residual growth is outside these two bounded maps and
-remains open for attribution.
+**Resolved.** The two completed-entry StateResolver maps remain bounded and
+live-validated. The approximately 34 MiB/min slope recorded in the original
+observation is no longer open for attribution: the later investigation showed
+that completed LRUs could be at their limits while separately unbounded
+in-flight resolution entries surged to `state_cache=37138/1024` during a
+workchain-0 standstill and retry storm.
+
+PR #15 bounded new in-flight admissions, PR #16 stopped network resolution for
+skip-certified slots, and `1c137fa44` changed long empty-candidate ancestry
+recovery from one recursively admitted operation per ancestor into one
+iterative, constant-memory walk. With all three fixes deployed from current
+`main`, node3 no longer shows either the retry cycle or the residual anonymous
+live-allocation slope. See the 2026-07-29 closure evidence under "Node3 live
+validation" below.
 
 Related: this is the "separate, not-yet-root-caused source" flagged in
 [celldb-v2-node3-rss-growth-2026-07-26.md](celldb-v2-node3-rss-growth-2026-07-26.md),
-which covers the (already fixed and deployed) CellDB V2 cache-overshoot bug.
-That fix is unrelated to this one and should not be touched.
+which covers the already fixed CellDB V2 cache-overshoot bug. The original
+measurements below are retained as investigation history.
 
 ## Symptom
 
@@ -222,6 +228,31 @@ The process as a whole did **not** reach a memory plateau. From 14:28:36 to
 38.7 MiB/min. This is materially below the pre-deployment observation of
 roughly 60 MiB/min, but it is not zero and must not be attributed to the now
 bounded StateResolver maps without a new differential heap profile.
+
+### 2026-07-29 closure validation
+
+The warning above accurately described the 2026-07-26 observation, but it is
+no longer the current status. Node3 restarted at 00:06 UTC on current `main`
+with PR #15, PR #16, and `1c137fa44`. After replay/catch-up settled:
+
+- workchain 0 resumed producing blocks (including
+  `Generating an empty block for slot 193410` for
+  shard `(0,8000000000000000)`);
+- `Standstill detected` occurred zero times from 00:36 through 00:46 UTC;
+- from 00:44 through 00:47 UTC, diagnostics stayed at
+  `state_cache=1024/1024`, `finalized_cache=4096/4096`,
+  `state_inflight=0`, and `finalized_inflight=0`;
+- process-tracked `BufferAllocator` live bytes oscillated only between
+  590.6 and 591.2 MB over 00:38-00:47 UTC;
+- a PID 3231848 `jeprof --base` diff spanning 00:26-00:47 UTC reported
+  37.2 MB net growth (about 1.8 MiB/min), with the complete positive delta in
+  normal RocksDB MemTable/SkipList/Arena writes and no matching
+  StateResolver, Plumtree, or Overlay retention stack.
+
+This closes the earlier residual-growth item. RocksDB write-cycle allocation
+may rise between MemTable flushes, so minute-scale RSS is not expected to be
+perfectly flat; there is no current evidence of an independent unbounded
+anonymous-memory leak.
 
 ## Reference
 

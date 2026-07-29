@@ -5,6 +5,13 @@
 **Fixed in code and validated on node3 with a complete retention-window
 turnover.**
 
+**2026-07-29 follow-up:** this conclusion still holds on current `main`.
+After the workchain-0 liveness fixes settled, `BufferAllocator` live bytes
+were flat over the measured steady window, and the 00:26-00:47 UTC
+`jeprof --base` diff contained no CandidateResolver retention stack. The only
+net-positive allocation was 37.2 MB in ordinary RocksDB writes. No additional
+CandidateResolver memory fix is required.
+
 This report follows:
 
 - [node3-residual-leak-archive-memtable-2026-07-26.md](node3-residual-leak-archive-memtable-2026-07-26.md)

@@ -1072,6 +1072,61 @@ TEST(Toslib, Wallet) {
   do_test_wallet<tos::RestrictedWallet>();
 }
 
+TEST(Smartcont, GenericAccountCheckedExternalMessage) {
+  auto code = vm::CellBuilder().store_long(0x11, 8).finalize();
+  auto data = vm::CellBuilder().store_long(0x22, 8).finalize();
+  auto body = vm::CellBuilder().store_long(0x33, 8).finalize();
+  block::StdAddress address{0, td::Bits256::zero(), true};
+
+  auto full_state_r = tos::GenericAccount::get_init_state_checked(code, data);
+  ASSERT_TRUE(full_state_r.is_ok());
+  ASSERT_EQ(full_state_r.ok()->get_hash(), tos::GenericAccount::get_init_state(code, data)->get_hash());
+
+  auto code_only_state_r = tos::GenericAccount::get_init_state_checked(code, {});
+  ASSERT_TRUE(code_only_state_r.is_ok());
+  block::gen::StateInit::Record code_only_state;
+  ASSERT_TRUE(tlb::unpack_cell(code_only_state_r.move_as_ok(), code_only_state));
+  ASSERT_TRUE(code_only_state.code.not_null());
+  ASSERT_TRUE(code_only_state.data.not_null());
+  ASSERT_EQ(code_only_state.code->prefetch_ulong(1), 1u);
+  ASSERT_EQ(code_only_state.data->prefetch_ulong(1), 0u);
+  ASSERT_EQ(code_only_state.code->prefetch_ref()->get_hash(), code->get_hash());
+  ASSERT_TRUE(code_only_state.data->prefetch_ref().is_null());
+
+  auto data_only_state_r = tos::GenericAccount::get_init_state_checked({}, data);
+  ASSERT_TRUE(data_only_state_r.is_ok());
+  block::gen::StateInit::Record data_only_state;
+  ASSERT_TRUE(tlb::unpack_cell(data_only_state_r.move_as_ok(), data_only_state));
+  ASSERT_TRUE(data_only_state.code.not_null());
+  ASSERT_TRUE(data_only_state.data.not_null());
+  ASSERT_EQ(data_only_state.code->prefetch_ulong(1), 0u);
+  ASSERT_EQ(data_only_state.data->prefetch_ulong(1), 1u);
+  ASSERT_TRUE(data_only_state.code->prefetch_ref().is_null());
+  ASSERT_EQ(data_only_state.data->prefetch_ref()->get_hash(), data->get_hash());
+
+  auto code_only_message = tos::GenericAccount::create_ext_message_checked(address, code, {}, body);
+  ASSERT_TRUE(code_only_message.is_ok());
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(code_only_message.ok()));
+
+  auto data_only_message = tos::GenericAccount::create_ext_message_checked(address, {}, data, body);
+  ASSERT_TRUE(data_only_message.is_ok());
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(data_only_message.ok()));
+}
+
+TEST(Smartcont, GenericAccountCheckedExternalMessageCatchesCellBuilderFailure) {
+  td::Ref<vm::Cell> max_depth_code = vm::CellBuilder().finalize();
+  for (int depth = 0; depth < vm::Cell::max_depth; ++depth) {
+    max_depth_code = vm::CellBuilder().store_ref(std::move(max_depth_code)).finalize();
+  }
+  ASSERT_EQ(max_depth_code->get_depth(), vm::Cell::max_depth);
+
+  auto body = vm::CellBuilder().finalize();
+  block::StdAddress address{0, td::Bits256::zero(), true};
+  auto message = tos::GenericAccount::create_ext_message_checked(address, max_depth_code, {}, body);
+  ASSERT_TRUE(message.is_error());
+  ASSERT_EQ(message.error().message(), "Got cell write error");
+}
+
 TEST(Toslib, WalletV4) {
   // Test V4 basic functionality: create, init, transfer with op=0
   auto priv_key = td::Ed25519::generate_private_key().move_as_ok();

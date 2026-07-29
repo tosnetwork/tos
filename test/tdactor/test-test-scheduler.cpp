@@ -11,6 +11,15 @@ Task<int> fail_shared_future_attempt(int& attempts) {
   co_return td::Status::Error("expected failure");
 }
 
+Task<int> delayed_shared_future_attempt(int& attempts, bool& fail) {
+  ++attempts;
+  co_await coro_sleep(Timestamp::in(1.0));
+  if (fail) {
+    co_return td::Status::Error("injected shared operation failure");
+  }
+  co_return 42;
+}
+
 TEST(SharedFuture, FailedResultIsEvictedAndRetried) {
   TestScheduler ts;
   ts.run([&]() -> Task<Unit> {
@@ -32,6 +41,60 @@ TEST(SharedFuture, FailedResultIsEvictedAndRetried) {
     auto second = co_await get().wrap();
     EXPECT(second.is_error());
     EXPECT(!cache);
+    EXPECT_EQ(attempts, 2);
+    co_return td::Unit{};
+  });
+}
+
+TEST(SharedFuture, ConcurrentWaitersShareFailureAndRetry) {
+  TestScheduler ts;
+  ts.run([&]() -> Task<Unit> {
+    std::shared_ptr<SharedFuture<int>> cache;
+    int attempts = 0;
+    bool fail = true;
+
+    auto get = [&]() -> Task<int> {
+      if (!cache) {
+        cache = std::make_shared<SharedFuture<int>>(delayed_shared_future_attempt(attempts, fail).start());
+      }
+      co_return co_await await_shared_future(cache);
+    };
+
+    std::vector<StartedTask<int>> failed_waiters;
+    for (int i = 0; i < 64; ++i) {
+      failed_waiters.push_back(get().start());
+    }
+    co_await ts.wait_sync_work();
+    EXPECT_EQ(attempts, 1);
+
+    ts.advance_time(1.0);
+    co_await ts.wait_sync_work();
+    for (auto& waiter : failed_waiters) {
+      auto result = co_await std::move(waiter).wrap();
+      EXPECT(result.is_error());
+    }
+    EXPECT(!cache);
+
+    fail = false;
+    std::vector<StartedTask<int>> successful_waiters;
+    for (int i = 0; i < 64; ++i) {
+      successful_waiters.push_back(get().start());
+    }
+    co_await ts.wait_sync_work();
+    EXPECT_EQ(attempts, 2);
+
+    ts.advance_time(1.0);
+    co_await ts.wait_sync_work();
+    for (auto& waiter : successful_waiters) {
+      auto result = co_await std::move(waiter).wrap();
+      ASSERT_TRUE(result.is_ok());
+      EXPECT_EQ(result.ok(), 42);
+    }
+    EXPECT(cache != nullptr);
+
+    auto cached = co_await get().wrap();
+    ASSERT_TRUE(cached.is_ok());
+    EXPECT_EQ(cached.ok(), 42);
     EXPECT_EQ(attempts, 2);
     co_return td::Unit{};
   });

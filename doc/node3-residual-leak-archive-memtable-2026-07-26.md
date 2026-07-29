@@ -11,11 +11,23 @@ process-wide bound and the removal of unused transaction history. This file
 remains the investigation record for the earlier, larger wallet-index flush
 and archive-backlog bugs.
 
+**Final status update (2026-07-29):** all unbounded containers identified by
+this investigation and its follow-ups remain fixed. A later approximately
+34 MiB/min anonymous-memory episode occurred during a separate workchain-0
+standstill, when state resolution repeatedly accumulated tens of thousands of
+in-flight entries and retried a long empty-candidate ancestry walk. PR #15,
+PR #16, and `1c137fa44` removed that retry cycle. On current `main`,
+`BufferAllocator` live bytes are flat, StateResolver caches/in-flight counts
+are bounded, and a 21-minute differential heap profile shows only 37.2 MB of
+normal RocksDB write-cycle growth. There is no remaining unattributed
+unbounded-growth item in this report.
+
 This is a follow-up to
 [state-resolver-cache-leak-2026-07-26.md](state-resolver-cache-leak-2026-07-26.md),
-which bounded `StateResolverImpl`'s two maps and live-validated them on node3,
-but left a residual ~34 MiB/min `stats.allocated` growth ("not fully fixed")
-unattributed.
+which bounded `StateResolverImpl`'s completed maps and live-validated them on
+node3. At that historical point a residual ~34 MiB/min `stats.allocated`
+growth remained unattributed; the 2026-07-29 update above records its final
+resolution.
 
 Two `jeprof --base` differential heap profiles, taken ~16-20 minutes apart on
 a fresh node3 run, **confirm the StateResolver fix holds** (`state_cache_`/
@@ -440,7 +452,8 @@ blocks each so new entries are created rarely, and this implementation is
 essentially identical to `~/ton-c`'s. It cannot plausibly account for
 ~237 MB of `BufferAllocator` growth every 20 minutes. Not the leak.
 
-**Still open**:
+**Still open at this point in the chronology (answered by the later
+re-profiling below)**:
 
 1. Whether Bug A's fix (once implemented) actually shrinks chain (a)
    proportionally, and whether it has any effect on chain (b) given the
@@ -530,8 +543,9 @@ this result; see remaining items below.
 
 Node3 is currently running the clean (no diagnostics, no fault-injection
 knob) Bug A + Bug B binary, PID current as of this test. It has **not** been
-re-profiled yet for Bug A's effect on the memtable/flush chain — that's
-still open, see below.
+re-profiled yet for Bug A's effect on the memtable/flush chain — that was
+still open at this point in the chronology; see the completed re-profiling
+below.
 
 ## 2026-07-27: post-fix re-profiling — Bug A's effect confirmed, two rounds
 

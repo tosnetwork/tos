@@ -35,9 +35,15 @@ class GenericAccount {
   static td::Ref<vm::Cell> get_init_state(const SmartContract::State& state) noexcept {
     return get_init_state(state.code, state.data);
   }
+  static td::Result<td::Ref<vm::Cell>> get_init_state_checked(const td::Ref<vm::Cell>& code,
+                                                              const td::Ref<vm::Cell>& data) noexcept;
   static block::StdAddress get_address(tos::WorkchainId workchain_id, const td::Ref<vm::Cell>& init_state) noexcept;
   static td::Ref<vm::Cell> create_ext_message(const block::StdAddress& address, td::Ref<vm::Cell> new_state,
                                               td::Ref<vm::Cell> body);
+  static td::Result<td::Ref<vm::Cell>> create_ext_message_checked(const block::StdAddress& address,
+                                                                  const td::Ref<vm::Cell>& code,
+                                                                  const td::Ref<vm::Cell>& data,
+                                                                  td::Ref<vm::Cell> body) noexcept;
   static bool store_int_message(vm::CellBuilder& cb, const block::StdAddress& dest_address, td::int64 gramms,
                                 td::Ref<vm::Cell> extra_currencies);
 
