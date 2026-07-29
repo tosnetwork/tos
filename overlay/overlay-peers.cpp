@@ -45,6 +45,7 @@ void OverlayImpl::del_peer(const adnl::AdnlNodeIdShort &id) {
 
   VLOG(OVERLAY_DEBUG) << this << ": deleting peer " << id;
 
+  broadcasts_plumtree_.remove_peer(this, id);
   del_from_all_neighbour_lists(P);
   peer_list_.peers_.remove(id);
   peer_list_.bad_peers_.erase(id);
@@ -624,6 +625,20 @@ OverlayPeer *OverlayImpl::get_random_peer(bool only_alive) {
     update_neighbours(0, false);
   }
   return res;
+}
+
+OverlayPeer *OverlayImpl::get_random_neighbour_peer() {
+  auto neighbours = peer_list_.neighbours_.size();
+  auto plumtree_neighbours = peer_list_.plumtree_neighbours_.size();
+  auto total = neighbours + plumtree_neighbours;
+  if (total == 0) {
+    return nullptr;
+  }
+
+  auto index = static_cast<size_t>(td::Random::fast(0, static_cast<td::uint32>(total - 1)));
+  auto &peer =
+      index < neighbours ? peer_list_.neighbours_[index] : peer_list_.plumtree_neighbours_[index - neighbours];
+  return peer_list_.peers_.get(peer);
 }
 
 void OverlayImpl::get_overlay_random_peers(td::uint32 max_peers,

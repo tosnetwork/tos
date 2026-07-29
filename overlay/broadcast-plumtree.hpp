@@ -106,6 +106,11 @@ class BroadcastsPlumtree {
   void gc(OverlayImpl *overlay);
   void remove_peer(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer);
 
+  // Deterministic state setup/inspection for the peer-removal regression test.
+  void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
+  void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
+  bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

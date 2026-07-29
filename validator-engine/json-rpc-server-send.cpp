@@ -16,26 +16,28 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "json-rpc-server-internal.h"
-
-#include "auto/tl/lite_api.hpp"
-#include "tl/tl_object_parse.h"
-#include "block/block-auto.h"
-#include "block/block-parse.h"
-#include "block/workchain-execution-dispatch.h"
-#include "td/utils/crypto.h"
-#include "vm/cp0.h"
-#include "vm/vm.h"
-#include "smc-envelope/GenericAccount.h"
-#include "smc-envelope/SmartContract.h"
-#include "vm/dict.h"
-#include "vm/cellops.h"
-#include "block/check-proof.h"
-#include "block/mc-config.h"
-#include "validator/impl/config.hpp"
 #include <array>
 #include <limits>
 #include <optional>
+
+#include "auto/tl/lite_api.hpp"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/check-proof.h"
+#include "block/mc-config.h"
+#include "block/workchain-execution-dispatch.h"
+#include "smc-envelope/GenericAccount.h"
+#include "smc-envelope/SmartContract.h"
+#include "td/utils/crypto.h"
+#include "tl/tl_object_parse.h"
+#include "validator/impl/config.hpp"
+#include "vm/cellops.h"
+#include "vm/cp0.h"
+#include "vm/dict.h"
+#include "vm/excno.hpp"
+#include "vm/vm.h"
+
+#include "json-rpc-server-internal.h"
 
 namespace tos {
 
@@ -346,13 +348,10 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
   }
   auto cell = cell_r.move_as_ok();
-  // Mirror parse_optional_boc_field. Downstream consumers — notably
-  // GenericAccount::create_ext_message and SmartContract::send_external_msg
-  // (declared noexcept, called from buildTransactionIntent /
-  // getSigningPayload via build_external_message_cell) — invoke bare
-  // load_cell_slice_ref(body) which throws on PrunedBranch / Library /
-  // Merkle* roots. A throw from a noexcept function calls std::terminate,
-  // killing the validator daemon.
+  // Mirror parse_optional_boc_field. Downstream consumers invoke bare
+  // load_cell_slice_ref(body), which throws on PrunedBranch / Library /
+  // Merkle* roots. Reject such roots here; the checked message builder below
+  // provides the final TRY_VM boundary for all remaining builder exceptions.
   if (cell.not_null()) {
     try {
       bool special = false;
@@ -534,17 +533,41 @@ static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIn
   auto init_data_r = parse_optional_boc_string(in.init_data_b64, "init_data");
   if (init_data_r.is_error()) return init_data_r.move_as_error();
 
-  td::Ref<vm::Cell> new_state;
   auto init_code = init_code_r.move_as_ok();
   auto init_data = init_data_r.move_as_ok();
-  if (init_code.not_null() || init_data.not_null()) {
-    new_state = tos::GenericAccount::get_init_state(init_code, init_data);
-  }
-  auto message = tos::GenericAccount::create_ext_message(addr, new_state, body_r.move_as_ok());
-  if (message.is_null()) {
-    return td::Status::Error("Failed to build external message (body or init state too large to encode)");
-  }
-  return message;
+  return tos::GenericAccount::create_ext_message_checked(addr, init_code, init_data, body_r.move_as_ok());
+}
+
+static td::Result<td::Ref<vm::Cell>> build_external_message_cell_by_ref(const block::StdAddress& addr,
+                                                                        const td::Ref<vm::Cell>& init_code,
+                                                                        const td::Ref<vm::Cell>& init_data,
+                                                                        td::Ref<vm::Cell> body) noexcept {
+  return TRY_VM(([&]() -> td::Result<td::Ref<vm::Cell>> {
+    if (body.is_null()) {
+      return td::Status::Error("Failed to build external message: body is empty");
+    }
+
+    vm::CellBuilder cb;
+    if (!(cb.store_long_bool(0b10, 2) && cb.store_long_bool(0b00, 2) && cb.store_long_bool(0b10, 2) &&
+          cb.store_zeroes_bool(1) && cb.store_long_bool(addr.workchain, 8) &&
+          cb.store_bits_bool(addr.addr.cbits(), 256) && cb.store_zeroes_bool(4))) {
+      return td::Status::Error("Failed to build external message header");
+    }
+
+    if (init_code.not_null() || init_data.not_null()) {
+      TRY_RESULT(init_state, tos::GenericAccount::get_init_state_checked(init_code, init_data));
+      if (!(cb.store_ones_bool(2) && cb.store_ref_bool(std::move(init_state)))) {
+        return td::Status::Error("Failed to store StateInit in external message");
+      }
+    } else if (!cb.store_zeroes_bool(1)) {
+      return td::Status::Error("Failed to store empty StateInit in external message");
+    }
+
+    if (!(cb.store_ones_bool(1) && cb.store_ref_bool(std::move(body)))) {
+      return td::Status::Error("Failed to store external message body");
+    }
+    return cb.finalize();
+  })());
 }
 
 static td::Result<std::string> serialize_cell_b64(td::Ref<vm::Cell> cell) {
@@ -1081,11 +1104,9 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
   auto addr = addr_r.move_as_ok();
   // Round 144 MEDIUM fix: addr_std uses an int8 workchain field
   // (range [-128, 127]).  parse_address_param accepts the wider
-  // int32 form, so an address like "128:<hex>" parsed and then
-  // store_long(addr.workchain, 8) at the addr_std encode below
-  // truncated silently — emitting a structurally malformed
-  // message that downstream consensus would reject after
-  // unpaid CPU work.  Reject out-of-int8 workchains here.
+  // int32 form, so an address like "128:<hex>" would otherwise
+  // reach the addr_std encoder and emit a structurally malformed
+  // message. Reject out-of-int8 workchains before message construction.
   if (addr.workchain < -128 || addr.workchain > 127) {
     promise.set_value(make_json_error(
         -32602,
@@ -1101,107 +1122,33 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     promise.set_value(make_json_error(-32602, "Missing 'body'", req_id));
     return;
   }
-  auto body_decoded_r = td::base64_decode(body_r.ok());
-  if (body_decoded_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Invalid base64 in 'body'", req_id));
-    return;
-  }
-  if (body_decoded_r.ok().size() > kMaxBocSize) {
-    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
-    return;
-  }
-  auto body_cell_r = vm::std_boc_deserialize(td::Slice(body_decoded_r.ok()));
+  auto body_cell_r = parse_optional_boc_string(body_r.ok(), "body");
   if (body_cell_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Invalid BOC in 'body'", req_id));
+    promise.set_value(make_json_error(-32602, body_cell_r.error().message().str(), req_id));
     return;
   }
   auto body_cell = body_cell_r.move_as_ok();
 
   // Parse optional init_code and init_data
-  td::Ref<vm::Cell> init_code, init_data;
-  auto code_r = params.get_optional_string_field("init_code");
-  if (code_r.is_ok() && !code_r.ok().empty()) {
-    auto dec = td::base64_decode(code_r.ok());
-    if (dec.is_error()) {
-      promise.set_value(make_json_error(-32602, "invalid base64 in init_code", req_id));
-      return;
-    }
-    if (dec.ok().size() > kMaxBocSize) {
-      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
-      return;
-    }
-    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-    if (cell.is_error()) {
-      promise.set_value(make_json_error(-32602, "invalid BOC in init_code", req_id));
-      return;
-    }
-    init_code = cell.move_as_ok();
+  auto init_code_r = parse_optional_boc_field(params, "init_code");
+  if (init_code_r.is_error()) {
+    promise.set_value(make_json_error(-32602, init_code_r.error().message().str(), req_id));
+    return;
   }
-  auto data_r = params.get_optional_string_field("init_data");
-  if (data_r.is_ok() && !data_r.ok().empty()) {
-    auto dec = td::base64_decode(data_r.ok());
-    if (dec.is_error()) {
-      promise.set_value(make_json_error(-32602, "invalid base64 in init_data", req_id));
-      return;
-    }
-    if (dec.ok().size() > kMaxBocSize) {
-      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
-      return;
-    }
-    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-    if (cell.is_error()) {
-      promise.set_value(make_json_error(-32602, "invalid BOC in init_data", req_id));
-      return;
-    }
-    init_data = cell.move_as_ok();
+  auto init_data_r = parse_optional_boc_field(params, "init_data");
+  if (init_data_r.is_error()) {
+    promise.set_value(make_json_error(-32602, init_data_r.error().message().str(), req_id));
+    return;
   }
 
-  // Build external inbound message
-  // Message = message$_ info:CommonMsgInfo init:(Maybe (Either StateInit ^StateInit)) body:(Either X ^X)
-  vm::CellBuilder cb;
-
-  // CommonMsgInfo: ext_in_msg_info$10 src:MsgAddressExt dest:MsgAddressInt import_fee:Grams
-  cb.store_long(0b10, 2);    // ext_in_msg_info tag
-  cb.store_long(0b00, 2);    // addr_none for src (MsgAddressExt)
-  // dest: addr_std$10 anycast:(Maybe Anycast) workchain:int8 address:bits256
-  cb.store_long(0b10, 2);    // addr_std tag
-  cb.store_long(0, 1);       // no anycast
-  cb.store_long(addr.workchain, 8);
-  cb.store_bits(addr.addr.cbits(), 256);
-  cb.store_long(0, 4);       // import_fee: 0 grams (VarUInteger 16, len=0)
-
-  // init: Maybe (Either StateInit ^StateInit)
-  bool has_init = init_code.not_null() || init_data.not_null();
-  if (has_init) {
-    cb.store_long(1, 1);     // Maybe: present
-    cb.store_long(1, 1);     // Either: right (^StateInit, as ref)
-    // Build StateInit cell
-    vm::CellBuilder si_cb;
-    si_cb.store_long(0, 1);  // split_depth: nothing
-    si_cb.store_long(0, 1);  // special: nothing
-    if (init_code.not_null()) {
-      si_cb.store_long(1, 1);
-      si_cb.store_ref(init_code);
-    } else {
-      si_cb.store_long(0, 1);
-    }
-    if (init_data.not_null()) {
-      si_cb.store_long(1, 1);
-      si_cb.store_ref(init_data);
-    } else {
-      si_cb.store_long(0, 1);
-    }
-    si_cb.store_long(0, 1);  // library: empty HashmapE
-    cb.store_ref(si_cb.finalize());
-  } else {
-    cb.store_long(0, 1);     // Maybe: absent
+  auto msg_cell_r = build_external_message_cell_by_ref(addr, init_code_r.move_as_ok(), init_data_r.move_as_ok(),
+                                                       std::move(body_cell));
+  if (msg_cell_r.is_error()) {
+    promise.set_value(
+        make_json_error(-32602, PSTRING() << "Failed to build external message: " << msg_cell_r.error(), req_id));
+    return;
   }
-
-  // body: Either X ^X — store as ref to avoid overflow
-  cb.store_long(1, 1);       // Either: right (^X, as ref)
-  cb.store_ref(body_cell);
-
-  auto msg_cell = cb.finalize();
+  auto msg_cell = msg_cell_r.move_as_ok();
   auto msg_boc_r = vm::std_boc_serialize(msg_cell);
   if (msg_boc_r.is_error()) {
     promise.set_value(make_json_error(-32603, "Failed to serialize message", req_id));
@@ -1352,10 +1299,6 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 
                   td::Ref<vm::Cell> effective_code = init_code.not_null() ? init_code : parsed.code_cell;
                   td::Ref<vm::Cell> effective_data = init_data.not_null() ? init_data : parsed.data_cell;
-                  td::Ref<vm::Cell> new_state;
-                  if (effective_code.not_null() || effective_data.not_null()) {
-                    new_state = tos::GenericAccount::get_init_state(effective_code, effective_data);
-                  }
                   if (effective_code.is_null()) {
                     promise.set_value(make_json_error(-32603,
                         "estimateFee requires deploy init_code/init_data or an active account state", req_id));
@@ -1369,11 +1312,12 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   auto config_query = tos::serialize_tl_object(
                       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(config_inner)), true);
 
-                  td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
+                  td::actor::send_closure(
+                      self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
                       td::PromiseCreator::lambda(
-                          [addr, body_cell = std::move(body_cell), new_state = std::move(new_state),
-                           effective_code = std::move(effective_code), effective_data = std::move(effective_data),
-                           parsed = std::move(parsed), ignore_chksig, req_id = std::move(req_id),
+                          [addr, body_cell = std::move(body_cell), effective_code = std::move(effective_code),
+                           effective_data = std::move(effective_data), parsed = std::move(parsed), ignore_chksig,
+                           req_id = std::move(req_id),
                            promise = std::move(promise)](td::Result<td::BufferSlice> config_res) mutable {
                             if (config_res.is_error()) {
                               promise.set_value(make_json_error(-32603,
@@ -1435,13 +1379,15 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                                 parsed.storage_last_paid, false, is_masterchain);
                             auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
 
-                            auto message = tos::GenericAccount::create_ext_message(addr, new_state, body_cell);
-                            if (message.is_null()) {
-                              promise.set_value(make_json_error(-32602,
-                                  "Failed to build external message (body or init state too large to encode)",
+                            auto message_r = tos::GenericAccount::create_ext_message_checked(addr, effective_code,
+                                                                                             effective_data, body_cell);
+                            if (message_r.is_error()) {
+                              promise.set_value(make_json_error(
+                                  -32602, PSTRING() << "Failed to build external message: " << message_r.error(),
                                   req_id));
                               return;
                             }
+                            auto message = message_r.move_as_ok();
                             vm::CellStorageStat in_msg_stat;
                             in_msg_stat.add_used_storage(message, true, 3);
                             auto in_fwd_fee =

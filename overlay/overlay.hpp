@@ -34,6 +34,7 @@
 #include "fec/fec.h"
 #include "keys/encryptor.h"
 #include "rldp2/rldp.h"
+#include "td/actor/SharedFuture.h"
 #include "td/utils/DecTree.h"
 #include "td/utils/LRUCache.h"
 #include "td/utils/List.h"
@@ -231,6 +232,8 @@ class OverlayImpl : public Overlay {
   void receive_nodes_from_db_v2(tl_object_ptr<tos_api::overlay_nodesV2> nodes) override;
 
   void get_self_node(td::Promise<OverlayNode> promise);
+  td::actor::Task<OverlayNode> get_self_node_coro();
+  td::actor::Task<OverlayNode> get_self_node_inner();
 
   void alarm() override;
   void start_up() override;
@@ -404,6 +407,8 @@ class OverlayImpl : public Overlay {
   }
 
  private:
+  friend class OverlayImplPeerCleanupTest;
+
   template <class T>
   void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {
     callback_->receive_query(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));
@@ -469,6 +474,7 @@ class OverlayImpl : public Overlay {
   void del_from_plumtree_neighbour_list(OverlayPeer *P);
   void del_from_all_neighbour_lists(OverlayPeer *P);
   OverlayPeer *get_random_peer(bool only_alive = false);
+  OverlayPeer *get_random_neighbour_peer();
   bool is_root_public_key(const PublicKeyHash &key) const;
   bool has_good_peers() const;
   size_t neighbours_cnt() const;
@@ -511,6 +517,8 @@ class OverlayImpl : public Overlay {
   std::set<BroadcastHash> delivered_broadcasts_;
 
   std::queue<BroadcastHash> bcast_lru_;
+
+  std::shared_ptr<td::actor::SharedFuture<OverlayNode>> self_node_future_;
 
   void bcast_gc();
 

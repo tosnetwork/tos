@@ -39,7 +39,9 @@ class SharedFuture {
       co_await token.check();
       value_ = std::move(result);
       is_resolved = true;
-      for (auto& p : promises_) {
+      std::vector<Promise<T>> promises;
+      promises.swap(promises_);
+      for (auto& p : promises) {
         p.set_result(value_.clone());
       }
     }
@@ -54,6 +56,23 @@ class SharedFuture {
   std::vector<Promise<T>> promises_;
   CancellationTokenSource cancellation_;
 };
+
+// Await a cached shared operation and evict the cache entry if it fails. The
+// identity check prevents an older failed operation from clearing a newer one
+// installed by another waiter.
+template <typename T>
+Task<T> await_shared_future(std::shared_ptr<SharedFuture<T>>& cache) {
+  CHECK(cache);
+  auto future = cache;
+  auto result = co_await future->get().wrap();
+  if (result.is_error()) {
+    if (cache == future) {
+      cache.reset();
+    }
+    co_return result.move_as_error();
+  }
+  co_return result.move_as_ok();
+}
 
 constexpr int AWAIT_TIMEOUT_CODE = 6520;
 

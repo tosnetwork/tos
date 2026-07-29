@@ -430,6 +430,9 @@ class BroadcastsPlumtree::Impl {
   td::Timestamp next_alarm_at();
   void gc(OverlayImpl *overlay);
   void remove_peer(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer);
+  void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
+  void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
+  bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
 
  private:
   td::actor::ActorId<adnl::AdnlSenderInterface> sender_;
@@ -467,6 +470,7 @@ class BroadcastsPlumtree::Impl {
   void remove_inactive_eager_peers(OverlayImpl *overlay, PlumtreeSlot &slot);
   bool add_eager_peer_ref(adnl::AdnlNodeIdShort peer);
   bool remove_eager_peer_ref(adnl::AdnlNodeIdShort peer);
+  bool remove_peer_state(adnl::AdnlNodeIdShort peer);
   std::vector<adnl::AdnlNodeIdShort> get_eager_mtu_peers() const;
   void refresh_eager_mtu(OverlayImpl *overlay) const;
   void promote_eager(OverlayImpl *overlay, PlumtreeSlot &slot, adnl::AdnlNodeIdShort peer, bool force);
@@ -814,9 +818,42 @@ void BroadcastsPlumtree::Impl::remove_eager(OverlayImpl *overlay, PlumtreeSlot &
 }
 
 void BroadcastsPlumtree::Impl::remove_peer(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer) {
-  for (auto &slot : slots_) {
-    remove_eager(overlay, slot, peer);
+  if (remove_peer_state(peer)) {
+    refresh_eager_mtu(overlay);
   }
+}
+
+bool BroadcastsPlumtree::Impl::remove_peer_state(adnl::AdnlNodeIdShort peer) {
+  bool mtu_peers_changed = false;
+  for (auto &slot : slots_) {
+    slot.pending_feedback.erase(peer);
+    if (slot.eager.erase(peer) > 0) {
+      mtu_peers_changed = remove_eager_peer_ref(peer) || mtu_peers_changed;
+    }
+  }
+  return mtu_peers_changed;
+}
+
+void BroadcastsPlumtree::Impl::add_peer_state_for_test(adnl::AdnlNodeIdShort peer) {
+  CHECK(!slots_.empty());
+  auto &slot = slots_.front();
+  slot.pending_feedback[peer] = td::Timestamp::in(10.0);
+  if (slot.eager.insert(peer).second) {
+    add_eager_peer_ref(peer);
+  }
+}
+
+void BroadcastsPlumtree::Impl::remove_peer_state_for_test(adnl::AdnlNodeIdShort peer) {
+  remove_peer_state(peer);
+}
+
+bool BroadcastsPlumtree::Impl::has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const {
+  if (eager_peer_refcnt_.contains(peer) || eager_peer_activity_.contains(peer)) {
+    return true;
+  }
+  return std::any_of(slots_.begin(), slots_.end(), [&](const auto &slot) {
+    return slot.eager.contains(peer) || slot.pending_feedback.contains(peer);
+  });
 }
 
 PlumtreeFecBroadcastState *BroadcastsPlumtree::Impl::get_state(const td::Bits256 &broadcast_id) {
@@ -2274,6 +2311,18 @@ void BroadcastsPlumtree::gc(OverlayImpl *overlay) {
 
 void BroadcastsPlumtree::remove_peer(OverlayImpl *overlay, adnl::AdnlNodeIdShort peer) {
   impl_->remove_peer(overlay, peer);
+}
+
+void BroadcastsPlumtree::add_peer_state_for_test(adnl::AdnlNodeIdShort peer) {
+  impl_->add_peer_state_for_test(peer);
+}
+
+void BroadcastsPlumtree::remove_peer_state_for_test(adnl::AdnlNodeIdShort peer) {
+  impl_->remove_peer_state_for_test(peer);
+}
+
+bool BroadcastsPlumtree::has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const {
+  return impl_->has_peer_state_for_test(peer);
 }
 
 }  // namespace overlay

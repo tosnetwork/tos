@@ -2,7 +2,23 @@
 
 ## Status
 
-Follow-up to
+**Current status (2026-07-29): resolved as an upstream-retention symptom, not
+a `BufferAllocator` leak.**
+The diagnostic proposed in this report was subsequently wired into node3's
+periodic memory telemetry. On current `main` after PR #15, PR #16, and
+`1c137fa44`, `BufferAllocator` `live_bytes` stayed between 590.6 and 591.2 MB
+over the 00:38-00:47 UTC window instead of following the former residual
+slope. A 00:26-00:47 UTC differential heap profile attributed the remaining
+37.2 MB net delta entirely to ordinary RocksDB write paths, not retained
+BufferRaw objects.
+
+The best-supported attribution for the old net BufferAllocator growth is live
+backlog retained by the workchain-0 state-resolution/standstill retry storm:
+the slope disappeared when that liveness bug was fixed, and the buffers now
+drain normally. No allocator pooling or `BufferAllocator` ownership change is
+required.
+
+Historical context follows. This report was a follow-up to
 [node3-residual-leak-archive-memtable-2026-07-26.md](node3-residual-leak-archive-memtable-2026-07-26.md).
 After the Bug A / Bug B fixes landed and were re-profiled live, total residual
 growth per comparable window dropped ~55% (625-680 MB → 284-332 MB per
@@ -20,9 +36,9 @@ and TL parse/serialize — i.e. it's a shared low-level allocator used by many
 otherwise-unrelated modules, not evidence any one of them is uniquely at
 fault. This document records what was investigated in `BufferAllocator`
 itself: whether these allocations are actually freed, and whether the
-allocator can be made to prefer recycled memory. **Nothing here has been
-changed or fixed — this is an analysis, with one proposed (not yet
-implemented) diagnostic step.**
+allocator can be made to prefer recycled memory. At that point this was an
+analysis with one proposed diagnostic step; the current result is recorded
+above.
 
 ## Is the memory `create_reader` allocates ever freed?
 
@@ -69,7 +85,7 @@ The fix is entirely different depending on which one this is (find-the-leaked-
 reference vs. add-backpressure/queue-limits), and neither fix lives in
 `BufferAllocator`.
 
-### A cheap way to tell them apart, not yet done
+### Diagnostic proposed then, now completed
 
 `BufferAllocator::get_buffer_mem()` (`buffer.h:82`, backed by the atomic
 `buffer_mem` counter maintained in `create_buffer_raw`/`dec_ref_cnt`) already
@@ -80,9 +96,11 @@ codebase: `test/test-download-state-budget.cpp` asserts it does *not* grow
 across various parse/download operations (e.g. lines 718, 762, 786, 2221,
 2237).
 
-It is **not currently wired into node3's periodic `mem-stat` log**
-(`validator-engine.cpp:1468`, the same line that logs `JEMALLOC_STATS`).
-Adding it there and watching it over a diff window would directly
+At the time of the original report it was not wired into node3's periodic
+`mem-stat` log. It was subsequently exposed through
+`BufferAllocator::get_memory_stats().live_bytes` (the same underlying
+process-wide counter) and observed over live windows. Watching it together
+with `stats.allocated` directly
 distinguish the two cases above:
 
 - Flat/oscillating, not tracking `stats.allocated`'s slope ⇒ backlog
@@ -92,8 +110,9 @@ distinguish the two cases above:
   (Plumtree vs. QUIC vs. TL) becomes the map of where to look for the
   retaining reference.
 
-**Proposed, not implemented**: add `BufferAllocator::get_buffer_mem()` to the
-existing `mem-stat` log line in `validator-engine.cpp`.
+**Result:** the live counter is flat/oscillating after the workchain-0
+liveness fixes and does not track an unbounded `stats.allocated` slope. This
+rules out a `BufferAllocator` reference leak in the measured deployment.
 
 ## Can `create_reader` be optimized to prefer already-freed memory?
 
@@ -133,7 +152,7 @@ how the allocator serves requests.
 
 ## Recommendation
 
-Don't touch `BufferAllocator`. Wire up `get_buffer_mem()` logging (cheap,
-already-trusted counter, one line) and re-run a diff window to determine
-whether this is a leak or a backlog before deciding where — if anywhere —
-a fix belongs.
+Don't change `BufferAllocator`. Keep the existing live-byte telemetry and
+alert on a sustained slope only when it correlates with a growing owning
+container or in-flight queue. The completed observation identifies the old
+slope as retry backlog and requires no allocator-level fix.

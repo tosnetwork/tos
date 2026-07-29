@@ -150,6 +150,22 @@ TEST(Crypto, ed25519) {
 */
 }
 
+TEST(Crypto, AesPrivateKeyExportImportRoundTrip) {
+  td::SecureString key_bytes(32);
+  for (size_t i = 0; i < key_bytes.size(); ++i) {
+    key_bytes.as_mutable_slice()[i] = static_cast<char>(i);
+  }
+
+  tos::PrivateKey original{tos::privkeys::AES(key_bytes.as_slice())};
+  auto encoded = original.export_as_slice();
+  ASSERT_EQ(encoded.size(), 36u);
+
+  auto decoded = tos::PrivateKey::import(encoded.as_slice()).move_as_ok();
+  auto reencoded = decoded.export_as_slice();
+  ASSERT_EQ(reencoded.as_slice(), encoded.as_slice());
+  ASSERT_EQ(decoded.compute_short_id(), original.compute_short_id());
+}
+
 TEST(Crypto, wycheproof) {
   std::vector<std::pair<std::string, std::string>> bad_tests;
   auto json_str = wycheproof_ed25519();

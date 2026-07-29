@@ -24,6 +24,21 @@ allows the mutable and transaction-history targets to be configured, and
 opens CellDB, StateDB, and WalletIndexDb as ordinary RocksDB databases without
 transaction history.
 
+### Latest validation (2026-07-29)
+
+The conclusion remains valid after the separate workchain-0 standstill was
+fixed. Node3 restarted at 00:06 UTC on current `main`; after catch-up,
+process-tracked `BufferAllocator` live bytes stayed between 590.6 and
+591.2 MB over 00:38-00:47 UTC. A `jeprof --base` diff for PID 3231848 from
+00:26 to 00:47 UTC reported only 37.2 MB net growth (about 1.8 MiB/min), and
+the entire positive delta was in `rocksdb::MemTable::Add` /
+`SkipListRep::Allocate` / `Arena` write allocation.
+
+No StateResolver, CandidateResolver, Plumtree, Overlay, or generic
+BufferAllocator retention stack matched the delta. This is the expected
+phase-dependent MemTable fill/flush behavior described in this report, not a
+new anonymous-memory leak.
+
 ## Direct evidence
 
 The one-minute monitor correlated process RSS with the sum of

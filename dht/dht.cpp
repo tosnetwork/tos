@@ -291,8 +291,8 @@ void DhtMemberImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::dht_getSig
   get_addr_list_queries_++;
 
   auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<DhtNode> R) mutable {
-    R.ensure();
-    promise.set_value(serialize_tl_object(R.move_as_ok().tl(), true));
+    TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
+    promise.set_value(serialize_tl_object(self_node.tl(), true));
   });
   get_self_node(std::move(P));
 }
@@ -469,9 +469,9 @@ void DhtMemberImpl::get_value_in(DhtKeyId key, td::Promise<DhtValue> result) {
                                        adnl = adnl_, list = get_nearest_nodes(key, k_ * 2), k = k_, a = a_,
                                        network_id = network_id_, id = id_,
                                        client_only = client_only_](td::Result<DhtNode> R) mutable {
-    R.ensure();
+    TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
     td::actor::create_actor<DhtQueryFindValueSingle>("FindValueQuery", key, print_id, id, std::move(list), k, a,
-                                                     network_id, R.move_as_ok(), client_only, SelfId, adnl,
+                                                     network_id, std::move(self_node), client_only, SelfId, adnl,
                                                      std::move(promise))
         .release();
   });
@@ -485,9 +485,9 @@ void DhtMemberImpl::get_value_many(DhtKey key, std::function<void(DhtValue)> cal
       [key = key_id, callback = std::move(callback), promise = std::move(promise), SelfId = actor_id(this),
        print_id = print_id(), adnl = adnl_, list = get_nearest_nodes(key_id, k_ * 2), k = k_, a = a_,
        network_id = network_id_, id = id_, client_only = client_only_](td::Result<DhtNode> R) mutable {
-        R.ensure();
+        TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
         td::actor::create_actor<DhtQueryFindValueMany>("FindValueManyQuery", key, print_id, id, std::move(list), k, a,
-                                                       network_id, R.move_as_ok(), client_only, SelfId, adnl,
+                                                       network_id, std::move(self_node), client_only, SelfId, adnl,
                                                        std::move(callback), std::move(promise))
             .release();
       });
@@ -508,11 +508,12 @@ void DhtMemberImpl::register_reverse_connection(adnl::AdnlNodeIdFull client, td:
                             td::actor::send_closure(SelfId, &DhtMemberImpl::get_self_node,
                                                     [=, list = std::move(list), signature = std::move(signature),
                                                      promise = std::move(promise)](td::Result<DhtNode> R) mutable {
-                                                      R.ensure();
+                                                      TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R),
+                                                                                "Failed to get self DHT node: ");
                                                       td::actor::create_actor<DhtQueryRegisterReverseConnection>(
                                                           "RegisterReverseQuery", key_id, std::move(client), ttl,
                                                           std::move(signature), print_id, id, std::move(list), k, a,
-                                                          network_id, R.move_as_ok(), client_only, SelfId, adnl,
+                                                          network_id, std::move(self_node), client_only, SelfId, adnl,
                                                           std::move(promise))
                                                           .release();
                                                     });
@@ -548,10 +549,10 @@ void DhtMemberImpl::request_reverse_ping_cont(adnl::AdnlNode target, td::BufferS
                  SelfId = actor_id(this), print_id = print_id(), list = get_nearest_nodes(key_id, k_ * 2),
                  client_only = client_only_, id = id_, k = k_, a = a_, adnl = adnl_,
                  network_id = network_id_](td::Result<DhtNode> R) mutable {
-    R.ensure();
+    TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
     td::actor::create_actor<DhtQueryRequestReversePing>(
         "RequestReversePing", client, std::move(target), std::move(signature), print_id, id, std::move(list), k, a,
-        network_id, R.move_as_ok(), client_only, SelfId, adnl, std::move(promise))
+        network_id, std::move(self_node), client_only, SelfId, adnl, std::move(promise))
         .release();
   });
 }
@@ -669,9 +670,9 @@ void DhtMemberImpl::check() {
                                          print_id = print_id(), adnl = adnl_, list = get_nearest_nodes(key, k_ * 2),
                                          k = k_, a = a_, network_id = network_id_, id = id_,
                                          client_only = client_only_](td::Result<DhtNode> R) mutable {
-      R.ensure();
+      TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
       td::actor::create_actor<DhtQueryFindNodes>("FindNodesQuery", key, print_id, id, std::move(list), k, a, network_id,
-                                                 R.move_as_ok(), client_only, SelfId, adnl, std::move(promise))
+                                                 std::move(self_node), client_only, SelfId, adnl, std::move(promise))
           .release();
     });
 
@@ -695,9 +696,10 @@ void DhtMemberImpl::send_store(DhtValue value, td::Promise<td::Unit> promise) {
                                        client_only = client_only_, list = get_nearest_nodes(key_id, k_ * 2), k = k_,
                                        a = a_, network_id = network_id_, SelfId = actor_id(this), adnl = adnl_,
                                        promise = std::move(promise)](td::Result<DhtNode> R) mutable {
-    R.ensure();
+    TRY_RESULT_PROMISE_PREFIX(promise, self_node, std::move(R), "Failed to get self DHT node: ");
     td::actor::create_actor<DhtQueryStore>("StoreQuery", std::move(value), print_id, id, std::move(list), k, a,
-                                           network_id, R.move_as_ok(), client_only, SelfId, adnl, std::move(promise))
+                                           network_id, std::move(self_node), client_only, SelfId, adnl,
+                                           std::move(promise))
         .release();
   });
 
@@ -705,26 +707,43 @@ void DhtMemberImpl::send_store(DhtValue value, td::Promise<td::Unit> promise) {
 }
 
 void DhtMemberImpl::get_self_node(td::Promise<DhtNode> promise) {
-  auto P = td::PromiseCreator::lambda([promise = std::move(promise), id = id_, keyring = keyring_,
-                                       client_only = client_only_,
-                                       network_id = network_id_](td::Result<adnl::AdnlNode> R) mutable {
-    R.ensure();
-    auto node = R.move_as_ok();
-    auto version = static_cast<td::int32>(td::Clocks::system());
-    td::BufferSlice B = serialize_tl_object(
-        DhtNode{node.pub_id(), node.addr_list(), version, network_id, td::BufferSlice{}}.tl(), true);
-    if (!client_only) {
-      CHECK(node.addr_list().size() > 0);
+  td::actor::send_closure(actor_id(this), &DhtMemberImpl::get_self_node_coro, std::move(promise));
+}
+
+td::actor::Task<DhtNode> DhtMemberImpl::get_self_node_coro() {
+  for (size_t iter = 0;; ++iter) {
+    if (!self_node_future_) {
+      self_node_future_ = std::make_shared<td::actor::SharedFuture<DhtNode>>(get_self_node_inner().start());
     }
-    auto P = td::PromiseCreator::lambda([promise = std::move(promise), node = std::move(node), version,
-                                         network_id](td::Result<td::BufferSlice> R) mutable {
-      R.ensure();
-      DhtNode n{node.pub_id(), node.addr_list(), version, network_id, R.move_as_ok()};
-      promise.set_result(std::move(n));
-    });
-    td::actor::send_closure(keyring, &keyring::Keyring::sign_message, id.pubkey_hash(), std::move(B), std::move(P));
-  });
-  td::actor::send_closure(adnl_, &adnl::Adnl::get_self_node, id_, std::move(P));
+    auto future = self_node_future_;
+    auto result = co_await td::actor::await_shared_future(self_node_future_).wrap();
+    if (result.is_error()) {
+      co_return result.move_as_error();
+    }
+    auto node = result.move_as_ok();
+    auto now = static_cast<td::int32>(td::Clocks::system());
+    if (node.version() >= now - 5 || iter > 0) {
+      co_return node;
+    }
+    if (self_node_future_ == future) {
+      self_node_future_.reset();
+    }
+  }
+}
+
+td::actor::Task<DhtNode> DhtMemberImpl::get_self_node_inner() {
+  VLOG(DHT_DEBUG) << "get_self_node_inner: start";
+  auto node = co_await td::actor::ask(adnl_, &adnl::Adnl::get_self_node, id_);
+  auto version = static_cast<td::int32>(td::Clocks::system());
+  td::BufferSlice data =
+      serialize_tl_object(DhtNode{node.pub_id(), node.addr_list(), version, network_id_, td::BufferSlice{}}.tl(), true);
+  if (!client_only_) {
+    CHECK(node.addr_list().size() > 0);
+  }
+  auto signature =
+      co_await td::actor::ask(keyring_, &keyring::Keyring::sign_message, id_.pubkey_hash(), std::move(data));
+  VLOG(DHT_DEBUG) << "get_self_node_inner: signed";
+  co_return DhtNode{node.pub_id(), node.addr_list(), version, network_id_, std::move(signature)};
 }
 
 td::Result<std::shared_ptr<DhtGlobalConfig>> Dht::create_global_config(tl_object_ptr<tos_api::dht_config_Global> conf) {

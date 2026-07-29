@@ -77,6 +77,44 @@ TEST(Toslib, Text) {
 
 using namespace toslib;
 
+TEST(Toslib, RejectsMaliciousLiteserverResponses) {
+  auto expected = tos::BlockIdExt{tos::masterchainId, tos::shardIdAll, 10, tos::RootHash::zero(),
+                                  tos::FileHash::zero()};
+  auto wrong = expected;
+  wrong.id.seqno++;
+
+  ASSERT_TRUE(detail::validate_liteserver_block_id(expected, expected).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_block_id(expected, wrong).is_error());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), false, 0).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), true, 1).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_page(td::Status::OK(), true, 0).is_error());
+  ASSERT_TRUE(
+      detail::validate_liteserver_transaction_page(td::Status::Error("invalid proof"), true, 1).is_error());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_result(1).is_ok());
+  ASSERT_TRUE(detail::validate_liteserver_transaction_result(0).is_error());
+  ASSERT_TRUE(detail::validate_previous_block_count(0).is_error());
+  ASSERT_TRUE(detail::validate_previous_block_count(1).is_ok());
+  ASSERT_TRUE(detail::validate_previous_block_count(2).is_ok());
+  ASSERT_TRUE(detail::validate_previous_block_count(3).is_error());
+}
+
+TEST(Toslib, BoundsMissingLibraryFetches) {
+  ASSERT_TRUE(detail::validate_library_depth(detail::max_library_depth).is_ok());
+  ASSERT_TRUE(detail::validate_library_depth(detail::max_library_depth + 1).is_error());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(false, 100).is_ok());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(true, 0).is_ok());
+  ASSERT_TRUE(detail::validate_missing_library_fetch_count(
+                        true, detail::max_smc_missing_library_fetches - 1)
+                  .is_ok());
+  ASSERT_TRUE(
+      detail::validate_missing_library_fetch_count(true, detail::max_smc_missing_library_fetches).is_error());
+}
+
+TEST(Toslib, InvalidPrivateKeyEncryptionReturnsError) {
+  DecryptedKey invalid_key({}, td::Ed25519::PrivateKey(td::SecureString()));
+  ASSERT_TRUE(invalid_key.encrypt("local password").is_error());
+}
+
 TEST(Toslib, PublicKey) {
   block::PublicKey::parse("pubjns2gp7DGCnEH7EOWeCnb6Lw1akm538YYaz6sdLVHfRB2").ensure_error();
   auto key = block::PublicKey::parse("Pubjns2gp7DGCnEH7EOWeCnb6Lw1akm538YYaz6sdLVHfRB2").move_as_ok();
@@ -289,7 +327,7 @@ TEST(Toslib, Mnemonic) {
 TEST(Toslib, Keys) {
   auto a = Mnemonic::create(td::SecureString(" Hello, . $^\n# World!   "), td::SecureString("cucumber")).move_as_ok();
   DecryptedKey decrypted_key(std::move(a));
-  EncryptedKey encrypted_key = decrypted_key.encrypt("qwerty");
+  EncryptedKey encrypted_key = decrypted_key.encrypt("qwerty").move_as_ok();
   auto other_decrypted_key = encrypted_key.decrypt("qwerty").move_as_ok();
   encrypted_key.decrypt("abcde").ensure_error();
   CHECK(decrypted_key.mnemonic_words == other_decrypted_key.mnemonic_words);

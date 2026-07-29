@@ -208,6 +208,13 @@ TEST(Bitstrings, main) {
   REGRESSION_VERIFY(os.str());
 }
 
+TEST(Bitstrings, ZeroLengthIntegerLoads) {
+  const unsigned char data = 0xff;
+  auto bits = td::ConstBitPtr{&data};
+  ASSERT_EQ(td::bitstring::bits_load_ulong(bits, 0), 0ULL);
+  ASSERT_EQ(td::bitstring::bits_load_long(bits, 0), 0LL);
+}
+
 void test_parse_dec(std::string s) {
   td::BigInt256 x, y;
   os << "s=\"" << s << "\"" << std::endl;
