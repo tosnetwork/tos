@@ -32,6 +32,8 @@
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl-test-loopback-implementation.h"
 #include "adnl/adnl.h"
+#include "dht/dht-bucket.hpp"
+#include "dht/dht-in.hpp"
 #include "dht/dht.h"
 #include "dht/dht.hpp"
 #include "td/utils/Random.h"
@@ -58,6 +60,15 @@ int main() {
   std::vector<tos::adnl::AdnlNodeIdFull> dht_ids;
   td::uint32 total_nodes = 11;
   std::atomic<td::uint32> remaining{0};
+  td::actor::ActorOwn<tos::dht::DhtMember> retry_dht;
+  auto retry_private_key = tos::PrivateKey{tos::privkeys::Ed25519::random()};
+  auto retry_public_key = retry_private_key.compute_public_key();
+  auto retry_full_id = tos::adnl::AdnlNodeIdFull{retry_public_key};
+  auto retry_short_id = retry_full_id.compute_short_id();
+  std::atomic<bool> retry_key_added{false};
+  bool retry_key_add_ok = false;
+  std::atomic<bool> retry_initial_id_registered{false};
+  bool retry_initial_id_exists = false;
 
   scheduler.run_in_context([&] {
     keyring = tos::keyring::Keyring::create(db_root_);
@@ -67,6 +78,21 @@ int main() {
 
     auto addr0 = tos::adnl::TestLoopbackNetworkManager::generate_dummy_addr_list(true);
     auto addr = tos::adnl::TestLoopbackNetworkManager::generate_dummy_addr_list();
+
+    td::actor::send_closure(keyring, &tos::keyring::Keyring::add_key, std::move(retry_private_key), true,
+                            [&](td::Result<> result) {
+                              retry_key_add_ok = result.is_ok();
+                              retry_key_added = true;
+                            });
+    auto retry_addr = tos::adnl::TestLoopbackNetworkManager::generate_dummy_addr_list();
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::add_id, retry_full_id, std::move(retry_addr),
+                            static_cast<td::uint8>(0));
+    td::actor::send_closure(network_manager, &tos::adnl::TestLoopbackNetworkManager::add_node_id, retry_short_id, true,
+                            true);
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::check_id_exists, retry_short_id, [&](td::Result<bool> result) {
+      retry_initial_id_exists = result.is_ok() && result.ok();
+      retry_initial_id_registered = true;
+    });
 
     for (td::uint32 i = 0; i < total_nodes; i++) {
       auto pk1 = tos::PrivateKey{tos::privkeys::Ed25519::random()};
@@ -98,6 +124,77 @@ int main() {
       td::actor::send_closure(adnl, &tos::adnl::Adnl::add_peer, n1.compute_short_id(), dht_ids[0], addr);
     }
   });
+
+  auto wait_for = [&](const std::atomic<bool> &done, td::Slice operation) {
+    auto timeout = td::Timestamp::in(10.0);
+    while (!done.load()) {
+      scheduler.run(0.1);
+      if (timeout.is_in_past()) {
+        LOG(FATAL) << "Timed out waiting for " << operation;
+      }
+    }
+  };
+
+  wait_for(retry_key_added, "DHT retry test key insertion");
+  CHECK(retry_key_add_ok);
+  wait_for(retry_initial_id_registered, "initial ADNL ID registration");
+  CHECK(retry_initial_id_exists);
+
+  scheduler.run_in_context([&] {
+    retry_dht = tos::dht::DhtMember::create(retry_short_id, db_root_, keyring.get(), adnl.get(), -1, 6, 3, true);
+  });
+  auto retry_dht_started_at = td::Timestamp::in(0.5);
+  while (!retry_dht_started_at.is_in_past()) {
+    scheduler.run(0.05);
+  }
+
+  std::atomic<bool> retry_id_deleted{false};
+  bool retry_id_delete_ok = false;
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::del_id, retry_short_id, [&](td::Result<td::Unit> result) {
+      retry_id_delete_ok = result.is_ok();
+      retry_id_deleted = true;
+    });
+  });
+  wait_for(retry_id_deleted, "temporary ADNL ID removal");
+  CHECK(retry_id_delete_ok);
+
+  LOG(ERROR) << "testing DHT self-node error propagation and retry";
+  std::atomic<bool> first_self_node_done{false};
+  bool first_self_node_failed = false;
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(retry_dht, &tos::dht::DhtMember::get_self_node, [&](td::Result<tos::dht::DhtNode> result) {
+      first_self_node_failed = result.is_error();
+      first_self_node_done = true;
+    });
+  });
+  wait_for(first_self_node_done, "initial DHT self-node failure");
+  CHECK(first_self_node_failed);
+
+  std::atomic<bool> retry_id_registered{false};
+  bool retry_id_exists = false;
+  scheduler.run_in_context([&] {
+    auto addr = tos::adnl::TestLoopbackNetworkManager::generate_dummy_addr_list();
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::add_id, retry_full_id, std::move(addr), static_cast<td::uint8>(0));
+    td::actor::send_closure(adnl, &tos::adnl::Adnl::check_id_exists, retry_short_id, [&](td::Result<bool> result) {
+      retry_id_exists = result.is_ok() && result.ok();
+      retry_id_registered = true;
+    });
+  });
+  wait_for(retry_id_registered, "ADNL ID registration");
+  CHECK(retry_id_exists);
+
+  std::atomic<bool> second_self_node_done{false};
+  bool second_self_node_succeeded = false;
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(retry_dht, &tos::dht::DhtMember::get_self_node, [&](td::Result<tos::dht::DhtNode> result) {
+      second_self_node_succeeded = result.is_ok() && result.ok().adnl_id().compute_short_id() == retry_short_id;
+      second_self_node_done = true;
+    });
+  });
+  wait_for(second_self_node_done, "DHT self-node retry");
+  CHECK(second_self_node_succeeded);
+  LOG(ERROR) << "DHT self-node error propagation and retry succeeded";
 
   LOG(ERROR) << "testing different values";
   auto key_pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};

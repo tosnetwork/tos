@@ -50,13 +50,11 @@ bool unpack_tomis(td::Ref<vm::CellSlice> cs, td::uint64& amount) {
 
 td::Ref<vm::Cell> GenericAccount::get_init_state(const td::Ref<vm::Cell>& code,
                                                  const td::Ref<vm::Cell>& data) noexcept {
-  return vm::CellBuilder()
-      .store_zeroes(2)
-      .store_ones(2)
-      .store_zeroes(1)
-      .store_ref(std::move(code))
-      .store_ref(std::move(data))
-      .finalize();
+  auto result = get_init_state_checked(code, data);
+  if (result.is_error()) {
+    return {};
+  }
+  return result.move_as_ok();
 }
 
 td::Result<td::Ref<vm::Cell>> GenericAccount::get_init_state_checked(const td::Ref<vm::Cell>& code,

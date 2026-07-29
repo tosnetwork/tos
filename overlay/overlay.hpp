@@ -407,6 +407,8 @@ class OverlayImpl : public Overlay {
   }
 
  private:
+  friend class OverlayImplPeerCleanupTest;
+
   template <class T>
   void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {
     callback_->receive_query(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));

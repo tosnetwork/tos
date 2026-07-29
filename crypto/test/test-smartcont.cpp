@@ -1084,6 +1084,9 @@ TEST(Smartcont, GenericAccountCheckedExternalMessage) {
 
   auto code_only_state_r = tos::GenericAccount::get_init_state_checked(code, {});
   ASSERT_TRUE(code_only_state_r.is_ok());
+  auto code_only_raw_state = tos::GenericAccount::get_init_state(code, {});
+  ASSERT_TRUE(code_only_raw_state.not_null());
+  ASSERT_EQ(code_only_raw_state->get_hash(), code_only_state_r.ok()->get_hash());
   block::gen::StateInit::Record code_only_state;
   ASSERT_TRUE(tlb::unpack_cell(code_only_state_r.move_as_ok(), code_only_state));
   ASSERT_TRUE(code_only_state.code.not_null());
@@ -1095,6 +1098,9 @@ TEST(Smartcont, GenericAccountCheckedExternalMessage) {
 
   auto data_only_state_r = tos::GenericAccount::get_init_state_checked({}, data);
   ASSERT_TRUE(data_only_state_r.is_ok());
+  auto data_only_raw_state = tos::GenericAccount::get_init_state({}, data);
+  ASSERT_TRUE(data_only_raw_state.not_null());
+  ASSERT_EQ(data_only_raw_state->get_hash(), data_only_state_r.ok()->get_hash());
   block::gen::StateInit::Record data_only_state;
   ASSERT_TRUE(tlb::unpack_cell(data_only_state_r.move_as_ok(), data_only_state));
   ASSERT_TRUE(data_only_state.code.not_null());
@@ -1111,6 +1117,14 @@ TEST(Smartcont, GenericAccountCheckedExternalMessage) {
   auto data_only_message = tos::GenericAccount::create_ext_message_checked(address, {}, data, body);
   ASSERT_TRUE(data_only_message.is_ok());
   ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(data_only_message.ok()));
+
+  auto raw_code_only_message = tos::GenericAccount::create_ext_message(address, code_only_raw_state, body);
+  ASSERT_TRUE(raw_code_only_message.not_null());
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(raw_code_only_message));
+
+  auto raw_data_only_message = tos::GenericAccount::create_ext_message(address, data_only_raw_state, body);
+  ASSERT_TRUE(raw_data_only_message.not_null());
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(raw_data_only_message));
 }
 
 TEST(Smartcont, GenericAccountCheckedExternalMessageCatchesCellBuilderFailure) {
@@ -1122,6 +1136,7 @@ TEST(Smartcont, GenericAccountCheckedExternalMessageCatchesCellBuilderFailure) {
 
   auto body = vm::CellBuilder().finalize();
   block::StdAddress address{0, td::Bits256::zero(), true};
+  ASSERT_TRUE(tos::GenericAccount::get_init_state(max_depth_code, {}).is_null());
   auto message = tos::GenericAccount::create_ext_message_checked(address, max_depth_code, {}, body);
   ASSERT_TRUE(message.is_error());
   ASSERT_EQ(message.error().message(), "Got cell write error");
