@@ -1144,18 +1144,46 @@ class TestConsensus : public td::actor::Actor {
                     << " persisted candidates; count after restart=" << after_restart;
       co_return td::Unit{};
     }
-    if (EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES == 0) {
+
+    // Several state resolutions may already be in flight when the restarted
+    // producer first reaches the finalized anchor. Each one starts the
+    // manager's state and block-data lookups in parallel, so the exact failure
+    // count is scheduler-dependent (2, 4, 6, ...). Let that startup burst
+    // drain, then verify the completed state-cache entry prevents any further
+    // anchor lookups while candidate production continues.
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.25));
+    auto settled_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
+    if (settled_anchor_failures == 0) {
       empty_chain_restart_error_ = "missing-manager-anchor fallback was not exercised";
       co_return td::Unit{};
     }
-    if (EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES > 2) {
+
+    auto settled_candidate_count = candidate_record_count(instance);
+    auto cache_reuse_target = settled_candidate_count + RECOVERY_CANDIDATES;
+    auto cache_reuse_deadline = td::Timestamp::in(DURATION * 0.1);
+    while (candidate_record_count(instance) < cache_reuse_target && !cache_reuse_deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    auto after_cache_reuse = candidate_record_count(instance);
+    if (after_cache_reuse < cache_reuse_target) {
       empty_chain_restart_error_ =
-          PSTRING() << "manager anchor was retried " << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES
-                    << " times after recovery; completed-ancestor cache was not reused";
+          PSTRING() << "candidate production stalled while checking completed-ancestor cache reuse; records "
+                    << settled_candidate_count << " -> " << after_cache_reuse;
+      co_return td::Unit{};
+    }
+
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.25));
+    auto final_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
+    if (final_anchor_failures != settled_anchor_failures) {
+      empty_chain_restart_error_ =
+          PSTRING() << "manager anchor failures increased after startup requests settled: "
+                    << settled_anchor_failures << " -> " << final_anchor_failures
+                    << "; completed-ancestor cache was not reused";
       co_return td::Unit{};
     }
     LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
-                 << " consecutive empty candidates: records " << stopped_count << " -> " << after_restart;
+                 << " consecutive empty candidates: records " << stopped_count << " -> " << after_cache_reuse
+                 << ", startup anchor failures=" << settled_anchor_failures;
     empty_chain_restart_completed_ = true;
     co_return td::Unit{};
   }
