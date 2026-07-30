@@ -28,6 +28,8 @@ The distinction is:
   service protocol, owner-operated terminals, discovery, clients, and
   independently released product profiles.
 
+![TOS Network vision: open coordination and settlement for AI services and physical edge intelligence](VISION.png)
+
 ## The Core Idea
 
 AI is moving in two directions at once:
