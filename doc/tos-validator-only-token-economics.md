@@ -456,11 +456,10 @@ R_bc = 3.352841228 TOS
 
 These values retain a 1.7:1 masterchain-to-basechain ratio and project
 4,999,898,999.882592 TOS over 2,557 days at the locally measured 2.5
-masterchain and 2.5 unsplit-basechain blocks per second. The derivation,
-one-offline-validator comparison, and limitations are recorded in
-[`validator-reward-calibration-local-2026-07-30.md`](validator-reward-calibration-local-2026-07-30.md).
-They remain candidates until an independent, longer, multi-host calibration
-closes launch gate 11.
+masterchain and 2.5 unsplit-basechain blocks per second. These values remain
+candidates until their derivation, one-offline-validator behavior, and
+sensitivity to sustained multi-host production are independently verified and
+launch gate 11 is closed.
 
 ### 6.4 Outages and restarts
 
