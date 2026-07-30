@@ -16,6 +16,11 @@ execution engines or bypass the native TVM actor model.
 Start with:
 
 - [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
+- [the-tos-protocol-implementation-plan.md](the-tos-protocol-implementation-plan.md) - repository boundaries and delivery plan for owner-operated TOS services
+- [ai-edge-computing-terminal-architecture.md](ai-edge-computing-terminal-architecture.md) - primary off-chain product architecture for turning owner-controlled hardware into bounded AI services
+- [local-gpu-sharing-use-case.md](local-gpu-sharing-use-case.md) - managed AI services on owner-controlled GPU hardware; bare GPU rental is excluded
+- [physical-ai-edge-terminal-use-case.md](physical-ai-edge-terminal-use-case.md) - site-bound Jetson/industrial terminals, offline operation, safe updates, real-time priority, actuator isolation, and fleet management
+- [local-open-weight-model-sharing-use-case.md](local-open-weight-model-sharing-use-case.md) - locally hosted open-weight model service requirements
 - [ai-actor-glossary.md](ai-actor-glossary.md) - shared terminology for agent, task, service, and verifier workflows
 - [ai-actor-message-catalog.md](ai-actor-message-catalog.md) - initial task, service, and verifier message catalog
 - [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md) - contract design guidance for agent accounts, task escrow, service actors, and verifier actors

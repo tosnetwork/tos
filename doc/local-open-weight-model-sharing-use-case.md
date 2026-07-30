@@ -7,8 +7,12 @@
 - Date: 2026-07-30
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- Terminal architecture:
+  [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Related compute use case:
-  [Local GPU Compute Sharing over TOS Network](local-gpu-sharing-use-case.md)
+  [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
+- Physical-terminal use case:
+  [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
 
 ## Purpose
 
@@ -22,21 +26,21 @@ open weights, and Llama 4. The exact model, variant, weights, quantization,
 license, acceptable-use policy, and hardware requirements must be checked at
 deployment time.
 
-This use case differs from both:
-
-- **raw GPU sharing**, where the consumer supplies executable work; and
-- **consumer-subscription forwarding**, where somebody proxies a personal
-  ChatGPT, Claude, or Kimi account.
+This use case differs from **consumer-subscription forwarding**, where
+somebody proxies a personal ChatGPT, Claude, or Kimi account. It also follows
+the terminal-wide prohibition on bare GPU rental and consumer-supplied
+execution.
 
 Here, the provider lawfully possesses a copy of the model weights, deploys the
-model on hardware she controls, selects the inference software and policy, and
-offers a bounded inference API. Consumers never receive shell access, GPU
-device access, model-host credentials, or the provider's owner key.
+model through an AI Edge Computing Terminal on hardware she controls, selects
+the inference software and policy, and offers a bounded inference API.
+Consumers never receive shell access, accelerator access, model-host
+credentials, or the provider's owner key.
 
 The provider does not need to run a validator. TOS supplies identity, naming,
-transport, capability discovery, payment, and settlement. Model-serving and
-AI Site components belong in the separate `tos-ai` product/protocol repository
-described by the implementation plan.
+transport, capability discovery, payment, and settlement. Model-serving,
+terminal, and AI Site components belong in the separate `tos-ai` product
+repository described by the implementation plan.
 
 ## Product Definition
 
@@ -47,6 +51,7 @@ versioned inference service:
 model weights
   + inference runtime
   + hardware allocation
+  + terminal resource and evidence profile
   + input/output contract
   + safety and privacy policy
   + availability and pricing
@@ -64,8 +69,8 @@ A provider may expose capabilities such as:
 - tool calling
 - structured JSON output
 
-Training, fine-tuning, arbitrary container execution, and raw CUDA access are
-separate compute profiles and are outside the initial inference MVP.
+Training, consumer-supplied models, arbitrary container execution, and raw
+CUDA access are outside the terminal product.
 
 ## Open Weights Do Not Remove License Obligations
 
@@ -136,8 +141,9 @@ As a model consumer, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, wallet and crypto, chain query APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-ai` repository | AI Site specification, model profile schema, `tos-edge`, runtime adapters, discovery, SDKs, clients, deployments, and conformance tests |
-| Provider's device | model weights, inference runtime, GPU/CPU resources, local policy, runtime key, `tos-edge`, and optional TOS Sites/RLDP ingress |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
+| `tos-ai` repository | AI terminal distribution, AI Site and model schemas, resource probes, model manager, runtime adapters, scheduler, discovery, SDKs, deployments, and conformance tests |
+| Terminal host | model weights, inference runtime, CPU/GPU/NPU resources, local policy, runtime key, bounded caches, `tos-edge-ai`, and optional TOS Sites/RLDP ingress |
 | TOS blockchain | service identity references, DNS, capability declarations, manifest commitments, payment, escrow, and settlement |
 
 Model weights, prompts, outputs, private context, runtime credentials, and
@@ -147,17 +153,23 @@ private logs must not be stored on-chain.
 
 ```mermaid
 flowchart LR
-    subgraph Provider["Provider's local infrastructure"]
+    subgraph Provider["AI Edge Computing Terminal"]
         Weights["Pinned model weights<br/>and model profile"]
+        Profiler["Resource profiler<br/>+ benchmark evidence"]
+        Manager["Model manager<br/>verify, cache, evict"]
         Runtime["vLLM / SGLang / Ollama /<br/>llama.cpp / compatible runtime"]
-        Scheduler["Admission + scheduler<br/>queue, context, VRAM"]
-        Edge["tos-edge<br/>auth, quote, payment,<br/>metering, receipt"]
+        Adapter["Runtime adapter"]
+        Scheduler["Task admission + scheduler<br/>queue, context, RAM/VRAM"]
+        Edge["tos-edge-ai<br/>auth, quote, payment,<br/>metering, receipt"]
         Ingress["TOS Sites / RLDP ingress"]
-        Hardware["GPU / CPU / accelerator"]
+        Hardware["GPU / CPU / NPU / accelerator"]
 
-        Weights --> Runtime
+        Profiler --> Edge
+        Weights --> Manager
+        Manager --> Adapter
         Hardware <--> Runtime
-        Runtime <--> Scheduler
+        Runtime <--> Adapter
+        Adapter <--> Scheduler
         Scheduler <--> Edge
         Edge <--> Ingress
     end
@@ -195,15 +207,17 @@ name.tos
   -> TOS DNS site record
   -> ADNL identity
   -> RLDP/TOS Sites ingress
-  -> tos-edge
-  -> bounded model scheduler
+  -> tos-edge-ai
+  -> bounded terminal admission and model scheduler
+  -> approved runtime adapter
   -> local inference runtime
   -> locally deployed weights and hardware
 ```
 
-The inference runtime must not be exposed directly to the public network.
-Public requests must pass through the authentication, payment, size, deadline,
-and admission controls in `tos-edge`.
+The inference runtime, accelerator device, container socket, and terminal
+administration must not be exposed directly to the public network. Public
+requests must pass through authentication, payment, size, deadline, and
+admission controls in the terminal.
 
 ## Provider Onboarding
 
@@ -260,7 +274,7 @@ The owner key should remain offline or in a protected administrative
 keystore. The public runtime receives revocable, time-bounded authorization
 and must not control the provider's domain or unrestricted wallet funds.
 
-### 4. Install the inference stack
+### 4. Install and preflight the AI Edge Computing Terminal
 
 The provider installs:
 
@@ -268,7 +282,7 @@ The provider installs:
 - an inference runtime such as vLLM, SGLang, Ollama, llama.cpp, or another
   compatible backend
 - the pinned model artifacts
-- `tos-edge`
+- the signed `tos-ai` terminal distribution and `tos-edge-ai`
 - a server-side TOS Sites/RLDP proxy when native RLDP ingress is unavailable
 
 The provider should first validate locally:
@@ -304,9 +318,9 @@ The service must never infer that all available hardware should be offered.
 The provider can reserve capacity, pause admission, drain active work, and
 withdraw a model profile.
 
-### 6. Run `tos-edge`
+### 6. Run the terminal service
 
-`tos-edge` provides the public service boundary:
+`tos-edge-core` plus `tos-edge-ai` provide the public service boundary:
 
 - challenge-response authentication
 - signed descriptor and manifest publication
@@ -507,7 +521,7 @@ readable and less stable for general discovery.
 sequenceDiagram
     participant C as AI Site Client
     participant D as TOS DNS / Discovery
-    participant E as tos-edge
+    participant E as tos-edge-ai
     participant S as Service Actor
     participant B as TOS Blockchain
     participant M as Local Model Runtime
@@ -583,7 +597,7 @@ timeout, runtime failure, partial output, and chain-observation failure.
 
 ### Invocation
 
-After verifying the quote and payment, `tos-edge`:
+After verifying the quote and payment, the terminal:
 
 1. validates input, model profile, policy, and deadlines
 2. reserves bounded queue, context, and accelerator capacity
@@ -745,11 +759,14 @@ provider and evidence policy are suitable.
 | Capability Registry | Available/partial | TOS core contract; model vocabulary and integration in `tos-ai` |
 | Task Escrow, Dispute, and Proof Attestation | Available/partial | TOS core contracts; optional advanced profiles in `tos-ai` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
-| Public `.tos` registration product | To build | `tos-ai` application contracts, tooling, and deployment |
+| Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
+| Terminal/resource schema and Edge Core | To build | `tos-protocol` |
+| Tier 1 AI terminal distribution | To build | `tos-ai` |
+| Resource probes and benchmark evidence | To build | `tos-ai` |
 | AI Site and model-profile schemas | To build | `tos-ai/spec/` |
-| `tos-edge` | To build | `tos-ai` |
-| Model scheduler and runtime adapters | To build | `tos-ai` |
-| Session, quote, invocation, and streaming protocol | To build | `tos-ai` |
+| `tos-edge-ai` | To build | `tos-ai`, consuming released Edge Core |
+| Model manager, task scheduler, and runtime adapters | To build | `tos-ai` |
+| Session, quote, invocation, and streaming protocol | To build | base in `tos-protocol`, inference extension in `tos-ai` |
 | Token/media metering and inference receipts | To build | `tos-ai` |
 | Model-aware capability discovery and clients | To build | `tos-ai` |
 | License and artifact provenance validation | To build | `tos-ai` |
@@ -757,24 +774,26 @@ provider and evidence policy are suitable.
 | Model, runtime, and hardware attestation | Later | separate verification profile |
 
 Today, the available TOS infrastructure can manually expose a local
-OpenAI-compatible inference server through ADNL/RLDP and TOS Sites. It does not
-yet provide the complete model manifest, discovery, quote, automatic payment,
+OpenAI-compatible inference server through ADNL/RLDP and TOS Sites. It does
+not yet provide the complete AI Edge Computing Terminal, resource evidence,
+model manager, adapters, manifest, discovery, quote, automatic payment,
 bounded admission, metering, and receipt product described here.
 
 ## Intended Ordinary-User Experience
 
 The final product should reduce provider onboarding to:
 
-1. install `tos-edge` and a supported inference backend
+1. install the signed AI terminal package and a supported inference backend
 2. select or import a locally downloaded model
 3. review and accept the detected license and notices
 4. verify artifact hashes
-5. run hardware and context-capacity checks
-6. choose public models, limits, retention, and price
+5. run versioned hardware, runtime, workload, and context-capacity checks
+6. reserve owner capacity and choose public models, limits, retention, thermal
+   policy, and price
 7. create a revocable runtime identity
 8. expose a raw ADNL endpoint
 9. optionally register and bind `name.tos`
-10. publish the signed manifest
+10. publish signed terminal and service manifests
 11. register capabilities and settlement
 12. pass a public self-test
 13. begin accepting paid inference
@@ -787,24 +806,28 @@ claims and must not advertise unsupported capacity.
 The first interoperable locally hosted model MVP is complete when an ordinary
 user can:
 
-1. install the product without building or operating a validator
+1. install a Tier 1 terminal without building or operating a validator
 2. import a pinned, license-reviewed model artifact
-3. validate local runtime and hardware compatibility
-4. configure context, output, concurrency, queue, memory, disk, and price
+3. validate local runtime and hardware compatibility and run a versioned
+   workload benchmark
+4. reserve owner capacity and configure context, output, concurrency, queue,
+   memory, disk, thermal, and price
    limits
 5. create a revocable runtime identity
 6. expose the service through raw ADNL
 7. optionally bind it to `name.tos`
-8. publish a signed, expiring manifest with an exact model profile
+8. publish signed, expiring terminal and service manifests with an exact model
+   profile and evidence levels
 9. register capabilities and a settlement contract
 10. appear in an independent model-aware discovery service
 11. issue a signed quote with a maximum price
 12. verify payment before expensive model admission
 13. execute and stream bounded inference
 14. return a signed result and usage receipt
-15. support cancellation, timeout, failure, and refund rules
+15. support cancellation, timeout, adapter crash, OOM, and refund rules
 16. upgrade a model without silently changing active quotes
-17. restart without losing required payment or settlement state
+17. restart without duplicating work or losing required payment or settlement
+    state
 18. pause and drain public work safely
 19. remain within configured RAM, VRAM, disk, connection, queue, cache, and
     settlement limits during an extended soak test
@@ -835,8 +858,8 @@ claim compatibility.
 ## Recommended Positioning
 
 The provider is not reselling a personal third-party subscription and is not
-renting an unrestricted GPU. She is operating a locally hosted, versioned
-model service under her own TOS identity.
+offering hardware rental. She is operating a locally hosted, versioned model
+service under her own TOS identity.
 
 The intended result is:
 

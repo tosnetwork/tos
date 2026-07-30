@@ -6,8 +6,8 @@
 - Companion PDF: [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf)
 - Assessment date: 2026-07-30
 - Scope: repository-level gap analysis and an implementation roadmap for
-  owner-operated Internet services, with local model inference as the first
-  reference profile
+  owner-operated Internet services, with an AI Edge Computing Terminal and
+  local model inference as the first reference product
 - Repository model: TOS core as a dependency, a separate generic service
   protocol repository, and independently released vertical product profiles
 
@@ -19,7 +19,8 @@ node, discovery model, and economic model, but it is not yet a normative
 protocol specification that independent implementations can follow.
 
 The use cases derived from the vision cover more than AI inference. An
-owner-operated `name.tos` endpoint may expose a local model, GPU service,
+owner-operated `name.tos` endpoint may expose a local model, a managed AI
+service backed by local accelerators, a site-bound physical AI capability,
 storage capacity, physical or digital goods, human skills, tools, or a
 composition of these resources. These services share identity, discovery,
 authentication, quote, payment, receipt, evidence, privacy, and transport
@@ -49,17 +50,34 @@ The main missing common surfaces are:
 - multi-region routing, relays, subscriptions, streaming settlement, and
   advanced verification
 
+The first deployable product is centered on the
+[TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md):
+an owner-operated appliance or workstation that measures its usable
+resources, runs approved runtime adapters, admits bounded tasks, exposes them
+through TOS networking, and produces payable signed receipts. The terminal is
+not a validator, consensus participant, mining role, public shell, or raw GPU
+lease merely because it contains an accelerator.
+
+This changes the primary product abstraction from “a remote GPU” to “a
+versioned AI service capability.” Consumers describe a model or task,
+constraints, privacy/evidence requirements, region, and budget. Terminal and
+discovery software select a compatible local runtime and device. Hardware
+model numbers and vendor TOPS remain scheduling evidence, not the service
+contract.
+
 The Phase 1 MVP should not modify validator consensus, execute application
 workloads inside `validator-engine`, or place the complete product stack in
 this repository. TOS should remain the general-purpose blockchain, naming,
 settlement, and ADNL/RLDP networking substrate.
 
 Before implementing multiple vertical products, Phase 0 should define a
-generic TOS Service Protocol and profile extension mechanism. Phase 1 should
-then validate that common layer with one bounded, owner-operated local model
-inference profile. Storage, general GPU compute, and commerce remain separate
-profiles and release tracks rather than being forced into the inference
-protocol or the TOS node.
+generic TOS Service Protocol, profile extension mechanism, and terminal
+foundation. Phase 1 should validate that common layer with one bounded,
+owner-operated managed-inference terminal on a Tier 1 Linux/NVIDIA reference
+platform. The site-bound physical terminal, storage, and commerce remain
+separate profiles and release tracks rather than being forced into the
+inference protocol, terminal base, or TOS node. Bare GPU rental and arbitrary
+consumer execution are excluded rather than deferred.
 
 ## Repository Boundary and Ownership
 
@@ -76,8 +94,8 @@ The central boundary rule is:
 | Repository | Owns | Does not own |
 |---|---|---|
 | `tos` (this repository) | consensus and validators, VM and generic smart-contract tooling, chain data and stable query APIs, wallet/crypto primitives, DNS resolution, ADNL/DHT/RLDP, and TOS Sites transport | application manifests, model/storage/commerce execution, derived discovery, or vertical product releases |
-| `tos-protocol` | base descriptor and manifest schemas, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, base discovery schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, catalogs, or vertical business policy |
-| `tos-ai` | inference, local open-weight models, GPU scheduling, agent/tool profiles, AI clients, model provenance, and AI-specific conformance tests | generic domain ownership or unrelated storage/commerce workflows |
+| `tos-protocol` | base descriptor and manifest schemas, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, base discovery schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, catalogs, or vertical business policy |
+| `tos-ai` | General and physical AI Edge Computing Terminal distributions, inference and physical-world task profiles, local open-weight models, resource probes and benchmarks, model/runtime adapters, bounded and real-time scheduling, signed updates, fleet management, AI clients, model provenance, packaging, and AI-specific conformance tests | bare GPU rental, consumer-supplied execution, generic domain ownership, or unrelated storage/commerce workflows |
 | `tos-storage` | object APIs, storage leases, content catalogs, storage metering, replication, and availability evidence | TOS consensus or AI model execution |
 | `tos-commerce` | store and offer schemas, orders, inventory, physical/digital fulfillment, human-service workflows, refunds, and commerce discovery | TOS consensus, generic transport, or model execution |
 
@@ -118,7 +136,7 @@ flowchart TB
     end
 
     subgraph Profiles["Independent vertical repositories"]
-        AI["tos-ai<br/>models + GPU + agents"]
+        AI["tos-ai<br/>AI Edge Terminal<br/>models + tasks + agents"]
         Storage["tos-storage<br/>objects + leases"]
         Commerce["tos-commerce<br/>offers + orders + delivery"]
     end
@@ -171,9 +189,15 @@ tos-protocol/
 
 tos-ai/
   spec/
+  apps/terminal/
+  probes/
+  benchmarks/
   adapters/models/
-  adapters/gpu/
+  adapters/accelerators/
+  adapters/sensors/
   services/tos-edge-ai/
+  services/fleet/
+  services/update-controller/
   apps/ai-client/
   tests/
 
@@ -249,11 +273,17 @@ flowchart TB
         Routing["Multi-runtime policy routing<br/>TO BUILD"]
     end
 
-    subgraph Edge["Owner-Operated Edge Plane"]
+    subgraph Edge["Owner-Operated Terminal Plane"]
         EdgeDaemon["tos-edge core<br/>TO BUILD"]
+        Terminal["AI Edge Terminal distribution<br/>TO BUILD BY tos-ai"]
+        Profiler["Resource probes + benchmarks<br/>TO BUILD BY tos-ai"]
         Ingress["Authenticated ingress + rate limits<br/>TO BUILD"]
         Supervisor["Runtime supervisor / sandbox<br/>TO BUILD"]
-        Model["Inference / GPU adapters<br/>TO BUILD BY PROFILE"]
+        Model["Model/runtime adapters<br/>TO BUILD BY tos-ai"]
+        Scheduler["Bounded task scheduler<br/>TO BUILD BY tos-ai"]
+        Physical["Physical-terminal profile<br/>TO BUILD BY tos-ai"]
+        Update["Signed update + rollback<br/>TO BUILD BY tos-ai"]
+        Fleet["Fleet enrollment + rollout<br/>TO BUILD BY tos-ai"]
         StorageAdapter["Storage adapter<br/>TO BUILD BY PROFILE"]
         CommerceAdapter["Commerce adapter<br/>TO BUILD BY PROFILE"]
         Tools["MCP-style tool gateway<br/>TO BUILD"]
@@ -292,8 +322,16 @@ flowchart TB
     Relay --> Ingress
     Routing --> Ingress
     Ingress --> EdgeDaemon
+    Terminal --> EdgeDaemon
+    Terminal --> Profiler
     EdgeDaemon --> Supervisor
     EdgeDaemon --> Model
+    EdgeDaemon --> Scheduler
+    Scheduler --> Model
+    Terminal --> Physical
+    Physical --> Scheduler
+    Physical --> Update
+    Physical --> Fleet
     EdgeDaemon --> StorageAdapter
     EdgeDaemon --> CommerceAdapter
     EdgeDaemon --> Tools
@@ -309,7 +347,7 @@ flowchart TB
 
     class DNS,ChainIndex,Task,Attest,Chain,ADNL,Sites available;
     class Agent,Service,Capability,HTTPS,Policy partial;
-    class Browser,ClientSDK,VerticalClients,Semantic,Registrar,Descriptor,Manifest,Profiles,Session,Quote,Action,Receipt,Delegate,Relay,Routing,EdgeDaemon,Ingress,Supervisor,Model,StorageAdapter,CommerceAdapter,Tools,Memory,Meter,Observe missing;
+    class Browser,ClientSDK,VerticalClients,Semantic,Registrar,Descriptor,Manifest,Profiles,Session,Quote,Action,Receipt,Delegate,Relay,Routing,EdgeDaemon,Terminal,Profiler,Ingress,Supervisor,Model,Scheduler,Physical,Update,Fleet,StorageAdapter,CommerceAdapter,Tools,Memory,Meter,Observe missing;
 ```
 
 ## Common and Profile Components
@@ -327,8 +365,16 @@ which components are common and which belong in vertical profiles.
 | Quote, order, lease, and task binding | Partial | Service Actor and Task Escrow request identities | Define common signed quotes plus profile-specific durable state machines, idempotency, event ordering, deadlines, and terminal cleanup |
 | Persistent/ephemeral memory | To build | Generic storage and database libraries only | Add encrypted site memory, tenant separation, retention, deletion, retrieval, and backup policies |
 | Runtime locators | Partial | DNS ADNL records and TOS Sites | Add signed multi-endpoint descriptors, transport/version negotiation, region/load metadata, expiry, and fallback |
+| Terminal/resource profile | To build | Host and accelerator information is locally observable | Define privacy-preserving terminal identity, hardware/runtime declarations, claim evidence levels, freshness, owner reservations, and compatibility rules |
+| Resource probes and benchmarks | To build | No common AI terminal benchmark surface exists | Implement versioned probes and workload-level benchmarks; distinguish declared, observed, benchmarked, audited, and attested claims |
 | Runtime supervisor | To build | Process, container, and systemd foundations exist operationally | Create isolated workload lifecycle, resource quotas, network/file/tool grants, restart policy, and upgrades |
-| Model gateway | To build | No AI model runtime is part of the node | Add adapters for local and remote OpenAI-compatible APIs, Ollama, vLLM, and optional GPU health |
+| Model/runtime adapter layer | To build | No AI model runtime is part of the node | Define a common adapter contract and initial OpenAI-compatible, Ollama, llama.cpp, and vLLM adapters without treating one engine as universal |
+| Model/artifact manager | To build | Generic storage and hashing libraries are reusable | Add artifact commitments, license/provenance records, compatibility preflight, bounded cache, staged activation, drain, and cleanup |
+| Task admission and scheduler | To build | Service Actor provides payment state, not local resource reservation | Add authoritative local admission, queue/RAM/VRAM/context bounds, owner reservations, cancellation, deadline, thermal policy, and terminal cleanup |
+| Offline journal and reconnect | To build | Generic storage, signatures, receipts, and settlement primitives are reusable | Define bounded offline authority, tamper-evident journal, idempotent upload/reconciliation, revocation observation, expiry, compaction, and failure recovery |
+| Safe update and rollback | To build | Hashing/signature and process-management foundations are reusable | Define package authority, compatibility, active/known-good slots, crash-safe activation, health gates, staged rollout, anti-rollback, and bounded retention |
+| Physical-I/O safety boundary | To build | No public actuator protocol exists or is implied | Define narrow semantic capabilities, local policy, independent safety-controller authority, deduplication, safe offline behavior, and audit receipts; never expose raw CAN/GPIO/serial/fieldbus |
+| Fleet management | To build | Chain identities and delegation are reusable; continuous fleet state is off-chain | Add enrollment, scoped site/fleet authority, grouping, rollout rings, health, revocation, offline expiry, bounded fan-out, and privacy-preserving inventory |
 | Tool gateway | To build | AI Actor contracts reference services and tools conceptually | Add MCP-style tool registration, policy enforcement, credentials isolation, auditing, and cancellation |
 | Wallet/policy service | Partial | Agent Account limits, Service Actor access policy, Task Escrow | Add session budgets, service/category restrictions, quote binding, subscription and subcontracting rules |
 | Metering and receipts | Partial | Service Actor request/response commitments and attestation | Define usage units, canonical receipts, provenance, state delta, aggregate receipts, and signer rotation |
@@ -347,7 +393,8 @@ which components are common and which belong in vertical profiles.
 | Profile | Required protocol surface | Owning repository |
 |---|---|---|
 | Local model inference | exact model/artifact profile, provenance and license, context/output limits, streaming, cancellation, token/media metering, model receipt | `tos-ai` |
-| GPU compute | hardware/runtime declarations, bounded admission, VRAM/time metering, job lifecycle, cancellation, cleanup, optional attestation | `tos-ai` |
+| Managed AI terminal | terminal/resource declaration, runtime adapter, exact service profile, bounded admission, model lifecycle, cancellation, metering, cleanup, and evidence | `tos-ai` |
+| Site-bound physical AI terminal | local-first execution, offline journal/reconnect, real-time priority, sensor-data policy, signed updates/rollback, actuator isolation, fleet enrollment/rollout, and physical-service receipts | `tos-ai` |
 | Storage | object identity, upload/download, lease/renew/delete, retention, capacity and egress metering, content catalog, replication and availability evidence | `tos-storage` |
 | Commerce | store manifest, immutable offer revisions, quote/order state, inventory reservation, physical/digital fulfillment, refunds, disputes, private buyer data | `tos-commerce` |
 | Human services | negotiated scope, deliverable commitment, deadlines, revisions, milestone/task escrow, acceptance and dispute evidence | `tos-commerce` |
@@ -589,7 +636,7 @@ their semantics:
 | State class | Typical profile | Required properties |
 |---|---|---|
 | Invocation | inference and tools | admission, stream ordering, cancellation, partial result, metering |
-| Job | GPU and batch compute | queue, start, checkpoint, deadline, termination, cleanup |
+| Asynchronous action | approved AI media and batch services | queue, start, progress, deadline, cancellation, terminal cleanup |
 | Lease | storage | allocation, upload, retention, renewal, expiry, deletion |
 | Order | commerce | offer revision, inventory reservation, payment, fulfillment, refund |
 | Task | human services | negotiated scope, acceptance, milestones, revisions, dispute |
@@ -604,19 +651,22 @@ Manifests, discovery results, and clients should use a common evidence
 vocabulary:
 
 ```text
-self-declared
-runtime-signed
-owner-authorized
-on-chain-committed
-issuer-attested
-hardware-attested
-replicated-observation
-cryptographically-proven
+declared
+observed
+benchmarked
+audited
+attested
+replicated
+cryptographically-proven (profile-specific)
 ```
 
-A signature proves who made a statement, not that the statement is true. User
-interfaces must display the issuer, claim, scope, expiry, and actual evidence
-level without presenting a runtime-signed declaration as verified execution.
+Signature/authorization (`runtime-signed`, `owner-authorized`) and publication
+(`on-chain-committed`) are separate attributes rather than higher truth
+levels. A signature proves who made a statement, and an on-chain hash proves
+which statement was committed; neither proves the statement true. User
+interfaces must display issuer, claim, scope, expiry, authorization,
+commitment, and evidence level without presenting a runtime declaration as
+verified execution.
 
 ### Data classification
 
@@ -647,9 +697,11 @@ Before declaring version 1.0:
    inference-profile actions rather than treating the original list as a
    universal service state machine.
 2. The paper says an Edge Node contains eight components, but the prose lists
-   ingress/relay, resolver, runtime supervisor, model gateway, tool gateway,
-   memory, wallet/policy, metering/receipts, and observability. The table
-   combines or omits several of them.
+   more. This plan resolves the ambiguity by defining Edge Core as the generic
+   protocol-enforcement foundation and the AI Edge Computing Terminal as the
+   operator-facing product containing resource probes, model management,
+   runtime adapters, bounded scheduling, ingress, policy, metering, receipts,
+   observability, and private administration.
 3. The phrase "direct a name.tos identity toward an owner-operated local edge
    IP" must be reconciled with the existing TOS Sites model, where DNS
    normally resolves to an ADNL identity rather than exposing the origin IP.
@@ -759,7 +811,14 @@ Payment observation must be idempotent and recoverable after restart.
 Reorganizations, duplicate notifications, partial fulfillment, timeouts, and
 refunds require explicit state transitions and bounded reconciliation work.
 
-## Off-Chain Edge Work
+## AI Edge Computing Terminal and Off-Chain Work
+
+The terminal architecture and compatibility policy are defined in
+[TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md).
+The terminal is the Phase 1 operator-facing product; Edge Core is its generic
+protocol enforcement foundation. One physical terminal may later host
+isolated storage or commerce profiles, but those profiles retain independent
+schemas, credentials, queues, and durable state.
 
 `tos-edge-core` belongs in `tos-protocol` and should be an independent library
 and service foundation, preferably implemented in Rust. Vertical repositories
@@ -783,7 +842,7 @@ flowchart LR
     Guard --> Quote["Quote and payment verifier"]
     Quote --> Router["Profile action router"]
 
-    Router --> Models["Inference / GPU adapter"]
+    Router --> Models["Model / runtime / accelerator adapter"]
     Router --> Storage["Storage / lease adapter"]
     Router --> Commerce["Commerce / order adapter"]
     Router --> Tools["Tool adapter"]
@@ -820,8 +879,8 @@ flowchart LR
 - direct, escrow, refund, and settlement reconciliation
 - profile-specific usage and fulfillment metering
 - canonical signed receipts
-- bounded connection, session, invocation, job, lease, order, task, receipt,
-  watcher, and evidence tables
+- bounded connection, session, invocation, asynchronous-action, lease, order,
+  task, receipt, watcher, and evidence tables
 - bounded durable journal and crash/restart recovery
 - explicit profile resource quotas and cleanup
 - isolated credentials, digital delivery keys, and administrative data
@@ -829,19 +888,46 @@ flowchart LR
 - health, metrics, structured logs, and profile-aware redaction
 - systemd and Docker Compose packaging
 
+The `tos-ai` terminal distribution additionally requires:
+
+- privacy-preserving CPU, RAM, accelerator, storage, network, and runtime
+  probes
+- versioned workload benchmarks and evidence classification
+- approved model/artifact manager with bounded cache and verified hashes
+- a common runtime adapter ABI
+- OpenAI-compatible, Ollama, llama.cpp, and vLLM reference adapters
+- authoritative local task admission with owner reservations
+- explicit RAM, VRAM, KV-cache, context, batch, thermal, and power limits
+- terminal compatibility tiers, signed packages, upgrades, drain, and rollback
+- fault injection and extended anonymous-load resource-soak tests
+
+The site-bound physical-terminal distribution additionally requires:
+
+- local-first execution outside the blockchain and network control loop
+- explicit safety/control/real-time/background priority classes
+- bounded disconnected operation and idempotent reconnect reconciliation
+- content-addressed signed updates, compatibility checks, active/rollback
+  slots, staged fleet rollout, health gates, and power-loss recovery
+- raw sensor and actuator isolation with narrow semantic capabilities and an
+  independent local safety controller
+- fleet enrollment, scoped delegation, grouping, rollout, health, revocation,
+  offline expiry, and retirement
+- bounded sensor buffers, offline journals, update storage, fleet fan-out,
+  retries, watchers, telemetry, and action audit
+
 The inference profile additionally supplies OpenAI-compatible endpoints,
-Ollama/vLLM adapters, streaming, model lifecycle, tool allowlists, encrypted
-memory, and prompt redaction. Storage and commerce features remain in their own
-adapters rather than becoming mandatory Edge Core dependencies.
+streaming, AI service schemas, token/media metering, tool allowlists,
+encrypted memory, and prompt redaction. Storage and commerce features remain
+in their own adapters rather than becoming mandatory AI terminal
+dependencies.
 
 ### Later edge features
 
 - multi-region runtime descriptors
 - latency/load/jurisdiction routing
-- GPU scheduling and model lifecycle
 - replicated memory
 - confidential computing and remote attestation
-- offline and intermittent-connectivity settlement
+- Tier 2/3 accelerator packaging and compatibility matrices
 
 ### Home-network reachability
 
@@ -960,22 +1046,37 @@ vertical product should provide a guided lifecycle:
 1. install a signed standalone package
 2. create or connect a wallet without exposing unrestricted keys
 3. create a revocable runtime identity
-4. select a local model, GPU allocation, storage volume, store, or service
-5. review resource provenance, rights, privacy, and profile policy
-6. configure price, capacity, concurrency, retention, fulfillment, and refund
+4. detect supported hardware, runtimes, storage, and network paths
+5. run local capability, compatibility, and resource-bound self-tests
+6. select a local model, task profile, hardware allocation, storage volume,
+   store, or service
+7. review resource provenance, rights, privacy, claim evidence, and profile
+   policy
+8. reserve capacity for the owner and configure price, concurrency, queue,
+   retention, fulfillment, thermal, and refund
    limits as applicable
-7. test local adapter health and resource bounds
-8. expose a raw ADNL endpoint
-9. optionally register and bind `name.tos`
-10. test public reachability or configure an owner-selected relay
-11. publish signed manifests and capability records
-12. pass payment, restart, rotation, expiry, and cleanup self-tests
-13. begin accepting actions
-14. pause admission, drain active work, upgrade, roll back, or retire safely
+9. test local adapter health and cleanup
+10. expose a raw ADNL endpoint
+11. optionally register and bind `name.tos`
+12. test public reachability or configure an owner-selected relay
+13. publish short-lived signed terminal, service, and capability records
+14. pass payment, cancellation, restart, rotation, expiry, and cleanup
+    self-tests
+15. begin accepting actions
+16. inspect redacted health, load, revenue, and settlement state
+17. pause admission, drain active work, upgrade, roll back, or retire safely
 
 The product must distinguish public manifest/catalog data from private
 administrative, credential, object, order, and fulfillment data. Installation
-must not require building or operating a validator.
+must not require building or operating a validator. It must not advertise
+every detected device or all host capacity by default.
+
+A site-bound physical terminal also requires the operator to select sensor
+egress policy, verify real-time reservations, pair an independent safety
+controller, configure offline quota/journal bounds, choose update and rollback
+authorities, enroll the terminal in a bounded fleet group, and run loss-of-
+network, power-loss, update-failure, actuator-rejection, and reconnect
+self-tests before enabling an external capability.
 
 ## Security Requirements
 
@@ -985,8 +1086,8 @@ must not require building or operating a validator.
   event, delegation, receipt, and payment authorization
 - bind signatures to the service identity, profile, chain, and protocol version
 - enforce expiry and bounded clock skew
-- make invocation, job, lease, order, and task IDs idempotent within documented
-  scopes
+- make invocation, asynchronous-action, lease, order, and task IDs idempotent
+  within documented scopes
 - prevent reuse across sites, sessions, manifests, profiles, resource
   revisions, contracts, clients, and chains
 
@@ -1001,6 +1102,13 @@ must not require building or operating a validator.
 - ensure prompt injection cannot modify policy or wallet authority
 - prevent storage path traversal, untrusted file execution, inventory races,
   and unauthorized refund or fulfillment mutations
+- never expose raw CAN, GPIO, serial, fieldbus, camera-administration, or
+  actuator interfaces through a public profile
+- require physical actions to pass narrow semantic capability, local policy,
+  state/rate/deadline constraints, idempotency, and an independent safety
+  interlock
+- keep update, model, terminal-runtime, fleet-owner, wallet, and actuator
+  authorities separate
 
 ### Resource bounds
 
@@ -1009,8 +1117,9 @@ All of the following must be explicitly bounded:
 - open connections and streams
 - session table
 - quote and idempotency caches
-- concurrent invocations, GPU jobs, uploads, orders, and tasks
-- admission, job, upload, fulfillment, and dispute queues
+- concurrent inference, media, physical-terminal, upload, order, and task
+  actions
+- admission, asynchronous-action, upload, fulfillment, and dispute queues
 - prompt/context/output sizes
 - object, catalog, offer, attachment, and evidence sizes
 - tool calls and recursion depth
@@ -1020,6 +1129,12 @@ All of the following must be explicitly bounded:
 - receipt/evidence queues
 - chain watchers and pending settlement records
 - retries, reconciliation work, and persistent event history
+- sensor/decoder buffers, retained events, clips, and telemetry backlog
+- offline journal bytes, entries, age, and reconnect work
+- update downloads, staging, rollback versions, retries, and rollout history
+- fleet fan-out, groups, commands, offline records, watchers, and health
+  history
+- actuator requests, deduplication windows, and audit records
 
 Profile processes must release resources on completion, cancellation, timeout,
 disconnect, expiry, and crash recovery. No anonymous actor may create
@@ -1032,6 +1147,9 @@ unbounded RAM, VRAM, disk, watcher, queue, or durable-state growth.
   remain off-chain
 - logs and metrics redact prompts, objects, credentials, personal data, and
   private fulfillment content
+- physical-terminal logs, discovery, fleet inventory, and receipts redact raw
+  sensor data, faces, plates, patient data, routes, factory layout, and precise
+  sensitive site location
 - manifests and profiles declare collection, retention, region, sharing, and
   deletion policies
 - sessions record the actual grant
@@ -1064,7 +1182,8 @@ export controls, taxes, or professional requirements.
 - display the issuer, scope, subject, expiry, and revocation status
 - do not treat a `.tos` name as legal-identity verification
 - do not treat a storage receipt as continuing proof of possession
-- do not treat a compute receipt as proof of model, hardware, or correctness
+- do not treat an AI service receipt as proof of model, hardware, physical
+  event, or correctness
 - do not treat a shipment event as proof that the correct physical item was
   delivered
 - keep reputation plural, capability-specific, and advisory
@@ -1078,7 +1197,7 @@ export controls, taxes, or professional requirements.
 - critical/unknown extension behavior
 - base/profile version negotiation and incompatible profile rejection
 - multi-profile service manifests
-- invalid invocation/job/lease/order/task transition tests
+- invalid invocation/asynchronous-action/lease/order/task transition tests
 - idempotency, replay, expiry, and clock-skew tests
 - quote/profile/resource-revision mismatch tests
 - cross-profile and cross-chain authorization-confusion tests
@@ -1106,15 +1225,23 @@ export controls, taxes, or professional requirements.
 ### Edge tests
 
 - tampered manifest and substituted endpoint
+- falsified/stale terminal capability and benchmark evidence
 - owner/controller/runtime key rotation and revocation
 - duplicate invoke/order/lease/task and duplicate payment
+- hardware, driver, runtime, model, and public-reachability preflight
+- owner-reserved capacity and local-priority policy
+- adapter compatibility rejection and normalized failure mapping
 - model timeout and partial stream
 - client cancellation
 - gateway crash/restart with pending settlement
 - slowloris and oversized context
-- connection/session/invocation/job/upload/order/watcher saturation
+- connection/session/invocation/asynchronous-action/upload/order/watcher
+  saturation
 - MCP tool escalation and credential isolation
-- bounded RAM, VRAM, disk, queue, and persistent-state soak tests
+- model-download, model-cache, KV-cache, and partial-artifact cleanup
+- adapter crash, OOM, timeout, disconnect, and failed-payment cleanup
+- bounded RAM, VRAM, disk, queue, watcher, cache, journal, and persistent-state
+  anonymous-load soak tests
 - NAT relay failure and endpoint fallback
 - crash during upload, fulfillment, refund, and dispute transitions
 - abandoned upload, reservation, lease, and temporary-file cleanup
@@ -1124,8 +1251,8 @@ export controls, taxes, or professional requirements.
 
 | Profile | Required additional tests |
 |---|---|
-| Inference | exact model/profile binding, tokenizer/template revision, streaming order, cancellation, KV-cache release, OOM recovery |
-| GPU compute | admission saturation, deadline termination, detached-job cleanup, VRAM accounting, untrusted job rejection |
+| Managed AI terminal | terminal/resource evidence, exact model/profile binding, tokenizer/template revision, runtime-adapter compatibility, owner reservation, streaming order, cancellation, KV-cache release, OOM recovery |
+| Site-bound physical AI terminal | real-time priority under external saturation, disconnected local execution, bounded offline journal, idempotent reconnect, signed update/rollback under power loss, raw-I/O rejection, independent safety interlock, fleet delegation/revocation, bounded rollout fan-out |
 | Storage | multipart upload, content hash, quota race, lease renewal/expiry, deletion authorization, replication/evidence claims |
 | Commerce | immutable offer revision, inventory reservation race, idempotent order, encrypted delivery, refund and dispute paths |
 | Human services | scope/quote binding, escrow acceptance, revisions, deadline, deliverable commitment, arbitration evidence |
@@ -1136,8 +1263,8 @@ The three-node local network should exercise:
 
 1. deploy the `.tos` registry
 2. register a name
-3. publish DNS, base manifest, and profile commitments
-4. run `tos-edge-ai` with a deterministic model stub
+3. publish DNS, terminal, base-service, and profile commitments
+4. run a Tier 1 `tos-edge-ai` terminal with a deterministic model stub
 5. resolve over TOS DNS
 6. fetch through RLDP
 7. open an authenticated session
@@ -1152,6 +1279,8 @@ The three-node local network should exercise:
 16. reject an unknown critical profile
 17. restart with pending application and settlement events
 18. confirm all bounded tables return to their expected steady state
+19. repeat cancellation, adapter crash, OOM, and failed-payment cases while
+    checking terminal RAM/VRAM/disk/watcher cleanup
 
 Later profile suites reuse the same three-node foundation and add their own
 lease, order, fulfillment, refund, and dispute lifecycles. They should not
@@ -1178,14 +1307,14 @@ production dependencies, not the release container for application services.
 ```mermaid
 flowchart TB
     P0A["Phase 0A<br/>Base protocol + profile mechanism"] --> P0B["Phase 0B<br/>.tos registrar + chain adapter + SDK"]
-    P0B --> P0C["Phase 0C<br/>Edge Core + discovery schema + conformance"]
+    P0B --> P0C["Phase 0C<br/>Edge Core + terminal schema<br/>+ discovery + conformance"]
 
-    P0C --> P1A["Phase 1A<br/>Local model inference profile"]
+    P0C --> P1A["Phase 1A<br/>Tier 1 AI Edge Terminal<br/>+ managed inference"]
     P1A --> P1B["Phase 1B<br/>Pay-per-call + streaming + receipts"]
     P1B --> P1C["Phase 1C<br/>Three-node E2E + audit + home reachability"]
 
-    P1C --> P2A["Phase 2A<br/>Storage profile"]
-    P1C --> P2B["Phase 2B<br/>GPU compute profile"]
+    P1C --> P2A["Phase 2A<br/>Tier 2 general terminal support<br/>+ storage composition"]
+    P1C --> P2B["Phase 2B<br/>Site-bound physical terminal<br/>offline + update + fleet"]
     P1C --> P3A["Phase 3A<br/>Commerce + human services"]
 
     P2A --> P4["Phase 4<br/>Replication, production relays, channels,<br/>attestation, multi-region"]
@@ -1193,10 +1322,12 @@ flowchart TB
     P3A --> P4
 ```
 
-Phase 0 defines the common layer without implementing every vertical. Phase 1
-uses locally hosted model inference as the first reference profile. Storage,
-general GPU compute, and commerce proceed only after the base protocol and
-conformance suite are stable enough to prevent incompatible copies.
+Phase 0 defines the common layer and terminal contract without implementing
+every hardware backend or vertical. Phase 1 uses a Tier 1 Linux/NVIDIA
+managed-inference terminal as the first reference product. Tier 2 general
+hardware, the site-bound physical terminal, storage, and commerce proceed only
+after the base protocol and conformance suite are stable enough to prevent
+incompatible copies. Bare GPU rental does not appear in any phase.
 
 ### Estimated effort
 
@@ -1204,9 +1335,9 @@ These are planning ranges, not commitments:
 
 | Phase | Deliverable | Approximate effort |
 |---|---|---|
-| Phase 0 | Base v0.1 specification, registrar, SDKs, Edge Core, conformance | 2-4 months for a 3-5 person team |
-| Phase 1 | Local model profile, pay-per-call, client, three-node E2E, audit | Additional 3-5 months for a 4-6 person team |
-| Phase 2 | Storage and bounded GPU compute profiles | Additional 4-8 months |
+| Phase 0 | Base v0.1 specification, registrar, SDKs, Edge Core, terminal schema, conformance | 2-4 months for a 3-5 person team |
+| Phase 1 | Tier 1 terminal, local model profile, adapters, scheduling, pay-per-call, client, three-node E2E, audit | Additional 4-7 months for a 4-6 person team |
+| Phase 2 | Tier 2 general hardware, storage composition, and site-bound physical terminal with offline/update/fleet support | Additional 6-12 months |
 | Phase 3 | Commerce, digital delivery, and human-service workflows | Additional 4-8 months |
 | Phase 4 | Relays, channels, replication, multi-region, advanced verification | Additional 6-12 months |
 
@@ -1223,7 +1354,8 @@ The initial PR sequence is in `tos-protocol`:
      contract ABIs/code hashes, local-network harness, and ownership rules
 2. **TOS Service Protocol v0.1 base specification**
    - descriptor, manifest, profile mechanism, authentication, quote, receipt,
-     evidence levels, errors, HTTP/RLDP bindings, and vectors
+     terminal/resource claims, evidence levels, errors, HTTP/RLDP bindings,
+     and vectors
 3. **`.tos` registrar contracts**
    - collection/item contracts, Rust SDK, sandbox/property tests
 4. **Domain CLI and deployment**
@@ -1233,7 +1365,8 @@ The initial PR sequence is in `tos-protocol`:
      compatibility matrix
 6. **Edge Core skeleton**
    - config, keystore, generic well-known manifest, bounded ingress, durable
-     journal, profile adapter interface, and private administration
+     journal, terminal/resource schema, profile adapter interface, and private
+     administration
 7. **Quote, payment, receipt, and evidence**
    - Service Actor/escrow integration, chain watcher, idempotent reconciliation,
      refund, canonical receipt, and evidence vocabulary
@@ -1243,21 +1376,50 @@ The initial PR sequence is in `tos-protocol`:
    - registration through settlement, restart, rotation, expiry, relay mode,
      compatibility, and resource soak
 
-The first `tos-ai` PR sequence is:
+The first `tos-ai` PR sequence is terminal-oriented:
 
-1. **Inference profile specification**
-   - exact model profile, provenance/license, input/output/stream schemas,
-     metering, cancellation, and receipt extension
-2. **Local model adapters and scheduler**
-   - OpenAI-compatible, Ollama/vLLM, deterministic stub, bounded queues, model
-     lifecycle, and cleanup
-3. **Inference payment and streaming**
+1. **AI Edge Terminal bootstrap and compatibility contract**
+   - signed installer, private administration, Tier 1 Linux/NVIDIA support,
+     resource probes, compatibility matrix, owner reservations, health, and
+     terminal self-tests
+2. **Inference and task profile specification**
+   - exact model/task profile, provenance/license, input/output/stream
+     schemas, privacy/evidence, metering, cancellation, and receipt extension
+3. **Model manager, runtime adapter ABI, and scheduler**
+   - deterministic stub, OpenAI-compatible, Ollama, llama.cpp, and vLLM
+     adapters; verified artifacts; bounded queues, RAM/VRAM/KV cache, model
+     lifecycle, cancellation, fault cleanup, and drain
+4. **Inference payment and streaming**
    - quote/profile/request binding, pay-per-call, result commitment, refunds
-4. **Inference client and discovery extension**
-   - model-aware selection, wallet flow, streaming, and receipt verification
-5. **Phase 1 three-node acceptance suite**
+5. **Inference client, routing, and discovery extension**
+   - service-capability selection, optional hardware constraints, claim
+     evidence, wallet flow, streaming, and receipt verification
+6. **Phase 1 terminal acceptance suite**
    - base resolution through model settlement, restart, key/model rotation,
-     expiry, cancellation, OOM, and RAM/VRAM soak
+     expiry, cancellation, adapter crash, OOM, anonymous-load fault injection,
+     and bounded RAM/VRAM/disk/watcher soak
+
+The `tos-ai` physical-terminal sequence follows the stable Phase 1 base:
+
+1. **Physical-terminal profile and deterministic simulator**
+   - fake sensors, local safety controller, priority scheduler, connectivity
+     states, update slots, offline journal, and fleet simulator
+2. **Jetson/ARM reference terminal**
+   - signed packaging, JetPack/runtime probe, local inference, events-only
+     egress, real-time reservations, and no public actuator action
+3. **Offline and reconnect protocol**
+   - bounded cached authority, vouchers/subscriptions, journal, expiry,
+     idempotent reconciliation, revocation observation, and compaction
+4. **Signed update and rollback controller**
+   - package authority, compatibility, canary, crash-safe slots, health gates,
+     staged rollout, anti-rollback, power-loss tests, and bounded retention
+5. **Fleet management**
+   - enrollment, site/fleet delegation, groups, rollout rings, health,
+     revocation, offline expiry, retirement, and bounded fan-out
+6. **Physical safety and acceptance suite**
+   - external saturation versus real-time deadlines, raw-I/O rejection,
+     independent safety interlock, actuator idempotency, disconnected soak,
+     reconnect settlement, fleet fault injection, and update rollback
 
 `tos-storage` and `tos-commerce` begin with profile specifications and shared
 base conformance vectors. They must not fork descriptor, authentication,
@@ -1281,26 +1443,31 @@ The MVP is expected to require no consensus-rule change.
 Phase 1 is complete only when the base protocol and inference reference profile
 allow an independent operator to:
 
-1. register `name.tos`
-2. bind it to an owner-controlled ADNL/TOS Site endpoint
-3. publish a signed base manifest and inference profile committed by an
-   on-chain service identity
-4. pin and disclose an exact, license-reviewed local model profile
-5. run an ordinary local model backend
-6. expose it through `tos-edge-ai`
-7. satisfy the documented public-ADNL or relay reachability requirement
-8. let an unfamiliar client resolve, authenticate, negotiate the profile, and
+1. install a signed Tier 1 AI Edge Terminal without running a validator
+2. detect and test supported hardware, driver, runtime, and reachability
+3. reserve local resources and enforce queue, RAM, VRAM, context, cache,
+   thermal, and deadline limits
+4. register `name.tos`
+5. bind it to an owner-controlled ADNL/TOS Site endpoint
+6. publish signed terminal, base-service, and inference manifests committed by
+   an on-chain service identity
+7. pin and disclose an exact, license-reviewed local model profile
+8. run it through a supported adapter without exposing the runtime directly
+9. expose it through `tos-edge-ai`
+10. satisfy the documented public-ADNL or relay reachability requirement
+11. let an unfamiliar client resolve, authenticate, negotiate the profile, and
    reject unknown critical extensions
-9. obtain a signed quote bound to the exact model/profile revision
-10. pay in TOS
-11. invoke, cancel, and stream the service
-12. receive and verify a signed receipt and evidence level
-13. observe or reclaim settlement on-chain
-14. rotate runtime infrastructure and model revisions without losing the site
+12. obtain a signed quote bound to the exact model/profile revision
+13. pay in TOS
+14. invoke, cancel, and stream the service
+15. receive and verify a signed receipt and evidence level
+16. observe or reclaim settlement on-chain
+17. rotate runtime infrastructure and model revisions without losing the site
     identity or changing active quotes
-15. restart with pending work and settlement state
-16. demonstrate bounded RAM, VRAM, disk, connection, queue, watcher, and
-    durable-state behavior under soak
+18. restart with pending work and settlement state
+19. clean up after timeout, disconnect, payment failure, adapter crash, and OOM
+20. demonstrate bounded RAM, VRAM, disk, connection, queue, watcher, cache, and
+    durable-state behavior under extended anonymous-load soak
 
 Anything less is an infrastructure demo rather than an interoperable,
 owner-operated service profile.
@@ -1312,7 +1479,12 @@ owner-operated service profile.
   code in the `tos` core repository
 - no requirement to release TOS nodes whenever an application profile changes
 - no new execution domain or VM
-- no model training or GPU marketplace
+- no bare GPU marketplace, raw accelerator rental, arbitrary consumer
+  containers/programs/models, or public shell in any planned phase
+- no promise of universal AI PC, NPU, mobile, or accelerator compatibility
+- no reward based only on uptime, claimed TOPS, or self-reported hardware
+- no assumption that a benchmark, payment, or signed receipt proves semantic
+  correctness
 - no complete storage marketplace, replication proof, or commerce marketplace
   in Phase 1
 - no forwarding or resale of unauthorized consumer AI subscriptions
@@ -1328,8 +1500,10 @@ owner-operated service profile.
 
 ## Related Documents
 
+- [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [Local Storage Sharing over TOS Network](local-storage-sharing-use-case.md)
-- [Local GPU Compute Sharing over TOS Network](local-gpu-sharing-use-case.md)
+- [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
+- [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
 - [Locally Hosted Open-Weight Model Sharing over TOS Network](local-open-weight-model-sharing-use-case.md)
 - [Owner-Operated Storefront over TOS Network](owner-operated-tos-storefront-use-case.md)
 - [Shared AI Inference Services over TOS Domains](ai-inference-sharing-tos-domains.md)

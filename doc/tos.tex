@@ -18,7 +18,7 @@
   colorlinks=true,
   linkcolor=blue!55!black,
   urlcolor=blue!55!black,
-  pdftitle={TOS: The Fast Blockchain for AI Agents},
+  pdftitle={TOS Network: Open Coordination and Settlement for AI Services and Physical Edge Intelligence},
   pdfauthor={TOS Network}
 }
 \setlist{nosep}
@@ -30,7 +30,8 @@
 \newcommand{\experimental}{\textbf{Experimental}}
 \newcommand{\planned}{\textbf{Planned}}
 
-\title{\textbf{TOS}\\[0.4em]\Large The Fast Blockchain for AI Agents}
+\title{\textbf{TOS Network}\\[0.4em]\Large Open Coordination and Settlement for\\
+AI Services and Physical Edge Intelligence}
 \author{TOS Network}
 \date{2026 Edition}
 
@@ -38,19 +39,22 @@
 \maketitle
 
 \begin{abstract}
-TOS is an actor-model blockchain designed for autonomous AI agents. It gives agents
-persistent accounts, programmable wallets, explicit spending authority, asynchronous task
-coordination, escrowed settlement, capability discovery and verifiable workflow state. TOS
-treats accounts, agents, tasks, services and verifiers as independent actors. Each actor owns
-private state, receives messages, changes only its own state and emits messages to other
-actors.
+TOS Network is being built as an open coordination and settlement network for autonomous
+agents, owner-operated AI services and site-bound physical AI terminals. Its economic unit is
+a completed service action under explicit policy, not an hour of unidentified hardware.
+Providers retain control of their models, devices, sites, data and operational responsibility;
+the network is intended to standardize identity, discovery, authorization, service
+commitments, evidence and settlement across organizational boundaries.
 
-The network combines native TVM execution, value-bearing asynchronous messages,
-masterchain-rooted consensus and dynamic sharding with agent-oriented contracts and operator
-tooling. The initial implementation includes Agent Wallet profiles, on-chain Agent Accounts,
-Task Escrow contracts, a per-actor Capability Registry, query APIs and real-localnet
-acceptance tests. Large model outputs and private prompts remain off-chain; the chain records
-authority, funds, deadlines, state transitions and compact evidence references.
+The implemented foundation, TOS Core, is an actor-model blockchain with native TVM
+execution, value-bearing asynchronous messages, masterchain-rooted consensus, dynamic
+sharding and ADNL/DHT/RLDP networking. It includes foundations for Agent Accounts, concurrent
+Service Actors, Task Escrow, Dispute, Capability Registry and Proof Attestation. The broader
+service protocol, public discovery products and AI Edge Computing Terminals described in this
+paper are planned product layers and are not presented as already deployed commercial
+infrastructure. Models, prompts, sensor streams and private customer data remain off-chain;
+shared authority, commitments and settlement use the chain where independently operated
+parties require a tamper-resistant source of truth.
 \end{abstract}
 
 \tableofcontents
@@ -58,40 +62,62 @@ authority, funds, deadlines, state transitions and compact evidence references.
 
 \section{Executive Summary}
 
-AI agents are becoming economic actors. They call models, purchase data, invoke tools,
-delegate work, deliver results and operate continuously without a person approving every
-step. Existing payment systems and consumer wallets were designed around interactive human
-sessions. They do not naturally express bounded machine authority, task-specific escrow,
-service discovery, replay-safe automation or auditable dispute resolution.
+AI is moving from centralized applications toward autonomous software and independently
+operated model services. At the same time, inference is moving toward cameras, robots,
+vehicles, factories, stores and homes where latency, privacy, intermittent connectivity and
+physical safety matter. This creates a fragmented economy of agents, models, devices, data,
+tools and human services. The resources can perform useful work, but they do not share a
+neutral system for persistent identity, machine-readable capability, bounded authorization,
+payment, receipts, evidence and dispute resolution.
 
-TOS is built around a different premise: an AI agent should be represented as a persistent
-actor with an account, funds, policy and an inspectable history of messages. An agent should
-be able to pay for a service without receiving unrestricted owner authority. A task should
-hold its own budget and enforce its own lifecycle. A verifier should have an explicit role,
-not an implicit off-chain privilege. A service should publish compact capability and pricing
-commitments that agents can inspect before interacting.
+TOS Network is designed to provide that common trust and economic layer. It does not compete
+to train foundation models, operate a centralized cloud or rent bare accelerators. At the
+application-network layer, it follows an asset-light coordination model: hardware, models,
+sites and operations remain with providers, while protocol participants standardize how
+services are described, invoked, evidenced and settled.
 
-TOS provides this foundation through five layers:
+The architecture has five layers:
 
 \begin{enumerate}
-  \item \textbf{Actor execution.} Accounts process asynchronous messages in native TVM.
-  \item \textbf{Agent authority.} Agent Wallets separate owner custody from controller automation.
-  \item \textbf{Task settlement.} Task actors escrow funds and enforce lifecycle transitions.
-  \item \textbf{Discovery and trust.} Registry actors publish capabilities, bonds and reputation references.
-  \item \textbf{Scalable coordination.} Masterchain consensus, shardchains and message routing support large actor populations.
+  \item \textbf{TOS Core.} Native actor execution, consensus, sharding, identity primitives,
+        payment and authenticated networking.
+  \item \textbf{TOS Service Protocol.} Versioned descriptors, authentication, quotes,
+        payment authorization, receipts, evidence envelopes and profile negotiation.
+  \item \textbf{Owner-operated terminals.} Bounded local execution through approved service
+        adapters without exposing a public shell, container socket or raw accelerator.
+  \item \textbf{Discovery and clients.} Human-readable names, capability search, policy-aware
+        selection and verifiable resolution.
+  \item \textbf{Vertical profiles.} Managed AI, physical AI, storage, commerce and human
+        services that share common protocol foundations but retain distinct state machines.
 \end{enumerate}
 
-TOS is not primarily a consumer mobile-wallet project, a model provider or an execution
-environment for unrelated virtual machines. It is a native coordination and settlement layer
-for AI agents and the services they use.
+Only the first layer is substantially implemented in this repository. The remaining layers
+are a product architecture and delivery plan. This distinction is deliberate: validators do
+not execute application workloads, and a new model, accelerator or service profile must not
+require a consensus upgrade.
+
+\subsection{Strategic Positioning}
+
+The unit of value in TOS Network is a completed, policy-compliant service action. A consumer
+requests a capability with an exact service revision, input and output contract, price,
+deadline, region, data-egress policy and evidence level. An owner-operated terminal decides
+whether it can safely admit the request, executes it through an approved local runtime,
+returns a signed receipt and settles according to the agreed payment policy.
+
+For physical terminals, the value is often location rather than raw throughput. A low-power
+terminal beside a production line, camera or robot can provide low-latency and privacy-
+preserving execution that a remote cloud cannot provide economically or safely. Local safety
+and deterministic real-time work always take priority, and TOS never replaces an independent
+safety controller.
 
 \section{Design Principles}
 
-\subsection{Agent-Wallet First}
+\subsection{Service Outcomes, Not Bare Capacity}
 
-Wallet primitives must serve autonomous software before consumer interface requirements.
-Machine-facing state, deterministic addresses, policy inspection, safe key separation and
-reliable automation are first-class requirements.
+Consumers buy a versioned service capability and a declared outcome. Hardware declarations,
+TOPS, accelerator memory and benchmarks are scheduling evidence; they are not themselves the
+service contract. Bare GPU rental, public accelerator access and arbitrary consumer-supplied
+programs or containers are outside the TOS product plan.
 
 \subsection{Actor First}
 
@@ -117,13 +143,55 @@ The chain is authoritative for funds, permissions, deadlines and settlement. Lar
 model outputs, datasets and private credentials remain off-chain. Contracts store hashes,
 signatures, attestations and evidence references that bind external work to on-chain state.
 
+\subsection{Local Control and Safety}
+
+Providers retain custody of hardware, data, models and operational policy. A physical
+terminal continues approved local work while disconnected and keeps blockchain consensus
+outside the hard real-time and actuator-control loop. Raw sensor and physical-I/O interfaces
+are not public network capabilities.
+
+\subsection{Bounded Resources and Recoverable Failure}
+
+Connections, queues, retries, model caches, RAM, accelerator memory, durable journals and
+watchers must have explicit limits and cleanup paths. Failure, cancellation, restart,
+disconnect and payment rejection are normal protocol states. No anonymous or unpaid caller
+may cause unbounded memory, disk or durable-state growth.
+
 \subsection{Native Execution Focus}
 
-The production network has one active application execution domain: the native TVM basechain.
-The architecture can describe future workchains, but unsupported execution engines are not
-registered in the current product.
+TOS Core has one active application execution domain: the native TVM basechain. Unsupported
+execution engines are not registered in the current product. Application workloads run in
+separate terminal processes and repositories, not inside \texttt{validator-engine}.
 
 \section{System Architecture}
+
+\subsection{Layer and Repository Boundaries}
+
+TOS Network is designed as independently released layers. The separation limits consensus
+risk and allows product profiles to evolve at application speed.
+
+\begin{longtable}{p{0.20\textwidth}p{0.34\textwidth}p{0.36\textwidth}}
+\toprule
+Layer & Responsibility & Delivery boundary \\
+\midrule
+\endhead
+TOS Core & Consensus, TVM, generic contracts, query APIs, wallet and cryptography,
+DNS, ADNL/DHT/RLDP and TOS Sites & Implemented and maintained in the
+\texttt{tos} repository \\
+Base service plane & Descriptors, manifests, authentication, quotes, payment
+authorization, receipts, evidence, discovery schema, Edge Core and conformance &
+Planned separate \texttt{tos-protocol} repository \\
+AI terminals & General and physical terminal products, resource probes, runtime
+adapters, scheduling, signed updates and fleet management & Planned separate
+\texttt{tos-ai} repository \\
+Other profiles & Storage leases, commerce, fulfillment and human-service state
+machines & Planned independently released vertical repositories \\
+\bottomrule
+\end{longtable}
+
+Existing Agent, Service, Escrow, Registry and Attestation contracts remain reusable TOS Core
+foundations. Product-specific daemons, model runtimes, catalogs and continuous device
+telemetry do not belong in the validator repository.
 
 \subsection{Masterchain and Basechain}
 
@@ -185,11 +253,13 @@ contract.
 
 Validators agree on masterchain and shardchain blocks and enforce protocol configuration.
 The networking stack provides authenticated datagram transport, distributed discovery,
-reliable large-message delivery and overlay communication. Validator-engine is the canonical
-node process; \texttt{tosctl} provides the operator path for configuration and agent-oriented
-workflows.
+reliable large-message delivery and overlay communication. ADNL identities and TOS DNS can
+locate services; RLDP and TOS Sites can carry application traffic. These primitives do not by
+themselves provide the planned service manifest, quote, receipt, relay or terminal product.
+\texttt{validator-engine} remains the canonical node process; \texttt{tosctl} provides an
+operator path for configuration and existing agent-oriented workflows.
 
-\section{AI Actor Types}
+\section{Trust and Settlement Actors}
 
 \subsection{Agent Wallet}
 
@@ -261,19 +331,23 @@ descriptions to remain off-chain.
 
 \subsection{Service Actor}
 
-A Service Actor represents a model, data source, tool or compute provider. The implemented
+A Service Actor represents a bounded model, data, tool or other defined service. The implemented
 contract supports open access or one authorized caller, price per call, a UTC-day rate limit,
 metadata and proof-scheme hashes, request and response commitments, accumulated revenue and an
 active or inactive lifecycle. A call must attach at least the configured price; accepted value
 is credited to contract revenue. The owner commits response hashes, updates policy, withdraws
 revenue and controls activation. The registry says what a service claims to provide; the
-Service Actor governs calls and payments.
+Service Actor governs calls and payments. It does not expose a host, raw accelerator or
+arbitrary execution environment.
 
-\subsection{Verifier Actor}
+\subsection{Verifier and Attestation Actors}
 
 A Verifier Actor evaluates result or evidence commitments according to a declared policy. A
 verifier may accept, reject, score or dispute work, but its authority must be explicitly stored
-by the task or registry actor. TOS does not hard-code one model, oracle or proof backend.
+by the task or registry actor. The implemented Proof Attestation foundation can record compact
+claims and evidence references. Neither a payment nor a hash alone proves semantic
+correctness, confidentiality or the physical hardware used. TOS does not hard-code one model,
+oracle or proof backend.
 
 \section{Agent Wallet and Authority Model}
 
@@ -341,21 +415,136 @@ according to explicit lifecycle rules. Timeout is consensus-time based. A disput
 reason or evidence commitment and moves authority to the configured resolution path. Verifier
 resolution is bounded by contract balance and role checks.
 
-\section{Capability Discovery and Service Markets}
+\section{TOS Service Protocol and Discovery}
+
+\subsection{Base Protocol}
+
+The planned TOS Service Protocol is the common application plane above TOS Core. Independent
+implementations require canonical and versioned definitions for:
+
+\begin{itemize}
+  \item signed service descriptors and short-lived terminal manifests;
+  \item profile negotiation and handling of unknown critical extensions;
+  \item authentication, replay domains, nonces and bounded delegation;
+  \item quotes, payment authorization, cancellation, refunds and idempotency;
+  \item request, stream, result, receipt and evidence envelopes;
+  \item durable operation identities and restart recovery;
+  \item error classes, limits and compatibility rules.
+\end{itemize}
+
+This protocol is planned work, not functionality implied by the existence of a Service Actor
+contract. The contract is a settlement primitive; an interoperable session and receipt
+protocol still requires schemas, SDKs, conformance vectors and independent implementations.
+
+\subsection{Capability Discovery}
 
 Capability discovery separates compact on-chain commitments from extensible off-chain
-descriptions. An agent can inspect an entry's owner, activity, bond, reputation score and
-hashes before selecting a counterparty. It can then retrieve a metadata document and verify
-that its hash matches the registry entry.
+descriptions. A client can inspect an entry's owner, activity, bond and commitment hashes,
+then retrieve a signed descriptor and verify its relationship to chain state.
 
 The current per-actor registry does not solve chain-wide search. Complete discovery requires
-an indexer or future protocol registry that can enumerate entries. Indexed data is a derived
-view: agents must verify critical owner, bond, capability and activity fields against contract
-state before committing funds.
+an indexer or protocol registry that can enumerate and rank services. Indexed data is a
+derived view: clients must verify critical owner, authorization, capability, activity and
+payment fields against signed or on-chain state before committing funds.
 
-Future service markets will combine registry discovery with quote, call, result and charge
-messages. Payment must remain linked to task authority, maximum charge and verifiable response
-metadata.
+\subsection{Names and Reachability}
+
+A service may be reached through a human-readable \texttt{name.tos} identity or a raw ADNL
+identity. A descriptor may publish RLDP/TOS Sites and optional HTTPS, QUIC, WebSocket or
+streaming bindings without changing the identity and authorization model. Ordinary home and
+site networks may require an owner-selected relay or reverse tunnel. A relay may forward
+encrypted traffic but must not receive owner authority, unrestricted runtime credentials or
+settlement control.
+
+A public root \texttt{.tos} registration product, signed multi-endpoint descriptors,
+short-lived health data and production relay service are planned. DNS and TOS Sites
+primitives already exist, but they are not equivalent to a complete service discovery
+marketplace.
+
+\section{AI Edge Computing Terminals}
+
+\subsection{Terminal as the Product Unit}
+
+The TOS AI Edge Computing Terminal is the first planned owner-operated execution product. It
+combines measured local resources, approved runtime adapters, bounded task admission, TOS
+identity and reachability, metering and signed receipts. A terminal may be a Linux GPU
+workstation, an AI PC, a small edge server or an industrial ARM/Jetson appliance.
+
+Consumers schedule against a service capability such as text generation, embedding, OCR,
+speech recognition or video analysis. A capability states the exact model or task revision,
+schemas, limits, privacy and region policy, evidence level, price and expiry. Hardware model
+numbers and vendor performance claims are evidence used by the scheduler; the consumer does
+not receive raw access to the device.
+
+\subsection{Runtime and Executor Isolation}
+
+The public service listener is separated from the administrative interface. Public adapters
+run under dedicated operating-system identities, containers or equivalent sandboxes with
+explicit CPU, RAM, accelerator-memory, filesystem, network and tool grants. They receive no
+Docker socket, shell, owner key, unrestricted wallet key, home directory or raw physical-I/O
+authority.
+
+The operator approves every model and executable artifact in the initial product. A runtime
+adapter performs compatibility checks, bounded load and unload, cancellation, error
+normalization, usage reporting and cleanup after success, timeout, disconnect, out-of-memory
+failure or process crash. Consumer-supplied containers, native programs and models are not
+accepted by the TOS terminal product.
+
+\subsection{Admission, Scheduling and Resource Bounds}
+
+The local scheduler is authoritative for admission. It considers model compatibility, RAM,
+accelerator memory, storage, queue and in-flight limits, context and output bounds, deadlines,
+owner reservations, thermal policy, price, privacy and evidence requirements. Remote
+discovery cannot reserve local hardware merely by publishing an optimistic capacity value.
+
+Every implementation must bound connections, sessions, streams, nonces, quotes, queues,
+retries, model caches, temporary files, logs, receipt queues, chain watchers and durable
+journals. Completion, cancellation, failed payment, adapter crash, upgrade and shutdown each
+need a tested cleanup path. These constraints are required to prevent anonymous RAM, VRAM,
+disk, watcher and durable-state growth.
+
+\subsection{Site-Bound Physical AI}
+
+A physical terminal runs beside sensors, robots, vehicles or industrial equipment. Its
+mandatory priority order is:
+
+\begin{enumerate}
+  \item emergency and independent safety interlocks;
+  \item deterministic control deadlines;
+  \item local real-time perception and sensor fusion;
+  \item local asynchronous analysis and maintenance;
+  \item approved external service requests;
+  \item background update, telemetry and compaction.
+\end{enumerate}
+
+TOS does not enter the hard real-time loop. Raw CAN, GPIO, serial, fieldbus, camera or actuator
+interfaces are never public capabilities. A narrow semantic action must pass local policy and
+an independent safety controller, which may reject an otherwise valid network request.
+
+\subsection{Disconnected Operation and Reconciliation}
+
+A physical terminal must continue its approved local workload while disconnected. It may use
+only unexpired cached policy and explicitly bounded offline authority. Events and obligations
+are written to a size- and age-bounded, tamper-evident journal. Reconnection first observes
+revocation and policy expiry, then uploads and reconciles events idempotently. A reconnect
+must not execute a paid task twice, lose a refund obligation or grow the journal without
+limit.
+
+\subsection{Safe Model and Software Updates}
+
+Model, runtime, firmware and policy updates are content-addressed, signed by an authorized
+release identity, compatibility-checked and staged before activation. Terminals maintain an
+active slot and a known-good rollback slot. Activation is crash-safe and subject to health
+gates, anti-rollback policy and bounded artifact retention. Fleet rollouts use canary and
+progressive rings and stop automatically when declared health thresholds fail.
+
+\subsection{Fleet Management}
+
+Fleet state is primarily off-chain. A fleet service handles enrollment, scoped delegation,
+site grouping, staged rollout, health, revocation, offline expiry and retirement without
+publishing detailed topology or continuous telemetry on-chain. Commands have bounded fan-out,
+expiry and idempotency. Compromise of a fleet controller must not confer owner custody or
+override independent local safety policy.
 
 \section{Verifiable AI Workflows}
 
@@ -381,20 +570,35 @@ decisions or domain-specific proof systems. A proof adapter translates external 
 a compact decision or commitment understood by a task or verifier actor. The core protocol
 remains neutral to the model provider and proof backend.
 
-\subsection{Example Workflow}
+Claims must state their evidence level. A terminal declaration, an observed successful call,
+a standardized benchmark, an independent audit, hardware attestation and replicated execution
+are different forms of evidence and must not be presented as interchangeable. A signed
+receipt proves that a signer made a statement about an operation; its semantic meaning still
+depends on the accepted policy and trust model.
+
+\subsection{Managed-Service Workflow}
 
 \begin{enumerate}
-  \item A creator funds a research task.
-  \item A planner Agent Account claims the task.
-  \item The planner discovers data and model services through capability entries.
-  \item Controller-signed messages authorize bounded service spending.
-  \item Worker and service actors return result and evidence commitments.
-  \item A verifier checks declared evidence and submits a decision.
-  \item The Task Escrow settles the agent and refunds any remainder.
+  \item A client resolves a service identity and verifies its signed descriptor.
+  \item The client requests a quote for an exact profile, limits and evidence policy.
+  \item A controller or user authorizes a bounded payment against the signed quote.
+  \item The terminal admits the request only after local policy and resource checks.
+  \item An isolated adapter executes the approved model and streams a bounded response.
+  \item The terminal signs a result and usage receipt linked to the operation identity.
+  \item The client verifies the receipt and the settlement path releases or refunds value.
 \end{enumerate}
 
 Every step is asynchronous. Failure, timeout and dispute are explicit workflow states rather
 than hidden exceptions in an off-chain orchestration process.
+
+\subsection{Physical-Terminal Workflow}
+
+A site terminal receives sensor data locally, schedules safety and real-time perception ahead
+of all network work, applies local policy and emits a bounded event or service result. If the
+site is disconnected, it continues approved local operation and journals the event. After
+reconnection it observes revocations, reconciles the journal idempotently and publishes only
+the receipt or evidence allowed by site data policy. Blockchain availability is therefore
+not a prerequisite for an emergency stop or deterministic local control decision.
 
 \section{APIs and Operator Tooling}
 
@@ -459,6 +663,37 @@ content is true. A result hash is not proof that a result is correct. Bonds, ver
 attestations and reputation can reduce risk, but task settlement policy must state which
 evidence is authoritative.
 
+\subsection{Executor and Supply-Chain Isolation}
+
+Public requests are untrusted input. Runtime adapters must enforce schema, byte, dimension,
+duration and output limits before allocating expensive resources. Models, runtimes and
+updates require authenticated provenance, canonical hashes, compatibility checks and
+operator approval. Sandboxing, least-privilege device access, network egress policy and
+secret separation limit the impact of a compromised model server or parser. The public
+service interface must never become an administrative or arbitrary-code execution path.
+
+\subsection{Physical Safety}
+
+Possession of a valid TOS key, payment authorization or network receipt does not grant raw
+actuator authority. Local semantic capability policy and independent safety interlocks remain
+authoritative. Safety and control deadlines pre-empt external work; overload or network
+failure must fail toward a locally defined safe state.
+
+\subsection{Offline Authority and Update Risk}
+
+Offline operation creates stale-policy and replay risk. Offline rights therefore need explicit
+scope, expiry and budgets, while journals need integrity, bounded retention and idempotent
+reconciliation. Update systems require separate release authority, anti-rollback checks,
+known-good recovery and staged fleet rollout. A terminal that cannot verify a package or
+recover a healthy runtime must continue only its previously approved safe workload.
+
+\subsection{Fleet Compromise}
+
+Fleet controllers use scoped delegation and revocable terminal identities. Commands carry
+target scope, expiry and idempotency identifiers. Rollout fan-out, retry queues, health
+history and offline inventory are bounded. Fleet compromise must not reveal owner custody
+keys, customer payloads or unrestricted site topology.
+
 \subsection{Indexer Authority Drift}
 
 Search results and reconstructed timelines are non-authoritative. Critical clients should
@@ -469,6 +704,8 @@ dispute.
 
 Automated actors can create unbounded retry loops. Production workflows require funded and
 bounded retries, backoff, timeout policy, queue limits and observable failure records.
+Terminals additionally require soak tests for RAM, accelerator memory, disk, watchers,
+connections, offline journals and update artifacts across success and every failure path.
 
 \section{Economics}
 
@@ -484,26 +721,37 @@ The canonical genesis target supply is 5,000,000,000 TOS. It is allocated at zer
 construction time, primarily to the main wallet with operational balances assigned to the
 elector and configuration contracts. Native genesis does not register proof-of-work givers.
 
-\subsection{Agent Economic Flows}
+\subsection{Service Economic Flows}
 
-Native TOS supports:
+The architecture can use native TOS for:
 
 \begin{itemize}
   \item escrowed task budgets and agent payouts;
   \item refunds after rejection, cancellation or timeout;
-  \item service-call payments under explicit maximum charges;
+  \item service-call settlement under explicit quotes and maximum charges;
   \item registry bonds and future verifier staking;
+  \item defined discovery, relay, verification or storage services;
   \item gas for messages and persistent actor state.
 \end{itemize}
 
-Token ownership does not grant an agent unlimited automation authority. Custody and controller
-policy remain separate concerns.
+Economic activity is designed to arise from completed service transactions and explicitly
+defined infrastructure services, not from merely remaining online or declaring hardware
+capacity. Token ownership does not grant an agent unlimited automation authority, prove
+service quality or override terminal policy.
+
+Service transaction volume, validator fees, protocol revenue and token value accrual are
+distinct concepts. This paper makes no forecast or promise regarding any of them. Detailed
+monetary policy, incentives, fee routing and governance require separate specifications and
+accepted network configuration.
 
 \section{Implementation Status}
 
-This whitepaper separates deployed code from architectural direction. ``Implemented'' means
-the repository contains contract or tooling code and automated tests; it does not imply a
-public mainnet deployment or completed external audit.
+This whitepaper separates repository implementation from architectural direction.
+``Implemented'' means this repository contains the relevant node, contract, tooling or test
+foundation. It does not imply public commercial deployment, external audit, production
+service availability or adoption. ``Partial'' means a reusable primitive exists but the
+interoperable product surface does not. ``Planned'' identifies work assigned to a future
+protocol or product repository.
 
 \begin{longtable}{p{0.35\textwidth}p{0.18\textwidth}p{0.37\textwidth}}
 \toprule
@@ -512,46 +760,91 @@ Capability & Status & Scope \\
 \endhead
 Native TVM execution and actor messages & \implemented & Node, contracts, cells, gas and value-bearing messages \\
 Masterchain and shardchain protocol & \implemented & Validator and full-node protocol stack \\
+ADNL, DHT, RLDP, QUIC and TOS Sites & \implemented & Core transport and networking primitives \\
+TOS DNS and resolver chaining & \implemented & Naming primitives; not a complete public registrar product \\
 Agent Wallet profiles & \implemented & Keys, policy, funding, activation, runtime binding and inspection \\
 Agent Account & \implemented & Deterministic deployment, controller actions, limits and rotation \\
 Task Escrow & \implemented & Claim, accept, reject, result, review, dispute, resolve and settlement \\
 Agent and task read APIs & \implemented & Authenticated reads, filtering, timeout and error taxonomy \\
 Capability Registry & \implemented & Per-actor entry, metadata hashes, bond, activity and reputation \\
 Service Actor contract & \implemented & Access policy, pricing, rate limits, calls, responses and revenue \\
-General proof-adapter interface & \planned & Backend-neutral evidence verification \\
-Chain-wide agent and task index & \planned & Search without treating indexed data as authority \\
+Dispute and Proof Attestation foundations & \implemented & Compact resolution and evidence commitments \\
+Public \texttt{.tos} registrar product & \planned & Ownership lifecycle, SDK, deployment and operator tooling \\
+TOS Service Protocol & \planned & Descriptors, sessions, quotes, receipts, evidence and conformance \\
+Edge Core and discovery clients & \planned & Terminal enforcement, SDKs, search and verifiable resolution \\
+Managed AI terminal & \planned & Approved model services, bounded scheduling, metering and receipts \\
+Physical AI terminal & \planned & Offline operation, safe updates, real-time priority, isolation and fleet management \\
+Chain-wide service index & \planned & Search without treating indexed data as authority \\
 Public-testnet hardening and external audit & \planned & Persistent deployment, load testing and independent review \\
-Shard-aware agent routing and analytics & \planned & High-volume production optimization \\
 \bottomrule
 \end{longtable}
 
+\section{Verification and Release Gates}
+
+No terminal profile is production-ready merely because its happy path works. Release suites
+must cover:
+
+\begin{itemize}
+  \item canonical encoding, signature domains, replay, expiry, idempotency and unknown
+        critical extensions;
+  \item contract authorization, escrow conservation, cancellation, refunds and disputes;
+  \item resolver, descriptor, quote, payment, invocation, receipt and restart flows on a
+        multi-node TOS network;
+  \item adapter crash, timeout, disconnect, malformed input, out-of-memory and failed-payment
+        cleanup;
+  \item bounded RAM, accelerator memory, disk, cache, watcher, connection, retry and journal
+        behavior under sustained load;
+  \item physical real-time priority, network partition, stale policy, reconnect and
+        idempotent reconciliation;
+  \item signed update verification, compatibility rejection, power-loss activation,
+        rollback and staged fleet abort;
+  \item actuator isolation, local safety override, fleet revocation and bounded command
+        fan-out.
+\end{itemize}
+
+Release gates include a threat model, protocol conformance vectors, reproducible builds,
+system-service or container hardening, migration and rollback procedures, independent review
+of externally exposed and settlement-critical components, and observed testnet operation.
+
 \section{Roadmap}
 
-\subsection{Phase 1: Native AI Actor Positioning}
+\subsection{Foundation: TOS Core}
 
-Maintain one focused native execution surface, document actor semantics and align operator
-documentation with the AI-agent direction.
+Maintain consensus, native TVM execution, networking, wallet and reusable actor-contract
+foundations as a stable dependency. Application workloads and vertical product release
+cycles remain outside the validator.
 
-\subsection{Phase 2: Agent Account and Task Primitives}
+\subsection{Phase 0: Base Protocol and Edge Core}
 
-Complete Agent Wallet operations, Agent Account policy enforcement, Task Escrow lifecycle,
-query APIs and real-localnet acceptance. Remaining hardening includes explicit owner transfer
-tooling and persistent public-testnet validation.
+Specify canonical descriptors, manifests, authentication, quotes, payment authorization,
+receipts, evidence levels, profile negotiation and conformance vectors. Build the public
+\texttt{.tos} registrar, chain adapter, SDKs, Edge Core, discovery schema and a deterministic
+multi-node reference harness.
 
-\subsection{Phase 3: Registry and Service Marketplace}
+\subsection{Phase 1: Managed Inference Terminal}
 
-Extend the implemented Capability Registry and Service Actor contracts with practical market
-discovery, composed task-to-service flows and production settlement hardening.
+Deliver a Tier 1 Linux/NVIDIA reference terminal for provider-approved models and bounded AI
+services. Complete resource probes, initial runtime adapters, task admission, streaming,
+metering, signed receipts, restart recovery and resource-soak testing. This phase does not
+accept arbitrary consumer execution.
 
-\subsection{Phase 4: Verifiable Workflows}
+\subsection{Phase 2: Site-Bound Physical Terminal}
 
-Standardize proof adapters, verifier decisions, evidence bundles and composed planner-worker-
-service workflows.
+Deliver a Jetson/ARM reference profile with disconnected local execution, bounded offline
+authority, tamper-evident reconciliation, signed A/B updates, real-time priority, physical-I/O
+isolation, independent safety interlocks and staged fleet management.
 
-\subsection{Phase 5: Scalable Agent Economy}
+\subsection{Phase 3: Additional Service Profiles}
 
-Optimize throughput, shard-aware placement, reputation aggregation, risk scoring, monitoring,
-retry and recovery for long-running autonomous systems.
+Add storage, commerce, digital and physical fulfillment, human-service and controlled
+composition profiles without forcing their business state machines into the AI protocol or
+validator.
+
+\subsection{Phase 4: Advanced Network Services}
+
+Add production relays, prepaid or channel settlement, multi-region routing, replication,
+stronger attestation, verifier markets and policy-aware orchestration after the base protocol
+and terminal cleanup invariants are stable.
 
 \section{Non-Goals}
 
@@ -560,28 +853,36 @@ TOS does not aim to:
 \begin{itemize}
   \item run private model inference directly in consensus;
   \item store prompts, credentials or large model outputs on-chain;
+  \item rent bare GPUs or expose raw accelerator devices;
+  \item accept arbitrary consumer-supplied containers, programs or models;
+  \item expose a public shell, Docker socket or unrestricted host interface;
+  \item put blockchain consensus in a hard real-time or safety-control loop;
+  \item expose raw CAN, GPIO, serial, fieldbus or actuator access as a public service;
+  \item reward a terminal merely for remaining online or declaring TOPS;
   \item hard-code one model provider, oracle, verifier or proof system;
   \item make third-party indexers authoritative for funds or permissions;
   \item give an agent runtime unrestricted owner custody by default;
-  \item optimize its first wallet roadmap around ordinary consumer mobile applications;
   \item bundle unrelated execution engines into the production node.
 \end{itemize}
 
 \section{Conclusion}
 
-TOS turns the actor model from a low-level execution property into an application architecture
-for autonomous economies. Agent Wallets provide custody and machine-readable policy. Agent
-Accounts constrain runtime authority. Task actors make work and settlement explicit.
-Capability entries let agents publish inspectable commitments. Verifier and proof-adapter
-designs connect external work to on-chain decisions without placing private or bulky data in
-consensus.
+TOS Core provides the implemented blockchain and networking substrate for persistent
+identity, bounded authority, asynchronous coordination and settlement. TOS Network is the
+broader product objective: an open service economy in which independently owned agents,
+models and physical terminals can transact without transferring custody of their hardware,
+data or operational policy to one platform.
 
-The same asynchronous message model that isolates account state also allows agents, tasks and
-services to scale independently. Native payments travel with workflow messages; consensus
-protects authority and settlement; sharding provides a path to large actor populations.
+The differentiation is not ownership of a particular accelerator or foundation model. It is
+the ability to determine which declared service may execute a request, under what limits,
+privacy and evidence policy, at what price, and how the result is receipted and settled.
+Physical terminals extend that model into real-world sites while preserving offline
+operation, deterministic local priority and independent safety authority.
 
-The result is a focused objective: TOS is the fast blockchain for AI agents, built for
-persistent identity, bounded autonomy, verifiable coordination and native economic exchange.
+The result is a focused positioning: TOS Network is being built as the open coordination and
+settlement network for AI services and physical edge intelligence. The chain foundation
+exists; the interoperable service protocol and terminal products remain work to be specified,
+implemented, tested and independently reviewed.
 
 \section*{Copyright and License}
 
@@ -590,6 +891,7 @@ Copyright \textcopyright{} 2025--2026 TOS Network.
 The source code and documentation in the TOS repository are distributed under the GNU General
 Public License v3.0. Protocol behavior is defined by released code, schemas and accepted
 network configuration; this whitepaper describes the architecture and direction and is not a
-substitute for implementation-level review.
+substitute for implementation-level review. It is not an offer of securities or a promise of
+investment return, service adoption, protocol revenue or token appreciation.
 
 \end{document}

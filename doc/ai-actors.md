@@ -61,6 +61,16 @@ Service actor state may include:
 - accepted payment flow
 - signed response key or attestation policy
 
+For owner-operated AI services, the off-chain implementation may be a
+[TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md).
+The Service Actor records payment and commitment state; it does not schedule
+the terminal's CPU/GPU/NPU, load models, execute inference, or prove that a
+self-reported hardware claim is true. Terminal admission remains locally
+authoritative and must bind its quote and receipt to the corresponding
+Service Actor request. For a site-bound physical terminal, local real-time
+priority and the independent safety controller remain authoritative even when
+the request and payment are valid.
+
 ### Verifier Actor
 
 A verifier actor reviews task results or external evidence. It may submit acceptance, rejection, score, or dispute messages.

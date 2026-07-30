@@ -48,6 +48,82 @@ Verifier actor:
 - verifier reviews result, task settles according to verifier decision
 - indexer reconstructs workflow from transaction history
 
+AI Edge Computing Terminal integration, when a Service Actor is backed by a
+terminal:
+
+- bind terminal quote, payment authorization, invocation, receipt, and
+  settlement to one request identity
+- reject a quote for an expired model/service revision
+- reject work before payment or local admission
+- preserve owner-reserved capacity
+- cancel and release queue, RAM, VRAM, KV cache, and temporary files
+- normalize adapter crash, OOM, timeout, and disconnect paths
+- restart without duplicate execution or lost refund/settlement state
+- rotate runtime key, model, endpoint, and price without changing active
+  quotes
+- distinguish declared claims from benchmarked, audited, or attested claims
+- demonstrate bounded memory, disk, queues, watchers, caches, and journal
+  growth under anonymous-load and fault-injection soak
+
+The complete off-chain matrix belongs to the
+[AI Edge Computing Terminal architecture](ai-edge-computing-terminal-architecture.md)
+and `tos-ai` conformance suite. These tests supplement rather than replace
+native contract tests.
+
+### Site-bound physical terminal
+
+Real-time priority and safety:
+
+- emergency and safety work preempts every lower priority
+- external saturation cannot cause a control or perception deadline miss
+- OOM, thermal pressure, model download, telemetry, and compaction reject or
+  pause lower-priority work first
+- TOS networking and settlement are absent from the hard real-time loop
+- public APIs expose no raw CAN, GPIO, serial, fieldbus, camera
+  administration, container socket, or accelerator handle
+- a valid network capability cannot bypass an independent safety interlock
+- semantic actuator requests enforce state/rate/deadline/value constraints,
+  idempotency, and local audit
+
+Offline and reconnect:
+
+- approved local inference continues without TOS connectivity
+- operations requiring fresh chain state fail closed
+- cached offline authority enforces value, quantity, age, and expiry
+- journal bytes, entries, age, receipts, retries, and compaction stay bounded
+- reconnect observes key/policy/model/terminal revocation before new admission
+- event, action, voucher, receipt, and settlement reconciliation is idempotent
+- expired queued requests and acknowledged journal segments are removed with
+  bounded work
+
+Model, runtime, firmware, and policy updates:
+
+- reject wrong signer, hash, target, dependency, compatibility, authority, and
+  security revision
+- reject truncated, oversized, replayed, and rollback-incompatible packages
+- power loss at download, verification, staging, activation, health check, and
+  commit preserves an active or known-good slot
+- lab/canary/cohort rollout advances only after explicit health gates
+- crash, deadline, memory, thermal, and accuracy gates pause and roll back
+- active quotes and receipts preserve the selected model/runtime/policy
+  revision
+- staging bytes, retained versions, logs, retry work, and history stay bounded
+
+Fleet:
+
+- enroll and revoke one terminal without affecting peer authority
+- site administrator cannot escalate to fleet owner
+- runtime, update, model, payment, and actuator keys are non-interchangeable
+- groups, pagination, fan-out, retries, watchers, offline records, and history
+  remain bounded at fleet scale
+- permanently offline terminals expire from active health
+- aggregate discovery/health does not expose prohibited site topology or
+  personal/sensor data
+- mixed-version fleet can pause, drain, roll back, and retire safely
+
+The normative use case is
+[Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md).
+
 ## Local Testnet Tests
 
 - deploy task and agent contracts on wc=0
@@ -56,6 +132,12 @@ Verifier actor:
 - stop one validator long enough to catch up
 - verify transaction history after catch-up
 - verify no additional execution domains are registered
+- bind a physical terminal to raw ADNL and optionally `name.tos`
+- complete online event/subscription payment and receipt
+- disconnect the terminal while local work continues
+- reconnect and settle a bounded offline journal exactly once
+- rotate runtime/update authority and reject the old authority
+- restart validators without affecting local safety execution
 
 ## Negative Tests
 
@@ -80,4 +162,6 @@ Before Level 2 support:
 - security review complete
 - message catalog updated
 - operator runbook updated
-
+- physical-terminal releases additionally pass disconnected soak, power-loss
+  update recovery, real-time saturation, actuator-interlock, and fleet-scale
+  bounded-state gates

@@ -1,36 +1,55 @@
-# Shared AI Inference Services over TOS Domains (Design Note, 2026-07-28)
+# Shared AI Edge Inference Services over TOS Domains
+
+## Status
+
+- Document type: domain binding and Phase 1 inference design note
+- Status: proposed, non-normative
+- Date: 2026-07-30
+- Terminal architecture:
+  [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
+- Main plan:
+  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 
 ## Motivation
 
-Individual TOS users who already run a local language model (no shared GPU
-infrastructure, no model hosting by TOS itself) should be able to expose that
-model as a paid, discoverable API compatible with common chat-completion
-client shapes (the ChatGPT/Kimi-style request/response pattern), without
-operating any TOS-specific server infrastructure beyond what the protocol
-already provides.
+Individual TOS users who run a local model should be able to turn selected
+hardware into a TOS AI Edge Computing Terminal and expose one or more paid,
+discoverable inference services compatible with common client shapes. TOS
+does not host the model or take control of the device. The operator installs a
+standalone terminal product, not a validator.
 
 The three requirements this note captures:
 
 1. A user can run a local inference backend and make it reachable as an AI
    service, billed in TOS.
 2. Callers pay per call or by subscription, in TOS.
-3. The service is reached through a human-readable `name.tos` domain that is
-   publicly resolvable on the TOS network, not a raw ADNL address or IP.
+3. The recommended public identity is a human-readable `name.tos` domain that
+   resolves through the TOS network to the terminal's current ADNL endpoint.
+
+Raw ADNL access remains valid when a domain is unavailable. The purpose of
+this note is the additional stable-name path, not a requirement that every
+terminal own a domain.
 
 This is a design note, not an implementation. It records the scope decisions
 made so far so that contract and gateway design can proceed from a fixed
 starting point.
 
-## Phase 1 Scope
+## Phase 1 Terminal Scope
 
-- The operator's gateway performs pure request forwarding to a local model
-  backend already running on the operator's machine. It does not host,
-  fine-tune, or manage a model.
-- No GPU provisioning, model packaging, or compute scheduling is part of this
-  phase.
-- Billing enforcement (call accounting, subscription validity, payment
-  verification) and request forwarding are gateway-side concerns; only the
-  payment/settlement primitives are expected to be on-chain.
+- The operator runs a Tier 1 managed-inference terminal on supported
+  Linux/NVIDIA hardware.
+- The operator approves exact local model artifacts and runtime adapters.
+- `tos-edge-core` and `tos-edge-ai` enforce authentication, quote/payment
+  binding, input limits, bounded admission, cancellation, metering, receipts,
+  and cleanup.
+- Consumers call provider-approved service profiles. They do not receive a
+  shell, Docker socket, raw accelerator access, or permission to execute an
+  arbitrary container.
+- The terminal may use OpenAI-compatible, Ollama, llama.cpp, or vLLM adapters.
+- Billing enforcement and request execution happen off-chain; generic
+  identity, commitment, payment, escrow, and settlement remain on-chain.
+- Resource claims and benchmarks carry explicit declared, observed,
+  benchmarked, audited, or attested evidence levels.
 
 ## How the Three Requirements Map to Existing TOS Infrastructure
 
@@ -40,10 +59,33 @@ starting point.
 | Reaching a node's HTTP service without a public TCP origin | TOS Sites / `rldp-http-proxy` (see [TosSites.md](TosSites.md)) | Already ported from TON |
 | Per-call or subscription billing in TOS, tied to an on-chain-auditable service | AI Actor Model `Service Actor` (see [ai-actors.md](ai-actors.md)) | Design exists; billing/subscription messages for this use case are new work |
 | Registering `name.tos` itself | A domain-registry contract minting ownership as an NFT (TON's `.ton` model) | **Not present in this repository.** TON's DNS Collection/auction contract is a separate ecosystem application built on top of TON, not part of the core protocol this repo cloned. This is new application-level contract work, described below. |
+| Terminal and resource identity | Edge Core plus signed terminal/resource manifest | **To build in `tos-protocol`.** This is not a validator identity. |
+| Hardware/runtime detection and measured compatibility | AI terminal probes and benchmark profiles | **To build in `tos-ai`.** Self-report is not attestation. |
+| Managed model execution | Model manager, runtime adapters, and bounded scheduler | **To build in `tos-ai`.** Existing runtimes are reused rather than reimplemented. |
+| Home-network reachability | Public ADNL path or owner-selected relay/reverse tunnel | TOS transport exists; a complete ordinary-user relay product remains new work. |
 
-The only genuinely new engineering surface is the domain-registry contract
-and the billing/gateway integration; DNS resolution, resolver chaining, and
-TOS Sites transport require no protocol changes.
+DNS resolution, resolver chaining, ADNL/RLDP, and TOS Sites transport require
+no consensus change. The missing work is nevertheless broader than the
+registrar: the terminal, base protocol, runtime adapters, scheduler, discovery,
+relay, billing integration, and conformance suite are all product work.
+
+## Domain-to-Terminal Binding
+
+```text
+name.tos
+  -> TOS DNS site record
+  -> current ADNL identity
+  -> RLDP/TOS Sites ingress or authorized relay
+  -> tos-edge-ai
+  -> authenticated and paid terminal session
+  -> bounded task admission
+  -> approved runtime adapter and model
+```
+
+The domain represents a persistent owner-controlled service identity. The
+terminal host, IP address, accelerator, runtime key, model revision, and relay
+may rotate without transferring the domain. Active quotes remain bound to
+their original service and model revisions.
 
 ## Domain Registry Design
 
@@ -144,7 +186,13 @@ work, not resolved by this note.
 
 ## Non-Goals (Phase 1)
 
-- No model hosting, fine-tuning, or GPU provisioning by TOS or the registry.
+- No model hosting, fine-tuning, or GPU provisioning by TOS core or the
+  registrar.
+- No arbitrary consumer containers, public shell, raw accelerator rental, or
+  automatic advertisement of all detected host capacity.
+- No promise of universal GPU, NPU, mobile, or edge-device compatibility.
+- No assumption that a domain, payment, benchmark, or receipt proves the
+  physical hardware, exact runtime, semantic correctness, or confidentiality.
 - No auction-based pricing or premium-name tiers.
 - No reserved/blocklisted name handling.
 - No multi-TLD support.
@@ -159,6 +207,11 @@ work, not resolved by this note.
   share).
 - Per-call vs. subscription billing message shapes for the AI service
   Service Actor.
+- Canonical terminal/resource manifest, workload benchmarks, evidence levels,
+  and freshness rules.
+- Runtime adapter ABI, model artifact commitments, and bounded scheduler
+  semantics.
+- Phase 1 public-ADNL requirement or minimally trusted relay product.
 - Target network for initial deployment (private/local network needs no
   registry coordination at all, per [DNS.md](DNS.md); a shared testnet or
   mainnet deployment requires a config-level decision about which
@@ -169,6 +222,11 @@ work, not resolved by this note.
 
 ## Related Docs
 
+- [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
+- [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
+- [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
+- [Locally Hosted Open-Weight Model Sharing](local-open-weight-model-sharing-use-case.md)
 - [DNS.md](DNS.md)
 - [TosSites.md](TosSites.md)
 - [ai-actors.md](ai-actors.md)

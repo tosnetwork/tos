@@ -2,7 +2,10 @@
 
 This document defines the baseline threat model for AI actor workflows on TOS.
 
-It applies to agent accounts, task actors, service actors, verifier actors, workflow indexers, and off-chain agent runners that interact with native TVM contracts.
+It applies to agent accounts, task actors, service actors, verifier actors,
+workflow indexers, off-chain agent runners, and
+[AI Edge Computing Terminals](ai-edge-computing-terminal-architecture.md) that
+interact with native TVM contracts.
 
 ## Assets
 
@@ -14,6 +17,10 @@ It applies to agent accounts, task actors, service actors, verifier actors, work
 - task state and settlement decisions
 - result metadata and evidence references
 - verifier decisions and reputation inputs
+- terminal runtime keys, paid task state, model/artifact commitments, and
+  bounded local compute resources
+- site sensor data, physical safety state, actuator authority, offline
+  journals, update/model signers, and fleet delegation
 
 ## Trust Boundaries
 
@@ -22,6 +29,14 @@ It applies to agent accounts, task actors, service actors, verifier actors, work
 - Service endpoints are not trusted by default.
 - Indexers and workflow dashboards provide derived views only.
 - Evidence references are claims until verified by a verifier actor, proof adapter, signature check, or trusted policy.
+- A site-bound terminal's independent local safety controller has final
+  actuator authority; chain payment or a valid network signature cannot
+  override it.
+- Cached offline authority is valid only within its signed value, quantity,
+  age, capability, and expiry bounds.
+- Fleet dashboards, desired configuration, and health aggregation are
+  off-chain derived state and cannot override chain authorization or local
+  safety.
 
 ## Primary Threats
 
@@ -85,6 +100,117 @@ Required controls:
 - max-value constraints
 - signed or hash-referenced service responses
 - settlement checks against verified chain state
+
+### Terminal Capability Fraud and Resource Exhaustion
+
+A terminal falsifies a hardware, model, benchmark, region, privacy, or
+availability claim, or an anonymous caller creates unbounded RAM, VRAM, disk,
+queue, watcher, cache, or settlement growth.
+
+Required controls:
+
+- distinguish declared, observed, benchmarked, audited, attested, and
+  replicated claims
+- bind quotes to exact service, model, runtime-policy, price, and evidence
+  revisions
+- enforce local admission before allocating expensive model/runtime resources
+- bound connections, sessions, queues, contexts, outputs, retries, caches,
+  temporary files, watchers, and durable reconciliation
+- release resources after success, cancellation, timeout, disconnect, failed
+  payment, adapter crash, OOM, and restart
+- isolate co-located AI, storage, and commerce credentials, queues, and data
+- use extended anonymous-load and fault-injection soak tests
+
+### Offline Authority and Reconciliation Failure
+
+A disconnected physical terminal accepts work using stale or revoked
+authority, grows an unbounded journal, or duplicates events, actions, charges,
+or settlement after reconnect.
+
+Required controls:
+
+- allow only explicitly pre-authorized offline capabilities with bounded value,
+  quantity, age, and expiry
+- continue site-owned local safety work without inventing payment authority
+- bound journal bytes, entries, age, unacknowledged receipts, retry work, and
+  compaction
+- use idempotent event, action, voucher, receipt, and settlement identities
+- observe current key, policy, model, and terminal revocation before new
+  network admission
+- discard expired queued requests and reconcile acknowledged journal segments
+  with bounded work
+
+### Malicious or Faulty Model and Software Update
+
+An attacker, compromised update service, incompatible package, or interrupted
+activation changes physical behavior, disables a terminal, or compromises a
+fleet.
+
+Required controls:
+
+- content-address and sign every model, runtime, firmware, configuration, and
+  policy package under separate scoped authorities
+- verify target hardware, dependencies, security revision, license, resource
+  requirements, and migration compatibility
+- use bounded staging plus active and known-good rollback slots
+- activate crash-safely and recover from power loss at every phase
+- deploy through lab/canary/cohort rollout rings with automatic health gates
+- support authorized emergency rollback while preventing silent rollback to a
+  known-vulnerable revision
+- bind active quotes and receipts to the exact model/runtime/policy revision
+
+### Actuator and Physical-I/O Escalation
+
+A remote caller, compromised model, or service adapter bypasses local policy
+and sends unsafe commands to CAN, GPIO, serial, fieldbus, motors, steering,
+brakes, doors, valves, or robotic joints.
+
+Required controls:
+
+- expose no generic raw physical-I/O API through TOS
+- represent allowed actions as narrow semantic capabilities
+- enforce caller, task, state, rate, value, deadline, and location constraints
+- require idempotent action identifiers and local audit
+- keep actuator authority separate from wallet, runtime, update, and model
+  keys
+- place an independent local safety controller or interlock in final authority
+- define a safe operating state for network loss, restart, update, and policy
+  failure
+
+### Real-Time Priority Inversion
+
+External requests, telemetry, model downloads, compaction, or fleet commands
+starve a safety, control, or local perception deadline.
+
+Required controls:
+
+- enforce emergency, control, real-time perception, local asynchronous,
+  external-service, and background priority classes
+- reserve CPU, accelerator memory, RAM, I/O, disk, network, and thermal
+  headroom before advertising capacity
+- reject or preempt lower-priority work first
+- keep TOS networking and settlement outside the hard real-time loop
+- test deadline behavior under external saturation, OOM, thermal pressure,
+  update, reconnect, and telemetry load
+
+### Fleet Authority and Fan-Out Compromise
+
+A fleet key, site administrator, rollout command, health collector, or retry
+loop gains excessive authority or affects every terminal at once.
+
+Required controls:
+
+- separate fleet owner, site administrator, terminal runtime, update, model,
+  payment, and actuator authorities
+- scope delegation by terminal group, capability, configuration field, value,
+  rollout operation, and expiry
+- revoke one terminal without authorizing or revoking peers
+- stage fleet-wide changes through explicit rollout rings and health gates
+- bound group size, pagination, fan-out, retries, watchers, offline records,
+  history, and health retention
+- keep detailed fleet topology and continuous telemetry off-chain
+- expire permanently offline terminals from active health without immortal
+  retry or watcher state
 
 ### Fake Results or Evidence
 

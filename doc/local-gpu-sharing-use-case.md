@@ -1,4 +1,4 @@
-# Local GPU Compute Sharing over TOS Network
+# Managed AI Services on Local GPU Hardware
 
 ## Status
 
@@ -7,33 +7,47 @@
 - Date: 2026-07-30
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- Terminal architecture:
+  [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
+- Physical-terminal use case:
+  [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
 
 ## Purpose
 
-This document describes how an ordinary user could expose part of her local
-GPU capacity as an Internet resource over TOS Network, how consumers could
-discover that resource, and how they could pay for and use it.
+This document describes how an ordinary user can use local GPU hardware to
+operate bounded AI services through a TOS AI Edge Computing Terminal, how
+consumers discover those services, and how they pay for and use them.
 
 The provider must not need to operate a validator or modify the TOS node. TOS
 remains the identity, naming, transport, payment, and settlement substrate.
-GPU-specific protocol code, runtime management, discovery, and client tooling
-belong in the separate `tos-ai` product/protocol repository defined by the
-implementation plan.
+GPU-specific protocol code, terminal packaging, resource probes, runtime
+management, discovery, and client tooling belong in the separate `tos-ai`
+product repository defined by the implementation plan.
+
+The public resource is a bounded service capability, not the physical GPU.
+Consumers normally request a model or task with latency, region, privacy,
+evidence, and budget constraints. The terminal selects a compatible approved
+runtime and device. A hardware model can remain an optional consumer
+constraint when a task or attestation profile requires it.
 
 The recommended first product is a **provider-managed inference service**:
 
 - the provider chooses and operates approved models
 - consumers submit bounded inference requests
 - consumers cannot execute arbitrary programs on the provider's machine
-- `tos-edge` authenticates requests, verifies payment, meters usage, and signs
-  receipts
+- the terminal's `tos-edge-ai` path authenticates requests, verifies payment,
+  performs bounded admission, meters usage, and signs receipts
 
-General-purpose GPU rental, in which an unknown consumer uploads an arbitrary
-CUDA program, container image, or model, is a substantially more dangerous
-product. It should be treated as a later protocol profile with stronger
-isolation and operational requirements.
+Bare GPU rental and consumer-supplied execution are outside this product.
+There is no TOS terminal profile for uploading arbitrary CUDA programs,
+containers, native binaries, or model weights.
 
-## Sharing Modes
+Jetson and industrial devices whose primary purpose is local cameras, sensors,
+robots, vehicles, or production equipment follow the separate physical-
+terminal profile. Their safety and local real-time work takes absolute
+priority over any approved network service.
+
+## Managed Service Modes
 
 ### Managed inference
 
@@ -52,31 +66,19 @@ direct device access, or permission to load arbitrary executable code.
 This mode is the Phase 1 recommendation because it maps directly to the AI Site
 protocol described in the implementation plan.
 
-### Approved model hosting
+### Operator-approved model hosting
 
-In a later phase, a provider may allow models or container images from an
-approved, signed registry. Images, model weights, licenses, resource profiles,
-and expected hashes must be checked before execution.
-
-### General GPU jobs
-
-A general compute profile may eventually accept:
-
-- signed container jobs
-- CUDA batch programs
-- rendering jobs
-- training or fine-tuning workloads
-- user-supplied model weights
-
-This mode requires a separate job protocol, stronger sandboxing, network
-egress controls, ephemeral storage, GPU isolation, and reliable cleanup. It is
-not part of the initial inference MVP.
+In a later phase, the terminal operator may install model or runtime packages
+from an approved, signed registry. Packages, model weights, licenses, resource
+profiles, signer authority, compatibility, and expected hashes must be checked
+before activation. A consumer cannot select an unapproved package or cause a
+package to be installed as part of a request.
 
 ## User Stories
 
-### GPU provider
+### Terminal operator
 
-As a GPU provider, I want to:
+As a terminal operator, I want to:
 
 - select which local GPU devices and models are available
 - preserve enough resources for my own use
@@ -87,10 +89,13 @@ As a GPU provider, I want to:
 - receive payment before or during execution
 - issue signed receipts for completed, cancelled, or failed work
 - stop accepting new requests without losing pending settlement state
+- publish measured service benchmarks without exposing immutable host serial
+  numbers
+- keep capacity for local work, quiet hours, and thermal limits
 
-### GPU consumer
+### AI service consumer
 
-As a GPU consumer, I want to:
+As an AI service consumer, I want to:
 
 - find services by model, capability, region, context size, price, and health
 - verify that the endpoint is authorized by its TOS identity
@@ -107,8 +112,9 @@ As a GPU consumer, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, JSON-RPC/lite APIs, wallet and crypto primitives, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-ai` repository | AI Site schemas, inference profiles, `tos-edge`, GPU scheduling adapters, discovery, SDKs, clients, deployments, and end-to-end tests |
-| Provider's device | GPU drivers, model backend, approved models, `tos-edge`, runtime key, and optionally a TOS Sites/RLDP ingress process |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
+| `tos-ai` repository | AI terminal distribution, AI Site schemas, inference/task profiles, resource probes and benchmarks, model/runtime adapters, scheduler, discovery, SDKs, deployments, and end-to-end tests |
+| Terminal host | GPU drivers, approved runtimes and models, `tos-edge-ai`, bounded caches, runtime key, policy, and optionally a TOS Sites/RLDP ingress process |
 | TOS blockchain | identity references, DNS, capability declarations, manifest commitments, payment, escrow, and settlement |
 
 Prompts, private inputs, generated output, model context, and private logs must
@@ -118,15 +124,21 @@ not be placed on-chain.
 
 ```mermaid
 flowchart LR
-    subgraph Provider["Provider's local device"]
+    subgraph Provider["AI Edge Computing Terminal"]
         GPU["Local GPU"]
-        Backend["Ollama / vLLM /<br/>OpenAI-compatible backend"]
-        Scheduler["GPU scheduler<br/>admission, queue, VRAM"]
-        Edge["tos-edge<br/>auth, quote, payment,<br/>metering, receipt"]
+        Profiler["Resource profiler<br/>+ benchmark evidence"]
+        Models["Verified model manager<br/>bounded cache"]
+        Adapter["Runtime adapter"]
+        Backend["Ollama / llama.cpp / vLLM /<br/>compatible backend"]
+        Scheduler["Task scheduler<br/>admission, queue, RAM/VRAM"]
+        Edge["tos-edge-ai<br/>auth, quote, payment,<br/>metering, receipt"]
         Ingress["TOS Sites / RLDP ingress"]
 
+        Profiler --> Edge
+        Models --> Adapter
         GPU <--> Backend
-        Backend <--> Scheduler
+        Backend <--> Adapter
+        Adapter <--> Scheduler
         Scheduler <--> Edge
         Edge <--> Ingress
     end
@@ -142,7 +154,7 @@ flowchart LR
         Payment --> Chain
     end
 
-    subgraph Consumer["GPU consumer"]
+    subgraph Consumer["AI service consumer"]
         Discovery["Discovery service / SDK"]
         Client["AI Site client"]
         Wallet["TOS wallet"]
@@ -164,14 +176,16 @@ name.tos
   -> TOS DNS site record
   -> ADNL identity
   -> RLDP/TOS Sites ingress
-  -> tos-edge
-  -> bounded GPU scheduler
+  -> tos-edge-ai
+  -> bounded task scheduler
+  -> approved runtime adapter
   -> approved model backend
   -> local GPU
 ```
 
-The GPU backend must not be exposed directly to the public network because
-doing so would bypass authentication, payment, metering, and resource policy.
+The GPU, runtime API, container socket, and terminal administrative interface
+must not be exposed directly to the public network because doing so would
+bypass authentication, payment, metering, admission, and resource policy.
 
 ## Provider Onboarding
 
@@ -188,7 +202,7 @@ keystore. The public runtime receives only revocable, time-bounded authority.
 Compromise of the runtime key must not automatically transfer the domain or
 the provider's funds.
 
-### 2. Prepare the local GPU environment
+### 2. Install and preflight the AI Edge Computing Terminal
 
 The provider installs:
 
@@ -196,20 +210,30 @@ The provider installs:
 - CUDA or the corresponding device runtime
 - an optional container runtime with GPU support
 - one or more approved model backends
-- `tos-edge`
+- the signed `tos-ai` terminal distribution and `tos-edge-ai`
 - a server-side TOS Sites/RLDP proxy when native ingress is unavailable
 
 The setup flow should detect:
 
+- operating-system architecture and terminal compatibility tier
 - GPU vendor and model
 - device and driver compatibility
 - available VRAM
 - supported precision and runtime features
+- host RAM, bounded disk, and model-cache capacity
 - health and temperature information
+- public ADNL or relay reachability
 - backend reachability
 
-Hardware information is useful for scheduling, but a self-reported GPU model
-is not cryptographic proof of the hardware used for a request.
+Detection must not automatically publish all devices or allocate all capacity.
+The operator explicitly chooses what is offered and what remains reserved for
+local work.
+
+Hardware information is useful for scheduling, but a self-reported GPU model,
+runtime version, temperature, or benchmark is not cryptographic proof of the
+hardware used for a request. Claims must be labeled as declared, observed,
+benchmarked, audited, attested, or replicated according to the terminal
+architecture.
 
 ### 3. Select the offered resources
 
@@ -263,9 +287,10 @@ profile should describe:
 Consumers generally need a model capability and service-level description,
 not only a GPU model number.
 
-### 5. Run `tos-edge`
+### 5. Run the terminal service
 
-For GPU sharing, `tos-edge` is responsible for:
+For managed GPU-backed AI services, `tos-edge-core` plus `tos-edge-ai` are
+responsible for:
 
 - client challenge-response authentication
 - signed quote generation
@@ -329,9 +354,12 @@ The provider publishes the signed manifest at:
 /.well-known/tos-ai-site.json
 ```
 
-A GPU/inference profile should include at least:
+The terminal publishes the generic base descriptor at
+`/.well-known/tos-service.json` and a profile-defined AI manifest, such as the
+path above. The terminal and GPU/inference profiles should include at least:
 
 - site and service identifiers
+- terminal and resource-profile versions
 - owner and authorized runtime keys
 - manifest and protocol versions
 - ADNL, HTTPS, or relay endpoints
@@ -342,6 +370,8 @@ A GPU/inference profile should include at least:
 - settlement contract address
 - privacy, logging, and retention policy
 - region and current health metadata
+- workload benchmark references and evidence levels
+- owner reservation and admission-state metadata
 - creation and expiry times
 - optional hardware or execution attestation references
 
@@ -361,14 +391,13 @@ Possible units include:
 - per invocation
 - per 1,000 input tokens
 - per 1,000 output tokens
-- per GPU-second
 - per generated image
 - per minute of audio
-- per batch job
+- per bounded batch action
 
-Per-request or token-based pricing is easier for an inference MVP. GPU-time
-pricing is more general but is difficult for the consumer to verify without
-trusted metering or execution evidence.
+External pricing is service-based. Measured accelerator time may be included
+as advisory receipt evidence or an operator cost metric, but it is not a bare
+device-rental unit.
 
 ## Discovery
 
@@ -419,7 +448,7 @@ Raw addressing works but is less readable and less stable for consumers.
 sequenceDiagram
     participant C as AI Site Client
     participant D as TOS DNS / Discovery
-    participant E as tos-edge
+    participant E as tos-edge-ai
     participant S as Service Actor
     participant B as TOS Blockchain
     participant G as GPU Model Backend
@@ -438,7 +467,7 @@ sequenceDiagram
     G-->>E: Tokens, media, progress, and usage
     E-->>C: STREAM(result, progress, usage)
     E->>S: Commit response hash or settle
-    E-->>C: Signed compute receipt
+    E-->>C: Signed AI service receipt
 ```
 
 ### Session establishment
@@ -494,7 +523,7 @@ charge.
 
 ### Invocation and streaming
 
-After payment verification, `tos-edge`:
+After payment verification, the terminal:
 
 1. applies admission, size, deadline, and policy checks
 2. reserves bounded queue and GPU capacity
@@ -506,12 +535,13 @@ After payment verification, `tos-edge`:
 8. signs the final receipt
 
 Client disconnect must not create an unbounded detached workload. The provider
-may define an explicit policy to cancel immediately or finish a paid batch job,
-but every detached job must remain visible, bounded, and recoverable.
+may define an explicit policy to cancel immediately or finish a paid bounded
+batch action, but every detached action must remain visible, bounded, and
+recoverable.
 
-## Compute Receipt
+## AI Service Receipt
 
-A signed compute receipt should bind:
+A signed AI service receipt should bind:
 
 - provider, site, service, and runtime identities
 - consumer or session identity
@@ -567,7 +597,7 @@ The provider must enforce limits on:
 The implementation must ensure:
 
 - cancellation actually reaches or terminates backend work
-- a disconnected client does not leave an unbounded job
+- a disconnected client does not leave an unbounded action
 - request completion releases KV cache and GPU buffers
 - model caches have explicit byte and entry limits
 - abandoned temporary files are removed with bounded work
@@ -582,7 +612,8 @@ connection, queue, or settlement growth.
 ## Consumer Privacy and Trust
 
 Transport encryption protects a request from network observers, but it does
-not hide plaintext from the GPU provider. A provider can potentially inspect:
+not hide plaintext from the terminal provider. A provider can potentially
+inspect:
 
 - prompts and input documents
 - generated output
@@ -605,49 +636,19 @@ For highly sensitive workloads, consumers should use some combination of:
 Model and hardware declarations must also be treated as self-reported unless
 their evidence policy provides stronger verification.
 
-## General GPU Job Security
+## Explicit Exclusion of Bare GPU Rental
 
-Allowing an unknown consumer to upload a container, CUDA program, or arbitrary
-model introduces risks including:
+The terminal accepts only bounded calls to services and artifacts installed by
+the operator. Consumer-supplied containers, native programs, model weights,
+training jobs, arbitrary rendering programs, raw device handles, and shell
+access are rejected by design.
 
-- container or virtual-machine escape
-- GPU driver vulnerabilities
-- host file and credential theft
-- local-network scanning
-- denial-of-service and proxy abuse
-- disk and memory exhaustion
-- cryptocurrency mining or infinite computation
-- malicious model formats and deserialization
-- residual VRAM or temporary-data leakage
-
-The recommended progression is:
-
-| Phase | Offered execution | Risk level |
-|---|---|---|
-| Phase 1 | Provider-installed model; consumer supplies only bounded input | Lowest |
-| Phase 2 | Provider-approved models and signed images | Moderate |
-| Phase 3 | Restricted batch GPU jobs | High |
-| Later | Arbitrary containers or general GPU virtual machines | Highest |
-
-A general job profile requires at least:
-
-- micro-VM or comparably strong isolation
-- GPU passthrough or vGPU isolation
-- signed and policy-approved images
-- no host filesystem mounts
-- isolated ephemeral storage
-- network egress policy
-- CPU, RAM, VRAM, disk, bandwidth, and duration quotas
-- forced termination and cleanup
-- current driver and kernel security updates
-- auditable job lifecycle and settlement
-
-This profile should be specified and audited separately from managed
-inference.
+This is a permanent product boundary for the architecture documented here, not
+a later roadmap phase.
 
 ## Availability and Verification Limits
 
-A local GPU provider may turn off her machine, lose network connectivity, or
+A terminal operator may turn off her machine, lose network connectivity, or
 reserve the device for local use. Discovery health signals and manifest
 availability are not guarantees of future execution.
 
@@ -677,55 +678,61 @@ whether that provider and evidence profile are suitable for the workload.
 | Capability Registry | Available/partial | TOS core contract; inference vocabulary and integration in `tos-ai` |
 | Task Escrow, Dispute, and Proof Attestation | Available/partial | TOS core contracts; optional compute profiles in `tos-ai` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
-| Public `.tos` registration product | To build | `tos-ai` application contracts, tooling, and deployment |
+| Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
+| Terminal/resource schema and Edge Core | To build | `tos-protocol` |
+| Tier 1 AI terminal distribution | To build | `tos-ai` |
+| Resource probes and benchmark evidence | To build | `tos-ai` |
 | GPU/inference manifest profile | To build | `tos-ai/spec/` |
-| `tos-edge` | To build | `tos-ai` |
-| GPU scheduler and runtime supervisor | To build | `tos-ai` |
-| Ollama, vLLM, and OpenAI-compatible adapters | To build | `tos-ai` |
-| Session, quote, invocation, and streaming protocol | To build | `tos-ai` |
-| Token/GPU metering and compute receipts | To build | `tos-ai` |
+| `tos-edge-ai` | To build | `tos-ai`, consuming released Edge Core |
+| Task scheduler and runtime supervisor | To build | `tos-ai` |
+| Ollama, llama.cpp, vLLM, and OpenAI-compatible adapters | To build | `tos-ai` |
+| Session, quote, invocation, and streaming protocol | To build | base in `tos-protocol`, inference extension in `tos-ai` |
+| Token/media metering, accelerator evidence, and AI service receipts | To build | `tos-ai` |
 | Capability discovery and clients | To build | `tos-ai` |
 | NAT relay and reverse tunnel | To build | reusable service, preferably outside validator code |
 | Model, runtime, and hardware attestation | Later | separate verification profile |
-| Arbitrary GPU job execution | Later | separately specified and audited compute profile |
 
 Today, the existing infrastructure can manually expose a local
 OpenAI-compatible endpoint through ADNL/RLDP and TOS Sites. It does not yet
-provide a complete GPU marketplace with standard manifests, discovery,
-quotes, automatic payment, bounded scheduling, and verifiable metering.
+provide the AI Edge Computing Terminal product with standard manifests,
+resource evidence, adapters, discovery, quotes, automatic payment, bounded
+scheduling, and metering.
 
 ## MVP Acceptance Criteria
 
-The first interoperable GPU-sharing MVP is complete when an ordinary user can:
+The first interoperable AI terminal MVP is complete when an ordinary user can:
 
 1. install the product without building or operating a validator
-2. detect a supported local GPU and backend
-3. select a provider-approved model
-4. configure VRAM, concurrency, queue, duration, RAM, disk, and price limits
-5. create a revocable runtime identity
-6. expose the service through a raw ADNL address
-7. optionally bind the service to `name.tos`
-8. publish a signed, expiring manifest
-9. register an inference capability and settlement contract
-10. appear in an independent capability discovery service
-11. issue a signed quote with a maximum cost
-12. verify payment before GPU admission
-13. execute and stream bounded inference
-14. return a signed result and usage receipt
-15. support cancellation, timeout, backend failure, and refund rules
-16. restart without losing required payment or settlement state
-17. drain or pause public workloads safely
-18. remain within configured RAM, VRAM, disk, connection, queue, cache, and
+2. detect a supported Tier 1 GPU, driver, runtime, and backend
+3. run a versioned local capability benchmark
+4. select a provider-approved model
+5. reserve owner capacity and configure VRAM, concurrency, queue, duration,
+   RAM, disk, thermal, and price limits
+6. create a revocable runtime identity
+7. expose the service through a raw ADNL address or selected relay
+8. optionally bind the service to `name.tos`
+9. publish signed, expiring terminal and service manifests
+10. register an inference capability and settlement contract
+11. appear in an independent capability discovery service
+12. issue a signed quote with a maximum cost
+13. verify payment before terminal admission
+14. execute and stream bounded inference through an approved adapter
+15. return a signed result and usage receipt
+16. support cancellation, timeout, adapter crash, OOM, and refund rules
+17. restart without duplicating work or losing settlement state
+18. drain or pause public workloads safely
+19. remain within configured RAM, VRAM, disk, connection, queue, cache, and
     settlement limits during an extended soak test
 
 ## Open Protocol Decisions
 
-The normative compute profile must still decide:
+The normative managed-service profile must still decide:
 
 - canonical capability and model identifiers
 - model-weight and configuration hashing
 - quote and result encodings
-- token, image, audio, and GPU-time metering rules
+- token, image, audio, batch-action metering, and advisory accelerator-usage
+  evidence
 - cancellation and partial-charge behavior
 - prepaid credit, voucher, channel, or per-call payment profiles
 - stream resumption and idempotency
@@ -734,7 +741,8 @@ The normative compute profile must still decide:
 - health, load, and capacity advertisement
 - capability-specific reputation
 - provider draining and failover behavior
-- requirements for approved images and general GPU jobs
+- signed operator-approved package, signer, compatibility, rollout, and
+  rollback rules
 
 These decisions require shared schemas, signature rules, maximum sizes, state
 machines, and conformance vectors before independent clients and providers can
@@ -743,6 +751,7 @@ claim protocol compatibility.
 ## Recommended Positioning
 
 The purpose of this design is not to turn TOS consensus into a GPU scheduling
-or proof-of-compute network. It is to let an ordinary user wrap local GPU
-capacity in a discoverable, authenticated, priced, payable, and composable
-Internet service under a persistent `.tos` identity.
+or proof-of-compute network. It is to let an ordinary user operate a bounded
+AI Edge Computing Terminal that converts selected local GPU capacity into
+discoverable, authenticated, priced, payable, and composable Internet
+services under a persistent `.tos` identity.

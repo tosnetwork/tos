@@ -4,9 +4,11 @@
 
 - Document type: product use case and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-29
+- Date: 2026-07-30
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- Shared host architecture:
+  [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 
 ## Purpose
 
@@ -18,8 +20,13 @@ stored data.
 The desired product must not require a storage provider to run a validator or
 modify the TOS node. TOS remains the identity, naming, transport, payment, and
 settlement substrate. Storage-specific protocol code and services belong in
-the separate `tos-ai` product/protocol repository described by the
-implementation plan.
+the separate `tos-storage` product repository described by the implementation
+plan.
+
+A storage adapter may coexist on the same host as an AI Edge Computing
+Terminal, especially for model distribution or owner-managed datasets. It is
+still a separate profile: storage leases, customer objects, credentials,
+queues, quotas, and durable state must not be folded into the AI scheduler.
 
 This use case covers two related modes:
 
@@ -79,8 +86,9 @@ implementation plan:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, JSON-RPC/lite APIs, wallet and crypto primitives, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-ai` repository | storage protocol schema, storage manifest profile, Storage Adapter, `tos-edge` integration, discovery/catalog services, clients, deployment tooling, and end-to-end tests |
-| Provider's device | local object data, storage backend, `tos-edge`, runtime keys, and optionally a TOS Sites/RLDP ingress process |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
+| `tos-storage` repository | storage protocol schema, storage manifest profile, Storage Adapter, `tos-edge-storage`, discovery/catalog services, clients, deployment tooling, and end-to-end tests |
+| Provider host | local object data, bounded storage backend, `tos-edge-storage`, runtime keys, and optionally a TOS Sites/RLDP ingress process |
 | TOS blockchain | identity references, DNS records, capability declarations, manifest commitments, payment, and settlement |
 
 Storage objects, private filenames, encryption keys, and object contents must
@@ -93,7 +101,7 @@ flowchart LR
     subgraph Provider["Provider's local device"]
         Disk["Dedicated shared directory<br/>or object volume"]
         Adapter["Storage Adapter<br/>PUT / GET / HEAD / DELETE"]
-        Edge["tos-edge<br/>authentication, policy,<br/>metering, receipts"]
+        Edge["tos-edge-storage<br/>authentication, policy,<br/>metering, receipts"]
         Ingress["TOS Sites / RLDP ingress"]
         Disk <--> Adapter
         Adapter <--> Edge
@@ -132,7 +140,7 @@ name.tos
   -> TOS DNS site record
   -> ADNL identity
   -> RLDP/TOS Sites ingress
-  -> tos-edge
+  -> tos-edge-storage
   -> Storage Adapter
   -> bounded local storage volume
 ```
@@ -145,7 +153,7 @@ The provider creates:
 
 - a TOS wallet for registration, fees, and storage revenue
 - a site owner key that controls the domain and long-lived service identity
-- a separate runtime key used by `tos-edge` to sign quotes and receipts
+- a separate runtime key used by `tos-edge-storage` to sign quotes and receipts
 
 The owner key should remain offline or in a protected administrative
 keystore. The public service should use a revocable, replaceable runtime key
@@ -189,7 +197,7 @@ The provider runs:
    - content hashing and integrity verification
    - lease and quota enforcement
 
-2. **`tos-edge`**
+2. **`tos-edge-storage`**
 
    It provides:
 
@@ -205,9 +213,9 @@ The provider runs:
 
 3. **TOS Sites/RLDP ingress, when required**
 
-   Until `tos-edge` has a native supported RLDP server integration, a
+   Until `tos-edge-storage` has a native supported RLDP server integration, a
    server-side TOS Sites/RLDP HTTP proxy can forward traffic to the local
-   `tos-edge` listener.
+   `tos-edge-storage` listener.
 
 The provider does not need to run a TOS validator.
 
@@ -251,7 +259,8 @@ required for raw ADNL access.
 The provider publishes a manifest through:
 
 ```text
-/.well-known/tos-ai-site.json
+/.well-known/tos-service.json
+/.well-known/tos-storage.json
 ```
 
 A storage profile should include at least:
@@ -345,7 +354,7 @@ payment contract.
 sequenceDiagram
     participant C as Storage Client
     participant D as TOS DNS / Discovery
-    participant E as tos-edge
+    participant E as tos-edge-storage
     participant S as Service Actor
     participant B as TOS Blockchain
     participant L as Local Storage
@@ -659,13 +668,13 @@ proof-backed durable storage.
 
 ### Complementary deployment
 
-`tos-edge` should allow pluggable storage backends rather than requiring every
-provider to use only a local filesystem:
+`tos-edge-storage` should allow pluggable storage backends rather than
+requiring every provider to use only a local filesystem:
 
 ```mermaid
 flowchart LR
     Client["TOS storage client"] --> Identity["name.tos + signed manifest"]
-    Identity --> Edge["tos-edge storage service"]
+    Identity --> Edge["tos-edge-storage service"]
     Edge --> Local["Local disk / NAS"]
     Edge --> IPFS["IPFS pinned content"]
     Edge --> Filecoin["Filecoin-backed archive"]
@@ -686,6 +695,17 @@ The signed manifest and quote must state the actual service class and evidence
 policy. A provider must not advertise a proof-backed or replicated service
 when it stores only one local copy.
 
+When storage and AI profiles share one physical terminal, their resource
+budgets remain independent:
+
+- leased object capacity cannot consume the model-artifact reserve
+- model downloads cannot consume storage promised by active leases
+- AI adapters receive no object plaintext or customer keys by default
+- storage requests cannot enter the GPU task queue
+- bandwidth and disk-I/O admission account for both profiles
+- stopping or upgrading one profile does not corrupt the other profile's
+  durable state
+
 The recommended positioning is therefore:
 
 > TOS provides the named service, authorization, policy, quote, payment, and
@@ -699,16 +719,16 @@ The recommended positioning is therefore:
 | TOS identity, wallet, and payment foundation | Available | TOS core |
 | DNS resolution and resolver chaining | Available | TOS core |
 | ADNL, DHT, RLDP, and TOS Sites | Available | TOS core |
-| Service Actor and escrow foundations | Available/partial | TOS core contracts; storage integration in `tos-ai` |
-| Capability Registry | Available/partial | TOS core contract; storage vocabulary and integration in `tos-ai` |
+| Service Actor and escrow foundations | Available/partial | TOS core contracts; storage integration in `tos-storage` |
+| Capability Registry | Available/partial | TOS core contract; storage vocabulary and integration in `tos-storage` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
-| Public `.tos` registration product | To build | `tos-ai` application contracts, tooling, and deployment |
-| Storage manifest profile | To build | `tos-ai/spec/` |
-| Storage Adapter and object API | To build | `tos-ai` |
-| Storage-enabled `tos-edge` | To build | `tos-ai` |
-| Storage quote, metering, and receipt profile | To build | `tos-ai` |
-| Storage client and CLI | To build | `tos-ai` |
-| Provider and public-content discovery | To build | `tos-ai` |
+| Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
+| Storage manifest profile | To build | `tos-storage/spec/` |
+| Storage Adapter and object API | To build | `tos-storage` |
+| Storage-enabled `tos-edge-storage` | To build | `tos-storage`, consuming released Edge Core |
+| Storage quote, metering, and receipt profile | To build | `tos-storage` |
+| Storage client and CLI | To build | `tos-storage` |
+| Provider and public-content discovery | To build | `tos-storage` |
 | NAT relay and reverse tunnel | To build | reusable service, preferably outside validator code |
 | Replication and availability proofs | Later | separate storage protocol phase |
 

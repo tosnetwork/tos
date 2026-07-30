@@ -7,6 +7,8 @@
 - Date: 2026-07-30
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- Shared host architecture:
+  [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 
 ## Purpose
 
@@ -86,6 +88,7 @@ Commerce remains outside the TOS core repository:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS, wallet and crypto, JSON-RPC/lite APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
 | `tos-commerce` repository | store and offer schemas, commerce edge service, seller CLI/UI, buyer SDKs, discovery, order workflows, fulfillment adapters, deployments, and end-to-end tests |
 | Seller's device | catalog, inventory, digital assets, private order data, fulfillment state, runtime key, and commerce edge service |
 | TOS blockchain | DNS references, service commitments, payment, escrow, settlement, dispute references, and optional attestations |
@@ -94,6 +97,12 @@ If common AI Site protocol crates are useful, `tos-commerce` may consume
 released descriptor, authentication, transport, and receipt libraries. It must
 not depend on validator-private source or require a TOS node release whenever
 the storefront product changes.
+
+The storefront may coexist on the same physical host as a TOS AI Edge
+Computing Terminal, but it is not an AI terminal profile merely because AI is
+used to translate a listing, answer a buyer, or prepare a digital product.
+Commerce remains a distinct durable workflow with separate credentials,
+private buyer data, inventory, queues, and dispute state.
 
 ## Commerce Modes
 
@@ -212,6 +221,28 @@ name.tos
 The private seller UI, inventory database, digital asset store, and wallet
 administration must not be directly reachable through the public storefront
 listener.
+
+### Composition with an AI Edge Computing Terminal
+
+A seller may explicitly authorize the commerce service to invoke a local or
+remote AI capability for:
+
+- listing translation or summarization
+- OCR and media preparation
+- customer-support drafts
+- private document translation
+- product search embeddings
+
+That composition uses the same capability, quote, budget, and receipt
+mechanisms as an independent consumer. The commerce adapter receives only a
+task-scoped AI capability; the AI adapter receives no store wallet,
+inventory-administration, buyer-address, or dispute authority. Private buyer
+content is forwarded only after the declared region, retention, provider, and
+machine-assistance policy has been accepted.
+
+Co-located AI and commerce processes require separate bounded queues,
+credentials, audit redaction, and durable state. An AI runtime failure or
+model-cache eviction must not corrupt an accepted order.
 
 ## Seller Onboarding
 
