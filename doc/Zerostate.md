@@ -23,11 +23,19 @@ Only the native zero-state template is valid for current genesis generation.
 
 ## Initial Supply
 
-The native TOS supply is fixed at **5,000,000,000 TOS** at zero-state construction time. It is not controlled by ConfigParams 6 or 7, which are for extra currencies.
+The production validator-led zerostate creates a provisional **101,000 TOS**:
+100,000 TOS in a bounded validator-bootstrap wallet and 500 TOS in each of the
+Elector and Configuration contracts.
 
-To change the TOS target supply, update the main-wallet allocation in the native zero-state template and the matching testnet generator.
+Nearly all remaining native TOS is created per produced block under
+ConfigParam 14. ConfigParams 6 and 7 govern extra-currency operations and do
+not control this native block creation. Five billion TOS over roughly seven
+years is a policy calibration target; it is not fully created at genesis and
+is not a hard consensus cap.
 
-If a launch profile allocates funds for AI actor bootstrap programs, those allocations should be recorded as named genesis recipients and tied to auditable task, service, or verifier deployment plans.
+Production genesis does not allocate native funds to AI actor bootstrap
+programs. Those accounts and services must be deployed later through auditable
+ordinary transactions.
 
 PoW/test giver contracts are not registered in the genesis templates and do not receive a genesis balance. The standalone giver scripts are test/deployment tools only.
 
@@ -46,4 +54,5 @@ Descriptors for unsupported execution domains are not valid for this binary beca
 ## References
 
 - [ConfigParam.md](ConfigParam.md)
+- [Validator-led token economics](tos-validator-only-token-economics.md)
 - [gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif)

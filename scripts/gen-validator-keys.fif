@@ -20,7 +20,7 @@
 "Lists.fif" include
 "Key.fif" include
 
-def? $1 { @' $1 (number) 0= abort"count must be a positive integer" } { 3 } cond constant count
+def? $1 { @' $1 (number) 0= abort"count must be a positive integer" } { 4 } cond constant count
 def? $2 { @' $2 } { "val-key-" } cond constant prefix
 
 variable pubs  B{} pubs !

@@ -2,7 +2,9 @@
 #
 # setup-testnet.sh - Set up a local TOS testnet using the tested Python infrastructure.
 #
-# Usage:  sudo VALIDATORS=1 ./scripts/setup-testnet.sh [--clean]
+# Usage:
+#   sudo VALIDATORS=3 GENESIS_VALIDATORS=4 \
+#     VALIDATOR_ECONOMICS_PROFILE=1 ./scripts/setup-testnet.sh [--clean]
 
 set -euo pipefail
 
@@ -61,10 +63,9 @@ chown tos:tos "$DATA" "$DATA/testnet"
 
 # Python script that uses the tested tostester infrastructure
 cd "$REPO_ROOT"
-# Locate uv and the HOME it should use. Under sudo, $HOME is /root and the
-# caller's ~/.local/bin is off PATH, so resolve uv (and its venv/cache home)
-# from the invoking user (SUDO_USER). The Python step still runs as root so it
-# can write under /data — only HOME is borrowed so uv reuses the caller's venv.
+# Under sudo, the caller's ~/.local/bin is off PATH. Resolve uv from the
+# invoking user without overriding HOME; use an explicit uv cache directory
+# and pass the repository path to the embedded Python process.
 UV_HOME="$HOME"
 UV=$(command -v uv 2>/dev/null || true)
 if [ -n "${SUDO_USER:-}" ]; then
@@ -80,7 +81,12 @@ if [ -z "$UV" ] || [ ! -x "$UV" ]; then
     echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
     exit 1
 fi
-HOME="$UV_HOME" VALIDATORS="${VALIDATORS:-1}" "$UV" run python3 <<'PYEOF'
+REPO_ROOT="$REPO_ROOT" \
+UV_CACHE_DIR="$UV_HOME/.cache/uv" \
+VALIDATORS="${VALIDATORS:-1}" \
+GENESIS_VALIDATORS="${GENESIS_VALIDATORS:-${VALIDATORS:-1}}" \
+VALIDATOR_ECONOMICS_PROFILE="${VALIDATOR_ECONOMICS_PROFILE:-0}" \
+"$UV" run python3 <<'PYEOF'
 import asyncio, json, os, sys, base64, hashlib
 from pathlib import Path
 from ipaddress import IPv4Address
@@ -93,26 +99,38 @@ BUILD = REPO / "build"
 DATA = Path("/data")
 TESTNET = DATA / "testnet"
 VALIDATORS = int(os.environ.get("VALIDATORS", "1"))
+GENESIS_VALIDATORS = int(os.environ.get("GENESIS_VALIDATORS", str(VALIDATORS)))
+VALIDATOR_ECONOMICS_PROFILE = os.environ.get(
+    "VALIDATOR_ECONOMICS_PROFILE", "0"
+) == "1"
 if VALIDATORS < 1:
     raise SystemExit("VALIDATORS must be >= 1")
+if GENESIS_VALIDATORS < VALIDATORS:
+    raise SystemExit("GENESIS_VALIDATORS must be >= VALIDATORS")
+if VALIDATOR_ECONOMICS_PROFILE and GENESIS_VALIDATORS != 4:
+    raise SystemExit(
+        "VALIDATOR_ECONOMICS_PROFILE=1 requires GENESIS_VALIDATORS=4"
+    )
 
 install = Install(BUILD, REPO)
 
 async def setup():
     async with Network(install, TESTNET) as network:
-        network.config.shard_validators = VALIDATORS
+        network.config.shard_validators = GENESIS_VALIDATORS
+        network.config.validator_economics_profile = VALIDATOR_ECONOMICS_PROFILE
         # Create DHT node
         dht = network.create_dht_node()
 
-        # Create the initial validator set. VALIDATORS=1 is the default
-        # single-validator bootstrap profile; larger values are supported for
-        # rehearsal before switching to the safer production profile.
+        # Create the complete genesis validator set. A smaller VALIDATORS value
+        # may be exported and run to exercise the one-offline-validator case
+        # of the four-validator production profile.
         nodes = []
-        for _ in range(VALIDATORS):
+        for _ in range(GENESIS_VALIDATORS):
             node = network.create_full_node()
             node.make_initial_validator()
             node.announce_to(dht)
             nodes.append(node)
+        running_nodes = nodes[:VALIDATORS]
 
         # Trigger zerostate generation
         zs = network._get_or_generate_zerostate()
@@ -122,7 +140,7 @@ async def setup():
 
         # Prepare each node's directory (without starting the processes)
         # This creates keyring, static symlinks, config files
-        for i, node in enumerate(nodes):
+        for i, node in enumerate(running_nodes):
             # Populate static dir
             static_dir = node._directory / "static"
             static_dir.mkdir(exist_ok=True)
@@ -151,13 +169,13 @@ async def setup():
                 "port": n._liteserver_addr.port,
                 "id": {"@type": "pub.ed25519", "key": base64.b64encode(n._liteserver_key.public_key.key).decode()},
             }
-            for n in nodes
+            for n in running_nodes
         ]
         gc_path = DATA / "tos-global.json"
         gc_path.write_text(json.dumps(gc_dict, indent=2))
 
         # Export per-node configs
-        for i, node in enumerate(nodes):
+        for i, node in enumerate(running_nodes):
             idx = i + 1
             svc_dir = DATA / f"tos{idx}"
             svc_dir.mkdir(exist_ok=True)
@@ -194,11 +212,13 @@ async def setup():
             {"idx": i+1, "validator_port": n._addr.port,
              "liteserver_port": n._liteserver_addr.port,
              "console_port": n._engine_console_addr.port}
-            for i, n in enumerate(nodes)
+            for i, n in enumerate(running_nodes)
         ]}
         (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
 
-        print(f"\n  Validators: {VALIDATORS}")
+        print(f"\n  Running validators: {VALIDATORS}")
+        print(f"  Genesis validators: {GENESIS_VALIDATORS}")
+        print(f"  Validator economics profile: {VALIDATOR_ECONOMICS_PROFILE}")
         print(f"  Global config: {gc_path}")
         print(f"  DHT config: {dht_dir / 'config.json'}")
 

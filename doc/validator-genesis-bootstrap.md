@@ -1,201 +1,195 @@
 # Genesis Validator Bootstrap (`validator-keys.pub`)
 
-How to seed the **initial validator set** of a TOS network at genesis — the
-validators that run the chain *before* the first staking election.
+This document describes how the four original TOS validators are committed to
+the production zerostate and how control later passes to ordinary Elector
+elections. The monetary parameters are specified in
+[`tos-validator-only-token-economics.md`](tos-validator-only-token-economics.md).
 
-AI actor launch plans should treat this as validator bootstrap only. Agent,
-task, service, and verifier accounts should be deployed through auditable
-native transactions or explicitly documented genesis allocations.
+## Bootstrap invariants
 
-If genesis allocation is used for AI actor bootstrap, the launch plan must
-document:
+- Genesis contains exactly four original validators in ConfigParam 34.
+- The four entries have equal weight and unique Ed25519 signing keys.
+- Every entry includes its ADNL identity.
+- The ADNL identity is the SHA-256 hash of the serialized `pub.ed25519` TL
+  object: the four-byte prefix `c6 b4 13 48` followed by the 32-byte public key.
+- Original validators are authorized directly by the zerostate and do not
+  stake before the first block.
+- ConfigParam 16 has a four-validator minimum.
+- ConfigParam 17 initially requires a 10,000 TOS individual stake, 40,000 TOS
+  aggregate stake, and an effective-stake factor of one.
+- The original set is valid for 131,072 seconds. This value covers two complete
+  65,536-second election intervals, but it must still pass the production
+  bootstrap rehearsal before the final zerostate hashes are frozen.
+- There is no hard-coded placeholder-validator fallback in the production
+  generator.
 
-- recipient address
-- intended actor type
-- initial balance
-- controller or owner authority
-- whether the account is predeployed or funded for later deployment
-- rollback or recovery policy before public use
+The four-key minimum is a liveness floor, not a decentralization target. Four
+equal-weight validators require three participating signatures; one unavailable
+validator can be tolerated, while two unavailable validators halt progress.
 
-## TL;DR
+## Why genesis validators do not stake
 
-- **Genesis validators do not stake.** They are written directly into the
-  zerostate (ConfigParam 34) with a fixed weight. No TOS balance is required to
-  be a genesis validator.
-- Staking (`min_stake`, currently **10,000 TOS** — see
-  [ConfigParam.md §17](ConfigParam.md)) is only needed **later**, when the
-  `elector` contract runs the first on-chain election that replaces the genesis
-  set. Those stakes come from the **5,000,000,000 TOS pre-mined to the main wallet**
-  (see [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance)),
-  distributed to candidates by the launch operator.
-- The genesis set is injected from a file called **`validator-keys.pub`** — a
-  flat concatenation of 32-byte raw Ed25519 public keys. The native
-  `gen-zerostate*.fif` flow reads this file directly during zero-state
-  construction.
+A new chain cannot complete an on-chain election before it can produce blocks,
+and it cannot produce blocks without an authorized validator set. The zerostate
+breaks this circular dependency by committing the original validator set in
+ConfigParam 34.
 
-## Background: why no stake at genesis
+This authorization is temporary. The first successful ordinary election
+installs a stake-backed set, after which membership continues through the
+existing Elector process.
 
-A chain cannot run its first staking election before it produces any blocks, and
-it cannot produce blocks without validators. TOS breaks this bootstrap loop by
-appointing the **first** validator set in the zerostate before later handing
-control to on-chain elections.
+## Public-key manifest
 
-In `crypto/smartcont/gen-zerostate.fif`:
+The production generator reads `validator-keys<suffix>.pub` from the current
+working directory. With no suffix, the filename is `validator-keys.pub`.
 
-```fif
-{ file>B { dup Blen } {
-    32 B| swap dup ."Validator public key = " Bx. cr
-    17 add-validator                     // weight = 17, NO stake
-  } while drop
-} : load-keys-from-file
+The file is a raw concatenation with no headers, lengths, or separators:
 
-false =: keys-from-file                  // <-- the switch
-keys-from-file
-{ "validator-keys" +suffix +".pub" load-keys-from-file }   // branch A: from file
-{ VPK'xrQTSOn... 1 add-adnl-validator }                    // branch B: 1 placeholder
-cond
+```text
+validator-keys.pub =
+    public_key_0 || public_key_1 || public_key_2 || public_key_3
 
-3000 =: orig_vset_valid_for              // the appointed set is valid 3000 s
-now dup orig_vset_valid_for + 0 config.validators!   // write ConfigParam 34
+public-key size = 32 bytes
+manifest size   = 4 * 32 = 128 bytes
 ```
 
-- `add-validator` takes `( pubkey weight -- )` and assigns a **fixed weight of
-  17** — there is no balance check.
-- The appointed set is short-lived (`orig_vset_valid_for = 3000` seconds): just
-  long enough for the `elector` to run the first real election and hand over to a
-  staked set.
-- By default `keys-from-file = false`, so the checked-in template appoints a
-  single hard-coded placeholder validator (`VPK'xrQTSOn...`) — fine for a local
-  demo, **not** for a real launch.
+Order is consensus-relevant because it determines validator indices. The
+generator aborts unless the file is exactly 128 bytes and all four public keys
+are unique.
 
-## The `validator-keys.pub` format
+For every key, `gen-zerostate.fif` derives the corresponding ADNL identity and
+uses `add-adnl-validator` with equal weight 17. Operators must configure their
+validator-engine instances with the matching signing and ADNL private key.
 
-`load-keys-from-file` reads the file as raw bytes and slices it into 32-byte
-chunks (`32 B|`), one per validator. Therefore:
+## Key-generation ceremony
 
-```
-validator-keys.pub  =  pubkey_1 ‖ pubkey_2 ‖ … ‖ pubkey_N
-                       (each pubkey is exactly 32 bytes, raw Ed25519, no separators)
-file size            =  N × 32 bytes
-```
+Each operator should generate its key on its own secured machine and disclose
+only the raw 32-byte public key. The launch coordinator must not collect
+production private keys.
 
-The filename includes the zerostate `suffix` (the first CLI arg to
-`create-state`): `validator-keys<suffix>.pub`. With no suffix it is just
-`validator-keys.pub`.
-
-> **`min_validators = 1`** (ConfigParam 16) in the single-validator bootstrap
-> profile. Put exactly the public keys you want in the initial validator set.
-> The safer production profile should be restored through governance once
-> enough independent validators are ready.
-
-## Step-by-step bootstrap
-
-> `fift` and `create-state` below are build artifacts — they live under
-> `build*/crypto/` in a source tree (e.g. `build/crypto/fift`,
-> `build/crypto/create-state`) and on `PATH` after an install. Prefix the
-> commands with the build path if they are not on your `PATH`.
-
-### 1. Generate validator keys
-
-Use the helper Fift script (committed at `scripts/gen-validator-keys.fif`):
+The helper defaults to four keys for isolated test ceremonies:
 
 ```bash
-# from the repo root; produces val-key-1..N (private) + validator-keys.pub
-fift -I crypto/fift/lib -s scripts/gen-validator-keys.fif 1
+build/crypto/fift -I crypto/fift/lib \
+  -s scripts/gen-validator-keys.fif 4
 ```
 
-This writes:
-- `val-key-1` — a raw 32-byte Ed25519 **private** key (the block-signing key
-  for that validator). Keep it secret.
-- `validator-keys.pub` — 32 bytes (1 × 32), the concatenated **public** keys.
+It writes `val-key-1` through `val-key-4` and the concatenated
+`validator-keys.pub`. Coordinator-generated private keys are acceptable only
+for disposable local networks.
 
-### 2. Assemble `validator-keys.pub`
-
-Two ways, pick by trust model:
-
-- **Mode A — coordinator-generated (simplest; testnets / trusted launch).**
-  Run step 1 once with the full count. The coordinator holds every private key
-  and hands one to each operator over a secure channel.
-
-- **Mode B — decentralized (recommended for mainnet).** Each operator runs the
-  script with count `1` on their **own** machine, keeps their private key, and
-  sends only their 32-byte `validator-keys.pub` to the coordinator. The
-  coordinator concatenates the submissions in a fixed, agreed order:
-
-  ```bash
-  cat op1.pub > validator-keys.pub             # order is consensus-relevant
-  test "$(wc -c < validator-keys.pub)" = "32"  # 1 × 32
-  ```
-
-### 3. Enable `keys-from-file` in the genesis script
-
-Flip the switch in the native zerostate template you launch from
-(`gen-zerostate.fif`):
-
-```diff
--false =: keys-from-file
-+true =: keys-from-file
-```
-
-Place `validator-keys.pub` in the directory where `create-state` runs.
-
-### 4. Generate the zerostate
+For a production ceremony, each operator instead generates one key and submits
+the 32-byte public part. The coordinator verifies identity and proof of
+possession, then concatenates the four submissions in the published order:
 
 ```bash
-create-state -I crypto/fift/lib -I crypto/smartcont -s gen-zerostate.fif
+cat operator-0.pub operator-1.pub operator-2.pub operator-3.pub \
+  > validator-keys.pub
+test "$(wc -c < validator-keys.pub)" = "128"
 ```
 
-`load-keys-from-file` echoes one `Validator public key = …` line per key, so you
-can eyeball the count.
+Before generation, publish a signed manifest containing:
 
-### 5. Verify the appointed set
+- index;
+- raw public key;
+- derived ADNL identity;
+- controlling masterchain wallet;
+- operator and control disclosure; and
+- a hash of the complete ordered 128-byte manifest.
 
-On a running node, dump ConfigParam 34 (current validator set):
+## Generate and inspect the zerostate
+
+Run the canonical production generator from the directory containing the key
+manifest:
 
 ```bash
-tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 34" -c "quit"
+build/crypto/create-state \
+  -I crypto/fift/lib \
+  -I crypto/smartcont \
+  -s "$PWD/crypto/smartcont/gen-zerostate.fif"
 ```
 
-It must list your N validator descriptors (each with weight 17).
+The generator emits `zerostate.boc`, the basechain zerostate, their hashes, the
+main-wallet key, and the configuration-contract key. Production key custody
+must follow the launch ceremony rather than leaving generated private keys in
+an ordinary working directory.
 
-> **Bootstrap invariant:** `validator-keys.pub` must contain `N * 32` bytes and
-> injects exactly `N` validators into the zerostate. For the single-validator
-> bootstrap profile, `N = 1`.
+Inspect the initial validator set on a running node:
 
-## Wiring the private keys into validator nodes
+```bash
+tos-lite-client -C /data/tos-global.json -v 0 \
+  -c "last" \
+  -c "getconfig 34" \
+  -c "quit"
+```
 
-Each `val-key-i` is the Ed25519 **block-signing** key whose public half is in
-ConfigParam 34. The validator node that signs as validator *i* must hold that
-private key in its `validator-engine` keyring. In **Mode B** this is automatic —
-the key never left the operator's machine. In **Mode A**, the coordinator must
-deliver each private key to its operator, who imports it into the node keyring
-(see [Validator.md](Validator.md) and [Validator-Local.md](Validator-Local.md)
-for node key/keyring setup). The ADNL address can be bound exactly as the
-placeholder branch does with `add-adnl-validator`.
+ConfigParam 34 must show:
 
-## After genesis: hand over to staked validators
+- `total=4` and `main=4`;
+- four `validator_addr` descriptors;
+- weight 17 for every descriptor;
+- the four published signing keys; and
+- the four independently derived ADNL identities.
 
-The appointed set is temporary by design. The path to a permissionless,
-stake-secured set:
+Also verify ConfigParams 14, 15, 16, 17, and 28 against the economic
+specification, and independently parse the zerostate to confirm its native
+balances.
 
-1. The genesis validators produce blocks and keep the chain live.
-2. The launch operator **distributes TOS from the main wallet** to anyone who
-   wants to validate — at least `min_stake` (10,000 TOS) plus gas each. The
-   5 B pre-mine is the reservoir for this (≈ up to 500 candidates at 10 K).
-3. Candidates send their stake to the `elector` contract. The first election
-   (governed by ConfigParam 15 timing and ConfigParam 17 stake limits) produces
-   a **staked** validator set that replaces the appointed one.
-4. From then on, validator membership is determined purely by on-chain staking
-   elections.
+## Local three-process fault-tolerance rehearsal
 
-This is the TOS two-phase launch model: pre-mine the initial supply to one
-wallet, appoint a bootstrap validator set, then decentralize via stake
-distribution and elections.
+The local test infrastructure can commit four genesis identities while running
+only three validator processes:
 
-## Related docs
+```bash
+sudo env \
+  VALIDATORS=3 \
+  GENESIS_VALIDATORS=4 \
+  VALIDATOR_ECONOMICS_PROFILE=1 \
+  ./scripts/setup-testnet.sh --clean
 
-- [Zerostate.md](Zerostate.md) — genesis construction, TOS pre-mine
-- [ConfigParam.md](ConfigParam.md) — ConfigParam 15 (election timing), 16
-  (validator counts), 17 (stake limits), 34 (current validator set)
-- [Validator.md](Validator.md) / [Validator-Local.md](Validator-Local.md) —
-  running a validator, keyring setup
+./scripts/testnet-ctl.sh start
+```
+
+This is deliberately a one-offline-validator test. It must prove that:
+
+- all three running nodes converge on the same masterchain and workchain
+  heads;
+- blocks continue to finalize with three of four equal-weight validators;
+- ConfigParam 14 creation reaches the Elector fallback collector;
+- no validator repeatedly restarts or reports standstill;
+- RSS and anonymous memory settle within expected bounded caches; and
+- stopping any second validator halts rather than violates safety.
+
+This rehearsal does not replace the four-operator election test.
+
+## First ordinary elections
+
+The production transition is:
+
+```text
+four zerostate validators begin producing blocks
+  -> the bounded main wallet funds four published controlling wallets
+  -> every wallet submits the first 10,000-TOS election stake
+  -> every wallet keeps enough principal for the overlapping election
+  -> the Elector installs the first ordinary set
+  -> a second overlapping elected set is installed
+  -> remaining bootstrap-wallet funds are burned
+  -> permissionless recurring elections continue
+```
+
+Each original validator may receive no more than 20,000 TOS of stake principal
+plus the separately measured fee allowance specified by the economic design.
+Funding does not make an address a validator: the candidate must submit a valid
+bid and be selected by the Elector.
+
+The production rehearsal must exercise the complete path, including failed
+submission recovery, configuration installation, stake recovery, and bonus
+recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
+
+## Related documents
+
+- [`tos-validator-only-token-economics.md`](tos-validator-only-token-economics.md)
+- [`Zerostate.md`](Zerostate.md)
+- [`ConfigParam.md`](ConfigParam.md)
+- [`Validator.md`](Validator.md)
+- [`Validator-Local.md`](Validator-Local.md)

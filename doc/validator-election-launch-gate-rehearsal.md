@@ -1,11 +1,17 @@
 # Validator Election Launch-Gate Rehearsal
 
-**Status:** Test specification
+**Status:** Stage A automated functional path passed; supplementary Stage A
+evidence and Stage B remain pending
 
 **Date:** July 30, 2026
 
+**Last updated:** July 30, 2026
+
 **Applies to:** The validator-led bootstrap and reward design in
 [`tos-validator-only-token-economics.md`](tos-validator-only-token-economics.md)
+
+**Stage A automated run:** Passed on July 30, 2026. See
+[`validator-election-stage-a-local-result-2026-07-30.md`](validator-election-stage-a-local-result-2026-07-30.md).
 
 ## 1. Purpose
 
@@ -15,8 +21,15 @@ validator-election launch gate:
 - two complete, overlapping ordinary elections;
 - activation of both elected validator sets;
 - recovery of the first elected set's stake;
-- recovery of the final elected set's stake and validator bonus; and
+- recovery of the second target set's stake and validator bonus; and
 - continued consensus and bounded resource use throughout the exercise.
+
+Elector never unfreezes the currently active validator set. A third successful
+ordinary election is therefore required as a rollover: its activation retires
+the second target validator set and starts that set's final holding period.
+The rollover election is not a third reward round under test, and its own stake
+is not recovered during this rehearsal, but it must use the same normal wallet,
+signature, election, and ConfigParam 34 paths.
 
 This is an end-to-end blockchain test. It must use real controlling wallets,
 real validator signatures, real Elector messages, normal block inclusion,
@@ -34,7 +47,7 @@ The production-period rehearsal verifies that the same path remains correct
 under the actual election timing. Passing only the accelerated rehearsal does
 not close the production launch gate.
 
-## 2. Repository Support and Remaining Harness Work
+## 2. Repository Support
 
 The repository already contains the principal transaction-building tools:
 
@@ -49,11 +62,11 @@ The repository already contains the principal transaction-building tools:
 The local zerostate generator also supports four unique genesis validator
 identities and the validator-economics profile.
 
-There is not yet a single end-to-end harness that deploys and funds four
-controlling wallets, submits two elections, polls both validator-set
-transitions, recovers both rounds, and produces a machine-readable report.
-That orchestration must be added before this specification can be executed
-reliably and repeatedly.
+The repository now includes `scripts/validator-election-stage-a.py`. It
+deploys and funds four controlling wallets, submits the two target elections
+and the required rollover election, polls all three validator-set transitions,
+recovers both target rounds, injects restart and quorum faults, samples process
+resources, and produces a machine-readable report.
 
 ## 3. Test Topology
 
@@ -128,9 +141,9 @@ Only election timing and the initial validator-set lifetime may be shortened.
 The resulting zerostate hash must be clearly labeled as non-production and
 must never be reused for a public network.
 
-### 4.2 Candidate accelerated timing
+### 4.2 Executed accelerated timing
 
-The following values are a practical starting point:
+The successful Stage A run used:
 
 ```text
 elected_for        = 300 seconds
@@ -142,8 +155,8 @@ initial_set_valid  = 600 seconds
 
 These values provide a two-minute submission window while preserving a real
 overlap between the next election and the currently active validator set. The
-complete two-election and final-recovery path takes approximately 23 minutes,
-plus setup and confirmation margin.
+complete two-target-election, rollover, and final-recovery path takes
+approximately 23 minutes, plus setup and confirmation margin.
 
 The harness must validate all ConfigParam 15 ordering constraints before
 generating the zerostate. If the local block rate or transaction inclusion
@@ -177,20 +190,158 @@ The harness must perform the following sequence.
     second ordinary election.
 13. Verify the second participant list and the second ConfigParam 34
     transition.
-14. Wait until the first election becomes recoverable.
-15. Query `compute_returned_stake` for each first-round wallet, submit
+14. Poll until the rollover election opens.
+15. Wait until the first election becomes recoverable.
+16. Query `compute_returned_stake` for each first-round wallet, submit
     `recover-stake`, and confirm the resulting wallet credits.
-16. Wait until the second election becomes recoverable.
-17. Confirm that validator bonuses have been assigned to the second election,
+17. After recovering the first-round stake, use those same wallets to submit
+    the complete rollover election before its submission window closes.
+18. Verify the rollover participant list and ConfigParam 34 transition. This
+    activation must retire the second target validator set through the normal
+    Elector and Config paths.
+19. Wait until the second target election becomes recoverable.
+20. Confirm that validator bonuses have been assigned to the second election,
     query every recoverable amount, submit `recover-stake`, and confirm final
     wallet credits.
-18. Submit a second recovery request for at least one wallet and verify that it
+21. Submit a second recovery request for at least one wallet and verify that it
     cannot recover the same principal or bonus twice.
-19. Reconcile balances and archive the complete test report.
+22. Reconcile balances and archive the complete test report. Record the
+    rollover stake as still locked in the active set rather than treating it as
+    missing funds.
 
 The first and second rounds should use distinguishable validator keys or
 recorded election identifiers so that an accidental observation of the same
 state cannot be mistaken for two transitions.
+
+### 4.4 July 30, 2026 execution result
+
+The automated Stage A functional run completed successfully on a throwaway
+single-host network:
+
+```text
+Run directory:
+test/integration/.validator-election-stage-a/20260730T223235Z
+
+Machine report:
+test/integration/.validator-election-stage-a/20260730T223235Z/report.json
+
+Recorded source commit:
+78ca3219d474089982db707fcbc8604cd2662073
+
+Machine result:
+status = pass
+failures = []
+```
+
+The report also records the dirty-worktree state used to generate the
+zerostate and execute the test. The local evidence directory is ignored by Git
+because it contains generated private keys, node databases, and approximately
+5.2 GiB of ephemeral data.
+
+#### Validator-set transitions
+
+| Set | Election ID / `utime_since` | `utime_until` | Validators | Result |
+|---|---:|---:|---:|---|
+| Genesis | `1785450755` | `1785451355` | 4 | Active and producing blocks |
+| First target | `1785451355` | `1785451655` | 4 | Elected and activated |
+| Second target | `1785451655` | `1785451955` | 4 | Elected while the first stake was frozen and activated |
+| Rollover | `1785451955` | `1785452255` | 4 | Elected and activated, retiring the second target set |
+
+All three elected sets contained the expected validator public keys and ADNL
+identities and had total weight `2^60`.
+
+#### Admission and recovery
+
+The run confirmed:
+
+- a 1,001 TOS message remained below the 10,000 TOS effective minimum and was
+  rejected;
+- the wrong election ID was rejected;
+- an invalid validator signature was rejected;
+- a duplicate validator key submitted from another wallet was rejected;
+- three accepted candidates produced only 30,000 TOS, below the 40,000 TOS
+  minimum total;
+- the fourth accepted candidate completed the 40,000 TOS minimum;
+- recovery before the unfreeze time did not return principal; and
+- a duplicate recovery request did not pay twice.
+
+Each first-round wallet recovered:
+
+```text
+12,087.479043163 TOS
+```
+
+Each second-round wallet recovered:
+
+```text
+12,050.367308204 TOS
+```
+
+Both values exceed the 10,000 TOS principal and therefore include the
+validator bonus assigned by Elector. The four first-round recoveries also
+funded the rollover submissions through normal wallet transactions. Rollover
+stakes remain locked in the active rollover set by design.
+
+#### Restart and quorum behavior
+
+The run restarted validators during an open election, after election
+completion but before activation, and after rewards arrived but before
+recovery. Each restarted validator returned to the same chain and election
+state.
+
+With one validator stopped, three of four validators continued producing
+blocks. With two validators stopped, eight consecutive five-second samples
+remained at masterchain seqno `3439`. After quorum was restored, the chain
+advanced to seqno `3442`.
+
+#### Resource observations
+
+The harness collected 142 samples over approximately 23 minutes, while the
+sampled masterchain advanced from seqno `13` to `3439` before the final
+quorum-recovery event:
+
+| Metric | Observed value |
+|---|---:|
+| Minimum mean RSS per running validator | 101,735 KiB |
+| Maximum mean RSS per running validator | 352,763 KiB |
+| Maximum individual-validator RSS | 380,344 KiB |
+| Minimum mean anonymous memory per running validator | 66,592 KiB |
+| Maximum mean anonymous memory per running validator | 317,588 KiB |
+
+RSS and anonymous memory repeatedly rose and returned to lower levels. The run
+did not show monotonic anonymous-memory growth. This short result rules out an
+immediate unbounded election-path leak; it is not a substitute for the Stage B
+soak period.
+
+#### Supporting checks
+
+After the run:
+
+- `validator-engine` and `test-smartcont` built successfully;
+- all 21 `test-smartcont` tests passed;
+- all seven zerostate supply/profile tests passed;
+- Ruff and Python bytecode validation passed; and
+- `git diff --check` passed.
+
+### 4.5 Remaining Stage A evidence
+
+The machine report's `pass` result applies to the assertions currently
+implemented by `scripts/validator-election-stage-a.py`. The following items
+from the broader specification were not independently exercised or fully
+reconciled in that run:
+
+- a deliberately mismatched ADNL identity;
+- an election request submitted after the submission window closes;
+- recovery after all four validator processes restart from persisted state;
+- full accounting of every newly created block reward, Config transfer,
+  Elector balance change, fee, and rounding remainder; and
+- the complete Section 8 monitoring set, including workchain head age, CPU,
+  file descriptors, RocksDB growth, and a longer post-recovery four-node soak.
+
+These are supplementary Stage A evidence gaps. They do not invalidate the
+successful election, activation, bonus, recovery, and quorum paths, but they
+must be closed before treating the entire local launch-gate specification as
+complete.
 
 ## 5. Stage B: Production-Period Rehearsal
 
@@ -225,8 +376,9 @@ state.
 | Second ordinary election opens | 163,840 s | 45 h 30 m 40 s |
 | Second ordinary election closes | 188,416 s | 52 h 20 m 16 s |
 | Second ordinary set becomes active | 196,608 s | 54 h 36 m 48 s |
-| First-round stake becomes recoverable | 229,376 s | 63 h 42 m 56 s |
-| Second ordinary set completes | 262,144 s | 72 h 49 m 04 s |
+| Rollover election opens; first-round stake becomes recoverable | 229,376 s | 63 h 42 m 56 s |
+| Rollover election closes | 253,952 s | 70 h 32 m 32 s |
+| Rollover set becomes active; second set becomes inactive | 262,144 s | 72 h 49 m 04 s |
 | Second-round stake and final bonus become recoverable | 294,912 s | 81 h 55 m 12 s |
 
 The formal run therefore needs at least 82 hours from the relevant zerostate
@@ -339,7 +491,7 @@ Each run must preserve:
 - validator public keys and ADNL identifiers, excluding private keys;
 - controlling wallet addresses;
 - signed transaction hashes and inclusion blocks;
-- first and second election identifiers;
+- first, second, and rollover election identifiers;
 - participant lists and elected-set hashes;
 - recovery transaction hashes;
 - wallet and system-contract balance reconciliation;
@@ -356,6 +508,8 @@ The accelerated functional rehearsal passes only when:
 - two distinct ordinary elections complete through normal on-chain messages;
 - both elected sets become ConfigParam 34 in the expected order;
 - the second election occurs while the first election's stake is still frozen;
+- a normal rollover election becomes ConfigParam 34 and retires the second
+  target validator set;
 - all eligible first-round stakes are recovered exactly once;
 - all eligible second-round stakes and final bonuses are recovered exactly
   once;
@@ -364,12 +518,29 @@ The accelerated functional rehearsal passes only when:
 - 3-of-4 operation remains live and 2-of-4 operation halts safely; and
 - memory and persistent election state remain bounded after cleanup.
 
+The July 30 execution is assessed as follows:
+
+| Acceptance area | Status |
+|---|---|
+| Two target elections and normal rollover activation | PASS |
+| First- and second-round principal and bonus recovery | PASS |
+| Early and duplicate recovery protection | PASS |
+| Planned single-node restart paths | PASS |
+| 3-of-4 liveness and 2-of-4 safe halt/recovery | PASS |
+| Additional negative and all-node persisted-restart cases | PENDING |
+| Full reward and balance reconciliation | PENDING |
+| Complete resource matrix and post-recovery soak | PENDING |
+
+Accordingly, the automated Stage A functional path is **PASS**, while the
+complete Stage A launch-gate evidence remains **OPEN** until the pending rows
+are closed.
+
 The production-period rehearsal passes only when the same criteria hold using
 the unmodified production timing and the final launch artifacts.
 
 The production launch gate is closed only after:
 
-1. the accelerated local rehearsal passes;
+1. the accelerated local rehearsal and its supplementary evidence pass;
 2. the unmodified production-period rehearsal passes;
 3. the result is independently reviewed; and
 4. an equivalent multi-host, multi-operator rehearsal confirms the operational
