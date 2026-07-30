@@ -1,7 +1,7 @@
 # TOS Validator-Led Distribution and Bootstrap Economics
 
 **Status:** Draft implementation specification<br>
-**Version:** 0.4<br>
+**Version:** 0.5<br>
 **Date:** July 30, 2026<br>
 **Target activation:** New mainnet genesis after all launch gates in Section 14 pass
 
@@ -29,8 +29,9 @@ The policy commitments are:
 1. Zerostate contains four equal-weight original validators.
 2. Genesis creates only the two system-contract reserves and a narrowly
    bounded main-wallet bootstrap balance.
-3. The main wallet may fund only the four original validators' first
-   overlapping election stakes and documented bootstrap expenses.
+3. The main wallet may fund only 20,000 TOS of first overlapping-election
+   stake principal for each original validator, plus a measured and capped
+   bootstrap fee allowance.
 4. There is no proof-of-work giver and no large main-wallet premine.
 5. Nearly all TOS is created through ordinary validator block rewards.
 6. The initial block-reward rate targets approximately five billion TOS of
@@ -77,16 +78,16 @@ and the validator's proportional share of the active set's bonus pool.
 
 ### 3.1 Policy targets
 
-| Parameter | Version 0.4 policy |
+| Parameter | Version 0.5 policy |
 |---|---:|
 | Smallest unit | 1 nanotomi |
 | Unit conversion | 1 TOS = 1,000,000,000 nanotomi |
 | Approximate gross-supply target | 5,000,000,000 TOS |
-| Provisional main-wallet genesis balance | 2,500,000 TOS |
+| Provisional main-wallet genesis balance | 100,000 TOS |
 | Elector genesis reserve | 500 TOS |
 | Configuration-contract genesis reserve | 500 TOS |
-| Provisional total genesis supply | 2,501,000 TOS |
-| Reference post-genesis validator creation | 4,997,499,000 TOS |
+| Provisional total genesis supply | 101,000 TOS |
+| Reference post-genesis validator creation | 4,999,899,000 TOS |
 | Proof-of-work giver allocation | 0 TOS |
 | Team, investor, foundation, and ecosystem allocation | 0 TOS |
 | Protocol treasury allocation | 0 TOS |
@@ -104,15 +105,15 @@ The reference arithmetic is:
 
 ```text
 provisional_genesis_supply =
-    2,500,000 TOS main wallet
-  +       500 TOS Elector reserve
-  +       500 TOS Configuration reserve
-  = 2,501,000 TOS
+    100,000 TOS main wallet
+  +     500 TOS Elector reserve
+  +     500 TOS Configuration reserve
+  = 101,000 TOS
 
 reference_post_genesis_validator_creation =
     5,000,000,000 TOS target
-  -     2,501,000 TOS provisional genesis supply
-  = 4,997,499,000 TOS
+  -       101,000 TOS provisional genesis supply
+  = 4,999,899,000 TOS
 ```
 
 This identity is a calibration target, not a block-validity rule. ConfigParam
@@ -137,7 +138,7 @@ supply but does not erase it from gross native creation.
 
 ### 3.3 No exact cap or exact deadline
 
-Version 0.4 intentionally does not add:
+Version 0.5 intentionally does not add:
 
 - a `validator_emission_issued` consensus counter;
 - a five-billion rejection condition;
@@ -165,7 +166,7 @@ The production zerostate contains three native-balance categories:
 
 1. **Elector reserve:** exactly 500 TOS;
 2. **Configuration-contract reserve:** exactly 500 TOS; and
-3. **main-wallet bootstrap balance:** provisionally 2,500,000 TOS, subject to
+3. **main-wallet bootstrap balance:** provisionally 100,000 TOS, subject to
    the test-derived reduction rule in Section 3.1.
 
 No giver, test faucet, team wallet, investor wallet, foundation wallet,
@@ -207,27 +208,36 @@ and the measured bootstrap procedure.
 
 ### 4.3 Main-wallet funding plan
 
-With a 300,000 TOS minimum stake, uninterrupted participation in overlapping
-elections requires approximately two stakes per validator:
+With a 10,000 TOS minimum stake, uninterrupted participation in overlapping
+elections requires two stake principals per validator:
 
 ```text
 per_validator_principal =
-    2 * 300,000 TOS
-  = 600,000 TOS
+    2 * 10,000 TOS
+  = 20,000 TOS
 ```
 
-The provisional transfer cap is:
+The agreed economic bootstrap allocation is 20,000 TOS of stake principal per
+original validator. An exact 20,000-TOS wallet balance cannot safely submit two
+10,000-TOS stakes because wallet messages and Elector admission also consume
+fees. The provisional operational transfer therefore keeps the principal at
+20,000 TOS and adds a separately disclosed 100-TOS maximum fee and retry
+allowance:
 
 ```text
-per_validator_bootstrap_transfer = 600,100 TOS
-four_validator_transfers          = 2,400,400 TOS
-main_wallet_initial_balance       = 2,500,000 TOS
-provisional_unspent_balance       =    99,600 TOS
+per_validator_stake_principal     =  20,000 TOS
+per_validator_fee_allowance       =     100 TOS
+per_validator_bootstrap_transfer  =  20,100 TOS
+four_validator_transfers          =  80,400 TOS
+main_wallet_initial_balance       = 100,000 TOS
+provisional_unspent_balance       =  19,600 TOS
 ```
 
-The additional 100 TOS per validator is a bounded fee and retry allowance. It
-is not a reward and may not be increased after genesis without a public
-hard-fork disclosure.
+The additional allowance is not stake principal or a validator reward. The
+end-to-end bootstrap rehearsal must reduce it to the smallest amount that
+reliably pays wallet deployment, election-message, Elector admission, and retry
+costs. It may not exceed 100 TOS per validator in the production genesis plan
+without a public specification revision and independent review.
 
 Main-wallet transfers must:
 
@@ -300,9 +310,9 @@ stake-tier transition.
 | Maximum validators | 400 | Bound election and consensus overhead |
 | Maximum masterchain validators | 100 | Bound masterchain consensus overhead |
 | Validators per shard group | 23 | Retain the current shard-group target |
-| Minimum stake per validator | 300,000 TOS | Provide meaningful slashable collateral |
+| Minimum stake per validator | 10,000 TOS | Permit the first public elections while circulation is still limited |
 | Maximum submitted stake | 10,000,000 TOS | Limit a single election entry |
-| Minimum aggregate stake | 1,200,000 TOS | Four times the minimum stake |
+| Minimum aggregate stake | 40,000 TOS | Four times the minimum stake |
 | Initial maximum effective-stake factor | 1 | Keep a four-validator set equal-weight |
 
 The four-validator value is a hard protocol minimum, not a sufficient
@@ -312,7 +322,7 @@ validator can be tolerated; two unavailable validators halt progress.
 
 ### 5.2 Effective-stake factor
 
-Version 0.4 does not add a validator-count-dependent factor formula to the
+Version 0.5 does not add a validator-count-dependent factor formula to the
 Elector. The initial ConfigParam 17 maximum factor is one, so the first
 four-validator elections remain equal in effective stake.
 
@@ -394,15 +404,15 @@ Using the provisional genesis values and an August 1, 2026 reference start,
 the post-genesis creation target is:
 
 ```text
-4,997,499,000 TOS
+4,999,899,000 TOS
 ```
 
 Across the 2,557 days from August 1, 2026 to August 1, 2033, the explanatory
 average is approximately:
 
 ```text
-1,954,438.40 TOS per day
-22.6208 TOS per second
+1,955,377.00 TOS per day
+22.6317 TOS per second
 ```
 
 These numbers do not appear in block validation. They are used only to
@@ -470,7 +480,7 @@ than estimates based only on wall-clock time or shard count.
 
 ### 6.6 Taper and stop procedure
 
-There is no automatic supply stop in Version 0.4. Governance must manage the
+There is no automatic supply stop in Version 0.5. Governance must manage the
 end of the initial distribution using existing configuration proposals.
 
 The recommended procedure is:
@@ -565,7 +575,7 @@ Production genesis and configuration must not fund or register:
 
 ## 9. Protocol invariants retained
 
-Version 0.4 relies on existing block and Elector validation. It adds no new
+Version 0.5 relies on existing block and Elector validation. It adds no new
 monetary consensus fields. The implementation must continue to enforce:
 
 1. ConfigParam 14 determines the native amount created for each applicable
@@ -652,9 +662,9 @@ ConfigParam 16:
   min_validators        = 4
 
 ConfigParam 17:
-  min_stake             = 300,000 TOS
+  min_stake             = 10,000 TOS
   max_stake             = 10,000,000 TOS
-  min_total_stake       = 1,200,000 TOS
+  min_total_stake       = 40,000 TOS
   max_stake_factor      = 1
 ```
 
@@ -665,7 +675,7 @@ test proves a timing defect.
 
 - Measure finalized production rate on a four-validator test network.
 - Select ConfigParam 14 values that project approximately
-  4,997,499,000 TOS of post-genesis creation over seven years.
+  4,999,899,000 TOS of post-genesis creation over seven years.
 - Verify depth-adjusted basechain creation across split and merge tests.
 - Verify the collector fallback or explicitly configure the Elector as fee
   collector.
@@ -747,6 +757,8 @@ At minimum, inspect:
 
 - The main wallet can fund all four controlling wallets.
 - Every transfer is equal and within the published cap.
+- Each transfer contains exactly 20,000 TOS of stake principal and no more than
+  100 TOS of separately accounted bootstrap fees.
 - No controlling wallet is the validator signing key itself.
 - A fifth or substituted destination is rejected by the operational signing
   checklist and detected by the launch verifier.
@@ -800,7 +812,7 @@ At minimum, inspect:
 
 ### 12.6 Memory and denial-of-service
 
-Version 0.4 adds no per-epoch emission queue, reward commitment, work proof,
+Version 0.5 adds no per-epoch emission queue, reward commitment, work proof,
 or recovery ring. Tests must nevertheless confirm:
 
 - no new unbounded in-memory state is introduced by supply telemetry;
@@ -952,9 +964,10 @@ return.
 ## 16. Final design statement
 
 TOS launches with four equal-weight validators committed in zerostate, two
-500-TOS system-contract reserves, and a small main wallet funded only for
-validator bootstrap. The main wallet supplies the four controlling wallets
-with equal funds for their first overlapping elections and burns the unused
+500-TOS system-contract reserves, and a provisional 100,000-TOS main wallet
+funded only for validator bootstrap. The main wallet supplies each of the four
+controlling wallets with exactly 20,000 TOS of first-election stake principal
+plus no more than 100 TOS of measured bootstrap fees, and burns the unused
 balance.
 
 After bootstrap, the network uses its existing block-creation, fee-collection,
