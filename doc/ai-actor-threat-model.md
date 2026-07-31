@@ -5,7 +5,9 @@ This document defines the baseline threat model for AI actor workflows on TOS.
 It applies to agent accounts, task actors, service actors, verifier actors,
 workflow indexers, off-chain agent runners, and
 [AI Edge Computing Terminals](ai-edge-computing-terminal-architecture.md) that
-interact with native TVM contracts.
+interact with native TVM contracts. It also covers public ARD catalogs, TOS
+ARD Registries, registry federation, and discovery clients as defined by the
+[TOS ARD compatibility profile](tos-ard-compatibility.md).
 
 ## Assets
 
@@ -21,6 +23,8 @@ interact with native TVM contracts.
   bounded local compute resources
 - site sensor data, physical safety state, actuator authority, offline
   journals, update/model signers, and fleet delegation
+- ARD publisher identities, catalog integrity, registry provenance, private
+  resource visibility, and discovery-policy state
 
 ## Trust Boundaries
 
@@ -28,6 +32,13 @@ interact with native TVM contracts.
 - Off-chain agent runners are not trusted by default.
 - Service endpoints are not trusted by default.
 - Indexers and workflow dashboards provide derived views only.
+- ARD catalogs and Registry results are untrusted discovery inputs, not
+  authorization, current availability, price, payment destination, execution
+  evidence, or settlement state.
+- Public ARD publisher identity is anchored in the verified publisher FQDN.
+  A `.tos` name or raw ADNL address requires a documented gateway or private
+  registry trust policy and is not automatically equivalent to public DNS
+  control.
 - Evidence references are claims until verified by a verifier actor, proof adapter, signature check, or trusted policy.
 - A site-bound terminal's independent local safety controller has final
   actuator authority; chain payment or a valid network signature cannot
@@ -120,6 +131,38 @@ Required controls:
   payment, adapter crash, OOM, and restart
 - isolate co-located AI, storage, and commerce credentials, queues, and data
 - use extended anonymous-load and fault-injection soak tests
+
+### ARD Catalog and Registry Poisoning
+
+A publisher, crawler target, compromised registry, federated peer, or
+catalog-supplied natural-language field causes identity confusion, endpoint
+substitution, stale discovery, prompt injection, private-resource disclosure,
+server-side request forgery, ranking manipulation, or unbounded crawler and
+index growth.
+
+Required controls:
+
+- pin and validate the supported ARD version, schema, media types,
+  value-or-reference rules, domain-anchored identifiers, and publisher binding
+- treat descriptions, representative queries, tags, endpoints, references,
+  trust metadata, and nested catalogs as untrusted data, never as executable
+  instructions
+- allow only approved schemes, ports, address classes, redirect policies, and
+  content types; resolve and recheck targets to prevent DNS rebinding and SSRF
+- impose catalog, entry, field, reference, redirect, recursion, federation
+  hop, cycle, response, time, retry, cache, index, and per-publisher quotas
+- preserve field-level provenance and distinguish publisher data,
+  registry-derived ranking, on-chain state, observations, and attestations
+- require expiry, revalidation, rollback/equivocation handling, and bounded
+  stale-result retention
+- apply visibility policy before indexing or federating private catalogs and
+  never publish credentials, private endpoints, topology, raw sensor data, or
+  customer payloads
+- independently verify the current TOS descriptor, runtime authorization,
+  manifest commitment, live quote, admission decision, and payment
+  destination before invocation or value transfer
+- ensure an ARD result never grants terminal, wallet, update, model, fleet, or
+  actuator authority
 
 ### Offline Authority and Reconciliation Failure
 
@@ -225,13 +268,17 @@ Required controls:
 
 ### Indexer Authority Drift
 
-Clients treat derived workflow timelines or reputation data as authoritative for spending or settlement.
+Clients treat derived workflow timelines, ARD search results, registry health
+signals, rankings, or reputation data as authoritative for spending,
+invocation, physical action, or settlement.
 
 Required controls:
 
 - trust-tier labeling
 - node-verified checks for balances and permissions
 - clear distinction between indexed views and contract state
+- field-level discovery provenance and client-side revalidation of publisher,
+  endpoint, descriptor, quote, and payment bindings
 
 ### Message Amplification
 
@@ -256,5 +303,7 @@ Every production AI actor primitive should receive review for:
 - service-call payment limits
 - evidence and verifier semantics
 - indexer trust boundaries
+- ARD publisher binding, catalog parsing, Registry provenance, federation,
+  SSRF, prompt-injection, privacy, and bounded-state controls
 - denial-of-service and message amplification
 - local testnet restart and catch-up behavior

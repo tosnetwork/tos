@@ -4,7 +4,7 @@
 
 - Document type: product architecture and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Related plan:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 
@@ -38,6 +38,12 @@ advertises one.
 Bare GPU rental, arbitrary consumer-supplied execution, and public accelerator
 access are outside the TOS product plan. They are not deferred terminal
 profiles.
+
+The terminal publishes its stable callable services through an
+ARD-compatible catalog, and TOS can operate an ARD Registry for plural,
+federated discovery. ARD remains outside the execution and safety boundary:
+catalogs and search results cannot reserve hardware, authorize payment, change
+local priority, install software, or control a physical device.
 
 ## Why the Terminal Is the Core Product Unit
 
@@ -91,6 +97,8 @@ industrial box into a small public GPU cloud.
 | **Service profile** | The consumer-facing model/task contract, including schemas, limits, pricing, privacy, evidence, and receipt rules |
 | **Terminal operator** | The owner or authorized administrator of the hardware and services |
 | **Runtime key** | A revocable key authorized to sign short-lived terminal manifests, quotes, and receipts |
+| **ARD catalog** | The protocol-neutral `ai-catalog.json` discovery envelope for stable callable resources |
+| **TOS ARD Registry** | An off-chain ARD-compatible search and federation service enriched with explicitly sourced TOS chain, health, and profile data |
 
 “Terminal” must not be used as a synonym for a TOS full node or validator.
 Running a terminal must not grant consensus authority.
@@ -100,8 +108,8 @@ Running a terminal must not grant consensus authority.
 | Location | Responsibility |
 |---|---|
 | `tos` | Consensus, VM, generic contracts and query APIs, wallet/crypto primitives, DNS, ADNL/DHT/RLDP, and TOS Sites |
-| `tos-protocol` | Base service protocol, Edge Core, chain adapter, terminal identity and resource schema, authentication, quotes, receipts, generic discovery, SDKs, and conformance |
-| `tos-ai` | General and physical AI terminal distributions, AI capability vocabulary, resource probes and benchmarks, model/runtime adapters, task scheduler, signed updates, fleet management, AI discovery/client, packaging, and AI conformance |
+| `tos-protocol` | Base service protocol, ARD compatibility profile and Registry, Edge Core, chain adapter, terminal identity and resource schema, authentication, quotes, receipts, SDKs, and conformance |
+| `tos-ai` | General and physical AI terminal distributions, ARD catalog generation for AI profiles, AI capability vocabulary, resource probes and benchmarks, model/runtime adapters, task scheduler, signed updates, fleet management, AI client, packaging, and AI conformance |
 | Other vertical repositories | Storage and commerce adapters that may coexist on the same host but retain separate state machines and releases |
 | Terminal host | Drivers, runtimes, model artifacts, local data, runtime key, policy, caches, logs, and profile processes |
 
@@ -112,7 +120,8 @@ The preferred implementation split is:
 
 ```text
 tos-protocol
-  └── tos-edge-core
+  ├── tos-edge-core
+  └── tos-ard-registry
 
 tos-ai
   ├── tos-edge-ai
@@ -162,23 +171,25 @@ flowchart LR
     subgraph TOS["TOS identity, discovery, and settlement"]
         DNS["name.tos → ADNL"]
         Registry["Capability Registry"]
+        ARD["TOS ARD Registry<br/>catalog crawl + POST /search"]
         Settlement["Service Actor / escrow"]
         Chain["TOS blockchain"]
         DNS --> Chain
         Registry --> Chain
+        ARD --> Registry
         Settlement --> Chain
     end
 
     subgraph Consumer["Consumer"]
-        Discovery["Discovery / routing"]
+        Discovery["ARD discovery / routing"]
         Client["AI client / AI Site"]
         Wallet["Wallet"]
         Discovery --> Client
         Wallet --> Client
     end
 
+    Discovery --> ARD
     Discovery --> DNS
-    Discovery --> Registry
     Client <--> Ingress
     Client --> Settlement
 ```
@@ -187,7 +198,8 @@ The normal path is:
 
 ```text
 intent
-  -> discover compatible service profiles
+  -> search an ARD Registry for compatible service profiles
+  -> verify catalog publisher, provenance, and TOS identity binding
   -> verify fresh signed manifest and chain commitments
   -> obtain quote bound to exact service revision
   -> authorize payment
@@ -208,6 +220,7 @@ The terminal must separate:
 
 - owner authorization and runtime-key rotation
 - terminal and service manifests
+- ARD catalog generation and publication
 - hardware/runtime inventory
 - benchmark evidence
 - model installation and approval
@@ -234,6 +247,10 @@ model, change price policy, access the wallet, or obtain a shell.
 
 The terminal publishes both **resource declarations** and **service
 capabilities**. They serve different purposes.
+
+Stable public service capabilities belong in the ARD catalog. Rapidly changing
+resource state remains in short-lived signed terminal data and live
+quote/admission responses. ARD discovery is never a reservation.
 
 ### Resource declaration
 
@@ -414,6 +431,13 @@ credentials, model-provider secrets, or settlement control.
 QUIC, HTTPS, WebSocket, and SSE may be defined as optional profile bindings,
 but they must not silently replace the TOS identity and authorization model.
 
+Public ARD crawling uses standard HTTPS and a verifiable FQDN. A terminal
+reachable only through `name.tos` or raw ADNL publishes through an approved
+HTTPS gateway namespace or a private ARD Registry with an explicit `.tos`
+trust policy. The catalog may carry signed `.tos`, ADNL, TOS address, and
+on-chain bindings, but `.tos` is not misrepresented as conventional public
+DNS proof.
+
 ## Site-Bound Physical Terminal Specialization
 
 A physical terminal keeps TOS outside the hard real-time and safety loop:
@@ -463,6 +487,8 @@ The complete requirements are in
 
 The terminal must:
 
+- treat ARD descriptions, tags, representative queries, trust metadata, and
+  endpoints as untrusted data rather than instructions or authority
 - run public adapters under dedicated operating-system identities or
   sandboxes
 - expose no raw GPU device, Docker socket, shell, home directory, or
@@ -484,6 +510,8 @@ jobs are not accepted by the TOS terminal product.
 
 Every terminal implementation must explicitly bound:
 
+- ARD catalog entries, bytes, nesting, refresh work, publication history, and
+  discovery-client result/cache state
 - connections, sessions, streams, and request bodies
 - quotes, nonces, idempotency entries, and replay windows
 - queues, in-flight tasks, subtasks, and retries
@@ -550,11 +578,14 @@ An ordinary operator should be able to:
 8. configure prices, privacy, region, retention, evidence, and refund policy
 9. expose a raw ADNL endpoint or configure a relay
 10. optionally bind `name.tos`
-11. publish short-lived signed terminal and service manifests
-12. pass payment, cancellation, restart, rotation, and cleanup self-tests
-13. accept work
-14. inspect redacted health, revenue, load, and settlement state
-15. pause, drain, upgrade, roll back, rotate, or retire safely
+11. configure a verifiable FQDN, approved gateway, or private ARD publication
+    policy
+12. publish a bounded ARD catalog plus short-lived signed terminal and service
+    manifests
+13. pass ARD, payment, cancellation, restart, rotation, and cleanup self-tests
+14. accept work
+15. inspect redacted health, revenue, load, and settlement state
+16. pause, drain, upgrade, roll back, rotate, or retire safely
 
 The default installer must preserve capacity for the owner's own use and must
 not advertise all detected devices automatically.
@@ -575,6 +606,7 @@ It supports:
 - bounded streaming and cancellation
 - raw ADNL access plus the selected home-reachability policy
 - optional `name.tos`
+- ARD-compatible catalog publication and TOS ARD Registry discovery
 - signed manifests, quotes, receipts, and settlement integration
 
 It excludes:
@@ -593,8 +625,10 @@ The first terminal release is complete only when:
 
 1. an ordinary Tier 1 operator can install and onboard without a validator
 2. hardware, runtime, model, and public reachability preflight succeed
-3. a consumer can discover a compatible service without knowing its origin IP
-4. the consumer can verify the exact service revision and claim evidence
+3. a consumer can discover a compatible service through ARD without knowing
+   its origin IP
+4. the consumer can verify ARD publisher/provenance, the TOS identity binding,
+   exact service revision, and claim evidence
 5. quote, payment, invocation, cancellation, receipt, and settlement bind to
    the same task identity
 6. terminal admission remains locally bounded and authoritative
@@ -605,7 +639,8 @@ The first terminal release is complete only when:
     disk, connections, queues, watchers, caches, and journal growth
 11. a three-node TOS environment validates DNS, ADNL/RLDP, contract, and
     settlement integration
-12. an independent client and terminal implementation can pass the same
+12. the Registry, client, and publisher pass pinned upstream ARD conformance
+13. an independent client and terminal implementation can pass the same TOS
     conformance vectors
 
 ## Open Decisions
@@ -620,6 +655,8 @@ The first terminal release is complete only when:
 - low-latency prepaid credit or voucher flow
 - relay selection, abuse prevention, and availability model
 - task routing and capability-specific reputation
+- pinned ARD version, TOS media types, `.tos` gateway binding, federation
+  policy, and migration to a stable ARD release
 - supported attestation roots and evidence issuers
 - energy and thermal reporting semantics
 - Tier 2 and Tier 3 compatibility matrices
@@ -630,6 +667,7 @@ The first terminal release is complete only when:
 
 ## Related Documents
 
+- [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)

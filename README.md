@@ -179,6 +179,11 @@ These are design objectives, not claims that the current network has already
 achieved commercial scale. Detailed monetary policy, incentives, and
 governance require separate specifications.
 
+![TOS Network long-term agent-to-agent service economy vision](A2A.png)
+
+*Conceptual long-term A2A network vision; figures shown are aspirational, not
+current deployment metrics.*
+
 ## What TOS Is — and Is Not
 
 | TOS is | TOS is not |

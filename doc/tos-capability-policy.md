@@ -188,7 +188,15 @@ The bridge is:
 
 - account permissions decide who may sign or submit;
 - capability handles decide what a target contract will accept;
-- capability discovery tells wallets and SDKs which model is supported.
+- ARD discovery tells wallets and SDKs that a resource claims to expose a
+  supported capability; clients then resolve and verify the current TOS
+  descriptor and authorization model.
+
+An ARD identifier, catalog record, Registry result, representative query, or
+trust manifest is not a TOS capability grant. It cannot satisfy
+`requireCapability(...)`, select a grantee, bypass replay constraints, or
+authorize value transfer. The protocol-neutral discovery mapping is defined
+in [tos-ard-compatibility.md](tos-ard-compatibility.md).
 
 ## 7. Tol and stdlib surface
 

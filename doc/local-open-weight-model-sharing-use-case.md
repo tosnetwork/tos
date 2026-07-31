@@ -4,7 +4,7 @@
 
 - Document type: product use case and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - Terminal architecture:
@@ -13,6 +13,8 @@
   [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - Physical-terminal use case:
   [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
+- Discovery profile:
+  [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 
 ## Purpose
 
@@ -141,8 +143,8 @@ As a model consumer, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, wallet and crypto, chain query APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
-| `tos-ai` repository | AI terminal distribution, AI Site and model schemas, resource probes, model manager, runtime adapters, scheduler, discovery, SDKs, deployments, and conformance tests |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-ai` repository | AI terminal distribution, AI Site and model schemas, resource probes, model manager, runtime adapters, scheduler, ARD catalog generation and model-specific ranking enrichment, SDKs, deployments, and conformance tests |
 | Terminal host | model weights, inference runtime, CPU/GPU/NPU resources, local policy, runtime key, bounded caches, `tos-edge-ai`, and optional TOS Sites/RLDP ingress |
 | TOS blockchain | service identity references, DNS, capability declarations, manifest commitments, payment, escrow, and settlement |
 
@@ -186,7 +188,7 @@ flowchart LR
     end
 
     subgraph Consumer["Model consumer"]
-        Discovery["Discovery service / SDK"]
+        Discovery["TOS ARD Registry / SDK"]
         Client["AI Site client"]
         Wallet["TOS wallet"]
 
@@ -419,6 +421,26 @@ The manifest is a signed declaration. Without stronger evidence, it does not
 prove the physical hardware, exact loaded weights, current capacity, output
 correctness, or future availability.
 
+### 9.1 Publish the ARD catalog
+
+For public agentic discovery, the provider publishes:
+
+```text
+https://<publisher-fqdn>/.well-known/ai-catalog.json
+```
+
+Each ARD entry represents a stable callable model service and references its
+exact TOS service/model descriptor. The entry may point to MCP, A2A, OpenAPI,
+or a TOS Service Protocol descriptor, but ARD itself does not invoke the model
+or authorize payment. Frequently changing queue depth, free memory, price,
+loaded revision, and admission state stay out of the catalog and are returned
+by a signed live quote.
+
+The provider must verify the public ARD publisher through a conventional FQDN,
+an approved HTTPS gateway for the `name.tos` service, or an explicitly trusted
+private Registry. The ARD publisher identifier is not a substitute for the
+signed TOS owner, runtime, ADNL, account, or manifest bindings.
+
 ### 10. Register capabilities and settlement
 
 Possible capability identifiers include:
@@ -479,9 +501,11 @@ When the consumer knows `alice-models.tos`, the client:
 6. checks the exact model and capability profile
 7. requests current health and a fresh quote
 
-### Discovery by capability and model
+### Discovery by capability and model through ARD
 
-An independent discovery service can index:
+A TOS ARD Registry can crawl the provider catalog, ingest the referenced TOS
+descriptors and on-chain seeds, and answer ARD `POST /search` queries. It can
+index:
 
 - Capability Registry and Service Actor records
 - signed public manifests
@@ -503,10 +527,11 @@ Example consumer queries include:
 > Find a locally hosted vision-language model that does not retain prompts and
 > supports prepaid session credit.
 
-Discovery is advisory. Before payment or invocation, the client independently
-rechecks signatures, expiry, current chain state, the payment address, model
-profile, and quote. Semantic ranking belongs in the independent discovery
-service, not the TOS core indexer.
+ARD discovery is advisory. Before payment or invocation, the client
+independently rechecks publisher binding, signatures, expiry, current chain
+state, endpoint authorization, payment address, exact model profile, and live
+quote. Registry responses preserve field provenance. Semantic ranking belongs
+in independent ARD Registry deployments, not the TOS core indexer.
 
 ### Discovery by raw ADNL address
 
@@ -520,7 +545,7 @@ readable and less stable for general discovery.
 ```mermaid
 sequenceDiagram
     participant C as AI Site Client
-    participant D as TOS DNS / Discovery
+    participant D as TOS DNS / ARD Registry
     participant E as tos-edge-ai
     participant S as Service Actor
     participant B as TOS Blockchain
@@ -760,6 +785,7 @@ provider and evidence policy are suitable.
 | Task Escrow, Dispute, and Proof Attestation | Available/partial | TOS core contracts; optional advanced profiles in `tos-ai` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
 | Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; model enrichment in `tos-ai` |
 | Terminal/resource schema and Edge Core | To build | `tos-protocol` |
 | Tier 1 AI terminal distribution | To build | `tos-ai` |
 | Resource probes and benchmark evidence | To build | `tos-ai` |
@@ -768,7 +794,7 @@ provider and evidence policy are suitable.
 | Model manager, task scheduler, and runtime adapters | To build | `tos-ai` |
 | Session, quote, invocation, and streaming protocol | To build | base in `tos-protocol`, inference extension in `tos-ai` |
 | Token/media metering and inference receipts | To build | `tos-ai` |
-| Model-aware capability discovery and clients | To build | `tos-ai` |
+| Model-aware ARD enrichment and clients | To build | `tos-ai` |
 | License and artifact provenance validation | To build | `tos-ai` |
 | NAT relay and reverse tunnel | To build | reusable service, preferably outside validator code |
 | Model, runtime, and hardware attestation | Later | separate verification profile |
@@ -819,7 +845,8 @@ user can:
 8. publish signed, expiring terminal and service manifests with an exact model
    profile and evidence levels
 9. register capabilities and a settlement contract
-10. appear in an independent model-aware discovery service
+10. publish a conforming ARD catalog and appear through an independent
+    model-aware TOS ARD Registry with publisher and field provenance intact
 11. issue a signed quote with a maximum price
 12. verify payment before expensive model admission
 13. execute and stream bounded inference

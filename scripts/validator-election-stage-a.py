@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Run the accelerated validator-election Stage A rehearsal on a local network.
+"""Run a validator-election launch-gate rehearsal on a local network.
 
-This is an opt-in, throwaway integration exercise. It preserves the production
-candidate's contracts, validator-count rules, stake limits, rewards, and
-message paths while shortening only ConfigParam 15 and the genesis validator
-set lifetime through NetworkConfig.validator_election_stage_a_profile.
+Stage A is an accelerated, opt-in, throwaway integration exercise. Stage B
+uses the unmodified production election periods and initial validator-set
+lifetime. Both preserve the production candidate's contracts,
+validator-count rules, stake limits, rewards, and message paths.
 
 The script starts one DHT node and four validator processes on loopback,
 deploys five real masterchain wallets (four validators plus one negative-test
 wallet), submits two overlapping target elections and the required rollover
 election with the repository's Fift tools, recovers both target rounds, injects
 restart/quorum faults, and writes JSONL metrics plus a final JSON report under
-test/integration/.validator-election-stage-a.
+the selected stage's test/integration output directory.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -55,9 +56,43 @@ STAKE_MESSAGE_VALUE = EFFECTIVE_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
 VALIDATOR_WALLET_FUNDING = 20_020 * NANO
 NEGATIVE_WALLET_FUNDING = 15_000 * NANO
 MAX_FACTOR = 1 << 16
-STAGE_A_ELECTED_FOR = 300
-STAGE_A_STAKES_FROZEN_FOR = 180
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class RehearsalProfile:
+    stage: str
+    label: str
+    elected_for: int
+    elect_start_before: int
+    elect_end_before: int
+    stakes_frozen_for: int
+    initial_set_valid: int
+    accelerated: bool
+
+
+PROFILES = {
+    "a": RehearsalProfile(
+        stage="a",
+        label="Stage A",
+        elected_for=300,
+        elect_start_before=180,
+        elect_end_before=60,
+        stakes_frozen_for=180,
+        initial_set_valid=600,
+        accelerated=True,
+    ),
+    "b": RehearsalProfile(
+        stage="b",
+        label="Stage B",
+        elected_for=65_536,
+        elect_start_before=32_768,
+        elect_end_before=8_192,
+        stakes_frozen_for=32_768,
+        initial_set_valid=131_072,
+        accelerated=False,
+    ),
+}
 
 
 @dataclass
@@ -133,7 +168,7 @@ def build_election_body(
     )
 
 
-class StageA:
+class ValidatorElectionRehearsal:
     def __init__(
         self,
         *,
@@ -141,13 +176,17 @@ class StageA:
         base_port: int,
         build_dir: Path,
         sample_interval: float,
+        profile: RehearsalProfile,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
         self.artifacts_dir = run_dir / "artifacts"
         self.base_port = base_port
-        self.install = Install(build_dir, REPO)
+        self.original_build_dir = build_dir.absolute()
+        self.install = Install(self.original_build_dir, REPO)
         self.sample_interval = sample_interval
+        self.profile = profile
+        self.long_poll_interval = 1.0 if profile.accelerated else 30.0
         self.events: list[dict[str, Any]] = []
         self.failures: list[str] = []
         self.metrics_path = run_dir / "metrics.jsonl"
@@ -170,6 +209,99 @@ class StageA:
         self.wallets: list[WalletV1] = []
         self.negative_wallet: WalletV1 | None = None
         self.wallet_balance_history: dict[str, list[dict[str, Any]]] = {}
+        self.provenance: dict[str, Any] = {}
+
+    @staticmethod
+    def file_provenance(path: Path) -> dict[str, Any]:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        stat = path.stat()
+        return {
+            "path": str(path),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "sha256": digest.hexdigest(),
+        }
+
+    def prepare_artifact_snapshot(self) -> None:
+        snapshot_dir = self.run_dir / "artifact-snapshot"
+        snapshot_build = snapshot_dir / "build"
+        snapshot_source = snapshot_dir / "source"
+
+        binary_paths = [
+            "crypto/create-state",
+            "utils/generate-random-id",
+            "lite-client/lite-client",
+            "validator-engine/validator-engine",
+            "dht-server/dht-server",
+            "validator-engine-console/validator-engine-console",
+            "blockchain-explorer/blockchain-explorer",
+        ]
+        binaries: dict[str, dict[str, Any]] = {}
+        for relative in binary_paths:
+            source = self.original_build_dir / relative
+            target = snapshot_build / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            binaries[relative] = self.file_provenance(target)
+
+        toslib_source = (
+            self.original_build_dir / "toslib/libtoslibjson.so"
+        ).resolve(strict=True)
+        toslib_target = snapshot_build / "toslib/libtoslibjson.so"
+        toslib_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(toslib_source, toslib_target)
+        binaries["toslib/libtoslibjson.so"] = self.file_provenance(
+            toslib_target
+        )
+
+        source_paths = [
+            Path("crypto/fift/lib"),
+            Path("crypto/smartcont"),
+            Path("test/tostester/src"),
+        ]
+        for relative in source_paths:
+            shutil.copytree(REPO / relative, snapshot_source / relative)
+        script_target = snapshot_source / "scripts/validator-election-stage-a.py"
+        script_target.parent.mkdir(parents=True)
+        shutil.copy2(Path(__file__), script_target)
+
+        source_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        git_status = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        source_patch = subprocess.run(
+            ["git", "diff", "--binary", "HEAD"],
+            cwd=REPO,
+            capture_output=True,
+            check=True,
+        ).stdout
+        patch_path = snapshot_dir / "working-tree.patch"
+        patch_path.write_bytes(source_patch)
+
+        self.provenance = {
+            "source_commit": source_commit,
+            "git_status_start": git_status,
+            "working_tree_patch": self.file_provenance(patch_path),
+            "harness": self.file_provenance(script_target),
+            "binaries": binaries,
+        }
+        (snapshot_dir / "manifest.json").write_text(
+            json.dumps(self.provenance, indent=2, sort_keys=True)
+        )
+        self.install = Install(snapshot_build, snapshot_source)
 
     def event(self, name: str, **details: Any) -> None:
         item = {"at": utc_now(), "event": name, **details}
@@ -353,7 +485,8 @@ class StageA:
         request_file = self.artifacts_dir / f"{label}-to-sign.bin"
         body_file = self.artifacts_dir / f"{label}-body.boc"
         await self.run_fift(
-            REPO / "crypto/smartcont/validator-elect-req.fif",
+            self.install.source_dir
+            / "crypto/smartcont/validator-elect-req.fif",
             raw_address(wallet.address),
             str(election_id),
             "1",
@@ -367,7 +500,8 @@ class StageA:
         ).decode()
         signature_b64 = base64.b64encode(signature).decode()
         await self.run_fift(
-            REPO / "crypto/smartcont/validator-elect-signed.fif",
+            self.install.source_dir
+            / "crypto/smartcont/validator-elect-signed.fif",
             raw_address(wallet.address),
             str(election_id),
             "1",
@@ -392,7 +526,7 @@ class StageA:
     async def recovery_body(self, label: str) -> Cell:
         body_file = self.artifacts_dir / f"{label}-recover.boc"
         await self.run_fift(
-            REPO / "crypto/smartcont/recover-stake.fif",
+            self.install.source_dir / "crypto/smartcont/recover-stake.fif",
             str(body_file),
         )
         return Cell.one_from_boc(body_file.read_bytes())
@@ -547,7 +681,7 @@ class StageA:
         reached = await self.retry(
             chain_time,
             timeout=max(120.0, timestamp - time.time() + 120.0),
-            interval=1,
+            interval=self.long_poll_interval,
             description=label,
             predicate=lambda value: value >= timestamp,
         )
@@ -625,8 +759,8 @@ class StageA:
         )
         unfreeze_at = (
             election_id
-            + STAGE_A_ELECTED_FOR
-            + STAGE_A_STAKES_FROZEN_FOR
+            + self.profile.elected_for
+            + self.profile.stakes_frozen_for
         )
         credit_timeout = max(240, unfreeze_at - int(time.time()) + 90)
         credits: list[int] = []
@@ -637,7 +771,7 @@ class StageA:
                     "compute_returned_stake", wallet_hash
                 ),
                 timeout=credit_timeout,
-                interval=2,
+                interval=max(2.0, self.long_poll_interval),
                 description=f"round {round_number} validator {index + 1} credit",
                 predicate=lambda value: value >= EFFECTIVE_STAKE,
             )
@@ -728,20 +862,79 @@ class StageA:
             balance_after=after,
         )
 
+    async def chain_heads(self) -> dict[str, int]:
+        output = await self.lite("time", "allshards")
+        masterchain = re.search(
+            r"latest masterchain block known to server is "
+            r"\(-1,8000000000000000,(\d+)\).* created at (\d+)",
+            output,
+        )
+        workchain = re.search(
+            r"shard #\d+ : \(0,[0-9A-Fa-f]+,(\d+)\).* @ (\d+)",
+            output,
+        )
+        if masterchain is None or workchain is None:
+            raise RuntimeError("cannot parse masterchain/workchain heads")
+        return {
+            "masterchain_seqno": int(masterchain.group(1)),
+            "masterchain_created_at": int(masterchain.group(2)),
+            "workchain_seqno": int(workchain.group(1)),
+            "workchain_created_at": int(workchain.group(2)),
+        }
+
+    def network_storage(self) -> dict[str, int]:
+        logical_bytes = 0
+        allocated_bytes = 0
+        file_count = 0
+        for path in self.network_dir.rglob("*"):
+            try:
+                if path.is_file():
+                    stat = path.stat()
+                    logical_bytes += stat.st_size
+                    allocated_bytes += stat.st_blocks * 512
+                    file_count += 1
+            except (FileNotFoundError, PermissionError):
+                continue
+        return {
+            "network_storage_logical_bytes": logical_bytes,
+            "network_storage_allocated_bytes": allocated_bytes,
+            "network_file_count": file_count,
+        }
+
     async def metrics_monitor(self) -> None:
         self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._monitor_stop.is_set():
-            sample: dict[str, Any] = {"at": utc_now()}
+            sampled_at = time.time()
+            sample: dict[str, Any] = {
+                "at": datetime.fromtimestamp(sampled_at, UTC).isoformat()
+            }
             try:
-                sample["masterchain_seqno"] = await self.masterchain_seqno()
+                heads = await self.chain_heads()
+                sample.update(heads)
+                sample["masterchain_head_age_seconds"] = max(
+                    0.0, sampled_at - heads["masterchain_created_at"]
+                )
+                sample["workchain_head_age_seconds"] = max(
+                    0.0, sampled_at - heads["workchain_created_at"]
+                )
             except Exception as error:
-                sample["masterchain_error"] = str(error)
+                sample["chain_heads_error"] = str(error)
             try:
                 config = await self.get_config34()
                 sample["config34_since"] = config.utime_since
                 sample["config34_until"] = config.utime_until
             except Exception as error:
                 sample["config34_error"] = str(error)
+            try:
+                sample["elector_balance_nanotos"] = await self.balance(ELECTOR)
+            except Exception as error:
+                sample["elector_balance_error"] = str(error)
+            try:
+                sample["active_election_id"] = await self.runmethod_int(
+                    "active_election_id"
+                )
+            except Exception as error:
+                sample["active_election_error"] = str(error)
 
             processes: list[dict[str, Any]] = []
             network_marker = str(self.network_dir).encode()
@@ -757,6 +950,13 @@ class StageA:
                         if ":" in line:
                             key, value = line.split(":", 1)
                             status[key] = value.strip()
+                    smaps: dict[str, str] = {}
+                    for line in (proc_dir / "smaps_rollup").read_text().splitlines():
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            smaps[key] = value.strip()
+                    stat_tail = (proc_dir / "stat").read_text().rsplit(")", 1)[1]
+                    stat_fields = stat_tail.split()
                     processes.append(
                         {
                             "pid": int(proc_dir.name),
@@ -764,12 +964,34 @@ class StageA:
                             "anon_kib": int(
                                 status.get("RssAnon", "0 kB").split()[0]
                             ),
+                            "file_kib": int(
+                                status.get("RssFile", "0 kB").split()[0]
+                            ),
+                            "shmem_kib": int(
+                                status.get("RssShmem", "0 kB").split()[0]
+                            ),
+                            "pss_kib": int(smaps.get("Pss", "0 kB").split()[0]),
+                            "private_kib": int(
+                                smaps.get("Private_Clean", "0 kB").split()[0]
+                            )
+                            + int(
+                                smaps.get("Private_Dirty", "0 kB").split()[0]
+                            ),
                             "threads": int(status.get("Threads", "0")),
+                            "open_fds": len(list((proc_dir / "fd").iterdir())),
+                            "cpu_user_ticks": int(stat_fields[11]),
+                            "cpu_system_ticks": int(stat_fields[12]),
                         }
                     )
                 except (FileNotFoundError, PermissionError, ProcessLookupError):
                     continue
             sample["validator_processes"] = processes
+            try:
+                sample.update(await asyncio.to_thread(self.network_storage))
+                disk = shutil.disk_usage(self.run_dir)
+                sample["filesystem_free_bytes"] = disk.free
+            except Exception as error:
+                sample["storage_error"] = str(error)
             with self.metrics_path.open("a") as output:
                 output.write(json.dumps(sample, sort_keys=True) + "\n")
             try:
@@ -818,15 +1040,13 @@ class StageA:
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
         self.artifacts_dir.mkdir()
+        self.prepare_artifact_snapshot()
         self.event(
-            "stage_a_start",
-            source_commit=subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=REPO,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip(),
+            f"stage_{self.profile.stage}_start",
+            stage=self.profile.label,
+            accelerated=self.profile.accelerated,
+            source_commit=self.provenance["source_commit"],
+            artifact_snapshot=str(self.run_dir / "artifact-snapshot"),
             base_port=self.base_port,
             production_defaults_unchanged=True,
         )
@@ -840,7 +1060,9 @@ class StageA:
         try:
             network.config.shard_validators = 4
             network.config.validator_economics_profile = True
-            network.config.validator_election_stage_a_profile = True
+            network.config.validator_election_stage_a_profile = (
+                self.profile.accelerated
+            )
 
             dht = network.create_dht_node()
             for _ in range(4):
@@ -861,16 +1083,31 @@ class StageA:
             config15 = await self.lite("time", "getconfig 15 16 17 28 34")
             (self.artifacts_dir / "initial-config.txt").write_text(config15)
             if (
-                "validators_elected_for:300" not in config15
-                or "elections_start_before:180" not in config15
-                or "elections_end_before:60" not in config15
-                or "stake_held_for:180" not in config15
+                f"validators_elected_for:{self.profile.elected_for}" not in config15
+                or (
+                    f"elections_start_before:{self.profile.elect_start_before}"
+                    not in config15
+                )
+                or (
+                    f"elections_end_before:{self.profile.elect_end_before}"
+                    not in config15
+                )
+                or (
+                    f"stake_held_for:{self.profile.stakes_frozen_for}"
+                    not in config15
+                )
             ):
-                raise AssertionError("Stage A ConfigParam 15 is not accelerated")
+                raise AssertionError(
+                    f"{self.profile.label} ConfigParam 15 does not match its profile"
+                )
             if "min_validators:4" not in config15:
-                raise AssertionError("Stage A changed ConfigParam 16")
+                raise AssertionError(
+                    f"{self.profile.label} changed ConfigParam 16"
+                )
             if "value:10000000000000" not in config15:
-                raise AssertionError("Stage A changed the 10,000 TOS minimum stake")
+                raise AssertionError(
+                    f"{self.profile.label} changed the 10,000 TOS minimum stake"
+                )
 
             self.initial_config34 = await self.get_config34()
             self.event(
@@ -884,8 +1121,8 @@ class StageA:
 
             self.first_election_id = await self.retry(
                 lambda: self.runmethod_int("active_election_id"),
-                timeout=600,
-                interval=1,
+                timeout=max(600, self.profile.initial_set_valid + 300),
+                interval=self.long_poll_interval,
                 description="first election opening",
                 predicate=lambda value: value > 0,
             )
@@ -964,8 +1201,8 @@ class StageA:
 
             self.second_election_id = await self.retry(
                 lambda: self.runmethod_int("active_election_id"),
-                timeout=240,
-                interval=1,
+                timeout=max(240, self.profile.elected_for),
+                interval=self.long_poll_interval,
                 description="second election opening",
                 predicate=lambda value: value > self.first_election_id,
             )
@@ -991,8 +1228,8 @@ class StageA:
 
             self.rollover_election_id = await self.retry(
                 lambda: self.runmethod_int("active_election_id"),
-                timeout=240,
-                interval=1,
+                timeout=max(240, self.profile.elected_for),
+                interval=self.long_poll_interval,
                 description="rollover election opening",
                 predicate=lambda value: value > self.second_election_id,
             )
@@ -1044,7 +1281,8 @@ class StageA:
             final_seqno = await self.masterchain_seqno()
             elector_balance = await self.balance(ELECTOR)
             self.event(
-                "stage_a_passed",
+                f"stage_{self.profile.stage}_passed",
+                stage=self.profile.label,
                 final_masterchain_seqno=final_seqno,
                 elector_balance=elector_balance,
                 first_credits=self.first_credits,
@@ -1065,13 +1303,15 @@ class StageA:
             "status": "pass" if not self.failures else "fail",
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
-            "source_commit": subprocess.run(
+            "source_commit": self.provenance["source_commit"],
+            "source_commit_at_report": subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=REPO,
                 capture_output=True,
                 text=True,
                 check=True,
             ).stdout.strip(),
+            "provenance": self.provenance,
             "git_status": subprocess.run(
                 ["git", "status", "--short"],
                 cwd=REPO,
@@ -1080,11 +1320,13 @@ class StageA:
                 check=True,
             ).stdout.splitlines(),
             "profile": {
-                "elected_for": STAGE_A_ELECTED_FOR,
-                "elect_start_before": 180,
-                "elect_end_before": 60,
-                "stakes_frozen_for": STAGE_A_STAKES_FROZEN_FOR,
-                "initial_set_valid": 600,
+                "stage": self.profile.label,
+                "accelerated": self.profile.accelerated,
+                "elected_for": self.profile.elected_for,
+                "elect_start_before": self.profile.elect_start_before,
+                "elect_end_before": self.profile.elect_end_before,
+                "stakes_frozen_for": self.profile.stakes_frozen_for,
+                "initial_set_valid": self.profile.initial_set_valid,
                 "effective_stake": EFFECTIVE_STAKE,
                 "stake_message_value": STAKE_MESSAGE_VALUE,
             },
@@ -1111,12 +1353,18 @@ class StageA:
             "metrics_file": str(self.metrics_path),
         }
         self.report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
-        print(f"Stage A report: {self.report_path}", flush=True)
+        print(f"{self.profile.label} report: {self.report_path}", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the local validator election Stage A rehearsal"
+        description="Run a local validator election launch-gate rehearsal"
+    )
+    parser.add_argument(
+        "--stage",
+        choices=sorted(PROFILES),
+        default="a",
+        help="'a' for accelerated timing or 'b' for unmodified production timing",
     )
     parser.add_argument(
         "--base-port",
@@ -1133,27 +1381,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=REPO / "test/integration/.validator-election-stage-a",
-        help="parent directory for timestamped run artifacts",
+        default=None,
+        help="parent directory for timestamped run artifacts (stage-specific default)",
     )
     parser.add_argument(
         "--sample-interval",
         type=float,
-        default=10.0,
-        help="resource and chain-state sample interval in seconds",
+        default=None,
+        help="sample interval in seconds (default: Stage A 10, Stage B 60)",
     )
     return parser.parse_args()
 
 
 async def async_main() -> int:
     args = parse_args()
+    profile = PROFILES[args.stage]
+    output_root = args.output_root or (
+        REPO / f"test/integration/.validator-election-stage-{profile.stage}"
+    )
+    sample_interval = args.sample_interval
+    if sample_interval is None:
+        sample_interval = 10.0 if profile.accelerated else 60.0
+    if sample_interval <= 0:
+        raise ValueError("sample interval must be positive")
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = args.output_root / timestamp
-    stage = StageA(
+    run_dir = output_root / timestamp
+    stage = ValidatorElectionRehearsal(
         run_dir=run_dir,
         base_port=args.base_port,
         build_dir=args.build_dir,
-        sample_interval=args.sample_interval,
+        sample_interval=sample_interval,
+        profile=profile,
     )
     try:
         await stage.execute()

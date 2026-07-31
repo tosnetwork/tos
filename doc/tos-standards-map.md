@@ -56,6 +56,7 @@ The TOS standards map is organized into these families:
 6. contract and application standards
 7. trust and verification standards
 8. AI actor workflow standards
+9. agentic resource discovery standards
 
 ## 1. RPC Standards
 
@@ -383,6 +384,68 @@ The first agent and task primitives may begin as Level 3 while examples and test
 - workflow builders
 - verifier and reputation systems
 
+## 9. Agentic Resource Discovery Standards
+
+### Scope
+
+**Status: ARD v0.9 compatibility architecture published; implementation not
+started**
+
+TOS adopts Agentic Resource Discovery (ARD) as its protocol-neutral surface
+for publishing and finding callable AI resources. The normative TOS profile is
+[tos-ard-compatibility.md](tos-ard-compatibility.md).
+
+The external ARD draft remains an experimental Level 3 dependency until a
+stable release and interoperable conformance suite exist. The TOS
+compatibility profile and Registry implementation may advance to Level 2 only
+while pinned to an exact ARD version; TOS must not silently redefine ARD
+fields.
+
+### Surfaces
+
+- `/.well-known/ai-catalog.json` publication
+- domain-anchored ARD resource identifiers and publisher verification
+- ARD value-or-reference records and media-type handling
+- mandatory ARD Registry HTTP REST search baseline, including `POST /search`
+- optional exploration, listing, nested-catalog, and federation surfaces
+- catalog-to-TOS descriptor and profile-manifest references
+- Registry provenance, visibility, expiry, withdrawal, ranking, and health
+  semantics
+- approved HTTPS gateway or private-Registry treatment for `.tos` and raw
+  ADNL identities
+
+### Required Stability
+
+The exact supported ARD version, publisher verification rules, Registry
+baseline, media-type mapping, and security bounds must be explicit. External
+draft changes require compatibility review and conformance updates. TOS
+extensions must remain namespaced and must not change standard ARD meaning.
+
+### Required Guarantees
+
+- ARD remains discovery-only and does not become payment, authorization,
+  scheduling, execution, physical-control, evidence, or settlement authority
+- public publisher identity is verified against its FQDN
+- `.tos`, ADNL, accounts, and on-chain commitments remain separately verified
+  TOS identity metadata
+- Registry responses preserve provenance and distinguish publisher data,
+  derived ranking, on-chain state, live observations, and attestations
+- clients revalidate the current TOS descriptor, endpoint authorization,
+  quote, admission decision, and payment destination before invocation
+- catalog parsing, crawling, indexing, federation, caching, and retry state
+  are bounded and hardened against SSRF and prompt injection
+- multiple public, private, regional, or specialized registries can
+  interoperate without a mandatory central TOS registry
+
+### Primary Consumers
+
+- agents and agent runtimes
+- AI Sites and edge-terminal operators
+- MCP, A2A, OpenAPI, and TOS Service Protocol publishers
+- TOS ARD Registry and gateway operators
+- storage, commerce, model, and physical-terminal profile implementations
+- SDKs, wallets, schedulers, and enterprise discovery systems
+
 ## Standards Ownership
 
 TOS should assign clear ownership for each standards family:
@@ -395,6 +458,7 @@ TOS should assign clear ownership for each standards family:
 - contract and application standards
 - trust and verification standards
 - AI actor workflow standards
+- agentic resource discovery standards
 
 Ownership must answer:
 
@@ -449,8 +513,9 @@ For the next 12 months, TOS should standardize in this order:
 3. operator standards
 4. indexing and data standards
 5. trust and verification standards
-6. account and permission standards
-7. contract and application standards
+6. agentic resource discovery standards
+7. account and permission standards
+8. contract and application standards
 
 This order follows the first-year priority of reducing operator and integrator friction before expanding higher-level abstraction surfaces.
 

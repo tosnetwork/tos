@@ -4,11 +4,13 @@
 
 - Document type: product use case and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - Shared host architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
+- Discovery profile:
+  [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 
 ## Purpose
 
@@ -88,8 +90,8 @@ Commerce remains outside the TOS core repository:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS, wallet and crypto, JSON-RPC/lite APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
-| `tos-commerce` repository | store and offer schemas, commerce edge service, seller CLI/UI, buyer SDKs, discovery, order workflows, fulfillment adapters, deployments, and end-to-end tests |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-commerce` repository | store and offer schemas, commerce edge service, seller CLI/UI, buyer SDKs, ARD catalog generation, commerce ranking and catalog search, order workflows, fulfillment adapters, deployments, and end-to-end tests |
 | Seller's device | catalog, inventory, digital assets, private order data, fulfillment state, runtime key, and commerce edge service |
 | TOS blockchain | DNS references, service commitments, payment, escrow, settlement, dispute references, and optional attestations |
 
@@ -192,7 +194,7 @@ flowchart LR
     end
 
     subgraph Buyer["Buyer"]
-        Discovery["Store discovery / SDK"]
+        Discovery["ARD Registry + store search / SDK"]
         Client["Commerce client"]
         Wallet["TOS wallet"]
 
@@ -416,6 +418,25 @@ The manifest is a signed seller declaration. It is not automatic proof of
 legal identity, inventory, product quality, professional skill, or future
 fulfillment.
 
+### 6.1 Publish callable commerce resources through ARD
+
+For agent clients, the seller may publish:
+
+```text
+https://<publisher-fqdn>/.well-known/ai-catalog.json
+```
+
+ARD entries describe callable commerce resources such as store search, quote
+request, order creation, translation-task intake, or fulfillment-status
+lookup, and reference the signed TOS commerce descriptor. The product catalog
+itself remains a signed commerce artifact: ARD is not an inventory database,
+marketplace listing format, proof of stock, or seller endorsement.
+
+A `name.tos` storefront needs a conventional FQDN, an approved HTTPS gateway,
+or an explicitly trusted private Registry for ARD publisher verification. The
+ARD publisher, TOS store identity, runtime signer, catalog signer, offer
+revision, escrow address, and payment destination remain separate bindings.
+
 ### 7. Register store capabilities
 
 Example capability identifiers could include:
@@ -483,7 +504,9 @@ When a buyer knows `alice-shop.tos`, the commerce client:
 
 ### Discovery by category and capability
 
-An independent commerce discovery service can index:
+A TOS ARD Registry can discover the store's callable services and hand the
+client to the signed commerce catalog. A commerce-aware Registry or linked
+catalog index can index:
 
 - store capability records
 - signed public store manifests
@@ -505,7 +528,9 @@ Example queries include:
 > Find a downloadable design template with a commercial-use license and an
 > encrypted delivery profile.
 
-Discovery is advisory. Before payment, the client independently rechecks:
+ARD and commerce discovery are advisory. Registry responses preserve
+publisher, chain, observation, attestation, and ranking provenance. Before
+payment, the client independently rechecks:
 
 - store and offer signatures
 - offer revision and expiry
@@ -514,8 +539,9 @@ Discovery is advisory. Before payment, the client independently rechecks:
 - total quote
 - fulfillment, refund, and dispute terms
 
-Discovery and ranking belong in independent `tos-commerce` services, not the
-TOS core indexer. Multiple discovery operators should be possible.
+Discovery and ranking belong in independent ARD Registry and `tos-commerce`
+services, not the TOS core indexer. Multiple discovery operators should be
+possible.
 
 ### Discovery by raw ADNL address or link
 
@@ -553,7 +579,7 @@ network timeout must not create or charge a second order.
 ```mermaid
 sequenceDiagram
     participant B as Buyer Client
-    participant D as DNS / Discovery
+    participant D as DNS / ARD Registry
     participant E as Commerce Edge
     participant P as Payment / Escrow
     participant C as TOS Blockchain
@@ -878,10 +904,11 @@ cannot determine every real-world fact or subjective quality judgment.
 | Proof Attestation | Available/partial | TOS core contract; optional seller, delivery, and product profiles |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual store distribution |
 | Public `.tos` registration product | To build | application contracts, tooling, and deployment |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; commerce enrichment in `tos-commerce` |
 | Store, offer, quote, order, and receipt schemas | To build | `tos-commerce/spec/` |
 | Commerce edge and seller UI | To build | `tos-commerce` |
 | Buyer SDK, wallet flow, and commerce client | To build | `tos-commerce` |
-| Store and offer discovery | To build | `tos-commerce` |
+| Store-service ARD enrichment and offer discovery | To build | `tos-commerce`; ARD covers callable resources, not the signed product catalog |
 | Physical fulfillment and carrier adapters | To build | `tos-commerce` |
 | Encrypted digital delivery | To build | `tos-commerce`, optionally using a storage service |
 | Human-service task workflow | To build | `tos-commerce` using Task Escrow |
@@ -923,7 +950,8 @@ The first interoperable storefront MVP is complete when an ordinary seller can:
 4. optionally bind it to `name.tos`
 5. publish a signed, expiring store manifest
 6. publish immutable signed offer revisions
-7. appear in an independent commerce discovery service
+7. publish conforming ARD callable-service entries and appear through an
+   independent TOS ARD Registry without treating ARD as the product catalog
 8. issue a signed quote with a complete maximum price
 9. accept direct payment or escrow
 10. create an idempotent order

@@ -4,12 +4,14 @@
 
 - Source vision document: [The-TOS-Protocol.docx](The-TOS-Protocol.docx)
 - Companion PDF: [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf)
-- Assessment date: 2026-07-30
+- Assessment date: 2026-07-31
 - Scope: repository-level gap analysis and an implementation roadmap for
   owner-operated Internet services, with an AI Edge Computing Terminal and
   local model inference as the first reference product
 - Repository model: TOS core as a dependency, a separate generic service
   protocol repository, and independently released vertical product profiles
+- External discovery baseline: Agentic Resource Discovery (ARD) v0.9 Draft,
+  pinned and versioned until a stable ARD release is available
 
 ## Executive Summary
 
@@ -25,6 +27,15 @@ storage capacity, physical or digital goods, human skills, tools, or a
 composition of these resources. These services share identity, discovery,
 authentication, quote, payment, receipt, evidence, privacy, and transport
 requirements, but have different business state machines.
+
+TOS Network adopts Agentic Resource Discovery (ARD) as its standard public
+discovery envelope. Providers and gateways publish ARD-compatible
+`/.well-known/ai-catalog.json` documents, and the off-chain TOS ARD Registry
+implements the standard HTTP search
+interface. TOS does not fork ARD's general catalog, identifier, or federation
+model. TOS extends the flow after discovery with live admission, edge
+execution, signed quotes, payment, metering, receipts, evidence, disputes, and
+settlement.
 
 The repository already contains substantial trust and settlement
 infrastructure:
@@ -46,7 +57,8 @@ The main missing common surfaces are:
 - durable invocation, lease, order, task, fulfillment, refund, and dispute
   state machines
 - client SDKs for the base protocol and vertical profiles
-- plural service discovery and user-agent foundations
+- an ARD-compatible Registry, plural service discovery, and user-agent
+  foundations
 - multi-region routing, relays, subscriptions, streaming settlement, and
   advanced verification
 
@@ -88,13 +100,13 @@ when the repositories are created.
 The central boundary rule is:
 
 > `tos` provides reusable blockchain infrastructure; `tos-protocol` defines
-> interoperable service foundations; vertical repositories implement specific
-> resource profiles and products.
+> interoperable service foundations and ARD compatibility; vertical
+> repositories implement specific resource profiles and products.
 
 | Repository | Owns | Does not own |
 |---|---|---|
 | `tos` (this repository) | consensus and validators, VM and generic smart-contract tooling, chain data and stable query APIs, wallet/crypto primitives, DNS resolution, ADNL/DHT/RLDP, and TOS Sites transport | application manifests, model/storage/commerce execution, derived discovery, or vertical product releases |
-| `tos-protocol` | base descriptor and manifest schemas, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, base discovery schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, catalogs, or vertical business policy |
+| `tos-protocol` | base descriptor and manifest schemas, ARD compatibility profile, ARD Registry/crawler/federation, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, application content catalogs, or vertical business policy |
 | `tos-ai` | General and physical AI Edge Computing Terminal distributions, inference and physical-world task profiles, local open-weight models, resource probes and benchmarks, model/runtime adapters, bounded and real-time scheduling, signed updates, fleet management, AI clients, model provenance, packaging, and AI-specific conformance tests | bare GPU rental, consumer-supplied execution, generic domain ownership, or unrelated storage/commerce workflows |
 | `tos-storage` | object APIs, storage leases, content catalogs, storage metering, replication, and availability evidence | TOS consensus or AI model execution |
 | `tos-commerce` | store and offer schemas, orders, inventory, physical/digital fulfillment, human-service workflows, refunds, and commerce discovery | TOS consensus, generic transport, or model execution |
@@ -131,7 +143,7 @@ flowchart TB
         Adapter["Versioned TOS chain adapter"]
         ProtocolSDK["Base SDKs"]
         EdgeCore["tos-edge core"]
-        DiscoverySchema["Discovery schema"]
+        ARD["ARD compatibility<br/>catalog + Registry + federation"]
         Conformance["Conformance + E2E suites"]
     end
 
@@ -149,24 +161,24 @@ flowchart TB
     EdgeCore --> P2P
     ProtocolSDK --> Adapter
     ProtocolSDK --> Spec
-    DiscoverySchema --> Spec
+    ARD --> Spec
     Conformance --> Domain
     Conformance --> EdgeCore
     AI --> ProtocolSDK
     AI --> EdgeCore
-    AI --> DiscoverySchema
+    AI --> ARD
     Storage --> ProtocolSDK
     Storage --> EdgeCore
-    Storage --> DiscoverySchema
+    Storage --> ARD
     Commerce --> ProtocolSDK
     Commerce --> EdgeCore
-    Commerce --> DiscoverySchema
+    Commerce --> ARD
 
     classDef core fill:#d8f3dc,stroke:#2d6a4f,color:#081c15;
     classDef base fill:#dbeafe,stroke:#1d4ed8,color:#172554;
     classDef profile fill:#f3e8ff,stroke:#7e22ce,color:#3b0764;
     class Validator,VM,ChainAPI,CoreDNS,P2P,ActorABI core;
-    class Spec,Domain,Adapter,ProtocolSDK,EdgeCore,DiscoverySchema,Conformance base;
+    class Spec,Domain,Adapter,ProtocolSDK,EdgeCore,ARD,Conformance base;
     class AI,Storage,Commerce profile;
 ```
 
@@ -180,7 +192,9 @@ tos-protocol/
   crates/protocol/
   crates/chain-adapter/
   crates/edge-core/
-  crates/discovery/
+  crates/ard-catalog/
+  services/ard-registry/
+  crates/ard-federation/
   sdk/typescript/
   apps/cli/
   deploy/
@@ -239,7 +253,9 @@ flowchart TB
         Browser["Service Browser / User Agent<br/>TO BUILD"]
         ClientSDK["Rust + TypeScript Base SDKs<br/>TO BUILD"]
         VerticalClients["AI / Storage / Commerce Clients<br/>TO BUILD BY PROFILE"]
-        Semantic["Plural discovery and ranking<br/>TO BUILD"]
+        Catalog["ARD ai-catalog.json<br/>TO BUILD"]
+        Registry["TOS ARD Registry<br/>POST /search<br/>TO BUILD"]
+        Federation["ARD federation + ranking<br/>TO BUILD"]
         ChainIndex["Capability/service chain index<br/>AVAILABLE"]
     end
 
@@ -296,8 +312,10 @@ flowchart TB
     Browser --> ClientSDK
     VerticalClients --> ClientSDK
     ClientSDK --> DNS
-    ClientSDK --> Semantic
-    Semantic --> ChainIndex
+    ClientSDK --> Registry
+    Catalog --> Registry
+    Registry --> Federation
+    Registry --> ChainIndex
     DNS --> Registrar
     DNS --> Descriptor
     Descriptor --> Manifest
@@ -347,7 +365,7 @@ flowchart TB
 
     class DNS,ChainIndex,Task,Attest,Chain,ADNL,Sites available;
     class Agent,Service,Capability,HTTPS,Policy partial;
-    class Browser,ClientSDK,VerticalClients,Semantic,Registrar,Descriptor,Manifest,Profiles,Session,Quote,Action,Receipt,Delegate,Relay,Routing,EdgeDaemon,Terminal,Profiler,Ingress,Supervisor,Model,Scheduler,Physical,Update,Fleet,StorageAdapter,CommerceAdapter,Tools,Memory,Meter,Observe missing;
+    class Browser,ClientSDK,VerticalClients,Catalog,Registry,Federation,Registrar,Descriptor,Manifest,Profiles,Session,Quote,Action,Receipt,Delegate,Relay,Routing,EdgeDaemon,Terminal,Profiler,Ingress,Supervisor,Model,Scheduler,Physical,Update,Fleet,StorageAdapter,CommerceAdapter,Tools,Memory,Meter,Observe missing;
 ```
 
 ## Common and Profile Components
@@ -358,8 +376,10 @@ which components are common and which belong in vertical profiles.
 | Component | Status | Existing repository foundation | Required work |
 |---|---|---|---|
 | Human-readable `name.tos` identity | Partial | [DNS.md](DNS.md), DNS smart contracts, ConfigParam 4 resolution | Implement the root `.tos` collection/item registry, ownership lifecycle, CLI, SDK, and deployment |
+| ARD capability catalog | To build | ARD v0.9 provides the public data model and `/.well-known/ai-catalog.json` convention | Pin the supported ARD version, import its authoritative schemas, generate bounded catalogs, define TOS media-type mappings, and keep `.tos`/ADNL/on-chain identity bindings as verified extensions |
+| TOS ARD Registry | To build | ARD defines the mandatory HTTP REST discovery baseline and federated-registry model | Implement bounded crawling, `POST /search`, provenance, federation, private catalogs, chain-index enrichment, `.tos` gateway ingestion, policy filters, and upstream/TOS conformance |
 | Signed service descriptor | To build | ADNL identity and existing asymmetric key infrastructure | Define the base descriptor schema, signature domain, controller/runtime authorization, expiry, health window, and endpoint selection |
-| Base service manifest and profiles | To build | Service Actor and Capability Registry metadata hashes | Define canonical JSON/CBOR, profile negotiation, critical extensions, media types, well-known URLs, signatures, on-chain commitments, and update/version rules |
+| Base service manifest and profiles | To build | Service Actor and Capability Registry metadata hashes; ARD supplies the protocol-neutral discovery envelope | Define canonical JSON/CBOR operational manifests, profile negotiation, critical extensions, TOS media types, signatures, on-chain commitments, update/version rules, and an explicit mapping from ARD entries to TOS descriptors |
 | Owner/controller key hierarchy | Partial | Agent Account owner/controller separation | Add runtime keys, session keys, bounded delegation, revocation, multi-controller support, and recovery semantics |
 | Capability declaration | Partial | Capability Registry and metadata hashes | Standardize base capability identifiers, profile vocabularies, input/output schemas, languages, regions, pricing, evidence, and critical extensions |
 | Quote, order, lease, and task binding | Partial | Service Actor and Task Escrow request identities | Define common signed quotes plus profile-specific durable state machines, idempotency, event ordering, deadlines, and terminal cleanup |
@@ -384,7 +404,7 @@ which components are common and which belong in vertical profiles.
 | Evidence and attestation | Partial | Proof Attestation and domain-separated response commitments | Standardize receipt/evidence envelopes, verifier references, issuer trust, and off-chain proof adapters |
 | HTTP/RLDP access | Available | [TosSites.md](TosSites.md), `rldp-http-proxy` | Add generic service/profile well-known paths, authenticated sessions, event/stream bindings, and profile-specific limits |
 | NAT traversal and relays | To build | ADNL tunneling foundations exist, but not a complete owner-operated relay product | Add owner-selected relays/reverse tunnels without transferring site authority |
-| Service discovery | To build | Chain-wide service/capability index exists | Add manifest ingestion, signature checks, profile indexes, health, pricing, reputation, and plural ranking |
+| Service discovery | To build | Chain-wide service/capability index exists; ARD defines public catalog and Registry interoperability | Run an ARD-compatible Registry, ingest standard catalogs and TOS chain/manifests with field provenance, add health/pricing/reputation indexes, federate without a mandatory global registry, and revalidate authority before transaction |
 | Service Browser | To build | Wallet/connect/client SDK foundations | Build a CLI/desktop/extension base user agent with inference, storage, and commerce modules for consent, budgets, receipts, and composition |
 | Observability | Partial | Validator and service metrics/logging patterns | Add privacy-preserving edge health, bounded metrics, tracing, usage audit, and redaction |
 
@@ -424,6 +444,17 @@ at:
 /.well-known/tos-service.json
 ```
 
+An ARD-compatible HTTPS publisher additionally serves:
+
+```text
+/.well-known/ai-catalog.json
+```
+
+The ARD catalog is the protocol-neutral discovery envelope and may reference
+the TOS service descriptor, MCP server card, A2A agent card, OpenAPI document,
+or nested catalog. The TOS descriptor remains authoritative for TOS
+authentication, live quote, payment, receipt, and endpoint semantics.
+
 It references one or more signed profile documents, for example inference,
 storage, or commerce manifests. Profile paths such as
 `/.well-known/tos-inference.json`, `/.well-known/tos-storage.json`, and
@@ -431,6 +462,13 @@ storage, or commerce manifests. Profile paths such as
 can be committed through the Service Actor or Capability Registry. This avoids
 inventing a new DNS record type before descriptor and profile specifications
 stabilize.
+
+Because ARD identifiers are anchored in a verifiable public FQDN, `name.tos`
+must not be presented as conventional ARD domain proof by itself. Operators
+use an operator-controlled DNS name, an approved HTTPS gateway namespace, or
+a private ARD Registry with an explicit `.tos` trust policy. The ARD record can
+carry signed `name.tos`, ADNL, TOS address, and on-chain commitment bindings as
+extension metadata.
 
 ### Service, Escrow, and Attestation Contracts
 
@@ -500,6 +538,13 @@ conforming vertical implementation, not the definition of the base protocol.
 
 ```text
 tos-protocol/spec/
+  ard/
+    compatibility-profile.md
+    media-types.md
+    identity-binding.md
+    registry-policy.md
+    pinned-upstream/
+    test-vectors/
   base/
     protocol.md
     service-descriptor.schema.json
@@ -513,7 +558,7 @@ tos-protocol/spec/
     receipt.schema.json
     evidence.schema.json
     authentication.md
-    discovery.md
+    ard-handoff.md
     payment-and-settlement.md
     transport-http.md
     transport-rldp.md
@@ -528,7 +573,7 @@ tos-protocol/spec/
 
 tos-ai/spec/
   inference/
-  gpu-compute/
+  physical-terminal/
 
 tos-storage/spec/
   storage/
@@ -550,6 +595,10 @@ The base specification must define:
 - critical versus advisory manifest fields
 - profile identifiers, version negotiation, and compatibility rules
 - profile discovery and profile-specific well-known document references
+- the pinned ARD version, ARD identifier and media-type mapping, and
+  catalog-to-TOS descriptor handoff
+- the distinction between stable ARD discovery data, registry-derived fields,
+  and authoritative live quote/admission state
 - unknown extension handling
 - maximum sizes and nesting limits
 - state transitions and legal message ordering
@@ -868,6 +917,7 @@ flowchart LR
 
 - owner and runtime key loading from a protected keystore
 - signed descriptor generation and renewal
+- bounded ARD `ai-catalog.json` generation with pinned-version validation
 - `/.well-known/tos-service.json` plus profile document routing
 - protocol endpoints for base operations and negotiated profile actions
 - challenge-response peer authentication
@@ -987,15 +1037,19 @@ and evidence envelopes but define different profile actions and durable state.
 
 ## Client and Discovery Work
 
-Base client, SDK, and discovery schemas belong to `tos-protocol`. Vertical
-clients and derived indexes belong to their profile repositories. They consume
-TOS data and transport services but have release lifecycles independent from
-the validator.
+Base clients, SDKs, the
+[TOS ARD compatibility profile](tos-ard-compatibility.md), and the standalone
+TOS ARD Registry belong to `tos-protocol`. Vertical clients and
+profile-specific derived fields belong to their profile repositories. They
+consume TOS data and transport services but have release lifecycles independent
+from the validator.
 
 ### Rust SDK
 
 Provide:
 
+- ARD catalog fetch, schema validation, registry search, provenance, and
+  federation handling
 - DNS and descriptor resolution
 - manifest parsing and verification
 - profile discovery, negotiation, and critical-extension handling
@@ -1010,8 +1064,10 @@ Provide:
 ### TypeScript SDK
 
 Provide equivalent browser/Node.js base types and verification, integrated
-with the existing wallet/connect packages. Vertical packages add inference,
-storage, and commerce types. Browser environments will initially need one of:
+with the existing wallet/connect packages. This includes ARD `POST /search`,
+catalog verification, and safe handoff to MCP, A2A, OpenAPI, or the TOS
+Service Protocol. Vertical packages add inference, storage, and commerce
+types. Browser environments will initially need one of:
 
 - an HTTPS gateway
 - a local TOS Sites proxy
@@ -1019,10 +1075,16 @@ storage, and commerce types. Browser environments will initially need one of:
 
 ### Discovery service
 
-Define the common discovery record in `tos-protocol` and build separate derived
-indexes in vertical repositories, seeded through existing chain query APIs:
+Implement an ARD Registry in `tos-protocol`; do not define a competing
+general-purpose TOS catalog/search protocol. The service must support the
+pinned ARD HTTP REST baseline and may build profile-specific derived indexes
+seeded through standard catalogs and existing chain query APIs:
 
-- fetch public manifests
+- fetch bounded public `/.well-known/ai-catalog.json` documents
+- validate ARD identifiers, value-or-reference rules, media types, schemas,
+  publisher bindings, and trust metadata
+- ingest policy-approved DNS hints, upstream ARD registries, private catalogs,
+  TOS gateway records, and chain-index events
 - verify owner/runtime signatures and on-chain commitments
 - index service/profile type, version, capability, language, region, price,
   transport, privacy, provenance, and evidence policy
@@ -1031,10 +1093,16 @@ indexes in vertical repositories, seeded through existing chain query APIs:
 - track descriptor expiry and endpoint health
 - keep reputation capability-specific
 - expose issuer/attestation provenance
+- preserve whether every field is publisher-supplied, registry-derived,
+  observed, attested, or chain-derived
+- bound crawl bytes, redirects, SSRF exposure, nesting, federation hops,
+  fan-out, embeddings, caches, retries, tombstones, queues, logs, and disk
 - permit multiple independent ranking implementations
 
 Discovery results are advisory. Authorization, payment, and settlement must
-always be rechecked against signed data and chain state.
+always be rechecked against the current catalog/descriptor, signed data, live
+quote/admission result, and chain state. ARD discovery does not reserve
+hardware or grant data-egress, wallet, fleet, update, or actuator authority.
 Semantic ranking and manifest crawling should not be added to the core
 `tosctld` indexer.
 
@@ -1084,6 +1152,9 @@ self-tests before enabling an external capability.
 
 - domain-separate every descriptor, manifest, profile, session, quote, action,
   event, delegation, receipt, and payment authorization
+- bind every ARD `urn:air` publisher component to the verified FQDN and reject
+  catalog-host, identifier, trust-manifest, TOS-binding, and endpoint
+  substitution
 - bind signatures to the service identity, profile, chain, and protocol version
 - enforce expiry and bounded clock skew
 - make invocation, asynchronous-action, lease, order, and task IDs idempotent
@@ -1114,6 +1185,9 @@ self-tests before enabling an external capability.
 
 All of the following must be explicitly bounded:
 
+- ARD catalog bytes, entries, JSON depth, redirects, nested catalogs,
+  federation hops, crawl fan-out, search results, embeddings, caches,
+  tombstones, retries, watchers, and index history
 - open connections and streams
 - session table
 - quote and idempotency caches
@@ -1192,6 +1266,11 @@ export controls, taxes, or professional requirements.
 
 ### Protocol conformance
 
+- pinned upstream ARD catalog-schema and Registry API conformance
+- ARD direct fetch, `POST /search`, federation, media-type handoff, and
+  catalog-to-TOS-descriptor vectors
+- invalid ARD publisher/URN/trust binding, value-or-reference ambiguity,
+  prompt injection, SSRF, redirect, nesting, cycle, size, and fan-out tests
 - canonical serialization and signature vectors
 - cross-language Rust/TypeScript vectors
 - critical/unknown extension behavior
@@ -1263,23 +1342,27 @@ The three-node local network should exercise:
 
 1. deploy the `.tos` registry
 2. register a name
-3. publish DNS, terminal, base-service, and profile commitments
-4. run a Tier 1 `tos-edge-ai` terminal with a deterministic model stub
-5. resolve over TOS DNS
-6. fetch through RLDP
-7. open an authenticated session
-8. quote and pay through Service Actor
-9. invoke and stream a response
-10. verify the receipt and on-chain response commitment
-11. restart an edge daemon
-12. restart and catch up one validator
-13. rotate a runtime key
-14. expire and re-register the name
-15. confirm there is no stale authority or DNS record leakage
-16. reject an unknown critical profile
-17. restart with pending application and settlement events
-18. confirm all bounded tables return to their expected steady state
-19. repeat cancellation, adapter crash, OOM, and failed-payment cases while
+3. publish a valid ARD catalog plus DNS, terminal, base-service, and profile
+   commitments
+4. crawl the catalog into a local TOS ARD Registry
+5. discover it through ARD `POST /search` and verify result provenance
+6. run a Tier 1 `tos-edge-ai` terminal with a deterministic model stub
+7. resolve the TOS identity and descriptor
+8. fetch through RLDP
+9. open an authenticated session
+10. obtain a live quote and pay through Service Actor
+11. invoke and stream a response through the advertised native protocol
+12. verify the receipt and on-chain response commitment
+13. restart the ARD Registry and prove bounded re-index/recovery
+14. restart an edge daemon
+15. restart and catch up one validator
+16. rotate a runtime key
+17. expire and re-register the name
+18. confirm there is no stale authority, catalog, or DNS record leakage
+19. reject an unknown critical profile
+20. restart with pending application and settlement events
+21. confirm all bounded tables return to their expected steady state
+22. repeat cancellation, adapter crash, OOM, and failed-payment cases while
     checking terminal RAM/VRAM/disk/watcher cleanup
 
 Later profile suites reuse the same three-node foundation and add their own
@@ -1294,6 +1377,7 @@ duplicate the base DNS, authentication, quote, and receipt harness.
 - reproducible builds
 - migration/version compatibility matrix
 - base/profile compatibility matrix
+- pinned ARD compatibility and upstream conformance matrix
 - rollback procedure
 - systemd/container hardening
 - testnet observation before mainnet deployment
@@ -1306,8 +1390,8 @@ production dependencies, not the release container for application services.
 
 ```mermaid
 flowchart TB
-    P0A["Phase 0A<br/>Base protocol + profile mechanism"] --> P0B["Phase 0B<br/>.tos registrar + chain adapter + SDK"]
-    P0B --> P0C["Phase 0C<br/>Edge Core + terminal schema<br/>+ discovery + conformance"]
+    P0A["Phase 0A<br/>Base protocol + profile mechanism<br/>+ ARD compatibility"] --> P0B["Phase 0B<br/>.tos registrar + chain adapter + SDK"]
+    P0B --> P0C["Phase 0C<br/>Edge Core + terminal schema<br/>+ ARD Registry + conformance"]
 
     P0C --> P1A["Phase 1A<br/>Tier 1 AI Edge Terminal<br/>+ managed inference"]
     P1A --> P1B["Phase 1B<br/>Pay-per-call + streaming + receipts"]
@@ -1335,7 +1419,7 @@ These are planning ranges, not commitments:
 
 | Phase | Deliverable | Approximate effort |
 |---|---|---|
-| Phase 0 | Base v0.1 specification, registrar, SDKs, Edge Core, terminal schema, conformance | 2-4 months for a 3-5 person team |
+| Phase 0 | Base v0.1 specification, pinned ARD compatibility, ARD Registry, registrar, SDKs, Edge Core, terminal schema, conformance | 2-4 months for a 3-5 person team |
 | Phase 1 | Tier 1 terminal, local model profile, adapters, scheduling, pay-per-call, client, three-node E2E, audit | Additional 4-7 months for a 4-6 person team |
 | Phase 2 | Tier 2 general hardware, storage composition, and site-bound physical terminal with offline/update/fleet support | Additional 6-12 months |
 | Phase 3 | Commerce, digital delivery, and human-service workflows | Additional 4-8 months |
@@ -1352,10 +1436,11 @@ The initial PR sequence is in `tos-protocol`:
 1. **Repository bootstrap and TOS compatibility contract**
    - workspace layout, licenses, CI, supported TOS release matrix, pinned
      contract ABIs/code hashes, local-network harness, and ownership rules
-2. **TOS Service Protocol v0.1 base specification**
+2. **TOS Service Protocol v0.1 and ARD compatibility specification**
    - descriptor, manifest, profile mechanism, authentication, quote, receipt,
      terminal/resource claims, evidence levels, errors, HTTP/RLDP bindings,
-     and vectors
+     ARD version pin, identifier/media-type mapping, catalog handoff, and
+     vectors
 3. **`.tos` registrar contracts**
    - collection/item contracts, Rust SDK, sandbox/property tests
 4. **Domain CLI and deployment**
@@ -1370,11 +1455,14 @@ The initial PR sequence is in `tos-protocol`:
 7. **Quote, payment, receipt, and evidence**
    - Service Actor/escrow integration, chain watcher, idempotent reconciliation,
      refund, canonical receipt, and evidence vocabulary
-8. **Base discovery schema and TypeScript SDK**
-   - signed records, profile references, wallet integration, and plural indexes
-9. **Base conformance and three-node harness**
+8. **ARD catalog, Registry, federation, and TypeScript SDK**
+   - bounded catalog generation/crawling, `POST /search`, publisher and
+     provenance verification, `.tos` gateway/chain ingestion, MCP/A2A/OpenAPI
+     handoff, wallet integration, plural indexes, and federation limits
+9. **ARD/base conformance and three-node harness**
    - registration through settlement, restart, rotation, expiry, relay mode,
-     compatibility, and resource soak
+     ARD discovery, compatibility, crawler/index failure injection, and
+     resource soak
 
 The first `tos-ai` PR sequence is terminal-oriented:
 
@@ -1451,22 +1539,27 @@ allow an independent operator to:
 5. bind it to an owner-controlled ADNL/TOS Site endpoint
 6. publish signed terminal, base-service, and inference manifests committed by
    an on-chain service identity
-7. pin and disclose an exact, license-reviewed local model profile
-8. run it through a supported adapter without exposing the runtime directly
-9. expose it through `tos-edge-ai`
-10. satisfy the documented public-ADNL or relay reachability requirement
-11. let an unfamiliar client resolve, authenticate, negotiate the profile, and
+7. publish a valid ARD catalog through a verifiable FQDN or approved gateway
+8. be discovered through a conforming TOS ARD Registry while preserving field
+   provenance and plural ranking
+9. pin and disclose an exact, license-reviewed local model profile
+10. run it through a supported adapter without exposing the runtime directly
+11. expose it through `tos-edge-ai`
+12. satisfy the documented public-ADNL or relay reachability requirement
+13. let an unfamiliar client discover through ARD, resolve the TOS binding,
+    authenticate, negotiate the profile, and
    reject unknown critical extensions
-12. obtain a signed quote bound to the exact model/profile revision
-13. pay in TOS
-14. invoke, cancel, and stream the service
-15. receive and verify a signed receipt and evidence level
-16. observe or reclaim settlement on-chain
-17. rotate runtime infrastructure and model revisions without losing the site
+14. obtain a signed quote bound to the exact model/profile revision
+15. pay in TOS
+16. invoke, cancel, and stream the service
+17. receive and verify a signed receipt and evidence level
+18. observe or reclaim settlement on-chain
+19. rotate runtime infrastructure and model revisions without losing the site
     identity or changing active quotes
-18. restart with pending work and settlement state
-19. clean up after timeout, disconnect, payment failure, adapter crash, and OOM
-20. demonstrate bounded RAM, VRAM, disk, connection, queue, watcher, cache, and
+20. restart with pending work and settlement state
+21. clean up after timeout, disconnect, payment failure, adapter crash, and OOM
+22. demonstrate bounded ARD crawler/index state, RAM, VRAM, disk, connection,
+    queue, watcher, cache, and
     durable-state behavior under extended anonymous-load soak
 
 Anything less is an infrastructure demo rather than an interoperable,
@@ -1490,6 +1583,7 @@ owner-operated service profile.
 - no forwarding or resale of unauthorized consumer AI subscriptions
 - no requirement to store prompts or outputs on-chain
 - no single mandatory discovery/ranking service
+- no TOS-only replacement for the ARD catalog or Registry API
 - no universal reputation score
 - no immediate requirement for a dedicated browser
 - no dependency on advanced zero-knowledge inference proofs
@@ -1500,6 +1594,7 @@ owner-operated service profile.
 
 ## Related Documents
 
+- [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [Local Storage Sharing over TOS Network](local-storage-sharing-use-case.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)

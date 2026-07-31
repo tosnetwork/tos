@@ -5,6 +5,8 @@ This runbook describes the minimum operational posture for running AI actor infr
 It covers off-chain agent runners, model or tool service operators,
 [AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 operators, verifier operators, and task workflow backends.
+It also covers operators of TOS ARD Registry instances and catalog gateways
+defined by [tos-ard-compatibility.md](tos-ard-compatibility.md).
 
 The operational target is an Agent Wallet stack: Agent Account contracts,
 controller keys, off-chain runners, Service Actors and Verifier Actors. An AI
@@ -20,6 +22,11 @@ Recommended trust tiers:
 - use proof-backed reads for lightweight agents where available
 - use trusted RPC only for low-value automation or development
 - use indexed data for discovery and dashboards, not authority
+
+ARD search results are indexed discovery data. Before payment or invocation,
+clients revalidate the publisher, current TOS descriptor, endpoint
+authorization, chain commitments, live quote, admission, and payment
+destination.
 
 ## Key Separation
 
@@ -59,6 +66,41 @@ Monitor:
 - update rollout ring, health gates, pause, and rollback status
 - fleet enrollment, revocation, and permanently offline records
 - actuator rejection, deduplication, and safety-interlock events
+- ARD catalog crawl success, publisher verification, expiry, withdrawal,
+  equivocation, redirect and content-size rejection
+- Registry search latency, index size, per-publisher quota, stale-result age,
+  federation hops/cycles, cache/queue/retry bounds, and provenance coverage
+- denied SSRF targets, private-catalog access, prompt-injection indicators,
+  and visibility-policy violations
+
+## ARD Registry Operation
+
+Run an ARD Registry as a separate least-privilege service, not inside
+`validator-engine` and not with validator, owner, terminal, payment, update,
+fleet, or actuator keys.
+
+An operator should:
+
+1. pin the exact supported ARD version and publish its compatibility status
+2. allowlist schemes, ports, redirect behavior and reachable address classes
+   and recheck resolved targets against DNS rebinding
+3. configure hard limits for catalog bytes, decompression, entries, fields,
+   references, recursion, federation hops, cycles, response time, retries,
+   cache, index size, retention, and each publisher
+4. keep public, private and tenant catalogs in separately authorized
+   visibility domains
+5. preserve field-level publisher, chain, observation, attestation, and
+   derived-ranking provenance
+6. support bounded expiry, withdrawal, revalidation, rollback and equivocation
+   handling
+7. back up configuration and rebuildable source state without treating the
+   derived search index as settlement authority
+8. test graceful restart, corrupt-index recovery, upstream outage and
+   federation isolation
+
+The Registry may be unavailable without stopping admitted terminal work,
+physical safety functions, blockchain consensus, or settlement of already
+identified operations.
 
 ## Incident Response
 
@@ -90,6 +132,18 @@ If a site-bound physical terminal or update behaves unexpectedly:
 7. preserve bounded signed audit and offline-journal evidence
 8. reconcile payment only after reconnect state and revocation are verified
 
+If an ARD catalog, gateway, or Registry is compromised:
+
+1. stop new crawling and federation without interrupting admitted work
+2. quarantine the publisher, peer, tenant, or affected provenance class
+3. withdraw or mark affected results stale rather than silently rewriting
+   their origin
+4. rotate Registry/gateway credentials that are actually affected; do not
+   rotate unrelated TOS owner or validator keys
+5. rebuild the derived index from verified catalogs and bounded source state
+6. require clients to refresh descriptors, quotes and payment bindings
+7. publish the affected time, scope, identities and remediation
+
 ## Deployment Checklist
 
 - local testnet run completed
@@ -100,6 +154,9 @@ If a site-bound physical terminal or update behaves unexpectedly:
 - transaction history reconstruction tested
 - key backup and rotation procedure documented
 - emergency stop or revoke path tested
+- ARD publisher and Registry releases pass pinned-version conformance,
+  provenance, withdrawal, SSRF/DNS-rebinding, prompt-injection, federation,
+  private-visibility, restart and bounded-state tests
 - physical-terminal releases test disconnected local operation, bounded
   reconnect, signed update rollback under power loss, real-time priority,
   actuator isolation, and fleet-scale bounded state

@@ -1,7 +1,7 @@
 # Validator Election Launch-Gate Rehearsal
 
-**Status:** Stage A automated functional path passed; supplementary Stage A
-evidence and Stage B remain pending
+**Status:** Stage A automated functional path passed; Stage B production-period
+rehearsal is running; supplementary Stage A evidence remains pending
 
 **Date:** July 30, 2026
 
@@ -12,6 +12,10 @@ evidence and Stage B remain pending
 
 **Stage A automated run:** Passed on July 30, 2026. See
 [`validator-election-stage-a-local-result-2026-07-30.md`](validator-election-stage-a-local-result-2026-07-30.md).
+
+**Stage B automated run:** Started on July 30, 2026. The launch gate remains
+open until the complete production-period sequence finishes and its report
+passes.
 
 ## 1. Purpose
 
@@ -238,6 +242,11 @@ zerostate and execute the test. The local evidence directory is ignored by Git
 because it contains generated private keys, node databases, and approximately
 5.2 GiB of ephemeral data.
 
+The Stage A node databases, generated keys, and other ephemeral run data were
+deleted before Stage B was initialized. The result document above preserves
+the reviewed Stage A outcome; the deleted local machine report and private
+test artifacts are not presented as retained evidence.
+
 #### Validator-set transitions
 
 | Set | Election ID / `utime_since` | `utime_until` | Validators | Result |
@@ -404,6 +413,75 @@ Stage B repeats the complete Stage A transaction sequence, but:
 The production-period run is invalid if an operator manually modifies
 ConfigParam 34, Elector storage, account balances, election timestamps, or
 node databases to force progress.
+
+### 5.4 July 30, 2026 running execution
+
+The automated Stage B run was initialized on a fresh four-validator network:
+
+```text
+Run directory:
+test/integration/.validator-election-stage-b/20260730T234035Z
+
+User service:
+tos-validator-stage-b.service
+
+Recorded source commit:
+049ab696029670e40965f8ca4f6d1b98c4908fd1
+
+Current result:
+RUNNING -- not yet a pass
+```
+
+The harness copied all executables, Toslib, Fift inputs, Tostester sources, and
+the harness itself into `artifact-snapshot/` before creating the zerostate.
+The manifest records SHA-256 hashes, the source commit, the initial dirty-tree
+status, and the exact working-tree patch. The running nodes and all subsequent
+wallet/election operations use that immutable snapshot, so a later repository
+build cannot silently change this rehearsal.
+
+The initial on-chain checks passed:
+
+```text
+ConfigParam 15:
+elected_for        = 65,536
+elect_start_before = 32,768
+elect_end_before   = 8,192
+stakes_frozen_for  = 32,768
+
+Initial ConfigParam 34:
+utime_since = 1,785,454,836
+utime_until = 1,785,585,908
+total       = 4
+main        = 4
+```
+
+All four validator wallets and the negative-test wallet were deployed and
+funded through normal chain transactions. At the first recorded resource
+sample, the masterchain was at seqno 14 and all four validator processes were
+running. Their individual RSS values were approximately 102--103 MiB and
+anonymous memory values were approximately 67--68 MiB. These are startup
+observations only, not evidence of long-term memory boundedness.
+
+The chain-derived nominal checkpoints for this run are:
+
+| Event | Expected chain time (UTC) |
+|---|---|
+| First ordinary election opens | August 1, 2026 02:59:00 |
+| First ordinary election closes | August 1, 2026 09:48:36 |
+| First ordinary set becomes active | August 1, 2026 12:05:08 |
+| Second ordinary election opens | August 1, 2026 21:11:16 |
+| Second ordinary election closes | August 2, 2026 04:00:52 |
+| Second ordinary set becomes active | August 2, 2026 06:17:24 |
+| Rollover opens; first target is recoverable | August 2, 2026 15:23:32 |
+| Rollover election closes | August 2, 2026 22:13:08 |
+| Rollover set becomes active | August 3, 2026 00:29:40 |
+| Second target stake and bonus are recoverable | August 3, 2026 09:35:48 |
+
+These are expected boundaries derived from the initial ConfigParam 34. The
+final report must use actual chain observations and transaction inclusion
+times. The service writes one resource sample per minute and will write
+`report.json` before exiting. A host reboot, manual service stop, or mutation
+of the generated node databases invalidates the uninterrupted run.
 
 ## 6. Balance and Reward Reconciliation
 

@@ -17,6 +17,7 @@ Start with:
 
 - [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
 - [the-tos-protocol-implementation-plan.md](the-tos-protocol-implementation-plan.md) - repository boundaries and delivery plan for owner-operated TOS services
+- [tos-ard-compatibility.md](tos-ard-compatibility.md) - pinned ARD compatibility profile, catalog publication, federated Registry architecture, security bounds, and TOS handoff
 - [ai-edge-computing-terminal-architecture.md](ai-edge-computing-terminal-architecture.md) - primary off-chain product architecture for turning owner-controlled hardware into bounded AI services
 - [local-gpu-sharing-use-case.md](local-gpu-sharing-use-case.md) - managed AI services on owner-controlled GPU hardware; bare GPU rental is excluded
 - [physical-ai-edge-terminal-use-case.md](physical-ai-edge-terminal-use-case.md) - site-bound Jetson/industrial terminals, offline operation, safe updates, real-time priority, actuator isolation, and fleet management

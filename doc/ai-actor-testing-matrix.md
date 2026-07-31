@@ -40,6 +40,21 @@ Verifier actor:
 - reject unauthorized verifier
 - bind decision to task id and result hash
 
+ARD catalog and Registry:
+
+- accept a conforming catalog for the pinned ARD version
+- reject malformed schemas, invalid domain-anchored identifiers, unsupported
+  critical versions, ambiguous value-or-reference records, and mismatched
+  media types
+- verify publisher-domain and trust-manifest bindings
+- preserve unknown non-critical fields without assigning TOS authorization
+  meaning
+- treat descriptions, representative queries, and other natural-language
+  fields as data rather than instructions
+- enforce field, entry, document, reference, redirect, recursion, federation,
+  cache, index, and per-publisher limits
+- preserve field-level provenance and visibility labels
+
 ## Integration Tests
 
 - user creates task, agent accepts, agent submits result, user settles
@@ -47,10 +62,22 @@ Verifier actor:
 - agent calls service actor, service result is referenced by task result
 - verifier reviews result, task settles according to verifier decision
 - indexer reconstructs workflow from transaction history
+- publisher serves `/.well-known/ai-catalog.json`, TOS ARD Registry ingests it,
+  `POST /search` returns it with provenance, and a client resolves the TOS
+  descriptor before requesting a live quote
+- direct catalog, nested catalog, and federated Registry discovery return
+  equivalent resource identity without erasing their different provenance
+- catalog rotation, endpoint rotation, withdrawal, expiry, rollback, and
+  equivocation produce deterministic bounded index state
+- `.tos` resources published through an approved HTTPS gateway preserve both
+  the verified ARD publisher identity and separately signed TOS/ADNL identity
 
 AI Edge Computing Terminal integration, when a Service Actor is backed by a
 terminal:
 
+- discover the stable terminal or fleet-broker capability through ARD, then
+  obtain current capacity, price, policy, and revision through live TOS
+  quote/admission
 - bind terminal quote, payment authorization, invocation, receipt, and
   settlement to one request identity
 - reject a quote for an expired model/service revision
@@ -120,6 +147,10 @@ Fleet:
 - aggregate discovery/health does not expose prohibited site topology or
   personal/sensor data
 - mixed-version fleet can pause, drain, roll back, and retire safely
+- ARD publication exposes a bounded fleet-broker service, not raw per-device
+  administration, private topology, or actuator interfaces
+- discovery ranking cannot override local real-time priority, safety policy,
+  admission, update authority, or device-group delegation
 
 The normative use case is
 [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md).
@@ -133,6 +164,8 @@ The normative use case is
 - verify transaction history after catch-up
 - verify no additional execution domains are registered
 - bind a physical terminal to raw ADNL and optionally `name.tos`
+- publish the service through an ARD catalog, ingest it into two independent
+  Registry instances, query it through `POST /search`, and verify provenance
 - complete online event/subscription payment and receipt
 - disconnect the terminal while local work continues
 - reconnect and settle a bounded offline journal exactly once
@@ -151,6 +184,16 @@ The normative use case is
 - expired capability
 - service charge above maximum
 - settlement without result
+- ARD catalog JSON bomb, oversized fields, excessive entries, decompression
+  bomb, deep reference chain, federation cycle, redirect loop, and retry storm
+- catalog URL resolving to loopback, link-local, private, metadata-service, or
+  disallowed address space
+- publisher FQDN/URN/trust-manifest mismatch, endpoint substitution, stale
+  rollback, equivocation, withdrawn entry, and poisoned ranking
+- instructions embedded in descriptions or representative queries
+- private catalog or terminal-topology leakage through search or federation
+- ARD result used directly as payment, execution, update, fleet, or actuator
+  authority
 
 ## Release Gates
 
@@ -162,6 +205,10 @@ Before Level 2 support:
 - security review complete
 - message catalog updated
 - operator runbook updated
+- the implementation passes the conformance suite for the exact pinned ARD
+  version, including Registry `POST /search`, publisher verification,
+  provenance, SSRF, prompt-injection, federation, withdrawal, and bounded-state
+  tests
 - physical-terminal releases additionally pass disconnected soak, power-loss
   update recovery, real-time saturation, actuator-interlock, and fleet-scale
   bounded-state gates

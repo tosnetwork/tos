@@ -4,11 +4,13 @@
 
 - Document type: product use case and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Related architecture:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - Shared host architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
+- Discovery profile:
+  [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 
 ## Purpose
 
@@ -36,9 +38,9 @@ This use case covers two related modes:
    that other users can find and download.
 
 Finding a storage provider and finding a particular public object are separate
-discovery problems. The base capability registry can advertise storage
-services, but public content requires an additional signed catalog or content
-index.
+discovery problems. ARD can advertise a callable storage-service capability,
+but it is not a file or content-search protocol. Public objects still require
+an additional signed content catalog or content index.
 
 ## User Stories
 
@@ -86,8 +88,8 @@ implementation plan:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, JSON-RPC/lite APIs, wallet and crypto primitives, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, base discovery, and conformance |
-| `tos-storage` repository | storage protocol schema, storage manifest profile, Storage Adapter, `tos-edge-storage`, discovery/catalog services, clients, deployment tooling, and end-to-end tests |
+| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-storage` repository | storage protocol schema, storage manifest profile, Storage Adapter, `tos-edge-storage`, ARD catalog generation, storage-specific ranking and public-content catalogs, clients, deployment tooling, and end-to-end tests |
 | Provider host | local object data, bounded storage backend, `tos-edge-storage`, runtime keys, and optionally a TOS Sites/RLDP ingress process |
 | TOS blockchain | identity references, DNS records, capability declarations, manifest commitments, payment, and settlement |
 
@@ -119,7 +121,7 @@ flowchart LR
     end
 
     subgraph Consumer["Storage consumer"]
-        Discovery["Discovery service / SDK"]
+        Discovery["TOS ARD Registry / SDK"]
         Client["Storage client"]
         Wallet["TOS wallet"]
         Discovery --> Client
@@ -290,6 +292,25 @@ prices, or payment address.
 The manifest is an advertisement, not proof that the advertised capacity is
 currently available.
 
+### 6.1 Publish the ARD service catalog
+
+For public agentic discovery, the provider publishes:
+
+```text
+https://<publisher-fqdn>/.well-known/ai-catalog.json
+```
+
+The ARD entry describes callable operations such as bounded object put/get and
+references the TOS storage descriptor. It must not enumerate private objects,
+credentials, customer metadata, private endpoints, or rapidly changing free
+capacity. ARD discovers the storage service; the storage profile's signed
+content catalog discovers public objects.
+
+Public publisher verification uses a conventional FQDN or an approved TOS
+HTTPS gateway. A private Registry may apply an explicit `.tos` resolution
+policy. None of these paths replaces verification of the TOS service identity,
+runtime authorization, manifest commitment, or payment destination.
+
 ### 7. Register storage capabilities
 
 Example capability identifiers could include:
@@ -319,10 +340,11 @@ When the consumer knows `alice-storage.tos`, the client:
    on-chain manifest commitment
 5. checks endpoint health and obtains a fresh quote
 
-### Discovery by capability
+### Discovery by capability through ARD
 
-When the consumer does not know a provider, an independent discovery service
-can index:
+When the consumer does not know a provider, a TOS ARD Registry can crawl the
+ARD catalog, ingest TOS discovery seeds, and answer `POST /search`. It can
+index:
 
 - Capability Registry entries
 - Service Actor metadata
@@ -336,10 +358,11 @@ For example, a client could request:
 > Find object-storage providers with at least 100 GB advertised capacity,
 > 30-day retention, a maximum price, and an endpoint in Europe.
 
-Discovery is advisory. Before payment or upload, the client must independently
-recheck the signed manifest and current chain state. Semantic search and
-provider ranking belong in the independent discovery service, not the core
-TOS indexer.
+ARD discovery is advisory. Before payment or upload, the client must
+independently recheck publisher binding, the signed manifest, current chain
+state, endpoint authorization, live capacity, payment address, and quote.
+Semantic search and provider ranking belong in independent ARD Registry
+deployments, not the core TOS indexer, and every result retains provenance.
 
 ### Discovery by raw ADNL address
 
@@ -353,7 +376,7 @@ payment contract.
 ```mermaid
 sequenceDiagram
     participant C as Storage Client
-    participant D as TOS DNS / Discovery
+    participant D as TOS DNS / ARD Registry
     participant E as tos-edge-storage
     participant S as Service Actor
     participant B as TOS Blockchain
@@ -723,12 +746,13 @@ The recommended positioning is therefore:
 | Capability Registry | Available/partial | TOS core contract; storage vocabulary and integration in `tos-storage` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
 | Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; storage enrichment in `tos-storage` |
 | Storage manifest profile | To build | `tos-storage/spec/` |
 | Storage Adapter and object API | To build | `tos-storage` |
 | Storage-enabled `tos-edge-storage` | To build | `tos-storage`, consuming released Edge Core |
 | Storage quote, metering, and receipt profile | To build | `tos-storage` |
 | Storage client and CLI | To build | `tos-storage` |
-| Provider and public-content discovery | To build | `tos-storage` |
+| Storage-provider enrichment and public-content discovery | To build | `tos-storage`; ARD covers service discovery, not object catalogs |
 | NAT relay and reverse tunnel | To build | reusable service, preferably outside validator code |
 | Replication and availability proofs | Later | separate storage protocol phase |
 
@@ -748,7 +772,8 @@ can:
 5. optionally bind the service to `name.tos`
 6. publish a signed, expiring storage manifest
 7. register a storage capability and settlement contract
-8. appear in an independent capability discovery service
+8. publish a conforming ARD service entry and appear through an independent
+   TOS ARD Registry without exposing private objects
 9. issue a signed quote for a bounded storage lease
 10. accept payment and a resumable object upload
 11. return a signed receipt bound to the content hash

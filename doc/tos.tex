@@ -50,11 +50,13 @@ The implemented foundation, TOS Core, is an actor-model blockchain with native T
 execution, value-bearing asynchronous messages, masterchain-rooted consensus, dynamic
 sharding and ADNL/DHT/RLDP networking. It includes foundations for Agent Accounts, concurrent
 Service Actors, Task Escrow, Dispute, Capability Registry and Proof Attestation. The broader
-service protocol, public discovery products and AI Edge Computing Terminals described in this
-paper are planned product layers and are not presented as already deployed commercial
-infrastructure. Models, prompts, sensor streams and private customer data remain off-chain;
-shared authority, commitments and settlement use the chain where independently operated
-parties require a tamper-resistant source of truth.
+service protocol, ARD-compatible discovery products and AI Edge Computing Terminals described
+in this paper are planned product layers and are not presented as already deployed commercial
+infrastructure. TOS adopts Agentic Resource Discovery (ARD) rather than defining an
+incompatible general-purpose agent catalog, and the planned off-chain protocol product can
+run an independently deployable, federated ARD Registry. Models, prompts, sensor streams and
+private customer data remain off-chain; shared authority, commitments and settlement use the
+chain where independently operated parties require a tamper-resistant source of truth.
 \end{abstract}
 
 \tableofcontents
@@ -85,8 +87,9 @@ The architecture has five layers:
         payment authorization, receipts, evidence envelopes and profile negotiation.
   \item \textbf{Owner-operated terminals.} Bounded local execution through approved service
         adapters without exposing a public shell, container socket or raw accelerator.
-  \item \textbf{Discovery and clients.} Human-readable names, capability search, policy-aware
-        selection and verifiable resolution.
+  \item \textbf{ARD discovery and clients.} Standard domain-hosted catalogs, independently
+        deployable federated ARD Registries, human-readable names, policy-aware selection and
+        verifiable handoff to TOS descriptors.
   \item \textbf{Vertical profiles.} Managed AI, physical AI, storage, commerce and human
         services that share common protocol foundations but retain distinct state machines.
 \end{enumerate}
@@ -95,6 +98,11 @@ Only the first layer is substantially implemented in this repository. The remain
 are a product architecture and delivery plan. This distinction is deliberate: validators do
 not execute application workloads, and a new model, accelerator or service profile must not
 require a consensus upgrade.
+
+ARD operates before invocation: it lets agents publish and find resources. TOS remains
+responsible for authentication, live quotes, local admission, bounded execution, metering,
+evidence, receipts, payment and settlement. A search result therefore never becomes spending,
+execution, update, fleet or physical-control authority.
 
 \subsection{Strategic Positioning}
 
@@ -163,6 +171,14 @@ TOS Core has one active application execution domain: the native TVM basechain. 
 execution engines are not registered in the current product. Application workloads run in
 separate terminal processes and repositories, not inside \texttt{validator-engine}.
 
+\subsection{Open Discovery Compatibility}
+
+TOS uses the open Agentic Resource Discovery specification for protocol-neutral resource
+publication and search. TOS-specific payment and execution semantics are referenced from ARD
+records rather than encoded as incompatible replacements for ARD. Support is pinned to an
+exact assessed specification version, and changes to the external draft require compatibility
+review and new conformance vectors.
+
 \section{System Architecture}
 
 \subsection{Layer and Repository Boundaries}
@@ -178,8 +194,8 @@ Layer & Responsibility & Delivery boundary \\
 TOS Core & Consensus, TVM, generic contracts, query APIs, wallet and cryptography,
 DNS, ADNL/DHT/RLDP and TOS Sites & Implemented and maintained in the
 \texttt{tos} repository \\
-Base service plane & Descriptors, manifests, authentication, quotes, payment
-authorization, receipts, evidence, discovery schema, Edge Core and conformance &
+Base service plane & ARD profile and Registry, descriptors, manifests, authentication,
+quotes, payment authorization, receipts, evidence, Edge Core and conformance &
 Planned separate \texttt{tos-protocol} repository \\
 AI terminals & General and physical terminal products, resource probes, runtime
 adapters, scheduling, signed updates and fleet management & Planned separate
@@ -436,16 +452,50 @@ This protocol is planned work, not functionality implied by the existence of a S
 contract. The contract is a settlement primitive; an interoperable session and receipt
 protocol still requires schemas, SDKs, conformance vectors and independent implementations.
 
+\subsection{Agentic Resource Discovery Compatibility}
+
+TOS adopts Agentic Resource Discovery (ARD) as the public, protocol-neutral discovery
+envelope for agents, APIs, tools, workflows and nested catalogs. The initial compatibility
+target is ARD v0.9 Draft as assessed on July 31, 2026.\footnote{Agentic Resource Discovery
+specification: \url{https://agenticresourcediscovery.org/spec/}.} Because that document is a
+proposal rather than a frozen standard, every implementation records the exact version it
+accepts and does not silently reinterpret changed fields.
+
+An operator with a publicly verifiable DNS name publishes the catalog at
+\url{https://publisher.example/.well-known/ai-catalog.json}, replacing the
+example host with its FQDN. Each resource uses the ARD
+domain-anchored identifier form \texttt{urn:air:<publisher-fqdn>:\ldots} and an exact
+value-or-reference and media-type representation. An entry can hand a client to MCP, A2A,
+OpenAPI, a nested catalog or a versioned TOS Service Protocol descriptor. The ARD catalog is
+stable discovery metadata; rapidly changing price, free capacity, queue depth, local safety
+state, model residency and availability are returned only by a fresh TOS quote and admission
+flow.
+
+TOS can run a separately deployable ARD Registry. It implements the mandatory versioned HTTP
+REST search baseline, including \texttt{POST /search}, and may ingest public catalogs,
+operator-approved private catalogs, upstream registries, TOS on-chain discovery seeds and
+signed profile manifests. Registry responses preserve whether each field came from the
+publisher, on-chain state, live observation, attestation or registry-derived ranking.
+Federation is plural: no single TOS Registry is mandatory, and referral depth, cycles,
+fan-out, time, response size, caching and retries are bounded.
+
+ARD stops before invocation. It does not define TOS authentication, authorization, scheduling,
+execution, payment, receipts, evidence or settlement. Before transferring value or invoking
+a service, a client independently verifies publisher binding, the current TOS descriptor,
+runtime and endpoint authorization, manifest commitments, chain activity, quote expiry,
+admission and payment destination.
+
 \subsection{Capability Discovery}
 
 Capability discovery separates compact on-chain commitments from extensible off-chain
 descriptions. A client can inspect an entry's owner, activity, bond and commitment hashes,
 then retrieve a signed descriptor and verify its relationship to chain state.
 
-The current per-actor registry does not solve chain-wide search. Complete discovery requires
-an indexer or protocol registry that can enumerate and rank services. Indexed data is a
-derived view: clients must verify critical owner, authorization, capability, activity and
-payment fields against signed or on-chain state before committing funds.
+The current per-actor registry does not solve chain-wide search. TOS ARD Registries enumerate
+and rank services while retaining the Capability Registry as one source of on-chain seeds and
+commitments. Indexed data is a derived view: clients must verify critical publisher, owner,
+authorization, capability, activity, endpoint, quote and payment fields against signed,
+observed or on-chain state before committing funds.
 
 \subsection{Names and Reachability}
 
@@ -460,6 +510,13 @@ A public root \texttt{.tos} registration product, signed multi-endpoint descript
 short-lived health data and production relay service are planned. DNS and TOS Sites
 primitives already exist, but they are not equivalent to a complete service discovery
 marketplace.
+
+A \texttt{name.tos} identity is not automatically a conventional public-DNS trust anchor for
+ARD. A public service without its own DNS domain uses an approved HTTPS gateway that binds an
+ARD publisher namespace to the separately signed TOS identity, or it participates in a
+private Registry with an explicit \texttt{.tos} resolution policy. ARD publisher control,
+\texttt{name.tos}, ADNL, account and manifest commitments remain distinct verifiable
+bindings.
 
 \section{AI Edge Computing Terminals}
 
@@ -494,8 +551,10 @@ accepted by the TOS terminal product.
 
 The local scheduler is authoritative for admission. It considers model compatibility, RAM,
 accelerator memory, storage, queue and in-flight limits, context and output bounds, deadlines,
-owner reservations, thermal policy, price, privacy and evidence requirements. Remote
+owner reservations, thermal policy, price, privacy and evidence requirements. Remote ARD
 discovery cannot reserve local hardware merely by publishing an optimistic capacity value.
+A physical-terminal catalog advertises a bounded site or fleet-broker capability, not raw
+per-device administration, site topology, sensor streams or actuator handles.
 
 Every implementation must bound connections, sessions, streams, nonces, quotes, queues,
 retries, model caches, temporary files, logs, receipt queues, chain watchers and durable
@@ -693,6 +752,22 @@ Fleet controllers use scoped delegation and revocable terminal identities. Comma
 target scope, expiry and idempotency identifiers. Rollout fan-out, retry queues, health
 history and offline inventory are bounded. Fleet compromise must not reveal owner custody
 keys, customer payloads or unrestricted site topology.
+
+\subsection{ARD Catalog and Registry Risk}
+
+Catalogs, descriptions, representative queries, endpoints, nested references and federated
+responses are untrusted input. Implementations validate the pinned ARD schema, publisher
+domain, resource identifiers, trust metadata, value-or-reference rules and media types.
+Natural-language fields are data, never instructions to an agent. Crawlers allow only
+approved schemes, ports, redirects and address classes; they defend against DNS rebinding,
+server-side request forgery, oversized or compressed input, recursive catalogs, federation
+cycles, stale rollback, equivocation and ranking manipulation.
+
+Catalog, field, entry, reference, redirect, hop, response, time, retry, cache, index and
+per-publisher limits prevent anonymous memory, disk and work growth. Visibility policy
+prevents private endpoints, credentials, topology, sensor data and customer payloads from
+entering public search or federation. Registry output retains field provenance and cannot
+grant wallet, terminal, model, update, fleet or actuator authority.
 
 \subsection{Indexer Authority Drift}
 
@@ -1016,11 +1091,13 @@ Capability Registry & \implemented & Per-actor entry, metadata hashes, bond, act
 Service Actor contract & \implemented & Access policy, pricing, rate limits, calls, responses and revenue \\
 Dispute and Proof Attestation foundations & \implemented & Compact resolution and evidence commitments \\
 Public \texttt{.tos} registrar product & \planned & Ownership lifecycle, SDK, deployment and operator tooling \\
+ARD compatibility profile & \planned & Pinned external version, catalog mapping, publisher binding, media types and conformance \\
+TOS ARD Registry & \planned & Independent REST search, ingestion, federation, provenance, visibility and bounded crawling \\
 TOS Service Protocol & \planned & Descriptors, sessions, quotes, receipts, evidence and conformance \\
-Edge Core and discovery clients & \planned & Terminal enforcement, SDKs, search and verifiable resolution \\
+Edge Core and discovery clients & \planned & Terminal enforcement, SDKs, ARD search and verifiable TOS handoff \\
 Managed AI terminal & \planned & Approved model services, bounded scheduling, metering and receipts \\
 Physical AI terminal & \planned & Offline operation, safe updates, real-time priority, isolation and fleet management \\
-Chain-wide service index & \planned & Search without treating indexed data as authority \\
+Profile indexes and ranking & \planned & AI, storage and commerce enrichment without treating derived data as authority \\
 Public-testnet hardening and external audit & \planned & Persistent deployment, load testing and independent review \\
 \bottomrule
 \end{longtable}
@@ -1036,6 +1113,11 @@ must cover:
   \item contract authorization, escrow conservation, cancellation, refunds and disputes;
   \item resolver, descriptor, quote, payment, invocation, receipt and restart flows on a
         multi-node TOS network;
+  \item pinned-version ARD publication, \texttt{POST /search}, publisher verification,
+        provenance, withdrawal, nested catalog and bounded federation behavior;
+  \item malformed and oversized catalogs, decompression, redirect and federation loops,
+        SSRF and DNS rebinding, prompt injection, stale rollback, equivocation, poisoned
+        ranking and private-catalog leakage;
   \item adapter crash, timeout, disconnect, malformed input, out-of-memory and failed-payment
         cleanup;
   \item bounded RAM, accelerator memory, disk, cache, watcher, connection, retry and journal
@@ -1064,8 +1146,9 @@ cycles remain outside the validator.
 
 Specify canonical descriptors, manifests, authentication, quotes, payment authorization,
 receipts, evidence levels, profile negotiation and conformance vectors. Build the public
-\texttt{.tos} registrar, chain adapter, SDKs, Edge Core, discovery schema and a deterministic
-multi-node reference harness.
+\texttt{.tos} registrar, chain adapter, SDKs and Edge Core. Implement the pinned ARD
+compatibility profile, catalog publisher, independently deployable ARD Registry, bounded
+federation and deterministic multi-node reference harness.
 
 \subsection{Phase 1: Managed Inference Terminal}
 
@@ -1107,6 +1190,8 @@ TOS does not aim to:
   \item reward a terminal merely for remaining online or declaring TOPS;
   \item hard-code one model provider, oracle, verifier or proof system;
   \item make third-party indexers authoritative for funds or permissions;
+  \item replace ARD with a TOS-only general-purpose agent catalog or treat ARD discovery as
+        authorization, live admission, payment or physical-control authority;
   \item give an agent runtime unrestricted owner custody by default;
   \item bundle unrelated execution engines into the production node.
 \end{itemize}
@@ -1124,6 +1209,11 @@ the ability to determine which declared service may execute a request, under wha
 privacy and evidence policy, at what price, and how the result is receipted and settled.
 Physical terminals extend that model into real-world sites while preserving offline
 operation, deterministic local priority and independent safety authority.
+
+ARD makes these resources interoperably discoverable across the broader agentic ecosystem.
+TOS makes a discovered service safely actionable and transactable: it binds the resource to
+current authority, admission, execution policy, evidence, payment and settlement without
+turning a search registry into a trusted control plane.
 
 The result is a focused positioning: TOS Network is being built as the open coordination and
 settlement network for AI services and physical edge intelligence. The chain foundation

@@ -165,6 +165,14 @@ Rules:
 
 Workflow indexers may build derived views for UX, but contracts and agents should rely on chain state for authority.
 
+Public discovery of callable resources follows ARD as defined in
+[tos-ard-compatibility.md](tos-ard-compatibility.md). An ARD catalog or Registry
+result is a protocol-neutral discovery input. It does not grant a capability
+handle, authorize a Service Actor call, prove current capacity, quote a price,
+or determine payment or settlement. Clients resolve the selected entry to the
+current signed TOS descriptor and independently verify its chain and runtime
+bindings.
+
 Useful indexed views:
 
 - tasks by creator
@@ -208,6 +216,8 @@ Before an AI actor primitive moves beyond an example, it should satisfy:
 - Timeout model: deadlines and cancellation windows are consensus-visible or explicitly off-chain and non-authoritative.
 - Trust model: clients know whether they are reading node-verified state, proof-backed state, trusted RPC state, or derived indexed data.
 - Indexing model: derived task timelines do not become authority for balance, permission, or settlement checks.
+- Discovery model: ARD publisher identity and Registry provenance are
+  preserved, and discovery never becomes authorization or settlement state.
 - Operations model: local testnet validation covers restart, catch-up, and transaction-history reconstruction.
 - Release model: the primitive has a declared stability level before SDKs, wallets, or services rely on it.
 - Security model: spending limits, replay domains, evidence references, and service authorization have been reviewed.
@@ -262,6 +272,9 @@ The first implementation slice should add:
 - Do not let workflow indexers decide settlement.
 - Do not let agent controller keys silently become owner keys.
 - Do not treat service metadata or DNS records as authorization by themselves.
+- Do not replace ARD with an incompatible TOS-only general-purpose resource
+  catalog or treat an ARD result as invocation, payment, update, fleet, or
+  actuator authority.
 
 ## Related Documents
 
@@ -276,5 +289,6 @@ The first implementation slice should add:
 - [tos-message-policy.md](tos-message-policy.md)
 - [tos-account-permission-model.md](tos-account-permission-model.md)
 - [tos-capability-policy.md](tos-capability-policy.md)
+- [tos-ard-compatibility.md](tos-ard-compatibility.md)
 - [tos-supervision-policy.md](tos-supervision-policy.md)
 - [tos-time-policy.md](tos-time-policy.md)

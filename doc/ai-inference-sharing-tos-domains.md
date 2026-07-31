@@ -4,11 +4,13 @@
 
 - Document type: domain binding and Phase 1 inference design note
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Terminal architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Main plan:
   [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- Discovery profile:
+  [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 
 ## Motivation
 
@@ -29,6 +31,11 @@ The three requirements this note captures:
 Raw ADNL access remains valid when a domain is unavailable. The purpose of
 this note is the additional stable-name path, not a requirement that every
 terminal own a domain.
+
+Public agentic discovery follows ARD. A `name.tos` identity is not by itself a
+public-DNS ARD trust anchor: public publication uses an operator-controlled
+FQDN or approved TOS HTTPS gateway, while private registries may apply an
+explicit `.tos` trust policy.
 
 This is a design note, not an implementation. It records the scope decisions
 made so far so that contract and gateway design can proceed from a fixed
@@ -184,6 +191,25 @@ per-call on-chain or is batched off-chain by the gateway and settled
 periodically, are open design questions left for the Service Actor billing
 work, not resolved by this note.
 
+## Relationship to ARD
+
+An Internet-facing service publishes a stable ARD catalog at:
+
+```text
+https://<publisher-fqdn>/.well-known/ai-catalog.json
+```
+
+The ARD entry uses a domain-anchored resource identifier and references the
+versioned TOS service/AI descriptor. A TOS ARD Registry may crawl that catalog,
+combine it with separately identified on-chain and observed data, and expose
+the ARD `POST /search` interface.
+
+ARD is discovery only. It does not prove the `name.tos` binding, authorize an
+ADNL endpoint, reserve a model, quote a current price, permit a call, or
+settle payment. Before invocation, the client independently verifies the ARD
+publisher, TOS domain and runtime authorization, manifest commitment,
+endpoint, current quote, admission decision, and payment destination.
+
 ## Non-Goals (Phase 1)
 
 - No model hosting, fine-tuning, or GPU provisioning by TOS core or the
@@ -196,6 +222,7 @@ work, not resolved by this note.
 - No auction-based pricing or premium-name tiers.
 - No reserved/blocklisted name handling.
 - No multi-TLD support.
+- No proprietary replacement for ARD catalog or Registry discovery.
 - No destroy/redeploy lifecycle for domain contracts.
 - Resolving a domain does not itself authorize a paid call; billing state is
   verified independently.
@@ -224,6 +251,7 @@ work, not resolved by this note.
 
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
 - [Locally Hosted Open-Weight Model Sharing](local-open-weight-model-sharing-use-case.md)

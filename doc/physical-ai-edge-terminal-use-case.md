@@ -4,7 +4,7 @@
 
 - Document type: product use case and implementation requirements
 - Status: proposed, non-normative
-- Date: 2026-07-30
+- Date: 2026-07-31
 - Related architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Main plan:
@@ -67,8 +67,8 @@ data, latency, safety, payment, and evidence policies.
 | Fleet | Optional | Common and operationally important |
 
 Both products reuse Edge Core, TOS identity, signed manifests, capability
-discovery, payments, receipts, and evidence envelopes. They require different
-admission, offline, safety, update, and fleet profiles.
+discovery through ARD, payments, receipts, and evidence envelopes. They
+require different admission, offline, safety, update, and fleet profiles.
 
 ## User Stories
 
@@ -91,7 +91,8 @@ As a site operator, I want to:
 
 As a consumer, I want to:
 
-- discover a specific physical-world capability in an allowed region
+- discover a specific physical-world capability in an allowed region through
+  a standard ARD Registry
 - know whether raw data, derived events, or both can leave the site
 - verify the terminal, service, model, policy, and evidence revisions
 - obtain a quote for a bounded result or subscription
@@ -116,8 +117,8 @@ As a fleet operator, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` | Consensus, VM, generic contracts/query APIs, wallet/crypto, DNS, ADNL/DHT/RLDP, and TOS Sites |
-| `tos-protocol` | Edge Core, base terminal/resource schema, authentication, quote/payment/receipt envelopes, delegation, generic discovery, and conformance |
-| `tos-ai` | Physical-terminal profile, Jetson/ARM packaging, sensor/actuator policy schema, real-time admission, signed update controller, fleet management, AI adapters, client, and conformance |
+| `tos-protocol` | Edge Core, ARD compatibility profile and Registry, base terminal/resource schema, authentication, quote/payment/receipt envelopes, delegation, SDKs, and conformance |
+| `tos-ai` | Physical-terminal ARD catalog mapping, profile, Jetson/ARM packaging, sensor/actuator policy schema, real-time admission, signed update controller, fleet management, AI adapters, client, and conformance |
 | Terminal | Drivers, local models, sensor adapters, safety policy, bounded journals, runtime key, and local operator state |
 | Site safety controller | Independent hard or soft safety interlocks and final actuator authority |
 | TOS blockchain | Identity references, manifest commitments, capability records, payment, escrow, and settlement |
@@ -167,11 +168,13 @@ flowchart LR
         DNS["name.tos / ADNL"]
         Transport["ADNL / RLDP / relay"]
         Registry["Capability Registry"]
+        ARD["TOS ARD Registry<br/>POST /search"]
         Payment["Service Actor / escrow"]
         Chain["TOS blockchain"]
         DNS --> Chain
         DNS --> Transport
         Registry --> Chain
+        ARD --> Registry
         Payment --> Chain
     end
 
@@ -183,7 +186,7 @@ flowchart LR
     end
 
     subgraph Consumer["Authorized consumer"]
-        Discovery["Discovery / subscription"]
+        Discovery["ARD discovery / subscription"]
         Client["Service client"]
         Wallet["Wallet"]
         Discovery --> Client
@@ -191,11 +194,12 @@ flowchart LR
     end
 
     Ingress <--> Transport
+    Edge --> ARD
     Edge --> Registry
     Edge --> Payment
     Rollout --> Update
     Edge --> FleetHealth
-    Discovery --> Registry
+    Discovery --> ARD
     Client <--> Edge
     Client --> Payment
 ```
@@ -315,7 +319,7 @@ Compromise of:
 - an update server must not transfer funds
 - a model signer must not issue actuator commands
 - a payment contract must not disable local safety
-- a discovery service must not change local policy
+- an ARD Registry or discovery client must not change local policy
 
 ## Physical-Terminal Manifest
 
@@ -371,6 +375,29 @@ Example:
 ```
 
 Marketing TOPS alone is not a schedulable capability.
+
+### ARD publication
+
+The public ARD catalog advertises stable, callable physical-world service
+capabilities, not raw device inventory. A fleet should normally expose a
+stable task-broker, MCP, A2A, OpenAPI, or TOS Service Protocol entry while
+keeping individual terminals and sensitive site topology private.
+
+The catalog may describe capabilities such as warehouse safety events,
+inspection workflows, OCR, local speech, or privacy-preserving counts. It must
+not publish raw camera administration, CAN, GPIO, serial, fieldbus, shell,
+container, update, fleet-control, or unrestricted actuator endpoints.
+
+ARD publisher identity and search ranking do not authorize physical work. The
+client must still obtain a live TOS quote and admission result, and every
+physical action remains subject to local priority, cached authority, semantic
+capability policy, and the independent safety controller.
+
+When the site has only `name.tos` or outbound ADNL reachability, its catalog is
+published through an approved HTTPS gateway namespace or a private ARD
+Registry with an explicit `.tos` policy. The catalog can carry signed `.tos`,
+ADNL, TOS address, and on-chain commitment bindings without claiming that
+`.tos` is conventional public DNS proof.
 
 ## Safe Model and Software Updates
 
@@ -528,6 +555,9 @@ tested bounded recovery path.
 
 Physical terminals add threats beyond ordinary inference:
 
+- poisoned ARD descriptions or forged publisher bindings redirect clients to
+  an unauthorized fleet, terminal, or actuator-like endpoint
+- stale ARD availability is mistaken for live site capacity or permission
 - a network request starves a safety or control workload
 - malicious or faulty model update changes physical behavior
 - stolen update key compromises an entire fleet
@@ -585,6 +615,10 @@ These threats are incorporated into the common
 ### Three-node TOS integration
 
 - bind a physical terminal to raw ADNL and optionally `name.tos`
+- publish a valid ARD catalog through a verifiable FQDN or approved gateway
+- discover the stable physical service through a TOS ARD Registry
+- reject forged publisher/URN/TOS bindings, stale catalogs, unsafe endpoints,
+  and catalog text attempting to override client or terminal policy
 - publish and verify terminal, capability, model, policy, and evidence
   commitments
 - complete an online event/subscription payment and receipt
@@ -602,6 +636,7 @@ The common test requirements are also recorded in the
 |---|---|---|
 | TOS identity, wallet, contracts, and payment | Available/partial | TOS core; terminal integration remains |
 | DNS, ADNL, DHT, RLDP, and TOS Sites | Available | TOS core |
+| ARD catalog mapping and TOS ARD Registry | To build | `tos-protocol`, with Physical AI entry generation in `tos-ai` |
 | Edge Core and terminal/resource schema | To build | `tos-protocol` |
 | Physical-terminal profile and packaging | To build | `tos-ai` |
 | Jetson/ARM runtime and resource probes | To build | `tos-ai` |
@@ -642,11 +677,14 @@ The first production physical-terminal profile is complete only when:
 10. actuator policy cannot override an independent safety interlock
 11. fault injection demonstrates bounded RAM, accelerator memory, disk,
     journals, queues, watchers, retries, and update history
-12. the three-node TOS suite validates identity, discovery, payment, receipt,
-    reconnect, key rotation, and exactly-once settlement
+12. ARD publisher, Registry, client, and Physical AI mappings pass pinned
+    upstream and TOS security conformance
+13. the three-node TOS suite validates identity, ARD discovery, payment,
+    receipt, reconnect, key rotation, and exactly-once settlement
 
 ## Related Documents
 
+- [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
