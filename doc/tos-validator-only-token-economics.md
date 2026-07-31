@@ -1,6 +1,6 @@
 # TOS Validator-Led Distribution and Bootstrap Economics
 
-**Status:** Draft implementation specification<br>
+**Status:** Draft implementation candidate; production launch gates remain open<br>
 **Version:** 0.5<br>
 **Date:** July 30, 2026<br>
 **Target activation:** New mainnet genesis after all launch gates in Section 14 pass
@@ -42,11 +42,12 @@ The policy commitments are:
 9. Reward creation is stopped or tapered through the existing configuration
    governance process when the public supply target is approached.
 
-This is a target design, not a description of the repository's current
-zerostate. The current generator still allocates almost five billion TOS to
-the main wallet, uses a one-validator minimum, and sets block rewards that
-were not calibrated for this distribution policy. Those values must be
-replaced before a new production zerostate is generated.
+The implementation branch replaces the legacy main-wallet premine and
+one-validator bootstrap with the genesis balances and validator parameters in
+this document. ConfigParam 14 remains provisional until the sustained
+calibration and complete election/reward recovery rehearsals in Sections 6 and
+14 pass. No production zerostate hashes may be frozen before every launch gate
+is closed.
 
 ## 2. Economic character of TOS
 
@@ -445,6 +446,20 @@ report must include:
 - the chosen masterchain-to-basechain reward ratio;
 - projected one-, three-, five-, and seven-year creation; and
 - sensitivity to faster and slower production.
+
+The implementation candidate uses:
+
+```text
+R_mc = 5.699830088 TOS
+R_bc = 3.352841228 TOS
+```
+
+These values retain a 1.7:1 masterchain-to-basechain ratio and project
+4,999,898,999.882592 TOS over 2,557 days at the locally measured 2.5
+masterchain and 2.5 unsplit-basechain blocks per second. These values remain
+candidates until their derivation, one-offline-validator behavior, and
+sensitivity to sustained multi-host production are independently verified and
+launch gate 11 is closed.
 
 ### 6.4 Outages and restarts
 

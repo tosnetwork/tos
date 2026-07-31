@@ -707,19 +707,223 @@ bounded retries, backoff, timeout policy, queue limits and observable failure re
 Terminals additionally require soak tests for RAM, accelerator memory, disk, watchers,
 connections, offline journals and update artifacts across success and every failure path.
 
-\section{Economics}
+\section{TOS Token Economics}
 
-\subsection{Native Unit}
+\subsection{Native Unit, Utility and Economic Character}
 
-TOS is the native settlement asset. One TOS equals $10^9$ \nanotos, the smallest indivisible
-unit. Contract balances, fees, task budgets, bonds and spending limits are represented in
-\nanotos{} to avoid rounding ambiguity.
+TOS is the native settlement and security asset of TOS Network. One TOS equals $10^9$
+\nanotos, the smallest indivisible unit. Contract balances, fees, task budgets, bonds,
+spending limits and validator stakes are represented in \nanotos{} to avoid rounding
+ambiguity.
 
-\subsection{Initial Supply}
+TOS is designed for functional use within the network:
 
-The canonical genesis target supply is 5,000,000,000 TOS. It is allocated at zero-state
-construction time, primarily to the main wallet with operational balances assigned to the
-elector and configuration contracts. Native genesis does not register proof-of-work givers.
+\begin{itemize}
+  \item paying transaction, message, storage and protocol-service fees;
+  \item bonding elected validators and securing consensus;
+  \item compensating elected validators for producing and validating blocks;
+  \item funding task escrow, refunds and service-call settlement;
+  \item bonding capability, verifier and other protocol roles where specified; and
+  \item participating in protocol governance only where an accepted protocol rule grants
+        that function.
+\end{itemize}
+
+TOS does not represent equity, debt, a partnership interest or ownership of a legal entity.
+It gives no contractual claim on project assets, revenue, profits, dividends or cash flows;
+no right of redemption by a company, foundation or operator; no guaranteed return, fixed
+yield, liquidity or price support; and no ownership of a model, terminal, data set or
+off-chain service provider. Holding TOS alone does not produce a protocol reward. Validator
+compensation requires election, locked stake, active operation and continuing exposure to
+the protocol's complaint and penalty rules.
+
+\subsection{Supply Policy}
+
+The initial distribution is designed to avoid a large insider premine and to create nearly
+all TOS through ordinary validator block rewards. The current production policy is:
+
+\begin{longtable}{p{0.48\textwidth}p{0.38\textwidth}}
+\toprule
+Item & Policy target \\
+\midrule
+\endhead
+Smallest unit & 1 \nanotos \\
+Unit conversion & 1 TOS = 1,000,000,000 \nanotos \\
+Approximate gross native-creation target & 5,000,000,000 TOS \\
+Provisional main-wallet genesis balance & 100,000 TOS \\
+Elector operating reserve & 500 TOS \\
+Configuration-contract operating reserve & 500 TOS \\
+Provisional total genesis creation & 101,000 TOS \\
+Reference post-genesis validator creation & 4,999,899,000 TOS \\
+Proof-of-work giver allocation & 0 TOS \\
+Team, investor, foundation and ecosystem allocation & 0 TOS \\
+General protocol-treasury allocation & 0 TOS \\
+Target distribution duration & Approximately seven years \\
+Treatment of network outages & No creation and no later catch-up \\
+Reward termination & Configuration governance tapers or sets ConfigParam 14 to zero \\
+New hard consensus supply cap & None in this policy \\
+\bottomrule
+\end{longtable}
+
+Five billion TOS and seven years are policy calibration targets, not an exact consensus cap,
+a guaranteed completion date or a statement about future market value. The actual total and
+completion date depend on finalized block production, shard behavior, validator
+availability, configuration activation and the eventual governance transaction that stops
+native block creation.
+
+\subsection{Genesis Bootstrap and Allocation}
+
+The production zerostate provisionally creates 101,000 TOS: a bounded 100,000-TOS
+validator-bootstrap main wallet and 500-TOS operating reserves for each of the Elector and
+Configuration contracts. It contains no proof-of-work giver, faucet, discretionary mint
+contract, general treasury, market-making inventory or native allocation to a team,
+investor, foundation or ecosystem fund. The protocol distribution plan includes no sale of
+a large genesis inventory.
+
+The zerostate commits four original validators with unique signing and network identities
+and equal initial consensus weight. The main wallet may transfer to each validator's
+published controlling masterchain wallet exactly 20,000 TOS of principal for two overlapping
+minimum-stake elections, plus no more than 100 TOS of separately measured wallet,
+message and retry costs. The signing keys, controlling wallets, allowed destinations,
+transfer caps and transactions must be public.
+
+After two overlapping elected validator sets have been installed successfully, all remaining
+main-wallet TOS must be transferred to a published unspendable address, leaving the wallet
+with zero spendable balance. The main wallet is a temporary bootstrap mechanism and must not
+become a treasury, fee collector, market-making account, governance fund or emergency mint
+authority. The two system-contract reserves are controlled only by their deployed contract
+code and are not validator rewards or discretionary allocations.
+
+\subsection{Validator-Led Native Creation}
+
+Post-genesis native creation uses the existing block-value and Elector path:
+
+\begin{center}
+\texttt{ConfigParam 14 block creation}\\
+$\longrightarrow$ \texttt{configured collector or Elector fallback}\\
+$\longrightarrow$ \texttt{active validator-set bonus pool}\\
+$\longrightarrow$ \texttt{stake and bonus recovery}
+\end{center}
+
+For validator $i$, the existing proportional rule is
+
+\[
+  B_i =
+  \left\lfloor
+    B_{\mathrm{set}}\frac{E_i}{\sum_j E_j}
+  \right\rfloor,
+\]
+
+where $B_{\mathrm{set}}$ is the active set's recoverable bonus pool and $E_i$ is
+validator $i$'s effective stake. Deterministic integer-remainder handling, stake returns,
+complaints and penalties follow the existing Elector rules. There is no separate proposer
+allocation, passive-holder yield, work-score reward, vote-count reward, private mint key or
+off-chain reward discretion.
+
+A validator must submit a valid bid, be selected, keep its stake locked, operate its assigned
+consensus responsibilities and remain eligible under the protocol rules. Native block
+creation and collected transaction fees are different economic flows: only ConfigParam 14
+creation increases gross native supply, while fees transfer existing TOS.
+
+\subsection{Approximate Seven-Year Distribution}
+
+The reference post-genesis creation target is 4,999,899,000 TOS. For calibration, the
+expected creation rate is modeled as
+
+\[
+  \dot S =
+  \lambda_{\mathrm{mc}}R_{\mathrm{mc}} +
+  \sum_s \lambda_s\frac{R_{\mathrm{bc}}}{2^{d_s}},
+\]
+
+where $\lambda_{\mathrm{mc}}$ is the measured finalized masterchain block rate,
+$R_{\mathrm{mc}}$ is the configured masterchain creation value, $\lambda_s$ is the
+finalized rate of basechain shard $s$, $d_s$ is its prefix depth and $R_{\mathrm{bc}}$ is
+the configured basechain value. Depth adjustment is intended to keep aggregate basechain
+creation approximately stable across balanced shard splits, but actual finalized chain data
+remains authoritative.
+
+The current implementation candidate uses 5.699830088 TOS per masterchain block and
+3.352841228 TOS per unsplit-basechain block. At the locally measured reference rate of
+approximately 2.5 finalized blocks per second for each chain, those values project nearly
+the full post-genesis target from August 1, 2026 to August 1, 2033. They are provisional
+until sustained multi-validator, multi-host, outage and shard split-and-merge measurements
+pass the published launch gates.
+
+Issuance is event-based:
+
+\begin{center}
+\texttt{no finalized produced block} $\Longrightarrow$ \texttt{no native creation}.
+\end{center}
+
+An outage, partition, failed election or delayed restart creates no emission debt. There is
+no backfill, catch-up multiplier, anniversary tranche, pending-emission queue or automatic
+extension of a seven-year calendar. Faster block production can reach the target earlier;
+slower production can reach it later. These outcomes must be measured and disclosed rather
+than described as protocol faults.
+
+Governance must monitor finalized creation and begin a public taper review before projected
+gross creation reaches 4.95 billion TOS. It may reduce ConfigParam 14 to manage activation
+delay and must set both masterchain and basechain creation values to zero near the
+five-billion policy target. Transaction and service fees continue after native creation
+stops. Any later proposal to restart native creation is a separate monetary-policy decision
+requiring prominent public review.
+
+\subsection{Broad Distribution and Concentration Controls}
+
+The protocol avoids allocating the initial supply to founders, investors or a central
+treasury. Its validator distribution is intended to broaden through recurring elections and
+open network participation. Initial controls include:
+
+\begin{itemize}
+  \item four equal-weight original validators rather than one bootstrap validator;
+  \item equal and capped bootstrap funding to separately disclosed controlling wallets;
+  \item recurring protocol elections that replace the zerostate validator set;
+  \item a 10,000-TOS minimum and 10,000,000-TOS maximum submitted stake;
+  \item a four-validator, 40,000-TOS aggregate protocol minimum;
+  \item an initial maximum effective-stake factor of one, which keeps the minimum
+        four-validator elected set equal in effective weight;
+  \item a maximum of 400 validators and 100 masterchain validators;
+  \item public disclosure of beneficial control, key custody, funding, hosting, network,
+        geography and related-party relationships; and
+  \item public concentration metrics for the largest one, four and ten validators and for
+        known related parties.
+\end{itemize}
+
+Four validators are only the bootstrap minimum, not a decentralization claim. The
+recommended public-launch participation target is 64 independent operators, with a
+long-term target of at least 75 eligible validators. A later increase in the effective-stake
+factor requires sustained independent participation, concentration analysis, election
+simulation and public governance review.
+
+These controls reduce initial administrative allocation and single-entry dominance, but no
+protocol can guarantee that market ownership or operational control will never concentrate.
+Stake-proportional rewards may compound existing holdings, one controller may attempt to
+operate several identities, and early rewards necessarily go to the validators then elected.
+Broad ownership therefore also depends on new validator entry, service payments, voluntary
+transfers and transparent monitoring. TOS communications must describe these residual risks
+and must not claim guaranteed decentralization.
+
+\subsection{Supply Accounting, Burns and Transparency}
+
+Supply reporting distinguishes:
+
+\begin{itemize}
+  \item \textbf{gross native creation}: every TOS created in zerostate or by finalized block
+        creation, including amounts later burned;
+  \item \textbf{outstanding supply}: gross native creation minus provably burned TOS;
+  \item \textbf{circulating supply}: outstanding TOS excluding published system reserves,
+        locked stake and other consistently defined non-circulating balances; and
+  \item \textbf{validator block creation}: cumulative ConfigParam 14 creation after genesis.
+\end{itemize}
+
+Burning unused bootstrap funds or penalties reduces outstanding supply but does not erase
+historical gross creation. Public reporting must derive creation and burn totals from
+finalized chain data, not solely from wall-clock estimates. Before launch the project must
+publish every genesis balance, validator and controlling-wallet identity, relevant
+configuration value, zerostate hash and bootstrap transaction cap. During operation it must
+publish current reward parameters, cumulative creation, burns, circulating-supply
+methodology, trailing block rates, target-date projections, validator concentration and
+every monetary configuration proposal and vote.
 
 \subsection{Service Economic Flows}
 
@@ -730,7 +934,7 @@ The architecture can use native TOS for:
   \item refunds after rejection, cancellation or timeout;
   \item service-call settlement under explicit quotes and maximum charges;
   \item registry bonds and future verifier staking;
-  \item defined discovery, relay, verification or storage services;
+  \item defined discovery, relay, verification or storage services; and
   \item gas for messages and persistent actor state.
 \end{itemize}
 
@@ -739,10 +943,52 @@ defined infrastructure services, not from merely remaining online or declaring h
 capacity. Token ownership does not grant an agent unlimited automation authority, prove
 service quality or override terminal policy.
 
-Service transaction volume, validator fees, protocol revenue and token value accrual are
-distinct concepts. This paper makes no forecast or promise regarding any of them. Detailed
-monetary policy, incentives, fee routing and governance require separate specifications and
-accepted network configuration.
+Service transaction volume, validator fees, service-provider revenue and token market value
+are distinct concepts. This paper makes no forecast or promise regarding any of them.
+
+\subsection{Governance, Communications and Participant Responsibilities}
+
+Ordinary authenticated configuration governance retains the ability to change block rewards,
+validator counts, stake limits, election timing and other configurable protocol parameters.
+Every monetary proposal should disclose its proposer, old and proposed values, activation
+conditions, expected supply impact and recorded votes. The ability to change configuration
+is a material governance risk and means the five-billion target is not a hard technical cap.
+
+Public descriptions of TOS must be accurate, balanced and consistent with released code and
+accepted network configuration. They must separate implemented functions from plans, avoid
+predictions of token value or return, disclose material technical and economic risks, and
+avoid presenting a policy target as a guarantee. No operator may describe validator
+compensation as risk-free interest or a reward available merely for purchasing or holding
+TOS.
+
+The base protocol does not replace obligations that may apply to exchanges, custodians,
+wallet operators, payment intermediaries, token distributors or commercial service
+providers. Each participant is responsible for determining whether its activities require
+authorization, customer and counterparty checks, transfer records, transaction monitoring,
+tax reporting, sanctions controls, consumer disclosures, data protection or other
+jurisdiction-specific measures. Service-layer implementations should expose the records and
+policy boundaries needed for their operators to implement those controls without placing
+private customer data in public consensus.
+
+\subsection{Risk and Sustainability Disclosures}
+
+TOS may lose some or all market value. Transferability, exchange availability and liquidity
+are not guaranteed. Users face key-loss, custody, smart-contract, consensus, validator,
+governance, software, cybersecurity, service-provider, market and changing-regulatory risks.
+Network faults, concentrated stake, configuration changes or insufficient fee demand may
+impair operation or validator incentives. TOS is not redeemable for official currency by the
+protocol and is not presented as a deposit, insured balance or protected investment product.
+
+Consensus uses stake-bonded validators rather than proof-of-work mining or a proof-of-work
+token giver. Validator nodes, networking and supporting infrastructure still consume energy
+and hardware resources. AI terminals and service workloads have separate resource impacts
+that must not be attributed to consensus alone. Material energy and environmental claims
+should be based on a published methodology and measured deployment data; no unverified claim
+of zero impact is made.
+
+This section describes protocol design and policy rather than providing legal, tax or
+investment advice. Classification and participant obligations depend on the facts of an
+activity and may change as the network, services and applicable requirements evolve.
 
 \section{Implementation Status}
 

@@ -72,6 +72,12 @@ namespace {
 constexpr td::uint32 kDeterministicZerostateNow = 1700000000;
 constexpr td::Slice kMainWalletPkHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 constexpr td::Slice kConfigMasterPkHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+constexpr td::Slice kGenesisValidatorPkHex[] = {
+    "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+    "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+    "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+};
 constexpr td::uint32 kFixedFiftNow = 1700000000;
 constexpr td::uint32 kValidatorElectTime = 1234567890;
 constexpr td::uint32 kValidatorMaxFactor = 2u << 16;
@@ -271,6 +277,13 @@ std::string cell_root_hash_hex(td::Slice boc) {
 void write_deterministic_zerostate_keys(const std::string& dir) {
   td::write_file(dir + TD_DIR_SLASH + "main-wallet.pk", td::hex_decode(kMainWalletPkHex).move_as_ok()).ensure();
   td::write_file(dir + TD_DIR_SLASH + "config-master.pk", td::hex_decode(kConfigMasterPkHex).move_as_ok()).ensure();
+  std::string validator_public_keys;
+  for (auto private_key_hex : kGenesisValidatorPkHex) {
+    auto private_key =
+        td::Ed25519::PrivateKey(td::SecureString(td::hex_decode(private_key_hex).move_as_ok()));
+    validator_public_keys += private_key.get_public_key().move_as_ok().as_octet_string().as_slice().str();
+  }
+  td::write_file(dir + TD_DIR_SLASH + "validator-keys.pub", validator_public_keys).ensure();
 }
 
 void append_state_hash_summary(std::string& summary, const std::string& dir, const std::string& state_name,

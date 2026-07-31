@@ -80,15 +80,20 @@ account.balance.tomis                // account balance
 
 ## Initial Supply
 
-The genesis zero state allocates **5 billion TOS** (5,000,000,000 TOS), distributed as:
+The validator-led production zerostate allocates a provisional **101,000 TOS**:
 
 | Recipient | Amount | Address |
 |-----------|--------|---------|
-| Main wallet | approximately 4,999,999,000 TOS | `-1:000...000` |
+| Validator-bootstrap main wallet | 100,000 TOS | published with the final zerostate |
 | Elector contract | 500 TOS | `-1:333...333` |
 | Config contract | 500 TOS | `-1:555...555` |
 
-The current genesis templates do not register PoW givers or genesis minting. Native TOS is fully pre-mined; standalone testgiver scripts are not part of the zero-state allocation.
+There is no PoW giver, general treasury, team, investor, foundation, or
+ecosystem allocation. Nearly all native TOS is created later for produced
+blocks under ConfigParam 14 and routed through the existing Elector reward
+path. Five billion TOS and seven years are approximate policy targets rather
+than a hard consensus cap or deadline. See
+[TOS Validator-Led Distribution and Bootstrap Economics](tos-validator-only-token-economics.md).
 
 ## Related Docs
 

@@ -9,7 +9,9 @@
 //
 // This is THE default mainnet template. It ships a ConfigParam 12 that
 // contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1).
-// The supply is fully pre-mined (see the main-wallet line below).
+// Genesis contains only the bounded validator-bootstrap wallet and the two
+// system-contract reserves defined below. Nearly all native TOS is created
+// later through ConfigParam 14 validator block rewards.
 // =====================================================================
 
 def? $1 { @' $1 } { "" } cond constant suffix
@@ -40,44 +42,13 @@ basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
 config.workchains!
 
-// Genesis balances reserved for system contracts (elector, config), carved
-// out of the fixed 5 B TOS total supply. Defined once here and reused at
-// both the main-wallet subtraction below and each contract's own
-// register_smc call, so the total is correct by construction instead of
-// relying on two independently-maintained literals staying in sync.
+// Version 0.5 validator-led genesis balances. The 100,000-TOS main wallet is
+// a provisional cap: four original validator wallets receive 20,000 TOS of
+// overlapping-election principal plus at most 100 TOS of measured bootstrap
+// fees each, and the residual is burned after the bootstrap procedure.
+TM$100000 constant main_wallet_genesis_balance
 TM$500 constant elector_genesis_balance
 TM$500 constant config_genesis_balance
-
-/*
- *
- *  Initial wallets (test)
- *
- */
-
-// Stage 1 wallets
-
-PK'Puasxr0QfFZZnYISRphVse7XHKfW7pZU5SJarVHXvQ+rpzkD rwallet-init-pubkey !
--86400 rwallet-start-at +!
-
-{ swap create-wallet3 } : stage1
-{ bl word $>TM bl word parse-pubkey } : parse-amount-pubkey
-{ parse-amount-pubkey stage1 } : StA
-
-// test
-StA 1001 PuZ8WoEOTgSR8-HopmCIVlOVSL94tNn9zgraiJqMk1SnioEQ
-
-// Stage 2 wallets
-
-{ swap create-wallet0 } : stage2
-{ parse-amount-pubkey stage2 } : StB
-
-// test
-StB 999. PubMMGvqM08jx_6BibYldMclwjl-D88r7-u0_IEcDXHA30-G
-
-// Lockdowns
-
-{ swap create-wallet3b } : stage3
-{ parse-amount-pubkey stage3 } : StC
 
 // SmartContract #1 (Advanced wallet)
 
@@ -88,10 +59,8 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$5000000000 allocated-balance - elector_genesis_balance - config_genesis_balance -
-// balance: 5 B TOS total supply, fully pre-mined to the main wallet less the
-// stage wallets above (allocated-balance) and the elector/config reserves
-// registered below
+main_wallet_genesis_balance
+// balance: bounded validator-bootstrap funding only; not a treasury or premine
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address
@@ -102,13 +71,11 @@ Masterchain over
 2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
 
-// PoW Givers removed — TON-style full pre-mine.  The original TON network
-// pre-mined its entire supply to the main wallet at genesis and deployed
-// PoW-giver distribution contracts AFTERWARD, funded from that wallet.  TOS
-// follows the same model here: the full 5 B supply is pre-mined to the main
-// wallet above.  To add a mining distribution later, deploy giver contracts
-// post-genesis from the main wallet (see doc/Mining-Design.md).
-."Total wallet balance (pre-mine, excludes elector/config reserves) = " allocated-balance .TM cr
+// No PoW/test giver, faucet, team wallet, investor wallet, foundation wallet,
+// ecosystem wallet, or general treasury is funded by production genesis.
+."Main wallet validator-bootstrap balance = " main_wallet_genesis_balance .TM cr
+."Total native genesis supply = "
+main_wallet_genesis_balance elector_genesis_balance + config_genesis_balance + .TM cr
 
 /*
  *
@@ -139,13 +106,9 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-// Single-validator bootstrap profile: start with one validator, then raise
-// min_validators through governance once enough independent validators exist.
-40 20 1 config.validator_num!
+400 100 4 config.validator_num!
 // min-stake max-stake min-total-stake max-factor
-// Bootstrap permits a single min-stake validator. The safer production profile
-// is TM$10000 TM$100000 TM$70000 sg~3 together with min_validators=7.
-TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!
+TM$10000 TM$10000000 TM$40000 sg~1 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
 65536 32768 8192 32768 config.election_params!
 // config-addr = -1:5555...5555
@@ -169,7 +132,7 @@ config.special!
 // masterchain fwd (aligned with production)
 10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
-250 250 1000 1 true config.catchain_params!
+250 250 1000 23 true config.catchain_params!
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
 3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
 // ConfigParam 30: first-testnet Simplex v2 (#22), with the 400 ms target
@@ -202,20 +165,23 @@ triple untriple config.mc_block_limits!
 1000 5000 10000 triple               // lt: underload soft hard
 triple untriple config.block_limits!
 
-TM$1.7 TM$1 config.block_create_fees!
+// Candidate values calibrated from a four-validator Simplex v2 rehearsal at
+// 2.5 finalized masterchain and basechain blocks per second. See the dated
+// validator reward calibration report; production launch still requires an
+// independent sustained-network confirmation.
+TM$5.699830088 TM$3.352841228 config.block_create_fees!
 // smc1_addr config.collector_smc!
 // F3: mint authority (ConfigParam 2) is the governance config contract, NOT
-// the pre-mine wallet (smc1_addr). Decouples a single founder key from the
+// the bootstrap wallet (smc1_addr). Decouples a single launch key from the
 // extra-currency mint power.
 config_addr config.minter_smc!
 
-// F3: no genesis extra-currency minting. Base TOS is non-inflatable (the
-// collator excludes base grams from to_mint), and the previous
-// `-17 / 239` to_mint entries were copied TON test values. ConfigParam 7 is
-// optional and is intentionally omitted, so genesis mints no extra-currency.
+// ConfigParam 7 governs extra currencies only and is intentionally omitted, so
+// genesis mints no extra currency. Native TOS creation is separate: each
+// produced block creates the amount configured by ConfigParam 14 above.
 
 ( 0 1 9 10 12 14 15 16 17 18 20 21 22 23 24 25 28 34 ) config.mandatory_params!
-( -999 -1000 -1001 0 1 9 10 12 14 15 16 17 32 34 36 ) config.critical_params!
+( -999 -1000 -1001 0 1 3 9 10 12 14 15 16 17 32 34 36 ) config.critical_params!
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
@@ -226,26 +192,29 @@ config.param_proposals_setup!
 // deposit bit_pps cell_pps
 TM$100 1 500 config.complaint_prices!
 
-{ file>B { dup Blen } {
+variable genesis-validator-keys  dictnew genesis-validator-keys !
+// pubkey -- pubkey
+{ dup 256 B>u@ empty_cell <s swap genesis-validator-keys @ 256 udict!+
+  not abort"genesis validator public keys must be unique"
+  genesis-validator-keys !
+} : register-genesis-validator-key
+
+{ file>B
+  dup Blen 128 <> abort"validator key manifest must contain exactly four 32-byte public keys"
+  { dup Blen } {
     32 B| swap dup ."Validator public key = " Bx. cr
-    17 add-validator
+    register-genesis-validator-key
+    dup B{c6b41348} swap B+ Bhashu
+    17 add-adnl-validator
   } while drop
 } : load-keys-from-file
 
-false =: keys-from-file
-keys-from-file
-{ "validator-keys" +suffix +".pub" load-keys-from-file
-} {
-  VPK'xrQTSOn2F9RjLgeHdSS0uIvde4Lv49l+/KXfJe0I7wYatz6e
-  B64{8E9AbL8blhRiBUoZt/b/vIo3+iZzglLKiL8MTf0g6Sg=} 256 B>u@
-  1 add-adnl-validator
-} cond
-// newkeypair nip dup ."Validator #1 public key = " Bx. cr
-// 17 add-validator
-// newkeypair nip dup ."Validator #2 public key = " Bx. cr
-// 239 add-validator
+"validator-keys" +suffix +".pub" load-keys-from-file
 
-3000 =: orig_vset_valid_for  // original validator set valid 3000 seconds
+// Two complete 65,536-second election intervals. This conservative initial
+// value must still pass the production bootstrap timing rehearsal before the
+// zerostate hashes are frozen.
+131072 =: orig_vset_valid_for
 now dup orig_vset_valid_for + 0 config.validators!
 
 /*
@@ -275,6 +244,8 @@ Masterchain swap
  *
  */
 
+main_wallet_genesis_balance elector_genesis_balance + config_genesis_balance +
+allocated-balance <> abort"unexpected native balance in production genesis"
 create_state
 cr cr ."new state is:" cr dup <s csr. cr
 dup 31 boc+>B dup Bx. cr

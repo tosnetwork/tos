@@ -42,6 +42,8 @@ class NetworkConfig:
         default_factory=SimplexConsensusConfig
     )  # Simplex enabled
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
+    validator_economics_profile: bool = False
+    validator_election_stage_a_profile: bool = False
 
 
 @dataclass
@@ -108,9 +110,9 @@ config.workchains!
 // main-wallet subtraction below and each contract's own register_smc call,
 // so the total is correct by construction instead of relying on
 // independently-maintained literals staying in sync.
-TM$1 constant smc3_genesis_balance
-TM$10 constant elector_genesis_balance
-TM$10 constant config_genesis_balance
+{smc3_genesis_balance} constant smc3_genesis_balance
+{elector_genesis_balance} constant elector_genesis_balance
+{config_genesis_balance} constant config_genesis_balance
 
 // SmartContract #1 (Simple wallet)
 
@@ -141,8 +143,8 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c private_lib
 }}Libs  // libraries
-TM$5000000000 smc3_genesis_balance - elector_genesis_balance - config_genesis_balance -
-// balance: 5 B TOS total supply, less reserves for system contracts (smc3 + elector + config)
+{main_wallet_genesis_balance}
+// balance selected by NetworkConfig (development faucet or validator bootstrap)
 0 // split_depth
 0 // ticktock
 AllOnes 0 * // address
@@ -222,11 +224,11 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 {min_validators} config.validator_num!  // single-validator bootstrap rehearsal by default
+{max_validators} {max_main_validators} {min_validators} config.validator_num!
 // min-stake max-stake min-total-stake max-factor
-TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
+{min_stake} {max_stake} {min_total_stake} {max_stake_factor} config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
-86400 4000 600 1000 config.election_params!  // DEV-SPECIFIC: 24h election cycle for local testnet
+{election_params} config.election_params!
 // config-addr = -1:5555...5555
 AllOnes 5 * constant config_addr
 config_addr config.config_smc!
@@ -246,7 +248,7 @@ config.special!
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
-{mc_valgroup_lifetime} {shard_valgroup_lifetime} {shard_validators_lifetime} {shard_val} true config.catchain_params!
+{mc_valgroup_lifetime} {shard_valgroup_lifetime} {shard_validators_lifetime} {shard_validators_per_group} true config.catchain_params!
 
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
 // proto-version catchain-max-blocks-coeff
@@ -266,15 +268,15 @@ triple dup
 untriple make-block-limits 22 config!
 untriple make-block-limits 23 config!
 
-TM$1.7 TM$1 config.block_create_fees!
+{masterchain_block_reward} {basechain_block_reward} config.block_create_fees!
 // smc1_addr config.collector_smc!
-smc1_addr config.minter_smc!
+{minter_address} config.minter_smc!
 
-// No genesis extra-currency minting; native TOS supply is fully pre-mined.
-// PoW/test givers are not registered in the zero-state template.
+// No genesis extra-currency minting. PoW/test givers are not registered in
+// either profile; the validator-economics profile also has no native premine.
 
 ( 0 1 9 10 12 14 15 16 17 18 20 21 22 23 24 25 28 34 ) config.mandatory_params!
-( -999 -1000 -1001 0 1 9 10 12 14 15 16 17 32 34 36 ) config.critical_params!
+( -999 -1000 -1001 0 1 3 9 10 12 14 15 16 17 32 34 36 ) config.critical_params!
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
@@ -286,7 +288,7 @@ config.param_proposals_setup!
 TM$100 1 500 config.complaint_prices!
 
 {validators}
-now dup 3600 + {mc_validators} config.validators!
+now dup {original_vset_valid_for} + {mc_validators} config.validators!
 
 {new_consensus_config}
 config.new_consensus_params_all!
@@ -326,6 +328,8 @@ Masterchain swap
  *
  */
 
+{expected_genesis_supply}
+allocated-balance <> abort"unexpected native balance in generated zerostate"
 create_state
 dup 31 boc+>B dup "zerostate.boc" B>file
 Bhashu dup =: zerostate_fhash 256 u>B "zerostate.fhash" B>file
@@ -336,9 +340,91 @@ hashu dup =: zerostate_rhash 256 u>B "zerostate.rhash" B>file
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
+    if (
+        config.validator_election_stage_a_profile
+        and not config.validator_economics_profile
+    ):
+        raise ValueError(
+            "validator election Stage A profile requires validator economics profile"
+        )
+    if config.validator_economics_profile and len(validator_keys) != 4:
+        raise ValueError(
+            "validator economics profile requires exactly four genesis validators"
+        )
+    if config.validator_economics_profile and len(
+        {key.public_key.key for key in validator_keys}
+    ) != len(validator_keys):
+        raise ValueError(
+            "validator economics profile requires unique genesis validator keys"
+        )
+
     keys: list[str] = []
     for key in validator_keys:
-        keys.append(f"B{{{key.public_key.key.hex()}}} 17 add-validator")
+        keys.append(
+            f"B{{{key.public_key.key.hex()}}} "
+            f"B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
+        )
+
+    if config.validator_economics_profile:
+        profile = {
+            "smc3_genesis_balance": "0",
+            "elector_genesis_balance": "TM$500",
+            "config_genesis_balance": "TM$500",
+            "main_wallet_genesis_balance": "TM$100000",
+            "expected_genesis_supply": "TM$101000",
+            "max_validators": 400,
+            "max_main_validators": 100,
+            "min_validators": 4,
+            "min_stake": "TM$10000",
+            "max_stake": "TM$10000000",
+            "min_total_stake": "TM$40000",
+            "max_stake_factor": "sg~1",
+            "election_params": "65536 32768 8192 32768",
+            "masterchain_block_reward": "TM$5.699830088",
+            "basechain_block_reward": "TM$3.352841228",
+            "minter_address": "config_addr",
+            "mc_valgroup_lifetime": 250,
+            "shard_valgroup_lifetime": 250,
+            "shard_validators_lifetime": 1000,
+            "shard_validators_per_group": 23,
+            "original_vset_valid_for": 131072,
+        }
+        if config.validator_election_stage_a_profile:
+            # TEST-ONLY: preserve all production economics, validator-count,
+            # stake, reward, and contract settings while shortening only the
+            # election timing and original validator-set lifetime. Never use
+            # this profile to generate a production zerostate.
+            profile["election_params"] = "300 180 60 180"
+            profile["original_vset_valid_for"] = 600
+    else:
+        profile = {
+            "smc3_genesis_balance": "TM$1",
+            "elector_genesis_balance": "TM$10",
+            "config_genesis_balance": "TM$10",
+            "main_wallet_genesis_balance": (
+                "TM$5000000000 smc3_genesis_balance - "
+                "elector_genesis_balance - config_genesis_balance -"
+            ),
+            "expected_genesis_supply": "TM$5000000000",
+            "max_validators": 40,
+            "max_main_validators": 20,
+            "min_validators": max(
+                1, min(len(keys), config.shard_validators)
+            ),
+            "min_stake": "TM$10000",
+            "max_stake": "TM$100000",
+            "min_total_stake": "TM$10000",
+            "max_stake_factor": "sg~10",
+            "election_params": "86400 4000 600 1000",
+            "masterchain_block_reward": "TM$1.7",
+            "basechain_block_reward": "TM$1",
+            "minter_address": "smc1_addr",
+            "mc_valgroup_lifetime": config.mc_valgroup_lifetime,
+            "shard_valgroup_lifetime": config.shard_valgroup_lifetime,
+            "shard_validators_lifetime": config.shard_validators_lifetime,
+            "shard_validators_per_group": config.shard_validators,
+            "original_vset_valid_for": 3600,
+        }
 
     new_consensus_config = ""
     for consensus_config in (config.mc_consensus, config.shard_consensus):
@@ -363,15 +449,11 @@ def create_zerostate(
             monitor_min_split=config.monitor_min_split,
             split=config.split,
             global_version=config.global_version,
-            shard_val=config.shard_validators,
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
-            min_validators=max(1, min(len(keys), config.shard_validators)),
             mc_validators=len(keys),
-            mc_valgroup_lifetime=config.mc_valgroup_lifetime,
-            shard_valgroup_lifetime=config.shard_valgroup_lifetime,
-            shard_validators_lifetime=config.shard_validators_lifetime,
             new_consensus_config=new_consensus_config,
+            **profile,
         ),
         state_dir,
     )

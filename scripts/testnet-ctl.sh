@@ -70,7 +70,8 @@ restart_services() {
 
 show_status() {
     for svc in $(all_services); do
-        status=$(sudo systemctl is-active "$svc" 2>/dev/null || echo "inactive")
+        status=$(sudo systemctl is-active "$svc" 2>/dev/null || true)
+        status=${status:-inactive}
         printf "  %-24s %s\n" "$svc" "$status"
     done
 }
