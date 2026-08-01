@@ -56,6 +56,7 @@ set(VALIDATOR_HEADERS
   import-db-slice-local.hpp
   queue-size-counter.hpp
   validator-telemetry.hpp
+  weak-ptr-registry.hpp
   storage-stat-cache.hpp
   shard-block-verifier.hpp
   shard-block-retainer.hpp

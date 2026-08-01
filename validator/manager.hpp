@@ -49,6 +49,7 @@
 #include "storage-stat-cache.hpp"
 #include "token-manager.h"
 #include "validator-group.hpp"
+#include "weak-ptr-registry.hpp"
 
 namespace tos {
 
@@ -177,7 +178,10 @@ class ValidatorManagerImpl : public ValidatorManager {
 
  private:
   // HANDLES CACHE
-  std::map<BlockIdExt, std::weak_ptr<BlockHandleInterface>> handles_;
+  WeakPtrRegistry<BlockIdExt, BlockHandleInterface> handles_;
+
+  static constexpr std::size_t handle_sweep_insert_budget_ = 8;
+  static constexpr std::size_t handle_sweep_alarm_budget_ = 256;
 
   static constexpr td::uint32 handle_lru_max_size_ = 16;
   td::uint32 handle_lru_size_ = 0;

@@ -797,6 +797,10 @@ target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validat
 add_executable(test-validator-options test/test-validator-options.cpp)
 target_link_libraries(test-validator-options PRIVATE validator-common)
 
+add_executable(test-weak-ptr-registry test/test-td-main.cpp test/test-weak-ptr-registry.cpp)
+target_include_directories(test-weak-ptr-registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-weak-ptr-registry PRIVATE tdutils)
+
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
@@ -1075,6 +1079,7 @@ tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
 tos_test(test-validator-options)
+tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)
 tos_test(test-quorum)
 tos_test(test-catchain)

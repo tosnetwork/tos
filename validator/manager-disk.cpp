@@ -951,15 +951,10 @@ void ValidatorManagerImpl::new_block(BlockHandle handle, td::Ref<ShardState> sta
 }
 
 void ValidatorManagerImpl::get_block_handle(BlockIdExt id, bool force, td::Promise<BlockHandle> promise) {
-  auto it = handles_.find(id);
-  if (it != handles_.end()) {
-    auto handle = it->second.lock();
-    if (handle) {
-      promise.set_value(std::move(handle));
-      return;
-    } else {
-      handles_.erase(it);
-    }
+  auto handle = handles_.get(id);
+  if (handle) {
+    promise.set_value(std::move(handle));
+    return;
   }
   auto P = td::PromiseCreator::lambda(
       [id, force, promise = std::move(promise), SelfId = actor_id(this)](td::Result<BlockHandle> R) mutable {
@@ -983,16 +978,13 @@ void ValidatorManagerImpl::get_block_handle(BlockIdExt id, bool force, td::Promi
 }
 
 void ValidatorManagerImpl::register_block_handle(BlockHandle handle, td::Promise<BlockHandle> promise) {
-  auto it = handles_.find(handle->id());
-  if (it != handles_.end()) {
-    auto h = it->second.lock();
-    if (h) {
-      promise.set_value(std::move(h));
-      return;
-    }
-    handles_.erase(it);
+  auto existing = handles_.get(handle->id());
+  if (existing) {
+    promise.set_value(std::move(existing));
+    return;
   }
-  handles_.emplace(handle->id(), std::weak_ptr<BlockHandleInterface>(handle));
+  CHECK(handles_.insert(handle->id(), handle));
+  handles_.sweep_expired(handle_sweep_insert_budget_);
   promise.set_value(std::move(handle));
 }
 
