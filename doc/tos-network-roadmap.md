@@ -138,30 +138,17 @@ Work is ordered by dependency, not by repository size.
 
 ## External Certification
 
-These items remain open even when all repository tests pass:
+External certification remains separate from repository completion. It covers
+live-chain and settlement behavior, key custody and public authentication,
+target hardware and isolation, model/update trust, sustained availability and
+memory, public networking, ARD publication, and release governance. Deferred
+offline physical-control and fleet claims are not part of non-streaming v0.1.
 
-- **Live chain:** deploy reviewed contracts and demonstrate controller/key
-  rotation, revocation, stale-node rejection, finality, payment observation,
-  reorganization, and restart behavior against independent RPC endpoints.
-- **Key custody:** conduct Quote and Receipt key ceremonies; bind manifest roles
-  to sidecars or HSMs; rehearse rotation, revocation, restart, and outage.
-- **Physical isolation:** certify the exact kernel, cgroup v2, containerd,
-  runc, seccomp, namespace, filesystem, and any NVIDIA device configuration.
-- **Model supply chain:** provision trust roots and rehearse corruption,
-  interrupted update, power loss, disk full, anti-rollback, known-good
-  rollback, and disconnected operation on target hardware.
-- **Availability and memory:** run sustained anonymous-load, malformed-input,
-  slow-client, chain/signer/Worker outage, restart, and disk-quota tests while
-  recording RSS, heap, goroutines, file descriptors, durable state, RAM, VRAM,
-  and cache behavior.
-- **Network perimeter:** certify TLS termination, rate and connection limits,
-  private sockets, firewall policy, public-response redaction, and home/relay
-  reachability.
-- **ARD publication:** publish an operator-approved catalog under the selected
-  domain or TOS naming path and run the pinned official conformance tooling.
-- **Release governance:** reproducible builds, compatibility matrix, rollback
-  procedure, independent security review, testnet observation, and signed
-  release artifacts.
+The canonical mutable status ledger is
+[`tos-protocol/docs/non-streaming-v0.1-production-gates.md`](https://github.com/tosnetwork/tos-protocol/blob/main/docs/non-streaming-v0.1-production-gates.md).
+The repository ROADMAPs and this program roadmap summarize scope only; dated
+test reports remain historical evidence and do not maintain independent gate
+status.
 
 ## Milestone sequence
 
@@ -178,5 +165,6 @@ These items remain open even when all repository tests pass:
 
 Every merged feature that changes a milestone must update the owning
 repository ROADMAP. The program roadmap changes only when a cross-repository
-deliverable moves category. CI success may close a code item, but only an
-attached deployment artifact may close an External Certification item.
+deliverable moves category. CI success may close a code item, but external
+gate status changes only in the canonical production-gate ledger and requires
+linked deployment evidence.
