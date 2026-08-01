@@ -75,8 +75,16 @@ engine exposes these controls:
 ```text
 --state-ttl <seconds>    state retention; default 86400 seconds
 --archive-ttl <seconds>  archive retention; default 7 * 86400 seconds
+--max-archive-fd <N>     maximum open archive package/database handles; default 512
 --permanent-celldb       disable CellDB garbage collection (archival only)
 ```
+
+`--max-archive-fd` bounds the archive manager's open-handle LRU. Archive
+slices keep package files and RocksDB instances open, so an unlimited value can
+make both file-descriptor use and RocksDB memory grow with chain height. The
+default `512` is appropriate for normal validators and for Stage B. A value of
+`0` disables the limit and should only be used for a measured archival workload
+with deliberately provisioned file-descriptor and memory limits.
 
 Use the default TTLs for an ordinary validator unless a documented recovery,
 compliance, or archival requirement justifies longer retention. Do not enable
@@ -90,28 +98,40 @@ be deleted.
 
 ### CellDB and memory policy
 
-Keep CellDB on RocksDB for production. The production profile uses the
-TON-compatible cache floor; omit both cache-size overrides:
+Keep CellDB on RocksDB for production. CellDB V2 has two separate caches:
+
+- a RocksDB block cache, sized in bytes by `--celldb-cache-size`
+- an in-memory Cell-object cache, bounded by entry count through
+  `--celldb-cell-cache-max-size`
+
+If no explicit minimum is supplied, CellDB V2 computes its RocksDB block-cache
+floor as the greater of 1 GiB and 5,000 bytes per Cell-cache entry. With the
+default 1,000,000 Cell entries, the resulting floor is 5,000,000,000 bytes
+(approximately 4.66 GiB), even though the nominal `--celldb-cache-size` CLI
+default is 1 GiB. If the state TTL is at least 30 days and Bloom filters are
+enabled, RocksDB's two-level index/filter is enabled and raises the default
+floor to 16 GiB.
+
+For a normal production validator, omit both byte-size overrides and let that
+policy select the cache:
 
 ```text
 # no --celldb-cache-size override
 # no --celldb-cache-min-size override
 ```
 
-When the two-level index/filter is enabled, the production default floor is
-16 GiB. The validator CLI's nominal `--celldb-cache-size` default is 1 GiB, but
-CellDB raises the effective cache to that 16 GiB floor unless an explicit
-minimum override is supplied.
-
-The 1 GiB value used on node3 is a low-memory test profile, not a production
-recommendation:
+For the constrained Stage A/B test profile, set both options. Setting only
+`--celldb-cache-size` is insufficient because CellDB V2 will raise it to the
+computed minimum during initialization:
 
 ```text
---celldb-cache-size 1073741824 --celldb-cache-min-size 1073741824
+--celldb-cache-size 268435456 --celldb-cache-min-size 268435456
 ```
 
-The default remains 16 GiB; this option only lowers the minimum and does not
-force the cache above `--celldb-cache-size`.
+This 256 MiB setting is a low-memory test/canary profile, not a production
+recommendation. An explicit minimum override replaces both the V2 computed
+floor and the 16 GiB two-level-index floor. The effective cache is the greater
+of `--celldb-cache-size` and `--celldb-cache-min-size`.
 
 The V2 Cell reader also has an independent entry-count limit. For a low-memory
 test node, use for example:
@@ -136,6 +156,19 @@ RocksDB write buffers are separate from both the CellDB block cache and the V2
 Cell-object cache. A validator opens several RocksDB databases, so leaving
 each database at its independent default can produce a long RSS warm-up even
 though every individual MemTable is finite.
+
+RocksDB instances that do not supply their own cache share one process-wide
+default block cache. It defaults to 1 GiB and can be changed with a byte-count
+environment variable:
+
+```text
+TOS_ROCKSDB_BLOCK_CACHE_SIZE=268435456
+```
+
+This sets a 256 MiB shared default-cache budget for the Stage A/B low-memory
+profile. CellDB supplies its own explicit cache, so this environment variable
+does not replace the two CellDB CLI options shown above. The environment
+variable and both CLI options are required to reproduce the Stage A/B profile.
 
 The global domain covers every `td::RocksDb` opened in the validator process,
 including CellDB, StateDB, WalletIndexDb, Simplex, Catchain, archive indexes,
@@ -185,14 +218,43 @@ latency and finalized-height lag during rollout. Setting both critical and
 global domains creates two independent managers: critical databases use the
 critical manager and all remaining databases use the global manager.
 
+The complete Stage A/B low-memory resource profile is therefore:
+
+```text
+# validator-engine arguments
+--max-archive-fd 512
+--celldb-cache-size 268435456
+--celldb-cache-min-size 268435456
+
+# process environment
+TOS_ROCKSDB_BLOCK_CACHE_SIZE=268435456
+TOS_ROCKSDB_WRITE_BUFFER_SIZE=16777216
+TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE=16777216
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=268435456
+TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1
+MALLOC_CONF=background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000
+TOS_MEMORY_DIAGNOSTICS=1
+```
+
+This is the canary configuration used by the Stage A/B harness, not the
+production sizing recommendation. `MALLOC_CONF` applies when the validator is
+using jemalloc. `TOS_MEMORY_DIAGNOSTICS=1` enables the periodic cache, allocator,
+state-download, and RocksDB diagnostic logs and may be omitted after the test.
+
 The per-database `TOS_ROCKSDB_WRITE_BUFFER_SIZE` and
 `TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE` overrides apply regardless of manager
 domain. Memory diagnostics report `write_buffer_manager_domain=critical`,
-`global`, or `explicit` for every database. The validator monitor additionally
-reports flush-pending databases, running flushes, pending compaction bytes,
-delayed writes, stopped writes, and warns once for every unknown database path.
-These environment variables are read once when the process opens its first
-RocksDB instance; restart the validator after changing them.
+`global`, or `explicit` for every managed database. Each cache-enabled RocksDB
+diagnostic line also reports `block_cache_bytes`,
+`block_cache_pinned_bytes`, and `block_cache_limit_bytes`; compare current and
+pinned occupancy with the limit when investigating RSS growth. The validator
+monitor additionally reports flush-pending databases, running flushes, pending
+compaction bytes, delayed writes, stopped writes, and warns once for every
+unknown database path. These environment variables are read once when the
+process opens its first RocksDB instance; restart the validator after changing
+them.
 
 The reusable monitor is `scripts/validator_rss_rocksdb_monitor.sh`. The
 templated systemd examples under `scripts/systemd/` require a host-specific
@@ -305,6 +367,10 @@ These parameters are required for the node to accept external connections (lite-
 ### Optional Parameters
 
 - `-t <N>`: worker threads (default: 7)
+- `--max-archive-fd <N>`: maximum archive handles kept open (default: 512; `0` disables the limit)
+- `--celldb-cache-size <bytes>`: requested CellDB RocksDB block-cache size
+- `--celldb-cache-min-size <bytes>`: explicit CellDB RocksDB block-cache floor
+- `--celldb-cell-cache-max-size <N>`: maximum V2 Cell-object cache entries (default: 1,000,000)
 - `--parallel-validation`: enable account-level parallel validation
 - `--collect-validator-telemetry`: export validator telemetry
 - `--db-event-fifo`: publish DB events
