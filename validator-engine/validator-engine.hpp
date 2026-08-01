@@ -255,7 +255,8 @@ class ValidatorEngine : public td::actor::Actor {
   double archive_ttl_ = 0;
   double key_proof_ttl_ = 0;
   td::uint32 celldb_compress_depth_ = 0;
-  size_t max_open_archive_files_ = 0;
+  size_t max_open_archive_files_ =
+      tos::validator::ValidatorManagerOptions::default_max_open_archive_files();
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_ = false;
   bool nonfinal_ls_queries_enabled_ = false;

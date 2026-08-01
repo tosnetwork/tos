@@ -396,6 +396,7 @@ TEST(KeyValue, RocksDbCriticalMemoryDomain) {
   }
   const auto expected_limit = td::to_integer_safe<td::uint64>(td::Slice(configured_limit)).move_as_ok();
   const char *configured_global_limit = std::getenv("TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE");
+  const char *configured_block_cache_limit = std::getenv("TOS_ROCKSDB_BLOCK_CACHE_SIZE");
 
   td::RocksDb::destroy("testdb-memory-critical").ignore();
   td::RocksDb::destroy("testdb-memory-background").ignore();
@@ -408,6 +409,11 @@ TEST(KeyValue, RocksDbCriticalMemoryDomain) {
     const auto critical_stats = critical_db.memory_stats();
     ASSERT_TRUE(critical_stats.find("write_buffer_manager_domain=critical") != std::string::npos);
     ASSERT_EQ(rocksdb_memory_stat(critical_stats, "write_buffer_manager_limit_bytes"), expected_limit);
+    if (configured_block_cache_limit != nullptr) {
+      const auto expected_block_cache_limit =
+          td::to_integer_safe<td::uint64>(td::Slice(configured_block_cache_limit)).move_as_ok();
+      ASSERT_EQ(rocksdb_memory_stat(critical_stats, "block_cache_limit_bytes"), expected_block_cache_limit);
+    }
 
     td::RocksDbOptions background_options;
     background_options.no_transactions = true;
@@ -419,6 +425,11 @@ TEST(KeyValue, RocksDbCriticalMemoryDomain) {
           td::to_integer_safe<td::uint64>(td::Slice(configured_global_limit)).move_as_ok();
       ASSERT_TRUE(background_stats.find("write_buffer_manager_domain=global") != std::string::npos);
       ASSERT_EQ(rocksdb_memory_stat(background_stats, "write_buffer_manager_limit_bytes"), expected_global_limit);
+    }
+    if (configured_block_cache_limit != nullptr) {
+      const auto expected_block_cache_limit =
+          td::to_integer_safe<td::uint64>(td::Slice(configured_block_cache_limit)).move_as_ok();
+      ASSERT_EQ(rocksdb_memory_stat(background_stats, "block_cache_limit_bytes"), expected_block_cache_limit);
     }
   }
   td::RocksDb::destroy("testdb-memory-critical").ensure();

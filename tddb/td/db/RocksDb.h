@@ -63,7 +63,9 @@ struct RocksDbSnapshotStatistics {
 
 struct RocksDbOptions {
   std::shared_ptr<rocksdb::Statistics> statistics = nullptr;
-  std::shared_ptr<rocksdb::Cache> block_cache;  // Default - one 1G cache for all RocksDb
+  // Default: one process-wide 1 GiB cache, optionally bounded with
+  // TOS_ROCKSDB_BLOCK_CACHE_SIZE.
+  std::shared_ptr<rocksdb::Cache> block_cache;
   std::shared_ptr<RocksDbSnapshotStatistics> snapshot_statistics = nullptr;
 
   std::shared_ptr<rocksdb::MergeOperator> merge_operator = nullptr;

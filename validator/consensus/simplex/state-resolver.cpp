@@ -195,11 +195,19 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         touch_finalized_cache(id);
         co_return true;
       }
-      // finalize_blocks() holds a reference to this entry across co_await.
-      // Even if its DB write has just become visible, promoting the entry to
-      // the completed LRU here could let another completion evict it before
-      // the owning coroutine resumes.
-      co_return false;
+      // A concurrent finalization is already materializing this candidate in
+      // ManagerFacade and persisting its finalized marker. Replaying the same
+      // ancestor chain in parallel can combine a pre-finalization manager
+      // anchor with newer candidates. Wait for the authoritative finalization
+      // instead; this is especially important during cold-start catch-up.
+      CHECK(it->second.started);
+      auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+      it->second.waiters.push_back(std::move(promise));
+      co_await std::move(task);
+      auto completed = finalized_blocks_.find(id);
+      CHECK(completed != finalized_blocks_.end() && completed->second.done);
+      touch_finalized_cache(id);
+      co_return true;
     }
 
     // During steady-state processing, a candidate newer than the latest
@@ -256,9 +264,10 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         break;
       }
 
-      // A slot that timed out into a skip certificate never had a Candidate
-      // object. Pool's available_base jumps directly past the skip run.
-      if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(id->slot)) {
+      // A skip-only slot never had a Candidate object. Pool's available_base
+      // jumps directly past the skip run. Query the exact CandidateId so Pool
+      // can reject the shortcut when the slot also has a NotarCert.
+      if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(*id)) {
         id = *skip_base;
         continue;
       }
@@ -424,16 +433,16 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         finalized_inflight_.release();
       };
       auto result = co_await finalize_blocks_inner(id, final_cert, final_candidate).wrap();
-      for (auto& p : state.waiters) {
-        p.set_result(result.clone());
-      }
-      state.waiters.clear();
+      auto waiters = std::move(state.waiters);
       if (result.is_ok()) {
         state.done = true;
         touch_finalized_cache(id);
       } else {
         finalized_blocks_lru_.erase(id);
         finalized_blocks_.erase(id);
+      }
+      for (auto& p : waiters) {
+        p.set_result(result.clone());
       }
     }
     co_return co_await std::move(task);

@@ -377,7 +377,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   BlockSeqno sync_upto_{0};
   std::string session_logs_file_;
   td::uint32 celldb_compress_depth_{0};
-  size_t max_open_archive_files_ = 0;
+  size_t max_open_archive_files_ = ValidatorManagerOptions::default_max_open_archive_files();
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_;
   bool nonfinal_ls_queries_enabled_ = false;

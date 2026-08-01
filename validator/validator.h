@@ -138,6 +138,13 @@ struct NoncriticalParamsOverride {
 
 struct ValidatorManagerOptions : public td::CntObject {
  public:
+  // Archive slices each keep a RocksDB instance and one or more package files
+  // open.  An unlimited default makes both descriptors and RocksDB memory grow
+  // with chain height on long-running validators.
+  static constexpr size_t default_max_open_archive_files() {
+    return 512;
+  }
+
   virtual BlockIdExt zero_block_id() const = 0;
   virtual BlockIdExt init_block_id() const = 0;
   virtual bool need_monitor(ShardIdFull shard, const td::Ref<MasterchainState>& state) const = 0;

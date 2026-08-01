@@ -1526,7 +1526,11 @@ void ArchiveLru::set_permanent_slices(std::vector<PackageId> ids) {
 }
 
 void ArchiveLru::enforce_limit() {
-  while (total_files_ > max_total_files_ && lru_.size() > 1) {
+  // Keeping one evictable slice open defeats the configured limit when a
+  // slice contains hundreds of per-shard package files. The currently written
+  // normal/key/temp slices are tracked as permanent and are never present in
+  // lru_, so it is safe to close the last non-permanent slice as well.
+  while (total_files_ > max_total_files_ && !lru_.empty()) {
     auto it = lru_.begin();
     auto it2 = slices_.find(to_tuple(it->second));
     lru_.erase(it);

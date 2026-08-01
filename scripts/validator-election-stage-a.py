@@ -56,6 +56,8 @@ STAKE_MESSAGE_VALUE = EFFECTIVE_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
 VALIDATOR_WALLET_FUNDING = 20_020 * NANO
 NEGATIVE_WALLET_FUNDING = 15_000 * NANO
 MAX_FACTOR = 1 << 16
+MAX_ARCHIVE_FDS = 512
+ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
 T = TypeVar("T")
 
 
@@ -210,6 +212,45 @@ class ValidatorElectionRehearsal:
         self.negative_wallet: WalletV1 | None = None
         self.wallet_balance_history: dict[str, list[dict[str, Any]]] = {}
         self.provenance: dict[str, Any] = {}
+
+    @staticmethod
+    def validator_start_options() -> StartOptions:
+        # Keep archive RocksDB/package handles bounded during the multi-day
+        # Stage B run. The engine has the same safe default; spelling it out
+        # here makes the rehearsal invariant explicit in its provenance.
+        return StartOptions(
+            args=(
+                "--max-archive-fd",
+                str(MAX_ARCHIVE_FDS),
+                # CellDB V2 otherwise raises its independent RocksDB cache to
+                # cache_size_max * 5000 (5 GB with the default entry count).
+                # Both values are required: cache-size alone is raised to the
+                # computed minimum during CellDB initialization.
+                "--celldb-cache-size",
+                str(ROCKSDB_CACHE_BYTES),
+                "--celldb-cache-min-size",
+                str(ROCKSDB_CACHE_BYTES),
+            ),
+            env={
+                # Use the repository's documented low-memory canary profile.
+                # Critical and background databases have independent budgets
+                # so archive flush pressure cannot stall consensus writes.
+                "TOS_ROCKSDB_BLOCK_CACHE_SIZE": str(ROCKSDB_CACHE_BYTES),
+                "TOS_ROCKSDB_WRITE_BUFFER_SIZE": str(16 * 1024 * 1024),
+                "TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE": str(16 * 1024 * 1024),
+                "TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE": str(256 * 1024 * 1024),
+                "TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL": "1",
+                "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE": str(256 * 1024 * 1024),
+                "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL": "1",
+                "MALLOC_CONF": (
+                    "background_thread:true,dirty_decay_ms:10000,"
+                    "muzzy_decay_ms:10000"
+                ),
+                "TOS_MEMORY_DIAGNOSTICS": "1",
+            },
+            threads=4,
+            verbosity=3,
+        )
 
     @staticmethod
     def file_provenance(path: Path) -> dict[str, Any]:
@@ -664,7 +705,7 @@ class ValidatorElectionRehearsal:
         self.event("node_restart_begin", node=index + 1, reason=reason)
         await self.nodes[index].stop()
         await asyncio.sleep(1)
-        await self.nodes[index].run(StartOptions(threads=4, verbosity=3))
+        await self.nodes[index].run(self.validator_start_options())
         self.event("node_restart_complete", node=index + 1, reason=reason)
 
     async def wait_until_chain_time(self, timestamp: int, label: str) -> None:
@@ -724,7 +765,7 @@ class ValidatorElectionRehearsal:
         after = await self.masterchain_seqno()
         if after <= before:
             raise AssertionError(f"3-of-4 did not advance: {before} -> {after}")
-        await self.nodes[3].run(StartOptions(threads=4, verbosity=3))
+        await self.nodes[3].run(self.validator_start_options())
         self.event("three_of_four_passed", before=before, after=after)
 
     async def verify_two_of_four_safe_halt(self) -> None:
@@ -737,8 +778,8 @@ class ValidatorElectionRehearsal:
             samples.append(await self.masterchain_seqno())
         if len(set(samples[-4:])) != 1:
             raise AssertionError(f"2-of-4 did not reach a safe halt: {samples}")
-        await self.nodes[2].run(StartOptions(threads=4, verbosity=3))
-        await self.nodes[3].run(StartOptions(threads=4, verbosity=3))
+        await self.nodes[2].run(self.validator_start_options())
+        await self.nodes[3].run(self.validator_start_options())
         resumed_from = samples[-1]
         resumed_to = await self.retry(
             self.masterchain_seqno,
@@ -955,6 +996,17 @@ class ValidatorElectionRehearsal:
                         if ":" in line:
                             key, value = line.split(":", 1)
                             smaps[key] = value.strip()
+                    fd_entries = list((proc_dir / "fd").iterdir())
+                    archive_fds = 0
+                    for fd_entry in fd_entries:
+                        try:
+                            if "/archive/" in str(fd_entry.readlink()):
+                                archive_fds += 1
+                        except FileNotFoundError:
+                            # The descriptor may close between listing and
+                            # resolving it; the next sample will observe the
+                            # stable value.
+                            pass
                     stat_tail = (proc_dir / "stat").read_text().rsplit(")", 1)[1]
                     stat_fields = stat_tail.split()
                     processes.append(
@@ -970,6 +1022,7 @@ class ValidatorElectionRehearsal:
                             "shmem_kib": int(
                                 status.get("RssShmem", "0 kB").split()[0]
                             ),
+                            "archive_fds": archive_fds,
                             "pss_kib": int(smaps.get("Pss", "0 kB").split()[0]),
                             "private_kib": int(
                                 smaps.get("Private_Clean", "0 kB").split()[0]
@@ -978,7 +1031,7 @@ class ValidatorElectionRehearsal:
                                 smaps.get("Private_Dirty", "0 kB").split()[0]
                             ),
                             "threads": int(status.get("Threads", "0")),
-                            "open_fds": len(list((proc_dir / "fd").iterdir())),
+                            "open_fds": len(fd_entries),
                             "cpu_user_ticks": int(stat_fields[11]),
                             "cpu_system_ticks": int(stat_fields[12]),
                         }
@@ -1073,7 +1126,7 @@ class ValidatorElectionRehearsal:
 
             await dht.run(StartOptions(threads=2, verbosity=3))
             for node in self.nodes:
-                await node.run(StartOptions(threads=4, verbosity=3))
+                await node.run(self.validator_start_options())
 
             self.lite_config.write_text(self.nodes[0]._liteserver_config.to_json())
             await asyncio.wait_for(network.wait_mc_block(seqno=3), timeout=120)

@@ -67,6 +67,10 @@ add_test(
     COMMAND test-consensus --state-resolver-inflight-admission-unit-test
 )
 add_test(
+    NAME test-consensus-simplex2-skipped-slot-resolution-unit
+    COMMAND test-consensus --skipped-slot-resolution-unit-test
+)
+add_test(
     NAME test-consensus-simplex2-candidate-resolver-retention-unit
     COMMAND test-consensus --candidate-resolver-retention-unit-test
 )

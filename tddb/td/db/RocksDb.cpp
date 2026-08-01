@@ -24,6 +24,8 @@
 #include "rocksdb/db.h"
 #pragma GCC diagnostic pop
 
+#include "rocksdb/advanced_cache.h"
+#include "rocksdb/cache.h"
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
@@ -46,6 +48,7 @@ namespace {
 struct ProcessRocksDbMemoryOptions {
   td::optional<size_t> write_buffer_size;
   td::optional<td::int64> transaction_history_size;
+  std::shared_ptr<rocksdb::Cache> default_block_cache;
   std::shared_ptr<rocksdb::WriteBufferManager> global_write_buffer_manager;
   std::shared_ptr<rocksdb::WriteBufferManager> critical_write_buffer_manager;
 };
@@ -79,6 +82,12 @@ bool bool_from_env(const char *name, bool default_value) {
 const ProcessRocksDbMemoryOptions &process_memory_options() {
   static const ProcessRocksDbMemoryOptions options = [] {
     ProcessRocksDbMemoryOptions result;
+    auto block_cache_size = positive_size_from_env("TOS_ROCKSDB_BLOCK_CACHE_SIZE");
+    result.default_block_cache =
+        rocksdb::NewLRUCache(block_cache_size ? block_cache_size.value() : (1ULL << 30));
+    if (block_cache_size) {
+      LOG(WARNING) << "Enabled process-wide RocksDB block-cache budget: limit=" << block_cache_size.value();
+    }
     result.write_buffer_size = positive_size_from_env("TOS_ROCKSDB_WRITE_BUFFER_SIZE");
     auto transaction_history_size = positive_size_from_env("TOS_ROCKSDB_TRANSACTION_HISTORY_SIZE");
     if (transaction_history_size) {
@@ -175,9 +184,8 @@ Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
   }
   db_options.write_buffer_manager = options.write_buffer_manager;
 
-  static auto default_cache = rocksdb::NewLRUCache(1 << 30);
   if (!options.no_block_cache && options.block_cache == nullptr) {
-    options.block_cache = default_cache;
+    options.block_cache = process_options.default_block_cache;
   }
 
   rocksdb::BlockBasedTableOptions table_options;
@@ -304,6 +312,9 @@ std::string RocksDb::memory_stats() const {
     if (db_->GetIntProperty(property.name, &value)) {
       builder << " " << property.label << "=" << value;
     }
+  }
+  if (options_.block_cache) {
+    builder << " block_cache_limit_bytes=" << options_.block_cache->GetCapacity();
   }
   if (options_.write_buffer_manager && options_.write_buffer_manager->enabled()) {
     builder << " write_buffer_manager_bytes=" << options_.write_buffer_manager->memory_usage()

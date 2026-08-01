@@ -527,15 +527,23 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   template <>
   td::actor::Task<std::optional<ParentId>> process(BusHandle, std::shared_ptr<QuerySlotSkipped> query) {
-    auto slot = state_->slot_at(query->slot);
-    if (!slot.has_value() || !slot->state->is_skipped()) {
+    auto slot = state_->slot_at(query->id.slot);
+    if (!slot.has_value()) {
       co_return std::nullopt;
     }
-    // available_base already accounts for any run of skips leading up to this
-    // slot (handle_typed_saved_certificate(SkipCertRef) propagates it forward
-    // past each skip-certified slot), so this jumps straight to the real
-    // ancestor rather than requiring the caller to walk the skip run one slot
-    // at a time.
+    auto action =
+        select_skipped_slot_resolution(query->id, slot->state->is_skipped(), slot->state->notarized_block());
+    if (action.is_error()) {
+      co_return action.move_as_error();
+    }
+    if (action.move_as_ok() == SkippedSlotResolution::ResolveCandidate) {
+      co_return std::nullopt;
+    }
+    // Skip-only slots have no candidate to resolve. available_base already
+    // accounts for any run of skips leading up to this slot, so jump directly
+    // to the real ancestor. Do not take this path for a dual-certified slot:
+    // its notarized candidate is part of the state chain even though a SkipCert
+    // was also observed.
     co_return slot->state->available_base;
   }
 

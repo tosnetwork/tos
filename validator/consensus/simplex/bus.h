@@ -65,18 +65,22 @@ struct ResolveCandidate {
 };
 
 // Purely local query answered from Pool's own in-memory slot state -- no
-// network round-trip, no candidate resolution. Lets StateResolver check
-// whether a slot has already been skip-certified (and, if so, which real
-// ancestor to build on top of) before ever attempting ResolveCandidate,
-// which has nothing to find for a slot that timed out without any leader
-// ever broadcasting so much as an empty-candidate placeholder.
+// network round-trip, no candidate resolution. Lets StateResolver skip an
+// exact CandidateId only when its slot is skip-certified and has no notarized
+// candidate. A slot may legally have both SkipCert and NotarCert, in which
+// case the notarized candidate must still be resolved and applied.
 struct QuerySlotSkipped {
   using ReturnType = std::optional<ParentId>;
 
-  td::uint32 slot;
+  CandidateId id;
 
   std::string contents_to_string() const;
 };
+
+enum class SkippedSlotResolution { ResolveCandidate, UseAvailableBase };
+
+td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
+    const CandidateId& requested, bool is_skipped, std::optional<CandidateId> notarized);
 
 struct StoreCandidate {
   using ReturnType = td::Unit;

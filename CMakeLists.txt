@@ -794,6 +794,9 @@ target_link_libraries(test-celldb-streaming-import PRIVATE validator-common vali
 add_executable(test-celldb-actor-restart test/test-celldb-actor-restart.cpp)
 target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-validator-options test/test-validator-options.cpp)
+target_link_libraries(test-validator-options PRIVATE validator-common)
+
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
@@ -1071,6 +1074,7 @@ tos_test(test-msg-envelope)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
+tos_test(test-validator-options)
 tos_test(test-wallet-index)
 tos_test(test-quorum)
 tos_test(test-catchain)
@@ -1079,7 +1083,7 @@ tos_test(test-emulator)
 tos_test(test-fec)
 tos_test(test-tddb ${TEST_OPTIONS})
 set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
-  "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
+  "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_test(test-db ${TEST_OPTIONS})
 
 add_subdirectory(test)

@@ -49,7 +49,24 @@ std::string ResolveCandidate::contents_to_string() const {
 }
 
 std::string QuerySlotSkipped::contents_to_string() const {
-  return PSTRING() << "{slot=" << slot << "}";
+  return PSTRING() << "{id=" << id << "}";
+}
+
+td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
+    const CandidateId& requested, bool is_skipped, std::optional<CandidateId> notarized) {
+  if (!is_skipped) {
+    return SkippedSlotResolution::ResolveCandidate;
+  }
+  if (!notarized.has_value()) {
+    return SkippedSlotResolution::UseAvailableBase;
+  }
+  if (*notarized != requested) {
+    return td::Status::Error(
+        ErrorCode::protoviolation,
+        PSTRING() << "Simplex state-resolver: requested candidate " << requested
+                  << " conflicts with notarized candidate " << *notarized << " in the same skipped slot");
+  }
+  return SkippedSlotResolution::ResolveCandidate;
 }
 
 std::string StoreCandidate::contents_to_string() const {

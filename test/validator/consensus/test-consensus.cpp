@@ -1531,6 +1531,21 @@ void test_state_resolver_inflight_admission() {
   CHECK(admission.count() == 2);
 }
 
+void test_skipped_slot_resolution_policy() {
+  CandidateId requested{.slot = 411, .hash = from_hex(
+                                            "1111111111111111111111111111111111111111111111111111111111111111")};
+  CandidateId conflicting{.slot = 411, .hash = from_hex(
+                                              "2222222222222222222222222222222222222222222222222222222222222222")};
+
+  CHECK(simplex::select_skipped_slot_resolution(requested, false, std::nullopt).move_as_ok() ==
+        simplex::SkippedSlotResolution::ResolveCandidate);
+  CHECK(simplex::select_skipped_slot_resolution(requested, true, std::nullopt).move_as_ok() ==
+        simplex::SkippedSlotResolution::UseAvailableBase);
+  CHECK(simplex::select_skipped_slot_resolution(requested, true, requested).move_as_ok() ==
+        simplex::SkippedSlotResolution::ResolveCandidate);
+  CHECK(simplex::select_skipped_slot_resolution(requested, true, conflicting).is_error());
+}
+
 void test_candidate_resolver_retention() {
   using State = simplex::CandidateEvictionState;
 
@@ -2088,6 +2103,7 @@ int main(int argc, char *argv[]) {
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
   bool run_state_resolver_inflight_admission_unit_test = false;
+  bool run_skipped_slot_resolution_unit_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
@@ -2245,6 +2261,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "state-resolver-inflight-admission-unit-test",
                "verify in-flight resolution admission control bounds concurrent pending entries",
                [&]() { run_state_resolver_inflight_admission_unit_test = true; });
+  p.add_option('\0', "skipped-slot-resolution-unit-test",
+               "verify skip-only and simultaneous skip/notar candidate resolution",
+               [&]() { run_skipped_slot_resolution_unit_test = true; });
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
@@ -2303,6 +2322,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_state_resolver_inflight_admission_unit_test) {
     test_state_resolver_inflight_admission();
+    return 0;
+  }
+  if (run_skipped_slot_resolution_unit_test) {
+    test_skipped_slot_resolution_policy();
     return 0;
   }
   if (run_candidate_resolver_retention_unit_test) {
