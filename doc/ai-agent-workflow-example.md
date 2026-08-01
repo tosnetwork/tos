@@ -19,6 +19,12 @@ they compose into one workflow. Each contract's own lifecycle is covered by its 
 exercised end to end, in one continuous real-localnet run, by
 [`scripts/agent-economy-composed-e2e.py`](../scripts/agent-economy-composed-e2e.py).
 
+The proposed [OpenFox autonomous earning agent](openfox-autonomous-earning-agent.md)
+can implement the worker's off-chain discovery, evaluation, execution, and
+settlement loop. The commands below are the existing manual and testable
+protocol workflow; they do not claim that the OpenFox automation layer is
+already implemented.
+
 ## 0. Actors in this example
 
 | Role | Concrete actor | Wallet/profile |
@@ -48,6 +54,10 @@ The worker (or its off-chain planner) looks this up before committing to a task:
 ```bash
 tosctl agent registry show --name model-provider-registry --format json
 ```
+
+For OpenFox, this lookup is only a candidate input. It must independently
+verify current task, identity, delegation, price, payment, and settlement state
+and pass deterministic owner policy before accepting work or spending funds.
 
 ## 2. The model provider deploys the callable Service Actor
 
@@ -196,3 +206,7 @@ the party executing the payout is responsible for translating `split_bps` into t
 - A chain-wide way to discover Task Escrows, Capability Registry entries or Service Actors
   without already knowing their address or local `tosctl` record name (see the "not a
   chain-wide index" notes in `ROADMAP.md` Phase 2/3).
+- The OpenFox autonomous loop, skill matching, profitability/risk policy,
+  delegated signer, durable idempotency, or automatic task execution. Those
+  are product requirements defined in
+  [`openfox-autonomous-earning-agent.md`](openfox-autonomous-earning-agent.md).

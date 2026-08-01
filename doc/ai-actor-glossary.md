@@ -14,6 +14,14 @@ An agent-first wallet/account designed for AI agents, agent runners, automation 
 
 An off-chain process that observes chain state and submits messages on behalf of an agent account. It is not trusted unless its actions are authorized on-chain.
 
+## OpenFox
+
+The proposed TOS autonomous earning agent. OpenFox discovers candidate paid
+work, matches it to owner-approved skills, evaluates cost and risk under hard
+policy, executes through approved capacity such as `tos-ai`, and observes
+result settlement through `tos-protocol`. It is an off-chain Agent Runner, not
+an owner-equivalent authority or a new consensus actor.
+
 ## Task Actor
 
 A contract that represents a unit of work. It stores task status, escrow, assigned agent, deadlines, result references, and settlement policy.

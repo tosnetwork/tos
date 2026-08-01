@@ -62,6 +62,16 @@ The main missing common surfaces are:
 - multi-region routing, relays, subscriptions, streaming settlement, and
   advanced verification
 
+The proposed
+[OpenFox autonomous earning agent](openfox-autonomous-earning-agent.md) is the
+owner-side product that turns those foundations into a bounded economic loop:
+it discovers work, matches approved skills, evaluates profit and risk,
+coordinates execution, and observes settlement. The product relationship is
+intentional: `tos-protocol` establishes the trusted market, `tos-ai` supplies
+production capacity, and OpenFox lets that capacity participate autonomously
+in the market and earn revenue. This is a target boundary, not a statement
+that the public market or OpenFox is already implemented.
+
 The first deployable product is centered on the
 [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md):
 an owner-operated appliance or workstation that measures its usable
@@ -101,13 +111,15 @@ The central boundary rule is:
 
 > `tos` provides reusable blockchain infrastructure; `tos-protocol` defines
 > interoperable service foundations and ARD compatibility; vertical
-> repositories implement specific resource profiles and products.
+> repositories implement specific resource profiles and products; OpenFox is
+> an autonomous client product that operates them under owner policy.
 
 | Repository | Owns | Does not own |
 |---|---|---|
 | `tos` (this repository) | consensus and validators, VM and generic smart-contract tooling, chain data and stable query APIs, wallet/crypto primitives, DNS resolution, ADNL/DHT/RLDP, and TOS Sites transport | application manifests, model/storage/commerce execution, derived discovery, or vertical product releases |
 | `tos-protocol` | base descriptor and manifest schemas, ARD compatibility profile, ARD Registry/crawler/federation, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, application content catalogs, or vertical business policy |
 | `tos-ai` | General and physical AI Edge Computing Terminal distributions, inference and physical-world task profiles, local open-weight models, resource probes and benchmarks, model/runtime adapters, bounded and real-time scheduling, signed updates, fleet management, AI clients, model provenance, packaging, and AI-specific conformance tests | bare GPU rental, consumer-supplied execution, generic domain ownership, or unrelated storage/commerce workflows |
+| `openfox` (proposed) | off-chain agent loop, owner mandate, approved skills, task discovery and matching, conservative cost/profit/risk evaluation, deterministic policy gates, protocol and execution clients, bounded durable decision state, and accounting/audit | consensus, protocol schemas, settlement authority, owner-key custody, model runtimes, terminal admission, or unrestricted task-supplied tools and code |
 | `tos-storage` | object APIs, storage leases, content catalogs, storage metering, replication, and availability evidence | TOS consensus or AI model execution |
 | `tos-commerce` | store and offer schemas, orders, inventory, physical/digital fulfillment, human-service workflows, refunds, and commerce discovery | TOS consensus, generic transport, or model execution |
 
@@ -153,6 +165,10 @@ flowchart TB
         Commerce["tos-commerce<br/>offers + orders + delivery"]
     end
 
+    subgraph Autonomous["Autonomous client products"]
+        Fox["openfox<br/>skills + planning + economics<br/>policy + execution coordination"]
+    end
+
     Domain --> VM
     Domain --> CoreDNS
     Adapter --> ChainAPI
@@ -167,6 +183,9 @@ flowchart TB
     AI --> ProtocolSDK
     AI --> EdgeCore
     AI --> ARD
+    Fox --> ProtocolSDK
+    Fox --> ARD
+    Fox --> AI
     Storage --> ProtocolSDK
     Storage --> EdgeCore
     Storage --> ARD
@@ -213,6 +232,19 @@ tos-ai/
   services/fleet/
   services/update-controller/
   apps/ai-client/
+  tests/
+
+openfox/
+  cmd/
+  internal/discovery/
+  internal/skills/
+  internal/planner/
+  internal/economics/
+  internal/policy/
+  internal/taskstate/
+  pkg/protocolclient/
+  pkg/executionclient/
+  pkg/signer/
   tests/
 
 tos-storage/
@@ -1594,6 +1626,7 @@ owner-operated service profile.
 
 ## Related Documents
 
+- [OpenFox Autonomous Earning Agent](openfox-autonomous-earning-agent.md)
 - [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [Local Storage Sharing over TOS Network](local-storage-sharing-use-case.md)

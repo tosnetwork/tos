@@ -3,7 +3,8 @@
 This document defines the baseline threat model for AI actor workflows on TOS.
 
 It applies to agent accounts, task actors, service actors, verifier actors,
-workflow indexers, off-chain agent runners, and
+workflow indexers, off-chain agent runners such as the proposed
+[OpenFox autonomous earning agent](openfox-autonomous-earning-agent.md), and
 [AI Edge Computing Terminals](ai-edge-computing-terminal-architecture.md) that
 interact with native TVM contracts. It also covers public ARD catalogs, TOS
 ARD Registries, registry federation, and discovery clients as defined by the
@@ -16,6 +17,8 @@ ARD Registries, registry federation, and discovery clients as defined by the
 - service actor payment streams
 - owner and controller keys
 - delegated agent permissions
+- autonomous-agent mandates, approved skills, economic limits, decision state,
+  delegated signer access, and realized revenue records
 - task state and settlement decisions
 - result metadata and evidence references
 - verifier decisions and reputation inputs
@@ -30,6 +33,9 @@ ARD Registries, registry federation, and discovery clients as defined by the
 
 - Chain state is authoritative for balances, permissions, task status, deadlines, and settlement.
 - Off-chain agent runners are not trusted by default.
+- An autonomous planner's model output, memory, profitability estimate, or
+  selected action is advisory until deterministic policy and current
+  authorization checks permit the exact action.
 - Service endpoints are not trusted by default.
 - Indexers and workflow dashboards provide derived views only.
 - ARD catalogs and Registry results are untrusted discovery inputs, not
@@ -78,6 +84,33 @@ Required controls:
 - reserve owner-authorized transfers for manual treasury maintenance, refunds, emergency
   withdrawals, and agent retirement
 - route automated task and service spending through the policy-enforced Agent Account path
+
+### Autonomous Economic Manipulation and Prompt Injection
+
+A malicious task, catalog field, attachment, tool result, counterparty message,
+or model output causes an autonomous runner such as OpenFox to ignore owner
+policy, leak data, install code, call an attacker-selected tool, overpay,
+accept unprofitable work, lock capital, or recursively create unbounded work.
+
+Required controls:
+
+- treat every discovered natural-language and binary field as untrusted task
+  data, never as policy or an executable instruction
+- define skills as owner-approved, versioned schemas and capabilities rather
+  than task-supplied prompts, scripts, plugins, models, or MCP servers
+- keep signing and payment behind a deterministic policy gate that validates
+  exact action, task, counterparty, value, deadline, and cumulative exposure
+- keep the owner key outside the agent runtime and use narrowly scoped,
+  revocable Agent Account delegation through an external signer
+- calculate cost and margin conservatively and enforce per-task, daily,
+  cumulative-loss, unresolved-escrow, concurrency, retry, and service-spend
+  limits
+- require human approval for unknown skills, counterparties, high-value work,
+  policy changes, new tools, new destinations, and exceptional loss exposure
+- prevent task content and model output from changing endpoints, credentials,
+  tool policy, budgets, skill approval, or terminal configuration
+- provide a global pause, kill switch, safe restart, and bounded durable audit
+  trail without allowing autonomous self-modification
 
 ### Escrow Theft
 

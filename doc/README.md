@@ -16,6 +16,7 @@ execution engines or bypass the native TVM actor model.
 Start with:
 
 - [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
+- [openfox-autonomous-earning-agent.md](openfox-autonomous-earning-agent.md) - proposed autonomous earning agent that discovers profitable TOS work, applies owner policy, executes through approved capacity, and settles through the service protocol
 - [the-tos-protocol-implementation-plan.md](the-tos-protocol-implementation-plan.md) - repository boundaries and delivery plan for owner-operated TOS services
 - [tos-ard-compatibility.md](tos-ard-compatibility.md) - pinned ARD compatibility profile, catalog publication, federated Registry architecture, security bounds, and TOS handoff
 - [ai-edge-computing-terminal-architecture.md](ai-edge-computing-terminal-architecture.md) - primary off-chain product architecture for turning owner-controlled hardware into bounded AI services

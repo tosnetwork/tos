@@ -13,6 +13,26 @@ TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as a
 - Keep payments, permissions, deadlines, results, and disputes inspectable from chain state.
 - Allow external evidence, signatures, attestations, and proof adapters without binding the protocol to one off-chain runtime.
 
+## Product Relationship
+
+The AI actor model separates market trust, production capacity, and autonomous
+economic decision-making:
+
+> **`tos-protocol` establishes the trusted market, `tos-ai` supplies production
+> capacity, and OpenFox lets that capacity participate autonomously in the
+> market and earn revenue.**
+
+[`OpenFox`](openfox-autonomous-earning-agent.md) is the proposed off-chain
+autonomous earning agent. It discovers candidate work, matches owner-approved
+skills, evaluates profit and risk, requests bounded authorization, dispatches
+execution, submits results, and observes settlement. OpenFox does not make its
+local view authoritative: contracts and current protocol verification remain
+authoritative for identity, permission, task, escrow, and settlement state,
+while the AI terminal remains authoritative for local resource admission.
+
+This relationship is a product direction, not a claim that OpenFox or a public
+end-to-end task market is already implemented.
+
 ## Actor Types
 
 ### AI Agent Wallet
@@ -34,6 +54,19 @@ An agent account is an on-chain account controlled by owner and controller keys.
 - service endpoint hash
 - task history references
 - delegation and recovery policy
+
+### OpenFox Agent Runner
+
+OpenFox is an off-chain Agent Runner controlled by an owner mandate and a
+bounded Agent Account delegation. It is not a new on-chain contract type. A
+probabilistic planner may recommend tasks and plans, but deterministic policy
+must authorize every acceptance, spend, privileged tool call, and signature.
+The owner key remains outside OpenFox and `tos-ai-worker`.
+
+OpenFox may use an owner-approved `tos-ai` terminal as production capacity.
+It cannot bypass terminal admission, select administrator-owned runtime
+endpoints, install task-supplied programs or models, or convert a discovery
+record into payment authority.
 
 ### Task Actor
 
@@ -278,6 +311,7 @@ The first implementation slice should add:
 
 ## Related Documents
 
+- [openfox-autonomous-earning-agent.md](openfox-autonomous-earning-agent.md)
 - [ai-actor-glossary.md](ai-actor-glossary.md)
 - [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
 - [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)

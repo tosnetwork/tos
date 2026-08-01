@@ -31,6 +31,15 @@ owner-controlled hardware
   = TOS AI Edge Computing Terminal
 ```
 
+The terminal supplies production capacity; it is not the autonomous market
+operator. The proposed
+[OpenFox autonomous earning agent](openfox-autonomous-earning-agent.md) is a
+separate off-chain process that discovers candidate paid work, applies owner
+economic policy, and dispatches approved work to a terminal. In product terms,
+`tos-protocol` establishes the trusted market, `tos-ai` supplies production
+capacity, and OpenFox lets that capacity participate autonomously in the
+market and earn revenue.
+
 Consumers buy a declared service outcome under explicit constraints. They do
 not receive raw access to the accelerator merely because the terminal
 advertises one.
@@ -99,6 +108,7 @@ industrial box into a small public GPU cloud.
 | **Runtime key** | A revocable key authorized to sign short-lived terminal manifests, quotes, and receipts |
 | **ARD catalog** | The protocol-neutral `ai-catalog.json` discovery envelope for stable callable resources |
 | **TOS ARD Registry** | An off-chain ARD-compatible search and federation service enriched with explicitly sourced TOS chain, health, and profile data |
+| **OpenFox** | A proposed autonomous earning agent that matches paid tasks to owner-approved skills and capacity under bounded economic and signing policy |
 
 “Terminal” must not be used as a synonym for a TOS full node or validator.
 Running a terminal must not grant consensus authority.
@@ -110,6 +120,7 @@ Running a terminal must not grant consensus authority.
 | `tos` | Consensus, VM, generic contracts and query APIs, wallet/crypto primitives, DNS, ADNL/DHT/RLDP, and TOS Sites |
 | `tos-protocol` | Base service protocol, ARD compatibility profile and Registry, Edge Core, chain adapter, terminal identity and resource schema, authentication, quotes, receipts, SDKs, and conformance |
 | `tos-ai` | General and physical AI terminal distributions, ARD catalog generation for AI profiles, AI capability vocabulary, resource probes and benchmarks, model/runtime adapters, task scheduler, signed updates, fleet management, AI client, packaging, and AI conformance |
+| `openfox` (proposed) | Autonomous task discovery, skill matching, planning, conservative cost/profit/risk evaluation, bounded protocol actions, execution coordination, and owner-facing accounting/audit |
 | Other vertical repositories | Storage and commerce adapters that may coexist on the same host but retain separate state machines and releases |
 | Terminal host | Drivers, runtimes, model artifacts, local data, runtime key, policy, caches, logs, and profile processes |
 
@@ -131,7 +142,20 @@ tos-ai
   ├── model manager
   ├── task scheduler
   └── AI discovery and client
+
+openfox
+  ├── owner mandate and skill registry
+  ├── bounded discovery and task state
+  ├── planner, economics engine, and policy gate
+  ├── tos-protocol and tos-ai clients
+  └── delegated signer, accounting, and audit interfaces
 ```
+
+OpenFox may be co-located with a terminal for an ordinary operator, but it must
+not be linked into the worker process or inherit the terminal runtime key. It
+uses released protocol interfaces and the terminal's private, policy-bounded
+execution interface. The worker still performs authoritative admission before
+loading models or reserving large resources.
 
 The Edge Core is preferably implemented in Rust. Runtime processes may be
 written in their native ecosystems. The design does not require the control
@@ -667,6 +691,7 @@ The first terminal release is complete only when:
 
 ## Related Documents
 
+- [OpenFox Autonomous Earning Agent](openfox-autonomous-earning-agent.md)
 - [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
