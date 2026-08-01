@@ -2,6 +2,8 @@
 
 ## Status
 
+- Live delivery status:
+  [TOS Network Development Roadmap](tos-network-roadmap.md)
 - Source vision document: [The-TOS-Protocol.docx](The-TOS-Protocol.docx)
 - Companion PDF: [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf)
 - Assessment date: 2026-07-31
