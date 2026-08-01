@@ -32,13 +32,14 @@ certified public service are different milestones and must not be conflated.
 
 ## Current milestone
 
-The active milestone is **M1: deployable non-streaming AI Edge service**.
+The active milestone is **M2: v0.1 production candidate**.
 
-The generic non-streaming v0.1 protocol and private AI Worker foundations are
-code-complete candidates. The next product boundary is a public
-`tos-ai-edge` composition that connects the reviewed protocol ingress to one
-private Worker, current TOS chain authority, purpose-specific key custody,
-ARD publication, and an operator-selected authentication policy.
+M1's bounded public `tos-ai-edge` composition and local three-node
+discovery-to-Receipt rehearsal are complete. The current boundary is to make
+the merged protocol/AI pair a signed release, select the deployment
+authentication/custody policy, and certify only the hardware, isolation,
+model, memory and network claims the first production terminal will actually
+advertise.
 
 ## Completed
 
@@ -82,47 +83,57 @@ ARD publication, and an operator-selected authentication policy.
 - `tos-ai` pinned to an immutable `tos-protocol` revision, with both repositories
   passing independent race tests and CI.
 
+### Deployable non-streaming AI Edge integration
+
+- Strict `tos-ai-edge` composition with bounded discovery/Action HTTP,
+  current-chain authority/client/payment adapters, private Worker and
+  purpose-fixed signing boundaries.
+- Real local service and client Agent Accounts, exact finalized native payment,
+  text-generation execution, signed Receipt and exact same-process replay.
+- Byte-identical terminal response after restarting both Worker and Edge,
+  backed by one Worker-owned durable completion timestamp shared by Invoke and
+  retained GetTask.
+- One-of-three RPC loss tolerance, two-of-three fail-closed startup,
+  signer/Worker readiness degradation, strict production configuration and
+  systemd templates, plus a bounded anonymous malformed-input sample.
+
 ## In Progress
 
-### M1: deployable non-streaming AI Edge service
+### M2: v0.1 production candidate
 
-- Build a production `tos-ai-edge` executable that composes public Edge Core,
-  the text-generation profile, private Worker, chain adapters, Quote/Receipt
-  custody, ARD catalog publication, and bounded ingress.
-- Select and implement the deployment authentication ceremony for session and
-  Quote issuance plus authenticated Action/Receipt status access.
-- Configure the three-node local TOS network as the first real authority,
-  client-key, payment, controller-rotation, and reorganization test target.
-- Package one Tier 1 Linux/NVIDIA terminal configuration without exposing a
-  public runtime endpoint, raw GPU rental, arbitrary container, or shell.
-- Turn the production-gate checklist into repeatable deployment rehearsals and
-  capture artifacts instead of relying on narrative confirmation.
-- Freeze and tag the first compatible `tos-protocol`/`tos-ai` release pair only
-  after the M1 integration checks pass.
+- Keep the exact immutable protocol/AI revision pair, run independent CI, and
+  prepare signed release artifacts.
+- Select and audit the deployment authentication ceremony for session/Quote
+  issuance and Action-status/Receipt-read access.
+- Exercise controller/key rotation, revocation, stale-node rejection and the
+  selected settlement policy without weakening strict-majority finality.
+- Install and certify one Tier 1 Linux/NVIDIA terminal configuration without
+  exposing a public runtime endpoint, raw GPU rental, arbitrary container or
+  shell.
+- Complete the applicable key-custody, model, isolation, long-duration memory,
+  public perimeter, ARD and release-governance gates before making production
+  claims.
 
 ## Next
 
 Work is ordered by dependency, not by repository size.
 
-1. Complete the M1 three-node flow: publish, discover, authenticate, quote,
-   pay, execute, recover, deliver a signed receipt, rotate authority, restart,
-   and reconcile.
-2. Add a bounded ARD remote crawler and federation policy with SSRF, redirect,
+1. Add a bounded ARD remote crawler and federation policy with SSRF, redirect,
    recursion, fan-out, publisher, expiry, and aggregate-index controls.
-3. Complete the `.tos` registrar application and stable client SDK surfaces
+2. Complete the `.tos` registrar application and stable client SDK surfaces
    needed by independent operators.
-4. Specify and implement Worker/result streaming as v0.2 with ordering,
+3. Specify and implement Worker/result streaming as v0.2 with ordering,
    backpressure, cancellation, resume, usage, and receipt binding; unary v0.1
    remains stable.
-5. Add reviewed GPU container isolation and additional fixed runtime activation
+4. Add reviewed GPU container isolation and additional fixed runtime activation
    backends only after the Tier 1 non-streaming path is certified.
-6. Implement the site-bound physical AI terminal track: offline journal,
+5. Implement the site-bound physical AI terminal track: offline journal,
    signed update slots, real-time priority, safety isolation, reconnect, and
    fleet management.
-7. Start storage, commerce, and human-service profiles only from the stable
+6. Start storage, commerce, and human-service profiles only from the stable
    base protocol; they must not fork identity, payment, receipt, or discovery
    formats.
-8. Add production relays, multi-region routing, subscriptions/channels,
+7. Add production relays, multi-region routing, subscriptions/channels,
    replication, and advanced evidence as later milestones.
 
 ## External Certification
@@ -157,8 +168,8 @@ These items remain open even when all repository tests pass:
 | Milestone | Exit condition | Current state |
 |---|---|---|
 | M0: non-streaming foundations | Base protocol, chain adapters, Edge Core, private Worker, text-generation profile, bounded Registry, race-tested cross-repository compatibility | Completed |
-| M1: deployable AI Edge service | One public bounded composition completes the three-node discovery-to-receipt flow and passes deployment rehearsals | In Progress |
-| M2: v0.1 production candidate | Immutable release pair plus required security, isolation, memory, key, and network evidence | Next |
+| M1: deployable AI Edge service | One public bounded composition completes the three-node discovery-to-receipt flow and passes deployment rehearsals | Completed |
+| M2: v0.1 production candidate | Immutable release pair plus required security, isolation, memory, key, and network evidence | In Progress |
 | M3: streaming and extended discovery | Versioned streaming v0.2, bounded crawler/federation, stable client SDKs | Next |
 | M4: physical AI terminal | Offline operation, safe updates, real-time priority, device isolation, and fleet lifecycle | Next |
 | M5: additional service profiles | Storage, commerce, and human-service products reuse the stable base protocol | Next |
