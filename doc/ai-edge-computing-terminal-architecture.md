@@ -1,5 +1,13 @@
 # TOS AI Edge Computing Terminal Architecture
 
+> Implementation note (2026-08-02): the local reference now includes bounded
+> cached ARD federation in `tos-protocol`, WorkerStreamService v0.2
+> terminal-result streaming across the private Worker boundary, and signed
+> bounded fleet-control/offline/canary state machines in `tos-ai`. These close
+> locally executable protocol and MOCK tests. They do not certify a public
+> federation perimeter, NVIDIA isolation, an operator fleet transport, or a
+> physical safety controller.
+
 ## Status
 
 - Document type: product architecture and implementation requirements

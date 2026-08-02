@@ -67,6 +67,12 @@ advertise.
   reload, Worker-to-ARD projection, and explicit privacy/resource limits.
 - Unary WorkerService v0.1 with structured readiness, resource claims, Quote,
   Invoke, exact Cancel, and retained `GetTask` recovery.
+- WorkerStreamService v0.2 local candidate with ordered/offset-bound chunks,
+  transport backpressure, retained-task-only resume, final usage/output digest
+  binding and cross-repository fault tests.
+- Cached ARD federation local candidate with exact HTTPS origin policy,
+  bounded redirects, compressed/decoded bodies, depth, cycles, source count,
+  TTL expiry and whole-generation atomic replacement.
 
 ### AI terminal foundation
 
@@ -105,6 +111,10 @@ advertise.
 - A successful local run of the full CPU-only lifecycle suite on real
   containerd/runc, plus MOCK NVIDIA telemetry, VRAM admission, device-loss and
   recovery. Target NVIDIA device isolation remains external certification.
+- Signed fleet-control local candidate with monotonic terminal-scoped commands,
+  bounded durable offline queue/history, real-time-work priority, reconnect
+  drain, deterministic canary rings and signed rollback, validated with MOCK
+  terminals and injected failures.
 
 ## In Progress
 
@@ -128,22 +138,17 @@ advertise.
 
 Work is ordered by dependency, not by repository size.
 
-1. Add a bounded ARD remote crawler and federation policy with SSRF, redirect,
-   recursion, fan-out, publisher, expiry, and aggregate-index controls.
-2. Complete the `.tos` registrar application and stable client SDK surfaces
+1. Complete the `.tos` registrar application and stable client SDK surfaces
    needed by independent operators.
-3. Specify and implement Worker/result streaming as v0.2 with ordering,
-   backpressure, cancellation, resume, usage, and receipt binding; unary v0.1
-   remains stable.
-4. Add reviewed GPU container isolation and additional fixed runtime activation
+2. Add reviewed GPU container isolation and additional fixed runtime activation
    backends only after the Tier 1 non-streaming path is certified.
-5. Implement the site-bound physical AI terminal track: offline journal,
-   signed update slots, real-time priority, safety isolation, reconnect, and
-   fleet management.
-6. Start storage, commerce, and human-service profiles only from the stable
+3. Integrate the completed fleet-control primitives with a selected operator
+   transport and independent physical safety controller, then obtain target-
+   site evidence.
+4. Start storage, commerce, and human-service profiles only from the stable
    base protocol; they must not fork identity, payment, receipt, or discovery
    formats.
-7. Add production relays, multi-region routing, subscriptions/channels,
+5. Add production relays, multi-region routing, subscriptions/channels,
    replication, and advanced evidence as later milestones.
 
 ## External Certification
@@ -167,8 +172,8 @@ status.
 | M0: non-streaming foundations | Base protocol, chain adapters, Edge Core, private Worker, text-generation profile, bounded Registry, race-tested cross-repository compatibility | Completed |
 | M1: deployable AI Edge service | One public bounded composition completes the three-node discovery-to-receipt flow and passes deployment rehearsals | Completed |
 | M2: v0.1 production candidate | Immutable release pair plus required security, isolation, memory, key, and network evidence | In Progress |
-| M3: streaming and extended discovery | Versioned streaming v0.2, bounded crawler/federation, stable client SDKs | Next |
-| M4: physical AI terminal | Offline operation, safe updates, real-time priority, device isolation, and fleet lifecycle | Next |
+| M3: streaming and extended discovery | Versioned result streaming v0.2, bounded crawler/federation, stable client SDKs | Streaming/federation local candidates complete; SDK remains Next |
+| M4: physical AI terminal | Offline operation, safe updates, real-time priority, device isolation, and fleet lifecycle | Fleet-control local candidate complete; target safety/isolation remains Next/External |
 | M5: additional service profiles | Storage, commerce, and human-service products reuse the stable base protocol | Next |
 
 ## Maintenance

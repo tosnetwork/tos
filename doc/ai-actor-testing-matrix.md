@@ -2,6 +2,18 @@
 
 This document defines the minimum test matrix for AI actor primitives.
 
+## Current Local Automation Status
+
+| Area | Automated locally | Still external |
+|---|---|---|
+| Streaming v0.2 | Success and retained resume over the real private Connect/Unix path; duplicate/reordered sequences, missing/conflicting offsets, binding/digest conflicts, chunk/total limits, incorrect prefix, and nonterminal disconnect rejection | Independent-language clients and production long-lived network soak |
+| ARD federation | HTTPS origin allowlist, redirect rejection, gzip expansion, decoded limits, cycle/depth/source bounds, cached search, TTL expiry, atomic failure preservation, plus existing catalog/publisher/index quotas | Public DNS/perimeter policy and authoritative upstream conformance service |
+| Fleet control | Signature/scope/generation checks, exact replay, queue and record limits, offline/reconnect, real-time busy gate, deterministic canary and injected-failure rollback using MOCK terminals | Operator transport, fleet-owner custody, physical actuator interlock and multi-site soak |
+| GPU/runtime dependency | Deterministic AI adapter and fake NVIDIA healthy, power, thermal, VRAM exhaustion, disappearance and recovery matrices | Selected NVIDIA hardware/driver/container-runtime certification |
+
+Passing a MOCK row proves bounded state-machine behavior; it does not convert
+the corresponding hardware or operational row into production evidence.
+
 ## Unit Tests
 
 Agent account:

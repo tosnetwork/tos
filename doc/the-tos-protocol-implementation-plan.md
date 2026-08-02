@@ -288,8 +288,8 @@ flowchart TB
         ClientSDK["Rust + TypeScript Base SDKs<br/>TO BUILD"]
         VerticalClients["AI / Storage / Commerce Clients<br/>TO BUILD BY PROFILE"]
         Catalog["ARD ai-catalog.json<br/>TO BUILD"]
-        Registry["TOS ARD Registry<br/>POST /search<br/>TO BUILD"]
-        Federation["ARD federation + ranking<br/>TO BUILD"]
+        Registry["TOS ARD Registry<br/>POST /search<br/>AVAILABLE REFERENCE"]
+        Federation["Bounded cached ARD federation<br/>AVAILABLE REFERENCE"]
         ChainIndex["Capability/service chain index<br/>AVAILABLE"]
     end
 
@@ -333,7 +333,7 @@ flowchart TB
         Scheduler["Bounded task scheduler<br/>TO BUILD BY tos-ai"]
         Physical["Physical-terminal profile<br/>TO BUILD BY tos-ai"]
         Update["Signed update + rollback<br/>TO BUILD BY tos-ai"]
-        Fleet["Fleet enrollment + rollout<br/>TO BUILD BY tos-ai"]
+        Fleet["Signed fleet agent + canary rollout<br/>REFERENCE IMPLEMENTED IN tos-ai"]
         StorageAdapter["Storage adapter<br/>TO BUILD BY PROFILE"]
         CommerceAdapter["Commerce adapter<br/>TO BUILD BY PROFILE"]
         Tools["MCP-style tool gateway<br/>TO BUILD"]
@@ -428,7 +428,7 @@ which components are common and which belong in vertical profiles.
 | Offline journal and reconnect | To build | Generic storage, signatures, receipts, and settlement primitives are reusable | Define bounded offline authority, tamper-evident journal, idempotent upload/reconciliation, revocation observation, expiry, compaction, and failure recovery |
 | Safe update and rollback | To build | Hashing/signature and process-management foundations are reusable | Define package authority, compatibility, active/known-good slots, crash-safe activation, health gates, staged rollout, anti-rollback, and bounded retention |
 | Physical-I/O safety boundary | To build | No public actuator protocol exists or is implied | Define narrow semantic capabilities, local policy, independent safety-controller authority, deduplication, safe offline behavior, and audit receipts; never expose raw CAN/GPIO/serial/fieldbus |
-| Fleet management | To build | Chain identities and delegation are reusable; continuous fleet state is off-chain | Add enrollment, scoped site/fleet authority, grouping, rollout rings, health, revocation, offline expiry, bounded fan-out, and privacy-preserving inventory |
+| Fleet management | Partial | `tos-ai/pkg/fleetcontrol` now provides signed terminal/fleet-scoped commands, monotonic generations, exact replay, bounded durable offline queues, real-time priority gates, reconnect drain, deterministic canary rings and signed rollback | Integrate a deployment-selected authenticated transport; add deployment inventory/group policy and physical-site health/actuator certification without moving continuous fleet state on-chain |
 | Tool gateway | To build | AI Actor contracts reference services and tools conceptually | Add MCP-style tool registration, policy enforcement, credentials isolation, auditing, and cancellation |
 | Wallet/policy service | Partial | Agent Account limits, Service Actor access policy, Task Escrow | Add session budgets, service/category restrictions, quote binding, subscription and subcontracting rules |
 | Metering and receipts | Partial | Service Actor request/response commitments and attestation | Define usage units, canonical receipts, provenance, state delta, aggregate receipts, and signer rotation |
@@ -438,7 +438,7 @@ which components are common and which belong in vertical profiles.
 | Evidence and attestation | Partial | Proof Attestation and domain-separated response commitments | Standardize receipt/evidence envelopes, verifier references, issuer trust, and off-chain proof adapters |
 | HTTP/RLDP access | Available | [TosSites.md](TosSites.md), `rldp-http-proxy` | Add generic service/profile well-known paths, authenticated sessions, event/stream bindings, and profile-specific limits |
 | NAT traversal and relays | To build | ADNL tunneling foundations exist, but not a complete owner-operated relay product | Add owner-selected relays/reverse tunnels without transferring site authority |
-| Service discovery | To build | Chain-wide service/capability index exists; ARD defines public catalog and Registry interoperability | Run an ARD-compatible Registry, ingest standard catalogs and TOS chain/manifests with field provenance, add health/pricing/reputation indexes, federate without a mandatory global registry, and revalidate authority before transaction |
+| Service discovery | Partial | Chain-wide service/capability index plus a bounded ARD Registry and cached federation crawler now exist in `tos-protocol`; federation enforces exact HTTPS origins, redirect/body/depth/source quotas, cycles, TTL and atomic replacement | Add authoritative upstream List/filter conformance, health/pricing/reputation indexes and deployment policy; revalidate authority before every transaction |
 | Service Browser | To build | Wallet/connect/client SDK foundations | Build a CLI/desktop/extension base user agent with inference, storage, and commerce modules for consent, budgets, receipts, and composition |
 | Observability | Partial | Validator and service metrics/logging patterns | Add privacy-preserving edge health, bounded metrics, tracing, usage audit, and redaction |
 

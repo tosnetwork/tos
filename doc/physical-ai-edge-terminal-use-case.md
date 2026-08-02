@@ -636,15 +636,15 @@ The common test requirements are also recorded in the
 |---|---|---|
 | TOS identity, wallet, contracts, and payment | Available/partial | TOS core; terminal integration remains |
 | DNS, ADNL, DHT, RLDP, and TOS Sites | Available | TOS core |
-| ARD catalog mapping and TOS ARD Registry | To build | `tos-protocol`, with Physical AI entry generation in `tos-ai` |
+| ARD catalog mapping and TOS ARD Registry | Reference available | `tos-protocol`, including bounded cached federation; Physical AI entry policy remains in `tos-ai` |
 | Edge Core and terminal/resource schema | To build | `tos-protocol` |
 | Physical-terminal profile and packaging | To build | `tos-ai` |
 | Jetson/ARM runtime and resource probes | To build | `tos-ai` |
-| Real-time local admission and priority policy | To build | `tos-ai` |
-| Offline bounded journal and reconciliation | To build | `tos-ai` plus base receipt/settlement protocol |
-| Signed update controller and rollback slots | To build | `tos-ai` |
+| Real-time local admission and priority policy | Reference available | `tos-ai`; hard-real-time safety remains outside Go and requires site evidence |
+| Offline bounded journal and reconciliation | Reference available | `tos-ai` task and fleet journals plus base receipt/settlement protocol |
+| Signed update controller and rollback slots | Reference available | `tos-ai`; target service-manager and hardware rehearsal remain external |
 | Actuator semantic capability and safety boundary | To build | `tos-ai`; site safety controller remains external |
-| Fleet enrollment, rollout, health, and revocation | To build | `tos-ai` |
+| Fleet enrollment, rollout, health, and revocation | Partial reference | Signed per-terminal authority, exact replay, offline queue/reconnect, canary and rollback are implemented in `tos-ai`; operator transport, inventory aggregation and target-site certification remain |
 | Relay/reverse tunnel for outbound-only sites | To build | reusable owner-selected connectivity service |
 | Hardware/runtime attestation | Later | profile-specific verification |
 
@@ -652,7 +652,7 @@ The common test requirements are also recorded in the
 
 | Phase | Scope |
 |---|---|
-| P0 | Deterministic simulator with fake sensors, safety controller, offline state, update slots, and fleet |
+| P0 | Completed locally: deterministic MOCK runtime/GPU telemetry, offline fleet state, update slots, canary and rollback fault injection |
 | P1 | One Jetson/ARM reference terminal, local inference, events-only egress, no public actuator action |
 | P2 | Signed staged model/runtime updates, rollback, bounded offline journal, reconnect settlement |
 | P3 | Fleet enrollment, delegation, rollout rings, health, and multi-terminal soak |

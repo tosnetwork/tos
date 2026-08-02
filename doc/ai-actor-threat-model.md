@@ -288,6 +288,16 @@ Required controls:
 - expire permanently offline terminals from active health without immortal
   retry or watcher state
 
+Current local reference coverage: `tos-ai/pkg/fleetcontrol` verifies
+domain-separated controller signatures and exact terminal/fleet scope, uses a
+monotonic generation and exact command fingerprint, caps both queued and total
+durable records plus database bytes, stops reconnect draining while local
+real-time work is active, and uses deterministic canary ordering with
+independently signed rollback commands. MOCK tests inject offline, queue-full,
+real-time-busy and canary-failure states. Remote operator transport, physical
+safety interlocks, target-device isolation and fleet-owner key custody remain
+deployment certification rather than claims of this local test suite.
+
 ### Fake Results or Evidence
 
 An agent submits a result hash, transcript, or evidence reference that is not connected to the requested task.
