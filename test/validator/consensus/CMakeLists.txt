@@ -12,6 +12,20 @@ target_link_libraries(test-consensus PRIVATE
     validator
 )
 
+add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
+target_link_libraries(test-validator-manager-resource-policy PRIVATE
+    adnl
+    adnltest
+    dht
+    overlay
+    rldp
+    tdactor
+    tdutils
+    tl_api
+    tos_validator
+    validator
+)
+
 add_test(
     NAME test-consensus-simplex2-loss
     COMMAND test-consensus --duration 4 --n-nodes 5 --target-rate-ms 100
@@ -81,6 +95,14 @@ add_test(
 add_test(
     NAME test-consensus-simplex2-db-finalized-slot-dedup-unit
     COMMAND test-consensus --simplex-db-finalized-slot-dedup-unit-test
+)
+add_test(
+    NAME test-consensus-validator-manager-resource-policy-unit
+    COMMAND test-consensus --validator-manager-resource-policy-unit-test
+)
+add_test(
+    NAME test-validator-manager-resource-policy-actor
+    COMMAND test-validator-manager-resource-policy
 )
 add_test(
     NAME test-consensus-simplex2-state-resolver-catch-up

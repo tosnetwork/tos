@@ -41,6 +41,7 @@
 #include "td/utils/port/StdStreams.h"
 
 #include "manager-init.h"
+#include "manager-resource-policy.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -212,6 +213,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   };
   std::map<ShardTopBlockDescriptionId, ShardTopBlock> shard_blocks_;
   std::map<BlockIdExt, td::Ref<OutMsgQueueProof>> cached_msg_queue_to_masterchain_;
+  static constexpr std::size_t MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS = 64;
+  BoundedActiveOperations<BlockIdExt> active_shard_block_desc_generations_{MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS};
 
   td::LRUCache<BlockIdExt, td::BufferSlice> cached_block_data_{/* max_size = */ 128};
   td::LRUCache<BlockIdExt, td::BufferSlice> cached_masterchain_block_candidates_{/* max_size = */ 128};
@@ -800,8 +803,14 @@ class ValidatorManagerImpl : public ValidatorManager {
   };
   std::map<std::pair<ShardIdFull, CatchainSeqno>, NonfinalGroupInfo> nonfinal_info_;
 
+  using NonfinalProcessingKey = std::pair<BlockIdExt, CatchainSeqno>;
+  static constexpr std::size_t MAX_NONFINAL_PROCESSING_IN_FLIGHT = 256;
+  static constexpr std::size_t MAX_RECENT_PROCESSED_NONFINAL_BLOCKS = 4096;
+  BoundedIdempotentOperations<NonfinalProcessingKey> nonfinal_processing_{MAX_NONFINAL_PROCESSING_IN_FLIGHT,
+                                                                          MAX_RECENT_PROCESSED_NONFINAL_BLOCKS};
+
   bool is_valid_nonfinal_group(ShardIdFull shard, CatchainSeqno cc_seqno);
-  void process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno);
+  td::actor::Task<> process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno);
   void cleanup_nonfinal_groups();
 };
 

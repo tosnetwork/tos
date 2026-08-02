@@ -617,7 +617,8 @@ td::actor::Task<GeneratedProofRoot> get_proof_root(BlockHandle handle, td::Times
 td::actor::Task<td::BufferSlice> generate_shard_block_description(
     BlockIdExt block_id, Ref<block::BlockSignatureSet> signatures, td::Timestamp timeout,
     td::actor::ActorId<ValidatorManager> manager) {
-  co_await td::actor::become_lightweight();
+  co_await td::actor::detach_from_actor();
+  CHECK(td::actor::detail::get_current_actor_id().empty());
   if (block_id.is_masterchain()) {
     co_return td::Status::Error("block is from masterchain");
   }

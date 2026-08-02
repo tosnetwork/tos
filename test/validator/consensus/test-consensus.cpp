@@ -4,18 +4,20 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <atomic>
+
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
 #include "block/block.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
+#include "consensus/candidate-relay-policy.h"
 #include "consensus/simplex/bus.h"
 #include "consensus/simplex/candidate-retention.h"
 #include "consensus/simplex/completed-lru.h"
 #include "consensus/simplex/finalized-slot-dedup.h"
 #include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
-#include "consensus/candidate-relay-policy.h"
 #include "overlay/overlays.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
@@ -23,14 +25,13 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
-#include "validator/finality-cache-policy.h"
 #include "validator-session/candidate-serializer.h"
+#include "validator/finality-cache-policy.h"
+#include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
 
 #include "block-auto.h"
-
-#include <atomic>
 
 using namespace tos;
 using namespace tos::validator;
@@ -1471,6 +1472,54 @@ void test_candidate_relay_eviction() {
   CHECK(deduplicator.should_relay(block_ids[1]));
 }
 
+void test_validator_manager_resource_policy() {
+  using Active = BoundedActiveOperations<int>;
+  Active active{2};
+  CHECK(active.try_start(1) == Active::StartResult::Started);
+  CHECK(active.try_start(1) == Active::StartResult::AlreadyActive);
+  CHECK(active.try_start(2) == Active::StartResult::Started);
+  CHECK(active.try_start(3) == Active::StartResult::Full);
+  CHECK(active.size() == 2);
+  active.finish(1);
+  CHECK(active.try_start(3) == Active::StartResult::Started);
+  active.finish(2);
+  active.finish(3);
+  CHECK(active.size() == 0);
+
+  using Idempotent = BoundedIdempotentOperations<int>;
+  Idempotent operations{/* max_in_flight = */ 2, /* max_processed = */ 3};
+  CHECK(operations.try_start(10) == Idempotent::StartResult::Started);
+  CHECK(operations.try_start(10) == Idempotent::StartResult::AlreadyInFlight);
+  operations.finish_failure(10);
+  CHECK(operations.try_start(10) == Idempotent::StartResult::Started);
+  CHECK(!operations.finish_success(10).has_value());
+  CHECK(operations.try_start(10) == Idempotent::StartResult::AlreadyProcessed);
+
+  CHECK(operations.try_start(20) == Idempotent::StartResult::Started);
+  CHECK(operations.try_start(30) == Idempotent::StartResult::Started);
+  CHECK(operations.try_start(40) == Idempotent::StartResult::Full);
+  CHECK(operations.prune_in_flight([](int key) { return key == 20; }) == 1);
+  CHECK(!operations.finish_failure_if_present(20));
+  CHECK(operations.try_start(40) == Idempotent::StartResult::Started);
+  CHECK(!operations.finish_success(30).has_value());
+  CHECK(!operations.finish_success(40).has_value());
+
+  CHECK(operations.try_start(50) == Idempotent::StartResult::Started);
+  auto evicted = operations.finish_success(50);
+  CHECK(evicted.has_value() && *evicted == 10);
+  CHECK(!operations.is_processed(10));
+  CHECK(operations.is_processed(20) == false);
+  CHECK(operations.is_processed(30));
+  CHECK(operations.is_processed(40));
+  CHECK(operations.is_processed(50));
+
+  operations.prune_processed([](int key) { return key >= 40; });
+  CHECK(operations.processed_size() == 1);
+  CHECK(operations.is_processed(30));
+  CHECK(!operations.is_processed(40));
+  CHECK(!operations.is_processed(50));
+}
+
 void test_state_resolver_completed_lru() {
   simplex::CompletedLru<int> lru{3};
   CHECK(lru.capacity() == 3);
@@ -2107,6 +2156,7 @@ int main(int argc, char *argv[]) {
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
+  bool run_validator_manager_resource_policy_unit_test = false;
   td::OptionParser p;
   p.set_description("test consensus");
   p.add_option('h', "help", "prints_help", [&]() {
@@ -2273,6 +2323,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "simplex-db-finalized-slot-dedup-unit-test",
                "verify finalized-slot pruning for persisted vote and certificate hashes",
                [&]() { run_simplex_db_finalized_slot_dedup_unit_test = true; });
+  p.add_option('\0', "validator-manager-resource-policy-unit-test",
+               "verify bounded manager operation admission and exact-key idempotence",
+               [&]() { run_validator_manager_resource_policy_unit_test = true; });
   p.add_checked_option('\0', "catch-up-downtime",
                        "stop one validator for this many seconds, then require it to catch up",
                        [&](td::Slice arg) {
@@ -2338,6 +2391,10 @@ int main(int argc, char *argv[]) {
   }
   if (run_simplex_db_finalized_slot_dedup_unit_test) {
     test_simplex_db_finalized_slot_dedup();
+    return 0;
+  }
+  if (run_validator_manager_resource_policy_unit_test) {
+    test_validator_manager_resource_policy();
     return 0;
   }
   CHECK(N_DOUBLE_NODES <= N_NODES);
