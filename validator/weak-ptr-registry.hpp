@@ -30,6 +30,11 @@ namespace tos::validator {
 template <class Key, class Value>
 class WeakPtrRegistry {
  public:
+  struct InsertResult {
+    std::shared_ptr<Value> value;
+    bool inserted{false};
+  };
+
   struct Stats {
     std::size_t entries{0};
     std::uint64_t sweep_scanned{0};
@@ -52,8 +57,18 @@ class WeakPtrRegistry {
     return {};
   }
 
-  bool insert(const Key &key, const std::shared_ptr<Value> &value) {
-    return entries_.emplace(key, std::weak_ptr<Value>(value)).second;
+  // Returns the live value already registered for key, or registers value if
+  // the key is absent or its weak reference has expired. This idempotent API
+  // avoids requiring callers to keep a separate get-then-insert sequence
+  // atomic. Like the rest of the registry, it must be called from one actor or
+  // otherwise externally synchronized, and value must be non-null.
+  InsertResult insert_or_get(const Key &key, std::shared_ptr<Value> value) {
+    auto existing = get(key);
+    if (existing) {
+      return InsertResult{std::move(existing), false};
+    }
+    entries_.emplace(key, std::weak_ptr<Value>(value));
+    return InsertResult{std::move(value), true};
   }
 
   void sweep_expired(std::size_t budget) {

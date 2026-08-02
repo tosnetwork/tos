@@ -72,9 +72,9 @@ TEST(WeakPtrRegistry, PreservesLiveEntriesAndRemovesExpiredEntries) {
   auto live = std::make_shared<Value>(1);
   auto expired = std::make_shared<Value>(2);
 
-  ASSERT_TRUE(registry.insert(1, live));
-  ASSERT_TRUE(registry.insert(2, expired));
-  ASSERT_TRUE(!registry.insert(1, live));
+  ASSERT_TRUE(registry.insert_or_get(1, live).inserted);
+  ASSERT_TRUE(registry.insert_or_get(2, expired).inserted);
+  ASSERT_TRUE(!registry.insert_or_get(1, live).inserted);
   ASSERT_EQ(registry.get(1), live);
 
   expired.reset();
@@ -92,7 +92,7 @@ TEST(WeakPtrRegistry, KeyCursorSurvivesLookupErasingLastInspectedEntry) {
   std::vector<std::shared_ptr<Value>> values;
   for (int key = 1; key <= 4; ++key) {
     values.push_back(std::make_shared<Value>(key));
-    ASSERT_TRUE(registry.insert(key, values.back()));
+    ASSERT_TRUE(registry.insert_or_get(key, values.back()).inserted);
   }
 
   registry.sweep_expired(2);  // The key cursor now points at key 2.
@@ -115,14 +115,14 @@ TEST(WeakPtrRegistry, WrapFindsKeysInsertedOnBothSidesOfCursor) {
   std::vector<std::shared_ptr<Value>> values;
   for (int key : {10, 20, 30}) {
     values.push_back(std::make_shared<Value>(key));
-    ASSERT_TRUE(registry.insert(key, values.back()));
+    ASSERT_TRUE(registry.insert_or_get(key, values.back()).inserted);
   }
 
   registry.sweep_expired(1);  // The key cursor now points at key 10.
   auto before = std::make_shared<Value>(5);
   auto after = std::make_shared<Value>(40);
-  ASSERT_TRUE(registry.insert(5, before));
-  ASSERT_TRUE(registry.insert(40, after));
+  ASSERT_TRUE(registry.insert_or_get(5, before).inserted);
+  ASSERT_TRUE(registry.insert_or_get(40, after).inserted);
 
   for (auto &value : values) {
     value.reset();
@@ -141,7 +141,7 @@ TEST(WeakPtrRegistry, InsertionProportionalSweepBoundsExpiredBacklog) {
   Registry registry;
   for (int key = 0; key < 10000; ++key) {
     auto value = std::make_shared<Value>(key);
-    ASSERT_TRUE(registry.insert(key, value));
+    ASSERT_TRUE(registry.insert_or_get(key, value).inserted);
     value.reset();
     registry.sweep_expired(4);
   }
@@ -155,7 +155,7 @@ TEST(WeakPtrRegistry, SweepReleasesSharedAllocationRetainedByWeakReference) {
   auto allocation_stats = std::make_shared<AllocationStats>();
   auto value = std::allocate_shared<Value>(CountingAllocator<Value>{allocation_stats}, 1);
   ASSERT_EQ(allocation_stats->allocations, 1u);
-  ASSERT_TRUE(registry.insert(1, value));
+  ASSERT_TRUE(registry.insert_or_get(1, value).inserted);
 
   value.reset();
   ASSERT_EQ(allocation_stats->deallocations, 0u);
@@ -163,6 +163,37 @@ TEST(WeakPtrRegistry, SweepReleasesSharedAllocationRetainedByWeakReference) {
   registry.sweep_expired(1);
   ASSERT_EQ(registry.size(), 0u);
   ASSERT_EQ(allocation_stats->deallocations, 1u);
+}
+
+TEST(WeakPtrRegistry, InsertOrGetKeepsLiveCanonicalValue) {
+  Registry registry;
+  auto canonical = std::make_shared<Value>(1);
+  auto duplicate = std::make_shared<Value>(2);
+
+  auto first = registry.insert_or_get(1, canonical);
+  auto second = registry.insert_or_get(1, duplicate);
+
+  ASSERT_TRUE(first.inserted);
+  ASSERT_EQ(first.value, canonical);
+  ASSERT_TRUE(!second.inserted);
+  ASSERT_EQ(second.value, canonical);
+  ASSERT_EQ(registry.size(), 1u);
+}
+
+TEST(WeakPtrRegistry, InsertOrGetReplacesExpiredValue) {
+  Registry registry;
+  auto expired = std::make_shared<Value>(1);
+  ASSERT_TRUE(registry.insert_or_get(1, expired).inserted);
+  expired.reset();
+
+  auto replacement = std::make_shared<Value>(2);
+  auto result = registry.insert_or_get(1, replacement);
+
+  ASSERT_TRUE(result.inserted);
+  ASSERT_EQ(result.value, replacement);
+  ASSERT_EQ(registry.get(1), replacement);
+  ASSERT_EQ(registry.size(), 1u);
+  ASSERT_EQ(registry.stats().lookup_removed, 1u);
 }
 
 }  // namespace

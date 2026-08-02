@@ -1920,9 +1920,15 @@ void ValidatorManagerImpl::get_block_handle_cont(BlockIdExt id, td::Result<Block
   }
   if (R.is_ok()) {
     CHECK(R.ok()->id() == id);
-    CHECK(handles_.insert(id, R.ok()));
-    add_handle_to_lru(R.ok());
-    handles_.sweep_expired(handle_sweep_insert_budget_);
+    // A handle may have been registered while the DB request was in flight.
+    // Always publish the canonical live instance instead of relying on a
+    // get-then-insert precondition that would turn that case into a crash.
+    auto registration = handles_.insert_or_get(id, R.ok());
+    R = registration.value;
+    add_handle_to_lru(registration.value);
+    if (registration.inserted) {
+      handles_.sweep_expired(handle_sweep_insert_budget_);
+    }
   }
   for (auto &p : it->second.waiting_) {
     p.set_result(R.clone());

@@ -568,14 +568,12 @@ void ValidatorManagerImpl::get_cell_db_reader(td::Promise<std::shared_ptr<vm::Ce
 }
 
 void ValidatorManagerImpl::register_block_handle(BlockHandle handle, td::Promise<BlockHandle> promise) {
-  auto existing = handles_.get(handle->id());
-  if (existing) {
-    promise.set_value(std::move(existing));
-    return;
+  auto id = handle->id();
+  auto registration = handles_.insert_or_get(id, std::move(handle));
+  if (registration.inserted) {
+    handles_.sweep_expired(handle_sweep_insert_budget_);
   }
-  CHECK(handles_.insert(handle->id(), handle));
-  handles_.sweep_expired(handle_sweep_insert_budget_);
-  promise.set_value(std::move(handle));
+  promise.set_value(std::move(registration.value));
 }
 
 void ValidatorManagerImpl::start_up() {

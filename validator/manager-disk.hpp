@@ -64,6 +64,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<BlockIdExt, WaitBlockDataList> wait_block_data_;
 
   WeakPtrRegistry<BlockIdExt, BlockHandleInterface> handles_;
+  // This offline manager has no periodic alarm. Its registry can grow only
+  // when handles are inserted, so insertion-proportional sweeping bounds the
+  // expired backlog without waking an idle actor.
   static constexpr std::size_t handle_sweep_insert_budget_ = 8;
 
   std::unique_ptr<Callback> callback_;
