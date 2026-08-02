@@ -116,6 +116,11 @@ advertise.
   fail-closed uncertain crash recovery, real-time-work priority, reconnect
   drain, deterministic canary rings and signed rollback, validated with MOCK
   terminals and injected failures.
+- Cross-repository dependency-boundary closeout: public ARD entry decoding is
+  ambiguity-safe, injected Go interfaces reject typed nil values, and runtime,
+  hardware SDK and Worker lifecycle panics become bounded fail-closed outcomes.
+  Persistent fuzz targets and MOCK fault injection cover these paths without
+  adding background queues or request-retained state.
 
 ## In Progress
 
