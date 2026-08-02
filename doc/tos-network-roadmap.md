@@ -84,8 +84,9 @@ advertise.
   anti-rollback, and local trust policy foundations.
 - Immutable `tos.ai.text-generation` v0.1 profile mapper and live Worker
   capability-derived Edge deployment plan with route-identity drift checks.
-- Opt-in CPU-only, `network=none` containerd execution foundation and reusable
-  isolated-backend conformance tests.
+- Opt-in `network=none` containerd execution with bounded CPU mode and an
+  operator-fixed, exclusive-lease NVIDIA CDI path; reusable isolated-backend
+  conformance tests prevent callers from selecting device identities.
 - `tos-ai` pinned to an immutable `tos-protocol` revision, with both repositories
   passing independent race tests and CI.
 
@@ -108,9 +109,10 @@ advertise.
 - Two-slot terminal software updates with exact candidate-boot health,
   power-loss rollback, anti-rollback revisions, terminal-bound signed
   administrator lifecycle commands and bounded privacy-minimized history.
-- A successful local run of the full CPU-only lifecycle suite on real
-  containerd/runc, plus MOCK NVIDIA telemetry, VRAM admission, device-loss and
-  recovery. Target NVIDIA device isolation remains external certification.
+- Successful local runs of the full lifecycle suite and exact MOCK-CDI device
+  injection on real containerd/runc, plus MOCK NVIDIA telemetry, VRAM
+  admission, device-loss and recovery. A fail-closed physical NVIDIA test is
+  supplied; target device isolation/performance remains external certification.
 - Signed fleet-control local candidate with monotonic terminal-scoped commands,
   bounded durable offline queue/history, atomic pre-execution claims,
   fail-closed uncertain crash recovery, real-time-work priority, reconnect
@@ -153,8 +155,9 @@ Work is ordered by dependency, not by repository size.
 1. Complete the `.tos` registrar application; add further client SDK languages
    only when an independent consumer exists. The bounded Go and TypeScript ARD
    Registry clients are complete.
-2. Add reviewed GPU container isolation and additional fixed runtime activation
-   backends only after the Tier 1 non-streaming path is certified.
+2. Run the completed GPU-CDI path on the selected Tier 1 NVIDIA image and
+   certify its exact device isolation, inference, thermals and power behavior;
+   add further fixed runtime activation backends only when required.
 3. Integrate the completed fleet-control primitives with a selected operator
    transport and independent physical safety controller, then obtain target-
    site evidence.
