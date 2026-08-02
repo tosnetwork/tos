@@ -24,9 +24,9 @@
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
-#include "block/block.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/block.h"
 #include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "common/stats.h"
@@ -42,6 +42,7 @@
 #include "td/actor/coro_utils.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Random.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
@@ -282,12 +283,7 @@ td::actor::Task<> ValidatorManagerImpl::validated_accepted_block_broadcast(Block
       td::actor::send_closure(collator_node.actor, &CollatorNode::new_shard_block_accepted, block_id, cc_seqno);
     }
   }
-  if (!block_id.is_masterchain() && opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
-      shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
-    co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state_short, block_id, 0,
-                            td::Timestamp::in(60.0), true);
-  }
-  process_accepted_nonfinal_block(block_id, cc_seqno);
+  co_await process_accepted_nonfinal_block(block_id, cc_seqno);
   co_return td::Unit{};
 }
 
@@ -307,6 +303,25 @@ td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(
                          << " : too old block";
     co_return td::Unit{};
   }
+
+  using StartResult = BoundedActiveOperations<BlockIdExt>::StartResult;
+  switch (active_shard_block_desc_generations_.try_start(block_id)) {
+    case StartResult::AlreadyActive:
+      VLOG(VALIDATOR_DEBUG) << "Don't generate shard block description for " << block_id.to_str()
+                            << " : generation is already active";
+      co_return td::Unit{};
+    case StartResult::Full:
+      VLOG(VALIDATOR_WARNING) << "Don't generate shard block description for " << block_id.to_str()
+                              << " : active generation limit reached (" << active_shard_block_desc_generations_.size()
+                              << "/" << active_shard_block_desc_generations_.capacity() << ")";
+      co_return td::Unit{};
+    case StartResult::Started:
+      break;
+  }
+  SCOPE_EXIT {
+    active_shard_block_desc_generations_.finish(block_id);
+  };
+
   auto r_desc =
       co_await validator::generate_shard_block_description(block_id, sig_set, td::Timestamp::in(30.0), actor_id(this))
           .wrap();
@@ -595,7 +610,8 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
 
 static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set,
                                                    Ref<MasterchainState> mc_state) {
-  co_await td::actor::become_lightweight();
+  co_await td::actor::detach_from_actor();
+  CHECK(td::actor::detail::get_current_actor_id().empty());
   auto try_val_set = [&](Ref<block::ValidatorSet> val_set) -> td::Status {
     if (val_set.is_null()) {
       return td::Status::Error("no validator set");
@@ -655,6 +671,9 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
   if (!finality.block_id.is_masterchain() && finality.sig_set->is_final() && is_validator()) {
     generate_shard_block_description(finality.block_id, finality.sig_set).start().detach();
   }
+  if (!finality.block_id.is_masterchain() && finality.sig_set->is_final()) {
+    process_accepted_nonfinal_block(finality.block_id, finality.sig_set->get_catchain_seqno()).start().detach();
+  }
   pending_block_finality_.put(finality.block_id, PendingBlockFinality{std::move(finality.sig_set), source});
   try_process_pending_block_finality(finality.block_id);
   co_return td::Unit{};
@@ -706,20 +725,7 @@ void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDesc
       VLOG(VALIDATOR_DEBUG) << "new shard block descr for " << desc->block_id().id.to_str()
                             << " is too new: last known shard block is " << top_block->top_block_id().id.to_str();
     } else {
-      auto P = td::PromiseCreator::lambda([block_id = desc->block_id(), cc_seqno = desc->catchain_seqno(),
-                                           SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
-        if (R.is_error()) {
-          auto S = R.move_as_error();
-          if (S.code() != ErrorCode::timeout && S.code() != ErrorCode::notready) {
-            VLOG(VALIDATOR_NOTICE) << "failed to get shard state: " << S;
-          } else {
-            VLOG(VALIDATOR_DEBUG) << "failed to get shard state: " << S;
-          }
-          return;
-        }
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_accepted_nonfinal_block, block_id, cc_seqno);
-      });
-      wait_block_state_short(desc->block_id(), 0, td::Timestamp::in(60.0), true, std::move(P));
+      process_accepted_nonfinal_block(desc->block_id(), desc->catchain_seqno()).start().detach();
     }
   }
   if (validating_masterchain()) {
@@ -4151,10 +4157,55 @@ bool ValidatorManagerImpl::is_valid_nonfinal_group(ShardIdFull shard, CatchainSe
   return shard_client_state_->get_shard_cc_seqno(shard) <= cc_seqno;
 }
 
-void ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno) {
-  if (!is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
-    return;
+td::actor::Task<> ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno) {
+  if (block_id.is_masterchain() || (!opts_->nonfinal_ls_queries_enabled() && db_event_publisher_.empty())) {
+    co_return td::Unit{};
   }
+
+  // Once initialized, the shard-client group only advances. Reject obsolete
+  // work before admission; cleanup may already have cancelled an older wait.
+  if (!shard_client_state_.is_null() && !is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+    co_return td::Unit{};
+  }
+
+  NonfinalProcessingKey key{block_id, cc_seqno};
+  using StartResult = BoundedIdempotentOperations<NonfinalProcessingKey>::StartResult;
+  switch (nonfinal_processing_.try_start(key)) {
+    case StartResult::AlreadyInFlight:
+    case StartResult::AlreadyProcessed:
+      co_return td::Unit{};
+    case StartResult::Full:
+      VLOG(VALIDATOR_WARNING) << "Dropping nonfinal block processing for " << block_id.to_str()
+                              << " : in-flight limit reached (" << nonfinal_processing_.in_flight_size() << "/"
+                              << nonfinal_processing_.in_flight_capacity() << ")";
+      co_return td::Unit{};
+    case StartResult::Started:
+      break;
+  }
+
+  bool completed = false;
+  SCOPE_EXIT {
+    if (!completed) {
+      nonfinal_processing_.finish_failure_if_present(key);
+    }
+  };
+
+  auto r_state = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state_short, block_id, 0,
+                                         td::Timestamp::in(60.0), true)
+                     .wrap();
+  if (r_state.is_error()) {
+    auto error = r_state.move_as_error();
+    if (error.code() == ErrorCode::timeout || error.code() == ErrorCode::notready) {
+      VLOG(VALIDATOR_DEBUG) << "Failed to process nonfinal block " << block_id.to_str() << " : " << error;
+    } else {
+      VLOG(VALIDATOR_NOTICE) << "Failed to process nonfinal block " << block_id.to_str() << " : " << error;
+    }
+    co_return td::Unit{};
+  }
+  if (!nonfinal_processing_.is_in_flight(key) || !is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+    co_return td::Unit{};
+  }
+
   if (opts_->nonfinal_ls_queries_enabled()) {
     NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
     if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
@@ -4166,10 +4217,12 @@ void ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, 
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockSigned " << block_id.to_str();
-    td::actor::ask(db_event_publisher_, &DbEventPublisher::publish,
-                   create_tl_object<tos_api::db_event_blockSigned>(create_tl_block_id(block_id)))
-        .detach();
+    td::actor::send_closure(db_event_publisher_, &DbEventPublisher::publish,
+                            create_tl_object<tos_api::db_event_blockSigned>(create_tl_block_id(block_id)));
   }
+  nonfinal_processing_.finish_success(key);
+  completed = true;
+  co_return td::Unit{};
 }
 
 void ValidatorManagerImpl::cleanup_nonfinal_groups() {
@@ -4196,6 +4249,11 @@ void ValidatorManagerImpl::cleanup_nonfinal_groups() {
       it = nonfinal_info_.erase(it);
     }
   }
+  auto is_obsolete = [&](const NonfinalProcessingKey &key) {
+    return !is_valid_nonfinal_group(key.first.shard_full(), key.second);
+  };
+  nonfinal_processing_.prune_in_flight(is_obsolete);
+  nonfinal_processing_.prune_processed(is_obsolete);
 }
 
 }  // namespace validator
