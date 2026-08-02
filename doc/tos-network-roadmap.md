@@ -1,7 +1,7 @@
 # TOS Network Development Roadmap
 
 Status: active cross-repository roadmap  
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-02
 
 This document is the canonical program-level view of delivery across the TOS
 blockchain, `tos-protocol`, and `tos-ai`. It records implementation status,
@@ -96,13 +96,23 @@ advertise.
 - One-of-three RPC loss tolerance, two-of-three fail-closed startup,
   signer/Worker readiness degradation, strict production configuration and
   systemd templates, plus a bounded anonymous malformed-input sample.
+- Complete deterministic release bundles for both off-chain repositories,
+  including full SHA-256 manifests, optional detached Ed25519 verification,
+  archive-safety/tamper gates and CI integration.
+- Two-slot terminal software updates with exact candidate-boot health,
+  power-loss rollback, anti-rollback revisions, terminal-bound signed
+  administrator lifecycle commands and bounded privacy-minimized history.
+- A successful local run of the full CPU-only lifecycle suite on real
+  containerd/runc, plus MOCK NVIDIA telemetry, VRAM admission, device-loss and
+  recovery. Target NVIDIA device isolation remains external certification.
 
 ## In Progress
 
 ### M2: v0.1 production candidate
 
-- Keep the exact immutable protocol/AI revision pair, run independent CI, and
-  prepare signed release artifacts.
+- Keep the exact immutable protocol/AI revision pair, run independent CI,
+  conduct the offline signing ceremony and approve the signed artifacts built
+  by the completed deterministic release pipeline.
 - Select and audit the deployment authentication ceremony for session/Quote
   issuance and Action-status/Receipt-read access.
 - Exercise controller/key rotation, revocation, stale-node rejection and the
