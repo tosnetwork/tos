@@ -1884,16 +1884,11 @@ void ValidatorManagerImpl::get_block_handle(BlockIdExt id, bool force, td::Promi
       return;
     }
   }
-  auto it = handles_.find(id);
-  if (it != handles_.end()) {
-    auto handle = it->second.lock();
-    if (handle) {
-      CHECK(handle->id() == id);
-      promise.set_value(std::move(handle));
-      return;
-    } else {
-      handles_.erase(it);
-    }
+  auto handle = handles_.get(id);
+  if (handle) {
+    CHECK(handle->id() == id);
+    promise.set_value(std::move(handle));
+    return;
   }
 
   auto [it2, inserted] = wait_block_handle_.emplace(id, WaitBlockHandle{});
@@ -1924,10 +1919,10 @@ void ValidatorManagerImpl::get_block_handle_cont(BlockIdExt id, td::Result<Block
     }
   }
   if (R.is_ok()) {
-    CHECK(!handles_.contains(id));
     CHECK(R.ok()->id() == id);
-    handles_.emplace(id, std::weak_ptr(R.ok()));
+    CHECK(handles_.insert(id, R.ok()));
     add_handle_to_lru(R.ok());
+    handles_.sweep_expired(handle_sweep_insert_budget_);
   }
   for (auto &p : it->second.waiting_) {
     p.set_result(R.clone());
@@ -3244,6 +3239,7 @@ void ValidatorManagerImpl::state_serializer_update(BlockSeqno seqno) {
 
 void ValidatorManagerImpl::alarm() {
   try_advance_gc_masterchain_block();
+  handles_.sweep_expired(handle_sweep_alarm_budget_);
   alarm_timestamp() = td::Timestamp::in(1.0);
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),
@@ -3504,6 +3500,13 @@ void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::
   }
 
   vec.emplace_back("start_time", td::to_string(started_at_));
+  const auto handle_stats = handles_.stats();
+  vec.emplace_back("block_handle_registry.entries", td::to_string(handle_stats.entries));
+  vec.emplace_back("block_handle_registry.sweep_scanned", td::to_string(handle_stats.sweep_scanned));
+  vec.emplace_back("block_handle_registry.sweep_removed", td::to_string(handle_stats.sweep_removed));
+  vec.emplace_back("block_handle_registry.lookup_removed", td::to_string(handle_stats.lookup_removed));
+  vec.emplace_back("block_handle_registry.sweep_passes", td::to_string(handle_stats.sweep_passes));
+  vec.emplace_back("block_handle_registry.lru_entries", td::to_string(handle_lru_size_));
   for (int iter = 0; iter < 2; ++iter) {
     td::StringBuilder sb;
     td::uint32 total = 0;

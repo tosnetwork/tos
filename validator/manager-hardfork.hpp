@@ -31,6 +31,7 @@
 #include "manager-init.h"
 #include "queue-size-counter.hpp"
 #include "validator-group.hpp"
+#include "weak-ptr-registry.hpp"
 
 namespace tos {
 
@@ -64,7 +65,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   };
   std::map<BlockIdExt, WaitBlockDataList> wait_block_data_;
 
-  std::map<BlockIdExt, std::weak_ptr<BlockHandleInterface>> handles_;
+  WeakPtrRegistry<BlockIdExt, BlockHandleInterface> handles_;
+  static constexpr std::size_t handle_sweep_insert_budget_ = 8;
 
   std::unique_ptr<Callback> callback_;
   td::actor::ActorOwn<Db> db_;
