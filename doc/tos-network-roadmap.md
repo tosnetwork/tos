@@ -112,7 +112,8 @@ advertise.
   containerd/runc, plus MOCK NVIDIA telemetry, VRAM admission, device-loss and
   recovery. Target NVIDIA device isolation remains external certification.
 - Signed fleet-control local candidate with monotonic terminal-scoped commands,
-  bounded durable offline queue/history, real-time-work priority, reconnect
+  bounded durable offline queue/history, atomic pre-execution claims,
+  fail-closed uncertain crash recovery, real-time-work priority, reconnect
   drain, deterministic canary rings and signed rollback, validated with MOCK
   terminals and injected failures.
 
@@ -138,8 +139,9 @@ advertise.
 
 Work is ordered by dependency, not by repository size.
 
-1. Complete the `.tos` registrar application and stable client SDK surfaces
-   needed by independent operators.
+1. Complete the `.tos` registrar application; add further client SDK languages
+   only when an independent consumer exists. The bounded Go and TypeScript ARD
+   Registry clients are complete.
 2. Add reviewed GPU container isolation and additional fixed runtime activation
    backends only after the Tier 1 non-streaming path is certified.
 3. Integrate the completed fleet-control primitives with a selected operator
@@ -172,7 +174,7 @@ status.
 | M0: non-streaming foundations | Base protocol, chain adapters, Edge Core, private Worker, text-generation profile, bounded Registry, race-tested cross-repository compatibility | Completed |
 | M1: deployable AI Edge service | One public bounded composition completes the three-node discovery-to-receipt flow and passes deployment rehearsals | Completed |
 | M2: v0.1 production candidate | Immutable release pair plus required security, isolation, memory, key, and network evidence | In Progress |
-| M3: streaming and extended discovery | Versioned result streaming v0.2, bounded crawler/federation, stable client SDKs | Streaming/federation local candidates complete; SDK remains Next |
+| M3: streaming and extended discovery | Versioned result streaming v0.2, bounded crawler/federation, stable client SDKs | Streaming/federation and Go/TypeScript Registry clients complete locally; further languages are consumer-driven |
 | M4: physical AI terminal | Offline operation, safe updates, real-time priority, device isolation, and fleet lifecycle | Fleet-control local candidate complete; target safety/isolation remains Next/External |
 | M5: additional service profiles | Storage, commerce, and human-service products reuse the stable base protocol | Next |
 
