@@ -121,6 +121,12 @@ advertise.
   hardware SDK and Worker lifecycle panics become bounded fail-closed outcomes.
   Persistent fuzz targets and MOCK fault injection cover these paths without
   adding background queues or request-retained state.
+- Final host-executable fault closeout: cancellation-late backend success is
+  rejected across protocol trust/readiness/read paths; deterministic disk-full
+  software-update writes do not advance state; NVIDIA shutdown failure degrades
+  evidence; runtime bounds have complete statement coverage; and the current
+  working-tree pair passes full local gates, cross-repository race testing and
+  an additional 5.8 million-plus protocol-input fuzz cases.
 
 ## In Progress
 
