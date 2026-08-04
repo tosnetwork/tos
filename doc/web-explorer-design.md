@@ -1,9 +1,9 @@
-# TOS Web Explorer — Design Document
+# TOS Birdeye — Design Document
 
 ## Status
 
 - Document type: product/technical design proposal, non-normative
-- Status: proposed
+- Status: reviewed proposal; implementation gates identified
 - Date: 2026-08-04
 - Related code: `~/tos/validator-engine/json-rpc-server*.cpp`, `~/tos/doc/json-rpc-policy.md`,
   `~/tos/doc/openapi.yaml`, `~/tos/crypto/block/check-proof.{h,cpp}`, `~/tos/emulator/CMakeLists.txt`
@@ -14,8 +14,8 @@
 
 ## 1. Purpose
 
-Build a new, standalone, browser-based block explorer for TOS Network with a distinct visual
-identity: a real-time, cinematic, "digital-rain" / neon-glow presentation of chain activity —
+Build **TOS Birdeye**, a new, standalone, browser-based spatial explorer for TOS Network with a
+distinct visual identity: a real-time, cinematic, "digital-rain" / neon-glow presentation of chain activity —
 blocks, shards, accounts and transactions rendered as a living, animated graph rather than as
 static HTML tables. The explorer should read as a piece of the TOS brand (precise, engineering-
 forward, technically substantiated — see `~/tos/doc/tos.pdf` §2 Design Principles) while looking
@@ -33,7 +33,7 @@ Concretely, the explorer must, at minimum:
   accounts, value and fees.
 - Let a viewer look up an account/address and see its balance, state and recent transaction
   history.
-- Render all of the above as an animated, force-directed relationship graph (blocks → shard
+- Render all of the above as an animated, hybrid-constrained relationship graph (blocks → shard
   blocks → transactions → accounts) with continuous motion, particle/glow effects and smooth
   entry animation for new blocks — not a plain list.
 - Recognize TOS AI Actor contracts and render an **AI Execution Matrix**: Agent Account → Task
@@ -49,6 +49,69 @@ The product is therefore not "Etherscan with a cyberpunk skin." It is a real-tim
 surface for three connected systems: consensus, chain state transition, and verifiable AI service
 execution. The cinematic presentation is a semantic instrument: every node, edge, pulse, color
 and particle must correspond to a real datum or an explicitly labeled inference.
+
+### 1.1 Product identity
+
+- **Product name**: TOS Birdeye
+- **Short name**: Birdeye
+- **Canonical production URL**: `https://birdeye.tos.network`
+- **Product category**: evidence-native spatial blockchain and AI execution explorer
+- **Working repository/component prefix**: `tos-birdeye` / `birdeye-*`
+
+"Birdeye" expresses the primary interaction: begin with a network-wide bird's-eye view, identify a
+validator, block, transaction, contract or AI execution path, then descend without losing spatial
+or causal context. The product name is not a claim of affiliation with any third-party product
+using the same word. TOS branding, the `tos.network` domain and the complete name **TOS Birdeye**
+must remain prominent in metadata, navigation, social cards and public documentation.
+
+The interaction vocabulary may use:
+
+- **Skyview** for the global network overview;
+- **Consensus Matrix**, **Chain Matrix** and **AI Execution Matrix** for semantic scene modes;
+- **Lens** or **Inspector** for selected-entity and evidence detail;
+- **Zoom** only as an interaction verb, not a product or subsystem name.
+
+### 1.2 Innovation thesis
+
+The defensible innovation is not any one visual effect. Three-dimensional graphs, bloom and
+digital-rain backgrounds are established techniques and must not be marketed as protocol
+innovation. TOS Birdeye becomes meaningfully different when it combines all of the following:
+
+1. **Consensus as an inspectable process** — validator-set weight, actual proof-chain signatures,
+   shard context and threshold progress share the same time axis as blocks and transactions.
+2. **State transition as a causal graph** — messages and contract execution connect persistent
+   identities instead of being flattened into unrelated transaction rows.
+3. **AI execution as a cross-boundary evidence graph** — an on-chain task/escrow/service lifecycle
+   is joined to a remote terminal span only through explicit request/result/receipt commitments.
+4. **Provenance-native UX** — chain-reported, proof-verified, signed, attested, observed, declared,
+   inferred and stale values remain visibly distinct at field level.
+5. **One navigable temporal model** — Consensus, Chain and AI views are projections of one event
+   graph, with camera continuity and deterministic replay rather than separate dashboards.
+
+This combination is the product claim. The project must not claim to be the first 3D blockchain
+explorer or the first WebGPU explorer without a separately maintained market survey. It may claim
+that TOS exposes its own consensus and AI-service evidence model in a way conventional transfer-
+centric explorers do not, once the corresponding features are actually shipped.
+
+### 1.3 Technical feasibility summary
+
+| Capability | Feasibility | Current repository support | Required work / gate |
+|---|---|---|---|
+| recent masterchain blocks | high / available now | JSON-RPC tip, lookup, header and transaction-list handlers | normalize, cache, paginate and test against a live node |
+| block/account lookup | high / available now | address and transaction RPCs return decoded state plus raw BOCs where documented | pin response fixtures and error semantics |
+| current validator weights | high, with backend decoding | config RPC returns a validated config-param BOC | add shared decoder or decoded read-only endpoint; do not decode consensus TLB ad hoc in UI code |
+| per-block signer graph | medium-high | `getMasterchainBlockSignatures` extracts signatures from forward proof links | prove exact block/signature semantics and join `node_id_short` to validator set |
+| true live consensus animation | low with current public API | only later proof-chain signatures are exposed; no gossip/catchain event stream | label as reconstructed participation, or add a separate opt-in telemetry source |
+| transaction/message execution graph | medium | transaction BOC and basic fields exist; full messages/compute phases are not exposed by the examined handler | implement canonical backend decoder/API before AI workflow visualization |
+| AI contract workflow graph | medium | contract sources and schemas exist; only Agent Account and Task Escrow are in the standard `GenFif` build list today | publish code-hash/version registry, build/deploy supported contracts, add fixtures and decoders |
+| remote Edge Terminal map | medium, ecosystem-dependent | architecture and evidence schemas exist; production discovery/receipt feed is not established here | define signed manifest/receipt transport, identity binding, expiry and privacy policy |
+| browser proof verification | medium after node/API work | native proof checks and Emscripten precedent exist | expose complete raw proof packages, define trust-root bootstrap, build/size a narrow WASM target |
+| cinematic graph rendering | high at bounded scale | mature WebGL 2; WebGPU is a viable progressive path | prototype and benchmark representative worst-case graphs on device tiers |
+| full historical search/replay | high but operationally substantial | not supplied by rolling node RPC calls | durable index, checkpointing, reorg model, retention and storage budget |
+
+No red item invalidates the product. It does mean the implementation plan must deliver a truthful
+Consensus + Chain MVP before presenting reconstructed signatures as live consensus, proof-derived
+data as browser-verified, or terminal declarations as executed AI work.
 
 ## 2. Non-Goals (this iteration)
 
@@ -87,6 +150,60 @@ Two things already exist in the repo that touch this problem; neither is a found
    handshake and encryption). There is no WebSocket or HTTP transport for it anywhere in this
    repository, and no browser can speak it directly. It is not a viable integration point for a
    browser frontend without writing and running a custom bridge process — which brings us to §4.
+
+### 3.1 Open-source landscape and competitive position
+
+No surveyed open-source project combines the full target: spatial real-time chain visualization,
+validator/consensus participation, causal contract execution, AI Agent workflows, remote Edge
+Terminal evidence and field-level provenance. Several projects solve important subsets and should
+influence the implementation without becoming the product foundation:
+
+| Project | What it proves / provides | What it does not provide for TOS | Reuse posture |
+|---|---|---|---|
+| [TxStreet](https://github.com/txstreet/txstreet) (MIT frontend) | real-time transaction/mempool animation; Vue + Phaser scene lifecycle; REST + WebSocket event model | validator consensus, proof semantics, contract causality and AI execution; its official backend is not open source | study event-to-animation mapping, aggregation and scene lifecycle; do not fork the renderer or depend on its backend |
+| [Polkadot Telemetry](https://github.com/paritytech/substrate-telemetry) (GPL-3.0) | production-shaped ingestion of node-reported connectivity, block import and finality telemetry | chain explorer, cryptographic authority for operator telemetry, TOS protocol semantics | adopt the separation between opt-in node telemetry and on-chain facts; design a TOS-native schema |
+| [Polkadot Introspector](https://github.com/paritytech/polkadot-introspector) (GPL-3.0) | validator tracking and relay/parachain tracing from on-chain plus telemetry data | public spatial explorer and TOS-compatible consensus decoder | study validator identity joins, tracing and diagnostic outputs; avoid code reuse unless GPL obligations are deliberately accepted |
+| [Beaconcha.in Explorer](https://github.com/gobitfly/eth2-beaconchain-explorer) | mature validator/proposal/attestation indexing and operational history | TOS catchain/shard semantics, spatial causality and AI evidence | use as a requirements reference for validator history, status and indexing depth, not as a codebase |
+| [mempool](https://github.com/mempool/mempool) (AGPL-3.0) | production self-hosted explorer, live mempool/block/fee visualization and scalable deployment practice | validator view, general contract execution and AI workflows | study caching, live-data degradation and operations; do not copy AGPL code into a differently licensed component without review |
+| [Chaingraph](https://github.com/bitauth/chaingraph) (MIT) | multi-node acknowledgement, PostgreSQL/GraphQL indexing, reorganization and observation timeline | frontend visualization, validator consensus and AI semantics | strongest architectural reference for per-source provenance, append-only observations, replay and corrections |
+| [AEVS SDK](https://github.com/fetchai/AEVS-sdk) (Apache-2.0) | signed/hash-chained AI tool-call receipts and public/private/proof-only disclosure modes | blockchain consensus, smart-contract escrow/settlement and physical Edge Terminal evidence | study receipt envelopes, redaction modes and verification UX; define independent TOS receipt compatibility rather than coupling to its hosted backend |
+| [Blockscout](https://github.com/blockscout/blockscout) and [Esplora](https://github.com/Blockstream/esplora) | comprehensive conventional explorer indexing, search and detail workflows | the target visual/causal/consensus/AI model; both are chain-family-specific | requirements references for search, canonical URLs, pagination, API hygiene and operational completeness only |
+
+This survey changes the implementation strategy in four concrete ways:
+
+1. Use TxStreet as evidence that semantic live animation works, while retaining the hybrid
+   constrained three.js design rather than inheriting a 2D/game metaphor.
+2. Model validator telemetry the way Polkadot separates node-submitted operational observations
+   from on-chain state; never merge liveness, geography or client version into consensus truth.
+3. Make Chaingraph-style source attribution and correction history part of the aggregator from
+   the beginning instead of adding multi-node provenance after the single-node MVP schema freezes.
+4. Treat AEVS-style privacy modes as a minimum AI receipt requirement: public metadata,
+   selectively disclosed payloads and hash-only evidence must all remain useful in the explorer.
+
+The recommended public position is:
+
+> **An evidence-native spatial explorer for blockchain consensus and AI execution.**
+
+"Matrix-style" remains the visual direction, not the technical novelty claim. Do not advertise
+"the first 3D blockchain explorer" or imply that no animated transaction explorers exist. A
+competitive claim should describe shipped, testable integration: consensus participation + causal
+chain execution + remote AI evidence + explicit provenance in one replayable graph.
+
+### 3.2 Build, adapt or integrate decisions
+
+- **Build TOS-native**: canonical block/config/message/AI-contract decoder, proof-package API,
+  consensus/chain/AI graph schema, deterministic projector, truth-state model and spatial UI.
+- **Adapt patterns, not code**: live event coalescing, validator telemetry ingestion, historical
+  indexing, receipt redaction and operational dashboards from the projects above.
+- **Integrate by open format where useful**: permit import/verification of compatible signed AI
+  receipts or terminal evidence, but normalize them into TOS provenance and require explicit
+  identity/commitment binding.
+- **Do not adopt as a base**: an EVM/Bitcoin explorer backend, TxStreet's closed backend contract,
+  or a chain-specific validator indexer. Their domain models would create more impedance than they
+  remove.
+- **Perform license review before copying**: MIT/Apache patterns are generally integration-
+  friendly; GPL/AGPL components require an intentional distribution and service-source strategy.
+  This document's links are prior-art references, not authorization to copy code or assets.
 
 ## 4. Data Source: the embedded JSON-RPC server
 
@@ -155,7 +272,7 @@ Parameter handling worth designing around (`json-rpc-policy.md` R10/R11):
 ### 4.2 Data interface: fetching the latest 10 (masterchain) blocks
 
 MVP scope is masterchain blocks only (workchain `-1`); shard-block drill-down is a later-phase
-extension (§10 Phase 5) because TOS uses dynamic sharding and "the last 10 blocks" is ambiguous
+extension (§10 Phase 7) because TOS uses dynamic sharding and "the last 10 blocks" is ambiguous
 once multiple shards are in play.
 
 **Step 1 — find the chain tip.**
@@ -183,26 +300,29 @@ or, once the exact `BlockIdExt` is known from step 1/a prior lookup,
 GET /getBlockHeader?workchain=-1&shard=...&seqno=<seqno>&root_hash=...&file_hash=...
 ```
 Both resolve to `liteServer.blockHeader` (`id`, `mode`, `header_proof`), from which the JSON-RPC
-handler layer (not the raw TL type) extracts the fields an explorer actually wants to show —
-`gen_utime`, previous-block references, key-block flag. These are unpacked from the block's
-merkle proof BOC via `block::gen` TLB inside the handler; the exact JSON field names returned to
-the client should be pinned down by reading `handle_getBlockHeader` in
-`json-rpc-server-blocks.cpp` before frontend work starts (flagged as unverified in §11 — the TL
-schema alone does not expose `gen_utime` as a named field, only the raw proof).
+handler extracts the fields an explorer wants to show. Direct code audit confirms the successful
+decoded response currently contains `global_id`, `version`, split/merge flags,
+`validator_list_hash_short`, `catchain_seqno`, `min_ref_mc_seqno`, `is_key_block`,
+`prev_key_block_seqno`, `start_lt`, `end_lt` and `gen_utime`. It does **not** currently include
+ordinary previous-block references or return `header_proof` on the successful parse path; the raw
+proof is only returned by the handler's parse-failure fallback. That asymmetry must be fixed before
+client-side header verification is possible. The aggregator may use the decoded response for the
+reported-data MVP, but must not label it browser-verified.
 
 **Step 3 — fetch each block's transaction list.**
 ```
 GET /getBlockTransactionsExt?workchain=-1&shard=...&seqno=<seqno>&count=40
 ```
-(`count` defaults to 40 per R10; raise or paginate via the `after` cursor —
-`liteServer.transactionId3{account, lt}` — if a block has more). Per-transaction JSON fields
+(`count` defaults to 40 in this handler and is capped at 256; paginate using `after_lt` plus the
+base64 account value currently named `after_hash` if `incomplete=true`). Per-transaction JSON fields
 (from `getBlockTransactionsExt`/`getTransactions`, `json-rpc-server-transactions.cpp`):
 `@type: "raw.transaction"`, `data` (base64 BOC), `account` (hex), `lt` (string), `utime`, `hash`
-(base64), `fee` (decimal string), `in_msg_hash` (base64, when present). In/out message detail
-(value, src/dest, message body/comment) is **not confirmed** in the current research pass — the
-handler unpacks it via `block::gen::Transaction`/`Message` TLB records, and the exact JSON shape
-needs to be read directly from `json-rpc-server-transactions.cpp` before the frontend contract is
-finalized.
+(base64), `fee` (decimal string), `in_msg_hash` (base64, when present). Direct code audit confirms
+that this endpoint does **not** decode source, destination, message value/body/opcode, out messages,
+description/compute/action phases, exit code or gas. The raw transaction BOC is enough for a
+canonical TOS decoder to recover many of these fields, but it is not itself a transaction-inclusion
+proof. Phase 0 therefore needs a shared decoder in the aggregator or an additive decoded RPC;
+frontend code must not implement a second consensus serialization stack in TypeScript.
 
 **Step 4 (drill-down, not part of the 10-block MVP list, but needed for the account view).**
 ```
@@ -212,6 +332,11 @@ GET /getWalletInformation?address=<addr>
 ```
 Returns balance (nanotomi, decimal string), code/data (base64 BOC), `last_transaction_id`
 (`lt`/`hash`), `block_id`, `sync_utime`, `state` (`uninit`/`active`/`frozen`).
+
+The account handler validates the upstream `shard_proof` and account `proof` inside the node before
+constructing this JSON, but the response does not forward those raw proofs. This is stronger than
+an unvalidated transformation inside the node, yet still means the browser trusts that JSON-RPC
+node and aggregator until a complete proof package is exposed.
 
 This gives a complete, verified path from "open the explorer" to "render the last 10 blocks with
 their transaction counts and let the viewer click into any of them" using only documented,
@@ -299,34 +424,38 @@ off-chain terminal event to an on-chain settlement.
 
 ### 5.1 Motivation
 
-Everything in §4 is fetched through the Aggregator Service (§6), which means the browser is, by
-default, trusting three layers it did not choose: the polled node, the Aggregator's network path
-to that node, and the Aggregator's own code. `getBlockHeader`, `getAccountState`, and the
-block-transaction listing responses all carry a `proof`/`header_proof`/`shard_proof` field
-alongside the data (§4.2) — these are Merkle proofs, and they exist specifically so a client does
-not have to extend that trust. Right now nothing in this design reads them; they are fetched and
-discarded. Verifying them client-side, instead of only displaying the data they authenticate, is
-the difference between "a nice-looking dashboard" and "a client that can prove what it shows you
-is what the chain actually produced" — for a flagship public explorer this is a real
-differentiator, not a decorative feature.
+Everything in §4 is fetched through the Aggregator Service (§6), which means the browser initially
+trusts the polled node, the Aggregator's network path to that node and the Aggregator's own code.
+The underlying lite-server responses contain Merkle/proof data, and the node already validates
+some of it internally, but the present explorer-facing JSON does **not** expose a complete proof
+package for headers, accounts and transaction inclusion (§4.2). Browser verification is therefore
+a gated architectural objective, not an MVP capability that can be wired up without node changes.
 
-### 5.2 This verification logic already exists and is already trusted
+When the API exposes complete packages, verifying them client-side instead of only displaying the
+transformed data will be a real differentiator. The verification contract must define more than a
+boolean function: it needs the claimed object, raw proof BOCs, anchor block IDs, verification time,
+network identity and a trust-root/bootstrap policy. A Merkle proof anchored only to an untrusted
+block ID proves internal consistency, not canonical-chain membership.
+
+### 5.2 Native verification primitives already exist
 
 This is not new cryptography to design. `~/tos/crypto/block/check-proof.h` /
-`check-proof.cpp` implements exactly the functions needed, and they are not experimental — they
-are the same functions `lite-client` itself calls to avoid blindly trusting a liteserver's
-answers (confirmed: `grep -l check_block_header_proof lite-client/ toslib/` matches both
-`lite-client/lite-client.cpp` and `toslib/toslib/ToslibClient.cpp`). Relevant entry points, and
+`check-proof.cpp` implements the core functions needed, and the same primitives are used by
+`lite-client` and Toslib to avoid blindly trusting a liteserver's answers (confirmed:
+`grep -l check_block_header_proof lite-client/ toslib/` matches both
+`lite-client/lite-client.cpp` and `toslib/toslib/ToslibClient.cpp`). Reuse reduces implementation
+drift, but does not waive WASM build, trust-bootstrap, fixture, fuzzing or audit requirements.
+Relevant entry points, and
 how they map onto the §4.2 data flow:
 
 | Function (`crypto/block/check-proof.h`) | Verifies | Matches JSON-RPC field (§4.2) |
 |---|---|---|
 | `check_block_header_proof(root, blkid, ...)` | A block header's proof against its claimed `BlockIdExt` (root_hash/file_hash), optionally recovering `gen_utime`/`gen_lt` | `getBlockHeader` → `header_proof` |
-| `check_shard_proof(blk, shard_blk, shard_proof)` | A shard block's inclusion under a masterchain block | `shards`/shard drill-down (Phase 5) → `shard_proof` |
+| `check_shard_proof(blk, shard_blk, shard_proof)` | A shard block's inclusion under a masterchain block | `shards`/shard drill-down (Phase 7) → `shard_proof` |
 | `check_account_proof(proof, shard_blk, addr, root, ...)` / `AccountState::validate(...)` | An account state against a shard block, recovering `last_trans_lt`/`last_trans_hash`/`gen_utime` | `getAddressInformation` / `getExtendedAddressInformation` → `proof`, `shard_proof` |
 | `Transaction::validate()` / `TransactionList::validate()` / `BlockTransaction::validate()` | A transaction (or list of transactions) against the block it claims to belong to | `getBlockTransactionsExt` → per-tx proof data |
 
-The explorer's job is to expose these four checks to the browser, not to reimplement Merkle/cell
+The explorer's eventual job is to expose these checks to the browser, not to reimplement Merkle/cell
 verification in JavaScript. A hand-written JS reimplementation is exactly the kind of thing that
 silently drifts from the real consensus/serialization rules over time (cell hashing edge cases,
 pruned-branch handling, exotic cells); compiling the real implementation removes that entire
@@ -352,7 +481,7 @@ networking stack, which this design deliberately does not use in the browser (§
 Aggregator/JSON-RPC path is the transport). Pulling in `ExtClient` and friends would bloat the
 WASM payload with a networking stack that can never actually open a connection in a browser
 sandbox anyway. Instead, add a new, narrow Emscripten target — e.g.
-`explorer-verify-emscripten`, modeled directly on `emulator/CMakeLists.txt`'s pattern — that links
+`birdeye-verify-emscripten`, modeled directly on `emulator/CMakeLists.txt`'s pattern — that links
 only `crypto/block/check-proof.*`, `vm/cells`, and the hashing primitives they depend on, and
 exports four functions: `verify_block_header`, `verify_shard_proof`, `verify_account_state`,
 `verify_block_transactions`. Each takes the base64 proof blob(s) plus the claimed `BlockIdExt`/
@@ -376,10 +505,27 @@ can cross-check them against what the Aggregator claimed.
   been (or failed to be) checked — so verification reinforces the visual language instead of
   living in a separate, easy-to-ignore panel.
 - This is also the natural place for the "more CPU-bound, less blockchain-specific" WASM use
-  case: once the graph is rendering hundreds of nodes (Phase 5 shard awareness, Phase 6
-  historical search), the force-directed layout physics step becomes a second, independent
+  case: once the graph is rendering thousands of nodes (Phase 7 shard awareness, Phase 8
+  historical search), bounded local layout physics becomes a second, independent
   candidate for a WASM (e.g. Rust) implementation running in its own worker — unrelated to proof
   verification, but the same "keep heavy compute off the main render thread" principle applies.
+
+### 5.5 Verification readiness gate
+
+Phase 6 may use the label **Chain verified** only after all of these are true:
+
+- header, account and transaction endpoints return versioned, byte-preserving proof packages;
+- the verifier rejects mismatched network, block ID, address, transaction and claimed decoded data;
+- a documented trust-root path anchors the verified block to a configured checkpoint or verified
+  validator-set/signature chain, rather than trusting the aggregator's chosen root;
+- native and WASM implementations pass the same positive, corrupted, truncated, wrong-anchor and
+  cross-network fixtures;
+- verification results include verifier build/version and anchor identity and survive replay;
+- WASM size, initialization latency, peak memory and per-object verification time meet the device
+  budgets in §10.
+
+Before that gate, use **Node validated / Chain reported**: it accurately says that the node's native
+code validated data before the explorer received it without implying independent browser trust.
 
 ## 6. System Architecture
 
@@ -391,8 +537,8 @@ can cross-check them against what the Aggregator claimed.
            │ HTTP: POST /jsonRPC, GET /<method>, /healthcheck, /readyz, /api-info
            ▼
 ┌───────────────────────────────┐
-│  Explorer Aggregator Service   │  (new component — this design)
-│  Node.js/Go, stateless-ish     │
+│  Birdeye Aggregator Service    │  (new component — this design)
+│  Go/Rust/Node.js service       │
 │  - polls getMasterchainInfo    │
 │  - reads validator config +    │
 │    per-block signatures        │
@@ -407,6 +553,8 @@ can cross-check them against what the Aggregator claimed.
 │  - short-TTL cache (R8 says    │
 │    the RPC server won't cache, │
 │    so the aggregator must)     │
+│  - durable event log + graph   │
+│    checkpoints and provenance  │
 │  - fans out over WebSocket/SSE │
 └──────────┬─────────────────────┘
            │ WebSocket (block/tx graph deltas) + REST (initial load, search, account lookup)
@@ -431,7 +579,7 @@ can cross-check them against what the Aggregator claimed.
                                └──────────────► Aggregator
 ```
 
-A dedicated **Explorer Aggregator Service** is necessary — not optional — for two independent
+A dedicated **Birdeye Aggregator Service** is necessary — not optional — for two independent
 reasons documented above: (a) the JSON-RPC server has no push transport (§4.1), so something has
 to poll and turn deltas into a stream; (b) it explicitly does no caching (R8) and is meant to run
 co-located with a single validator, so an explorer hammering it directly with per-viewer polling
@@ -448,6 +596,32 @@ code hashes/opcodes, validator-set snapshots by masterchain block, and expiring 
 observations. It may cache and correlate these records; it may not silently upgrade a declared or
 observed claim into a chain-verified claim.
 
+Calling this component "stateless-ish" is misleading once replay, correction, AI workflow joins
+and historical search exist. Separate its responsibilities:
+
+- **collector**: polls one or more RPC nodes with bounded concurrency and persists raw,
+  content-addressed responses plus source/timing metadata;
+- **canonical decoder**: converts BOCs/config/transactions with shared TOS libraries and emits
+  versioned normalized events; malformed data is quarantined, not partially rendered;
+- **projector**: builds current graph snapshots and deterministic deltas from the append-only event
+  log; projections are rebuildable after decoder upgrades;
+- **enrichment verifier**: isolated egress worker for signed terminal/validator metadata with SSRF,
+  schema, signature, size and expiry enforcement;
+- **stream gateway**: serves snapshots/search and bounded deltas without coupling browser count to
+  validator RPC load.
+
+For the rolling MVP, one durable embedded/relational database plus object/blob storage is enough;
+do not introduce Kafka or a graph database before measured scale requires it. PostgreSQL-style
+tables and indexes fit block/transaction/account lookup, while adjacency tables/materialized
+neighborhoods serve graph expansion. A graph database is an optimization decision, not a product
+prerequisite.
+
+Each stream connection has a byte/event budget. Standard browser `WebSocket` has no application-
+level backpressure contract, so the gateway must coalesce superseded telemetry, bound per-client
+queues and disconnect/resnapshot slow consumers. Chain events and retractions are never silently
+dropped; ephemeral particle/telemetry hints may be coalesced because they are reconstructable from
+the authoritative graph delta.
+
 ## 7. Frontend Visual Architecture
 
 Mira (the sibling multi-agent simulation product; see `~/mira/frontend/src/components/
@@ -461,19 +635,24 @@ simultaneous animated transaction-flow trails) at the frame rates a flagship pro
 reuse the *concept* (force-directed relationship layout) reimplemented on a GPU-accelerated
 stack:
 
-- **Renderer**: WebGL via `three.js`. Use `UnrealBloomPass`-style post-processing for neon glow
-  on blocks/nodes, additive-blended particle systems for transaction "flow" between accounts and
-  blocks, and a subtle depth-of-field/parallax camera for a 3D scene rather than a flat 2D plane.
-- **Layout**: a 3D force-directed graph (e.g. `d3-force-3d` driving positions, or the
-  `3d-force-graph` library which already wraps three.js + d3-force-3d) — blocks as anchor nodes,
-  transactions as edges/particles flowing from source to destination account nodes, new blocks
-  entering the scene with an animated "materialize" transition rather than popping in.
-  Masterchain blocks in a clear chain/backbone layout (reflecting seqno order); their transactions
-  branch outward.
+- **Renderer**: use `three.js` behind a narrow renderer abstraction. WebGL 2 is the compatibility
+  baseline. Prototype `WebGPURenderer` early and enable it progressively when its required
+  post-processing/material path passes visual parity and device tests; it can use WebGPU where
+  available and fall back to a WebGL 2 backend. Do not fork shaders deeply into two permanent
+  implementations. Use bloom carefully, instanced geometry, batched lines and GPU particle
+  buffers; avoid one scene object/material per graph entity.
+- **Layout**: use a **hybrid constrained layout**, not a global unconstrained force simulation.
+  Masterchain time/seqno owns one stable axis; shard ancestry owns lanes/branches; validators use a
+  stable weighted ring or cluster; AI workflows use a layered causal/DAG layout; local account
+  neighborhoods may use bounded 2D/3D forces. This preserves the user's mental map, makes replay
+  deterministic and prevents every new block from moving the whole scene. Force simulation is a
+  local collision/legibility tool, not the source of truth for topology. Transactions/messages
+  render as edges/particles between stable anchors, and new blocks enter with an animated
+  "materialize" transition rather than popping in.
   - See `~/tos/doc/tos.pdf` §3.6 (Sharding) when a future phase needs to visualize shard
     structure rather than the linear masterchain backbone — dynamic shard splits/merges will need
     their own layout treatment; this design does not attempt to solve that for Phase 0–3 (see
-    §10 Phase 5).
+    §10 Phase 7).
 - **Aesthetic direction ("digital rain" / cyberpunk-technical)**: dark background, monospaced/
   technical type for data (matching the whitepaper's own "austere, precise, engineering-forward"
   brand voice — see the persona language style Mira generated for the TOS Network account in an
@@ -486,6 +665,11 @@ stack:
 - **Framework**: Vue 3 (consistent with the rest of the TOS/Mira frontend ecosystem) driving a
   three.js canvas plus conventional DOM overlays for detail panels, search, and address input.
 
+WebGPU exposes both rendering and compute, which may eventually move layout or aggregation kernels
+to the GPU, but that is an optimization after profiling. Proof verification remains in WASM/Web
+Workers: cryptographic verification and GPU rendering have different portability, side-channel,
+testability and failure-isolation requirements.
+
 ### 7.1 Three connected scene modes
 
 The explorer uses one graph and one camera vocabulary, with three semantic projections. Switching
@@ -493,9 +677,11 @@ modes changes emphasis and layout; it does not navigate to an unrelated dashboar
 
 1. **Consensus Matrix (default landing scene).** Validator nodes orbit or cluster around the
    current masterchain backbone. Node volume represents validator weight, not wealth inferred from
-   an unrelated account balance. When a block arrives, real signature signals converge from the
-   participating validators; signed weight and threshold are visible as the convergence completes.
-   Current/previous/next validator sets and shard/catchain assignments can be scrubbed over time.
+   an unrelated account balance. When signature evidence becomes available, reconstructed signals
+   converge from actual signers and expose signed weight and threshold. The scene labels this
+   **proof-derived participation**, including its observation delay; it must not imply that the
+   explorer witnessed live catchain votes. Current/previous/next validator sets and shard/catchain
+   assignments can be scrubbed over time.
 2. **Chain Matrix.** Masterchain blocks form the stable spine, shard blocks branch from it,
    transactions attach to blocks, and messages flow between persistent account/contract nodes.
    Success, bounce, compute failure and aborted/action failure use distinct, accessible visual
@@ -537,7 +723,9 @@ Every selected node and edge shows a provenance badge:
 
 - **Chain verified** — included in chain state and successfully checked against its proof/trust
   root where client verification is available.
-- **Chain reported** — returned by the configured node but not yet independently checked.
+- **Node validated** — native node code checked an upstream proof, but the browser did not receive
+  enough material to repeat the check independently.
+- **Chain reported** — returned by the configured node without an independently checked proof path.
 - **Signed off-chain** — signature and identity binding checked; not a chain execution fact.
 - **Attested/audited/benchmarked/replicated** — evidence method checked under its named policy.
 - **Observed** — measured by the aggregator or derived from receipts, with time and observer.
@@ -555,7 +743,7 @@ to lay out and animate:
 
 ```ts
 type Provenance = {
-  class: "chain_verified" | "chain_reported" | "signed_offchain" |
+  class: "chain_verified" | "node_validated" | "chain_reported" | "signed_offchain" |
          "attested" | "audited" | "benchmarked" | "replicated" |
          "observed" | "declared" | "inferred" | "stale";
   source: string;
@@ -680,7 +868,8 @@ explicit retractions/replacements, not hidden behind a full page reload.
 1. **Phase 0 — contracts and data plumbing**: pin down real block/message/compute JSON shapes;
    aggregator polls the last 10 masterchain blocks; define GraphDelta/provenance contracts and a
    plain diagnostic frontend. Decode current validator config and signatures in this phase even if
-   the first diagnostic UI is textual.
+   the first diagnostic UI is textual. Include source/node identity and correction history in the
+   schema even though the first deployment polls only one node.
 2. **Phase 1 — Consensus + Chain Matrix**: three.js/WebGL scene, masterchain backbone, validator
    weight distribution, real signature convergence, transactions/messages, bloom/particle effects,
    legends and reduced-motion/low-GPU modes.
@@ -694,8 +883,9 @@ explicit retractions/replacements, not hidden behind a full page reload.
    workflow and settlement graph. Unknown versions degrade safely to generic contracts.
 6. **Phase 5 — remote AI Edge layer**: ingest signed, expiring terminal/service manifests and
    public receipts; join them to chain commitments; render capability, admission and evidence
-   levels with strict provenance. Do not require private prompts or outputs.
-7. **Phase 6 — client-side verification (§5)**: new `explorer-verify-emscripten` CMake target,
+   levels with strict provenance. Support public, selectively disclosed and hash-only receipt
+   modes; do not require private prompts or outputs.
+7. **Phase 6 — client-side verification (§5)**: new `birdeye-verify-emscripten` CMake target,
    Web Worker integration and precise chain reported/verified states. Add supported receipt,
    signature and attestation verifiers as separate policies, never as one universal check.
 8. **Phase 7 — shard and network awareness**: shard blocks, masterchain/shard relationships,
@@ -703,16 +893,51 @@ explicit retractions/replacements, not hidden behind a full page reload.
 9. **Phase 8 — optional enrichment and history**: opt-in coarse validator region/ASN/provider,
    terminal performance history, full historical index/search, then token/NFT visualization.
 
+### 10.1 Release gates and measurable acceptance criteria
+
+Phases are capability gates, not calendar promises. Initial budgets must be validated on real TOS
+data and may be tightened, but they must exist before visual implementation expands:
+
+| Gate | Minimum acceptance signal |
+|---|---|
+| data correctness | golden fixtures for pagination, split/merge flags, large integer values, unknown contract versions and malformed BOCs; normalized output is deterministic |
+| freshness | healthy-node p95 tip-to-browser graph delta under 2 seconds beyond the chain/API observation delay; UI always displays block age and upstream status |
+| stream recovery | reconnect from retained cursor without duplication; forced snapshot recovery after cursor expiry; slow-client queue remains bounded |
+| render performance | representative desktop tier sustains p95 frame time ≤ 16.7 ms at the declared normal graph budget; mobile/low-GPU mode sustains p95 ≤ 33.3 ms |
+| interaction | selection/search response under 100 ms for already-loaded entities; stable node positions across identical replay |
+| accessibility | complete keyboard/DOM route to search and details; no information encoded only by color/motion; automatic and interactive non-essential motion can be paused/disabled |
+| provenance | every externally visible field resolves to source, observation time and truth class; expired off-chain data changes state automatically |
+| proof verification | cross-implementation fixtures and trust-root gate in §5.5; no **Chain verified** label before it passes |
+| privacy/security | egress/SSRF tests, hostile manifest/media fixtures, exact-coordinate suppression and bounded graph expansion |
+| product differentiation | one recorded workflow demonstrates validator participation → block → transaction/message → AI contract → terminal receipt/evidence → settlement with source/truth state inspectable at every step; unsupported portions are visibly absent, not simulated |
+
+The team should choose explicit normal and stress graph budgets after Phase 0 captures real block
+distributions. As a starting test matrix, benchmark 2k/10k/50k visible entities and 5k/25k/100k
+edges with particle density capped independently of edge count. Level-of-detail rules collapse old
+transactions into aggregate flows before frame rate degrades; selection expands detail on demand.
+
+### 10.2 Recommended implementation decisions
+
+- Prefer a typed, memory-safe service language with strong TOS decoding support. Go or Rust is a
+  better default for the long-running collector/projector than Node.js if native TOS parsers can be
+  integrated cleanly; choose by a Phase 0 spike, not fashion.
+- Keep the normalized event schema transport-neutral and versioned. JSON is acceptable for initial
+  REST/debugging; use compact binary deltas only after profiling proves serialization/bandwidth is
+  material.
+- Begin with WebGL 2 through three.js and a renderer abstraction; promote WebGPU after parity and
+  device testing. Advanced product semantics matter more than selecting the newest GPU API.
+- Use deterministic server/projector coordinates for the consensus backbone and time axis, with
+  client-local forces only for bounded neighborhoods. This makes screenshots, replay and incident
+  comparison reproducible.
+- Ship the provenance inspector in the first visual release. Adding truth labels after the visual
+  language is established is both harder and less credible.
+
 ## 11. Open Questions / Follow-ups Before Implementation
 
-- **Block header JSON shape**: the exact field names `handle_getBlockHeader` returns for
-  `gen_utime`, previous-block references and key-block flag are not yet confirmed against
-  `json-rpc-server-blocks.cpp` — read that handler directly before finalizing the frontend's
-  block-card data contract.
-- **Transaction message detail**: in/out message value, source/destination address and comment
-  fields are not yet confirmed against `json-rpc-server-transactions.cpp` / the
-  `block::gen::Transaction`/`Message` TLB unpacking — required before the transaction detail
-  panel (Phase 3) can be built against a real contract instead of guesses.
+- **Decoded explorer API**: code audit confirmed the current header fields and confirmed that
+  `getBlockTransactionsExt` omits message endpoints/value/body/opcode and execution phases. Decide
+  whether one versioned `getExplorerBlock`-style read model or shared aggregator decoder becomes
+  the canonical contract; freeze golden response fixtures before frontend implementation.
 - **`~/tos/adnl/` has no dedicated prose documentation** beyond code comments; if the aggregator
   ever needs to speak ADNL directly instead of going through the JSON-RPC server (it shouldn't,
   per §4), this is a gap to fill first.
@@ -720,14 +945,12 @@ explicit retractions/replacements, not hidden behind a full page reload.
   code one — needs an answer before Phase 0 ships anywhere but localhost.
 - **`check-proof.cpp`'s dependency footprint** (what it pulls in from `vm/cells`, hashing, and
   `block::gen` beyond what's declared in `check-proof.h`) has not been traced end-to-end — needed
-  to size the new `explorer-verify-emscripten` WASM target (§5.3) and confirm it can be built
+  to size the new `birdeye-verify-emscripten` WASM target (§5.3) and confirm it can be built
   without dragging in ADNL/networking code.
-- **JSON-RPC does not appear to return raw proof bytes verbatim for every field** — the
-  `header_proof`/`shard_proof`/`proof` fields in the TL schema are raw BOC bytes, but whether the
-  JSON-RPC layer forwards them unmodified (as opposed to only returning the fields it already
-  unpacked from them) needs to be confirmed in `json-rpc-server-blocks.cpp`/
-  `json-rpc-server-accounts.cpp` before §5 can be implemented — if the raw proof is not exposed
-  over JSON-RPC today, exposing it is a small, additive node-side change, not a redesign.
+- **Proof package API**: code audit confirmed that successful decoded block headers omit
+  `header_proof`, account responses omit `shard_proof`/`proof`, and raw transaction BOCs do not
+  provide a complete inclusion proof. Design a byte-preserving, versioned proof-package endpoint
+  plus trust-root bootstrap before beginning the WASM UI integration.
 - **Decoded validator set contract**: confirm whether `getConfigParam`/`getConfigAll` currently
   exposes enough decoded validator member data for public use. If it only returns a config BOC,
   choose whether decoding belongs in the aggregator via shared TOS code or in a new narrow
@@ -767,3 +990,34 @@ explicit retractions/replacements, not hidden behind a full page reload.
 - `doc/tos-trust-tiers.md` — distinctions between local full-node, proof-backed and trusted RPC
   reads; the explorer provenance vocabulary should remain consistent with it.
 - `doc/json-rpc-policy.md` and `doc/openapi.yaml` — public node data and transport contract.
+
+## 13. External Technical Baselines
+
+These references support implementation choices; they do not establish a competitive "first":
+
+- [W3C WebGPU Candidate Recommendation](https://www.w3.org/TR/webgpu/) — standardized GPU
+  rendering/compute model, worker exposure, validation and security considerations. WebGPU is a
+  progressive performance path, not a reason to remove the WebGL 2 fallback.
+- [three.js WebGPURenderer guide](https://threejs.org/manual/en/webgpurenderer) — current renderer
+  architecture and WebGL 2 fallback behavior; also documents material/shader migration constraints
+  that require an early visual-parity spike.
+- [MDN WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) — browser
+  WebSocket behavior and the backpressure distinction from the non-standard/limited
+  `WebSocketStream`; the production protocol must bound queues itself.
+- [W3C Understanding Animation from Interactions](https://www.w3.org/WAI/WCAG21/Understanding/animation-from-interactions.html)
+  — user control and reduced-motion expectations for non-essential animation.
+
+## 14. Review Conclusion
+
+The design is technically feasible if delivered as a sequence of truth-preserving projections,
+not as one large visualization project. The strongest near-term product is a live Consensus +
+Chain Matrix backed by the existing JSON-RPC server, a canonical decoder and reconstructed signer
+evidence. The strongest long-term differentiator is the AI Execution Matrix joining on-chain state
+to signed and expiring remote-execution evidence.
+
+The highest risks are data-contract incompleteness, overclaiming signature liveness or proof
+verification, unstable global force layouts, unbounded browser/stream load, and dependence on a
+remote-terminal ecosystem that is not yet a production data feed. The changes and gates above
+turn each into an explicit engineering dependency. If the team ships provenance, causal replay and
+truthful evidence semantics first, the Matrix aesthetic amplifies a genuinely advanced explorer;
+without them, it would remain only a premium visualization of trusted RPC data.
