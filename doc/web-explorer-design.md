@@ -27,10 +27,18 @@ Concretely, the explorer must, at minimum:
 - Open on a live **Consensus Matrix** showing the current validator set, validator weight/stake
   distribution, recent masterchain participation and block signatures. Consensus should be
   visible as signals converging on a block, not reduced to a validator table.
+- Distinguish the **global validator population** from the protocol-selected current validator
+  set and from the actual signers of one block. The global view may use aggregate/LOD clusters,
+  but it must state its source, snapshot time and whether its count is complete, sampled or a
+  static-demo fixture. A 14-member active set must never visually imply that the whole TOS
+  Network has only 14 validators.
 - Show the most recent masterchain blocks (initial scope: last 10) as they are produced, with
   seqno, shard summary, transaction count and timestamp.
 - Let a viewer drill into a block to see its transactions, and into a transaction to see its
   accounts, value and fees.
+- In every block view, distinguish the block's authoritative `tx_count` from transactions that
+  are actually loaded or sampled in the current client window. A static demo must visibly label
+  sampled rows/particles and must not imply that a 15-transaction fixture is the complete history.
 - Let a viewer look up an account/address and see its balance, state and recent transaction
   history.
 - Render all of the above as an animated, hybrid-constrained relationship graph (blocks → shard
@@ -377,6 +385,28 @@ Geographic presentation should default to coarse region/ASN clusters, never a pr
 location. Unknown location is a valid state. A node with no metadata remains fully represented in
 the consensus graph and must not be visually penalized as though it were offline.
 
+#### 4.3.1 Validator population, active set and signer layers
+
+The data contract and UI must expose three separate scopes:
+
+1. **Global population** — all validators known from the selected authoritative registry/config
+   window, or a clearly labeled sampled/estimated population where a complete enumeration is not
+   available. This layer communicates network scale and coarse distribution; it is not evidence
+   that every node is currently elected, online or signing.
+2. **Active validator set** — the previous/current/next protocol set decoded from masterchain
+   configuration, including set ID, validity interval, member count and total weight. This is the
+   authoritative scope for voting-weight visualization at the selected block.
+3. **Block signers** — the subset joined from the selected block's proof/signature response. This
+   layer alone drives signer convergence, signed-weight and threshold progress.
+
+The default Skyview should show global scale without rendering hundreds or thousands of labels.
+Use deterministic aggregate clusters or a bounded swarm, then expand the selected active set into
+stable inspectable nodes. A scope control must let users distinguish `NETWORK`, `ACTIVE SET` and
+`SIGNERS`. Cluster size maps population count; active-node size maps voting weight. Neither size
+may be reused to imply liveness, wealth or geographic precision. Static fixtures must include
+explicit `population_total`, `population_rendered`, `population_kind` (`complete`, `sampled`, or
+`fixture`) and `generated_at` fields.
+
 ### 4.4 AI workflow and remote Edge Terminal data
 
 TOS AI execution spans an authoritative on-chain state machine and an off-chain execution plane.
@@ -681,11 +711,20 @@ modes changes emphasis and layout; it does not navigate to an unrelated dashboar
    converge from actual signers and expose signed weight and threshold. The scene labels this
    **proof-derived participation**, including its observation delay; it must not imply that the
    explorer witnessed live catchain votes. Current/previous/next validator sets and shard/catchain
-   assignments can be scrubbed over time.
+   assignments can be scrubbed over time. Skyview uses three explicit semantic depths:
+   `NETWORK` shows a bounded global validator swarm or aggregate clusters, `ACTIVE SET` expands
+   protocol-selected members sized by voting weight, and `SIGNERS` filters/emphasizes only proof-
+   joined signers for the selected block. Camera transitions preserve the user's spatial context,
+   and all three scopes display both their source and their member/rendered counts.
 2. **Chain Matrix.** Masterchain blocks form the stable spine, shard blocks branch from it,
    transactions attach to blocks, and messages flow between persistent account/contract nodes.
    Success, bounce, compute failure and aborted/action failure use distinct, accessible visual
    states. Value, fees and compute consumption affect controlled visual channels with legends.
+   The initial retained window contains ten masterchain anchors. Each anchor displays its total
+   `tx_count`, while loaded transaction nodes display an explicit `loaded / total` or `sampled /
+   total` contract. Desktop may expand the full bounded fixture neighborhood; mobile must apply
+   deterministic LOD and disclose what was collapsed. Blocks, transactions, shard blocks,
+   accounts and contracts remain globally searchable even when their labels are collapsed.
 3. **AI Execution Matrix.** The scene expands a recognized AI workflow into principals, Agent
    Account, Task Escrow, Service Actor, remote Edge Terminal, evidence/receipt, verifier/dispute
    and settlement nodes. Animated transitions follow actual contract messages and signed receipt
@@ -905,6 +944,8 @@ data and may be tightened, but they must exist before visual implementation expa
 | stream recovery | reconnect from retained cursor without duplication; forced snapshot recovery after cursor expiry; slow-client queue remains bounded |
 | render performance | representative desktop tier sustains p95 frame time ≤ 16.7 ms at the declared normal graph budget; mobile/low-GPU mode sustains p95 ≤ 33.3 ms |
 | interaction | selection/search response under 100 ms for already-loaded entities; stable node positions across identical replay |
+| validator scope | Network, Active Set and Signers are separately selectable; each reports source, total and rendered count; no active-set count is presented as total network population |
+| chain legibility | initial view exposes 10 masterchain blocks; block `tx_count` and loaded/sampled transaction count are visibly distinct; mobile LOD reports collapsed detail |
 | accessibility | complete keyboard/DOM route to search and details; no information encoded only by color/motion; automatic and interactive non-essential motion can be paused/disabled |
 | provenance | every externally visible field resolves to source, observation time and truth class; expired off-chain data changes state automatically |
 | proof verification | cross-implementation fixtures and trust-root gate in §5.5; no **Chain verified** label before it passes |
