@@ -24,6 +24,9 @@ should not look like a decade-old testnet tool.
 
 Concretely, the explorer must, at minimum:
 
+- Open on a live **Consensus Matrix** showing the current validator set, validator weight/stake
+  distribution, recent masterchain participation and block signatures. Consensus should be
+  visible as signals converging on a block, not reduced to a validator table.
 - Show the most recent masterchain blocks (initial scope: last 10) as they are produced, with
   seqno, shard summary, transaction count and timestamp.
 - Let a viewer drill into a block to see its transactions, and into a transaction to see its
@@ -33,6 +36,19 @@ Concretely, the explorer must, at minimum:
 - Render all of the above as an animated, force-directed relationship graph (blocks → shard
   blocks → transactions → accounts) with continuous motion, particle/glow effects and smooth
   entry animation for new blocks — not a plain list.
+- Recognize TOS AI Actor contracts and render an **AI Execution Matrix**: Agent Account → Task
+  Escrow → Service Actor / remote AI Edge Terminal → result/evidence commitment → verifier or
+  dispute → settlement. A user must be able to distinguish an ordinary value transfer from an
+  AI workflow and inspect the contract execution that caused each state transition.
+- Show remote AI Edge Terminals as live, separately sourced service nodes: advertised capability,
+  model/runtime commitment, region, price, admission state, recent receipt-backed work and claim
+  evidence level. The UI must never present self-declared hardware or off-chain execution as a
+  chain-verified fact.
+
+The product is therefore not "Etherscan with a cyberpunk skin." It is a real-time observability
+surface for three connected systems: consensus, chain state transition, and verifiable AI service
+execution. The cinematic presentation is a semantic instrument: every node, edge, pulse, color
+and particle must correspond to a real datum or an explicitly labeled inference.
 
 ## 2. Non-Goals (this iteration)
 
@@ -46,6 +62,12 @@ Concretely, the explorer must, at minimum:
   operator-facing debug tool. This is a fully separate product.
 - No multi-node/liteserver-pool aggregation at launch — see §9 for the single-node caveat this
   implies.
+- No public exposure of validator or terminal private network coordinates. Validator geography,
+  ASN/provider and terminal region are optional enrichment data, never consensus data; precise
+  IP addresses and stable hardware fingerprints must not be published by default.
+- No claim that a payment, receipt or on-chain hash proves that a particular GPU, model or
+  inference runtime performed semantically correct work. The explorer visualizes the strongest
+  available evidence and its provenance; it does not manufacture an execution guarantee.
 
 ## 3. Why the existing tooling doesn't fit
 
@@ -195,6 +217,84 @@ This gives a complete, verified path from "open the explorer" to "render the las
 their transaction counts and let the viewer click into any of them" using only documented,
 existing RPC surface — no new node-side code is required for v1.
 
+### 4.3 Validator and consensus data
+
+The Consensus Matrix must derive identity, weight and participation from chain data rather than
+from an operator-maintained validator directory:
+
+- `getConfigParam` for masterchain configuration parameters 32–37 (previous/current/next
+  validator sets, as applicable at the selected block). The aggregator must decode and normalize
+  the returned config BOC into validator public key, ADNL identifier, weight, set validity and
+  total-weight fields. If the current JSON-RPC response does not expose the decoded members, add a
+  narrow read-only decoded-validator-set endpoint rather than duplicating TLB parsing in the
+  frontend.
+- `getMasterchainBlockSignatures?seqno=<n>` for actual signer `node_id_short` values on a selected
+  masterchain block. Join them to the selected block's validator set and calculate signed weight,
+  missing weight and threshold progress. A signature edge means "this validator signed evidence
+  included in the returned proof chain"; it must not be invented from validator liveness.
+- `getBlockHeader` for `validator_list_hash_short`, catchain sequence and shard/masterchain context.
+  These fields bind a block to the set expected to participate.
+- `shards`/`getShardBlockProof` in the shard-aware phase for masterchain-to-shard inclusion. The
+  protocol's validator-subset assignment must be recovered from verified config and block context
+  where possible; the UI must not imply that every validator signs every shard block.
+
+Validator "distribution" has several meanings and the API contract must keep them separate:
+
+| View | Source | Authority |
+|---|---|---|
+| voting/stake weight | masterchain config | on-chain, proof-verifiable |
+| block signer participation | masterchain block proof/signatures | on-chain, proof-verifiable |
+| shard/catchain assignment | config + block context | protocol-derived |
+| observed availability/latency | aggregator probes or operator telemetry | off-chain observation |
+| country/region/ASN/provider | opt-in metadata or network enrichment | off-chain claim/inference |
+
+Geographic presentation should default to coarse region/ASN clusters, never a precise validator
+location. Unknown location is a valid state. A node with no metadata remains fully represented in
+the consensus graph and must not be visually penalized as though it were offline.
+
+### 4.4 AI workflow and remote Edge Terminal data
+
+TOS AI execution spans an authoritative on-chain state machine and an off-chain execution plane.
+The explorer joins them by stable identifiers and commitments; it must never collapse them into
+one undifferentiated "verified" status.
+
+**On-chain sources** are Agent Account, Task Escrow, Service Actor, Capability Registry and
+Dispute contract state and messages, documented in `ai-actors.md`, `ai-actor-message-catalog.md`
+and `ai-workflow-schemas.md`. The aggregator should identify these contracts by known code hash
+and version, decode their supported opcodes/get-methods, and reconstruct:
+
+```text
+TaskRequest -> TaskAccept -> TaskProgress? -> TaskResult
+            -> TaskSettle | TaskDispute -> ruling -> settlement/refund
+```
+
+Relevant values include creator/agent/service/verifier addresses, budget, deadline, status,
+request/result/evidence hashes, service-call request/response hashes, proof-scheme commitment and
+payouts. Contract recognition must be versioned. An unknown code hash remains a generic smart
+contract; it must not be guessed to be an AI contract from address labels or message text.
+
+**Off-chain sources** are opt-in AI service/terminal manifests, ARD catalogs, live signed health
+and capacity documents, quotes, runtime attestations, benchmark evidence and signed usage/result
+receipts described by `ai-edge-computing-terminal-architecture.md`. These may provide:
+
+- terminal/service identity and its binding to a Service Actor or TOS domain;
+- service profile and exact model/artifact/runtime commitments;
+- coarse region, ingress transport and short-expiry availability/admission state;
+- declared resources, price units, queue/load class and supported evidence level;
+- request, output, usage and receipt hashes that can be joined to an on-chain service call;
+- Declared, Observed, Benchmarked, Audited, Attested or Replicated evidence per claim.
+
+The aggregator may fetch public manifests and evidence documents, but it must retain the raw
+signed envelope, retrieval time, expiry, signer and content hash. Rapid capacity data must expire
+rather than lingering as false "online" state. Prompts, model outputs, private tool transcripts,
+precise host fingerprints and administrative endpoints are not explorer data. Raw artifacts are
+only fetched or displayed when explicitly public and content-addressed; otherwise the explorer
+shows commitments and verification results only.
+
+The minimum correlation key is a tuple of chain/network, contract address, task or call identifier,
+and request/result/receipt hash. A display name, URL or model name is never sufficient to join an
+off-chain terminal event to an on-chain settlement.
+
 ## 5. Client-Side Proof Verification via WebAssembly
 
 ### 5.1 Motivation
@@ -294,8 +394,14 @@ can cross-check them against what the Aggregator claimed.
 │  Explorer Aggregator Service   │  (new component — this design)
 │  Node.js/Go, stateless-ish     │
 │  - polls getMasterchainInfo    │
+│  - reads validator config +    │
+│    per-block signatures        │
 │  - diffs tip seqno, fetches    │
 │    new block header + txs      │
+│  - recognizes versioned AI     │
+│    contracts and workflows     │
+│  - verifies signed, expiring   │
+│    terminal manifests/receipts │
 │  - normalizes to explorer's    │
 │    graph schema (§8)           │
 │  - short-TTL cache (R8 says    │
@@ -308,14 +414,21 @@ can cross-check them against what the Aggregator claimed.
 ┌───────────────────────────────┐
 │  Web Frontend                  │  (new component — this design)
 │  WebGL/three.js render layer   │
-│  - animated force-directed     │
-│    graph of blocks/txs/accounts│
+│  - Consensus / Chain / AI      │
+│    Matrix scene modes          │
 │  - bloom/particle/glow effects │
 │  - block/tx/account detail     │
 │    panels on click             │
 │  - Web Worker: proof           │
 │    verification WASM (§5)      │
 └─────────────────────────────────┘
+
+       optional, explicitly non-authoritative enrichment inputs
+┌──────────────────────────────────────────────────────────────────┐
+│ signed terminal manifests + receipts │ ARD catalogs │ coarse     │
+│ validator metadata/telemetry          │ evidence/attestations     │
+└──────────────────────────────┬───────────────────────────────────┘
+                               └──────────────► Aggregator
 ```
 
 A dedicated **Explorer Aggregator Service** is necessary — not optional — for two independent
@@ -328,6 +441,12 @@ and fans out to any number of connected browsers.
 This also gives a natural place to add multi-node redundancy later (poll two or three
 independently operated nodes' JSON-RPC endpoints and reconcile) without touching the frontend or
 the node itself, addressing the single-liteserver-view caveat from R6.
+
+The aggregator is also a semantic indexer, but not a new source of truth. It maintains a rolling
+graph projection with provenance on every field, a versioned registry of recognized AI contract
+code hashes/opcodes, validator-set snapshots by masterchain block, and expiring off-chain terminal
+observations. It may cache and correlate these records; it may not silently upgrade a declared or
+observed claim into a chain-verified claim.
 
 ## 7. Frontend Visual Architecture
 
@@ -367,21 +486,141 @@ stack:
 - **Framework**: Vue 3 (consistent with the rest of the TOS/Mira frontend ecosystem) driving a
   three.js canvas plus conventional DOM overlays for detail panels, search, and address input.
 
+### 7.1 Three connected scene modes
+
+The explorer uses one graph and one camera vocabulary, with three semantic projections. Switching
+modes changes emphasis and layout; it does not navigate to an unrelated dashboard.
+
+1. **Consensus Matrix (default landing scene).** Validator nodes orbit or cluster around the
+   current masterchain backbone. Node volume represents validator weight, not wealth inferred from
+   an unrelated account balance. When a block arrives, real signature signals converge from the
+   participating validators; signed weight and threshold are visible as the convergence completes.
+   Current/previous/next validator sets and shard/catchain assignments can be scrubbed over time.
+2. **Chain Matrix.** Masterchain blocks form the stable spine, shard blocks branch from it,
+   transactions attach to blocks, and messages flow between persistent account/contract nodes.
+   Success, bounce, compute failure and aborted/action failure use distinct, accessible visual
+   states. Value, fees and compute consumption affect controlled visual channels with legends.
+3. **AI Execution Matrix.** The scene expands a recognized AI workflow into principals, Agent
+   Account, Task Escrow, Service Actor, remote Edge Terminal, evidence/receipt, verifier/dispute
+   and settlement nodes. Animated transitions follow actual contract messages and signed receipt
+   events. Off-chain execution spans are visually distinct from on-chain messages but connected by
+   their verified hashes.
+
+A global search accepts block ID/seqno, transaction hash, address, validator identifier, task or
+service contract, terminal identity and public receipt hash. Search should move the camera to the
+entity and reveal its upstream/downstream neighborhood rather than replacing the graph with a
+static result page. A timeline scrubber freezes the live stream and reconstructs the graph at a
+selected masterchain block or AI workflow event.
+
+### 7.2 Visual grammar and truth states
+
+The Matrix aesthetic must be learnable. Initial recommended grammar:
+
+| Entity/event | Visual role |
+|---|---|
+| masterchain block | bright, stable backbone anchor |
+| shard block | smaller branch anchor linked to its masterchain inclusion |
+| validator | persistent identity node sized by selected-set weight |
+| block signature | converging pulse from validator to block |
+| transaction/message | directional particle trail; selection exposes exact values |
+| account/contract | persistent endpoint; recognized contract type changes glyph, not truth level |
+| AI Edge Terminal | off-chain service node outside the chain plane |
+| receipt/evidence commitment | bridge node joining terminal span to contract state |
+| dispute/failure | interrupted or branching path, never merely a red decorative flash |
+
+Color alone must not encode status; shape, motion and labels must remain usable with reduced motion
+and common forms of color-vision deficiency. The UI must provide reduced-motion and low-GPU modes,
+cap particle counts, pause background animation when hidden, and fall back to a 2D/canvas or DOM
+inspection view without losing data.
+
+Every selected node and edge shows a provenance badge:
+
+- **Chain verified** — included in chain state and successfully checked against its proof/trust
+  root where client verification is available.
+- **Chain reported** — returned by the configured node but not yet independently checked.
+- **Signed off-chain** — signature and identity binding checked; not a chain execution fact.
+- **Attested/audited/benchmarked/replicated** — evidence method checked under its named policy.
+- **Observed** — measured by the aggregator or derived from receipts, with time and observer.
+- **Declared** — self-reported by a validator/terminal operator.
+- **Inferred** — e.g. ASN or coarse geography derived from network data, with source and confidence.
+- **Expired/stale** — formerly valid short-lived data that is no longer current.
+
+No single green checkmark may combine these meanings. Detail copy must state what was verified,
+by whom, against which commitment or trust root, and at what time.
+
 ## 8. Data Model (Aggregator → Frontend graph schema)
 
 The aggregator normalizes RPC responses into a single graph shape the frontend already knows how
 to lay out and animate:
 
 ```ts
+type Provenance = {
+  class: "chain_verified" | "chain_reported" | "signed_offchain" |
+         "attested" | "audited" | "benchmarked" | "replicated" |
+         "observed" | "declared" | "inferred" | "stale";
+  source: string;
+  observed_at: number;
+  expires_at?: number;
+  evidence_hash?: string;
+  details?: string;
+};
+
 type ExplorerNode =
   | { kind: "block"; id: string /* workchain:shard:seqno */; seqno: number; gen_utime: number;
-      tx_count: number; workchain: number; shard: string }
+      tx_count: number; workchain: number; shard: string; validator_set_hash?: number;
+      catchain_seqno?: number; provenance: Provenance }
+  | { kind: "validator"; id: string /* node_id_short or public-key-derived ID */;
+      public_key?: string; adnl_id?: string; weight: string; weight_fraction: number;
+      set: "previous" | "current" | "next"; provenance: Provenance }
   | { kind: "account"; id: string /* address */; balance: string; state: string }
-  | { kind: "transaction"; id: string /* hash */; lt: string; fee: string; utime: number };
+  | { kind: "contract"; id: string /* address */; code_hash: string;
+      contract_type: "agent_account" | "task_escrow" | "service_actor" |
+                     "capability_registry" | "dispute" | "unknown";
+      contract_version?: string; provenance: Provenance }
+  | { kind: "transaction"; id: string /* hash */; lt: string; fee: string; utime: number;
+      compute_exit_code?: number; gas_used?: string; aborted?: boolean; provenance: Provenance }
+  | { kind: "ai_task"; id: string; contract: string; status: string; creator: string;
+      agent?: string; budget?: string; deadline?: number; result_hash?: string;
+      evidence_hash?: string; provenance: Provenance }
+  | { kind: "ai_service"; id: string; contract?: string; service_profile?: string;
+      pricing_hash?: string; proof_scheme_hash?: string; provenance: Provenance }
+  | { kind: "edge_terminal"; id: string /* revocable terminal identity */; service_id?: string;
+      region?: string; admission?: "available" | "busy" | "draining" | "offline" | "unknown";
+      capabilities: string[]; expires_at: number; provenance: Provenance }
+  | { kind: "ai_receipt"; id: string /* receipt/content hash */; request_hash: string;
+      output_hash?: string; usage_hash?: string; evidence_level: string;
+      provenance: Provenance }
+  | { kind: "dispute"; id: string; contract: string; status: string;
+      ruling_hash?: string; provenance: Provenance };
 
 type ExplorerEdge =
   | { kind: "contains"; from: string /* block id */; to: string /* tx id */ }
-  | { kind: "touches"; from: string /* tx id */; to: string /* account id */; direction: "in" | "out" };
+  | { kind: "precedes"; from: string /* block id */; to: string /* block id */ }
+  | { kind: "signed"; from: string /* validator */; to: string /* block */;
+      signature: string; signed_weight: string; provenance: Provenance }
+  | { kind: "assigned_to"; from: string /* validator */; to: string /* shard/catchain */;
+      provenance: Provenance }
+  | { kind: "touches"; from: string /* tx id */; to: string /* account id */;
+      direction: "in" | "out" }
+  | { kind: "message"; from: string; to: string; tx: string; value?: string; opcode?: number;
+      bounced?: boolean; provenance: Provenance }
+  | { kind: "workflow"; from: string; to: string;
+      event: "request" | "accept" | "service_call" | "result" | "verify" |
+             "dispute" | "settle" | "refund"; tx?: string; provenance: Provenance }
+  | { kind: "executes_on"; from: string /* service call/task */; to: string /* terminal */;
+      request_hash: string; provenance: Provenance }
+  | { kind: "commits"; from: string /* chain event */; to: string /* receipt/evidence */;
+      hash: string; provenance: Provenance };
+
+type GraphDelta = {
+  cursor: string;              // monotonically ordered stream cursor, not necessarily chain seqno
+  chain_tip: string;
+  generated_at: number;
+  upsert_nodes: ExplorerNode[];
+  upsert_edges: ExplorerEdge[];
+  remove_node_ids: string[];   // expiry/window eviction, not chain deletion
+  remove_edge_ids: string[];
+};
 ```
 
 New blocks/transactions/accounts are pushed as additive graph deltas over the WebSocket channel;
@@ -389,6 +628,17 @@ the frontend force layout absorbs new nodes without discarding existing position
 same "delta, not full reload" principle the aggregator needs internally to avoid re-fetching the
 whole 10-block window on every poll tick — track the last-seen tip `seqno` and only fetch blocks
 above it).
+
+All monetary quantities, weights and logical times remain decimal strings across the API boundary;
+JavaScript `number` must not silently truncate 64/128-bit values. Graph entity IDs are namespaced
+by network and kind to prevent a transaction hash, receipt hash and terminal identity from
+colliding. Off-chain fields require field-level provenance when one node mixes sources (for
+example, a chain-bound Service Actor with an operator-declared display name and observed latency).
+
+The stream protocol needs replay and resynchronization semantics: the frontend reconnects with its
+last cursor, the aggregator replays retained deltas when possible, and otherwise returns a compact
+snapshot plus a new cursor. Reorganizations or a corrected upstream view are represented as
+explicit retractions/replacements, not hidden behind a full page reload.
 
 ## 9. Security & Operational Notes
 
@@ -409,27 +659,49 @@ above it).
   caveat above: it proves the Aggregator did not alter what the polled node returned, not that the
   polled node itself is honest or in consensus with the network. Say exactly that in the UI copy
   next to the verified-state indicator — do not oversell it as full light-client trustlessness.
+- Treat terminal manifests, ARD records, evidence bundles and validator metadata as untrusted input
+  even when signed. Enforce response size/content-type/time limits, schema validation, signature
+  verification, URL allow/deny policy and outbound SSRF protections in a dedicated fetch worker.
+  Never render fetched HTML or execute terminal-provided script/shader/3D assets.
+- Do not proxy private terminal administrative APIs, model-provider credentials or validator
+  control interfaces through the explorer. Public discovery and health endpoints are separate from
+  control planes by design.
+- Coarse geography and provider/ASN enrichment create validator privacy and targeting risk. Make
+  them opt-in where possible, retain source/collection time, avoid precise coordinates, and provide
+  a deployment switch that disables all network enrichment.
+- Public AI payloads may contain prompts, outputs, personal information or malicious content. The
+  default UI shows hashes and bounded metadata, not raw payloads. Any opt-in artifact viewer must
+  be sandboxed, size-limited and safe for hostile media.
+- Search, graph-neighborhood expansion and WebSocket connections need per-client quotas. A single
+  query must not recursively expand an unbounded account or AI workflow graph.
 
 ## 10. Phased Delivery
 
-1. **Phase 0 — data plumbing**: aggregator service polling `getMasterchainInfo` +
-   `getBlockHeader` + `getBlockTransactionsExt` for the last 10 masterchain blocks; plain
-   (non-cinematic) frontend list to validate the data path end-to-end.
-2. **Phase 1 — the real visual layer**: three.js/WebGL force-directed graph, bloom/particle
-   effects, animated block arrival, replacing the plain list.
-3. **Phase 2 — live streaming**: WebSocket delta push from aggregator, continuous animation as
-   new blocks land, no manual refresh.
-4. **Phase 3 — drill-down**: transaction detail panel (needs the in/out-message field audit from
-   §4.2 step 3), account lookup/search bar using `getAddressInformation`/
-   `getExtendedAddressInformation`.
-5. **Phase 4 — client-side verification (§5)**: new `explorer-verify-emscripten` CMake target
-   wrapping `crypto/block/check-proof.*`; Web Worker integration; verified/unverified visual state
-   on block, account and transaction nodes.
-6. **Phase 5 — shard awareness**: extend beyond masterchain-only to render shard blocks
-   (`shards`/`getAllShardsInfo`) and the masterchain/shard relationship, `check_shard_proof`
-   verification (§5.2), and multi-node polling for redundancy (§6).
-7. **Phase 6 (stretch)**: token/NFT visualization (`getTokenData`, `getAccountJettons`,
-   `getAccountNfts`), full historical search/index.
+1. **Phase 0 — contracts and data plumbing**: pin down real block/message/compute JSON shapes;
+   aggregator polls the last 10 masterchain blocks; define GraphDelta/provenance contracts and a
+   plain diagnostic frontend. Decode current validator config and signatures in this phase even if
+   the first diagnostic UI is textual.
+2. **Phase 1 — Consensus + Chain Matrix**: three.js/WebGL scene, masterchain backbone, validator
+   weight distribution, real signature convergence, transactions/messages, bloom/particle effects,
+   legends and reduced-motion/low-GPU modes.
+3. **Phase 2 — live streaming and time**: WebSocket delta/replay protocol, continuous block
+   arrival, reconnect/resync behavior and timeline scrubbing over the retained window.
+4. **Phase 3 — chain drill-down**: transaction/message/TVM execution panel, account and global
+   lookup, raw identifiers and value/fee/compute fields. Complete the in/out-message audit from
+   §4.2 before committing the public schema.
+5. **Phase 4 — AI contract semantics**: versioned code-hash/opcode registry; decode Agent Account,
+   Task Escrow, Service Actor, Capability Registry and Dispute state; reconstruct the on-chain AI
+   workflow and settlement graph. Unknown versions degrade safely to generic contracts.
+6. **Phase 5 — remote AI Edge layer**: ingest signed, expiring terminal/service manifests and
+   public receipts; join them to chain commitments; render capability, admission and evidence
+   levels with strict provenance. Do not require private prompts or outputs.
+7. **Phase 6 — client-side verification (§5)**: new `explorer-verify-emscripten` CMake target,
+   Web Worker integration and precise chain reported/verified states. Add supported receipt,
+   signature and attestation verifiers as separate policies, never as one universal check.
+8. **Phase 7 — shard and network awareness**: shard blocks, masterchain/shard relationships,
+   validator subset views, shard proofs, multi-node polling and upstream disagreement display.
+9. **Phase 8 — optional enrichment and history**: opt-in coarse validator region/ASN/provider,
+   terminal performance history, full historical index/search, then token/NFT visualization.
 
 ## 11. Open Questions / Follow-ups Before Implementation
 
@@ -456,3 +728,42 @@ above it).
   unpacked from them) needs to be confirmed in `json-rpc-server-blocks.cpp`/
   `json-rpc-server-accounts.cpp` before §5 can be implemented — if the raw proof is not exposed
   over JSON-RPC today, exposing it is a small, additive node-side change, not a redesign.
+- **Decoded validator set contract**: confirm whether `getConfigParam`/`getConfigAll` currently
+  exposes enough decoded validator member data for public use. If it only returns a config BOC,
+  choose whether decoding belongs in the aggregator via shared TOS code or in a new narrow
+  read-only JSON-RPC method. Also confirm the exact join from validator public key/ADNL ID to
+  `node_id_short` returned by `getMasterchainBlockSignatures`.
+- **Signature semantics and timing**: document exactly which proof-link destination each returned
+  signature authenticates and whether the endpoint can transiently return an incomplete set near
+  the tip. The animation must show a completed historical signature set, not pretend to be a live
+  gossip capture when the source is a later block proof.
+- **AI contract registry ownership**: define the canonical, signed mapping of network + code hash
+  to contract family/version/opcode decoder. The explorer must be upgradeable without relabeling
+  old blocks under a new ABI.
+- **AI execution trace availability**: audit transaction JSON for inbound/outbound messages,
+  opcodes, compute/action phases, exit codes, gas and state-change evidence. Decide which missing
+  decoded fields warrant additive node-side read endpoints versus aggregator-side BOC decoding.
+- **Terminal identity binding and discovery**: specify the production path from Service Actor or
+  Capability Registry commitment to signed terminal manifest/ARD record, including key rotation,
+  revocation, expiry and TOS domain binding. A public URL alone is not an identity.
+- **Receipt transport and privacy**: decide where public receipt/evidence bundles are retrieved,
+  their retention policy and maximum size, and which fields are safe to expose. Hash-only
+  workflows must remain useful in the UI when no preimage is public.
+- **Validator geography policy**: decide whether the production explorer accepts only opt-in
+  operator metadata or also performs IP/ASN inference. Document granularity, retention, takedown
+  and anti-targeting controls before enabling a map.
+- **Performance budget**: establish device tiers and measurable budgets for initial JS/WASM bytes,
+  time-to-first-meaningful-graph, steady-state frame time, node/edge/particle counts, worker CPU and
+  memory. The Matrix must remain an explorer on ordinary hardware, not only on a workstation GPU.
+
+## 12. Related Design Sources
+
+- `doc/ai-actors.md` — authoritative actor roles, task lifecycle and chain/evidence boundary.
+- `doc/ai-actor-message-catalog.md` — stable AI workflow message categories and required fields.
+- `doc/ai-workflow-schemas.md` — canonical result, evidence, service-call and receipt commitments.
+- `doc/ai-edge-computing-terminal-architecture.md` — remote terminal capability, admission,
+  evidence levels, privacy and signed receipt model.
+- `doc/ai-inference-sharing-tos-domains.md` — TOS domain to AI service/terminal binding.
+- `doc/tos-trust-tiers.md` — distinctions between local full-node, proof-backed and trusted RPC
+  reads; the explorer provenance vocabulary should remain consistent with it.
+- `doc/json-rpc-policy.md` and `doc/openapi.yaml` — public node data and transport contract.
