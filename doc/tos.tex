@@ -64,6 +64,14 @@ chain where independently operated parties require a tamper-resistant source of 
 
 \section{Executive Summary}
 
+TOS Network's long-term objective is to function as the Internet Layer for Autonomous
+Agents: a shared identity, discovery, authorization and settlement substrate that lets
+independently owned agents and AI-capable devices find one another, establish trust,
+exchange capabilities and settle value, in the same way TCP/IP and DNS let independently
+owned computers interoperate without a single owner. The remainder of this paper describes
+the concrete protocol and product work required to reach that objective, and is explicit
+about what is already implemented versus planned.
+
 AI is moving from centralized applications toward autonomous software and independently
 operated model services. At the same time, inference is moving toward cameras, robots,
 vehicles, factories, stores and homes where latency, privacy, intermittent connectivity and
@@ -128,6 +136,108 @@ reach into the trillions of dollars over time. TOS Network's design goal is to p
 identity, authorization, evidence and settlement infrastructure this layer requires. This is a
 structural thesis about where machine-native demand could go, not a claim about currently
 realized transaction volume, protocol revenue or token appreciation.
+
+\subsection{Model Scale and the Coming Deployment Shift}
+\label{sec:model-scale-shift}
+
+A useful way to read where machine-native demand will concentrate is to cross model
+capability against where that model actually runs. Provider roadmaps and open-weight
+release patterns point toward a rough correspondence between model scale, deployment
+location and workload:
+
+\begin{longtable}{p{0.16\textwidth}p{0.32\textwidth}p{0.34\textwidth}}
+\toprule
+Model scale & Primary deployment location & Typical workload \\
+\midrule
+\endhead
+2B--4B & Phones, IoT devices, single-board computers & Voice, control loops,
+sensor interpretation \\
+8B--14B & Edge nodes: workstations, AI PCs, Jetson-class appliances & Autonomous
+agents, coding assistance, office and knowledge work, retrieval-augmented
+generation, tool calling \\
+30B--70B & Enterprise servers & Enterprise knowledge bases, complex multi-step
+reasoning \\
+200B+ & Cloud data centers & Frontier research, large-scale training \\
+\bottomrule
+\end{longtable}
+
+Under this trajectory, the 8B--14B band is the most likely candidate to become the
+dominant model scale for edge AI over the next several years: it is small enough to run
+on owner-controlled hardware with acceptable latency and cost, and capable enough to
+carry agentic workloads such as tool calling, coding and retrieval-augmented reasoning
+that previously required a frontier-scale model.
+
+Several factors reinforce this band as a practical sweet spot rather than an arbitrary
+midpoint. Local execution keeps round-trip latency low and avoids dependence on external
+network availability, which matters for interactive agent loops and tool-calling chains.
+Running on owner-controlled hardware keeps prompts, retrieved context and tool outputs
+on-premises by default, which is materially different from a privacy posture that depends
+on a remote operator's data-handling policy. A model in this band can run continuously
+within consumer or small-business power and cooling budgets, and it can keep serving
+previously approved workloads through a network outage. None of this implies that an
+8B--14B model matches frontier-scale reasoning quality; it implies that, for the volume of
+narrow, tool-mediated and retrieval-grounded tasks autonomous agents generate, this band is
+frequently sufficient, and materially cheaper and faster than routing every request to a
+frontier model.
+
+This reshapes what "the Internet Layer for Autonomous Agents" actually connects. The
+counterparties TOS Network coordinates at scale are less likely to be a comparatively
+small population of data-center accelerators, and more likely to be a much larger
+population of owner-operated edge nodes running 8B--14B class models. Because these
+nodes combine local inference with local storage, tool invocation and direct access to
+local data, they are complementary to centralized cloud compute rather than a
+substitute for it: cloud data centers remain the venue for frontier training and the
+heaviest reasoning workloads, while edge nodes carry the high-frequency, latency- and
+privacy-sensitive agent work. This is a structural thesis about where deployable model
+capacity is heading, not a commitment to specific hardware targets or a claim about the
+number of nodes currently connected to the network.
+
+\subsection{From Cloud-Centric AI to an Agent Mesh}
+\label{sec:agent-mesh}
+
+The deployment shift described above changes the shape of the network TOS coordinates, not
+merely its scale. A cloud-centric pattern routes every request from a user directly to a
+centralized frontier model:
+
+\begin{center}
+\texttt{User -> Cloud Frontier Model}
+\end{center}
+
+An edge-capable pattern instead resolves a request through progressively broader compute
+tiers, escalating outward only when a nearer tier cannot satisfy the required capability,
+latency, privacy or evidence policy:
+
+\begin{center}
+\texttt{User -> Local AI Agent -> Nearby Edge AI Node -> Regional AI Infrastructure ->
+Cloud Frontier Model}
+\end{center}
+
+These are compute tiers defined by device capability and network locality, not the five
+protocol layers introduced earlier in this section: TOS Core, the Service Protocol, a
+terminal, ARD discovery and a vertical profile can each be exercised at any tier, from a
+phone running a local agent to a data-center cluster running a frontier model. Mobile AI
+(phones, wearables and other constrained devices), Edge AI (owner-operated workstations,
+AI PCs and Jetson-class appliances), Regional AI (enterprise and aggregation-tier servers)
+and Cloud Frontier AI (large data-center deployments) correspond to the model-scale bands
+in the table above.
+
+A single agent-mediated task can touch more than one tier. A local agent may handle routine
+tool calls and context assembly itself, delegate a specialized sub-task to a nearby edge
+node with a particular model or tool integration, and escalate only the narrow portion of
+the task that requires frontier-scale reasoning. Section~\ref{sec:mesh-routing} describes
+how the service protocol resolves a request across tiers without granting a search result
+execution or spending authority.
+
+TOS Network does not select which tier is correct for a given request, and it is neutral to
+which foundation model, open-weight release or proprietary provider a node runs. Its
+function is the same at every tier: identity, capability description, authenticated
+discovery, quoting, bounded authorization, evidence and settlement.
+
+As capable open-weight models proliferate across consumer and small-business hardware, the
+long-run edge-tier device population could plausibly reach into the hundreds of millions to
+billions of devices. This is a structural expectation about where deployable compute is
+heading, not a claim about the number of devices currently connected to the network or a
+specific forecast date.
 
 \section{Design Principles}
 
@@ -529,6 +639,35 @@ private Registry with an explicit \texttt{.tos} resolution policy. ARD publisher
 \texttt{name.tos}, ADNL, account and manifest commitments remain distinct verifiable
 bindings.
 
+\subsection{Locality-First Routing Across Mesh Tiers}
+\label{sec:mesh-routing}
+
+The mesh tiers introduced in Section~\ref{sec:agent-mesh} are realized through the
+discovery and invocation primitives described earlier in this section, not through a
+separate escalation protocol. A client or agent runtime performing an ARD search can rank
+candidate resources by measured or declared latency, region and privacy policy in addition
+to price and capability, and a federated ARD Registry can apply the same ranking when
+resolving a query across upstream catalogs. Preferring the nearest capable node before
+considering a broader tier is a client- or registry-side policy expressed through existing
+search, ranking and federation behavior, not a new consensus primitive.
+
+A single task may fan out across tiers before it settles. An agent running locally may
+resolve routine sub-tasks itself, issue independent quotes to one or more nearby specialized
+edge nodes for narrow capabilities such as retrieval, transcription or a domain-specific
+tool, and reserve a regional- or frontier-tier service call for the portion of the task that
+requires it:
+
+\begin{center}
+\texttt{User -> Nearest Edge Agent -> Nearby Specialized Agents -> Regional Compute ->
+Cloud Frontier Model}
+\end{center}
+
+Each hop in this pattern is an ordinary TOS-authorized invocation: a resolved descriptor, a
+live quote, a bounded payment authorization and a signed receipt. ARD discovery lets an
+agent find a candidate at any tier; it does not grant that candidate execution, spending or
+settlement authority, and a locality-first search ranking is evidence for the requester's
+own admission and payment decision, not a substitute for it.
+
 \section{AI Edge Computing Terminals}
 
 \subsection{Terminal as the Product Unit}
@@ -543,6 +682,23 @@ speech recognition or video analysis. A capability states the exact model or tas
 schemas, limits, privacy and region policy, evidence level, price and expiry. Hardware model
 numbers and vendor performance claims are evidence used by the scheduler; the consumer does
 not receive raw access to the device.
+
+Consistent with the model-scale trend described in Section~\ref{sec:model-scale-shift}, the terminal product is
+designed first for the 8B--14B parameter class: the band most compatible with
+owner-operated hardware such as workstations, AI PCs and Jetson-class appliances, and the
+band most likely to carry agentic, coding, RAG and tool-calling workloads at the edge. The
+terminal architecture does not require this band and does not exclude smaller or larger
+models where a runtime adapter and resource envelope support them.
+
+The set of eligible terminal hardware is intentionally broad within that class: a Mac
+mini, MacBook, gaming PC, home server, NAS appliance or small industrial workstation can
+register under the same Capability Registry and Service Actor primitives described earlier
+in this paper as a rack-mounted GPU server, provided it passes the same admission,
+isolation and evidence requirements described in this section. What a terminal contributes
+is not limited to raw inference: a Service Actor entry can equally represent local storage,
+request routing to another known-good node, retrieval or context-memory services built on
+stored state, or a narrowly scoped tool integration. The product requirement is a bounded,
+evidenced, receipted capability, not a particular hardware class or deployment scale.
 
 \subsection{Runtime and Executor Isolation}
 
@@ -1221,15 +1377,28 @@ privacy and evidence policy, at what price, and how the result is receipted and 
 Physical terminals extend that model into real-world sites while preserving offline
 operation, deterministic local priority and independent safety authority.
 
+This positioning is deliberately independent of foundation-model competition. TOS Network
+does not train models and does not need to be preferred over any other foundation-model
+provider, open-weight release or inference stack: its function is identical regardless of
+which model a participating node runs. As capable open-weight models in the 8B--14B range
+increasingly run on owner-operated edge hardware rather than exclusively in centralized data
+centers, described in Section~\ref{sec:model-scale-shift} and Section~\ref{sec:agent-mesh},
+the network's addressable participants shift from a comparatively small number of
+data-center operators toward a much larger population of owner-operated edge, regional and
+cloud nodes. TOS's role does not change with that shift: it remains the identity,
+discovery, authorization, evidence and settlement layer that lets each of those nodes be
+found, trusted and paid.
+
 ARD makes these resources interoperably discoverable across the broader agentic ecosystem.
 TOS makes a discovered service safely actionable and transactable: it binds the resource to
 current authority, admission, execution policy, evidence, payment and settlement without
 turning a search registry into a trusted control plane.
 
 The result is a focused positioning: TOS Network is being built as the open coordination and
-settlement network for AI services and physical edge intelligence. The chain foundation
-exists; the interoperable service protocol and terminal products remain work to be specified,
-implemented, tested and independently reviewed.
+settlement network for AI services and physical edge intelligence -- in short, an Internet
+Layer for Autonomous Agents spanning mobile, edge, regional and cloud compute tiers. The
+chain foundation exists; the interoperable service protocol and terminal products remain
+work to be specified, implemented, tested and independently reviewed.
 
 \section*{Copyright and License}
 
