@@ -5,7 +5,9 @@
 - Document type: product/technical design proposal, non-normative
 - Status: proposed
 - Date: 2026-08-04
-- Related code: `~/tos/validator-engine/json-rpc-server*.cpp`, `~/tos/doc/json-rpc-policy.md`, `~/tos/doc/openapi.yaml`
+- Related code: `~/tos/validator-engine/json-rpc-server*.cpp`, `~/tos/doc/json-rpc-policy.md`,
+  `~/tos/doc/openapi.yaml`, `~/tos/crypto/block/check-proof.{h,cpp}`, `~/tos/emulator/CMakeLists.txt`
+  (existing Emscripten precedent)
 - Related prior art (do not build on top of): `~/tos/blockchain-explorer/` (legacy, inherited from
   Telegram Systems LLP's TON explorer, server-rendered Bootstrap-4 HTML tables, no JSON API, no
   visualization layer)
@@ -42,7 +44,7 @@ Concretely, the explorer must, at minimum:
   `getTokenData`, `getAccountJettons`, `getAccountNfts` — but are out of scope for v1).
 - No attempt to replace or modify `~/tos/blockchain-explorer/`; it can keep serving as an
   operator-facing debug tool. This is a fully separate product.
-- No multi-node/liteserver-pool aggregation at launch — see §8 for the single-node caveat this
+- No multi-node/liteserver-pool aggregation at launch — see §9 for the single-node caveat this
   implies.
 
 ## 3. Why the existing tooling doesn't fit
@@ -119,7 +121,7 @@ JSON-RPC server load-balances for you.
 There is **no push/subscription transport** (no WebSocket, no SSE, no long-poll) on this server —
 every read is a discrete request against current state, per R8 ("no response caching... every
 request executes a fresh liteserver query"). Real-time behavior on the explorer side must be
-built by polling. This directly shapes the architecture in §5.
+built by polling. This directly shapes the architecture in §6.
 
 Parameter handling worth designing around (`json-rpc-policy.md` R10/R11):
 
@@ -130,9 +132,9 @@ Parameter handling worth designing around (`json-rpc-policy.md` R10/R11):
 
 ### 4.2 Data interface: fetching the latest 10 (masterchain) blocks
 
-MVP scope is masterchain blocks only (workchain `-1`); shard-block drill-down is a phase-2
-extension (see §9) because TOS uses dynamic sharding and "the last 10 blocks" is ambiguous once
-multiple shards are in play.
+MVP scope is masterchain blocks only (workchain `-1`); shard-block drill-down is a later-phase
+extension (§10 Phase 5) because TOS uses dynamic sharding and "the last 10 blocks" is ambiguous
+once multiple shards are in play.
 
 **Step 1 — find the chain tip.**
 
@@ -163,7 +165,7 @@ handler layer (not the raw TL type) extracts the fields an explorer actually wan
 `gen_utime`, previous-block references, key-block flag. These are unpacked from the block's
 merkle proof BOC via `block::gen` TLB inside the handler; the exact JSON field names returned to
 the client should be pinned down by reading `handle_getBlockHeader` in
-`json-rpc-server-blocks.cpp` before frontend work starts (flagged as unverified in §10 — the TL
+`json-rpc-server-blocks.cpp` before frontend work starts (flagged as unverified in §11 — the TL
 schema alone does not expose `gen_utime` as a named field, only the raw proof).
 
 **Step 3 — fetch each block's transaction list.**
@@ -193,7 +195,93 @@ This gives a complete, verified path from "open the explorer" to "render the las
 their transaction counts and let the viewer click into any of them" using only documented,
 existing RPC surface — no new node-side code is required for v1.
 
-## 5. System Architecture
+## 5. Client-Side Proof Verification via WebAssembly
+
+### 5.1 Motivation
+
+Everything in §4 is fetched through the Aggregator Service (§6), which means the browser is, by
+default, trusting three layers it did not choose: the polled node, the Aggregator's network path
+to that node, and the Aggregator's own code. `getBlockHeader`, `getAccountState`, and the
+block-transaction listing responses all carry a `proof`/`header_proof`/`shard_proof` field
+alongside the data (§4.2) — these are Merkle proofs, and they exist specifically so a client does
+not have to extend that trust. Right now nothing in this design reads them; they are fetched and
+discarded. Verifying them client-side, instead of only displaying the data they authenticate, is
+the difference between "a nice-looking dashboard" and "a client that can prove what it shows you
+is what the chain actually produced" — for a flagship public explorer this is a real
+differentiator, not a decorative feature.
+
+### 5.2 This verification logic already exists and is already trusted
+
+This is not new cryptography to design. `~/tos/crypto/block/check-proof.h` /
+`check-proof.cpp` implements exactly the functions needed, and they are not experimental — they
+are the same functions `lite-client` itself calls to avoid blindly trusting a liteserver's
+answers (confirmed: `grep -l check_block_header_proof lite-client/ toslib/` matches both
+`lite-client/lite-client.cpp` and `toslib/toslib/ToslibClient.cpp`). Relevant entry points, and
+how they map onto the §4.2 data flow:
+
+| Function (`crypto/block/check-proof.h`) | Verifies | Matches JSON-RPC field (§4.2) |
+|---|---|---|
+| `check_block_header_proof(root, blkid, ...)` | A block header's proof against its claimed `BlockIdExt` (root_hash/file_hash), optionally recovering `gen_utime`/`gen_lt` | `getBlockHeader` → `header_proof` |
+| `check_shard_proof(blk, shard_blk, shard_proof)` | A shard block's inclusion under a masterchain block | `shards`/shard drill-down (Phase 5) → `shard_proof` |
+| `check_account_proof(proof, shard_blk, addr, root, ...)` / `AccountState::validate(...)` | An account state against a shard block, recovering `last_trans_lt`/`last_trans_hash`/`gen_utime` | `getAddressInformation` / `getExtendedAddressInformation` → `proof`, `shard_proof` |
+| `Transaction::validate()` / `TransactionList::validate()` / `BlockTransaction::validate()` | A transaction (or list of transactions) against the block it claims to belong to | `getBlockTransactionsExt` → per-tx proof data |
+
+The explorer's job is to expose these four checks to the browser, not to reimplement Merkle/cell
+verification in JavaScript. A hand-written JS reimplementation is exactly the kind of thing that
+silently drifts from the real consensus/serialization rules over time (cell hashing edge cases,
+pruned-branch handling, exotic cells); compiling the real implementation removes that entire
+failure class.
+
+### 5.3 The WASM build path already exists in this repo
+
+`USE_EMSCRIPTEN` is not a hypothetical toolchain choice — it is already wired into the build:
+
+- `~/tos/CMakeLists.txt` (line 79): `option(USE_EMSCRIPTEN "Use \"ON\" for config building wasm." OFF)`.
+- `~/tos/emulator/CMakeLists.txt` already produces a working, browser-loadable WASM module today:
+  `emulator-emscripten.cpp` → `EmulatorModule`, with link options
+  `-sEXPORTED_FUNCTIONS=_emulate,_free,_malloc,_run_get_method,...`, `-sMODULARIZE=1`,
+  `-sENVIRONMENT=web,node`, `-sALLOW_MEMORY_GROWTH=1`. This is the same mechanism TON's published
+  `@ton/emulator` npm package uses upstream — proof this toolchain produces real, shippable
+  browser artifacts from this codebase, not just native binaries.
+- `~/tos/toslib/CMakeLists.txt` also gates on `USE_EMSCRIPTEN` (forcing `TOSLIBJSON_STATIC=ON`
+  when set) — `toslib` is where the proof-checking call sites in `ToslibClient.cpp` already live.
+
+**Recommendation: do not compile all of `toslib` for the browser.** `toslib` links `adnllite`,
+`tl_lite_api`, `lite-client-common`, and `emulator_static` — most of that weight is the ADNL
+networking stack, which this design deliberately does not use in the browser (§3 point 2; the
+Aggregator/JSON-RPC path is the transport). Pulling in `ExtClient` and friends would bloat the
+WASM payload with a networking stack that can never actually open a connection in a browser
+sandbox anyway. Instead, add a new, narrow Emscripten target — e.g.
+`explorer-verify-emscripten`, modeled directly on `emulator/CMakeLists.txt`'s pattern — that links
+only `crypto/block/check-proof.*`, `vm/cells`, and the hashing primitives they depend on, and
+exports four functions: `verify_block_header`, `verify_shard_proof`, `verify_account_state`,
+`verify_block_transactions`. Each takes the base64 proof blob(s) plus the claimed `BlockIdExt`/
+address already present in the corresponding JSON-RPC response, and returns verified/rejected
+plus the fields it independently recovered (`gen_utime`, `last_trans_lt`, etc.) so the frontend
+can cross-check them against what the Aggregator claimed.
+
+### 5.4 Where this sits in the frontend
+
+- Load the verification WASM module lazily, off the initial render path — the 10-block MVP view
+  (§4.2, §10 Phase 0/1) should never block on it. Fetch and instantiate it only when a viewer
+  opens a block/account/transaction detail panel (§10 Phase 3), or opts into a persistent
+  "verified" mode.
+- Run it in a Web Worker, not the main thread. This is a hard requirement, not a nice-to-have:
+  the main thread is already carrying the three.js/WebGL render loop (§7) and cannot absorb
+  synchronous WASM verification work without dropping frames on exactly the kind of continuous
+  particle/glow animation this design is built around. `postMessage` the proof blobs in, get a
+  verified/rejected result back.
+- Surface the result as a UI signal tied to the affected node/edge in the graph — e.g. a
+  verified block/account renders with a distinct glow state versus one whose proof has not yet
+  been (or failed to be) checked — so verification reinforces the visual language instead of
+  living in a separate, easy-to-ignore panel.
+- This is also the natural place for the "more CPU-bound, less blockchain-specific" WASM use
+  case: once the graph is rendering hundreds of nodes (Phase 5 shard awareness, Phase 6
+  historical search), the force-directed layout physics step becomes a second, independent
+  candidate for a WASM (e.g. Rust) implementation running in its own worker — unrelated to proof
+  verification, but the same "keep heavy compute off the main render thread" principle applies.
+
+## 6. System Architecture
 
 ```
 ┌─────────────────────┐      ADNL (local, node-internal)     ┌──────────────────┐
@@ -209,7 +297,7 @@ existing RPC surface — no new node-side code is required for v1.
 │  - diffs tip seqno, fetches    │
 │    new block header + txs      │
 │  - normalizes to explorer's    │
-│    graph schema (§7)           │
+│    graph schema (§8)           │
 │  - short-TTL cache (R8 says    │
 │    the RPC server won't cache, │
 │    so the aggregator must)     │
@@ -225,6 +313,8 @@ existing RPC surface — no new node-side code is required for v1.
 │  - bloom/particle/glow effects │
 │  - block/tx/account detail     │
 │    panels on click             │
+│  - Web Worker: proof           │
+│    verification WASM (§5)      │
 └─────────────────────────────────┘
 ```
 
@@ -239,7 +329,7 @@ This also gives a natural place to add multi-node redundancy later (poll two or 
 independently operated nodes' JSON-RPC endpoints and reconcile) without touching the frontend or
 the node itself, addressing the single-liteserver-view caveat from R6.
 
-## 6. Frontend Visual Architecture
+## 7. Frontend Visual Architecture
 
 Mira (the sibling multi-agent simulation product; see `~/mira/frontend/src/components/
 GraphPanel.vue`) already has a working force-directed relationship graph, but it is D3 + SVG:
@@ -264,7 +354,7 @@ stack:
   - See `~/tos/doc/tos.pdf` §3.6 (Sharding) when a future phase needs to visualize shard
     structure rather than the linear masterchain backbone — dynamic shard splits/merges will need
     their own layout treatment; this design does not attempt to solve that for Phase 0–3 (see
-    §9 Phase 4).
+    §10 Phase 5).
 - **Aesthetic direction ("digital rain" / cyberpunk-technical)**: dark background, monospaced/
   technical type for data (matching the whitepaper's own "austere, precise, engineering-forward"
   brand voice — see the persona language style Mira generated for the TOS Network account in an
@@ -277,7 +367,7 @@ stack:
 - **Framework**: Vue 3 (consistent with the rest of the TOS/Mira frontend ecosystem) driving a
   three.js canvas plus conventional DOM overlays for detail panels, search, and address input.
 
-## 7. Data Model (Aggregator → Frontend graph schema)
+## 8. Data Model (Aggregator → Frontend graph schema)
 
 The aggregator normalizes RPC responses into a single graph shape the frontend already knows how
 to lay out and animate:
@@ -300,7 +390,7 @@ same "delta, not full reload" principle the aggregator needs internally to avoid
 whole 10-block window on every poll tick — track the last-seen tip `seqno` and only fetch blocks
 above it).
 
-## 8. Security & Operational Notes
+## 9. Security & Operational Notes
 
 - Run the explorer's node(s) with `--json-rpc-readonly` — the explorer never needs `sendBoc`/
   `sendBocReturnHash`/`sendQuery`.
@@ -315,8 +405,12 @@ above it).
 - Prometheus metrics on `:9100/metrics` should be scraped by the aggregator's own ops stack to
   alert on `jsonrpc_errors_total`/cache miss spikes — useful signal for "the visual explorer just
   went quiet because the node it polls is unhealthy."
+- §5's client-side proof verification narrows, but does not remove, the "trust this node's view"
+  caveat above: it proves the Aggregator did not alter what the polled node returned, not that the
+  polled node itself is honest or in consensus with the network. Say exactly that in the UI copy
+  next to the verified-state indicator — do not oversell it as full light-client trustlessness.
 
-## 9. Phased Delivery
+## 10. Phased Delivery
 
 1. **Phase 0 — data plumbing**: aggregator service polling `getMasterchainInfo` +
    `getBlockHeader` + `getBlockTransactionsExt` for the last 10 masterchain blocks; plain
@@ -328,13 +422,16 @@ above it).
 4. **Phase 3 — drill-down**: transaction detail panel (needs the in/out-message field audit from
    §4.2 step 3), account lookup/search bar using `getAddressInformation`/
    `getExtendedAddressInformation`.
-5. **Phase 4 — shard awareness**: extend beyond masterchain-only to render shard blocks
-   (`shards`/`getAllShardsInfo`) and the masterchain/shard relationship, and multi-node polling
-   for redundancy (§5).
-6. **Phase 5 (stretch)**: token/NFT visualization (`getTokenData`, `getAccountJettons`,
+5. **Phase 4 — client-side verification (§5)**: new `explorer-verify-emscripten` CMake target
+   wrapping `crypto/block/check-proof.*`; Web Worker integration; verified/unverified visual state
+   on block, account and transaction nodes.
+6. **Phase 5 — shard awareness**: extend beyond masterchain-only to render shard blocks
+   (`shards`/`getAllShardsInfo`) and the masterchain/shard relationship, `check_shard_proof`
+   verification (§5.2), and multi-node polling for redundancy (§6).
+7. **Phase 6 (stretch)**: token/NFT visualization (`getTokenData`, `getAccountJettons`,
    `getAccountNfts`), full historical search/index.
 
-## 10. Open Questions / Follow-ups Before Implementation
+## 11. Open Questions / Follow-ups Before Implementation
 
 - **Block header JSON shape**: the exact field names `handle_getBlockHeader` returns for
   `gen_utime`, previous-block references and key-block flag are not yet confirmed against
@@ -349,3 +446,13 @@ above it).
   per §4), this is a gap to fill first.
 - **Which node(s) to poll** in non-development environments is an operational decision, not a
   code one — needs an answer before Phase 0 ships anywhere but localhost.
+- **`check-proof.cpp`'s dependency footprint** (what it pulls in from `vm/cells`, hashing, and
+  `block::gen` beyond what's declared in `check-proof.h`) has not been traced end-to-end — needed
+  to size the new `explorer-verify-emscripten` WASM target (§5.3) and confirm it can be built
+  without dragging in ADNL/networking code.
+- **JSON-RPC does not appear to return raw proof bytes verbatim for every field** — the
+  `header_proof`/`shard_proof`/`proof` fields in the TL schema are raw BOC bytes, but whether the
+  JSON-RPC layer forwards them unmodified (as opposed to only returning the fields it already
+  unpacked from them) needs to be confirmed in `json-rpc-server-blocks.cpp`/
+  `json-rpc-server-accounts.cpp` before §5 can be implemented — if the raw proof is not exposed
+  over JSON-RPC today, exposing it is a small, additive node-side change, not a redesign.
