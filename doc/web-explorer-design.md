@@ -38,7 +38,8 @@ Concretely, the explorer must, at minimum:
   accounts, value and fees.
 - In every block view, distinguish the block's authoritative `tx_count` from transactions that
   are actually loaded or sampled in the current client window. A static demo must visibly label
-  sampled rows/particles and must not imply that a 15-transaction fixture is the complete history.
+  sampled rows/particles and must not imply that a bounded transaction fixture is the complete
+  history.
 - Let a viewer look up an account/address and see its balance, state and recent transaction
   history.
 - Render all of the above as an animated, hybrid-constrained relationship graph (blocks → shard
