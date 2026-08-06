@@ -3,7 +3,8 @@
 localnet-jsonrpc.py - Lightweight single-process local TOS chain + JSON-RPC (for wallet dev).
 
 No systemd: uses tostester's Network to bring up 1 DHT + N validators in this process,
-with node[0] additionally serving JSON-RPC HTTP (default 127.0.0.1:18545), staying resident
+with every validator serving JSON-RPC HTTP on consecutive ports (default
+127.0.0.1:18545-18547 for three validators), staying resident
 once blocks are produced.
 
 Run:
@@ -95,10 +96,12 @@ async def main(rpc_addr, num_validators, workdir, boot_timeout, demo, fund):
             node.announce_to(dht)
             nodes.append(node)
 
+        rpc_host, rpc_port_text = rpc_addr.rsplit(":", 1)
+        rpc_addresses = [f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)]
         async with asyncio.TaskGroup() as tg:
             _ = tg.create_task(dht.run())
             for i, node in enumerate(nodes):
-                extra = ["--json-rpc-address", rpc_addr] if i == 0 else []
+                extra = ["--json-rpc-address", rpc_addresses[i]]
                 _ = tg.create_task(node.run(StartOptions(args=extra)))
 
         print(f"[localnet] validators={num_validators}; waiting for masterchain block #1 ...")
@@ -111,7 +114,7 @@ async def main(rpc_addr, num_validators, workdir, boot_timeout, demo, fund):
 
         print("=" * 70)
         print(" TOS LOCALNET READY")
-        print(f"   JSON-RPC : http://{rpc_addr}/jsonRPC   (readiness /readyz)")
+        print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
         print(f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}")
         print(f"   emulator : http://10.0.2.2:{port}")
         print("=" * 70)

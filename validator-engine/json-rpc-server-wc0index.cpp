@@ -27,6 +27,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "td/utils/StringBuilder.h"
+#include "td/utils/utf8.h"
 #include "vm/cellslice.h"
 #include "vm/dict.h"
 
@@ -64,6 +65,29 @@ td::Result<uint64_t> parse_uint64(td::Slice value, td::Slice field) {
     return td::Status::Error(PSTRING() << "Invalid '" << field << "' (expected uint64 string)");
   }
   return result;
+}
+
+std::string extract_text_comment(td::Ref<vm::CellSlice> body) {
+  if (body.is_null() || body->size() < 1) {
+    return {};
+  }
+  vm::CellSlice cs{*body};
+  bool in_ref = cs.fetch_ulong(1) != 0;
+  if (in_ref) {
+    if (cs.size_refs() < 1) {
+      return {};
+    }
+    cs = vm::load_cell_slice(cs.prefetch_ref());
+  }
+  if (cs.size() < 32 || cs.fetch_ulong(32) != 0 || cs.size() % 8 != 0 || cs.size() > 8 * 1024) {
+    return {};
+  }
+  std::string comment(cs.size() / 8, '\0');
+  if (!comment.empty() &&
+      !cs.fetch_bytes(reinterpret_cast<unsigned char *>(comment.data()), static_cast<unsigned>(comment.size()))) {
+    return {};
+  }
+  return td::check_utf8(comment) ? comment : std::string{};
 }
 
 std::string format_account_event(uint64_t lt, td::Ref<vm::Cell> cell) {
@@ -113,12 +137,17 @@ std::string format_account_event(uint64_t lt, td::Ref<vm::Cell> cell) {
       first_transfer = false;
       block::StdAddress source_address(source_wc, source);
       block::StdAddress destination_address(destination_wc, destination);
+      auto comment = extract_text_comment(body_cs);
       sb << "{\"@type\":\"wallet.nativeTransfer\""
          << ",\"direction\":" << td::JsonString(direction)
          << ",\"source\":" << td::JsonString(source_address.rserialize(true))
          << ",\"destination\":" << td::JsonString(destination_address.rserialize(true)) << ",\"amount\":\""
          << value.tomis->to_dec_string() << "\""
-         << ",\"bounced\":" << (info.bounced ? "true" : "false") << "}";
+         << ",\"bounced\":" << (info.bounced ? "true" : "false");
+      if (!comment.empty()) {
+        sb << ",\"comment\":" << td::JsonString(comment);
+      }
+      sb << "}";
     };
 
     if (tx.r1.in_msg->prefetch_long(1) == -1) {
