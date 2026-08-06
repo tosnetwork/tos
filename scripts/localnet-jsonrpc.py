@@ -19,7 +19,9 @@ Stop: Ctrl-C. In the Android emulator the wallet base url is http://10.0.2.2:185
 import argparse
 import asyncio
 import json
+import threading
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
 import logging
@@ -81,7 +83,59 @@ async def wait_balance_at_least(rpc_addr, address, target_nano, timeout=30.0):
     return False
 
 
-async def main(rpc_addr, num_validators, workdir, boot_timeout, demo, fund):
+def start_control_server(control_addr, loop, faucet, rpc_addr):
+    """Start a localhost-only faucet endpoint for autonomous integration tests."""
+
+    async def transfer(address, amount):
+        destination = Address(address)
+        canonical = destination.to_str()
+        before = rpc_balance_nano(rpc_addr, canonical)
+        await faucet.send(make_transfer(faucet, destination, amount))
+        ok = await wait_balance_at_least(rpc_addr, canonical, before + 1, timeout=40)
+        after = rpc_balance_nano(rpc_addr, canonical)
+        if not ok:
+            raise TimeoutError("local-chain transfer did not confirm")
+        return {"before": str(before), "after": str(after)}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _format, *_args):
+            return
+
+        def reply(self, status, value):
+            payload = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            if self.path == "/readyz":
+                self.reply(200, {"ok": True})
+            else:
+                self.send_error(404)
+
+        def do_POST(self):
+            if self.path != "/transfer":
+                self.send_error(404)
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                value = json.loads(self.rfile.read(size))
+                future = asyncio.run_coroutine_threadsafe(
+                    transfer(value["address"], float(value.get("amount", 1))), loop
+                )
+                self.reply(200, future.result(timeout=60))
+            except Exception as error:
+                self.reply(500, {"error": str(error)})
+
+    host, port = control_addr.rsplit(":", 1)
+    server = ThreadingHTTPServer((host, int(port)), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+async def main(rpc_addr, control_addr, num_validators, workdir, boot_timeout, demo, fund):
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True, exist_ok=True)
     install = Install(REPO / "build", REPO)
@@ -110,11 +164,13 @@ async def main(rpc_addr, num_validators, workdir, boot_timeout, demo, fund):
         client = await nodes[0].toslib_client()
         faucet = network.zerostate.main_wallet(client)
         faucet_addr = faucet.address.to_str()
+        control_server = start_control_server(control_addr, asyncio.get_running_loop(), faucet, rpc_addr)
         port = rpc_addr.rsplit(":", 1)[-1]
 
         print("=" * 70)
         print(" TOS LOCALNET READY")
         print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
+        print(f"   control  : http://{control_addr} (localhost test faucet only)")
         print(f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}")
         print(f"   emulator : http://10.0.2.2:{port}")
         print("=" * 70)
@@ -152,12 +208,16 @@ async def main(rpc_addr, num_validators, workdir, boot_timeout, demo, fund):
             print(f"[fund] done: {fmt(after)}  {'ok' if ok else 'TIMEOUT'} (+{fmt(after-before)})")
 
         print("[localnet] resident; press Ctrl-C to exit.")
-        await asyncio.Event().wait()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            control_server.shutdown()
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--rpc", default="127.0.0.1:18545")
+    p.add_argument("--control", default="127.0.0.1:18745")
     p.add_argument("--validators", type=int, default=1)
     p.add_argument("--workdir", default=str(REPO / "test/integration/.localnet"))
     p.add_argument("--boot-timeout", type=float, default=120.0)
@@ -165,6 +225,6 @@ if __name__ == "__main__":
     p.add_argument("--fund", action="append", help="fund an address, form 0:hex or 0:hex:25")
     a = p.parse_args()
     try:
-        asyncio.run(main(a.rpc, a.validators, Path(a.workdir), a.boot_timeout, a.demo, a.fund))
+        asyncio.run(main(a.rpc, a.control, a.validators, Path(a.workdir), a.boot_timeout, a.demo, a.fund))
     except KeyboardInterrupt:
         print("\n[localnet] stopped.")
