@@ -40,6 +40,7 @@
 
 #include <set>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -62,6 +63,38 @@ std::unique_ptr<tos_wallet_index::WalletIndexDb> open_fresh_db(const std::string
 }
 
 }  // namespace
+
+TEST(WalletIndex, AccountEventExactLookupAndCursorPagination) {
+  auto path = std::string("test-wallet-index-db-events");
+  auto db = open_fresh_db(path);
+  tos_wallet_index::HashKey account = td::Bits256::zero();
+  account.as_slice()[31] = 0x42;
+  std::vector<td::Ref<vm::Cell>> cells;
+  for (uint64_t lt : {100ULL, 200ULL, 300ULL}) {
+    vm::CellBuilder builder;
+    builder.store_long(static_cast<long long>(lt), 64);
+    cells.push_back(builder.finalize());
+    ASSERT_TRUE(db->put_event(account, lt, cells.back()).is_ok());
+  }
+  auto exact = db->get_event(account, 200);
+  ASSERT_TRUE(exact.is_ok());
+  ASSERT_TRUE(exact.ok()->get_hash() == cells[1]->get_hash());
+  ASSERT_TRUE(db->get_event(account, 201).is_error());
+
+  std::vector<uint64_t> first_page;
+  db->for_each_event(account, 2, [&](uint64_t lt, td::Ref<vm::Cell>) {
+    first_page.push_back(lt);
+    return td::Status::OK();
+  }).ensure();
+  ASSERT_EQ(first_page, (std::vector<uint64_t>{300, 200}));
+  std::vector<uint64_t> second_page;
+  db->for_each_event_before(account, 200, 2, [&](uint64_t lt, td::Ref<vm::Cell>) {
+    second_page.push_back(lt);
+    return td::Status::OK();
+  }).ensure();
+  ASSERT_EQ(second_page, (std::vector<uint64_t>{100}));
+  td::rmrf(path).ignore();
+}
 
 TEST(WalletIndex, IncompleteBlockMarkerRoundTrip) {
   auto path = std::string("test-wallet-index-db-roundtrip");

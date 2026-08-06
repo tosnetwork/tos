@@ -66,6 +66,10 @@ class WalletIndexDb {
   td::Status for_each_event(
       const HashKey& account, size_t limit,
       std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb);
+  td::Status for_each_event_before(
+      const HashKey& account, uint64_t before_lt, size_t limit,
+      std::function<td::Status(uint64_t lt, td::Ref<vm::Cell>)> cb);
+  td::Result<td::Ref<vm::Cell>> get_event(const HashKey& account, uint64_t lt);
 
   // --- NFT current-owner reverse map: 0x13 + nft(32) -> owner(32) ---
   // Tracks the last verified owner of each indexed NFT so the writer can erase

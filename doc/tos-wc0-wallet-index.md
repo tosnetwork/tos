@@ -54,6 +54,27 @@ Prefix-scan `0x10 + owner` lists an owner's jettons; `0x11 + owner` lists NFTs.
 Event keys store the bitwise complement of lt, so the ascending `0x12 + account`
 scan yields newest events first and a result limit caps the scan itself.
 
+## Native account history JSON-RPC
+
+TOS exposes a deliberately small native history contract; it is not a TonAPI
+compatibility layer.
+
+- `getAccountEvents` accepts `address`, optional `limit` (default 100, maximum
+  1000), and optional `before_lt` (a decimal string). It returns newest-first
+  `events` and `next_from`; pass a non-null `next_from` back as `before_lt` to
+  fetch the next page without overlap.
+- `getAccountEvent` accepts `address` and `event_id`. An event ID is
+  `<lt>:<transaction-hash-hex>`, binding the account-local lookup key to the
+  content-addressed transaction and preventing a mismatched lookup.
+
+Each `wallet.accountEvent` contains `event_id`, `lt`, transaction `hash`,
+`timestamp`, total `fee`, native-TOS `transfers`, and `raw_transaction` (base64
+BOC). A transfer contains `direction`, friendly `source` and `destination`,
+amount in nanotOS, and the bounced flag. The event feed is the account's
+canonical transaction history. Version 1 intentionally does not interpret
+Jetton, NFT, other extra-currency actions, or contract-specific payloads;
+clients can retain the raw BOC for forward-compatible decoding.
+
 ## State-verified token indexing
 
 First principle: the index must contain only statements verifiable against

@@ -1238,6 +1238,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getAccountNfts(params, std::move(req_id), std::move(promise));
   } else if (method == "getAccountEvents") {
     handle_getAccountEvents(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountEvent") {
+    handle_getAccountEvent(params, std::move(req_id), std::move(promise));
   // New APIs (HTTP API parity)
   } else if (method == "detectHash") {
     handle_detectHash(params, std::move(req_id), std::move(promise));

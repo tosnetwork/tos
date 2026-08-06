@@ -265,6 +265,53 @@ td::Status WalletIndexDb::for_each_event(
   });
 }
 
+td::Status WalletIndexDb::for_each_event_before(
+    const HashKey& account, uint64_t before_lt, size_t limit,
+    std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb) {
+  if (before_lt == 0) return td::Status::OK();
+  char begin[kEventKeyLen];
+  make_event_key(account, ~before_lt + 1, begin);
+  char end[1 + 32];
+  make_owner_prefix(kEventTag, account, end);
+  size_t i = sizeof(end);
+  while (i > 0 && static_cast<uint8_t>(end[i - 1]) == 0xff) --i;
+  if (i == 0) return td::Status::Error("wc0-index: unbounded event prefix");
+  end[i - 1] = static_cast<char>(static_cast<uint8_t>(end[i - 1]) + 1);
+
+  size_t seen = 0;
+  bool limit_hit = false;
+  auto status = db_->for_each_in_range(
+      td::Slice{begin, sizeof(begin)}, td::Slice{end, i},
+      [&](td::Slice key, td::Slice value) -> td::Status {
+        if (seen >= limit) {
+          limit_hit = true;
+          return td::Status::Error("wc0-index: limit reached");
+        }
+        if (key.size() != kEventKeyLen) return td::Status::OK();
+        auto cell_r = vm::std_boc_deserialize(value);
+        if (cell_r.is_error()) {
+          LOG(WARNING) << "wc0-index: skipping corrupt event: " << cell_r.error().message();
+          return td::Status::OK();
+        }
+        ++seen;
+        return cb(~get_u64_be(key.data() + 1 + 32), cell_r.move_as_ok());
+      });
+  if (limit_hit) return td::Status::OK();
+  return status;
+}
+
+td::Result<td::Ref<vm::Cell>> WalletIndexDb::get_event(const HashKey& account, uint64_t lt) {
+  char key[kEventKeyLen];
+  make_event_key(account, ~lt, key);
+  std::string value;
+  auto status = db_->get(td::Slice{key, sizeof(key)}, value);
+  if (status.is_error()) return status.move_as_error();
+  if (status.ok() == td::KeyValue::GetStatus::NotFound) {
+    return td::Status::Error("account event not found");
+  }
+  return vm::std_boc_deserialize(td::Slice{value});
+}
+
 // --- nft current-owner reverse map ---
 
 td::Status WalletIndexDb::put_nft_owner(const HashKey& nft, const HashKey& owner) {

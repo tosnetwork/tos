@@ -9,6 +9,7 @@ Covers:
   - tryLocateTx
   - tryLocateResultTx
   - tryLocateSourceTx
+  - getAccountEvents / getAccountEvent (TOS-native history)
 """
 import pytest
 
@@ -103,6 +104,30 @@ class TestGetTransactionsStd:
     def test_lt_without_hash(self, api_method_call):
         """Providing lt without hash should return an error."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, lt="12345")
+        assert response.json()["ok"] is False
+
+
+class TestAccountEvents:
+
+    def test_list_contract_and_cursor(self, api_method_call):
+        response = api_method_call("getAccountEvents", address="0:" + "0" * 64, limit=2)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["@type"] == "wallet.accountEvents"
+        assert isinstance(result["events"], list)
+        assert "next_from" in result
+        assert len(result["events"]) <= 2
+
+    def test_invalid_cursor(self, api_method_call):
+        response = api_method_call("getAccountEvents", address="0:" + "0" * 64,
+                                   before_lt="not-a-number")
+        assert response.json()["ok"] is False
+
+    def test_detail_validates_event_id(self, api_method_call):
+        response = api_method_call("getAccountEvent", address="0:" + "0" * 64,
+                                   event_id="invalid")
         assert response.json()["ok"] is False
 
 
