@@ -49,9 +49,9 @@ jobs:
           base64 --decode /tmp/atos-sidecar-e2e.patch.xz.b64 > /tmp/atos-sidecar-e2e.patch.xz
           echo '5f563da0a2c122d170e6dbf82e4e5c86bb02ef5a525b44e86bf16afbac6971ad  /tmp/atos-sidecar-e2e.patch.xz' | sha256sum --check --strict
           xz -dc /tmp/atos-sidecar-e2e.patch.xz > /tmp/atos-sidecar-e2e.patch
-          git apply --binary --whitespace=error-all /tmp/atos-sidecar-e2e.patch
+          git --git-dir="$repo/.git" --work-tree="$repo" apply --binary --whitespace=error-all /tmp/atos-sidecar-e2e.patch
           rustfmt --edition 2024 --config skip_children=true tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
-          git diff --check
+          git --git-dir="$repo/.git" --work-tree="$repo" diff --check
       - name: Validate materialized sources
         shell: bash
         run: |
