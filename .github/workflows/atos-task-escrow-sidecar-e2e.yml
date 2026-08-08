@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: tosnetwork/tos-protocol
-          ref: 959676842c5561266a21d298a18b6641d3d8487a
+          ref: 0d143cb05b26d438ba56e3c54628c7786190125f
           path: tos-protocol
       - uses: actions/setup-go@v5
         with:
