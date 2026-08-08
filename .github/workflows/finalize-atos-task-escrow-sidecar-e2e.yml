@@ -1,0 +1,80 @@
+name: finalize-atos-task-escrow-sidecar-e2e
+
+on:
+  push:
+    branches:
+      - agent/atos-task-escrow-sidecar-e2e
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/atos-task-escrow-sidecar-e2e
+          fetch-depth: 0
+      - name: Wait for the real-localnet E2E on this exact revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 5400))
+          while (( SECONDS < deadline )); do
+            payload="$(gh api "/repos/${REPOSITORY}/actions/runs?head_sha=${REVISION}&per_page=100")"
+            matches="$(jq --arg current "${CURRENT_RUN_ID}" '[.workflow_runs[]
+              | select((.id|tostring) != $current)
+              | select((.name + " " + .path + " " + .display_title)
+                  | test("(?i)(atos.*task.*escrow|task.*escrow.*sidecar|sidecar.*e2e|localnet.*escrow)"))]' <<<"${payload}")"
+            count="$(jq 'length' <<<"${matches}")"
+            if (( count > 0 )); then
+              failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' <<<"${matches}")"
+              pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"${matches}")"
+              if (( failed > 0 )); then
+                jq -r '.[] | select(.status == "completed" and .conclusion != "success") | "failed workflow: \(.name) \(.html_url) conclusion=\(.conclusion)"' <<<"${matches}" >&2
+                exit 1
+              fi
+              if (( pending == 0 )); then
+                jq -r '.[] | "validated workflow: \(.name) \(.html_url)"' <<<"${matches}"
+                exit 0
+              fi
+            fi
+            sleep 20
+          done
+          echo "timed out waiting for a successful real-localnet TaskEscrow sidecar E2E on ${REVISION}" >&2
+          exit 1
+      - name: Remove temporary trigger and validation workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/atos-task-escrow-sidecar-e2e.trigger
+          rm -f .github/workflows/finalize-atos-task-escrow-sidecar-e2e.yml
+          git diff --check
+      - name: Commit validated tree and mark PR ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'ci: record successful ATOS TaskEscrow localnet E2E'
+            git push origin HEAD:agent/atos-task-escrow-sidecar-e2e
+          fi
+          pr="$(gh pr list --head agent/atos-task-escrow-sidecar-e2e --state open --json number --jq '.[0].number')"
+          test -n "${pr}"
+          gh pr comment "${pr}" --body "Real-localnet TaskEscrow publisher sidecar E2E passed for revision ${GITHUB_SHA}. The test used a local TOS validator and the actual TaskEscrow contract path; the temporary trigger files have been removed."
+          gh pr ready "${pr}"
