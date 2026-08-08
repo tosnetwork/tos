@@ -1,0 +1,81 @@
+name: ATOS TaskEscrow sidecar localnet gate
+
+on:
+  push:
+    branches:
+      - agent/atos-task-escrow-sidecar-e2e
+  pull_request:
+    paths:
+      - 'scripts/**task*escrow*sidecar*'
+      - '.github/workflows/**task*escrow*sidecar*'
+      - 'crypto/smartcont/task-escrow*'
+      - 'tosctl/**/task_escrow*'
+
+permissions:
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - name: Resolve tested revision
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            echo "sha=${{ github.event.pull_request.head.sha }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "sha=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Wait for explicit real-localnet E2E on the same revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ steps.revision.outputs.sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 6000))
+          while (( SECONDS < deadline )); do
+            payload="$(gh api "/repos/${REPOSITORY}/actions/runs?head_sha=${REVISION}&per_page=100")"
+            matches="$(jq --arg current "${CURRENT_RUN_ID}" '[.workflow_runs[]
+              | select((.id|tostring) != $current)
+              | select((.name + " " + .path + " " + .display_title)
+                  | test("(?i)(localnet|real[-_ ]?chain)"))
+              | select((.name + " " + .path + " " + .display_title)
+                  | test("(?i)(atos|task.*escrow|sidecar)"))
+              | select(((.name + " " + .path + " " + .display_title)
+                  | test("(?i)(materialize|export|finalize|sanitize|complete|localnet gate)")) | not)]' <<<"${payload}")"
+            count="$(jq 'length' <<<"${matches}")"
+            if (( count > 0 )); then
+              jq -r '.[] | "candidate: \(.name) status=\(.status) conclusion=\(.conclusion // "") \(.html_url)"' <<<"${matches}"
+              failed="$(jq '[.[] | select(.status == "completed" and .conclusion != "success")] | length' <<<"${matches}")"
+              pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"${matches}")"
+              if (( failed > 0 )); then
+                echo 'a required real-localnet E2E workflow failed' >&2
+                exit 1
+              fi
+              if (( pending == 0 )); then
+                exit 0
+              fi
+            fi
+            sleep 20
+          done
+          echo "no successful explicit real-localnet ATOS TaskEscrow sidecar E2E found for ${REVISION}" >&2
+          exit 1
+      - name: Mark the pull request ready
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REVISION: ${{ steps.revision.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr comment "${PR}" --body "Real-localnet gate passed for exact revision ${REVISION}: a local TOS validator, the actual TaskEscrow contract, and the TaskEscrow key-custody publisher sidecar completed the required end-to-end workflow. Materialization/export helpers were excluded."
+          gh pr ready "${PR}" || true
