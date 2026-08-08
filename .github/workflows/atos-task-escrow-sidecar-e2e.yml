@@ -20,6 +20,9 @@ jobs:
   localnet:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
     container:
       image: ghcr.io/tosnetwork/tos-builder:ubuntu-24.04
       credentials:
