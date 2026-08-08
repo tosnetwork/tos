@@ -1,0 +1,29 @@
+name: export-atos-task-escrow-sidecar-source
+
+on:
+  push:
+    branches:
+      - agent/atos-task-escrow-sidecar-e2e
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/atos-task-escrow-sidecar-e2e
+          fetch-depth: 0
+      - name: Create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output=/tmp/tos-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tos-atos-task-escrow-sidecar-source
+          path: /tmp/tos-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
