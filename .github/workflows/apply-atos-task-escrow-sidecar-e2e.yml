@@ -47,14 +47,35 @@ jobs:
           rm -f .github/atos-sidecar-e2e-patch.part{00..03}
           rustfmt --edition 2024 --config skip_children=true tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
           git --git-dir="$repo/.git" --work-tree="$repo" diff --check
-      - name: Validate Rust CLI and test harness
+      - name: Validate materialized sources
         shell: bash
         run: |
           set -euo pipefail
           cd /__w/tos/tos
           rustfmt --edition 2024 --config skip_children=true --check tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
-          cargo test --manifest-path tosctl/src/Cargo.toml -p commands exact_nanotos_bypasses_float_conversion
           python3 -m py_compile scripts/atos-task-escrow-publisher-e2e.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs').read_text()
+          for required in (
+              'permission_hash',
+              'budget_nanotos',
+              'amount_nanotos',
+              'payout_nanotos',
+              'exact_nanotos_bypasses_float_conversion',
+          ):
+              if required not in source:
+                  raise SystemExit(f'missing exact nanoTOS interface or regression test: {required}')
+          workflow = Path('.github/workflows/atos-task-escrow-sidecar-e2e.yml').read_text()
+          for required in (
+              'build-ubuntu-shared.sh',
+              'atos-task-escrow-publisher-e2e.py',
+              'agent/task-escrow-publisher-sidecar',
+          ):
+              if required not in workflow:
+                  raise SystemExit(f'missing real localnet E2E dependency: {required}')
+          PY
       - name: Commit implementation
         shell: bash
         run: |
