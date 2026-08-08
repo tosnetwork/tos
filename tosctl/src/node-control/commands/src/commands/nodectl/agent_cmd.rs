@@ -13,31 +13,32 @@ use super::output_format::OutputFormat;
 use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
-    calculate_wallet_address, get_wallet_config, load_config_vault, load_config_vault_rpc_client,
-    make_wallet, save_config, try_create_rpc_client, wait_for_deploy, wait_for_seqno_change,
-    wallet_info, DEPLOY_TIMEOUT, SEND_TIMEOUT,
+    DEPLOY_TIMEOUT, SEND_TIMEOUT, calculate_wallet_address, get_wallet_config, load_config_vault,
+    load_config_vault_rpc_client, make_wallet, save_config, try_create_rpc_client, wait_for_deploy,
+    wait_for_seqno_change, wallet_info,
 };
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{
-    read_single_root_boc, write_boc, BuilderData, Cell, IBitstring, MsgAddressInt, Serializable,
+    BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::data_models::AccountState;
 use clap::ValueEnum;
 use colored::Colorize;
-use futures_util::{stream, StreamExt};
 use common::{
+    WalletVersion,
     app_config::{
         AgentRuntimeBinding, AgentTaskConfig, AgentWalletConfig, AgentWalletPolicy, KeyConfig,
         WalletConfig,
     },
     chain_utils::{display_tos, tos_to_nanotos},
-    time_format, WalletVersion,
+    time_format,
 };
 use contracts::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
     TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet,
 };
+use futures_util::{StreamExt, stream};
 use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
 };
@@ -143,8 +144,14 @@ pub struct AgentTaskSendCmd {
     evidence_hash: Option<String>,
     #[arg(long, help = "Dispute metadata/evidence hash for dispute operation")]
     dispute_hash: Option<String>,
-    #[arg(long, help = "Payout in TOS for settle or resolve; message value uses --amount")]
+    #[arg(
+        long,
+        conflicts_with = "payout_nanotos",
+        help = "Payout in TOS for settle or resolve; message value uses --amount"
+    )]
     payout: Option<f64>,
+    #[arg(long, conflicts_with = "payout", help = "Exact payout in nanoTOS for settle or resolve")]
+    payout_nanotos: Option<u64>,
     #[arg(
         long,
         conflicts_with = "signer_vault_key",
@@ -163,8 +170,14 @@ pub struct AgentTaskSendCmd {
         help = "New 32-byte ed25519 public key for rotate-attestor-key (creator-only)"
     )]
     new_attestor_pubkey: Option<String>,
-    #[arg(long, default_value_t = 0.01)]
-    amount: f64,
+    #[arg(
+        long,
+        conflicts_with = "amount_nanotos",
+        help = "Message value in TOS; defaults to 0.01"
+    )]
+    amount: Option<f64>,
+    #[arg(long, conflicts_with = "amount", help = "Exact message value in nanoTOS")]
+    amount_nanotos: Option<u64>,
     #[arg(long)]
     yes: bool,
 }
@@ -212,10 +225,22 @@ pub struct AgentTaskCreateCmd {
     agent: Option<String>,
     #[arg(long, help = "Optional verifier allowed to settle the task")]
     verifier: Option<String>,
-    #[arg(long, help = "Optional account-permission ID linked to this task")]
+    #[arg(
+        long,
+        conflicts_with = "permission_hash",
+        help = "Optional account-permission ID linked to this task"
+    )]
     permission_id: Option<String>,
-    #[arg(long)]
-    budget: f64,
+    #[arg(
+        long,
+        conflicts_with = "permission_id",
+        help = "Exact 32-byte permission hash in hex; intended for protocol-driven deployment"
+    )]
+    permission_hash: Option<String>,
+    #[arg(long, conflicts_with = "budget_nanotos", required_unless_present = "budget_nanotos")]
+    budget: Option<f64>,
+    #[arg(long, conflicts_with = "budget", required_unless_present = "budget")]
+    budget_nanotos: Option<u64>,
     #[arg(long)]
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
@@ -236,8 +261,14 @@ pub struct AgentTaskCreateCmd {
     signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
-    #[arg(long, default_value_t = 0.2)]
-    amount: f64,
+    #[arg(
+        long,
+        conflicts_with = "amount_nanotos",
+        help = "Funding amount in TOS; defaults to 0.2"
+    )]
+    amount: Option<f64>,
+    #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
+    amount_nanotos: Option<u64>,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
     workchain: i32,
     #[arg(long)]
@@ -301,17 +332,24 @@ pub struct AgentTaskEncodeCmd {
     evidence_hash: Option<String>,
     #[arg(long, help = "Dispute metadata/evidence hash for dispute operation")]
     dispute_hash: Option<String>,
-    #[arg(long, help = "Payout in TOS for settle or resolve operation")]
+    #[arg(
+        long,
+        conflicts_with = "payout_nanotos",
+        help = "Payout in TOS for settle or resolve operation"
+    )]
     payout: Option<f64>,
+    #[arg(
+        long,
+        conflicts_with = "payout",
+        help = "Exact payout in nanoTOS for settle or resolve operation"
+    )]
+    payout_nanotos: Option<u64>,
     #[arg(
         long,
         help = "64-byte ed25519 signature over the settle/resolve domain hash, for settle or resolve on a task deployed with --attestor-pubkey"
     )]
     attestation_signature: Option<String>,
-    #[arg(
-        long,
-        help = "New 32-byte ed25519 public key for rotate-attestor-key (creator-only)"
-    )]
+    #[arg(long, help = "New 32-byte ed25519 public key for rotate-attestor-key (creator-only)")]
     new_attestor_pubkey: Option<String>,
 }
 
@@ -324,10 +362,28 @@ pub struct AgentTaskBuildStateCmd {
     agent: Option<String>,
     #[arg(long, help = "Optional verifier allowed to settle the task")]
     verifier: Option<String>,
-    #[arg(long, help = "Optional account-permission ID linked to this task")]
+    #[arg(
+        long,
+        conflicts_with = "permission_hash",
+        help = "Optional account-permission ID linked to this task"
+    )]
     permission_id: Option<String>,
-    #[arg(long, help = "Escrow budget in TOS")]
-    budget: f64,
+    #[arg(long, conflicts_with = "permission_id", help = "Exact 32-byte permission hash in hex")]
+    permission_hash: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "budget_nanotos",
+        required_unless_present = "budget_nanotos",
+        help = "Escrow budget in TOS"
+    )]
+    budget: Option<f64>,
+    #[arg(
+        long,
+        conflicts_with = "budget",
+        required_unless_present = "budget",
+        help = "Exact escrow budget in nanoTOS"
+    )]
+    budget_nanotos: Option<u64>,
     #[arg(long, help = "Unix deadline")]
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
@@ -1025,7 +1081,8 @@ fn validate_controller_task_action(
 
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        validate_tos_amount("amount", self.amount)?;
+        let amount_nanotos =
+            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.01))?;
         let mut body: Option<Cell> = match self.operation {
             AgentTaskOperation::Accept => Some(TaskEscrowContract::accept(self.query_id)?),
             AgentTaskOperation::Claim => Some(TaskEscrowContract::claim(self.query_id)?),
@@ -1040,9 +1097,7 @@ impl AgentTaskSendCmd {
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?),
             AgentTaskOperation::Resolve => {
-                let payout = tos_to_nanotos(
-                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                );
+                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1057,9 +1112,7 @@ impl AgentTaskSendCmd {
                 }
             }
             AgentTaskOperation::Settle => {
-                let payout = tos_to_nanotos(
-                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                );
+                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1097,9 +1150,7 @@ impl AgentTaskSendCmd {
             let vault_key = self.signer_vault_key.as_deref().expect("checked above");
             match self.operation {
                 AgentTaskOperation::Settle => {
-                    let payout = tos_to_nanotos(
-                        self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                    );
+                    let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1116,9 +1167,7 @@ impl AgentTaskSendCmd {
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
                 }
                 AgentTaskOperation::Resolve => {
-                    let payout = tos_to_nanotos(
-                        self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                    );
+                    let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1132,19 +1181,18 @@ impl AgentTaskSendCmd {
                     )?;
                     let signature =
                         sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
-                    body =
-                        Some(TaskEscrowContract::resolve_signed(self.query_id, payout, &signature)?);
+                    body = Some(TaskEscrowContract::resolve_signed(
+                        self.query_id,
+                        payout,
+                        &signature,
+                    )?);
                 }
                 AgentTaskOperation::RotateAttestorKey => {
-                    let pubkey = resolve_attestor_pubkey(
-                        &None,
-                        &Some(vault_key.to_owned()),
-                        vault.clone(),
-                    )
-                    .await?
-                    .expect("vault key provided");
-                    body =
-                        Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?);
+                    let pubkey =
+                        resolve_attestor_pubkey(&None, &Some(vault_key.to_owned()), vault.clone())
+                            .await?
+                            .expect("vault key provided");
+                    body = Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?);
                 }
                 _ => unreachable!(
                     "only settle, resolve and rotate-attestor-key defer body resolution"
@@ -1188,7 +1236,7 @@ impl AgentTaskSendCmd {
             return AgentAccountTaskSendCmd {
                 wallet: agent_wallet.clone(),
                 target: destination.to_string(),
-                value: self.amount,
+                value: nanotos_to_tos_f64(amount_nanotos)?,
                 body_boc: Some(body_boc),
                 valid_until: self.valid_until.unwrap_or_else(|| time_format::now() as u32 + 300),
                 yes: self.yes,
@@ -1206,7 +1254,6 @@ impl AgentTaskSendCmd {
         if owner_info.account_state != AccountState::Active {
             anyhow::bail!("signing wallet is not active");
         }
-        let amount_nanotos = tos_to_nanotos(self.amount);
         if owner_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_ACTION_GAS) {
             anyhow::bail!("signing wallet has insufficient balance");
         }
@@ -1308,8 +1355,9 @@ impl AgentTaskShowCmd {
 
 impl AgentTaskCreateCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        validate_tos_amount("amount", self.amount)?;
-        validate_tos_amount("budget", self.budget)?;
+        let amount_nanotos =
+            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.2))?;
+        let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
         let creator = self.creator.parse::<MsgAddressInt>().context("invalid creator address")?;
         let agent =
             self.agent.as_deref().map(str::parse).transpose().context("invalid agent address")?;
@@ -1324,6 +1372,10 @@ impl AgentTaskCreateCmd {
         if let Some(permission_id) = &self.permission_id {
             validate_non_empty("permission-id", permission_id)?;
         }
+        let permission_hash = match parse_optional_hash("permission-hash", &self.permission_hash)? {
+            Some(value) => value,
+            None => permission_id_hash(self.permission_id.as_deref()),
+        };
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let attestor_pubkey =
@@ -1333,11 +1385,11 @@ impl AgentTaskCreateCmd {
             creator: creator.clone(),
             assigned_agent: agent,
             verifier,
-            budget: tos_to_nanotos(self.budget),
+            budget: budget_nanotos,
             deadline: self.deadline,
             review_period: self.review_period,
             settlement_policy_hash: policy_hash,
-            permission_hash: permission_id_hash(self.permission_id.as_deref()),
+            permission_hash,
             attestor_pubkey,
         };
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -1377,10 +1429,7 @@ impl AgentTaskCreateCmd {
         if payer_info.account_state != AccountState::Active {
             anyhow::bail!("funding wallet is not active");
         }
-        let amount_nanotos = tos_to_nanotos(self.amount);
-        if amount_nanotos == 0
-            || payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS)
-        {
+        if payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS) {
             anyhow::bail!("funding wallet has insufficient balance");
         }
         if !self.yes && !confirm("Confirm Task Escrow deployment?")? {
@@ -1425,6 +1474,7 @@ impl AgentTaskCreateCmd {
                     "status": "submitted",
                     "creator": creator.to_string(),
                     "permission_id": self.permission_id,
+                    "permission_hash": hex::encode(permission_hash),
                 })
             );
         } else {
@@ -1551,9 +1601,9 @@ impl AgentTaskLsCmd {
             }
         }
         records.retain(|record| {
-            self.status.as_ref().is_none_or(|status| {
-                record.chain_status.as_deref() == Some(status.as_str())
-            })
+            self.status
+                .as_ref()
+                .is_none_or(|status| record.chain_status.as_deref() == Some(status.as_str()))
         });
         records.retain(|record| {
             let assigned = if self.on_chain {
@@ -1620,9 +1670,7 @@ impl AgentTaskEncodeCmd {
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?,
             AgentTaskOperation::Resolve => {
-                let payout = tos_to_nanotos(
-                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                );
+                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1634,9 +1682,7 @@ impl AgentTaskEncodeCmd {
                 }
             }
             AgentTaskOperation::Settle => {
-                let payout = tos_to_nanotos(
-                    self.payout.ok_or_else(|| anyhow::anyhow!("--payout is required"))?,
-                );
+                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1701,13 +1747,17 @@ impl AgentTaskBuildStateCmd {
         if let Some(permission_id) = &self.permission_id {
             validate_non_empty("permission-id", permission_id)?;
         }
-        let permission_hash = permission_id_hash(self.permission_id.as_deref());
+        let permission_hash = match parse_optional_hash("permission-hash", &self.permission_hash)? {
+            Some(value) => value,
+            None => permission_id_hash(self.permission_id.as_deref()),
+        };
+        let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
         let attestor_pubkey = parse_optional_hash("attestor-pubkey", &self.attestor_pubkey)?;
         let init = TaskEscrowInit {
             creator: creator.clone(),
             assigned_agent: assigned_agent.clone(),
             verifier: verifier.clone(),
-            budget: tos_to_nanotos(self.budget),
+            budget: budget_nanotos,
             deadline: self.deadline,
             review_period: self.review_period,
             settlement_policy_hash: policy_hash,
@@ -2812,8 +2862,7 @@ impl AgentWalletSendCmd {
         let dest_addr = self.to.parse::<MsgAddressInt>().context("Invalid destination address")?;
 
         let amount_nanotos = tos_to_nanotos(self.amount);
-        if !(1..=from_info.balance.saturating_sub(AGENT_WALLET_FUND_GAS))
-            .contains(&amount_nanotos)
+        if !(1..=from_info.balance.saturating_sub(AGENT_WALLET_FUND_GAS)).contains(&amount_nanotos)
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Agent Wallet balance is {} TOS",
@@ -2852,9 +2901,9 @@ impl AgentWalletSendCmd {
             .context("create agent wallet signer")?;
         let body =
             if let Some(msg) = &self.message { build_comment_cell(msg)? } else { Cell::default() };
-        let msg =
-            wallet.build_message(dest_addr.clone(), amount_nanotos, body, false, None, None, None)
-                .await?;
+        let msg = wallet
+            .build_message(dest_addr.clone(), amount_nanotos, body, false, None, None, None)
+            .await?;
         let msg_boc = write_boc(&msg)?;
         rpc_client.send_boc(&msg_boc).await?;
         wait_for_seqno_change(
@@ -3222,7 +3271,10 @@ async fn build_agent_account_init(
     ))
 }
 
-pub(crate) fn parse_optional_hash(name: &str, value: &Option<String>) -> anyhow::Result<Option<[u8; 32]>> {
+pub(crate) fn parse_optional_hash(
+    name: &str,
+    value: &Option<String>,
+) -> anyhow::Result<Option<[u8; 32]>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -3290,6 +3342,40 @@ pub(crate) fn parse_optional_signature(
     let signature: [u8; 64] =
         bytes.try_into().map_err(|_| anyhow::anyhow!("{name} must be exactly 64 bytes"))?;
     Ok(Some(signature))
+}
+
+fn resolve_nanotos(
+    name: &str,
+    value_tos: Option<f64>,
+    value_nanotos: Option<u64>,
+    default_tos: Option<f64>,
+) -> anyhow::Result<u64> {
+    if let Some(value) = value_nanotos {
+        if value == 0 {
+            anyhow::bail!("{name}-nanotos must be greater than zero");
+        }
+        return Ok(value);
+    }
+    let value = value_tos
+        .or(default_tos)
+        .ok_or_else(|| anyhow::anyhow!("provide exactly one of --{name} or --{name}-nanotos"))?;
+    validate_tos_amount(name, value)?;
+    let nanotos = tos_to_nanotos(value);
+    if nanotos == 0 {
+        anyhow::bail!("{name} must be greater than zero");
+    }
+    Ok(nanotos)
+}
+
+fn nanotos_to_tos_f64(value: u64) -> anyhow::Result<f64> {
+    // Controller forwarding still accepts TOS as f64. Refuse values that cannot
+    // round-trip through IEEE-754 at nanoTOS precision instead of silently
+    // changing an economic amount.
+    const MAX_EXACT_NANOTOS: u64 = 9_007_199_254_740_991;
+    if value > MAX_EXACT_NANOTOS {
+        anyhow::bail!("nanoTOS value cannot be represented exactly by this command path");
+    }
+    Ok(value as f64 / 1_000_000_000.0)
 }
 
 fn permission_id_hash(permission_id: Option<&str>) -> [u8; 32] {
@@ -3438,7 +3524,9 @@ fn print_table_summary(view: &AgentWalletView) {
 
 #[cfg(test)]
 mod tests {
-    use super::{permission_id_hash, validate_controller_task_action, AgentTaskOperation};
+    use super::{
+        AgentTaskOperation, permission_id_hash, resolve_nanotos, validate_controller_task_action,
+    };
     use chain_block::MsgAddressInt;
     use contracts::TaskEscrowData;
 
@@ -3472,6 +3560,13 @@ mod tests {
             "873d4711315b76cfa2130ec78baabe70fa7d60e8f69f363f45ff6f03246a81ca"
         );
         assert_eq!(permission_id_hash(None), [0; 32]);
+    }
+
+    #[test]
+    fn exact_nanotos_bypasses_float_conversion() {
+        assert_eq!(resolve_nanotos("budget", None, Some(u64::MAX), None).unwrap(), u64::MAX);
+        assert!(resolve_nanotos("budget", None, Some(0), None).is_err());
+        assert_eq!(resolve_nanotos("amount", None, None, Some(0.2)).unwrap(), 200_000_000);
     }
 
     #[test]

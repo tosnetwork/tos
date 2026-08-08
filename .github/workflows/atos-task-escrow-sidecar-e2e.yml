@@ -1,0 +1,71 @@
+name: ATOS TaskEscrow sidecar localnet E2E
+
+on:
+  push:
+    branches:
+      - agent/atos-task-escrow-sidecar-e2e
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs'
+      - 'scripts/atos-task-escrow-publisher-e2e.py'
+      - '.github/workflows/atos-task-escrow-sidecar-e2e.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  localnet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/tosnetwork/tos-builder:ubuntu-24.04
+      credentials:
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out TOS
+        uses: actions/checkout@v7
+      - name: Check out tos-protocol publisher branch
+        uses: actions/checkout@v7
+        with:
+          repository: tosnetwork/tos-protocol
+          ref: agent/task-escrow-publisher-sidecar
+          path: tos-protocol
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: tos-protocol/go.sum
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          toolchain: 1.91.1
+          cache: false
+          rustflags: ''
+      - name: Build TOS localnet and tosctl
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ccache
+          cp assembly/native/build-ubuntu-shared.sh .
+          chmod +x build-ubuntu-shared.sh
+          ./build-ubuntu-shared.sh -t -c
+          cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl
+      - name: Validate publisher Go code
+        working-directory: tos-protocol
+        run: |
+          set -euo pipefail
+          make all
+          make test-race
+      - name: Prepare localnet Python environment
+        run: |
+          set -euo pipefail
+          uv sync --no-dev
+          uv run test/tostester/generate_tl.py
+      - name: Run real local-chain publisher E2E
+        env:
+          TOS_PROTOCOL_DIR: ${{ github.workspace }}/tos-protocol
+          TOS_BUILD_DIR: ${{ github.workspace }}/build
+          TOSCTL: ${{ github.workspace }}/tosctl/src/target/debug/tosctl
+        run: uv run python scripts/atos-task-escrow-publisher-e2e.py
