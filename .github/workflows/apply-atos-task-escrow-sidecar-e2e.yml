@@ -45,14 +45,14 @@ jobs:
           rm -f .github/workflows/export-atos-task-escrow-sidecar-source.yml
           rm -f .github/workflows/apply-atos-task-escrow-sidecar-e2e.yml
           rm -f .github/atos-sidecar-e2e-patch.part{00..03}
-          rustfmt --edition 2024 tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
+          rustfmt --edition 2024 --config skip_children=true tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
           git --git-dir="$repo/.git" --work-tree="$repo" diff --check
       - name: Validate Rust CLI and test harness
         shell: bash
         run: |
           set -euo pipefail
           cd /__w/tos/tos
-          rustfmt --edition 2024 --check tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
+          rustfmt --edition 2024 --config skip_children=true --check tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
           cargo test --manifest-path tosctl/src/Cargo.toml -p commands exact_nanotos_bypasses_float_conversion
           python3 -m py_compile scripts/atos-task-escrow-publisher-e2e.py
       - name: Commit implementation
