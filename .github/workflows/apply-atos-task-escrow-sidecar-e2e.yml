@@ -6,11 +6,12 @@ on:
       - agent/atos-task-escrow-sidecar-e2e
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
   apply:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     container:
@@ -94,3 +95,20 @@ jobs:
           set -euo pipefail
           cd /__w/tos/tos
           uv run python scripts/atos-task-escrow-publisher-e2e.py
+      - name: Commit validated source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo=/__w/tos/tos
+          cd "$repo"
+          # The permanent workflow is committed separately through the GitHub API,
+          # because a normal GITHUB_TOKEN cannot create or modify workflow files.
+          rm -f .github/workflows/atos-task-escrow-sidecar-e2e.yml
+          git --git-dir="$repo/.git" --work-tree="$repo" config user.name 'github-actions[bot]'
+          git --git-dir="$repo/.git" --work-tree="$repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git --git-dir="$repo/.git" --work-tree="$repo" add \
+            tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs \
+            scripts/atos-task-escrow-publisher-e2e.py \
+            doc/atos-task-escrow-publisher.md
+          git --git-dir="$repo/.git" --work-tree="$repo" commit -m 'test: add real local-chain TaskEscrow publisher E2E'
+          git --git-dir="$repo/.git" --work-tree="$repo" push origin HEAD:agent/atos-task-escrow-sidecar-e2e
