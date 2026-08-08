@@ -315,8 +315,10 @@ async def run_checks(faucet) -> None:
         )
     )
     publisher_config.chmod(0o600)
-    sidecar_stdout = (WORKDIR / "sidecar.stdout.log").open("wb")
-    sidecar_stderr = (WORKDIR / "sidecar.stderr.log").open("wb")
+    sidecar_stdout_path = WORKDIR / "sidecar.stdout.log"
+    sidecar_stderr_path = WORKDIR / "sidecar.stderr.log"
+    sidecar_stdout = sidecar_stdout_path.open("wb")
+    sidecar_stderr = sidecar_stderr_path.open("wb")
     environment = dict(os.environ)
     environment["TOS_TASK_ESCROW_PUBLISHER_CONFIG"] = str(publisher_config)
     sidecar_process = await asyncio.create_subprocess_exec(
@@ -326,7 +328,16 @@ async def run_checks(faucet) -> None:
         stderr=sidecar_stderr,
     )
     try:
-        check("publisher health ready", await wait_sidecar(socket_path))
+        ready = await wait_sidecar(socket_path)
+        check("publisher health ready", ready)
+        if not ready:
+            sidecar_stdout.flush()
+            sidecar_stderr.flush()
+            print("\n--- publisher sidecar stdout ---")
+            print(sidecar_stdout_path.read_text(errors="replace") or "(empty)")
+            print("--- publisher sidecar stderr ---")
+            print(sidecar_stderr_path.read_text(errors="replace") or "(empty)")
+            return
         harness_config = WORKDIR / "driver.json"
         harness_config.write_text(
             json.dumps(
