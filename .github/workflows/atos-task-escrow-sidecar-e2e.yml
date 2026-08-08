@@ -2,8 +2,11 @@ name: ATOS TaskEscrow sidecar localnet E2E
 
 on:
   push:
-    branches:
-      - agent/atos-task-escrow-sidecar-e2e
+    branches: [main]
+    paths:
+      - 'tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs'
+      - 'scripts/atos-task-escrow-publisher-e2e.py'
+      - '.github/workflows/atos-task-escrow-sidecar-e2e.yml'
   pull_request:
     branches: [main]
     paths:
@@ -11,6 +14,10 @@ on:
       - 'scripts/atos-task-escrow-publisher-e2e.py'
       - '.github/workflows/atos-task-escrow-sidecar-e2e.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -31,30 +38,40 @@ jobs:
     steps:
       - name: Check out TOS
         uses: actions/checkout@v7
-      - name: Check out tos-protocol publisher branch
+      - name: Check out tested tos-protocol publisher revision
         uses: actions/checkout@v7
         with:
           repository: tosnetwork/tos-protocol
-          ref: agent/task-escrow-publisher-sidecar
+          ref: 959676842c5561266a21d298a18b6641d3d8487a
           path: tos-protocol
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
           cache: true
           cache-dependency-path: tos-protocol/go.sum
+      - name: Date stamp
+        id: date-stamp
+        run: echo "timestamp=$(date -u '+%Y%m%d%H%M_%S')" >> "$GITHUB_OUTPUT"
+      - name: Restore TOS compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-shared-ccache
       - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: 1.91.1
           cache: false
           rustflags: ''
-      - name: Build TOS localnet and tosctl
+      - name: Build minimum real-localnet toolchain and tosctl
         run: |
           set -euo pipefail
           mkdir -p ~/.ccache
           cp assembly/native/build-ubuntu-shared.sh .
           chmod +x build-ubuntu-shared.sh
-          ./build-ubuntu-shared.sh -t -c
+          ./build-ubuntu-shared.sh -c
           cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl
+          cargo test --manifest-path tosctl/src/Cargo.toml -p commands exact_nanotos_bypasses_float_conversion
       - name: Validate publisher Go code
         working-directory: tos-protocol
         run: |
@@ -71,4 +88,6 @@ jobs:
           TOS_PROTOCOL_DIR: ${{ github.workspace }}/tos-protocol
           TOS_BUILD_DIR: ${{ github.workspace }}/build
           TOSCTL: ${{ github.workspace }}/tosctl/src/target/debug/tosctl
-        run: uv run python scripts/atos-task-escrow-publisher-e2e.py
+        run: |
+          set -euo pipefail
+          uv run python scripts/atos-task-escrow-publisher-e2e.py
