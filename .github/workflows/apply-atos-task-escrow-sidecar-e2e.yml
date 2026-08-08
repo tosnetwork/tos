@@ -6,14 +6,13 @@ on:
       - agent/atos-task-escrow-sidecar-e2e
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     container:
       image: ghcr.io/tosnetwork/tos-builder:ubuntu-24.04
       credentials:
@@ -24,6 +23,16 @@ jobs:
         with:
           ref: agent/atos-task-escrow-sidecar-e2e
           fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: tosnetwork/tos-protocol
+          ref: agent/task-escrow-publisher-sidecar
+          path: tos-protocol
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+          cache-dependency-path: tos-protocol/go.sum
       - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: 1.91.1
@@ -36,17 +45,13 @@ jobs:
           set -euo pipefail
           repo=/__w/tos/tos
           cd "$repo"
-          test -d "$repo/.git"
           cat .github/atos-sidecar-e2e-patch.part{00..03} > /tmp/atos-sidecar-e2e.patch.xz.b64
           base64 --decode /tmp/atos-sidecar-e2e.patch.xz.b64 > /tmp/atos-sidecar-e2e.patch.xz
           echo '5f563da0a2c122d170e6dbf82e4e5c86bb02ef5a525b44e86bf16afbac6971ad  /tmp/atos-sidecar-e2e.patch.xz' | sha256sum --check --strict
           xz -dc /tmp/atos-sidecar-e2e.patch.xz > /tmp/atos-sidecar-e2e.patch
-          git --git-dir="$repo/.git" --work-tree="$repo" apply --binary --whitespace=error-all /tmp/atos-sidecar-e2e.patch
-          rm -f .github/workflows/export-atos-task-escrow-sidecar-source.yml
-          rm -f .github/workflows/apply-atos-task-escrow-sidecar-e2e.yml
-          rm -f .github/atos-sidecar-e2e-patch.part{00..03}
+          git apply --binary --whitespace=error-all /tmp/atos-sidecar-e2e.patch
           rustfmt --edition 2024 --config skip_children=true tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
-          git --git-dir="$repo/.git" --work-tree="$repo" diff --check
+          git diff --check
       - name: Validate materialized sources
         shell: bash
         run: |
@@ -54,36 +59,38 @@ jobs:
           cd /__w/tos/tos
           rustfmt --edition 2024 --config skip_children=true --check tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs
           python3 -m py_compile scripts/atos-task-escrow-publisher-e2e.py
-          python3 - <<'PY'
-          from pathlib import Path
-
-          source = Path('tosctl/src/node-control/commands/src/commands/nodectl/agent_cmd.rs').read_text()
-          for required in (
-              'permission_hash',
-              'budget_nanotos',
-              'amount_nanotos',
-              'payout_nanotos',
-              'exact_nanotos_bypasses_float_conversion',
-          ):
-              if required not in source:
-                  raise SystemExit(f'missing exact nanoTOS interface or regression test: {required}')
-          workflow = Path('.github/workflows/atos-task-escrow-sidecar-e2e.yml').read_text()
-          for required in (
-              'build-ubuntu-shared.sh',
-              'atos-task-escrow-publisher-e2e.py',
-              'agent/task-escrow-publisher-sidecar',
-          ):
-              if required not in workflow:
-                  raise SystemExit(f'missing real localnet E2E dependency: {required}')
-          PY
-      - name: Commit implementation
+      - name: Build TOS localnet and tosctl
         shell: bash
         run: |
           set -euo pipefail
-          repo=/__w/tos/tos
-          cd "$repo"
-          git --git-dir="$repo/.git" --work-tree="$repo" config user.name 'github-actions[bot]'
-          git --git-dir="$repo/.git" --work-tree="$repo" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git --git-dir="$repo/.git" --work-tree="$repo" add -A
-          git --git-dir="$repo/.git" --work-tree="$repo" commit -m 'test: add real local-chain TaskEscrow publisher E2E'
-          git --git-dir="$repo/.git" --work-tree="$repo" push origin HEAD:agent/atos-task-escrow-sidecar-e2e
+          cd /__w/tos/tos
+          mkdir -p ~/.ccache
+          cp assembly/native/build-ubuntu-shared.sh .
+          chmod +x build-ubuntu-shared.sh
+          ./build-ubuntu-shared.sh -t -c
+          cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl
+          cargo test --manifest-path tosctl/src/Cargo.toml -p commands exact_nanotos_bypasses_float_conversion
+      - name: Validate publisher Go code
+        working-directory: tos-protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          make all
+          make test-race
+      - name: Prepare localnet Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /__w/tos/tos
+          uv sync --no-dev
+          uv run test/tostester/generate_tl.py
+      - name: Run real local-chain publisher E2E
+        shell: bash
+        env:
+          TOS_PROTOCOL_DIR: /__w/tos/tos/tos-protocol
+          TOS_BUILD_DIR: /__w/tos/tos/build
+          TOSCTL: /__w/tos/tos/tosctl/src/target/debug/tosctl
+        run: |
+          set -euo pipefail
+          cd /__w/tos/tos
+          uv run python scripts/atos-task-escrow-publisher-e2e.py
