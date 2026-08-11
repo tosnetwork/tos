@@ -159,11 +159,27 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Destination address")]
     to: String,
 
-    #[arg(long, help = "Amount in TOS (e.g. 1.5)")]
-    amount: f64,
+    #[arg(
+        long,
+        conflicts_with = "amount_nanotos",
+        required_unless_present = "amount_nanotos",
+        help = "Amount in TOS (e.g. 1.5)"
+    )]
+    amount: Option<f64>,
+
+    #[arg(
+        long,
+        conflicts_with = "amount",
+        required_unless_present = "amount",
+        help = "Exact amount in nanoTOS for automation"
+    )]
+    amount_nanotos: Option<u64>,
 
     #[arg(long, help = "Optional message/comment")]
     message: Option<String>,
+
+    #[arg(long, help = "Confirm the transfer non-interactively")]
+    yes: bool,
 }
 
 impl WalletCmd {
@@ -809,14 +825,19 @@ impl WalletSendCmd {
         let (from_wallet_address, from_wallet_info, from_secret) =
             wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
 
-        let amount_nanotos = tos_to_nanotos(self.amount);
+        let amount_nanotos = match (self.amount, self.amount_nanotos) {
+            (Some(amount), None) => tos_to_nanotos(amount),
+            (None, Some(amount)) if amount > 0 => amount,
+            _ => anyhow::bail!("Exactly one positive amount is required"),
+        };
+        let amount_tos = amount_nanotos as f64 / 1_000_000_000.0;
 
         if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
             .contains(&amount_nanotos)
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
-                self.amount,
+                amount_tos,
                 display_tos(from_wallet_info.balance)
             );
         }
@@ -845,7 +866,7 @@ impl WalletSendCmd {
             self.from,
             from_wallet_address,
             dest_addr,
-            self.amount,
+            amount_tos,
             if let Some(msg) = &self.message {
                 format!("\n  Comment: {}", msg)
             } else {
@@ -853,7 +874,7 @@ impl WalletSendCmd {
             },
         );
 
-        if !confirm("Confirm transfer?")? {
+        if !self.yes && !confirm("Confirm transfer?")? {
             println!("{}", "Transfer cancelled".yellow());
             return Ok(());
         }
