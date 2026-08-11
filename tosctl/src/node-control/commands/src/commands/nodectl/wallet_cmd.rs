@@ -8,7 +8,7 @@
  */
 use super::output_format::OutputFormat;
 use super::utils::{
-    load_config_vault_rpc_client, make_wallet, wallet_address, wallet_info,
+    load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, wallet_address, wallet_info,
     check_chain_rpc_connection, warn_chain_rpc_unavailable, get_wallet_config,
     wait_for_seqno_change, wait_for_deploy, SEND_TIMEOUT, DEPLOY_TIMEOUT,
 };
@@ -97,6 +97,10 @@ pub struct WalletLsCmd {
     /// Output format: table or json
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -170,6 +174,10 @@ pub struct WalletSendCmd {
 
     #[arg(long, help = "Skip the interactive transfer confirmation")]
     yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 impl WalletCmd {
@@ -192,6 +200,8 @@ impl WalletCmd {
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into());
         let cmd = WalletLsCmd {
             format: OutputFormat::Table,
+            config_fd: None,
+            config_format: None,
         };
         cmd.run(&config_path).await
     }
@@ -375,7 +385,11 @@ impl WalletLsCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let config_path = Path::new(config_path);
 
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(config_path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
 
         if let Err(e) = check_chain_rpc_connection(&rpc_client).await {
             if matches!(self.format, OutputFormat::Table) {
@@ -807,7 +821,11 @@ impl WalletSendCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let config_path = Path::new(config_path);
 
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(config_path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
 
         let wallet_cfg =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
@@ -918,5 +936,14 @@ mod wallet_send_cli_tests {
     fn rejects_both_amount_forms() {
         let command = WalletSendCmd::augment_args(Command::new("send"));
         assert!(command.try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount", "1", "--amount-nanotos", "1"]).is_err());
+    }
+
+    #[test]
+    fn parses_inherited_json_config_fd() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        let matches = command.try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount-nanotos", "1", "--config-fd", "3", "--config-format", "json"]).unwrap();
+        let parsed = WalletSendCmd::from_arg_matches(&matches).unwrap();
+        assert_eq!(parsed.config_fd, Some(3));
+        assert_eq!(parsed.config_format.as_deref(), Some("json"));
     }
 }
