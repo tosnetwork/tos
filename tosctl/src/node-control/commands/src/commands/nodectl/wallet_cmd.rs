@@ -896,3 +896,27 @@ impl WalletSendCmd {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod wallet_send_cli_tests {
+    use super::WalletSendCmd;
+    use clap::{Args, Command, FromArgMatches};
+
+    #[test]
+    fn parses_exact_nanotos_and_yes() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        let matches = command
+            .try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount-nanotos", "7", "--yes"])
+            .expect("exact send flags must parse");
+        let parsed = WalletSendCmd::from_arg_matches(&matches).expect("parsed send args");
+        assert_eq!(parsed.amount_nanotos, Some(7));
+        assert_eq!(parsed.amount, None);
+        assert!(parsed.yes);
+    }
+
+    #[test]
+    fn rejects_both_amount_forms() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        assert!(command.try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount", "1", "--amount-nanotos", "1"]).is_err());
+    }
+}
