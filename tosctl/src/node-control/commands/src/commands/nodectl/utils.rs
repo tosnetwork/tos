@@ -91,6 +91,22 @@ pub async fn load_config_vault_rpc_client(
     Ok((config, vault, rpc_client))
 }
 
+pub async fn load_config_vault_rpc_client_fd(
+    fd: i32,
+    format: &str,
+) -> anyhow::Result<(AppConfig, Arc<SecretVault>, Arc<ClientJsonRpc>)> {
+    let config = AppConfig::load_fd(fd, format)?;
+    let vault = SecretVaultBuilder::from_env().await?;
+    let rpc_client = Arc::new(
+        ClientJsonRpc::connect_many(
+            config.chain_rpc.resolved_endpoints(),
+            config.chain_rpc.api_key.clone(),
+        )
+        .context("ClientJsonRpc")?,
+    );
+    Ok((config, vault, rpc_client))
+}
+
 pub async fn wallet_address(
     wallet_cfg: &WalletConfig,
     vault: Arc<SecretVault>,

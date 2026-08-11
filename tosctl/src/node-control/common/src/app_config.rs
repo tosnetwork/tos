@@ -963,18 +963,32 @@ impl AppConfig {
 
         let file_ext = path.extension().and_then(OsStr::to_str).unwrap_or("").to_ascii_lowercase();
 
-        let mut config = match file_ext.as_str() {
+        Self::parse(&data, &file_ext, &path.display().to_string())
+    }
+
+    pub fn load_fd(fd: i32, format: &str) -> anyhow::Result<Self> {
+        use std::io::Read;
+        use std::os::fd::FromRawFd;
+        if fd < 3 { anyhow::bail!("config fd must be at least 3"); }
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let mut data = String::new();
+        file.read_to_string(&mut data).context("Failed to read config fd")?;
+        Self::parse(&data, &format.to_ascii_lowercase(), &format!("fd {fd}"))
+    }
+
+    fn parse(data: &str, format: &str, source: &str) -> anyhow::Result<Self> {
+        let mut config = match format {
             "yaml" | "yml" => serde_yaml2::from_str::<Self>(&data).map_err(|e| {
                 anyhow::anyhow!(
-                    "Failed to parse YAML config file '{}'. Error: {}",
-                    path.display(),
+                    "Failed to parse YAML config '{}'. Error: {}",
+                    source,
                     e
                 )
             })?,
             "json" => serde_json::from_str::<Self>(&data).map_err(|e| {
                 anyhow::anyhow!(
-                    "Failed to parse JSON config file '{}'. Error: {}",
-                    path.display(),
+                    "Failed to parse JSON config '{}'. Error: {}",
+                    source,
                     e
                 )
             })?,
@@ -996,6 +1010,21 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn load_json_from_inherited_fd_without_path_extension() {
+        use std::io::{Seek, Write};
+        use std::os::fd::IntoRawFd;
+        let path = std::env::temp_dir().join(format!("tosctl-config-fd-{}", std::process::id()));
+        let mut file = std::fs::OpenOptions::new().create_new(true).read(true).write(true).open(&path).unwrap();
+        serde_json::to_writer(&mut file, &minimal_config_json()).unwrap();
+        file.flush().unwrap();
+        file.rewind().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let config = AppConfig::load_fd(file.into_raw_fd(), "json").unwrap();
+        assert_eq!(config.chain_rpc.endpoints(), vec!["http://127.0.0.1:3301/"]);
+    }
 
     const ADDR: &'static str =
         "-1:bd313e9e1114bbbe7af6f28ef59be0ff3f02ac795423f10397a70dc16396c4ea";
