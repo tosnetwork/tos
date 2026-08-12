@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECCAEAAV4AART/APSkE/S88sgLAQIBYgIDApLQMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0NMP0x/TH9Mf+gD6ANT0BNEpghBBUFMBuuMCOgiCEEFQUwK64wJfCYEJA/LwBAUCAVgGBwDEOQfTH9P/03/Tf9GBCP1TSb7y9IEI/yLCAPL0UzuAIPQPb6GBCP4y8vIQPPgjyFAFzxYTy//Lf8t/yx/JQJiAIPQXEEcQNkVAEgfIyw8Wyx8Uyx8Syx8B+gIB+gLM9ADJ7VQAfgbRUzeAIPQPb6GBCQEy8vIjpCOoIqCBCQD4I1i+8vQDpBBHRWYEB8jLDxbLHxTLHxLLHwH6AgH6Asz0AMntVAAtudfu1E0NMP0x/TH9Mf+gD6ANT0BNFbgAc7s4btRNDTD9Mf0x/TH/oA+gDU9ATRbHGAIPQPb6HAAJkwcMjJ0FRxESDg0PpA0//Tf9N/0x8wcVVAjg6Mm5";
+pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECDgEAA2IAART/APSkE/S88sgLAQIBYgIDA+LQAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNEtxwCOnz1wf3TIywLKB8v/ydAcxwWzkl8N4FR4xVR3ZVYQVhLgPgzTH9M/MSGCEEFQUwG64wI8ghBBUFMCuuMCXw2BCQPy8AQFBgIBIAgJAvxScIAg9A9vocAAjmvQ+kDT/9N/MALTAjHSBzHT/zD4KAkQihB6EDYFEEpZcALIy//L/8lTEXHIyw9QDM8WGss/GMoHFst/UAT6AhfLHxXLfxTLDxTLDxLLH8zLAMlwcVRwEcjLAMsAywAUzBPLAMzLAMlxIfkAEuMNgQkCUAMLBwDqMdMf0//Tf9N/0YEI/VNNvvL0gQj/IsIA8vQjVhGAIPQPb6GBCP4y8vIQPvgjyFAFzxYTy//Lf8t/yx/JQL2AIPQXEIsQehBpEFgQRxA2RUAQIwvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAKYK0VN7gCD0D2+hgQkBMvLyJ6QnqCaggQkA+CNYvvL0B6QQiwoQaRBYEEcQNkUEQxMLyMsPGssfGMsfFssfFMoHEssPyw/LHwH6AgH6Asz0AMntVADK8vRQPqCBCQRTErzy8gmkUZZQPRwLyMsPGssfGMsfFssfFMoHEssPyw/LHwH6AgH6Asz0AMntVFh0yMsCE8oHy//J0HBxUwGAEMjLBVAFzxYj+gIUy2gTywASywASzMsAyYBA+wABW78hv2omhph+mP6Y/pj+kD6Yfph+mP/QB9AGp6AmicHC2bGxCIPAg0KCKIHCAMQKAgEgDA0B9lJwgCD0D2+hwACOa9D6QNP/038wAtMCMdIHMdP/MPgoCRCKEHoQNgUQSllwAsjL/8v/yVMRccjLD1AMzxYayz8YygcWy39QBPoCF8sfFct/FMsPFMsPEssfzMsAyXBxVHARyMsAywDLABTME8sAzMsAyXEh+QAS4w0xEgsACl8IcG0hAD251+7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRW4AIO7OG7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbLGAIPQPb6HAAJkwcMjJ0FRxESDg0PpA0//Tf9N/0x8wcVVAgKwWN1";
 
 pub const AIPOW_SETTLEMENT_REGISTER_OPCODE: u32 = 0x4150_5301;
 pub const AIPOW_SETTLEMENT_SKIP_OPCODE: u32 = 0x4150_5302;
@@ -33,10 +33,15 @@ pub struct AipowSettlementInit {
     pub epoch_seconds: u32,
     /// Seconds after an epoch ends before it may be skipped with zero mint.
     pub register_grace: u32,
+    /// The workchain the per-epoch distributors are deployed on and pay
+    /// identities on (e.g. 0 for basechain, where agent wallets live).
+    pub earner_workchain: i8,
+    /// The maturation snapshot every per-epoch distributor is deployed with.
+    pub maturation: crate::aipow_distributor::AipowMaturation,
     /// The AIPoW supply cap (nanotos), e.g. 4.5B TOS.
     pub total_cap: u64,
     /// The audited distributor code used to derive canonical distributor
-    /// addresses in the (later) settle path.
+    /// addresses in the settle path.
     pub distributor_code: Cell,
 }
 
@@ -48,6 +53,8 @@ pub struct AipowSettlementData {
     pub next_epoch: u32,
     pub epoch_seconds: u32,
     pub register_grace: u32,
+    pub earner_workchain: i8,
+    pub maturation: crate::aipow_distributor::AipowMaturation,
     pub minted_total: u64,
     pub total_cap: u64,
 }
@@ -71,11 +78,21 @@ impl AipowSettlementContract {
         if init.epoch_seconds == 0 {
             anyhow::bail!("epoch_seconds must be positive");
         }
+        if init.maturation.epoch_seconds == 0 || init.maturation.stream_epochs == 0 {
+            anyhow::bail!("maturation epoch_seconds and stream_epochs must be positive");
+        }
+        if init.maturation.immediate_bps > 10_000 {
+            anyhow::bail!("maturation immediate_bps must not exceed 10000");
+        }
         let mut data = BuilderData::new();
         data.append_u16(AIPOW_SETTLEMENT_VERSION)?;
         data.append_u32(init.next_epoch)?;
         data.append_u32(init.epoch_seconds)?;
         data.append_u32(init.register_grace)?;
+        data.append_i8(init.earner_workchain)?;
+        data.append_u16(init.maturation.immediate_bps)?;
+        data.append_u16(init.maturation.stream_epochs)?;
+        data.append_u32(init.maturation.epoch_seconds)?;
         append_tomis(&mut data, 0)?; // minted_total starts at zero
         append_tomis(&mut data, init.total_cap)?;
         data.checked_append_reference(init.distributor_code.clone())?;
@@ -99,9 +116,31 @@ impl AipowSettlementContract {
             next_epoch: stack.u64(1)? as u32,
             epoch_seconds: stack.u64(2)? as u32,
             register_grace: stack.u64(3)? as u32,
-            minted_total: stack.u64(4)?,
-            total_cap: stack.u64(5)?,
+            earner_workchain: stack.i64(4)? as i8,
+            maturation: crate::aipow_distributor::AipowMaturation {
+                immediate_bps: stack.u64(5)? as u16,
+                stream_epochs: stack.u64(6)? as u16,
+                epoch_seconds: stack.u64(7)? as u32,
+            },
+            minted_total: stack.u64(8)?,
+            total_cap: stack.u64(9)?,
         })
+    }
+
+    /// Decode `get_distributor_address(epoch, pool)`:
+    /// `(found, workchain, address_hash)`. Returns the canonical distributor
+    /// address the settle path would deploy, or `None` if `epoch` is not
+    /// registered.
+    pub fn decode_distributor_address(
+        stack: &TvmStackParser,
+    ) -> anyhow::Result<Option<MsgAddressInt>> {
+        let found = stack.u64(0)? != 0;
+        if !found {
+            return Ok(None);
+        }
+        let workchain = stack.i64(1)? as i8;
+        let hash = parse_hash(stack, 2)?;
+        Ok(Some(MsgAddressInt::with_standart(None, workchain, hash.into())?))
     }
 
     /// Decode `get_registration`:
@@ -189,6 +228,8 @@ mod tests {
             next_epoch: 27_260,
             epoch_seconds: 65_536,
             register_grace: 3600,
+            earner_workchain: 0,
+            maturation: crate::aipow_distributor::AipowMaturation::methodology_v0(),
             total_cap: 4_500_000_000_000_000_000,
             distributor_code: dummy_distributor_code(),
         }

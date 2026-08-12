@@ -4,19 +4,22 @@
 ;; The single governance-registered masterchain account named by
 ;; ConfigParam 93 (AipowRegistry.settlement_addr). It is the sole destination
 ;; of native AIPoW issuance: at masterchain settlement the protocol mints an
-;; epoch "pool" to this account (an empty-body special message), and this
-;; account records it, advances the epoch cursor, and forwards the pool to the
-;; canonical per-epoch distributor. It owns the cumulative supply cap and the
+;; epoch "pool" to this account (an empty-body special message from the
+;; masterchain minter -1:00..00), and this account records it, advances the
+;; epoch cursor, and forwards the pool to the canonical per-epoch distributor it
+;; deploys on the earner workchain. It owns the cumulative supply cap and the
 ;; epoch cursor so the once-per-epoch and 4.5B-cap invariants live in one place.
 ;;
 ;; DARK until activation: nothing mints to this account until capAipow is set in
 ;; ConfigParam 8 and this address is registered. Built and tested in isolation.
 ;;
-;; This file (W4.1, checkpoint 1) implements the account's state and the
-;; registration + skip paths. The `settle` op (receive the empty-body mint,
-;; advance the ledger, and forward the pool to the derived distributor address)
-;; is added in the next checkpoint, co-designed with the distributor's canonical
-;; initial-data layout (W4.3) that the forward address derivation must match.
+;; W4.1 checkpoint 3 adds the settle path: the derivation of the canonical
+;; per-epoch distributor address (build its initial data + StateInit exactly as
+;; the audited distributor SDK does, so the derived address equals a real
+;; deployment), the authenticated mint receipt, ledger advance, and the forward
+;; that deploys+funds the distributor. The maturation snapshot and earner
+;; workchain the distributor is built with are deploy parameters of this account
+;; (v0: snapshotted here; a later refinement versions them per epoch, F10).
 ;;
 ;; Persistent data layout:
 ;;   version:uint16                (D9 layout tag)
@@ -24,6 +27,11 @@
 ;;   epoch_seconds:uint32          (epoch length, for the skip deadline)
 ;;   register_grace:uint32         (seconds after an epoch ends before it may be
 ;;                                  skipped with zero mint if unregistered)
+;;   earner_workchain:int8         (workchain the distributor is deployed on and
+;;                                  pays identities on)
+;;   immediate_bps:uint16          (distributor maturation snapshot, frozen here)
+;;   stream_epochs:uint16
+;;   mat_epoch_seconds:uint32
 ;;   minted_total:Coins            (cumulative AIPoW minted; hard-cap tracking)
 ;;   total_cap:Coins               (the AIPoW supply cap, e.g. 4.5B TOS)
 ;;   ^distributor_code             (governance-set at deploy; the audited
@@ -52,42 +60,57 @@
 ;;                     total_score:uint128 organic_settled_value:uint128
 ;;       = InternalMsgBody;
 ;;   skip#41505302 query_id:uint64 = InternalMsgBody;
+;;   (settle) empty body, value = epoch pool, from the minter -1:00..00.
 
 const int op::register = 0x41505301;
 const int op::skip = 0x41505302;
 
-const int err::epoch_settled = 2301;       ;; nominated epoch is behind the cursor
-const int err::already_registered = 2302;  ;; a nomination for this epoch already exists
-const int err::zero_total_score = 2303;    ;; total_score must be > 0
-const int err::skip_too_early = 2304;      ;; skip before the grace deadline
-const int err::skip_registered = 2305;     ;; cannot skip an epoch that has a registration
+const int err::epoch_settled = 2301;        ;; nominated epoch is behind the cursor
+const int err::already_registered = 2302;   ;; a nomination for this epoch already exists
+const int err::zero_total_score = 2303;     ;; total_score must be > 0
+const int err::skip_too_early = 2304;       ;; skip before the grace deadline
+const int err::skip_registered = 2305;      ;; cannot skip an epoch that has a registration
+const int err::settle_no_registration = 2306; ;; mint arrived for an unregistered cursor epoch
 const int err::unknown_op = 2307;
+const int err::cap_exceeded = 2308;         ;; minting this pool would breach the supply cap
 
 ;; The settlement version this code understands.
 const int settlement_version = 1;
+;; The distributor layout version this code deploys (must match the audited
+;; distributor SDK's AIPOW_DISTRIBUTOR_VERSION).
+const int distributor_version = 1;
 
-(int, int, int, int, int, int, cell, cell) load_state() inline {
+(int, int, int, int, int, int, int, int, int, int, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
   int version = ds~load_uint(16);
   int next_epoch = ds~load_uint(32);
   int epoch_seconds = ds~load_uint(32);
   int register_grace = ds~load_uint(32);
+  int earner_workchain = ds~load_int(8);
+  int immediate_bps = ds~load_uint(16);
+  int stream_epochs = ds~load_uint(16);
+  int mat_epoch_seconds = ds~load_uint(32);
   int minted_total = ds~load_tomis();
   int total_cap = ds~load_tomis();
   cell distributor_code = ds~load_ref();
   cell registrations = ds~load_dict();
   ds.end_parse();
-  return (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap,
-    distributor_code, registrations);
+  return (version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
+    stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
 }
 
 () save_state(int version, int next_epoch, int epoch_seconds, int register_grace,
+             int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
              int minted_total, int total_cap, cell distributor_code, cell registrations) impure inline {
   set_data(begin_cell()
     .store_uint(version, 16)
     .store_uint(next_epoch, 32)
     .store_uint(epoch_seconds, 32)
     .store_uint(register_grace, 32)
+    .store_int(earner_workchain, 8)
+    .store_uint(immediate_bps, 16)
+    .store_uint(stream_epochs, 16)
+    .store_uint(mat_epoch_seconds, 32)
     .store_tomis(minted_total)
     .store_tomis(total_cap)
     .store_ref(distributor_code)
@@ -108,24 +131,137 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
   .end_cell();
 }
 
+;; The 256-bit account id of a standard MsgAddress
+;; (addr_std$10 anycast:nothing workchain:int8 address:bits256).
+int addr_account_id(slice addr) inline {
+  addr~load_uint(3);   ;; addr_std$10 + anycast:nothing (100)
+  addr~load_int(8);    ;; workchain
+  return addr~load_uint(256);
+}
+
+;; The canonical per-epoch distributor initial data. This MUST match the audited
+;; distributor SDK's build_data byte for byte, or the derived address will not
+;; equal a real deployment.
+cell build_distributor_data(slice op_addr, int epoch, int earner_workchain, int total_score,
+    int pool, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
+    int score_root, int commitment_ref) inline {
+  return begin_cell()
+    .store_uint(distributor_version, 16)
+    .store_slice(op_addr)
+    .store_uint(epoch, 64)
+    .store_int(earner_workchain, 8)
+    .store_uint(total_score, 128)
+    .store_tomis(pool)
+    .store_uint(0, 32)              ;; claimed_count
+    .store_uint(0, 128)             ;; claimed_score
+    .store_uint(immediate_bps, 16)
+    .store_uint(stream_epochs, 16)
+    .store_uint(mat_epoch_seconds, 32)
+    .store_ref(begin_cell()
+      .store_uint(score_root, 256)
+      .store_uint(commitment_ref, 256)
+    .end_cell())
+    .store_uint(0, 1)              ;; empty claims dictionary
+  .end_cell();
+}
+
+;; StateInit{code,data} serialization matching block::StateInit::write_to:
+;; fixed_prefix(0) special(0) code:(just ^) data:(just ^) library:(empty)
+;; => data bits 0,0,1,1,0 with refs [code, data].
+cell build_state_init(cell code, cell data) inline {
+  return begin_cell()
+    .store_uint(0, 1)              ;; fixed_prefix_length: nothing
+    .store_uint(0, 1)              ;; special: nothing
+    .store_uint(1, 1).store_ref(code)
+    .store_uint(1, 1).store_ref(data)
+    .store_uint(0, 1)              ;; library: empty HashmapE
+  .end_cell();
+}
+
+;; Resolve the canonical distributor for `epoch` funded with `pool`.
+;; Returns (found, state_init, address_hash). The distributor operator is this
+;; settlement account, the maturation + earner workchain are the settlement's
+;; snapshot, and the epoch tuple comes from the recorded registration.
+(int, cell, int) resolve_distributor(int epoch, int pool, int earner_workchain, int immediate_bps,
+    int stream_epochs, int mat_epoch_seconds, cell distributor_code, cell registrations) inline {
+  (cell rec_cell, int found) = registrations.udict_get_ref?(32, epoch);
+  if (found == 0) {
+    return (0, null(), 0);
+  }
+  slice rec = rec_cell.begin_parse();
+  slice commitment_addr = rec~load_msg_addr();
+  int score_root = rec~load_uint(256);
+  int total_score = rec~load_uint(128);
+  ;; organic_settled_value and registered_at are not part of the derivation.
+  int commitment_ref = addr_account_id(commitment_addr);
+  cell data = build_distributor_data(my_address(), epoch, earner_workchain, total_score, pool,
+    immediate_bps, stream_epochs, mat_epoch_seconds, score_root, commitment_ref);
+  cell state_init = build_state_init(distributor_code, data);
+  return (1, state_init, cell_hash(state_init));
+}
+
+;; Forward `pool` (carried from the inbound mint value) to the derived
+;; distributor on the earner workchain, deploying it with `state_init`. mode 64
+;; carries the remaining inbound value; non-bounceable (a deploy of deterministic
+;; code+data cannot fail, and a reward must not bounce).
+() forward_to_distributor(int earner_workchain, int dist_hash, cell state_init) impure inline {
+  slice dest = begin_cell()
+    .store_uint(4, 3)              ;; addr_std$10, anycast:nothing
+    .store_int(earner_workchain, 8)
+    .store_uint(dist_hash, 256)
+  .end_cell().begin_parse();
+  cell msg = begin_cell()
+    .store_uint(0x10, 6)           ;; non-bounceable internal message
+    .store_slice(dest)
+    .store_tomis(0)                ;; grams: mode 64 carries the inbound value
+    .store_uint(0, 1 + 4 + 4 + 64 + 32) ;; other + ihr_fee + fwd_fee + created_lt + created_at
+    .store_uint(1, 1)              ;; init present
+    .store_uint(1, 1)              ;; init as ^StateInit (Either right)
+    .store_ref(state_init)
+    .store_uint(0, 1)              ;; body inline (empty)
+  .end_cell();
+  send_raw_message(msg, 64);
+}
+
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
   var full_msg = in_msg_full.begin_parse();
   int flags = full_msg~load_uint(4);
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
+
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int earner_workchain,
+   int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total, int total_cap,
+   cell distributor_code, cell registrations) = load_state();
+
   if (in_msg.slice_empty?()) {
-    ;; Empty body: accepted as a no-op (this also covers the deploy message).
-    ;; In the next checkpoint an empty body from the zero (special-mint) source
-    ;; becomes the settle path -- receive the pool, advance the ledger, and
-    ;; forward to the derived distributor. While dark, no such mint arrives.
+    ;; The epoch mint arrives as an empty-body message from the masterchain
+    ;; minter (-1:00..00). Any other empty-body message (deploy, stray value) is
+    ;; a no-op -- only the authenticated minter triggers settlement.
+    slice minter = begin_cell()
+      .store_uint(4, 3).store_int(-1, 8).store_uint(0, 256)
+    .end_cell().begin_parse();
+    if (~ equal_slice_bits(sender, minter)) {
+      return ();
+    }
+    ;; SETTLE the cursor epoch: msg_value is the minted epoch pool.
+    (int found, cell state_init, int dist_hash) = resolve_distributor(next_epoch, msg_value,
+      earner_workchain, immediate_bps, stream_epochs, mat_epoch_seconds, distributor_code, registrations);
+    ;; The collator only mints for a registered, finalized epoch; if somehow no
+    ;; registration exists, throw so the (bounceable) mint returns and the cursor
+    ;; is not advanced.
+    throw_unless(err::settle_no_registration, found);
+    int new_minted = minted_total + msg_value;
+    throw_if(err::cap_exceeded, new_minted > total_cap);
+    save_state(version, next_epoch + 1, epoch_seconds, register_grace, earner_workchain,
+      immediate_bps, stream_epochs, mat_epoch_seconds, new_minted, total_cap, distributor_code,
+      registrations);
+    forward_to_distributor(earner_workchain, dist_hash, state_init);
     return ();
   }
+
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
-
-  (int version, int next_epoch, int epoch_seconds, int register_grace, int minted_total,
-   int total_cap, cell distributor_code, cell registrations) = load_state();
 
   if (op == op::register) {
     ;; A commitment nominates itself as the authoritative source for its epoch.
@@ -145,8 +281,8 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
     cell record = pack_registration(sender, score_root, total_score,
       organic_settled_value, now());
     registrations~udict_set_ref(32, epoch, record);
-    save_state(version, next_epoch, epoch_seconds, register_grace, minted_total,
-      total_cap, distributor_code, registrations);
+    save_state(version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
+      stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
     return ();
   }
 
@@ -164,27 +300,31 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
     ;; end has elapsed. uint32 * uint32 fits the 257-bit integer with no overflow.
     int skippable_at = (next_epoch + 1) * epoch_seconds + register_grace;
     throw_unless(err::skip_too_early, now() >= skippable_at);
-    save_state(version, next_epoch + 1, epoch_seconds, register_grace, minted_total,
-      total_cap, distributor_code, registrations);
+    save_state(version, next_epoch + 1, epoch_seconds, register_grace, earner_workchain,
+      immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
+      registrations);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-;; (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap)
-(int, int, int, int, int, int) get_aipow_settlement_data() method_id {
-  (int version, int next_epoch, int epoch_seconds, int register_grace, int minted_total,
-   int total_cap, cell distributor_code, cell registrations) = load_state();
+;; (version, next_epoch, epoch_seconds, register_grace, earner_workchain,
+;;  immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap)
+(int, int, int, int, int, int, int, int, int, int) get_aipow_settlement_data() method_id {
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int earner_workchain,
+   int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total, int total_cap,
+   cell distributor_code, cell registrations) = load_state();
   distributor_code~impure_touch();
   registrations~impure_touch();
-  return (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap);
+  return (version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
+    stream_epochs, mat_epoch_seconds, minted_total, total_cap);
 }
 
 ;; (found, commitment_addr, score_root, total_score, organic_settled_value,
 ;;  registered_at) for `epoch`.
 (int, slice, int, int, int, int) get_registration(int epoch) method_id {
-  (_, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (cell rec_cell, int found) = registrations.udict_get_ref?(32, epoch);
   if (found == 0) {
     ;; Not found: return an empty slice for the address slot (never read by the
@@ -199,4 +339,17 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
   int organic_settled_value = rec~load_uint(128);
   int registered_at = rec~load_uint(32);
   return (1, commitment_addr, score_root, total_score, organic_settled_value, registered_at);
+}
+
+;; (found, workchain, address_hash) of the canonical distributor this account
+;; would deploy for `epoch` funded with `pool`. This is the exact derivation the
+;; settle path uses; a real deployment of the audited distributor SDK with the
+;; same inputs has this address.
+(int, int, int) get_distributor_address(int epoch, int pool) method_id {
+  (_, _, _, _, int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
+   _, _, cell distributor_code, cell registrations) = load_state();
+  (int found, cell state_init, int dist_hash) = resolve_distributor(epoch, pool, earner_workchain,
+    immediate_bps, stream_epochs, mat_epoch_seconds, distributor_code, registrations);
+  state_init~impure_touch();
+  return (found, earner_workchain, dist_hash);
 }
