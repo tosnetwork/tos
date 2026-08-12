@@ -32,6 +32,7 @@ pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod aipow_commitment;
+pub mod aipow_merkle;
 pub mod proof_attestation;
 pub mod provider;
 pub mod service_actor;
