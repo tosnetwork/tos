@@ -5232,6 +5232,20 @@ bool Collator::create_mc_state_extra() {
   } else if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
              changed_cfg) {
     LOG(WARNING) << "global configuration changed, updating";
+    // Symmetric to validate-query's F15 check (Phase C): refuse to install a
+    // configuration that enables capAipow without a complete, mutually
+    // consistent AIPoW parameter set, so this node never produces a block that
+    // validators would reject. Dormant while capAipow is off.
+    {
+      auto new_config = block::Config::unpack_config(cfg_smc_config, config_addr, block::ConfigInfo::needCapabilities);
+      if (new_config.is_ok()) {
+        auto cfg = new_config.move_as_ok();
+        if (cfg->aipow_enabled() && cfg->check_aipow_config().is_error()) {
+          return fatal_error(
+              "refusing to install a configuration that enables capAipow without a complete AIPoW parameter set");
+        }
+      }
+    }
     vm::CellBuilder cb;
     CHECK(cb.store_bits_bool(config_addr) && cb.store_ref_bool(cfg_smc_config));
     state_extra.config = vm::load_cell_slice_ref(cb.finalize());

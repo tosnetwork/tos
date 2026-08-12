@@ -1006,17 +1006,6 @@ bool ValidateQuery::try_unpack_mc_state() {
                  << " have been enabled in global configuration, but we support only " << supported_version()
                  << " (upgrade validator software?)";
     }
-    // Consensus-safe activation (Phase C, F15): capAipow may be enabled only
-    // together with a complete, mutually consistent AIPoW parameter set. A
-    // block whose config activates the capability without it is rejected, so
-    // the feature can never be half-activated. Dormant while capAipow is off.
-    if (config_->aipow_enabled()) {
-      auto aipow_status = config_->check_aipow_config();
-      if (aipow_status.is_error()) {
-        return reject_query("capAipow is enabled but the AIPoW configuration is incomplete or invalid: "s +
-                            aipow_status.message().str());
-      }
-    }
 
     old_shard_conf_ = std::make_unique<block::ShardConfig>(*config_);
     if (!is_masterchain()) {
@@ -6958,6 +6947,27 @@ bool ValidateQuery::check_config_update(Ref<vm::CellSlice> old_conf_params, Ref<
     return reject_query(
         "new configuration parameters failed to pass per-parameter automated validity checks, or one of mandatory "
         "configuration parameters is missing");
+  }
+  // Consensus-safe activation (Phase C, F15): reject the candidate block itself
+  // if the configuration it installs enables capAipow without a complete,
+  // mutually consistent AIPoW parameter set. Checking the new configuration
+  // (not the reference state) makes activation atomic -- a half-activated
+  // config can never be installed. Dormant while capAipow is off.
+  {
+    auto new_config = block::Config::unpack_config(new_cfg_root, new_cfg_addr, block::ConfigInfo::needCapabilities);
+    if (new_config.is_error()) {
+      return reject_query("cannot unpack the new configuration to check AIPoW activation: "s +
+                          new_config.move_as_error().message().str());
+    }
+    auto cfg = new_config.move_as_ok();
+    if (cfg->aipow_enabled()) {
+      auto aipow_status = cfg->check_aipow_config();
+      if (aipow_status.is_error()) {
+        return reject_query(
+            "the new configuration enables capAipow but the AIPoW parameter set is incomplete or invalid: "s +
+            aipow_status.message().str());
+      }
+    }
   }
   auto ocfg_res = block::get_config_data_from_smc(ns_.account_dict_->lookup(old_cfg_addr));
   if (ocfg_res.is_error()) {

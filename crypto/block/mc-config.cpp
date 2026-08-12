@@ -2257,6 +2257,9 @@ td::Status Config::check_aipow_config() const {
   if (td::sgn(cfg.cold_start_floor) < 0) {
     return td::Status::Error("AipowConfig cold_start_floor must be non-negative");
   }
+  if (td::sgn(cfg.cold_start_floor - cfg.schedule_cap) > 0) {
+    return td::Status::Error("AipowConfig cold_start_floor must not exceed schedule_cap");
+  }
   if (mat.immediate_bps > 10000) {
     return td::Status::Error("AipowMaturation immediate_bps exceeds 10000");
   }
@@ -2266,9 +2269,12 @@ td::Status Config::check_aipow_config() const {
   if (td::sgn(lim.total_cap) <= 0) {
     return td::Status::Error("AipowLimits total_cap must be positive");
   }
-  if (reg.settlement_addr.is_zero() || reg.methodology_hash.is_zero()) {
-    return td::Status::Error("AipowRegistry settlement_addr and methodology_hash must be set");
+  if (reg.settlement_addr.is_zero() || reg.methodology_hash.is_zero() || reg.rate_card_hash.is_zero()) {
+    return td::Status::Error("AipowRegistry settlement_addr, methodology_hash and rate_card_hash must be set");
   }
+  // distributor_code_hashes may be empty: in the Model B architecture the
+  // settlement address is the trust anchor and the code-hash set is defence in
+  // depth only, so an empty set is not itself invalid.
   return td::Status::OK();
 }
 
