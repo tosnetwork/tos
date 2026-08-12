@@ -1090,6 +1090,7 @@ mod tests {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
+            aipow_commitments: Default::default(),
             alerts: Default::default(),
         })
     }
@@ -1114,6 +1115,7 @@ mod tests {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
+            aipow_commitments: Default::default(),
             alerts: Default::default(),
         })
     }

@@ -8,6 +8,7 @@
  */
 
 use super::capability_registry_cmd::CapabilityRegistryCmd;
+use super::aipow_cmd::AipowCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
 use super::proof_attestation_cmd::ProofAttestationCmd;
@@ -82,6 +83,8 @@ pub enum AgentAction {
     Service(ServiceActorCmd),
     /// Dispute case operations
     Dispute(DisputeCmd),
+    /// AIPoW score-commitment operations
+    Aipow(AipowCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
     Attestation(ProofAttestationCmd),
 }
@@ -996,6 +999,7 @@ impl AgentCmd {
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
+            AgentAction::Aipow(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
         }
     }

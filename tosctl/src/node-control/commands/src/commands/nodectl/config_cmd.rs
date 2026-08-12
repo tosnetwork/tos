@@ -132,6 +132,7 @@ impl GenerateCmd {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
+                aipow_commitments: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),

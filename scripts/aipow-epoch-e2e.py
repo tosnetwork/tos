@@ -455,6 +455,66 @@ async def run_checks(faucet) -> None:
         check("tampered envelope fails the independent verification",
               not verify_commitment_signature(tampered))
 
+        print("\n=== ONCHAIN: commit the scored root through the commitment contract ===")
+        score_root = output["score_root_hex"]
+        methodology_hash = hashlib.sha256(b"aipow-methodology-v0").hexdigest()
+        window_deadline = int(time.time()) + 40
+        deploy_out = await tosctl_json(
+            CONFIG_A, "agent", "aipow", "deploy", "--name", "e2e-commit",
+            "--committer", creator1, "--reviewer", creator2,
+            "--epoch", str(epoch), "--window-deadline", str(window_deadline),
+            "--commit-bond", "2", "--score-root", score_root,
+            "--methodology-hash", methodology_hash,
+            "--from", "creator1", "-w", "0", "--yes",
+        )
+        commitment_addr = norm_addr(deploy_out["address"])
+        print(f"  commitment: {commitment_addr}")
+        check("commitment active on chain", await poll_predicate(
+            lambda: rpc_call("getAddressState", address=commitment_addr).get("result")
+            == "active"))
+
+        show = await tosctl_json(
+            CONFIG_A, "agent", "aipow", "show", "--name", "e2e-commit")
+        check("on-chain root matches the scorer output",
+              show["score_root"] == score_root, str(show))
+        check("on-chain status is committed", show["status"] == "committed", str(show))
+        check("on-chain epoch matches", show["epoch"] == epoch, str(show))
+
+        found, body = await poll_http_predicate(
+            "/aipow/commitments",
+            lambda b: any(same_addr(i.get("address", ""), commitment_addr)
+                          for i in b.get("result", [])),
+            timeout=60.0,
+        )
+        check("indexer discovers the commitment chain-wide", found, str(body)[:2000])
+        if found:
+            entry = next(i for i in body["result"]
+                         if same_addr(i["address"], commitment_addr))
+            check("indexed commitment root matches", entry["score_root"] == score_root,
+                  str(entry))
+
+        # Wait out the challenge window, then finalize permissionlessly from
+        # a wallet that is not the committer; the bond returns to the
+        # committer regardless.
+        wait_for = max(0, window_deadline - int(time.time())) + 3
+        print(f"  waiting {wait_for}s for the challenge window to close…")
+        await asyncio.sleep(wait_for)
+        committer_before = balance(creator1)
+        await tosctl(CONFIG_A, "agent", "aipow", "send", "--operation", "finalize",
+                     "--name", "e2e-commit", "--from", "creator2", "--yes")
+        finalized, body = await poll_http_predicate(
+            f"/aipow/commitments/{commitment_addr}",
+            lambda b: b.get("result", {}).get("status") == "final",
+            timeout=60.0,
+        )
+        check("indexer observes the finalized commitment", finalized, str(body)[:1000])
+        show = await tosctl_json(
+            CONFIG_A, "agent", "aipow", "show", "--name", "e2e-commit")
+        check("commitment final on chain", show["status"] == "final", str(show))
+        bond_delta = balance(creator1) - committer_before
+        check("committer's bond returned on finalize",
+              int(1.9 * NANO) < bond_delta <= 2 * NANO, str(bond_delta))
+
     finally:
         service_proc.terminate()
         try:
