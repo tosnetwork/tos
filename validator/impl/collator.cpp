@@ -6145,6 +6145,8 @@ bool Collator::create_block_info(Ref<vm::Cell>& block_info) {
  * @returns True if the version information was successfully stored, false otherwise.
  */
 bool Collator::store_version(vm::CellBuilder& cb) const {
+  static_assert((supported_capabilities() & tos::capAipow) == tos::capAipow,
+                "Collator must declare capAipow support (Phase C dark scaffolding)");
   return block::gen::t_GlobalVersion.pack_capabilities(cb, supported_version(), supported_capabilities());
 }
 

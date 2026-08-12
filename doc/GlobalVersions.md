@@ -337,6 +337,28 @@ Not yet activated on any TOS network, same as version 14 above.
   `max_total_msg_cells`, configured in `ConfigParam 43`). Older v1/v2 `ConfigParam 43` records
   fall back to these same defaults.
 
+## Capability: capAipow (bit `1024`)
+
+AIPoW native issuance is gated by a capability flag rather than a protocol
+version bump, because it toggles a discrete feature (a per-epoch aggregate mint
+to the registered AIPoW settlement contract) rather than changing existing
+version-gated transaction/VM semantics. `SUPPORTED_VERSION` is therefore
+unchanged.
+
+- Defined as `capAipow = 1024` in `tos/tos-types.h`, the next free bit after
+  `capFullCollatedData = 512`.
+- Node readiness is declared by including it in `Collator::supported_capabilities()`
+  and `ValidateQuery::supported_capabilities()`. A binary that declares it will
+  accept a configuration that enables the bit; a binary that does not will reject
+  such blocks (`collator-node.cpp`) -- so, exactly as for a version bump, every
+  validator must run a capable binary before the bit is set in `ConfigParam 8`.
+- `block::Config::aipow_enabled()` reads the bit. It is **inert** until a
+  governance config vote sets `capAipow` in `ConfigParam 8`; until then the
+  entire Phase C mint path is a no-op. Shipping the readiness declaration ahead
+  of activation is the "dark scaffolding" step (Phase C, W1).
+- Activation follows the same all-validators-first sequence as the versions
+  below.
+
 ## Rollout plan
 
 Enabling version 14/15 on a live TOS network is a consensus-level change and must not be done by

@@ -628,6 +628,11 @@ class Config {
   bool create_stats_enabled() const {
     return has_capability(tos::capCreateStatsEnabled);
   }
+  // True once AIPoW native issuance is activated in ConfigParam 8. Off until a
+  // governance config vote sets capAipow; gates the entire Phase C mint path.
+  bool aipow_enabled() const {
+    return has_capability(tos::capAipow);
+  }
   std::unique_ptr<vm::Dictionary> get_param_dict(int idx) const;
   td::Result<std::vector<int>> unpack_param_list(int idx) const;
   std::unique_ptr<vm::Dictionary> get_mandatory_param_dict() const {

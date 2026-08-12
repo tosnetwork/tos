@@ -51,7 +51,8 @@ class Collator final : public td::actor::Actor {
   }
   static constexpr long long supported_capabilities() {
     return tos::capCreateStatsEnabled | tos::capBounceMsgBody | tos::capReportVersion | tos::capShortDequeue |
-           tos::capStoreOutMsgQueueSize | tos::capMsgMetadata | tos::capDeferMessages | tos::capFullCollatedData;
+           tos::capStoreOutMsgQueueSize | tos::capMsgMetadata | tos::capDeferMessages | tos::capFullCollatedData |
+           tos::capAipow;
   }
 
  private:

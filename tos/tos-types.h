@@ -66,8 +66,19 @@ enum GlobalCapabilities {
   capStoreOutMsgQueueSize = 64,
   capMsgMetadata = 128,
   capDeferMessages = 256,
-  capFullCollatedData = 512
+  capFullCollatedData = 512,
+  // Enables AIPoW native issuance: a per-epoch aggregate mint to the
+  // registered AIPoW settlement contract. Inert until set in ConfigParam 8.
+  capAipow = 1024
 };
+
+// capAipow must be the next free power-of-two bit and must not collide with any
+// existing capability (dark-scaffolding invariant; see doc/GlobalVersions.md).
+static_assert(capAipow == 1024, "capAipow must be bit 10 (1024)");
+static_assert((capAipow & (capIhrEnabled | capCreateStatsEnabled | capBounceMsgBody | capReportVersion |
+                           capSplitMergeTransactions | capShortDequeue | capStoreOutMsgQueueSize |
+                           capMsgMetadata | capDeferMessages | capFullCollatedData)) == 0,
+              "capAipow collides with an existing capability bit");
 
 inline int shard_pfx_len(ShardId shard) {
   return shard ? 63 - td::count_trailing_zeroes_non_zero64(shard) : 0;

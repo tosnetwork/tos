@@ -994,6 +994,8 @@ bool ValidateQuery::try_unpack_mc_state() {
     REJECT_UNLESS(config_);
     ihr_enabled_ = config_->ihr_enabled();
     create_stats_enabled_ = config_->create_stats_enabled();
+    static_assert((supported_capabilities() & capAipow) == capAipow,
+                  "ValidateQuery must declare capAipow support (Phase C dark scaffolding)");
     if (config_->has_capabilities() && (config_->get_capabilities() & ~supported_capabilities())) {
       LOG(ERROR) << "block generation capabilities " << config_->get_capabilities()
                  << " have been enabled in global configuration, but we support only " << supported_capabilities()
