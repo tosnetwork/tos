@@ -69,8 +69,9 @@ struct SettlementCursor {
 // The per-epoch pool from the committed organic value, per the arithmetic
 // contract (all 257-bit, floor rounding, no floats):
 //   pool = min(schedule_cap, max(cold_start_floor, floor(organic * k_num / k_den)))
-// Returns a non-negative RefInt256, or a null ref on a broken config
-// (k_den == 0) or a null/overflowing input -- the caller treats null as no mint.
+// Returns a non-negative RefInt256, or a null ref (fail closed) on any broken
+// input -- k_den == 0, a null/invalid organic value, null/invalid clamp fields,
+// or a 257-bit overflow -- which the caller treats as "no mint".
 td::RefInt256 compute_epoch_pool(const AipowConfig& cfg, const td::RefInt256& organic_settled_value);
 
 // The full per-block epoch-settlement decision. Pure over consensus inputs.

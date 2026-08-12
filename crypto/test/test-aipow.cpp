@@ -77,6 +77,74 @@ TEST(Aipow, epoch_pool_boundaries) {
                 4500000000000000000LL));
 }
 
+TEST(Aipow, epoch_pool_overflow_yields_null_not_a_clamped_value) {
+  // A 257-bit-overflowing quotient makes muldiv return an INVALID bigint (not
+  // null). compute_epoch_pool must reject it as "no defined pool" (null), NOT
+  // silently clamp it to the cold-start floor. organic 2^250 * 2^30 / 1 = 2^280
+  // overflows the 257-bit range.
+  RefInt256 huge_organic = make_refint(1) << 250;
+  auto cfg = make_cfg(1u << 30, 1, 4500000000000000000LL, 100);
+  auto pool = block::aipow::compute_epoch_pool(cfg, huge_organic);
+  // The contract is fail-closed to null (not merely a non-null NaN), so a future
+  // regression that returned an invalid-but-non-null ref would be caught here.
+  CHECK(pool.is_null());
+  // And the full derivation mints nothing on such an input.
+  auto r = block::aipow::compute_epoch_mint(cfg, make_limits(4500000000000000000LL),
+                                            make_cursor(5, 0, 65536, 3600), true, huge_organic, 0);
+  CHECK(r.is_none());
+}
+
+TEST(Aipow, k_num_zero_yields_the_cold_start_floor) {
+  // A zero numerator makes the per-organic term 0, so the pool is exactly the
+  // cold-start floor (deterministic, not undefined).
+  CHECK(pool_is(block::aipow::compute_epoch_pool(make_cfg(0, 7, 1000, 250), make_refint(1000000)), 250));
+  CHECK(pool_is(block::aipow::compute_epoch_pool(make_cfg(0, 7, 1000, 0), make_refint(1000000)), 0));
+}
+
+TEST(Aipow, skip_deadline_does_not_overflow_at_the_max_epoch) {
+  // epoch == UINT32_MAX must NOT wrap (epoch + 1 -> 0 in uint32 would collapse
+  // the deadline to register_grace and diverge from the FunC 257-bit check).
+  // With the correct 64-bit promotion, skippable_at = 2^32 * 65536 + 3600, far
+  // beyond any uint32 gen_utime, so the epoch is never skippable.
+  auto cfg = make_cfg(1, 2, 1000000, 0);
+  auto limits = make_limits(4500000000000000000LL);
+  auto cursor = make_cursor(0xFFFFFFFFu, 0, 65536, 3600);
+  // A gen_utime that WOULD skip under the wrap bug (>= register_grace):
+  auto r = block::aipow::compute_epoch_mint(cfg, limits, cursor, false, make_refint(0), 1000000000u);
+  CHECK(r.is_none());  // not skippable: the deadline did not overflow to 3600
+  // The maximum uint32 time is still below the (2^32 * 65536) deadline.
+  auto r2 = block::aipow::compute_epoch_mint(cfg, limits, cursor, false, make_refint(0), 0xFFFFFFFFu);
+  CHECK(r2.is_none());
+}
+
+TEST(Aipow, broken_config_fails_closed_to_no_mint) {
+  // The derivation is fail-closed: a missing (null) config field yields no mint
+  // rather than a null-deref or a partial clamp. These pin the is_usable guards
+  // so a regression that drops one is caught even though valid consensus config
+  // never hits them.
+  auto organic = make_refint(1000);
+  // Null schedule_cap.
+  auto no_cap = make_cfg(1, 2, 1000, 0);
+  no_cap.schedule_cap = {};
+  CHECK(block::aipow::compute_epoch_pool(no_cap, organic).is_null());
+  // Null cold_start_floor.
+  auto no_floor = make_cfg(1, 2, 1000, 0);
+  no_floor.cold_start_floor = {};
+  CHECK(block::aipow::compute_epoch_pool(no_floor, organic).is_null());
+  // Null organic.
+  CHECK(block::aipow::compute_epoch_pool(make_cfg(1, 2, 1000, 0), RefInt256{}).is_null());
+
+  // Null total_cap / minted_total in the full decision -> NoSettlement.
+  auto cfg = make_cfg(1, 2, 1000000000LL, 0);
+  auto cursor = make_cursor(5, 0, 65536, 3600);
+  auto no_total = make_limits(1000);
+  no_total.total_cap = {};
+  CHECK(block::aipow::compute_epoch_mint(cfg, no_total, cursor, true, organic, 0).is_none());
+  auto null_minted = make_cursor(5, 0, 65536, 3600);
+  null_minted.minted_total = {};
+  CHECK(block::aipow::compute_epoch_mint(cfg, make_limits(1000000000LL), null_minted, true, organic, 0).is_none());
+}
+
 TEST(Aipow, mint_happy_path_and_epoch) {
   auto cfg = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic/2
   auto limits = make_limits(4500000000000000000LL);
@@ -135,28 +203,47 @@ TEST(Aipow, unregistered_epoch_skips_only_past_the_grace_deadline) {
 TEST(Aipow, derivation_is_a_pure_deterministic_function) {
   // A deterministic sweep (no RNG, no time): the same inputs must always give
   // the same tagged result and byte-identical amount, and every Mint must honor
-  // the invariants (positive, <= schedule cap, <= remaining cap).
-  auto cfg = make_cfg(3, 7, 1000000000LL, 100);
+  // the invariants (positive, <= schedule cap, <= remaining cap). The sweep
+  // rotates through configs and input regimes so it exercises the clamp, skip,
+  // zero-pool, k_num==0, max-epoch and 257-bit-overflow branches, not just the
+  // easy interior.
+  block::AipowConfig cfgs[] = {
+      make_cfg(3, 7, 1000000000LL, 100),         // ordinary
+      make_cfg(0, 7, 1000000000LL, 50),          // k_num == 0 -> floor
+      make_cfg(1, 1, 1000, 0),                   // tiny cap (frequent clamp)
+      make_cfg(1u << 30, 1, 4500000000000000000LL, 100),  // can overflow on a huge organic
+  };
   auto limits = make_limits(5000000000LL);
   td::uint64 seed = 0x9E3779B97F4A7C15ull;
-  for (int i = 0; i < 4000; i++) {
+  for (int i = 0; i < 6000; i++) {
     // A simple LCG drives the sweep deterministically.
     seed = seed * 6364136223846793005ull + 1442695040888963407ull;
-    long long organic = (long long)((seed >> 11) % 3000000000ull);
+    const auto& cfg = cfgs[(seed >> 45) % 4u];
+    // Organic is usually a moderate value, but ~1/8 of the time a near-2^257
+    // value that overflows the widest config's quotient.
+    RefInt256 organic;
+    if (((seed >> 43) & 7u) == 0u) {
+      organic = make_refint(1) << (200 + (int)((seed >> 5) % 56u));
+    } else {
+      organic = make_refint((long long)((seed >> 11) % 3000000000ull));
+    }
     long long minted = (long long)((seed >> 29) % 6000000000ull);
-    td::uint32 epoch = (td::uint32)((seed >> 3) % 100000u);
+    // Epochs span the whole uint32 range, including values near UINT32_MAX.
+    td::uint32 epoch = (((seed >> 40) & 3u) == 0u) ? (td::uint32)(0xFFFFFFFFu - ((seed >> 7) % 5u))
+                                                   : (td::uint32)((seed >> 3) % 100000u);
     bool has_commit = ((seed >> 41) & 1u) != 0;
-    td::uint32 gen_utime = (td::uint32)((seed >> 17) % 20000000u);
+    td::uint32 gen_utime = (td::uint32)((seed >> 17) % 4000000000u);
     auto cursor = make_cursor(epoch, minted, 65536, 3600);
 
-    auto a = block::aipow::compute_epoch_mint(cfg, limits, cursor, has_commit, make_refint(organic), gen_utime);
-    auto b = block::aipow::compute_epoch_mint(cfg, limits, cursor, has_commit, make_refint(organic), gen_utime);
+    auto a = block::aipow::compute_epoch_mint(cfg, limits, cursor, has_commit, organic, gen_utime);
+    auto b = block::aipow::compute_epoch_mint(cfg, limits, cursor, has_commit, organic, gen_utime);
 
     // Same input => same output (kind, epoch, amount).
     CHECK(a.kind == b.kind);
     CHECK(a.epoch == b.epoch);
     CHECK(a.amount.is_null() == b.amount.is_null());
     if (a.amount.not_null()) {
+      CHECK(a.amount->is_valid());
       CHECK(td::cmp(a.amount, b.amount) == 0);
     }
 
@@ -165,6 +252,11 @@ TEST(Aipow, derivation_is_a_pure_deterministic_function) {
       CHECK(a.amount <= cfg.schedule_cap);
       auto remaining = limits.total_cap - cursor.minted_total;
       CHECK(a.amount <= remaining);
+    }
+    if (a.is_skip()) {
+      // Skip only past the (non-overflowing) grace deadline.
+      td::uint64 skippable_at = ((td::uint64)epoch + 1) * 65536ull + 3600ull;
+      CHECK((td::uint64)gen_utime >= skippable_at);
     }
   }
 }
