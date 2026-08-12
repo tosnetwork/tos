@@ -51,6 +51,7 @@ const ERR_NOTHING_TO_PAY: i32 = 2212;
 struct Fixture {
     bc: Blockchain,
     caller: Treasury,
+    operator: Treasury,
     distributor: MsgAddressInt,
 }
 
@@ -81,6 +82,15 @@ fn earner_addr(identity: [u8; 32]) -> MsgAddressInt {
 
 impl Fixture {
     fn new(total_score: u128, root: [u8; 32]) -> Self {
+        Self::new_with(total_score, root, AipowMaturation::methodology_v0(), DEPLOY_VALUE)
+    }
+
+    fn new_with(
+        total_score: u128,
+        root: [u8; 32],
+        maturation: AipowMaturation,
+        deploy_value: u64,
+    ) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let operator = bc.treasury("aipow-dist-operator", 1_000 * TOS).expect("operator");
@@ -91,19 +101,19 @@ impl Fixture {
             earner_workchain: EARNER_WC,
             total_score,
             pool: POOL,
-            maturation: AipowMaturation::methodology_v0(),
+            maturation,
             score_root: root,
             commitment_ref: [0x99; 32],
         };
         let distributor =
             AipowDistributorContract::calculate_address(-1, &init).expect("address");
-        let deploy = MessageBuilder::internal(operator.address(), &distributor, DEPLOY_VALUE)
+        let deploy = MessageBuilder::internal(operator.address(), &distributor, deploy_value)
             .bounce(false)
             .state_init(AipowDistributorContract::build_state_init(&init).expect("state init"))
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, caller, distributor }
+        Self { bc, caller, operator, distributor }
     }
 
     fn send(&mut self, body: Cell) -> tos_sandbox::SendResult {
@@ -113,6 +123,11 @@ impl Fixture {
     fn send_with_value(&mut self, body: Cell, value: u64) -> tos_sandbox::SendResult {
         let msg =
             MessageBuilder::internal(self.caller.address(), &self.distributor, value).body(body).build();
+        self.bc.send_message(msg).expect("send")
+    }
+
+    fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> tos_sandbox::SendResult {
+        let msg = MessageBuilder::internal(from, &self.distributor, TOS / 2).body(body).build();
         self.bc.send_message(msg).expect("send")
     }
 
@@ -686,4 +701,171 @@ fn operator_forfeit_freezes_maturation_and_is_once_only() {
     // Forfeiting an unclaimed identity is rejected.
     send(&mut bc, operator.address(), AipowDistributorContract::forfeit(4, [0xEE; 32]).unwrap())
         .expect_exit_code(2206);
+}
+
+// --- W4.3 review hardening (codex review round 1: not-a-bug coverage gaps) ---
+
+#[test]
+fn a_failed_payment_rolls_back_the_claim_record() {
+    // Send/record atomicity: if the immediate-tranche payment cannot be funded,
+    // the action phase aborts and the compute-phase state (the recorded claim
+    // and its paid cursor) must NOT persist -- there is no "recorded but never
+    // paid" state. Deploy underfunded so the immediate tranche (0.75 TOS for
+    // the 0x33 share) exceeds the instance balance.
+    let members = entries();
+    let root = score_root(&members).unwrap();
+    let mut f = Fixture::new_with(TOTAL_SCORE, root, AipowMaturation::methodology_v0(), TOS / 2);
+    let entry = &members[2]; // 0x33, score 300_000 -> 3 TOS share, 0.75 TOS immediate
+    let proof = inclusion_proof(&members, &entry.identity).unwrap();
+    // Carry exactly the min claim value; the compute-phase gate passes, but the
+    // action-phase send of the immediate tranche cannot be funded.
+    f.send_with_value(
+        AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap(),
+        contracts::AIPOW_MIN_CLAIM_VALUE,
+    )
+    .expect_aborted();
+    // Rolled back: nothing recorded, nothing paid.
+    assert_eq!(f.claim(entry.identity), None);
+    assert_eq!(f.claimed_count(), 0);
+    assert_eq!(f.data().claimed_score, 0);
+    assert_eq!(f.earner_balance(entry.identity), 0);
+}
+
+#[test]
+fn on_chain_maturation_matches_the_sdk_for_non_round_amounts() {
+    // Differential Rust-vs-TVM maturation with a deliberately non-round
+    // pro-rata amount and non-epoch-aligned query times, so any flooring or
+    // operation-order divergence between the SDK and the contract surfaces.
+    let members = vec![
+        ScoreEntry { identity: [0xA1; 32], score: 1_234_567 },
+        ScoreEntry { identity: [0xB2; 32], score: 2_345_678 },
+        ScoreEntry { identity: [0xC3; 32], score: 3_420_003 },
+    ];
+    let total: u128 = members.iter().map(|e| u128::from(e.score)).sum();
+    let root = score_root(&members).unwrap();
+    let mut f = Fixture::new(total, root);
+    let mat = AipowMaturation::methodology_v0();
+    let e = u64::from(mat.epoch_seconds);
+
+    let entry = &members[1]; // non-round share of the pool
+    let proof = inclusion_proof(&members, &entry.identity).unwrap();
+    f.send(AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap())
+        .expect_success();
+    let claimed = f.claim(entry.identity).unwrap();
+    let amount = claimed.amount;
+    let claimed_at = claimed.claimed_at;
+    // The amount must genuinely be non-round to make the test meaningful.
+    assert_ne!(amount % 4, 0, "share should not be divisible by the immediate quarter");
+
+    // Times that are NOT epoch-aligned (fractions of an epoch, offsets), and the
+    // full range including past-maturity.
+    for at in [
+        claimed_at,
+        claimed_at + 1,
+        claimed_at + e / 3,
+        claimed_at + e,
+        claimed_at + e + e / 2,
+        claimed_at + 3 * e + e / 7,
+        claimed_at + 7 * e + e - 1,
+        claimed_at + 8 * e,
+        claimed_at + 8 * e + 1,
+        claimed_at + 100 * e,
+    ] {
+        let sdk = contracts::compute_matured(
+            &contracts::AipowClaim {
+                amount,
+                claimed_at,
+                forfeited: false,
+                forfeit_at: 0,
+                paid: 0,
+            },
+            &mat,
+            at,
+        );
+        assert_eq!(f.matured(entry.identity, at), Some(sdk), "at t={at}");
+    }
+}
+
+#[test]
+fn on_chain_maturation_matches_the_sdk_at_boundary_bps() {
+    // Boundary maturation curves: all-immediate (10000 bps) and all-streamed
+    // (0 bps). Deploy an instance with each and differential-check a claim.
+    for immediate_bps in [0u16, 10_000u16] {
+        let mat = AipowMaturation { immediate_bps, stream_epochs: 8, epoch_seconds: 65_536 };
+        let members = entries();
+        let root = score_root(&members).unwrap();
+        let mut f = Fixture::new_with(TOTAL_SCORE, root, mat, DEPLOY_VALUE);
+        let e = u64::from(mat.epoch_seconds);
+        let entry = &members[4]; // 0x55, score 250_000
+        let proof = inclusion_proof(&members, &entry.identity).unwrap();
+        f.send(AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap())
+            .expect_success();
+        let claimed = f.claim(entry.identity).unwrap();
+        let amount = claimed.amount;
+        let claimed_at = claimed.claimed_at;
+        // Immediate paid at claim time equals the bps fraction of the amount.
+        let expect_immediate =
+            (u128::from(amount) * u128::from(immediate_bps) / 10_000) as u64;
+        assert_eq!(claimed.paid, expect_immediate, "bps={immediate_bps} immediate");
+        for at in [claimed_at, claimed_at + e, claimed_at + 4 * e, claimed_at + 8 * e] {
+            let sdk = contracts::compute_matured(
+                &contracts::AipowClaim {
+                    amount,
+                    claimed_at,
+                    forfeited: false,
+                    forfeit_at: 0,
+                    paid: 0,
+                },
+                &mat,
+                at,
+            );
+            assert_eq!(f.matured(entry.identity, at), Some(sdk), "bps={immediate_bps} at t={at}");
+        }
+    }
+}
+
+#[test]
+fn forfeit_between_epoch_boundaries_matches_the_sdk() {
+    // Forfeit at a time that is NOT an epoch boundary; the frozen maturation the
+    // contract reports must equal the SDK's compute_matured for the same
+    // forfeited claim (differential across the freeze).
+    let members = entries();
+    let root = score_root(&members).unwrap();
+    let mut f = Fixture::new(TOTAL_SCORE, root);
+    let mat = AipowMaturation::methodology_v0();
+    let e = u64::from(mat.epoch_seconds);
+    let operator = f.operator.address().clone();
+
+    let entry = &members[3]; // 0x44, score 150_000
+    let proof = inclusion_proof(&members, &entry.identity).unwrap();
+    f.send(AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap())
+        .expect_success();
+    let claimed = f.claim(entry.identity).unwrap();
+    let amount = claimed.amount;
+    let claimed_at = claimed.claimed_at;
+
+    // Forfeit 2.4 epochs in (a non-boundary offset).
+    let forfeit_at = claimed_at + 2 * e + (2 * e) / 5;
+    f.bc.set_now(forfeit_at as u32);
+    f.send_from(&operator, AipowDistributorContract::forfeit(1, entry.identity).unwrap())
+        .expect_success();
+    let after = f.claim(entry.identity).unwrap();
+    assert!(after.forfeited);
+    assert_eq!(after.forfeit_at, forfeit_at);
+
+    // Frozen value the contract reports at several later times equals the SDK.
+    for at in [forfeit_at, forfeit_at + e, claimed_at + 100 * e] {
+        let sdk = contracts::compute_matured(
+            &contracts::AipowClaim {
+                amount,
+                claimed_at,
+                forfeited: true,
+                forfeit_at,
+                paid: 0,
+            },
+            &mat,
+            at,
+        );
+        assert_eq!(f.matured(entry.identity, at), Some(sdk), "frozen at t={at}");
+    }
 }
