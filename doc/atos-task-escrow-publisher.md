@@ -15,6 +15,13 @@ agent task send                --amount-nanotos <uint64>
 agent task send/encode         --payout-nanotos <uint64>
 ```
 
+Before permanent publisher-journal enrollment, `tosctl agent task
+capabilities --format json` exposes the versioned
+`tosctl.task-escrow-cli.v1` contract. It declares the exact build-state,
+create and send commands, flags and lifecycle operations used by the
+publisher. Enrollment also executes one side-effect-free `build-state` probe;
+it never invokes create or send as a readiness test.
+
 The atomic flags conflict with their decimal equivalents. This avoids
 rounding an escrow budget or payout through IEEE-754 before it reaches the
 contract. `--permission-hash` conflicts with `--permission-id`: the former is

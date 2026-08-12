@@ -95,6 +95,8 @@ pub struct AgentTaskCmd {
 
 #[derive(clap::Subcommand, Clone)]
 pub enum AgentTaskAction {
+    /// Report the versioned, machine-readable Task Escrow CLI contract
+    Capabilities(AgentTaskCapabilitiesCmd),
     /// Deploy and fund a Task Escrow actor
     Create(AgentTaskCreateCmd),
     /// List locally tracked Task Escrow records
@@ -107,6 +109,13 @@ pub enum AgentTaskAction {
     BuildState(AgentTaskBuildStateCmd),
     /// Encode a Task Escrow lifecycle message
     Encode(AgentTaskEncodeCmd),
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Report the Task Escrow CLI capability contract")]
+pub struct AgentTaskCapabilitiesCmd {
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
 }
 
 #[derive(clap::Args, Clone)]
@@ -1010,6 +1019,7 @@ impl AgentAccountCmd {
 impl AgentTaskCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         match &self.action {
+            AgentTaskAction::Capabilities(cmd) => cmd.run(),
             AgentTaskAction::Create(cmd) => cmd.run(config_path).await,
             AgentTaskAction::Ls(cmd) => cmd.run(config_path).await,
             AgentTaskAction::Show(cmd) => cmd.run(config_path).await,
@@ -1017,6 +1027,63 @@ impl AgentTaskCmd {
             AgentTaskAction::BuildState(cmd) => cmd.run(),
             AgentTaskAction::Encode(cmd) => cmd.run(),
         }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AgentTaskCapabilitiesView {
+    schema_version: &'static str,
+    action_encoding: &'static str,
+    commands: [&'static str; 3],
+    create_flags: [&'static str; 14],
+    send_flags: [&'static str; 10],
+    send_operations: [&'static str; 9],
+}
+
+impl AgentTaskCapabilitiesCmd {
+    fn run(&self) -> anyhow::Result<()> {
+        if self.format != OutputFormat::Json {
+            anyhow::bail!("Task Escrow capabilities support only JSON output");
+        }
+        let view = AgentTaskCapabilitiesView {
+            schema_version: "tosctl.task-escrow-cli.v1",
+            action_encoding: "tos.task-escrow.action.v1",
+            commands: ["agent task build-state", "agent task create", "agent task send"],
+            create_flags: [
+                "--name",
+                "--creator",
+                "--agent",
+                "--verifier",
+                "--budget-nanotos",
+                "--deadline",
+                "--review-period",
+                "--policy-hash",
+                "--permission-hash",
+                "--from",
+                "--amount-nanotos",
+                "--workchain",
+                "--yes",
+                "--format",
+            ],
+            send_flags: [
+                "--operation",
+                "--address",
+                "--from",
+                "--query-id",
+                "--amount-nanotos",
+                "--yes",
+                "--result-hash",
+                "--evidence-hash",
+                "--dispute-hash",
+                "--payout-nanotos",
+            ],
+            send_operations: [
+                "accept", "reject", "result", "dispute", "resolve", "settle", "cancel", "timeout",
+                "claim",
+            ],
+        };
+        println!("{}", serde_json::to_string_pretty(&view)?);
+        Ok(())
     }
 }
 
