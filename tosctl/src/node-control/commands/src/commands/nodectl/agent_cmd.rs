@@ -1172,7 +1172,7 @@ impl AgentTaskSendCmd {
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?),
             AgentTaskOperation::Resolve => {
-                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1187,7 +1187,7 @@ impl AgentTaskSendCmd {
                 }
             }
             AgentTaskOperation::Settle => {
-                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1225,7 +1225,7 @@ impl AgentTaskSendCmd {
             let vault_key = self.signer_vault_key.as_deref().expect("checked above");
             match self.operation {
                 AgentTaskOperation::Settle => {
-                    let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                    let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1242,7 +1242,7 @@ impl AgentTaskSendCmd {
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
                 }
                 AgentTaskOperation::Resolve => {
-                    let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                    let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1745,7 +1745,7 @@ impl AgentTaskEncodeCmd {
                 parse_required_hash("dispute-hash", &self.dispute_hash)?,
             )?,
             AgentTaskOperation::Resolve => {
-                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -1757,7 +1757,7 @@ impl AgentTaskEncodeCmd {
                 }
             }
             AgentTaskOperation::Settle => {
-                let payout = resolve_nanotos("payout", self.payout, self.payout_nanotos, None)?;
+                let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
                 match parse_optional_signature(
                     "attestation-signature",
                     &self.attestation_signature,
@@ -3444,6 +3444,18 @@ fn resolve_nanotos(
     Ok(nanotos)
 }
 
+// A successful zero-charge settlement or a dispute resolved entirely in the
+// requester's favour has an exact provider payout of zero. TaskEscrow binds
+// that value in the signed action and refunds the remaining budget; it is not
+// the same as an omitted amount. Keep every funding/value path strictly
+// positive while allowing only the explicit atomic payout form to be zero.
+fn resolve_payout_nanotos(value_tos: Option<f64>, value_nanotos: Option<u64>) -> anyhow::Result<u64> {
+    if value_tos.is_none() && value_nanotos == Some(0) {
+        return Ok(0);
+    }
+    resolve_nanotos("payout", value_tos, value_nanotos, None)
+}
+
 fn nanotos_to_tos_f64(value: u64) -> anyhow::Result<f64> {
     // Controller forwarding still accepts TOS as f64. Refuse values that cannot
     // round-trip through IEEE-754 at nanoTOS precision instead of silently
@@ -3602,7 +3614,8 @@ fn print_table_summary(view: &AgentWalletView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentTaskOperation, permission_id_hash, resolve_nanotos, validate_controller_task_action,
+        AgentTaskOperation, permission_id_hash, resolve_nanotos, resolve_payout_nanotos,
+        validate_controller_task_action,
     };
     use chain_block::MsgAddressInt;
     use contracts::TaskEscrowData;
@@ -3644,6 +3657,13 @@ mod tests {
         assert_eq!(resolve_nanotos("budget", None, Some(u64::MAX), None).unwrap(), u64::MAX);
         assert!(resolve_nanotos("budget", None, Some(0), None).is_err());
         assert_eq!(resolve_nanotos("amount", None, None, Some(0.2)).unwrap(), 200_000_000);
+    }
+
+    #[test]
+    fn exact_zero_payout_is_valid_but_zero_funding_is_not() {
+        assert_eq!(resolve_payout_nanotos(None, Some(0)).unwrap(), 0);
+        assert!(resolve_payout_nanotos(Some(0.0), None).is_err());
+        assert!(resolve_nanotos("amount", None, Some(0), None).is_err());
     }
 
     #[test]
