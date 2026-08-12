@@ -41,6 +41,8 @@ pub enum AipowDistAction {
     Show(AipowDistShowCmd),
     /// Claim a beneficiary's pro-rata share with a merkle inclusion proof
     Claim(AipowDistClaimCmd),
+    /// Operator-only: forfeit a claim's unmatured remainder (fraud slashing)
+    Forfeit(AipowDistForfeitCmd),
 }
 
 impl AipowDistCmd {
@@ -50,6 +52,7 @@ impl AipowDistCmd {
             AipowDistAction::Ls(cmd) => cmd.run(config_path).await,
             AipowDistAction::Show(cmd) => cmd.run(config_path).await,
             AipowDistAction::Claim(cmd) => cmd.run(config_path).await,
+            AipowDistAction::Forfeit(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -314,6 +317,13 @@ pub struct AipowDistShowCmd {
     address: Option<String>,
     #[arg(long, help = "Local record name from `agent aipow-dist ls`")]
     name: Option<String>,
+    #[arg(
+        long,
+        help = "Optional identity (hex) to also report the claim and matured amount for"
+    )]
+    identity: Option<String>,
+    #[arg(long, help = "Unix time to evaluate maturation at; defaults to now")]
+    at_time: Option<u64>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -374,8 +384,39 @@ impl AipowDistShowCmd {
             .await?;
         let data = AipowDistributorContract::decode_data(&stack)?;
         let view = data_view(&address, data);
+
+        // Optionally report a single beneficiary's claim + matured amount.
+        let claim_view = if let Some(identity_hex) = &self.identity {
+            let identity = parse_required_hash("identity", &Some(identity_hex.clone()))?;
+            let arg = vec![contracts::stack_utils::bytes_to_stack_entry(&identity)];
+            let claim_stack =
+                provider.get_method(address.to_string(), "get_claim", arg.clone()).await?;
+            let claim = AipowDistributorContract::decode_claim(&claim_stack)?;
+            let at = self.at_time.unwrap_or_else(common::time_format::now);
+            let mut matured_arg = arg;
+            matured_arg.push(contracts::stack_utils::i64_to_stack_entry(at as i64));
+            let matured_stack =
+                provider.get_method(address.to_string(), "get_matured", matured_arg).await?;
+            let matured = AipowDistributorContract::decode_matured(&matured_stack)?;
+            claim.map(|c| ClaimView {
+                identity: identity_hex.clone(),
+                amount: c.amount,
+                claimed_at: c.claimed_at,
+                forfeited: c.forfeited,
+                forfeit_at: c.forfeit_at,
+                matured_at: at,
+                matured: matured.unwrap_or(0),
+            })
+        } else {
+            None
+        };
+
         if self.format == OutputFormat::Json {
-            println!("{}", serde_json::to_string_pretty(&view)?);
+            let mut out = serde_json::to_value(&view)?;
+            if let Some(claim) = &claim_view {
+                out["claim"] = serde_json::to_value(claim)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
             println!("AIPoW distributor: {}", view.address);
             println!("Operator: {}", view.operator);
@@ -384,9 +425,30 @@ impl AipowDistShowCmd {
             println!("Pool (nanotos): {}", view.pool);
             println!("Claimed count:  {}", view.claimed_count);
             println!("Score root: {}", view.score_root);
+            match &claim_view {
+                Some(c) => {
+                    println!("Claim [{}]:", c.identity);
+                    println!("  Amount (nanotos):  {}", c.amount);
+                    println!("  Forfeited: {}", c.forfeited);
+                    println!("  Matured at {} (nanotos): {}", c.matured_at, c.matured);
+                }
+                None if self.identity.is_some() => println!("No claim for that identity"),
+                None => {}
+            }
         }
         Ok(())
     }
+}
+
+#[derive(serde::Serialize)]
+struct ClaimView {
+    identity: String,
+    amount: u64,
+    claimed_at: u64,
+    forfeited: bool,
+    forfeit_at: u64,
+    matured_at: u64,
+    matured: u64,
 }
 
 #[derive(clap::Args, Clone)]
@@ -474,6 +536,69 @@ impl AipowDistClaimCmd {
         .await?;
         println!(
             "{} AIPoW distributor claim submitted to {} for identity {}",
+            "OK".green().bold(),
+            destination,
+            hex::encode(identity)
+        );
+        Ok(())
+    }
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Operator-only: forfeit a claim's unmatured remainder")]
+pub struct AipowDistForfeitCmd {
+    #[arg(long, conflicts_with = "name", help = "Distributor address")]
+    address: Option<String>,
+    #[arg(long, help = "Local record name from `agent aipow-dist ls`")]
+    name: Option<String>,
+    #[arg(long, help = "32-byte identity whose claim to forfeit (hex)")]
+    identity: String,
+    #[arg(long, help = "Operator signing wallet name or master_wallet")]
+    from: String,
+    #[arg(long, default_value_t = 0)]
+    query_id: u64,
+    #[arg(long, default_value_t = 0.05, help = "Message value in TOS")]
+    amount: f64,
+    #[arg(long)]
+    yes: bool,
+}
+
+impl AipowDistForfeitCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_tos_amount("amount", self.amount)?;
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let destination = resolve_dist_address(&config, &self.address, &self.name)?;
+        let identity = parse_required_hash("identity", &Some(self.identity.clone()))?;
+        let wallet_config =
+            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+        let (owner_address, owner_info, owner_secret) =
+            wallet_info(rpc_client.clone(), wallet_config, vault).await?;
+        if owner_info.account_state != AccountState::Active {
+            anyhow::bail!("signing wallet is not active");
+        }
+        let body = AipowDistributorContract::forfeit(self.query_id, identity)?;
+        let amount_nanotos = common::chain_utils::tos_to_nanotos(self.amount);
+        if owner_info.balance < amount_nanotos.saturating_add(DIST_ACTION_GAS) {
+            anyhow::bail!("signing wallet has insufficient balance");
+        }
+        if !self.yes && !confirm("Confirm AIPoW distributor forfeit?")? {
+            return Ok(());
+        }
+        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        send_wallet_message(
+            &wallet,
+            rpc_client,
+            destination.clone(),
+            amount_nanotos,
+            body,
+            true,
+            owner_info.seqno,
+            &owner_address,
+        )
+        .await?;
+        println!(
+            "{} AIPoW distributor forfeit submitted to {} for identity {}",
             "OK".green().bold(),
             destination,
             hex::encode(identity)

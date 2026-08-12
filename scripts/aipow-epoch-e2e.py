@@ -560,6 +560,65 @@ async def run_checks(faucet) -> None:
         check("agent's claim advances the claimed count",
               show_after and show_after["claimed_count"] == 1, str(show_after))
 
+        print("\n=== FORFEIT: the operator forfeits the agent's claim ===")
+        before = await tosctl_json(
+            CONFIG_A, "agent", "aipow-dist", "show", "--name", "e2e-dist",
+            "--identity", addr_hex(agent))
+        check("agent claim is not forfeited before the operator acts",
+              before.get("claim", {}).get("forfeited") is False, str(before.get("claim")))
+        await tosctl(CONFIG_A, "agent", "aipow-dist", "forfeit", "--name", "e2e-dist",
+                     "--identity", addr_hex(agent), "--from", "creator1", "--yes")
+        forfeited = None
+        for _ in range(30):
+            forfeited = await tosctl_json(
+                CONFIG_A, "agent", "aipow-dist", "show", "--name", "e2e-dist",
+                "--identity", addr_hex(agent))
+            if forfeited.get("claim", {}).get("forfeited"):
+                break
+            await asyncio.sleep(1)
+        check("operator forfeit freezes the agent's claim",
+              forfeited and forfeited.get("claim", {}).get("forfeited") is True,
+              str(forfeited.get("claim") if forfeited else None))
+
+        print("\n=== CHALLENGE: a challenged commitment ruled rejected ===")
+        ch_deadline = int(time.time()) + 3600  # long window: no wait needed
+        ch_out = await tosctl_json(
+            CONFIG_A, "agent", "aipow", "deploy", "--name", "e2e-commit-ch",
+            "--committer", creator1, "--reviewer", creator2,
+            "--epoch", str(epoch), "--window-deadline", str(ch_deadline),
+            "--commit-bond", "2", "--score-root", score_root,
+            "--methodology-hash", methodology_hash,
+            "--from", "creator1", "-w", "0", "--yes",
+        )
+        ch_addr = norm_addr(ch_out["address"])
+        check("challenged-path commitment active", await poll_predicate(
+            lambda: rpc_call("getAddressState", address=ch_addr).get("result") == "active"))
+        # The agent challenges with a bond at least matching the commit bond.
+        await tosctl(CONFIG_A, "agent", "aipow", "send", "--operation", "challenge",
+                     "--name", "e2e-commit-ch", "--from", "agent",
+                     "--challenge-evidence-hash", "cc" * 32, "--amount", "2.5", "--yes")
+        challenged = None
+        for _ in range(30):
+            challenged = await tosctl_json(
+                CONFIG_A, "agent", "aipow", "show", "--name", "e2e-commit-ch")
+            if challenged["status"] == "challenged":
+                break
+            await asyncio.sleep(1)
+        check("commitment enters challenged state", challenged
+              and challenged["status"] == "challenged", str(challenged))
+        # The reviewer upholds the challenge: the root is rejected.
+        await tosctl(CONFIG_A, "agent", "aipow", "send", "--operation", "rule",
+                     "--uphold", "true", "--name", "e2e-commit-ch", "--from", "creator2", "--yes")
+        ruled = None
+        for _ in range(30):
+            ruled = await tosctl_json(
+                CONFIG_A, "agent", "aipow", "show", "--name", "e2e-commit-ch")
+            if ruled["status"] == "rejected":
+                break
+            await asyncio.sleep(1)
+        check("upheld challenge rejects the root",
+              ruled and ruled["status"] == "rejected", str(ruled))
+
     finally:
         service_proc.terminate()
         try:
