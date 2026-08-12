@@ -29,8 +29,8 @@ use std::time::Duration;
 use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::{
-    CapabilityRegistryContract, ChainProvider, DisputeContract, ServiceActorContract,
-    TaskEscrowContract,
+    CapabilityRegistryContract, ChainProvider, DisputeContract, PoiwCommitmentContract,
+    ServiceActorContract, TaskEscrowContract,
 };
 
 use crate::indexer::store::{
@@ -77,7 +77,7 @@ pub async fn run(
     }
 }
 
-/// The four contract codes the indexer recognizes, keyed by their
+/// The contract codes the indexer recognizes, keyed by their
 /// representation hash (`Cell::repr_hash`, the same value `HASHCU` computes
 /// on-chain).
 struct KnownCodeHashes {
@@ -91,6 +91,7 @@ impl KnownCodeHashes {
         by_hash.insert(DisputeContract::code()?.repr_hash(), "dispute");
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
+        by_hash.insert(PoiwCommitmentContract::code()?.repr_hash(), "poiw_commitment");
         Ok(Self { by_hash })
     }
 
@@ -416,7 +417,67 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&CapabilityRegistryRecordDto::from(&data))?,
             })
         }
+        "poiw_commitment" => {
+            let stack = chain_provider
+                .run_get_method(address.to_owned(), "get_poiw_commitment_data", vec![])
+                .await?;
+            let data = PoiwCommitmentContract::decode_data(&stack)?;
+            store.upsert(&IndexedRecord {
+                address: address.to_owned(),
+                kind: kind.to_owned(),
+                creator: Some(data.committer.to_string()),
+                counterparty: Some(data.reviewer.to_string()),
+                status: Some(poiw_commitment_status_name(data.status).to_owned()),
+                deadline: Some(data.window_deadline),
+                last_seqno: seqno,
+                updated_at: now,
+                dto_json: serde_json::to_string(&PoiwCommitmentRecordDto::from(&data))?,
+            })
+        }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
+    }
+}
+
+fn poiw_commitment_status_name(status: u8) -> &'static str {
+    match status {
+        0 => "committed",
+        1 => "challenged",
+        2 => "final",
+        3 => "rejected",
+        _ => "unknown",
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct PoiwCommitmentRecordDto {
+    committer: String,
+    reviewer: String,
+    status: String,
+    epoch: u64,
+    window_deadline: u64,
+    commit_bond: u64,
+    challenge_bond: u64,
+    score_root: String,
+    methodology_hash: String,
+    challenger: String,
+    challenge_evidence_hash: String,
+}
+
+impl From<&contracts::PoiwCommitmentData> for PoiwCommitmentRecordDto {
+    fn from(data: &contracts::PoiwCommitmentData) -> Self {
+        Self {
+            committer: data.committer.to_string(),
+            reviewer: data.reviewer.to_string(),
+            status: poiw_commitment_status_name(data.status).to_owned(),
+            epoch: data.epoch,
+            window_deadline: data.window_deadline,
+            commit_bond: data.commit_bond,
+            challenge_bond: data.challenge_bond,
+            score_root: hex::encode(data.score_root),
+            methodology_hash: hex::encode(data.methodology_hash),
+            challenger: data.challenger.to_string(),
+            challenge_evidence_hash: hex::encode(data.challenge_evidence_hash),
+        }
     }
 }
 
@@ -1636,5 +1697,77 @@ mod tests {
             "a genuinely responded request must not be mislabeled swept just because the only \
              observation after it disappeared happened past the deadline"
         );
+    }
+
+    // ─── PoIW score-commitment classification (real sandbox contract) ───
+
+    #[tokio::test]
+    async fn indexer_decodes_a_poiw_commitment_through_its_lifecycle() {
+        use contracts::{PoiwCommitmentContract, PoiwCommitmentInit};
+
+        let tos: u64 = 1_000_000_000;
+        let mut bc = Blockchain::new().expect("blockchain");
+        bc.set_workchain(-1);
+        let base_now = time_format::now();
+        bc.set_now(base_now as u32);
+        let committer = bc.treasury("poiw-idx-committer", 1_000 * tos).expect("committer");
+        let reviewer = bc.treasury("poiw-idx-reviewer", 1_000 * tos).expect("reviewer");
+        let challenger = bc.treasury("poiw-idx-challenger", 1_000 * tos).expect("challenger");
+        let window_deadline = base_now + 3_600;
+        let init = PoiwCommitmentInit {
+            committer: committer.address().clone(),
+            reviewer: reviewer.address().clone(),
+            epoch: 42,
+            window_deadline,
+            commit_bond: 5 * tos,
+            score_root: [0x33; 32],
+            methodology_hash: [0x44; 32],
+        };
+        let commitment = PoiwCommitmentContract::calculate_address(-1, &init).expect("address");
+        let deploy = MessageBuilder::internal(committer.address(), &commitment, 6 * tos)
+            .bounce(false)
+            .state_init(PoiwCommitmentContract::build_state_init(&init).expect("state init"))
+            .body(chain_block::Cell::default())
+            .build();
+        bc.send_message(deploy).expect("deploy").expect_success();
+
+        let provider = Arc::new(SandboxChainProvider { bc: StdMutex::new(bc) });
+        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = commitment.to_string();
+
+        decode_and_store(&provider_dyn, &store, &address, "poiw_commitment", 1, base_now)
+            .await
+            .unwrap();
+        let record = store.get(&address).unwrap().unwrap();
+        assert_eq!(record.kind, "poiw_commitment");
+        assert_eq!(record.status.as_deref(), Some("committed"));
+        assert_eq!(record.creator.as_deref(), Some(committer.address().to_string().as_str()));
+        assert_eq!(record.counterparty.as_deref(), Some(reviewer.address().to_string().as_str()));
+        assert_eq!(record.deadline, Some(window_deadline));
+        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
+        assert_eq!(dto["epoch"], 42);
+        assert_eq!(dto["score_root"], hex::encode([0x33u8; 32]));
+        assert_eq!(dto["commit_bond"], 5 * tos);
+
+        // Drive a real challenge through the contract, then re-decode: the
+        // stored record must follow the status transition.
+        let challenge = MessageBuilder::internal(
+            challenger.address(),
+            &commitment,
+            6 * tos,
+        )
+        .body(PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
+        .build();
+        provider.bc.lock().unwrap().send_message(challenge).unwrap().expect_success();
+        decode_and_store(&provider_dyn, &store, &address, "poiw_commitment", 2, base_now)
+            .await
+            .unwrap();
+        let record = store.get(&address).unwrap().unwrap();
+        assert_eq!(record.status.as_deref(), Some("challenged"));
+        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
+        assert_eq!(dto["challenger"], challenger.address().to_string());
+        assert_eq!(dto["challenge_evidence_hash"], hex::encode([0xEEu8; 32]));
+        assert_eq!(dto["challenge_bond"], 6 * tos);
     }
 }

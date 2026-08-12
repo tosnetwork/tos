@@ -838,6 +838,86 @@ pub async fn get_registry(
     Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
+// --- PoIW score commitments (chain-wide, indexer-backed) ---
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct PoiwCommitmentDto {
+    pub address: String,
+    pub committer: String,
+    pub reviewer: String,
+    /// `committed`, `challenged`, `final`, or `rejected`.
+    pub status: String,
+    pub epoch: u64,
+    pub window_deadline: u64,
+    pub commit_bond: u64,
+    pub challenge_bond: u64,
+    pub score_root: String,
+    pub methodology_hash: String,
+    /// The zero address until a challenge is recorded.
+    pub challenger: String,
+    pub challenge_evidence_hash: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct PoiwCommitmentListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<PoiwCommitmentDto>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct PoiwCommitmentResponse {
+    pub ok: bool,
+    pub result: PoiwCommitmentDto,
+}
+
+#[utoipa::path(get, path = "/poiw/commitments", params(IndexedListQuery), responses(
+    (status = 200, body = PoiwCommitmentListResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_poiw_commitments(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<PoiwCommitmentListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list("poiw_commitment", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| indexed_dto::<PoiwCommitmentDto>(&r.dto_json, &r.address, false))
+        .collect();
+    Ok(axum::Json(PoiwCommitmentListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/poiw/commitments/{address}", params(("address" = String, Path, description = "PoIW score-commitment address")), responses(
+    (status = 200, body = PoiwCommitmentResponse), (status = 400, body = ApiErrorResponse),
+    (status = 404, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn get_poiw_commitment(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<PoiwCommitmentResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer_store
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "poiw_commitment")
+        .ok_or_else(|| AppError::not_found("no PoIW score commitment indexed at this address"))?;
+    let result = indexed_dto::<PoiwCommitmentDto>(&rec.dto_json, &rec.address, false)
+        .ok_or_else(|| {
+            AppError::invalid_contract_state(
+                "indexed PoIW score-commitment record could not be decoded",
+            )
+        })?;
+    Ok(axum::Json(PoiwCommitmentResponse { ok: true, result }))
+}
+
 // --- PoIW shadow-scoring data plane ---
 //
 // Settlement events observed by the chain indexer, exposed for the PoIW
@@ -1680,5 +1760,67 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 400);
         assert_eq!(json_body(response).await["error"]["kind"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn poiw_commitments_list_and_lookup_from_the_indexer() {
+        let f = Fixture::new();
+        let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
+        let address = "-1:".to_owned() + &"7".repeat(64);
+        let dto = serde_json::json!({
+            "committer": "-1:".to_owned() + &"1".repeat(64),
+            "reviewer": "-1:".to_owned() + &"2".repeat(64),
+            "status": "committed",
+            "epoch": 42,
+            "window_deadline": 1_900_000_000u64,
+            "commit_bond": 5_000_000_000u64,
+            "challenge_bond": 0,
+            "score_root": "33".repeat(32),
+            "methodology_hash": "44".repeat(32),
+            "challenger": "0:".to_owned() + &"0".repeat(64),
+            "challenge_evidence_hash": "0".repeat(64),
+        });
+        state
+            .indexer_store
+            .upsert(&crate::indexer::IndexedRecord {
+                address: address.clone(),
+                kind: "poiw_commitment".to_owned(),
+                creator: Some("-1:".to_owned() + &"1".repeat(64)),
+                counterparty: Some("-1:".to_owned() + &"2".repeat(64)),
+                status: Some("committed".to_owned()),
+                deadline: Some(1_900_000_000),
+                last_seqno: 5,
+                updated_at: 1_234,
+                dto_json: dto.to_string(),
+            })
+            .unwrap();
+
+        let response = routes(false, state.clone())
+            .oneshot(get("/poiw/commitments?status=committed"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let v = json_body(response).await;
+        assert_eq!(v["total"], 1);
+        assert_eq!(v["result"][0]["address"], address);
+        assert_eq!(v["result"][0]["epoch"], 42);
+        assert_eq!(v["result"][0]["score_root"], "33".repeat(32));
+
+        let response = routes(false, state.clone())
+            .oneshot(get(format!("/poiw/commitments/{address}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let v = json_body(response).await;
+        assert_eq!(v["result"]["status"], "committed");
+        assert_eq!(v["result"]["commit_bond"], 5_000_000_000u64);
+
+        // A non-commitment address 404s rather than leaking another kind.
+        let missing = "-1:".to_owned() + &"9".repeat(64);
+        let response = routes(false, state)
+            .oneshot(get(format!("/poiw/commitments/{missing}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
     }
 }
