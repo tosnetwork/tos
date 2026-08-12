@@ -317,6 +317,26 @@ async fn decode_and_store(
                 chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
             let data = TaskEscrowContract::decode_data(&stack)?;
             if task_status_name(data.status) == "settled" {
+                // Settlement drains the escrow, so the *current* budget
+                // field is already zero by the time the settled status is
+                // observable. The real budget comes from this indexer's
+                // own pre-settlement observation of the same contract
+                // (the not-yet-overwritten stored record). An indexer
+                // that first sees an escrow only after settlement has no
+                // such observation and records amount 0 -- the documented
+                // snapshot-diff limitation, resolved for good by the
+                // settlement-receipt schema.
+                let amount = if data.budget > 0 {
+                    data.budget
+                } else {
+                    store
+                        .get(address)?
+                        .and_then(|prior| {
+                            serde_json::from_str::<TaskEscrowRecordDto>(&prior.dto_json).ok()
+                        })
+                        .map(|dto| dto.budget)
+                        .unwrap_or(0)
+                };
                 // A settled escrow is terminal; `record_poiw_settlement`
                 // keeps the first observation, so re-visits are no-ops.
                 store.record_poiw_settlement(&PoiwSettlementRecord {
@@ -325,7 +345,7 @@ async fn decode_and_store(
                     kind: "task_escrow".to_owned(),
                     earner: data.assigned_agent.as_ref().unwrap_or(&data.creator).to_string(),
                     payer: data.creator.to_string(),
-                    amount: data.budget,
+                    amount,
                     attested: data.attestor_pubkey.is_some(),
                     seqno,
                     observed_at: now,
@@ -590,7 +610,7 @@ fn dispute_status_name(status: u8) -> &'static str {
 // closely enough to be re-served directly; kept private to this module since
 // they exist purely as the indexer's storage format.
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct TaskEscrowRecordDto {
     creator: String,
     assigned_agent: Option<String>,

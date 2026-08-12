@@ -37,6 +37,14 @@ seqno. The recorded `seqno` is the block in which the scan *observed*
 the transition — an upper bound on, not necessarily equal to, the block
 that executed it.
 
+Settlement drains a Task Escrow, so its on-chain budget field is already
+zero once the settled status is observable. The recorded `amount` is
+therefore taken from the indexer's own pre-settlement observation of the
+contract. A continuously-running indexer always has one; an indexer that
+first sees an escrow only after settlement records `amount = 0` — the
+same snapshot-diff limitation documented below, resolved for good by the
+settlement-receipt schema.
+
 ## Endpoint
 
 `GET /poiw/settled-work?from_seqno=&to_seqno=&offset=&limit=`
