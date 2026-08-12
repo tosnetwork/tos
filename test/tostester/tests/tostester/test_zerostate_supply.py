@@ -374,6 +374,94 @@ def test_genesis_refuses_capaipow_without_parameters(tmp_path):
     assert "capAipow" in (failed.stderr + failed.stdout)
 
 
+# A complete, valid AIPoW parameter set (ConfigParams 90-93) packed as fift, to
+# exercise the real C++ accessors + Config::check_aipow_config end to end via
+# create-state's genesis guard: k=3/1, cap 1000 TOS, floor 100 TOS, challenge
+# multiplier 2/1; 25%/8-epoch/65536s maturation; 4.5B cap; nonzero registry
+# anchors and an empty distributor-code set (allowed under Model B).
+_AIPOW_PARAMS_VALID = (
+    "<b 3 32 u, 1 32 u, TM$1000 Tomi, TM$100 Tomi, 2 32 u, 1 32 u, b> 90 config!\n"
+    "<b 2500 16 u, 8 16 u, 65536 32 u, 0 16 u, b> 91 config!\n"
+    "<b TM$4500000000 Tomi, b> 92 config!\n"
+    "<b 0xA1 256 u, 0xB2 256 u, 0xC3 256 u, 0 1 u, b> 93 config!\n"
+)
+
+
+def _run_genesis_with_aipow(tmp_path, params_block, *, enable_capaipow=True):
+    genesis = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    patched = genesis
+    if enable_capaipow:
+        patched = patched.replace("or config.version!", "or 1024 or config.version!")
+    patched = patched.replace(
+        "// ConfigParam 19: global_id",
+        params_block + "// ConfigParam 19: global_id",
+    )
+    script = tmp_path / "gen-zerostate-aipow.fif"
+    script.write_text(patched)
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(key.public_key.key for key in keys)
+    )
+    command = [
+        str(BUILD_DIR / "crypto/create-state"),
+        "-I",
+        str(REPO / "crypto/fift/lib"),
+        "-I",
+        str(REPO / "crypto/smartcont"),
+        "-s",
+        str(script),
+    ]
+    return subprocess.run(command, cwd=tmp_path, check=False, capture_output=True, text=True)
+
+
+def test_genesis_accepts_and_round_trips_a_complete_aipow_parameter_set(tmp_path):
+    # A genesis that activates capAipow WITH a complete, valid AIPoW parameter
+    # set must be accepted. Acceptance means create-state ran the real C++
+    # accessors (get_aipow_config/maturation/limits/registry) and
+    # Config::check_aipow_config over the fift-packed params -- so a clean run is
+    # the positive round-trip + validation signal. Confirm it landed in state.
+    result = _run_genesis_with_aipow(tmp_path, _AIPOW_PARAMS_VALID)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    assert _config(state, 8, ConfigParam8).capabilities & (1 << 10), "capAipow must be set"
+    for param in (90, 91, 92, 93):
+        assert param in state.custom.config.config, (
+            f"AIPoW ConfigParam {param} must be present"
+        )
+
+
+@pytest.mark.parametrize(
+    "params_block",
+    [
+        _AIPOW_PARAMS_VALID.replace("2500 16 u,", "10001 16 u,"),  # immediate_bps > 10000
+        _AIPOW_PARAMS_VALID.replace("3 32 u, 1 32 u,", "3 32 u, 0 32 u,"),  # zero k_den
+        _AIPOW_PARAMS_VALID.replace(
+            "TM$1000 Tomi, TM$100 Tomi,", "TM$1000 Tomi, TM$2000 Tomi,"
+        ),  # cold_start_floor > schedule_cap
+        _AIPOW_PARAMS_VALID.replace("0xC3 256 u,", "0 256 u,"),  # zero rate_card_hash
+        "".join(
+            line + "\n"
+            for line in _AIPOW_PARAMS_VALID.splitlines()
+            if "92 config!" not in line
+        ),  # AipowLimits (92) missing
+    ],
+    ids=[
+        "immediate_bps_over_10000",
+        "zero_denominator",
+        "floor_exceeds_cap",
+        "zero_rate_card_hash",
+        "missing_limits_param",
+    ],
+)
+def test_genesis_rejects_invalid_or_incomplete_aipow_parameters(tmp_path, params_block):
+    # Each variant activates capAipow but breaks one check_aipow_config invariant
+    # (or omits a required parameter); create-state's genesis guard must refuse.
+    result = _run_genesis_with_aipow(tmp_path, params_block)
+    assert result.returncode != 0
+    assert "capAipow" in (result.stderr + result.stdout)
+
+
 def test_validator_key_helper_defaults_to_four_keys(tmp_path):
     command = [
         str(BUILD_DIR / "crypto/fift"),
