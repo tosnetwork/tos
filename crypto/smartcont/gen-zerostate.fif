@@ -10,8 +10,10 @@
 // This is THE default mainnet template. It ships a ConfigParam 12 that
 // contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1).
 // Genesis contains only the bounded validator-bootstrap wallet and the two
-// system-contract reserves defined below. Nearly all native TOS is created
-// later through ConfigParam 14 validator block rewards.
+// system-contract reserves defined below. ConfigParam 14 validator block
+// rewards create approximately 500 million TOS of the network's supply
+// policy; the remaining community-agent allocation is created later through
+// a separate protocol reward mechanism and is not funded at genesis.
 // =====================================================================
 
 def? $1 { @' $1 } { "" } cond constant suffix
@@ -166,10 +168,12 @@ triple untriple config.mc_block_limits!
 triple untriple config.block_limits!
 
 // Candidate values calibrated from a four-validator Simplex v2 rehearsal at
-// 2.5 finalized masterchain and basechain blocks per second. See the dated
-// validator reward calibration report; production launch still requires an
-// independent sustained-network confirmation.
-TM$5.699830088 TM$3.352841228 config.block_create_fees!
+// 2.5 finalized masterchain and basechain blocks per second, retaining the
+// 1.7:1 masterchain-to-basechain ratio and targeting approximately
+// 499,899,000 TOS of post-genesis validator creation over roughly seven
+// years. See the dated validator reward calibration report; production
+// launch still requires an independent sustained-network confirmation.
+TM$0.569879384 TM$0.335223167 config.block_create_fees!
 // smc1_addr config.collector_smc!
 // F3: mint authority (ConfigParam 2) is the governance config contract, NOT
 // the bootstrap wallet (smc1_addr). Decouples a single launch key from the

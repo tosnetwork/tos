@@ -141,8 +141,8 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
         10_000 * NANOTOS_PER_TOS
     )
     rewards = _config(state, 14, ConfigParam14)
-    assert rewards.masterchain_block_fee == 5_699_830_088
-    assert rewards.basechain_block_fee == 3_352_841_228
+    assert rewards.masterchain_block_fee == 569_879_384
+    assert rewards.basechain_block_fee == 335_223_167
     assert _config(state, 2, ConfigParam2).minter_addr == _config(
         state, 0, ConfigParam0
     ).config_addr
@@ -184,8 +184,8 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     assert 3 in param10.critical_params
 
     param14 = _config(state, 14, ConfigParam14)
-    assert param14.masterchain_block_fee == 5_699_830_088
-    assert param14.basechain_block_fee == 3_352_841_228
+    assert param14.masterchain_block_fee == 569_879_384
+    assert param14.basechain_block_fee == 335_223_167
 
     param15 = _config(state, 15, ConfigParam15)
     assert (
@@ -268,8 +268,8 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     ).config_addr
     assert 3 not in state.custom.config.config
     canonical_rewards = _config(state, 14, ConfigParam14)
-    assert canonical_rewards.masterchain_block_fee == 5_699_830_088
-    assert canonical_rewards.basechain_block_fee == 3_352_841_228
+    assert canonical_rewards.masterchain_block_fee == 569_879_384
+    assert canonical_rewards.basechain_block_fee == 335_223_167
     assert _config(state, 16, ConfigParam16).min_validators == 4
     assert _config(state, 17, ConfigParam17).max_stake_factor == 1 << 16
     canonical_catchain = _config(state, 28, ConfigParam28)
