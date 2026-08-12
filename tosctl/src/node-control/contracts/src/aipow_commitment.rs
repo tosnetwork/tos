@@ -10,11 +10,12 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECCAEAAkcAART/APSkE/S88sgLAQIBYgIDA9DQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kD6QNMH0z/TP/oA+gDUAdDT/9P/0QLUAdD6QNP/0QLRQwAsghBBUFcBuuMCPiuCEEFQVwK64wILghBBUFcDuuMCXw2BCDvy8AQFBgBRoZcB2omh9IH0gaYPpn+mf/QB9AGoA6Gn/6f/ogWoA6H0gaf/ogWihgEAwFsyOYEINAXAABXy9IEINfgjI7ny9IEINlOhvvL0BtP/0YEIPCHDAPL0EFkQSHEIEDdeMkQzyFjPFsv/yQLIy//L/8nIUAnPFlAHzxYVywcTyz/LPwH6AgH6AhLMzMntVADQOzuBCDQGwAAW8vSBCDf4IyS+8vQH0XImCRBoVBcCEFcQRgUESxMMyFjPFsv/yQLIy//L/8nIUAnPFlAHzxYVywcTyz/LPwH6AgH6AhLMzMntVAFxcIAQyMsFUATPFlj6AhLLaskB+wAB8oEIOVHIxwUc8vSBCDgGwAEW8vQH0wfRgQg6IcAAIsABsfL0jlJyJlBoVBcCEFYEVEFkTD0byFjPFsv/yQLIy//L/8nIUAnPFlAHzxYVywcTyz/LPwH6AgH6AhLMzMntVFmgcXCAEMjLBVAEzxZY+gISy2rJAfsA4w0HAKYQVhBFc1FREEUDVEFTQbBSrchYzxbL/8kCyMv/y//JyFAJzxZQB88WFcsHE8s/yz8B+gIB+gISzMzJ7VRZoHFwgBDIywVQBM8WWPoCEstqyQH7ALt32zU=";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECCwEAAyQAART/APSkE/S88sgLAQIBYgIDBNjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kD6QNMH0z/TP9M/+gD6ANQB0NP/0//RAtQB0PpA0//RAtFDAC2CEEFQVwG64wI/LIIQQVBXArrjAiyCEEFQVwO64wI9C4IQQVBXBLoEBQYHAFWhlwHaiaH0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6IFqAOh9IGn/6IFooYBAf5bMjM5gQg0BcAAFfL0gQg1+CMjufL0gQg9U5bHBVOmxwWx8vKBCDZTpL7y9AbT/9GBCDwhwwDy9HH4I4IICTqAoBB4FhcQRQNRQFQSMlQrzMhYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQSCADYPDyBCDQHwAAX8vSBCDf4IyW+8vQI0XInChB5VBgCEGgQVxBGBUwTDchYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQBcXCAEMjLBVAEzxZY+gISy2rJAfsAAf48gQg5UdnHBR3y9IEIOAfAARfy9AjTB9GBCDohwAAiwAGx8vSOV3InUHlUGAIQZxBWBFRBZE0+HMhYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRZoHFwgBDIywVQBM8WWPoCEstqyQH7AOMNCQH6jniBCDgHwAEX8vSBCD74IyS+8vQI0XNUNXEqQ8NS38hYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRQM3FwgBDIywVQBM8WWPoCEstqyQH7AAFxcIAQyMsFUATPFlj6AhLLaskB+wDgXw0KADyhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAsBBnEFZzUWEQVhBFA1RBU0HAUr7IWM8Wy//JAsjL/8v/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UWaBxcIAQyMsFUATPFlj6AhLLaskB+wAACoEIO/Lw4P+Bcg==";
 
 pub const APW_CHALLENGE_OPCODE: u32 = 0x4150_5701;
 pub const APW_FINALIZE_OPCODE: u32 = 0x4150_5702;
 pub const APW_RULE_OPCODE: u32 = 0x4150_5703;
+pub const APW_TIMEOUT_OPCODE: u32 = 0x4150_5704;
 
 pub const AIPOW_COMMITMENT_STATUS_COMMITTED: u8 = 0;
 pub const AIPOW_COMMITMENT_STATUS_CHALLENGED: u8 = 1;
@@ -53,6 +54,10 @@ pub struct AipowCommitmentData {
     pub status: u8,
     pub epoch: u64,
     pub window_deadline: u64,
+    /// Zero until challenged; then the challenge time plus the review window.
+    /// A challenged commitment may be failed safe permissionlessly at or after
+    /// this time if the reviewer never rules.
+    pub review_deadline: u64,
     pub commit_bond: u64,
     pub challenge_bond: u64,
     pub score_root: [u8; 32],
@@ -80,6 +85,8 @@ impl AipowCommitmentContract {
         data.append_u8(AIPOW_COMMITMENT_STATUS_COMMITTED)?;
         data.append_u64(init.epoch)?;
         data.append_u64(init.window_deadline)?;
+        // review_deadline: zero until a challenge sets it.
+        data.append_u64(0)?;
         append_tomis(&mut data, init.commit_bond)?;
         append_tomis(&mut data, 0)?;
         let mut root = BuilderData::new();
@@ -106,25 +113,27 @@ impl AipowCommitmentContract {
     pub fn decode_data(stack: &TvmStackParser) -> anyhow::Result<AipowCommitmentData> {
         let mut committer_slice = stack.slice(0)?;
         let mut reviewer_slice = stack.slice(1)?;
-        let mut challenger_slice = stack.slice(9)?;
+        let mut challenger_slice = stack.slice(10)?;
         Ok(AipowCommitmentData {
             committer: MsgAddressInt::construct_from(&mut committer_slice)?,
             reviewer: MsgAddressInt::construct_from(&mut reviewer_slice)?,
             status: stack.u64(2)? as u8,
             epoch: stack.u64(3)?,
             window_deadline: stack.u64(4)?,
-            commit_bond: stack.u64(5)?,
-            challenge_bond: stack.u64(6)?,
-            score_root: parse_hash(stack, 7)?,
-            methodology_hash: parse_hash(stack, 8)?,
+            review_deadline: stack.u64(5)?,
+            commit_bond: stack.u64(6)?,
+            challenge_bond: stack.u64(7)?,
+            score_root: parse_hash(stack, 8)?,
+            methodology_hash: parse_hash(stack, 9)?,
             challenger: MsgAddressInt::construct_from(&mut challenger_slice)?,
-            challenge_evidence_hash: parse_hash(stack, 10)?,
+            challenge_evidence_hash: parse_hash(stack, 11)?,
         })
     }
 
-    /// Anyone may challenge a committed root before the window deadline;
-    /// the attached message value (at least the commit bond) becomes the
-    /// challenger's bond. The evidence hash must be nonzero.
+    /// Anyone but the committer and reviewer may challenge a committed root
+    /// before the window deadline. The bond is fixed at the commit bond; the
+    /// attached value must cover it and any excess is refunded. The evidence
+    /// hash must be nonzero.
     pub fn challenge(
         query_id: u64,
         challenge_evidence_hash: [u8; 32],
@@ -145,6 +154,13 @@ impl AipowCommitmentContract {
     /// finalizes the root and awards both bonds to the committer.
     pub fn rule(query_id: u64, uphold: bool) -> anyhow::Result<chain_block::Cell> {
         message(APW_RULE_OPCODE, query_id, |b| b.append_u8(u8::from(uphold)).map(|_| ()))
+    }
+
+    /// Anyone may fail a challenged commitment safe once the review deadline
+    /// passes without a ruling: the root is rejected and each party recovers
+    /// its own bond, so an absent reviewer cannot freeze the epoch.
+    pub fn timeout(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(APW_TIMEOUT_OPCODE, query_id, |_| Ok(()))
     }
 }
 
@@ -235,6 +251,12 @@ mod tests {
         assert_eq!(slice.get_next_u32().unwrap(), APW_RULE_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 3);
         assert_eq!(slice.get_next_byte().unwrap(), 1);
+        assert_eq!(slice.remaining_bits(), 0);
+
+        let body = AipowCommitmentContract::timeout(4).unwrap();
+        let mut slice = SliceData::load_cell(body).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), APW_TIMEOUT_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 4);
         assert_eq!(slice.remaining_bits(), 0);
     }
 }

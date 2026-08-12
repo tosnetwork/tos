@@ -24,6 +24,10 @@ use std::path::Path;
 
 const AIPOW_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
 const AIPOW_ACTION_GAS: u64 = 1_000_000; // 0.001 TOS
+// The deploy must fund the bond plus a reserve the contract keeps to pay for
+// its own outgoing bond returns (finalize/rule/timeout use mode-1 sends whose
+// fees come from the contract balance), so it can never be left underfunded.
+const AIPOW_MIN_DEPLOY_RESERVE: u64 = 100_000_000; // 0.1 TOS
 
 /// `tosctl agent aipow` -- AIPoW epoch score-commitment operations.
 #[derive(clap::Args, Clone)]
@@ -119,6 +123,7 @@ enum AipowOperation {
     Challenge,
     Finalize,
     Rule,
+    Timeout,
 }
 
 #[derive(clap::Args, Clone)]
@@ -136,7 +141,7 @@ pub struct AipowSendCmd {
     query_id: u64,
     #[arg(
         long,
-        help = "32-byte nonzero evidence hash for challenge (hex); the attached --amount becomes the challenger's bond and must at least match the commit bond"
+        help = "32-byte nonzero evidence hash for challenge (hex); the bond is fixed at the commit bond, so --amount must cover it and any excess is refunded. The committer and reviewer cannot challenge"
     )]
     challenge_evidence_hash: Option<String>,
     #[arg(
@@ -192,8 +197,11 @@ impl AipowDeployCmd {
             None => self.commit_bond + 1.0,
         };
         let amount_nanotos = common::chain_utils::tos_to_nanotos(amount);
-        if amount_nanotos < commit_bond {
-            anyhow::bail!("--amount must cover the commit bond");
+        if amount_nanotos < commit_bond.saturating_add(AIPOW_MIN_DEPLOY_RESERVE) {
+            anyhow::bail!(
+                "--amount must cover the commit bond plus at least a {} nanotos fee/storage reserve",
+                AIPOW_MIN_DEPLOY_RESERVE
+            );
         }
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
@@ -312,6 +320,7 @@ struct AipowDataView {
     status: String,
     epoch: u64,
     window_deadline: u64,
+    review_deadline: u64,
     commit_bond: u64,
     challenge_bond: u64,
     score_root: String,
@@ -338,6 +347,7 @@ fn data_view(address: &MsgAddressInt, data: AipowCommitmentData) -> AipowDataVie
         status: status_name(data.status).to_owned(),
         epoch: data.epoch,
         window_deadline: data.window_deadline,
+        review_deadline: data.review_deadline,
         commit_bond: data.commit_bond,
         challenge_bond: data.challenge_bond,
         score_root: hex::encode(data.score_root),
@@ -366,6 +376,7 @@ impl AipowShowCmd {
             println!("Status: {}", view.status);
             println!("Epoch:  {}", view.epoch);
             println!("Window deadline: {}", view.window_deadline);
+            println!("Review deadline: {}", view.review_deadline);
             println!("Commit bond (nanotos):    {}", view.commit_bond);
             println!("Challenge bond (nanotos): {}", view.challenge_bond);
             println!("Score root: {}", view.score_root);
@@ -448,6 +459,7 @@ impl AipowSendCmd {
                 self.query_id,
                 self.uphold.ok_or_else(|| anyhow::anyhow!("--uphold is required for rule"))?,
             )?,
+            AipowOperation::Timeout => AipowCommitmentContract::timeout(self.query_id)?,
         };
 
         let amount_nanotos = common::chain_utils::tos_to_nanotos(self.amount);

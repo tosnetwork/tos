@@ -466,6 +466,7 @@ struct AipowDistributorRecordDto {
     total_score: String,
     pool: u64,
     claimed_count: u32,
+    claimed_score: String,
     score_root: String,
     commitment_ref: String,
 }
@@ -478,6 +479,7 @@ impl From<&contracts::AipowDistributorData> for AipowDistributorRecordDto {
             total_score: data.total_score.to_string(),
             pool: data.pool,
             claimed_count: data.claimed_count,
+            claimed_score: data.claimed_score.to_string(),
             score_root: hex::encode(data.score_root),
             commitment_ref: hex::encode(data.commitment_ref),
         }
@@ -501,6 +503,7 @@ struct AipowCommitmentRecordDto {
     status: String,
     epoch: u64,
     window_deadline: u64,
+    review_deadline: u64,
     commit_bond: u64,
     challenge_bond: u64,
     score_root: String,
@@ -517,6 +520,7 @@ impl From<&contracts::AipowCommitmentData> for AipowCommitmentRecordDto {
             status: aipow_commitment_status_name(data.status).to_owned(),
             epoch: data.epoch,
             window_deadline: data.window_deadline,
+            review_deadline: data.review_deadline,
             commit_bond: data.commit_bond,
             challenge_bond: data.challenge_bond,
             score_root: hex::encode(data.score_root),
@@ -1814,7 +1818,12 @@ mod tests {
         let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
         assert_eq!(dto["challenger"], challenger.address().to_string());
         assert_eq!(dto["challenge_evidence_hash"], hex::encode([0xEEu8; 32]));
-        assert_eq!(dto["challenge_bond"], 6 * tos);
+        // The bond is fixed at the commit bond; the 1 TOS overpayment is
+        // refunded rather than recorded as a larger bond.
+        assert_eq!(dto["challenge_bond"], 5 * tos);
+        // The review deadline is set to the challenge time plus the 7-day
+        // review window.
+        assert_eq!(dto["review_deadline"], base_now + 604_800);
     }
 
     #[tokio::test]
@@ -1882,5 +1891,7 @@ mod tests {
         assert_eq!(record.status.as_deref(), Some("claimed:1"));
         let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
         assert_eq!(dto["claimed_count"], 1);
+        // The running claimed_score advances by the claimed member's score.
+        assert_eq!(dto["claimed_score"], "400000");
     }
 }

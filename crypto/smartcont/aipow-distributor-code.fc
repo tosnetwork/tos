@@ -29,6 +29,9 @@
 ;;   total_score:uint128       (pro-rata denominator; must be > 0)
 ;;   pool:Coins                (nominal epoch pool this slice does not move)
 ;;   claimed_count:uint32
+;;   claimed_score:uint128     (running sum of claimed scores; bounds the
+;;                              aggregate recorded amount to <= pool even if
+;;                              total_score is understated)
 ;;   ^[score_root:uint256 commitment_ref:uint256]
 ;;   ^claims  (udict: identity uint256 ->
 ;;             amount:Coins claimed_at:uint64 forfeited:uint1 forfeit_at:uint64)
@@ -38,9 +41,11 @@
 ;;                  proof:^ProofChain = InternalMsgBody;
 ;;   forfeit#41504402 query_id:uint64 identity:uint256 = InternalMsgBody;
 ;;
-;; ProofChain cell: sibling:uint256 sibling_is_left:uint1 [next:^ProofChain]?
-;;   An empty proof cell (the single-member tree, leaf == root) has fewer
-;;   than 257 data bits and terminates the walk immediately.
+;; ProofChain cell (canonical): a node is exactly sibling:uint256
+;;   sibling_is_left:uint1 (257 data bits) with an optional single reference to
+;;   the next node; the chain terminates either at a node with no reference or
+;;   at an empty cell (the single-member tree, leaf == root). Any other cell
+;;   shape is rejected as malformed.
 
 const int op::claim = 0x41504401;
 const int op::forfeit = 0x41504402;
@@ -53,6 +58,10 @@ const int err::unknown_op = 2204;
 const int err::not_operator = 2205;
 const int err::not_claimed = 2206;
 const int err::already_forfeited = 2207;
+const int err::score_exceeds_total = 2208;
+const int err::zero_score = 2209;
+const int err::insufficient_value = 2210;
+const int err::malformed_proof = 2211;
 
 ;; Maturation (methodology v0 draft): 25% immediate, the remaining 75%
 ;; streamed linearly over 8 epochs of 65,536 seconds each from claim time.
@@ -63,6 +72,11 @@ const int mat::epoch_seconds = 65536;
 ;; Bounds the proof walk: 2^60 members is far beyond any real epoch and
 ;; keeps gas bounded against a hostile deep proof chain.
 const int max_proof_depth = 60;
+
+;; A claim must carry at least this much value so a permissionless claim funds
+;; its own gas and a share of the dict's ongoing storage rent rather than
+;; draining the contract. v0 draft constant; phase C moves it to governance.
+const int min_claim_value = 50000000;  ;; 0.05 TOS
 
 int leaf_hash(int identity, int score) inline {
   return string_hash(begin_cell()
@@ -97,30 +111,33 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
   return immediate + streamed;
 }
 
-(slice, int, int, int, int, int, int, cell) load_state() inline {
+(slice, int, int, int, int, int, int, int, cell) load_state() inline {
   slice ds = get_data().begin_parse();
   slice op_addr = ds~load_msg_addr();
   int epoch = ds~load_uint(64);
   int total_score = ds~load_uint(128);
   int pool = ds~load_tomis();
   int claimed_count = ds~load_uint(32);
+  int claimed_score = ds~load_uint(128);
   slice roots = ds~load_ref().begin_parse();
   int score_root = roots~load_uint(256);
   int commitment_ref = roots~load_uint(256);
   roots.end_parse();
   cell claims = ds~load_dict();
   ds.end_parse();
-  return (op_addr, epoch, total_score, pool, claimed_count, score_root, commitment_ref, claims);
+  return (op_addr, epoch, total_score, pool, claimed_count, claimed_score,
+    score_root, commitment_ref, claims);
 }
 
 () save_state(slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-             int score_root, int commitment_ref, cell claims) impure inline {
+             int claimed_score, int score_root, int commitment_ref, cell claims) impure inline {
   set_data(begin_cell()
     .store_slice(op_addr)
     .store_uint(epoch, 64)
     .store_uint(total_score, 128)
     .store_tomis(pool)
     .store_uint(claimed_count, 32)
+    .store_uint(claimed_score, 128)
     .store_ref(begin_cell()
       .store_uint(score_root, 256)
       .store_uint(commitment_ref, 256)
@@ -129,19 +146,29 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
   .end_cell());
 }
 
-;; Recompute the root from a leaf and a proof chain. Bounded by
-;; max_proof_depth; throws proof_too_deep past it.
+;; Recompute the root from a leaf and a canonical proof chain. Each node is
+;; exactly a 256-bit sibling plus a 1-bit side flag with an optional single
+;; next reference; the chain ends at a node with no reference or at an empty
+;; cell. Any other shape (short/overlong data, extra references, dangling bits
+;; on the terminator) is rejected as malformed, so a proof has one canonical
+;; encoding. Bounded by max_proof_depth to keep gas finite.
 int fold_proof(int leaf, cell proof) inline_ref {
   int current = leaf;
   cell cur_cell = proof;
   int depth = 0;
   int done = 0;
   while (done == 0) {
-    throw_if(err::proof_too_deep, depth > max_proof_depth);
     slice ps = cur_cell.begin_parse();
-    if (ps.slice_bits() < 257) {
+    int bits = ps.slice_bits();
+    int refs = ps.slice_refs();
+    if (bits == 0) {
+      ;; Canonical terminator: an empty cell with no dangling references.
+      throw_unless(err::malformed_proof, refs == 0);
       done = 1;
     } else {
+      ;; A proof node is exactly a 256-bit sibling and a 1-bit side flag.
+      throw_unless(err::malformed_proof, (bits == 257) & (refs <= 1));
+      throw_if(err::proof_too_deep, depth >= max_proof_depth);
       int sibling = ps~load_uint(256);
       int is_left = ps~load_uint(1);
       if (is_left) {
@@ -149,7 +176,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
       } else {
         current = node_hash(current, sibling);
       }
-      if (ps.slice_refs() > 0) {
+      if (refs == 1) {
         cur_cell = ps~load_ref();
         depth += 1;
       } else {
@@ -161,7 +188,6 @@ int fold_proof(int leaf, cell proof) inline_ref {
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
-  msg_value~impure_touch();
   var full_msg = in_msg_full.begin_parse();
   int flags = full_msg~load_uint(4);
   if (flags & 1) { return (); }  ;; ignore bounced messages
@@ -172,14 +198,25 @@ int fold_proof(int leaf, cell proof) inline_ref {
   query_id~impure_touch();
 
   (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-   int score_root, int commitment_ref, cell claims) = load_state();
+   int claimed_score, int score_root, int commitment_ref, cell claims) = load_state();
 
   if (op == op::claim) {
+    ;; A permissionless claim must fund its own gas and storage rent so it
+    ;; cannot drain the contract on behalf of the whole cohort.
+    throw_unless(err::insufficient_value, msg_value >= min_claim_value);
     throw_unless(err::invalid_total_score, total_score > 0);
     int identity = in_msg~load_uint(256);
     int score = in_msg~load_uint(128);
     cell proof = in_msg~load_ref();
     in_msg.end_parse();
+    ;; A zero score earns nothing and would only pollute the dict.
+    throw_unless(err::zero_score, score > 0);
+    ;; Defence in depth against an understated denominator: the running sum of
+    ;; claimed scores may never exceed total_score, so the aggregate recorded
+    ;; amount stays <= pool even if total_score is smaller than the true sum of
+    ;; the committed leaves. (The authoritative fix binds total_score into the
+    ;; finalized commitment; phase C verifies that before minting.)
+    throw_unless(err::score_exceeds_total, claimed_score + score <= total_score);
 
     ;; Permissionless and idempotent: an identity may claim once. A repeat
     ;; is rejected rather than silently overwriting the recorded amount.
@@ -200,8 +237,9 @@ int fold_proof(int leaf, cell proof) inline_ref {
       .store_uint(0, 1)
       .store_uint(0, 64));
     claimed_count += 1;
-    save_state(op_addr, epoch, total_score, pool, claimed_count, score_root,
-      commitment_ref, claims);
+    claimed_score += score;
+    save_state(op_addr, epoch, total_score, pool, claimed_count, claimed_score,
+      score_root, commitment_ref, claims);
     return ();
   }
 
@@ -223,24 +261,25 @@ int fold_proof(int leaf, cell proof) inline_ref {
       .store_uint(claimed_at, 64)
       .store_uint(1, 1)
       .store_uint(now(), 64));
-    save_state(op_addr, epoch, total_score, pool, claimed_count, score_root,
-      commitment_ref, claims);
+    save_state(op_addr, epoch, total_score, pool, claimed_count, claimed_score,
+      score_root, commitment_ref, claims);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
+(slice, int, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
   (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-   int score_root, int commitment_ref, cell claims) = load_state();
+   int claimed_score, int score_root, int commitment_ref, cell claims) = load_state();
   claims~impure_touch();
-  return (op_addr, epoch, total_score, pool, claimed_count, score_root, commitment_ref);
+  return (op_addr, epoch, total_score, pool, claimed_count, claimed_score,
+    score_root, commitment_ref);
 }
 
 ;; (found, amount, claimed_at, forfeited, forfeit_at) for `identity`.
 (int, int, int, int, int) get_claim(int identity) method_id {
-  (_, _, _, _, _, _, _, cell claims) = load_state();
+  (_, _, _, _, _, _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0, 0, 0, 0);
@@ -252,9 +291,12 @@ int fold_proof(int leaf, cell proof) inline_ref {
   return (1, amount, claimed_at, forfeited, forfeit_at);
 }
 
-;; (found, matured) for `identity` at `at_time`.
+;; (found, matured) for `identity` at a caller-supplied `at_time`. This is for
+;; off-chain simulation/inspection of the maturation curve; a value-bearing
+;; consumer (the phase C native path) must use `get_matured_now`, never a
+;; caller-controlled time.
 (int, int) get_matured(int identity, int at_time) method_id {
-  (_, _, _, _, _, _, _, cell claims) = load_state();
+  (_, _, _, _, _, _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);
@@ -264,4 +306,20 @@ int fold_proof(int leaf, cell proof) inline_ref {
   int forfeited = entry~load_uint(1);
   int forfeit_at = entry~load_uint(64);
   return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, at_time));
+}
+
+;; (found, matured) for `identity` at chain time. This is the canonical getter
+;; the native minting path reads: the maturation time is `now()` and cannot be
+;; influenced by the caller.
+(int, int) get_matured_now(int identity) method_id {
+  (_, _, _, _, _, _, _, _, cell claims) = load_state();
+  (slice entry, int found) = claims.udict_get?(256, identity);
+  if (found == 0) {
+    return (0, 0);
+  }
+  int amount = entry~load_tomis();
+  int claimed_at = entry~load_uint(64);
+  int forfeited = entry~load_uint(1);
+  int forfeit_at = entry~load_uint(64);
+  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, now()));
 }

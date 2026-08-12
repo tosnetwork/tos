@@ -9,11 +9,12 @@
 //!
 //! These execute the compiled contract embedded in `AipowCommitmentContract`
 //! against the in-process executor: deployment and get-method inspection,
-//! the bonded challenge path (insufficient bond, zero evidence, and
-//! after-deadline rejections), permissionless finalization returning the
-//! committer's bond, reviewer-only rulings in both directions with bond
-//! flows asserted, terminal-state rejections, bounced-message immunity, and
-//! trailing-garbage rejection.
+//! the bonded challenge path (insufficient bond, zero evidence, conflicted
+//! challenger, excess refund, and after-deadline rejections), permissionless
+//! finalization returning the committer's bond, reviewer-only rulings in both
+//! directions with bond flows asserted, the permissionless review-timeout
+//! fail-safe returning each party its own bond, terminal-state rejections,
+//! bounced-message immunity, and trailing-garbage rejection.
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::{
@@ -34,6 +35,10 @@ const ERR_NOT_REVIEWER: i32 = 2105;
 const ERR_INVALID_RULING: i32 = 2106;
 const ERR_UNKNOWN_OP: i32 = 2107;
 const ERR_ZERO_EVIDENCE: i32 = 2108;
+const ERR_CONFLICTED_CHALLENGER: i32 = 2109;
+const ERR_REVIEW_OPEN: i32 = 2110;
+// Mirrors `review_window` in the contract (7 days).
+const REVIEW_WINDOW: u64 = 604_800;
 
 struct Fixture {
     bc: Blockchain,
@@ -152,6 +157,7 @@ fn deploys_committed_and_readable() {
     assert_eq!(data.status, AIPOW_COMMITMENT_STATUS_COMMITTED);
     assert_eq!(data.epoch, 27_260);
     assert_eq!(data.window_deadline, f.window_deadline);
+    assert_eq!(data.review_deadline, 0);
     assert_eq!(data.commit_bond, COMMIT_BOND);
     assert_eq!(data.challenge_bond, 0);
     assert_eq!(data.score_root, [0x33; 32]);
@@ -216,7 +222,9 @@ fn challenge_requires_bond_evidence_and_open_window() {
     )
     .expect_exit_code(ERR_ZERO_EVIDENCE);
 
-    // A well-formed challenge is recorded with the attached value as bond.
+    // A well-formed challenge is recorded. The bond is fixed at the commit
+    // bond (the overpaid excess is refunded -- asserted in isolation by
+    // `challenge_refunds_the_overpaid_excess`), and the review deadline is set.
     f.send_from_with_value(
         &challenger_addr,
         AipowCommitmentContract::challenge(3, [0xEE; 32]).unwrap(),
@@ -227,7 +235,8 @@ fn challenge_requires_bond_evidence_and_open_window() {
     assert_eq!(data.status, AIPOW_COMMITMENT_STATUS_CHALLENGED);
     assert_eq!(&data.challenger, f.challenger.address());
     assert_eq!(data.challenge_evidence_hash, [0xEE; 32]);
-    assert_eq!(data.challenge_bond, COMMIT_BOND + TOS);
+    assert_eq!(data.challenge_bond, COMMIT_BOND);
+    assert_eq!(data.review_deadline, u64::from(f.bc.now()) + REVIEW_WINDOW);
 
     // A second challenge and a finalize are both rejected now.
     f.send_from_with_value(
@@ -282,7 +291,8 @@ fn upheld_challenge_rejects_the_root_and_pays_the_challenger() {
     let before = f.balance(&challenger_addr);
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(4, true).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
-    let expected = 2 * COMMIT_BOND + TOS;
+    // Both bonds are the fixed commit bond, so an upheld challenge pays 2x.
+    let expected = 2 * COMMIT_BOND;
     let delta = f.balance(&challenger_addr) - before;
     assert!(
         delta > expected - TOS / 100 && delta <= expected,
@@ -310,7 +320,8 @@ fn dismissed_challenge_finalizes_and_pays_the_committer() {
     let before = f.balance(&committer_addr);
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
-    let expected = 2 * COMMIT_BOND + TOS;
+    // Both bonds are the fixed commit bond, so a dismissed challenge pays 2x.
+    let expected = 2 * COMMIT_BOND;
     let delta = f.balance(&committer_addr) - before;
     assert!(
         delta > expected - TOS / 100 && delta <= expected,
@@ -322,6 +333,96 @@ fn dismissed_challenge_finalizes_and_pays_the_committer() {
     let fresh_reviewer = fresh.reviewer.address().clone();
     fresh
         .send_from(&fresh_reviewer, AipowCommitmentContract::rule(1, true).unwrap())
+        .expect_exit_code(ERR_NOT_CHALLENGED);
+}
+
+#[test]
+fn challenge_refunds_the_overpaid_excess() {
+    // Sandbox treasuries are faucets (a sender is not debited for value it
+    // sends), so the refund is measured from the contract side: on a 3x
+    // overpayment the contract must retain only the fixed commit bond and send
+    // the excess straight back, so its balance grows by ~COMMIT_BOND, not 3x.
+    let mut f = Fixture::new();
+    let challenger_addr = f.challenger.address().clone();
+    let commitment_addr = f.commitment.clone();
+    let before = f.balance(&commitment_addr);
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        3 * COMMIT_BOND,
+    )
+    .expect_success();
+    assert_eq!(f.data().challenge_bond, COMMIT_BOND);
+    let retained = f.balance(&commitment_addr) - before;
+    assert!(
+        retained > COMMIT_BOND - TOS && retained < 2 * COMMIT_BOND,
+        "only the fixed bond is retained; the 2x overpayment is refunded, retained {retained}"
+    );
+}
+
+#[test]
+fn committer_and_reviewer_cannot_challenge() {
+    let mut f = Fixture::new();
+    let committer_addr = f.committer.address().clone();
+    let reviewer_addr = f.reviewer.address().clone();
+
+    // A conflicted challenger could route the committer's bond to itself via
+    // the ruling, so both the committer and the reviewer are barred.
+    f.send_from_with_value(
+        &committer_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_exit_code(ERR_CONFLICTED_CHALLENGER);
+    f.send_from_with_value(
+        &reviewer_addr,
+        AipowCommitmentContract::challenge(2, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_exit_code(ERR_CONFLICTED_CHALLENGER);
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
+}
+
+#[test]
+fn review_timeout_fails_safe_and_returns_each_bond() {
+    let mut f = Fixture::new();
+    let challenger_addr = f.challenger.address().clone();
+    let committer_addr = f.committer.address().clone();
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    let review_deadline = f.data().review_deadline;
+
+    // Before the review deadline the timeout is rejected: the reviewer still
+    // owns the decision.
+    f.send_from(&challenger_addr, AipowCommitmentContract::timeout(2).unwrap())
+        .expect_exit_code(ERR_REVIEW_OPEN);
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_CHALLENGED);
+
+    // Past it, anyone may fail it safe: the root is rejected and each party
+    // recovers its own bond (the fixed commit bond).
+    f.bc.set_now((review_deadline + 1) as u32);
+    let committer_before = f.balance(&committer_addr);
+    let challenger_before = f.balance(&challenger_addr);
+    // Permissionless: an outsider (committer here) may trigger it.
+    f.send_from(&committer_addr, AipowCommitmentContract::timeout(3).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
+    let committer_delta = f.balance(&committer_addr) - committer_before;
+    let challenger_delta = f.balance(&challenger_addr) - challenger_before;
+    assert!(
+        committer_delta > COMMIT_BOND - TOS && committer_delta <= COMMIT_BOND,
+        "committer recovers its own bond, got {committer_delta}"
+    );
+    assert!(
+        challenger_delta > COMMIT_BOND - TOS / 20 && challenger_delta <= COMMIT_BOND,
+        "challenger recovers its own bond, got {challenger_delta}"
+    );
+
+    // Terminal: a second timeout is rejected.
+    f.send_from(&challenger_addr, AipowCommitmentContract::timeout(4).unwrap())
         .expect_exit_code(ERR_NOT_CHALLENGED);
 }
 

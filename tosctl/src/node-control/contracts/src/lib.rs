@@ -74,6 +74,7 @@ pub use aipow_distributor::{
     compute_matured, AipowClaim, AipowDistributorContract, AipowDistributorData,
     AipowDistributorInit, AIPOW_DISTRIBUTOR_CLAIM_OPCODE, AIPOW_DISTRIBUTOR_FORFEIT_OPCODE,
     AIPOW_MATURATION_EPOCH_SECONDS, AIPOW_MATURATION_IMMEDIATE_BPS, AIPOW_MATURATION_STREAM_EPOCHS,
+    AIPOW_MIN_CLAIM_VALUE,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

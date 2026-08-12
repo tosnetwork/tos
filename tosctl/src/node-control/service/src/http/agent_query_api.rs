@@ -849,6 +849,10 @@ pub struct AipowCommitmentDto {
     pub status: String,
     pub epoch: u64,
     pub window_deadline: u64,
+    /// Zero until challenged; then the challenge time plus the review window,
+    /// after which the commitment can be failed safe permissionlessly.
+    #[serde(default)]
+    pub review_deadline: u64,
     pub commit_bond: u64,
     pub challenge_bond: u64,
     pub score_root: String,
@@ -930,6 +934,10 @@ pub struct AipowDistributorDto {
     pub total_score: String,
     pub pool: u64,
     pub claimed_count: u32,
+    /// Running sum of claimed scores (decimal string, u128); held at or below
+    /// `total_score` so the aggregate recorded amount cannot exceed `pool`.
+    #[serde(default)]
+    pub claimed_score: String,
     pub score_root: String,
     pub commitment_ref: String,
 }

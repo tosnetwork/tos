@@ -13,7 +13,9 @@
 //! be rejected. These tests deploy a distributor carrying a real Rust-built
 //! root and then claim every member through the contract, plus the
 //! rejection paths (wrong score, tampered proof, double claim, zero
-//! total score, unknown op) and the pro-rata amount recorded per claim.
+//! total score, zero score, an understated denominator's cumulative-score
+//! cap, an underfunded claim, a malformed proof, unknown op) and the pro-rata
+//! amount recorded per claim.
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::aipow_merkle::{inclusion_proof, score_root, ProofStep, ScoreEntry};
@@ -26,6 +28,10 @@ const ERR_INVALID_TOTAL_SCORE: i32 = 2200;
 const ERR_ALREADY_CLAIMED: i32 = 2201;
 const ERR_BAD_PROOF: i32 = 2202;
 const ERR_UNKNOWN_OP: i32 = 2204;
+const ERR_SCORE_EXCEEDS_TOTAL: i32 = 2208;
+const ERR_ZERO_SCORE: i32 = 2209;
+const ERR_INSUFFICIENT_VALUE: i32 = 2210;
+const ERR_MALFORMED_PROOF: i32 = 2211;
 
 struct Fixture {
     bc: Blockchain,
@@ -73,8 +79,12 @@ impl Fixture {
     }
 
     fn send(&mut self, body: Cell) -> tos_sandbox::SendResult {
+        self.send_with_value(body, TOS / 2)
+    }
+
+    fn send_with_value(&mut self, body: Cell, value: u64) -> tos_sandbox::SendResult {
         let msg =
-            MessageBuilder::internal(self.caller.address(), &self.distributor, TOS / 2).body(body).build();
+            MessageBuilder::internal(self.caller.address(), &self.distributor, value).body(body).build();
         self.bc.send_message(msg).expect("send")
     }
 
@@ -123,11 +133,22 @@ impl Fixture {
         AipowDistributorContract::decode_matured(&Self::parse_stack(&stack)).expect("decode_matured")
     }
 
+    fn matured_now(&self, identity: [u8; 32]) -> Option<u64> {
+        let stack = self
+            .bc
+            .run_get_method(&self.distributor, "get_matured_now", vec![Self::identity_arg(identity)])
+            .expect("get_matured_now")
+            .expect_success()
+            .stack
+            .clone();
+        AipowDistributorContract::decode_matured(&Self::parse_stack(&stack)).expect("decode_matured")
+    }
+
     fn now(&self) -> u64 {
         u64::from(self.bc.now())
     }
 
-    fn claimed_count(&self) -> u32 {
+    fn data(&self) -> contracts::AipowDistributorData {
         let stack = self
             .bc
             .run_get_method(&self.distributor, "get_aipow_distributor_data", vec![])
@@ -144,7 +165,10 @@ impl Fixture {
             entries,
         ))
         .expect("decode_data")
-        .claimed_count
+    }
+
+    fn claimed_count(&self) -> u32 {
+        self.data().claimed_count
     }
 }
 
@@ -198,6 +222,9 @@ fn every_member_claims_its_pro_rata_share_and_the_contract_recomputes_the_root()
         );
     }
     assert_eq!(f.claimed_count(), members.len() as u32);
+    // Every member claimed, so the running claimed_score equals the full
+    // denominator -- the cumulative cap is satisfied with no slack left.
+    assert_eq!(f.data().claimed_score, TOTAL_SCORE);
     // The five flooring shares sum to at most the pool; dust is unallocated.
     let total: u64 = members
         .iter()
@@ -269,10 +296,9 @@ fn a_second_claim_by_the_same_identity_is_rejected() {
 }
 
 #[test]
-fn a_zero_total_score_distributor_rejects_claims() {
-    // build_data rejects zero total_score, so craft the state directly is
-    // not possible through the SDK; instead confirm the SDK guard and that
-    // a positive-total distributor with a zero-score member records zero.
+fn a_zero_total_score_distributor_cannot_be_built() {
+    // build_data rejects a zero total_score outright, so a zero-denominator
+    // distributor can never be deployed through the SDK.
     assert!(contracts::AipowDistributorContract::build_data(&AipowDistributorInit {
         operator: MsgAddressInt::with_standart(None, -1, [1; 32].into()).unwrap(),
         epoch: 1,
@@ -282,7 +308,13 @@ fn a_zero_total_score_distributor_rejects_claims() {
         commitment_ref: [0; 32],
     })
     .is_err());
+    let _ = ERR_INVALID_TOTAL_SCORE;
+}
 
+#[test]
+fn a_zero_score_claim_is_rejected() {
+    // A zero score earns nothing and would only pollute the dict, so it is
+    // rejected before the proof is even folded.
     let members = vec![
         ScoreEntry { identity: [0x11; 32], score: 0 },
         ScoreEntry { identity: [0x22; 32], score: 1_000_000 },
@@ -291,9 +323,73 @@ fn a_zero_total_score_distributor_rejects_claims() {
     let mut f = Fixture::new(1_000_000, root);
     let proof = inclusion_proof(&members, &[0x11; 32]).unwrap();
     let body = AipowDistributorContract::claim(0, [0x11; 32], 0, &proof).unwrap();
-    f.send(body).expect_success();
-    assert_eq!(f.claim_amount([0x11; 32]), Some(0));
-    let _ = ERR_INVALID_TOTAL_SCORE;
+    f.send(body).expect_exit_code(ERR_ZERO_SCORE);
+    assert_eq!(f.claim_amount([0x11; 32]), None);
+    assert_eq!(f.claimed_count(), 0);
+}
+
+#[test]
+fn an_understated_denominator_caps_the_cumulative_claimed_score() {
+    // Deploy with a denominator (250_000) smaller than the true sum of the
+    // committed leaves (300_000). Claims succeed until the running claimed
+    // score would exceed the denominator; the overshooting claim is rejected,
+    // so the aggregate recorded amount can never exceed the pool.
+    let members = vec![
+        ScoreEntry { identity: [0x11; 32], score: 200_000 },
+        ScoreEntry { identity: [0x22; 32], score: 100_000 },
+    ];
+    let root = score_root(&members).unwrap();
+    let understated: u128 = 250_000;
+    let mut f = Fixture::new(understated, root);
+
+    let proof0 = inclusion_proof(&members, &[0x11; 32]).unwrap();
+    f.send(AipowDistributorContract::claim(0, [0x11; 32], 200_000, &proof0).unwrap())
+        .expect_success();
+    assert_eq!(f.data().claimed_score, 200_000);
+
+    // 200_000 + 100_000 = 300_000 > 250_000: the cap rejects it.
+    let proof1 = inclusion_proof(&members, &[0x22; 32]).unwrap();
+    f.send(AipowDistributorContract::claim(1, [0x22; 32], 100_000, &proof1).unwrap())
+        .expect_exit_code(ERR_SCORE_EXCEEDS_TOTAL);
+    assert_eq!(f.claimed_count(), 1);
+    assert_eq!(f.claim_amount([0x22; 32]), None);
+}
+
+#[test]
+fn an_underfunded_claim_is_rejected() {
+    // A permissionless claim must carry at least the minimum value so it funds
+    // its own gas and storage rent rather than draining the contract.
+    let members = entries();
+    let root = score_root(&members).unwrap();
+    let mut f = Fixture::new(TOTAL_SCORE, root);
+    let entry = &members[0];
+    let proof = inclusion_proof(&members, &entry.identity).unwrap();
+    let body = AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap();
+    f.send_with_value(body, contracts::AIPOW_MIN_CLAIM_VALUE - 1)
+        .expect_exit_code(ERR_INSUFFICIENT_VALUE);
+    assert_eq!(f.claimed_count(), 0);
+}
+
+#[test]
+fn a_non_canonical_proof_cell_is_rejected() {
+    // Craft a claim whose proof reference is neither an empty terminator nor a
+    // canonical 257-bit node (128 junk bits here). The strict parser rejects
+    // it as malformed rather than silently treating it as a terminator.
+    use chain_block::{BuilderData, IBitstring};
+    let only = vec![ScoreEntry { identity: [0x77; 32], score: 500_000 }];
+    let root = score_root(&only).unwrap();
+    let mut f = Fixture::new(500_000, root);
+
+    let mut junk = BuilderData::new();
+    junk.append_raw(&[0xAB; 16], 128).unwrap(); // 128 bits: not 0, not 257
+    let mut body = BuilderData::new();
+    body.append_u32(contracts::aipow_distributor::AIPOW_DISTRIBUTOR_CLAIM_OPCODE).unwrap();
+    body.append_u64(0).unwrap();
+    body.append_raw(&[0x77; 32], 256).unwrap();
+    body.append_raw(&500_000u128.to_be_bytes(), 128).unwrap();
+    body.checked_append_reference(junk.into_cell().unwrap()).unwrap();
+    f.send(body.into_cell().unwrap()).expect_exit_code(ERR_MALFORMED_PROOF);
+    assert_eq!(f.claim_amount([0x77; 32]), None);
 }
 
 #[test]
@@ -339,6 +435,14 @@ fn a_claim_matures_on_chain_matching_the_sdk_curve() {
     assert_eq!(f.matured(entry.identity, claimed_at), Some(amount / 4));
     // Fully matured after 8 epochs.
     assert_eq!(f.matured(entry.identity, claimed_at + 8 * epoch_secs), Some(amount));
+
+    // get_matured_now uses chain time, not a caller-supplied one. Right after
+    // the claim it equals the immediate fraction; advancing chain time by four
+    // epochs, it tracks now() and equals get_matured(now).
+    assert_eq!(f.matured_now(entry.identity), Some(amount / 4));
+    f.bc.set_now((claimed_at + 4 * epoch_secs) as u32);
+    assert_eq!(f.matured_now(entry.identity), f.matured(entry.identity, f.now()));
+    assert_eq!(f.matured_now(entry.identity), Some(amount / 4 + (amount - amount / 4) * 4 / 8));
 }
 
 #[test]

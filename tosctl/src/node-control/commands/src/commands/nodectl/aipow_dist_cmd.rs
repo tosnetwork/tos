@@ -356,6 +356,7 @@ struct DistDataView {
     total_score: String,
     pool: u64,
     claimed_count: u32,
+    claimed_score: String,
     score_root: String,
     commitment_ref: String,
 }
@@ -368,6 +369,7 @@ fn data_view(address: &MsgAddressInt, data: AipowDistributorData) -> DistDataVie
         total_score: data.total_score.to_string(),
         pool: data.pool,
         claimed_count: data.claimed_count,
+        claimed_score: data.claimed_score.to_string(),
         score_root: hex::encode(data.score_root),
         commitment_ref: hex::encode(data.commitment_ref),
     }
@@ -424,6 +426,7 @@ impl AipowDistShowCmd {
             println!("Total score: {}", view.total_score);
             println!("Pool (nanotos): {}", view.pool);
             println!("Claimed count:  {}", view.claimed_count);
+            println!("Claimed score:  {}", view.claimed_score);
             println!("Score root: {}", view.score_root);
             match &claim_view {
                 Some(c) => {
@@ -469,7 +472,11 @@ pub struct AipowDistClaimCmd {
     from: String,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
-    #[arg(long, default_value_t = 0.05, help = "Message value in TOS")]
+    #[arg(
+        long,
+        default_value_t = 0.1,
+        help = "Message value in TOS; must clear the contract's minimum claim value (0.05 TOS) so the claim funds its own gas and storage rent"
+    )]
     amount: f64,
     #[arg(long)]
     yes: bool,
@@ -516,6 +523,12 @@ impl AipowDistClaimCmd {
             anyhow::bail!("signing wallet is not active");
         }
         let amount_nanotos = common::chain_utils::tos_to_nanotos(self.amount);
+        if amount_nanotos < contracts::AIPOW_MIN_CLAIM_VALUE {
+            anyhow::bail!(
+                "--amount must be at least the contract's minimum claim value ({} nanotos)",
+                contracts::AIPOW_MIN_CLAIM_VALUE
+            );
+        }
         if owner_info.balance < amount_nanotos.saturating_add(DIST_ACTION_GAS) {
             anyhow::bail!("signing wallet has insufficient balance");
         }

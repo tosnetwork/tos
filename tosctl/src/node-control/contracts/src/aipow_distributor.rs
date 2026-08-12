@@ -12,7 +12,7 @@ use common::tvm_stack_parser::TvmStackParser;
 
 use crate::aipow_merkle::ProofStep;
 
-pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "te6cckECCwEAAngAART/APSkE/S88sgLAQIBYgIDAp7QMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0z/Tf/oA0x/UAdDT/9P/0QL0BNESKYIQQVBEAbrjAgmCEEFQRAK64wJfCoEInPLwBAUCASAHCAH2OTmBCJgkwgDy9AbT/9N/1NFTKYMH9A5voYEImTLy8lMhcMjLBxLL/8t/ydD5AgHbPIEImlEZuvL0VGNRqYRwIPgjyFAE+gITyz8SywDLP0AYgwf0QwakEEcQNlUiAsjL/8v/ychQB88WFcs/E8t/AfoCyx8SzPQAye1UBgDGgQidUafHBRry9AbT/9FTB4MH9A5voYEIngHy9PoA0z/TADCBCJ8B8vL4I3HIUAT6AhLLPxLLAMs/QBiDB/RDEEcQNkVAAsjL/8v/ychQB88WFcs/E8t/AfoCyx8SzPQAye1UALZwIJMgwACOUIEImyLCPPLyItAg10mBAQG5kltxjjnT/9MAAZ4FccjLBxLL/8v/ydD5Ap9QVXHIywcSy//L/8nQ+QLiJNdKwgCWMwPUMAGklDFxNFniVQLi6F8DAgFmCQoAO70pD2omh9IGmf6b/9AGmP6gDoaf/p/+iBegJoiRhADTsxq7UTQ+kDTP9N/+gDTH9QB0NP/0//RAvQE0RJscRKDB/QOb6HAAJNbcCDg+gDTP9MA0z8wcQUCmFMBuZExkTDikTDiIoEJxIEnEKmEUxK7kmwxjhMCoasPIMIIkjB43lEhoViptAKg4oAB1s207UTQ+kDTP9N/+gDTH9QB0NP/0//RAvQE0RJscYMH9A5vocAAljBwVHAAIOD6ANM/0wDTPzBxVTCAnzREX";
+pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "te6cckECDgEAA0AAART/APSkE/S88sgLAQIBYgIDAqjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTP9N/+gDTH9N/1AHQ0//T/9EC9ATREiqCEEFQRAG64wI8CYIQQVBEArrjAl8LgQic8vAEBQIBIAgJAv46OoEIoguCCvrwgL4b8vSBCJgkwgDy9AbT/9N/1NGBCKEiwgDy9IEIoFOSoCe78vRTKYMH9A5voYEImTLy8lMhcMjLBxLL/8t/ydD5AgHbPIEImlEcuvL0VHMEqYRwIPgjyFAE+gITyz8SywDLP0AJgwf0QwGkUGegEEgQN0ZQBgcAzoEInVGnxwUa8vQG0//RUwmDB/QOb6GBCJ4B8vT6ANM/0wAwgQifAfLy+CNxyFAE+gISyz8SywDLP0Aagwf0QxBIEDdGUEMwAsjL/8v/ychQCM8WFss/FMt/WPoCyx/LfxLM9ADJ7VQA6HAgkyDAAI5pItAg10kh10ohwACbbCGBCKMywADy9HGOT4EIowKBAQG6IcECsBLy9IEImyTCO/LyAdP/0wABngZxyMsHEsv/y//J0PkCn1BmccjLBxLL/8v/ydD5AuIBwAGWMwPUMAGklDFxNFniVQLi6F8DAEREMwLIy//L/8nIUAjPFhbLPxTLf1j6Assfy38SzPQAye1UAgFICgsAP70pD2omh9IGmf6b/9AGmP6b/qAOhp/+n/6IF6AmiJGEAN+2Ab2omh9IGmf6b/9AGmP6b/qAOhp/+n/6IF6AmiJNkDBg/oHN9DgAEmYOBBwfQBpn+mAaZ+YIYm4qBJ8EYFMKYDcyJjImHFImHERQITiQJOIVMIpiV3JNhjHCYFQ1YeQYQRJGDxvKJDQrFTaAVBxQAgEgDA0A17Mau1E0PpA0z/Tf/oA0x/Tf9QB0NP/0//RAvQE0RJsgRKDB/QOb6HAAJNbcCDg+gDTP9MA0z8wcQUCmFMBuZExkTDikTDiIoEJxIEnEKmEUxK7kmwxjhMCoasPIMIIkjB43lEhoViptAKg4oAB5s207UTQ+kDTP9N/+gDTH9N/1AHQ0//T/9EC9ATREmyBgwf0Dm+hwACWMHBUcAAg4PoA0z/TANM/MHFVMIKTvvHo=";
 
 pub const AIPOW_DISTRIBUTOR_CLAIM_OPCODE: u32 = 0x4150_4401;
 pub const AIPOW_DISTRIBUTOR_FORFEIT_OPCODE: u32 = 0x4150_4402;
@@ -23,6 +23,12 @@ pub const AIPOW_DISTRIBUTOR_FORFEIT_OPCODE: u32 = 0x4150_4402;
 pub const AIPOW_MATURATION_IMMEDIATE_BPS: u128 = 2_500;
 pub const AIPOW_MATURATION_STREAM_EPOCHS: u128 = 8;
 pub const AIPOW_MATURATION_EPOCH_SECONDS: u64 = 65_536;
+
+/// Minimum value a claim message must carry (nanotos), mirroring the
+/// contract's `min_claim_value`: a permissionless claim must fund its own gas
+/// and a share of the dict's storage rent. Callers should attach at least
+/// this much plus a forwarding margin.
+pub const AIPOW_MIN_CLAIM_VALUE: u64 = 50_000_000;
 
 /// One recorded claim's maturation state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +91,9 @@ pub struct AipowDistributorData {
     pub total_score: u128,
     pub pool: u64,
     pub claimed_count: u32,
+    /// Running sum of claimed scores; the claim path holds it at or below
+    /// `total_score` so the aggregate recorded amount cannot exceed `pool`.
+    pub claimed_score: u128,
     pub score_root: [u8; 32],
     pub commitment_ref: [u8; 32],
 }
@@ -107,6 +116,7 @@ impl AipowDistributorContract {
         append_u128(&mut data, init.total_score)?;
         Coins::new(init.pool).write_to(&mut data)?;
         data.append_u32(0)?; // claimed_count
+        append_u128(&mut data, 0)?; // claimed_score
         let mut roots = BuilderData::new();
         roots.append_u256(&init.score_root)?.append_u256(&init.commitment_ref)?;
         data.checked_append_reference(roots.into_cell()?)?;
@@ -136,8 +146,9 @@ impl AipowDistributorContract {
             total_score: parse_u128(stack, 2)?,
             pool: stack.u64(3)?,
             claimed_count: stack.u64(4)? as u32,
-            score_root: parse_hash(stack, 5)?,
-            commitment_ref: parse_hash(stack, 6)?,
+            claimed_score: parse_u128(stack, 5)?,
+            score_root: parse_hash(stack, 6)?,
+            commitment_ref: parse_hash(stack, 7)?,
         })
     }
 
