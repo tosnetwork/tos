@@ -161,6 +161,7 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         )
         .route("/registry", axum::routing::get(agent_query_api::list_registry))
         .route("/registry/{address}", axum::routing::get(agent_query_api::get_registry))
+        .route("/poiw/settled-work", axum::routing::get(agent_query_api::list_poiw_settled_work))
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -924,6 +925,7 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_service_request
         ,agent_query_api::list_registry
         ,agent_query_api::get_registry
+        ,agent_query_api::list_poiw_settled_work
     ),
     components(schemas(
         ApiErrorBody,
@@ -965,6 +967,8 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::ServiceRequestLifecycleResponse,
         agent_query_api::RegistryDto,
         agent_query_api::RegistryResponse,
+        agent_query_api::PoiwSettledWorkDto,
+        agent_query_api::PoiwSettledWorkResponse,
         agent_query_api::RegistryListResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,

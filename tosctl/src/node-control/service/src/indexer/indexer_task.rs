@@ -33,7 +33,9 @@ use contracts::{
     TaskEscrowContract,
 };
 
-use crate::indexer::store::{IndexedRecord, IndexerStore, ServiceRequestRecord};
+use crate::indexer::store::{
+    IndexedRecord, IndexerStore, PoiwSettlementRecord, ServiceRequestRecord,
+};
 use crate::runtime_config::RuntimeConfig;
 
 /// Upper bound on how many masterchain blocks a single tick will scan, so a
@@ -314,6 +316,21 @@ async fn decode_and_store(
             let stack =
                 chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
             let data = TaskEscrowContract::decode_data(&stack)?;
+            if task_status_name(data.status) == "settled" {
+                // A settled escrow is terminal; `record_poiw_settlement`
+                // keeps the first observation, so re-visits are no-ops.
+                store.record_poiw_settlement(&PoiwSettlementRecord {
+                    address: address.to_owned(),
+                    request_id: String::new(),
+                    kind: "task_escrow".to_owned(),
+                    earner: data.assigned_agent.as_ref().unwrap_or(&data.creator).to_string(),
+                    payer: data.creator.to_string(),
+                    amount: data.budget,
+                    attested: data.attestor_pubkey.is_some(),
+                    seqno,
+                    observed_at: now,
+                })?;
+            }
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -348,7 +365,8 @@ async fn decode_and_store(
                 .run_get_method(address.to_owned(), "get_service_data", vec![])
                 .await?;
             let data = ServiceActorContract::decode_data(&stack)?;
-            refresh_service_request_lifecycle(chain_provider, store, address, &data, now).await?;
+            refresh_service_request_lifecycle(chain_provider, store, address, &data, seqno, now)
+                .await?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -403,6 +421,7 @@ async fn refresh_service_request_lifecycle(
     store: &IndexerStore,
     address: &str,
     data: &contracts::ServiceActorData,
+    seqno: u32,
     now: u64,
 ) -> anyhow::Result<()> {
     let (max_indexed, active) = store.service_requests_for_refresh(address)?;
@@ -512,6 +531,25 @@ async fn refresh_service_request_lifecycle(
                 terms_hash: None,
             }
         };
+        // A `responded` conclusion is the only one this snapshot diff can
+        // prove was a real, paid service completion (see the deadline
+        // reasoning above); it is the Service Actor analog of a settled
+        // Task Escrow for the PoIW shadow-scoring data plane.
+        if let ("responded", Some(caller), Some(price)) =
+            (dto.status.as_str(), &dto.caller, dto.price)
+        {
+            store.record_poiw_settlement(&PoiwSettlementRecord {
+                address: address.to_owned(),
+                request_id: request_id.to_string(),
+                kind: "service_request".to_owned(),
+                earner: data.owner.to_string(),
+                payer: caller.clone(),
+                amount: price,
+                attested: data.attestor_pubkey.is_some(),
+                seqno,
+                observed_at: now,
+            })?;
+        }
         store.upsert_service_request(&ServiceRequestRecord {
             service_address: address.to_owned(),
             request_id,
@@ -1394,9 +1432,16 @@ mod tests {
         }
 
         async fn refresh(&self, store: &IndexerStore, now: u64) {
-            decode_and_store(&self.provider_dyn, store, &self.service.to_string(), "service_actor", 1, now)
-                .await
-                .unwrap();
+            decode_and_store(
+                &self.provider_dyn,
+                store,
+                &self.service.to_string(),
+                "service_actor",
+                1,
+                now,
+            )
+            .await
+            .unwrap();
         }
     }
 
@@ -1415,7 +1460,26 @@ mod tests {
         f.send(&owner, ServiceActorContract::respond(2, 0, [0xBB; 32]).unwrap());
         f.refresh(&store, f.base_now).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
-        assert_eq!(record.status, "responded", "a request answered before its deadline must be classified responded, not swept");
+        assert_eq!(
+            record.status, "responded",
+            "a request answered before its deadline must be classified responded, not swept"
+        );
+
+        // A responded request is a real, paid service completion: exactly
+        // one PoIW settlement event, attributed owner <- caller at the
+        // service's per-call price, unattested (this fixture deploys with
+        // no attestor key). A further refresh must not duplicate it.
+        let (events, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(events[0].kind, "service_request");
+        assert_eq!(events[0].request_id, "0");
+        assert_eq!(events[0].earner, f.owner.address().to_string());
+        assert_eq!(events[0].payer, caller.to_string());
+        assert_eq!(events[0].amount, 100_000_000);
+        assert!(!events[0].attested);
+        f.refresh(&store, f.base_now).await;
+        let (_, total_after) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        assert_eq!(total_after, 1);
     }
 
     #[tokio::test]
@@ -1437,7 +1501,15 @@ mod tests {
         f.send(&caller, ServiceActorContract::claim_refund(3, 0, &caller).unwrap());
         f.refresh(&store, past_response_deadline).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
-        assert_eq!(record.status, "refunded", "a refund claimed before its claim window closes must be classified refunded, not swept");
+        assert_eq!(
+            record.status, "refunded",
+            "a refund claimed before its claim window closes must be classified refunded, not swept"
+        );
+
+        // A refunded request is not a completed service: no PoIW
+        // settlement event may be recorded for it.
+        let (_, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
@@ -1501,7 +1573,10 @@ mod tests {
             let mut bc = f.provider.bc.lock().unwrap();
             bc.treasury("lifecycle-sweeper", 10_000_000_000).unwrap()
         };
-        f.send(&sweeper.address().clone(), ServiceActorContract::sweep_expired_request(4, 0).unwrap());
+        f.send(
+            &sweeper.address().clone(),
+            ServiceActorContract::sweep_expired_request(4, 0).unwrap(),
+        );
         f.refresh(&store, past_claim_deadline).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
         assert_eq!(

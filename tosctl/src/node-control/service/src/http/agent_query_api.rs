@@ -838,6 +838,91 @@ pub async fn get_registry(
     Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
+// --- PoIW shadow-scoring data plane ---
+//
+// Settlement events observed by the chain indexer, exposed for the PoIW
+// scorer's phase-A shadow scoring. This is the interim, tosctld-served
+// form of the settled-work surface; the node-side JSON-RPC method that
+// eventually supersedes it must serve the same rows. The evidence field
+// applies the published phase-A interim mapping: a settlement on a
+// contract deployed with an attestor key is `Attested` (its settle/
+// respond op carried a verified attestor signature), any other real
+// settlement is `Observed`. Capability classes, measured work units, and
+// rate-card values are not on chain yet, so consumers value work by the
+// settled amount until the settlement-receipt schema lands.
+
+#[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
+pub struct PoiwSettledWorkQuery {
+    pub from_seqno: Option<u32>,
+    pub to_seqno: Option<u32>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct PoiwSettledWorkDto {
+    pub address: String,
+    /// Empty for Task Escrow settlements; the request number for Service
+    /// Actor responses.
+    pub request_id: String,
+    /// `task_escrow` or `service_request`.
+    pub kind: String,
+    pub earner: String,
+    pub payer: String,
+    /// Settled amount in nanotos.
+    pub amount: u64,
+    /// Phase-A interim evidence mapping: `Attested` or `Observed`.
+    pub evidence: String,
+    /// Block seqno at which the settlement was observed by the scan (an
+    /// upper bound on the executing block).
+    pub seqno: u32,
+    pub observed_at: u64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct PoiwSettledWorkResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<PoiwSettledWorkDto>,
+}
+
+#[utoipa::path(get, path = "/poiw/settled-work", params(PoiwSettledWorkQuery), responses(
+    (status = 200, body = PoiwSettledWorkResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_poiw_settled_work(
+    State(state): State<AppState>,
+    Query(query): Query<PoiwSettledWorkQuery>,
+) -> Result<axum::Json<PoiwSettledWorkResponse>, AppError> {
+    let from_seqno = query.from_seqno.unwrap_or(0);
+    let to_seqno = query.to_seqno.unwrap_or(u32::MAX);
+    if from_seqno > to_seqno {
+        return Err(AppError::bad_request("from_seqno must not exceed to_seqno"));
+    }
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list_poiw_settlements(from_seqno, to_seqno, offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .map(|r| PoiwSettledWorkDto {
+            address: r.address,
+            request_id: r.request_id,
+            kind: r.kind,
+            earner: r.earner,
+            payer: r.payer,
+            amount: r.amount,
+            evidence: if r.attested { "Attested" } else { "Observed" }.to_owned(),
+            seqno: r.seqno,
+            observed_at: r.observed_at,
+        })
+        .collect();
+    Ok(axum::Json(PoiwSettledWorkResponse { ok: true, total, offset, limit, result }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1535,5 +1620,65 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 504);
         assert_eq!(json_body(response).await["error"]["kind"], "timeout");
+    }
+
+    #[tokio::test]
+    async fn poiw_settled_work_lists_events_with_interim_evidence_mapping() {
+        let f = Fixture::new();
+        let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
+        let seed = |request_id: &str, kind: &str, seqno: u32, attested: bool| {
+            crate::indexer::PoiwSettlementRecord {
+                address: "0:contract".to_owned(),
+                request_id: request_id.to_owned(),
+                kind: kind.to_owned(),
+                earner: "0:agent".to_owned(),
+                payer: "0:consumer".to_owned(),
+                amount: 750,
+                attested,
+                seqno,
+                observed_at: 1_234,
+            }
+        };
+        state.indexer_store.record_poiw_settlement(&seed("", "task_escrow", 5, true)).unwrap();
+        state
+            .indexer_store
+            .record_poiw_settlement(&seed("3", "service_request", 9, false))
+            .unwrap();
+
+        let response = routes(false, state.clone())
+            .oneshot(get("/poiw/settled-work?from_seqno=1&to_seqno=100"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let v = json_body(response).await;
+        assert_eq!(v["total"], 2);
+        let result = v["result"].as_array().unwrap();
+        assert_eq!(result[0]["kind"], "task_escrow");
+        assert_eq!(result[0]["evidence"], "Attested");
+        assert_eq!(result[0]["seqno"], 5);
+        assert_eq!(result[1]["kind"], "service_request");
+        assert_eq!(result[1]["request_id"], "3");
+        assert_eq!(result[1]["evidence"], "Observed");
+        assert_eq!(result[1]["amount"], 750);
+
+        // A range excluding both events lists nothing.
+        let response = routes(false, state)
+            .oneshot(get("/poiw/settled-work?from_seqno=50&to_seqno=100"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(json_body(response).await["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn poiw_settled_work_rejects_an_inverted_seqno_range() {
+        let f = Fixture::new();
+        let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
+        let response = routes(false, state)
+            .oneshot(get("/poiw/settled-work?from_seqno=10&to_seqno=2"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        assert_eq!(json_body(response).await["error"]["kind"], "invalid_request");
     }
 }

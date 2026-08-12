@@ -29,30 +29,52 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 /// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
-/// version `i + 2` (e.g. `MIGRATIONS[0]` migrates v1 -> v2). Empty today:
-/// v1 is the only version that has ever shipped, so there is nothing to
-/// migrate from yet. This is the mechanism the *next* schema change runs
-/// through, not a currently-exercised path -- adding an entry here plus
-/// bumping [`CURRENT_SCHEMA_VERSION`] is the intended way to evolve the
-/// schema, rather than editing `init_schema`'s `CREATE TABLE` in place
-/// (which `IF NOT EXISTS` would silently no-op against an existing file).
-const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[|conn| {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS service_request_lifecycle (
-            service_address TEXT NOT NULL,
-            request_id TEXT NOT NULL,
-            status TEXT NOT NULL,
-            updated_at INTEGER NOT NULL,
-            dto_json TEXT NOT NULL,
-            PRIMARY KEY(service_address, request_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_service_request_status
-            ON service_request_lifecycle(service_address, status);",
-    )
-}];
+/// version `i + 2` (e.g. `MIGRATIONS[0]` migrates v1 -> v2). Adding an
+/// entry here plus bumping [`CURRENT_SCHEMA_VERSION`] is the intended way
+/// to evolve the schema, rather than editing `init_schema`'s
+/// `CREATE TABLE` in place (which `IF NOT EXISTS` would silently no-op
+/// against an existing file).
+const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
+    |conn| {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS service_request_lifecycle (
+                service_address TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                dto_json TEXT NOT NULL,
+                PRIMARY KEY(service_address, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_service_request_status
+                ON service_request_lifecycle(service_address, status);",
+        )
+    },
+    |conn| conn.execute_batch(POIW_SETTLEMENT_SCHEMA),
+];
+
+/// v3: settlement events for the PoIW shadow-scoring data plane. One row
+/// per observed settlement (a Task Escrow reaching `settled`, or a
+/// Service Actor request answered within its deadline), keyed so
+/// re-observation is idempotent. `seqno` is the block in which the
+/// transition was *observed* by the scan -- an upper bound on, not
+/// necessarily equal to, the block that executed it.
+const POIW_SETTLEMENT_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS poiw_settlement_events (
+        address TEXT NOT NULL,
+        request_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        earner TEXT NOT NULL,
+        payer TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        attested INTEGER NOT NULL,
+        seqno INTEGER NOT NULL,
+        observed_at INTEGER NOT NULL,
+        PRIMARY KEY(address, request_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_poiw_settlement_seqno
+        ON poiw_settlement_events(seqno);";
 
 /// One indexed account: either a recognized contract (`kind` is one of
 /// `task_escrow`/`dispute`/`service_actor`/`capability_registry`) or
@@ -77,6 +99,22 @@ pub struct ServiceRequestRecord {
     pub status: String,
     pub updated_at: u64,
     pub dto_json: String,
+}
+
+/// One observed settlement, recorded for the PoIW shadow-scoring data
+/// plane. `request_id` is empty for Task Escrow settlements and the
+/// request number for Service Actor responses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoiwSettlementRecord {
+    pub address: String,
+    pub request_id: String,
+    pub kind: String,
+    pub earner: String,
+    pub payer: String,
+    pub amount: u64,
+    pub attested: bool,
+    pub seqno: u32,
+    pub observed_at: u64,
 }
 
 /// Filters accepted by [`IndexerStore::list`]. All fields are optional
@@ -139,6 +177,7 @@ impl IndexerStore {
             CREATE INDEX IF NOT EXISTS idx_service_request_status
                 ON service_request_lifecycle(service_address, status);",
         )?;
+        conn.execute_batch(POIW_SETTLEMENT_SCHEMA)?;
         Ok(())
     }
 
@@ -406,6 +445,70 @@ impl IndexerStore {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(bind.iter().map(|b| b.as_ref())), row_to_record)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((rows, total))
+    }
+
+    /// Records one settlement event. First observation wins (`INSERT OR
+    /// IGNORE`): a settlement is a terminal, once-only transition, so a
+    /// re-scan or a later re-observation of the same settled contract
+    /// must not move the event to a different seqno.
+    pub fn record_poiw_settlement(&self, record: &PoiwSettlementRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.execute(
+            "INSERT OR IGNORE INTO poiw_settlement_events
+                (address, request_id, kind, earner, payer, amount, attested, seqno, observed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.address,
+                record.request_id,
+                record.kind,
+                record.earner,
+                record.payer,
+                record.amount as i64,
+                record.attested as i64,
+                record.seqno,
+                record.observed_at as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Lists settlement events with `from_seqno <= seqno <= to_seqno`,
+    /// ordered by `(seqno, address, request_id)` for stable pagination,
+    /// returning `(page, total_matching)`.
+    pub fn list_poiw_settlements(
+        &self,
+        from_seqno: u32,
+        to_seqno: u32,
+        offset: usize,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<PoiwSettlementRecord>, usize)> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let total: usize = conn.query_row(
+            "SELECT COUNT(*) FROM poiw_settlement_events WHERE seqno >= ?1 AND seqno <= ?2",
+            params![from_seqno, to_seqno],
+            |row| row.get::<_, i64>(0),
+        )? as usize;
+        let mut stmt = conn.prepare(
+            "SELECT address, request_id, kind, earner, payer, amount, attested, seqno, observed_at
+             FROM poiw_settlement_events WHERE seqno >= ?1 AND seqno <= ?2
+             ORDER BY seqno, address, request_id LIMIT ?3 OFFSET ?4",
+        )?;
+        let rows = stmt
+            .query_map(params![from_seqno, to_seqno, limit as i64, offset as i64], |row| {
+                Ok(PoiwSettlementRecord {
+                    address: row.get(0)?,
+                    request_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    earner: row.get(3)?,
+                    payer: row.get(4)?,
+                    amount: row.get::<_, i64>(5)? as u64,
+                    attested: row.get::<_, i64>(6)? != 0,
+                    seqno: row.get(7)?,
+                    observed_at: row.get::<_, i64>(8)? as u64,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok((rows, total))
     }
@@ -814,5 +917,78 @@ mod tests {
         let (rows, total) = store.list("task_escrow", &ListFilters::default(), 0, 10).unwrap();
         assert_eq!(total, 0);
         assert!(rows.is_empty());
+    }
+
+    fn settlement(
+        address: &str,
+        request_id: &str,
+        seqno: u32,
+        amount: u64,
+    ) -> PoiwSettlementRecord {
+        PoiwSettlementRecord {
+            address: address.to_owned(),
+            request_id: request_id.to_owned(),
+            kind: "task_escrow".to_owned(),
+            earner: "0:agent".to_owned(),
+            payer: "0:creator".to_owned(),
+            amount,
+            attested: false,
+            seqno,
+            observed_at: 1_000,
+        }
+    }
+
+    #[test]
+    fn poiw_settlement_first_observation_wins() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let mut event = settlement("0:task", "", 7, 500);
+        event.attested = true;
+        store.record_poiw_settlement(&event).unwrap();
+
+        // A settlement is terminal; a replayed observation at a later
+        // seqno (e.g. after a rescan) must not move or change the event.
+        let mut replay = event.clone();
+        replay.seqno = 9;
+        replay.amount = 999;
+        store.record_poiw_settlement(&replay).unwrap();
+
+        let (rows, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(rows, vec![event]);
+    }
+
+    #[test]
+    fn poiw_settlements_filter_by_seqno_range_and_paginate() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        for i in 1..=5u32 {
+            store.record_poiw_settlement(&settlement(&format!("0:t{i}"), "", i, i.into())).unwrap();
+        }
+        let (rows, total) = store.list_poiw_settlements(2, 4, 0, 10).unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(rows.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![2, 3, 4]);
+
+        let (page, page_total) = store.list_poiw_settlements(2, 4, 1, 1).unwrap();
+        assert_eq!(page_total, 3);
+        assert_eq!(page.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![3]);
+
+        let (empty, none) = store.list_poiw_settlements(6, u32::MAX, 0, 10).unwrap();
+        assert_eq!(none, 0);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn poiw_settlements_key_on_address_and_request_id() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        // One service actor answering two requests yields two distinct
+        // events; the same request re-observed stays one event.
+        store.record_poiw_settlement(&settlement("0:svc", "0", 3, 10)).unwrap();
+        store.record_poiw_settlement(&settlement("0:svc", "1", 4, 20)).unwrap();
+        store.record_poiw_settlement(&settlement("0:svc", "1", 8, 20)).unwrap();
+        let (rows, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(
+            rows.iter().map(|r| (r.request_id.as_str(), r.seqno)).collect::<Vec<_>>(),
+            vec![("0", 3), ("1", 4)]
+        );
     }
 }
