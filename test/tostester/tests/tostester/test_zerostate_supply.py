@@ -10,6 +10,7 @@ from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import (
     ConfigParam0,
     ConfigParam2,
+    ConfigParam8,
     ConfigParam10,
     ConfigParam14,
     ConfigParam15,
@@ -305,6 +306,72 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert "genesis validator public keys must be unique" in (
         failed.stderr + failed.stdout
     )
+
+
+def test_aipow_native_issuance_is_inert_at_genesis(tmp_path):
+    # Phase C dark scaffolding: the mainnet genesis template must not activate
+    # AIPoW native issuance. capAipow (bit 1024) stays out of the ConfigParam 8
+    # capability set, and none of the four AIPoW ConfigParams (90-93) are
+    # present, so the mint path is a no-op until a governance config vote turns
+    # it on. This locks the "genesis stays off" invariant in place.
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(key.public_key.key for key in keys)
+    )
+    command = [
+        str(BUILD_DIR / "crypto/create-state"),
+        "-I",
+        str(REPO / "crypto/fift/lib"),
+        "-I",
+        str(REPO / "crypto/smartcont"),
+        "-s",
+        str(REPO / "crypto/smartcont/gen-zerostate.fif"),
+    ]
+    subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+
+    cap_aipow = 1 << 10  # capAipow
+    capabilities = _config(state, 8, ConfigParam8).capabilities
+    assert capabilities & cap_aipow == 0, (
+        f"capAipow must be off at genesis, capabilities={capabilities}"
+    )
+    for param in (90, 91, 92, 93):
+        assert param not in state.custom.config.config, (
+            f"AIPoW ConfigParam {param} must be absent at genesis"
+        )
+
+
+def test_genesis_refuses_capaipow_without_parameters(tmp_path):
+    # The create-state genesis guard must reject a configuration that turns on
+    # capAipow without the AIPoW parameter set, mirroring the block-transition
+    # check_config_update guard. Patch the capability line to OR in capAipow
+    # (bit 1024) while leaving ConfigParams 90-93 unset, and confirm genesis
+    # generation fails rather than emitting a half-activated state.
+    genesis = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    assert genesis.count("or config.version!") == 1
+    patched = genesis.replace("or config.version!", "or 1024 or config.version!")
+    bad_script = tmp_path / "gen-zerostate-capaipow.fif"
+    bad_script.write_text(patched)
+
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(key.public_key.key for key in keys)
+    )
+    command = [
+        str(BUILD_DIR / "crypto/create-state"),
+        "-I",
+        str(REPO / "crypto/fift/lib"),
+        "-I",
+        str(REPO / "crypto/smartcont"),
+        "-s",
+        str(bad_script),
+    ]
+    failed = subprocess.run(
+        command, cwd=tmp_path, check=False, capture_output=True, text=True
+    )
+    assert failed.returncode != 0
+    assert "capAipow" in (failed.stderr + failed.stdout)
 
 
 def test_validator_key_helper_defaults_to_four_keys(tmp_path):
