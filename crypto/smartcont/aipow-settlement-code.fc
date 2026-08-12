@@ -1,0 +1,200 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; AIPoW settlement account (Phase C, W4).
+;;
+;; The single governance-registered masterchain account named by
+;; ConfigParam 93 (AipowRegistry.settlement_addr). It is the sole destination
+;; of native AIPoW issuance: at masterchain settlement the protocol mints an
+;; epoch "pool" to this account (an empty-body special message), and this
+;; account records it, advances the epoch cursor, and forwards the pool to the
+;; canonical per-epoch distributor. It owns the cumulative supply cap and the
+;; epoch cursor so the once-per-epoch and 4.5B-cap invariants live in one place.
+;;
+;; DARK until activation: nothing mints to this account until capAipow is set in
+;; ConfigParam 8 and this address is registered. Built and tested in isolation.
+;;
+;; This file (W4.1, checkpoint 1) implements the account's state and the
+;; registration + skip paths. The `settle` op (receive the empty-body mint,
+;; advance the ledger, and forward the pool to the derived distributor address)
+;; is added in the next checkpoint, co-designed with the distributor's canonical
+;; initial-data layout (W4.3) that the forward address derivation must match.
+;;
+;; Persistent data layout:
+;;   version:uint16                (D9 layout tag)
+;;   next_epoch:uint32             (cursor: the next epoch to settle)
+;;   epoch_seconds:uint32          (epoch length, for the skip deadline)
+;;   register_grace:uint32         (seconds after an epoch ends before it may be
+;;                                  skipped with zero mint if unregistered)
+;;   minted_total:Coins            (cumulative AIPoW minted; hard-cap tracking)
+;;   total_cap:Coins               (the AIPoW supply cap, e.g. 4.5B TOS)
+;;   ^distributor_code             (governance-set at deploy; the audited
+;;                                  distributor code used to derive canonical
+;;                                  distributor addresses in the settle path)
+;;   ^registrations  (udict: epoch uint32 -> ^[
+;;                    commitment_addr:MsgAddress score_root:uint256
+;;                    total_score:uint128 organic_settled_value:uint128
+;;                    registered_at:uint32 ])
+;;
+;; Registration authenticity (v0). A commitment nominates itself as the
+;; authoritative source for its epoch by sending `register` with
+;; sender == the committed commitment address, carrying its epoch and committed
+;; tuple. The settlement records the first nomination per epoch. It cannot itself
+;; verify the sender is a genuine finalized commitment (a contract cannot read
+;; another account's code/state), so the native settlement path RE-VERIFIES the
+;; recorded nomination against the commitment's real previous-state (code hash,
+;; status == final, tuple) before minting. NOTE (v0 limitation, harden before
+;; activation): first-wins self-nomination is griefable -- an attacker can
+;; self-nominate a bogus commitment address first, blocking the real one; the
+;; hardened form keeps a bounded candidate set per epoch and lets the native path
+;; select the min-address valid finalized commitment. Tracked for the W4.1 review.
+;;
+;; Internal messages:
+;;   register#41505301 query_id:uint64 epoch:uint32 score_root:uint256
+;;                     total_score:uint128 organic_settled_value:uint128
+;;       = InternalMsgBody;
+;;   skip#41505302 query_id:uint64 = InternalMsgBody;
+
+const int op::register = 0x41505301;
+const int op::skip = 0x41505302;
+
+const int err::epoch_settled = 2301;       ;; nominated epoch is behind the cursor
+const int err::already_registered = 2302;  ;; a nomination for this epoch already exists
+const int err::zero_total_score = 2303;    ;; total_score must be > 0
+const int err::skip_too_early = 2304;      ;; skip before the grace deadline
+const int err::skip_registered = 2305;     ;; cannot skip an epoch that has a registration
+const int err::unknown_op = 2307;
+
+;; The settlement version this code understands.
+const int settlement_version = 1;
+
+(int, int, int, int, int, int, cell, cell) load_state() inline {
+  slice ds = get_data().begin_parse();
+  int version = ds~load_uint(16);
+  int next_epoch = ds~load_uint(32);
+  int epoch_seconds = ds~load_uint(32);
+  int register_grace = ds~load_uint(32);
+  int minted_total = ds~load_tomis();
+  int total_cap = ds~load_tomis();
+  cell distributor_code = ds~load_ref();
+  cell registrations = ds~load_dict();
+  ds.end_parse();
+  return (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap,
+    distributor_code, registrations);
+}
+
+() save_state(int version, int next_epoch, int epoch_seconds, int register_grace,
+             int minted_total, int total_cap, cell distributor_code, cell registrations) impure inline {
+  set_data(begin_cell()
+    .store_uint(version, 16)
+    .store_uint(next_epoch, 32)
+    .store_uint(epoch_seconds, 32)
+    .store_uint(register_grace, 32)
+    .store_tomis(minted_total)
+    .store_tomis(total_cap)
+    .store_ref(distributor_code)
+    .store_dict(registrations)
+  .end_cell());
+}
+
+;; A registration record: the nominated commitment address plus its committed
+;; economic tuple and the registration time.
+cell pack_registration(slice commitment_addr, int score_root, int total_score,
+                       int organic_settled_value, int registered_at) inline {
+  return begin_cell()
+    .store_slice(commitment_addr)
+    .store_uint(score_root, 256)
+    .store_uint(total_score, 128)
+    .store_uint(organic_settled_value, 128)
+    .store_uint(registered_at, 32)
+  .end_cell();
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  slice sender = full_msg~load_msg_addr();
+  if (in_msg.slice_empty?()) {
+    ;; Empty body = the protocol's epoch-settlement mint. Not handled in this
+    ;; checkpoint; the settle path (receive, advance the ledger, forward the
+    ;; pool to the derived distributor) is added with the distributor layout in
+    ;; the next checkpoint. Until then, and while dark, an empty-body message is
+    ;; rejected rather than silently held.
+    throw(err::unknown_op);
+  }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int minted_total,
+   int total_cap, cell distributor_code, cell registrations) = load_state();
+
+  if (op == op::register) {
+    ;; A commitment nominates itself as the authoritative source for its epoch.
+    int epoch = in_msg~load_uint(32);
+    int score_root = in_msg~load_uint(256);
+    int total_score = in_msg~load_uint(128);
+    int organic_settled_value = in_msg~load_uint(128);
+    in_msg.end_parse();
+    ;; Only nominate epochs the cursor has not already passed.
+    throw_unless(err::epoch_settled, epoch >= next_epoch);
+    ;; A positive denominator is required for any pro-rata pool.
+    throw_unless(err::zero_total_score, total_score > 0);
+    ;; First-wins per epoch (v0; see the header limitation note).
+    (cell existing, int found) = registrations.udict_get_ref?(32, epoch);
+    existing~impure_touch();
+    throw_if(err::already_registered, found);
+    cell record = pack_registration(sender, score_root, total_score,
+      organic_settled_value, now());
+    registrations~udict_set_ref(32, epoch, record);
+    save_state(version, next_epoch, epoch_seconds, register_grace, minted_total,
+      total_cap, distributor_code, registrations);
+    return ();
+  }
+
+  if (op == op::skip) {
+    ;; Permissionless: once an epoch's grace deadline has passed with no
+    ;; registration, advance the cursor with zero mint so a rejected or absent
+    ;; commitment never halts issuance (D5). Only the epoch at the cursor may be
+    ;; skipped, keeping the cursor strictly ordered.
+    in_msg.end_parse();
+    (cell existing, int found) = registrations.udict_get_ref?(32, next_epoch);
+    existing~impure_touch();
+    throw_if(err::skip_registered, found);
+    ;; The epoch [next_epoch] spans [next_epoch*epoch_seconds,
+    ;; (next_epoch+1)*epoch_seconds); it is skippable once the grace after its
+    ;; end has elapsed. uint32 * uint32 fits the 257-bit integer with no overflow.
+    int skippable_at = (next_epoch + 1) * epoch_seconds + register_grace;
+    throw_unless(err::skip_too_early, now() >= skippable_at);
+    save_state(version, next_epoch + 1, epoch_seconds, register_grace, minted_total,
+      total_cap, distributor_code, registrations);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+;; (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap)
+(int, int, int, int, int, int) get_aipow_settlement_data() method_id {
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int minted_total,
+   int total_cap, cell distributor_code, cell registrations) = load_state();
+  distributor_code~impure_touch();
+  registrations~impure_touch();
+  return (version, next_epoch, epoch_seconds, register_grace, minted_total, total_cap);
+}
+
+;; (found, commitment_addr, score_root, total_score, organic_settled_value,
+;;  registered_at) for `epoch`.
+(int, slice, int, int, int, int) get_registration(int epoch) method_id {
+  (_, _, _, _, _, _, _, cell registrations) = load_state();
+  (cell rec_cell, int found) = registrations.udict_get_ref?(32, epoch);
+  if (found == 0) {
+    return (0, null(), 0, 0, 0, 0);
+  }
+  slice rec = rec_cell.begin_parse();
+  slice commitment_addr = rec~load_msg_addr();
+  int score_root = rec~load_uint(256);
+  int total_score = rec~load_uint(128);
+  int organic_settled_value = rec~load_uint(128);
+  int registered_at = rec~load_uint(32);
+  return (1, commitment_addr, score_root, total_score, organic_settled_value, registered_at);
+}
