@@ -515,6 +515,51 @@ async def run_checks(faucet) -> None:
         check("committer's bond returned on finalize",
               int(1.9 * NANO) < bond_delta <= 2 * NANO, str(bond_delta))
 
+        print("\n=== DISTRIBUTOR: deploy over an entries file and claim a share ===")
+        # A small published scoring: three real chain accounts with scores
+        # summing to 1,000,000. The distributor CLI computes the score root
+        # and total from this file; the agent claims its pro-rata share.
+        entries = [
+            {"identity": addr_hex(creator1), "score": 300_000},
+            {"identity": addr_hex(creator2), "score": 200_000},
+            {"identity": addr_hex(agent), "score": 500_000},
+        ]
+        entries_file = WORKDIR / "entries.json"
+        entries_file.write_text(json.dumps(entries))
+        commitment_ref = hashlib.sha256(b"aipow-dist-e2e-ref").hexdigest()
+        dist_out = await tosctl_json(
+            CONFIG_A, "agent", "aipow-dist", "deploy", "--name", "e2e-dist",
+            "--operator", creator1, "--epoch", str(epoch),
+            "--entries-file", str(entries_file), "--pool", "6",
+            "--commitment-ref", commitment_ref,
+            "--from", "creator1", "-w", "0", "--yes",
+        )
+        dist_addr = norm_addr(dist_out["address"])
+        print(f"  distributor: {dist_addr}")
+        check("distributor active on chain", await poll_predicate(
+            lambda: rpc_call("getAddressState", address=dist_addr).get("result") == "active"))
+
+        show = await tosctl_json(CONFIG_A, "agent", "aipow-dist", "show", "--name", "e2e-dist")
+        check("distributor total score computed from entries",
+              show["total_score"] == "1000000", str(show))
+        check("distributor claimed count starts at zero",
+              show["claimed_count"] == 0, str(show))
+
+        # The agent claims: CLI builds the inclusion proof from the entries
+        # file and verifies the computed root against the on-chain root.
+        await tosctl(CONFIG_A, "agent", "aipow-dist", "claim", "--name", "e2e-dist",
+                     "--entries-file", str(entries_file), "--identity", addr_hex(agent),
+                     "--from", "agent", "--yes")
+        show_after = None
+        for _ in range(30):
+            show_after = await tosctl_json(
+                CONFIG_A, "agent", "aipow-dist", "show", "--name", "e2e-dist")
+            if show_after["claimed_count"] == 1:
+                break
+            await asyncio.sleep(1)
+        check("agent's claim advances the claimed count",
+              show_after and show_after["claimed_count"] == 1, str(show_after))
+
     finally:
         service_proc.terminate()
         try:

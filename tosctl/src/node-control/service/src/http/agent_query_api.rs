@@ -1130,6 +1130,7 @@ mod tests {
             disputes: Default::default(),
             proof_attestations: Default::default(),
             aipow_commitments: Default::default(),
+            aipow_distributors: Default::default(),
             agent_tasks: Default::default(),
             pools: Default::default(),
             bindings: Default::default(),

@@ -1104,6 +1104,7 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             aipow_commitments: Default::default(),
+            aipow_distributors: Default::default(),
             alerts: Default::default(),
         })
     }
@@ -1129,6 +1130,7 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             aipow_commitments: Default::default(),
+            aipow_distributors: Default::default(),
             alerts: Default::default(),
         })
     }

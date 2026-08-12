@@ -66,6 +66,7 @@ fn app_cfg_with_auth(auth: AuthConfig) -> Arc<common::app_config::AppConfig> {
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         aipow_commitments: HashMap::new(),
+        aipow_distributors: HashMap::new(),
         alerts: Default::default(),
     })
 }
@@ -91,6 +92,7 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         aipow_commitments: HashMap::new(),
+        aipow_distributors: HashMap::new(),
         alerts: Default::default(),
     })
 }

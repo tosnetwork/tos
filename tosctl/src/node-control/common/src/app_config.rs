@@ -536,6 +536,27 @@ pub struct AipowCommitmentConfig {
     pub created_at: Option<u64>,
 }
 
+/// Locally tracked AIPoW distributor record.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct AipowDistributorConfig {
+    /// Deployed AIPoW distributor contract address.
+    pub address: String,
+    pub operator: String,
+    pub epoch: u64,
+    /// The epoch total score (pro-rata denominator) as a decimal string,
+    /// because it is a u128.
+    pub total_score: String,
+    /// Nominal epoch pool in nanotos.
+    pub pool: u64,
+    /// Hex-encoded 32-byte epoch score root.
+    pub score_root: String,
+    /// Hex-encoded 32-byte reference to the finalized score commitment.
+    pub commitment_ref: String,
+    /// Unix timestamp when this local record was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+}
+
 /// Locally tracked Proof Attestation record.
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 pub struct ProofAttestationConfig {
@@ -951,6 +972,9 @@ pub struct AppConfig {
     /// AIPoW score commitments tracked by this operator, keyed by local name.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub aipow_commitments: HashMap<String, AipowCommitmentConfig>,
+    /// AIPoW distributors tracked by this operator, keyed by local name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub aipow_distributors: HashMap<String, AipowDistributorConfig>,
     #[serde(default)]
     pub pools: HashMap<String, PoolConfig>,
     #[serde(default)]

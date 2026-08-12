@@ -22,6 +22,7 @@ pub(crate) mod config_pool_cmd;
 pub(crate) mod config_wallet_cmd;
 pub(crate) mod deploy_cmd;
 pub(crate) mod aipow_cmd;
+pub(crate) mod aipow_dist_cmd;
 pub(crate) mod dispute_cmd;
 pub(crate) mod host_cmd;
 pub(crate) mod install_cmd;

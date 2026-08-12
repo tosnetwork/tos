@@ -238,6 +238,7 @@ mod tests {
                 disputes: HashMap::new(),
                 proof_attestations: HashMap::new(),
                 aipow_commitments: HashMap::new(),
+                aipow_distributors: HashMap::new(),
                 alerts: Default::default(),
             }),
         })
