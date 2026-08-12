@@ -4,6 +4,7 @@
     Licensed under the GNU General Public License v3.0.
 */
 #pragma once
+#include <functional>
 #include "common/refint.h"
 #include "common/bitstring.h"
 #include "vm/cells.h"
@@ -164,6 +165,54 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out);
 // resolution is not pure over cells).
 bool commitment_authorizes(const Registration& reg, const CommitmentState& commitment,
                            td::uint16 expected_commitment_version, td::uint32 epoch);
+
+/*
+ * The single shared masterchain epoch-mint decision (W4.5 part 2).
+ *
+ * This ties the parsers + authorization + compute_epoch_mint into ONE function
+ * that both the collator (to produce the mint) and validate-query (to check it)
+ * call, so the produce and check paths cannot drift. It is deterministic given
+ * the account resolver is deterministic (the resolver reads consensus state
+ * only). It does not touch value_flow / special messages -- it returns the
+ * tagged decision + amount, which those consensus paths then apply/verify.
+ */
+
+// An account resolved from the masterchain state: its code cell hash and data
+// cell. `exists` is false for a missing/uninitialized account.
+struct ResolvedAccount {
+  bool exists{false};
+  td::Bits256 code_hash;   // hash of the account's code cell
+  td::Ref<vm::Cell> data;  // the account's data cell
+};
+
+// Resolves an account by (workchain, account id) from the masterchain state.
+// Provided by the collator/validator; MUST be deterministic (reads consensus
+// state only), or the whole derivation forks.
+using AccountResolver = std::function<ResolvedAccount(td::int32 workchain, const td::Bits256& account_id)>;
+
+// Immutable inputs to the decision, from the block's config.
+struct MasterchainMintContext {
+  AipowConfig config;
+  td::Bits256 settlement_addr;              // ConfigParam 93 settlement_addr (masterchain)
+  td::Bits256 commitment_code_hash;         // the expected AIPoW commitment code cell hash (registry)
+  td::uint16 expected_commitment_version{1};
+  td::uint32 gen_utime{0};                  // the block's consensus time
+};
+
+// Resolve the settlement account and, if the cursor epoch is registered, the
+// registered commitment; verify the commitment (code hash + status final +
+// version + tuple exactly matching the registration); then compute the epoch
+// settlement.
+//   * A registered epoch with a valid commitment -> Mint (pool clamped to the
+//     settlement's own remaining cap, so the mint always passes the FunC settle
+//     cap check).
+//   * A registered epoch with an INVALID/unresolvable commitment -> NoSettlement
+//     (the FunC skip refuses a registered epoch, so the cursor cannot advance
+//     this block; matches the on-chain skip_registered guard).
+//   * An unregistered epoch -> Skip past its grace deadline, else NoSettlement.
+//   * A missing/malformed settlement account -> NoSettlement.
+EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
+                                              const AccountResolver& resolve);
 
 }  // namespace aipow
 }  // namespace block

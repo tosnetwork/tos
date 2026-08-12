@@ -238,5 +238,57 @@ bool commitment_authorizes(const Registration& reg, const CommitmentState& commi
   return true;
 }
 
+EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
+                                              const AccountResolver& resolve) {
+  // The settlement account lives on the masterchain (workchain -1).
+  ResolvedAccount settlement = resolve(-1, ctx.settlement_addr);
+  if (!settlement.exists) {
+    return EpochSettlement::none();
+  }
+  SettlementLedger ledger;
+  if (!parse_settlement_ledger(settlement.data, ledger)) {
+    return EpochSettlement::none();
+  }
+
+  SettlementCursor cursor;
+  cursor.next_epoch = ledger.next_epoch;
+  cursor.minted_total = ledger.minted_total;
+  cursor.epoch_seconds = ledger.epoch_seconds;
+  cursor.register_grace = ledger.register_grace;
+  // Enforce the cap against the settlement's OWN stored total_cap (what the FunC
+  // settle checks), so a clamped mint always passes its cap guard. The config
+  // AipowLimits.total_cap is the declared limit, validated to equal this at
+  // activation.
+  AipowLimits ledger_limits;
+  ledger_limits.total_cap = ledger.total_cap;
+
+  Registration reg = find_registration(ledger.registrations, cursor.next_epoch);
+  if (reg.found) {
+    // A registered epoch: resolve and verify the nominating commitment. Only a
+    // genuine (code-hash-pinned) finalized commitment whose committed tuple
+    // matches the registration authorizes the mint.
+    ResolvedAccount commitment = resolve(reg.commitment_workchain, reg.commitment_addr);
+    bool has_valid = false;
+    if (commitment.exists && commitment.code_hash == ctx.commitment_code_hash) {
+      CommitmentState cstate;
+      if (parse_commitment_state(commitment.data, cstate) &&
+          commitment_authorizes(reg, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
+        has_valid = true;
+      }
+    }
+    if (has_valid) {
+      return compute_epoch_mint(ctx.config, ledger_limits, cursor, true, reg.organic_settled_value,
+                                ctx.gen_utime);
+    }
+    // Registered but the commitment is invalid/unresolvable: no mint, and the
+    // on-chain skip refuses a registered epoch (skip_registered), so the cursor
+    // cannot advance this block.
+    return EpochSettlement::none();
+  }
+
+  // Unregistered epoch: skip past the grace deadline, else nothing due.
+  return compute_epoch_mint(ctx.config, ledger_limits, cursor, false, td::RefInt256{}, ctx.gen_utime);
+}
+
 }  // namespace aipow
 }  // namespace block

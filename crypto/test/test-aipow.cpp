@@ -472,3 +472,98 @@ TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
   CHECK(r.epoch == 27260);
   CHECK(td::cmp(r.amount, 500) == 0);
 }
+
+TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitment) {
+  auto score = mk_bits(0x5C);
+  auto commitment_addr = mk_bits(0xC0);
+  auto settlement_addr = mk_bits(0x99);
+  auto commit_code_hash = mk_bits(0xCC);
+  long long organic = 1000;
+
+  vm::Dictionary dict{32};
+  td::BitArray<32> key;
+  key.store_ulong(27260);
+  dict.set_ref(key, build_registration_record(-1, commitment_addr, score, 4000000, organic, 1));
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto commitment_data =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+      a.code_hash = mk_bits(0x5E);
+    } else if (wc == -1 && addr == commitment_addr) {
+      a.exists = true;
+      a.data = commitment_data;
+      a.code_hash = commit_code_hash;
+    }
+    return a;
+  };
+
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic / 2 = 500
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = commit_code_hash;
+  ctx.expected_commitment_version = 1;
+  ctx.gen_utime = 0;
+
+  auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  CHECK(r.is_mint());
+  CHECK(r.epoch == 27260);
+  CHECK(td::cmp(r.amount, 500) == 0);
+
+  // A wrong commitment code hash rejects it; because the epoch is registered it
+  // is NOT skippable either (matches the on-chain skip_registered guard), so the
+  // result is NoSettlement even far past the grace deadline.
+  {
+    auto bad = ctx;
+    bad.commitment_code_hash = mk_bits(0xBAD);
+    bad.gen_utime = 4000000000u;
+    CHECK(block::aipow::derive_masterchain_epoch_mint(bad, resolver).is_none());
+  }
+  // A non-final commitment is likewise unauthorized.
+  {
+    auto committed = build_commitment(1, 0 /*committed*/, 27260, score, 4000000, organic);
+    auto res2 = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+      auto a = resolver(wc, addr);
+      if (wc == -1 && addr == commitment_addr) {
+        a.data = committed;
+      }
+      return a;
+    };
+    CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, res2).is_none());
+  }
+  // A missing settlement account -> NoSettlement.
+  {
+    auto empty = [](td::int32, const td::Bits256&) { return block::aipow::ResolvedAccount{}; };
+    CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, empty).is_none());
+  }
+}
+
+TEST(Aipow, derive_masterchain_skips_an_unregistered_epoch_only_past_grace) {
+  auto settlement_addr = mk_bits(0x99);
+  auto settlement_data = build_settlement(10, 0, 4500000000000000000LL, {});  // empty registrations
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+    }
+    return a;
+  };
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 2, 1000000000LL, 0);
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.expected_commitment_version = 1;
+  // build_settlement uses epoch_seconds=65536, register_grace=3600.
+  td::uint64 skippable_at = (10ull + 1) * 65536ull + 3600ull;
+  ctx.gen_utime = (td::uint32)(skippable_at - 1);
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
+  ctx.gen_utime = (td::uint32)skippable_at;
+  auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  CHECK(r.is_skip());
+  CHECK(r.epoch == 10);
+}
