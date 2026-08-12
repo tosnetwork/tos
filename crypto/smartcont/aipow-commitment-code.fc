@@ -1,5 +1,5 @@
 ;; Copyright (C) 2025-2026  TOS Network.
-;; PoIW epoch score-commitment actor with a bonded public challenge window.
+;; AIPoW epoch score-commitment actor with a bonded public challenge window.
 ;;
 ;; One instance per committed epoch score root (same actor-per-address
 ;; pattern as Agent Account, Task Escrow, Capability Registry, Service Actor
@@ -13,7 +13,7 @@
 ;; root and awards both bonds to the committer.
 ;;
 ;; This contract records and adjudicates commitments only. It does not
-;; create, hold, or distribute PoIW rewards -- the separate distributor
+;; create, hold, or distribute AIPoW rewards -- the separate distributor
 ;; consumes finalized roots; a rejected root is simply never consumed.
 ;;
 ;; Persistent data layout:
@@ -30,14 +30,14 @@
 ;;   ^[challenger:MsgAddress challenge_evidence_hash:uint256]
 ;;
 ;; Internal messages:
-;;   challenge#50574301 query_id:uint64 challenge_evidence_hash:uint256
+;;   challenge#41505701 query_id:uint64 challenge_evidence_hash:uint256
 ;;       = InternalMsgBody;
-;;   finalize#50574302 query_id:uint64 = InternalMsgBody;
-;;   rule#50574303 query_id:uint64 uphold:uint8 = InternalMsgBody;
+;;   finalize#41505702 query_id:uint64 = InternalMsgBody;
+;;   rule#41505703 query_id:uint64 uphold:uint8 = InternalMsgBody;
 
-const int op::challenge = 0x50574301;
-const int op::finalize = 0x50574302;
-const int op::rule = 0x50574303;
+const int op::challenge = 0x41505701;
+const int op::finalize = 0x41505702;
+const int op::rule = 0x41505703;
 
 const int status::committed = 0;
 const int status::challenged = 1;
@@ -177,6 +177,6 @@ const int err::zero_evidence = 2108;
   throw(err::unknown_op);
 }
 
-(slice, slice, int, int, int, int, int, int, int, slice, int) get_poiw_commitment_data() method_id {
+(slice, slice, int, int, int, int, int, int, int, slice, int) get_aipow_commitment_data() method_id {
   return load_state();
 }

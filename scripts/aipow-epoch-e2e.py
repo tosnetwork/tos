@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # Copyright (C) 2025-2026  TOS Network.
 """
-poiw-epoch-e2e.py — phase-A PoIW shadow-scoring rehearsal on a real localnet.
+aipow-epoch-e2e.py — phase-A AIPoW shadow-scoring rehearsal on a real localnet.
 
 Closes the loop specified by the shadow-scoring data plane doc
-(doc/poiw-shadow-scoring.md): real settlements on a real chain flow through
-the tosctld indexer's settlement-event table, out of `GET /poiw/settled-work`,
-into the external PoIW scorer, and back out as a signed epoch commitment.
+(doc/aipow-shadow-scoring.md): real settlements on a real chain flow through
+the tosctld indexer's settlement-event table, out of `GET /aipow/settled-work`,
+into the external AIPoW scorer, and back out as a signed epoch commitment.
 
   SETTLE   boot a single-process localnet; two creators each fund, create,
            and settle a Task Escrow (budget 5) against the same agent via the
@@ -14,12 +14,12 @@ into the external PoIW scorer, and back out as a signed epoch commitment.
            cancelled as a negative control.
 
   INDEX    a second tosctld config (which never ran a single agent command)
-           serves `GET /poiw/settled-work`; the two settlements must appear
+           serves `GET /aipow/settled-work`; the two settlements must appear
            with earner = agent, payers = the two creators, amount = budget,
            evidence = Observed (no attestor key), and the cancelled escrow
            must not appear at all.
 
-  SCORE    the external `poiw-scorer` binary (env POIW_SCORER) shadow-scores
+  SCORE    the external `aipow-scorer` binary (env AIPOW_SCORER) shadow-scores
            the epoch through `--tosctld`: organic settled value must equal
            the sum of both budgets (two balanced payers keep the
            counterparty discount full), the agent must be the only organic
@@ -27,14 +27,14 @@ into the external PoIW scorer, and back out as a signed epoch commitment.
            payout must be allocated.
 
   COMMIT   the scorer publishes a signed commitment envelope; this script
-           re-derives the poiw-commit-v0 canonical bytes and digest
+           re-derives the aipow-commit-v0 canonical bytes and digest
            *independently in Python* per the published methodology and
            verifies the ed25519 signature -- a small cross-implementation
            check of the envelope spec itself.
 
 Exit code 0 iff every check passes.
 
-Run from the repository root: uv run python scripts/poiw-epoch-e2e.py
+Run from the repository root: uv run python scripts/aipow-epoch-e2e.py
 """
 import asyncio
 import hashlib
@@ -57,11 +57,11 @@ from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessa
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
-POIW_SCORER = os.environ.get(
-    "POIW_SCORER", str(REPO.parent / "poiw-scorer/target/debug/poiw-scorer"))
+AIPOW_SCORER = os.environ.get(
+    "AIPOW_SCORER", str(REPO.parent / "aipow-scorer/target/debug/aipow-scorer"))
 RPC = "127.0.0.1:19646"
 HTTP_B = "127.0.0.1:19647"
-WORKDIR = REPO / "test/integration/.poiw-epoch-e2e"
+WORKDIR = REPO / "test/integration/.aipow-epoch-e2e"
 CONFIG_A = WORKDIR / "tosctl-e2e-config-a.json"
 CONFIG_B = WORKDIR / "tosctl-e2e-config-b.json"
 COMMIT_DIR = WORKDIR / "commitments"
@@ -145,7 +145,7 @@ def same_addr(a: str, b: str) -> bool:
 
 
 def addr_hex(addr: str) -> str:
-    """The 64-hex account part of a normalized address (the PoIW identity)."""
+    """The 64-hex account part of a normalized address (the AIPoW identity)."""
     return norm_addr(addr).split(":", 1)[1]
 
 
@@ -296,14 +296,14 @@ async def settle_task(name: str, creator_wallet: str, agent_addr: str, payout: i
 
 
 def verify_commitment_signature(commitment: dict) -> bool:
-    """Independently re-derive the poiw-commit-v0 digest per the published
+    """Independently re-derive the aipow-commit-v0 digest per the published
     methodology (docs/methodology.md section 10.1 in the scorer repository)
     and verify the ed25519 signature. This is a deliberate second
     implementation of the envelope encoding, not a call into the scorer."""
     env = commitment["envelope"]
     version = env["methodology_version"].encode()
     payload = (
-        b"poiw-commit-v0"
+        b"aipow-commit-v0"
         + int(env["epoch"]).to_bytes(8, "big")
         + len(version).to_bytes(4, "big")
         + version
@@ -344,10 +344,10 @@ async def run_checks(faucet) -> None:
         check(f"{label} wallet active", bool(active))
 
     print("\n=== create three escrows (all open) ===")
-    task1 = await create_task("poiw-t1", creator1, "creator1", agent)
-    task2 = await create_task("poiw-t2", creator2, "creator2", agent)
-    task3 = await create_task("poiw-t3", creator1, "creator1", agent)
-    for name in ("poiw-t1", "poiw-t2", "poiw-t3"):
+    task1 = await create_task("aipow-t1", creator1, "creator1", agent)
+    task2 = await create_task("aipow-t2", creator2, "creator2", agent)
+    task3 = await create_task("aipow-t3", creator1, "creator1", agent)
+    for name in ("aipow-t1", "aipow-t2", "aipow-t3"):
         check(f"{name} open", await wait_task_status(name, "open"))
 
     # The indexer records a settlement's amount from its own
@@ -375,14 +375,14 @@ async def run_checks(faucet) -> None:
               str(body)[:2000])
 
         print("\n=== SETTLE: two escrows settle to the same agent; one is cancelled ===")
-        await settle_task("poiw-t1", "creator1", agent, 3)
-        await settle_task("poiw-t2", "creator2", agent, 4)
-        await send_op("cancel", "poiw-t3", "creator1")
-        check("poiw-t3 cancelled", await wait_task_status("poiw-t3", "cancelled"))
+        await settle_task("aipow-t1", "creator1", agent, 3)
+        await settle_task("aipow-t2", "creator2", agent, 4)
+        await send_op("cancel", "aipow-t3", "creator1")
+        check("aipow-t3 cancelled", await wait_task_status("aipow-t3", "cancelled"))
 
         print("\n=== settlement events served with pre-settlement budgets ===")
         found, body = await poll_http_predicate(
-            "/poiw/settled-work", lambda b: b.get("total") == 2, timeout=90.0)
+            "/aipow/settled-work", lambda b: b.get("total") == 2, timeout=90.0)
         check("exactly two settlement events served", found, str(body)[:2000])
         if not found:
             return
@@ -410,14 +410,14 @@ async def run_checks(faucet) -> None:
             return
         epoch = epochs.pop()
 
-        print(f"\n=== SCORE: poiw-scorer shadow-scores epoch {epoch} via --tosctld ===")
+        print(f"\n=== SCORE: aipow-scorer shadow-scores epoch {epoch} via --tosctld ===")
         COMMIT_DIR.mkdir(parents=True, exist_ok=True)
         scorer = subprocess.run(
-            [POIW_SCORER, "--tosctld", f"http://{HTTP_B}", str(epoch),
+            [AIPOW_SCORER, "--tosctld", f"http://{HTTP_B}", str(epoch),
              "--commit-out", str(COMMIT_DIR), "--sign-seed-hex", SIGN_SEED],
             capture_output=True, text=True, timeout=120,
         )
-        if not check("poiw-scorer exits 0", scorer.returncode == 0,
+        if not check("aipow-scorer exits 0", scorer.returncode == 0,
                      f"stdout={scorer.stdout[-1000:]} stderr={scorer.stderr[-1000:]}"):
             return
         output = json.loads(scorer.stdout)
@@ -439,7 +439,7 @@ async def run_checks(faucet) -> None:
               output["pool"] == 3 * expected_value, str(output["pool"]))
 
         print("\n=== COMMIT: signed envelope published and independently verified ===")
-        commit_path = COMMIT_DIR / f"poiw-commitment-epoch-{epoch}.json"
+        commit_path = COMMIT_DIR / f"aipow-commitment-epoch-{epoch}.json"
         if not check("commitment file published", commit_path.exists(), str(commit_path)):
             return
         commitment = json.loads(commit_path.read_text())
@@ -467,9 +467,9 @@ async def main() -> int:
     for path, hint in (
         (Path(TOSCTL),
          "build with: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl"),
-        (Path(POIW_SCORER),
-         "build with: cargo build -p poiw-cli  (in the poiw-scorer repository, "
-         "or set POIW_SCORER)"),
+        (Path(AIPOW_SCORER),
+         "build with: cargo build -p aipow-cli  (in the aipow-scorer repository, "
+         "or set AIPOW_SCORER)"),
     ):
         if not path.exists():
             print(f"FATAL: required binary not found at {path} ({hint})", file=sys.stderr)

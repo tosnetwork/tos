@@ -838,10 +838,10 @@ pub async fn get_registry(
     Ok(axum::Json(RegistryResponse { ok: true, result }))
 }
 
-// --- PoIW score commitments (chain-wide, indexer-backed) ---
+// --- AIPoW score commitments (chain-wide, indexer-backed) ---
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct PoiwCommitmentDto {
+pub struct AipowCommitmentDto {
     pub address: String,
     pub committer: String,
     pub reviewer: String,
@@ -859,68 +859,68 @@ pub struct PoiwCommitmentDto {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct PoiwCommitmentListResponse {
+pub struct AipowCommitmentListResponse {
     pub ok: bool,
     pub total: usize,
     pub offset: usize,
     pub limit: usize,
-    pub result: Vec<PoiwCommitmentDto>,
+    pub result: Vec<AipowCommitmentDto>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct PoiwCommitmentResponse {
+pub struct AipowCommitmentResponse {
     pub ok: bool,
-    pub result: PoiwCommitmentDto,
+    pub result: AipowCommitmentDto,
 }
 
-#[utoipa::path(get, path = "/poiw/commitments", params(IndexedListQuery), responses(
-    (status = 200, body = PoiwCommitmentListResponse), (status = 400, body = ApiErrorResponse)
+#[utoipa::path(get, path = "/aipow/commitments", params(IndexedListQuery), responses(
+    (status = 200, body = AipowCommitmentListResponse), (status = 400, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
-pub async fn list_poiw_commitments(
+pub async fn list_aipow_commitments(
     State(state): State<AppState>,
     Query(query): Query<IndexedListQuery>,
-) -> Result<axum::Json<PoiwCommitmentListResponse>, AppError> {
+) -> Result<axum::Json<AipowCommitmentListResponse>, AppError> {
     validate_indexed_query(&query)?;
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let (rows, total) = state
         .indexer_store
-        .list("poiw_commitment", &indexed_list_filters(&query), offset, limit)
+        .list("aipow_commitment", &indexed_list_filters(&query), offset, limit)
         .map_err(|e| AppError::internal(format!("{e:#}")))?;
     let result = rows
         .into_iter()
-        .filter_map(|r| indexed_dto::<PoiwCommitmentDto>(&r.dto_json, &r.address, false))
+        .filter_map(|r| indexed_dto::<AipowCommitmentDto>(&r.dto_json, &r.address, false))
         .collect();
-    Ok(axum::Json(PoiwCommitmentListResponse { ok: true, total, offset, limit, result }))
+    Ok(axum::Json(AipowCommitmentListResponse { ok: true, total, offset, limit, result }))
 }
 
-#[utoipa::path(get, path = "/poiw/commitments/{address}", params(("address" = String, Path, description = "PoIW score-commitment address")), responses(
-    (status = 200, body = PoiwCommitmentResponse), (status = 400, body = ApiErrorResponse),
+#[utoipa::path(get, path = "/aipow/commitments/{address}", params(("address" = String, Path, description = "AIPoW score-commitment address")), responses(
+    (status = 200, body = AipowCommitmentResponse), (status = 400, body = ApiErrorResponse),
     (status = 404, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
-pub async fn get_poiw_commitment(
+pub async fn get_aipow_commitment(
     State(state): State<AppState>,
     Path(raw): Path<String>,
-) -> Result<axum::Json<PoiwCommitmentResponse>, AppError> {
+) -> Result<axum::Json<AipowCommitmentResponse>, AppError> {
     let address = parse_address(&raw)?;
     let rec = state
         .indexer_store
         .get(&address.to_string())
         .map_err(|e| AppError::internal(format!("{e:#}")))?
-        .filter(|r| r.kind == "poiw_commitment")
-        .ok_or_else(|| AppError::not_found("no PoIW score commitment indexed at this address"))?;
-    let result = indexed_dto::<PoiwCommitmentDto>(&rec.dto_json, &rec.address, false)
+        .filter(|r| r.kind == "aipow_commitment")
+        .ok_or_else(|| AppError::not_found("no AIPoW score commitment indexed at this address"))?;
+    let result = indexed_dto::<AipowCommitmentDto>(&rec.dto_json, &rec.address, false)
         .ok_or_else(|| {
             AppError::invalid_contract_state(
-                "indexed PoIW score-commitment record could not be decoded",
+                "indexed AIPoW score-commitment record could not be decoded",
             )
         })?;
-    Ok(axum::Json(PoiwCommitmentResponse { ok: true, result }))
+    Ok(axum::Json(AipowCommitmentResponse { ok: true, result }))
 }
 
-// --- PoIW shadow-scoring data plane ---
+// --- AIPoW shadow-scoring data plane ---
 //
-// Settlement events observed by the chain indexer, exposed for the PoIW
+// Settlement events observed by the chain indexer, exposed for the AIPoW
 // scorer's phase-A shadow scoring. This is the interim, tosctld-served
 // form of the settled-work surface; the node-side JSON-RPC method that
 // eventually supersedes it must serve the same rows. The evidence field
@@ -932,7 +932,7 @@ pub async fn get_poiw_commitment(
 // settled amount until the settlement-receipt schema lands.
 
 #[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
-pub struct PoiwSettledWorkQuery {
+pub struct AipowSettledWorkQuery {
     pub from_seqno: Option<u32>,
     pub to_seqno: Option<u32>,
     pub offset: Option<usize>,
@@ -940,7 +940,7 @@ pub struct PoiwSettledWorkQuery {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct PoiwSettledWorkDto {
+pub struct AipowSettledWorkDto {
     pub address: String,
     /// Empty for Task Escrow settlements; the request number for Service
     /// Actor responses.
@@ -960,21 +960,21 @@ pub struct PoiwSettledWorkDto {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
-pub struct PoiwSettledWorkResponse {
+pub struct AipowSettledWorkResponse {
     pub ok: bool,
     pub total: usize,
     pub offset: usize,
     pub limit: usize,
-    pub result: Vec<PoiwSettledWorkDto>,
+    pub result: Vec<AipowSettledWorkDto>,
 }
 
-#[utoipa::path(get, path = "/poiw/settled-work", params(PoiwSettledWorkQuery), responses(
-    (status = 200, body = PoiwSettledWorkResponse), (status = 400, body = ApiErrorResponse)
+#[utoipa::path(get, path = "/aipow/settled-work", params(AipowSettledWorkQuery), responses(
+    (status = 200, body = AipowSettledWorkResponse), (status = 400, body = ApiErrorResponse)
 ), security(("bearerAuth" = [])))]
-pub async fn list_poiw_settled_work(
+pub async fn list_aipow_settled_work(
     State(state): State<AppState>,
-    Query(query): Query<PoiwSettledWorkQuery>,
-) -> Result<axum::Json<PoiwSettledWorkResponse>, AppError> {
+    Query(query): Query<AipowSettledWorkQuery>,
+) -> Result<axum::Json<AipowSettledWorkResponse>, AppError> {
     let from_seqno = query.from_seqno.unwrap_or(0);
     let to_seqno = query.to_seqno.unwrap_or(u32::MAX);
     if from_seqno > to_seqno {
@@ -984,11 +984,11 @@ pub async fn list_poiw_settled_work(
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let (rows, total) = state
         .indexer_store
-        .list_poiw_settlements(from_seqno, to_seqno, offset, limit)
+        .list_aipow_settlements(from_seqno, to_seqno, offset, limit)
         .map_err(|e| AppError::internal(format!("{e:#}")))?;
     let result = rows
         .into_iter()
-        .map(|r| PoiwSettledWorkDto {
+        .map(|r| AipowSettledWorkDto {
             address: r.address,
             request_id: r.request_id,
             kind: r.kind,
@@ -1000,7 +1000,7 @@ pub async fn list_poiw_settled_work(
             observed_at: r.observed_at,
         })
         .collect();
-    Ok(axum::Json(PoiwSettledWorkResponse { ok: true, total, offset, limit, result }))
+    Ok(axum::Json(AipowSettledWorkResponse { ok: true, total, offset, limit, result }))
 }
 
 #[cfg(test)]
@@ -1703,11 +1703,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poiw_settled_work_lists_events_with_interim_evidence_mapping() {
+    async fn aipow_settled_work_lists_events_with_interim_evidence_mapping() {
         let f = Fixture::new();
         let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
         let seed = |request_id: &str, kind: &str, seqno: u32, attested: bool| {
-            crate::indexer::PoiwSettlementRecord {
+            crate::indexer::AipowSettlementRecord {
                 address: "0:contract".to_owned(),
                 request_id: request_id.to_owned(),
                 kind: kind.to_owned(),
@@ -1719,14 +1719,14 @@ mod tests {
                 observed_at: 1_234,
             }
         };
-        state.indexer_store.record_poiw_settlement(&seed("", "task_escrow", 5, true)).unwrap();
+        state.indexer_store.record_aipow_settlement(&seed("", "task_escrow", 5, true)).unwrap();
         state
             .indexer_store
-            .record_poiw_settlement(&seed("3", "service_request", 9, false))
+            .record_aipow_settlement(&seed("3", "service_request", 9, false))
             .unwrap();
 
         let response = routes(false, state.clone())
-            .oneshot(get("/poiw/settled-work?from_seqno=1&to_seqno=100"))
+            .oneshot(get("/aipow/settled-work?from_seqno=1&to_seqno=100"))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -1743,7 +1743,7 @@ mod tests {
 
         // A range excluding both events lists nothing.
         let response = routes(false, state)
-            .oneshot(get("/poiw/settled-work?from_seqno=50&to_seqno=100"))
+            .oneshot(get("/aipow/settled-work?from_seqno=50&to_seqno=100"))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -1751,11 +1751,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poiw_settled_work_rejects_an_inverted_seqno_range() {
+    async fn aipow_settled_work_rejects_an_inverted_seqno_range() {
         let f = Fixture::new();
         let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
         let response = routes(false, state)
-            .oneshot(get("/poiw/settled-work?from_seqno=10&to_seqno=2"))
+            .oneshot(get("/aipow/settled-work?from_seqno=10&to_seqno=2"))
             .await
             .unwrap();
         assert_eq!(response.status(), 400);
@@ -1763,7 +1763,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poiw_commitments_list_and_lookup_from_the_indexer() {
+    async fn aipow_commitments_list_and_lookup_from_the_indexer() {
         let f = Fixture::new();
         let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
         let address = "-1:".to_owned() + &"7".repeat(64);
@@ -1784,7 +1784,7 @@ mod tests {
             .indexer_store
             .upsert(&crate::indexer::IndexedRecord {
                 address: address.clone(),
-                kind: "poiw_commitment".to_owned(),
+                kind: "aipow_commitment".to_owned(),
                 creator: Some("-1:".to_owned() + &"1".repeat(64)),
                 counterparty: Some("-1:".to_owned() + &"2".repeat(64)),
                 status: Some("committed".to_owned()),
@@ -1796,7 +1796,7 @@ mod tests {
             .unwrap();
 
         let response = routes(false, state.clone())
-            .oneshot(get("/poiw/commitments?status=committed"))
+            .oneshot(get("/aipow/commitments?status=committed"))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -1807,7 +1807,7 @@ mod tests {
         assert_eq!(v["result"][0]["score_root"], "33".repeat(32));
 
         let response = routes(false, state.clone())
-            .oneshot(get(format!("/poiw/commitments/{address}")))
+            .oneshot(get(format!("/aipow/commitments/{address}")))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -1818,7 +1818,7 @@ mod tests {
         // A non-commitment address 404s rather than leaking another kind.
         let missing = "-1:".to_owned() + &"9".repeat(64);
         let response = routes(false, state)
-            .oneshot(get(format!("/poiw/commitments/{missing}")))
+            .oneshot(get(format!("/aipow/commitments/{missing}")))
             .await
             .unwrap();
         assert_eq!(response.status(), 404);

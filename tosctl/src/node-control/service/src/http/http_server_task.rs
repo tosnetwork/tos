@@ -161,11 +161,11 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         )
         .route("/registry", axum::routing::get(agent_query_api::list_registry))
         .route("/registry/{address}", axum::routing::get(agent_query_api::get_registry))
-        .route("/poiw/settled-work", axum::routing::get(agent_query_api::list_poiw_settled_work))
-        .route("/poiw/commitments", axum::routing::get(agent_query_api::list_poiw_commitments))
+        .route("/aipow/settled-work", axum::routing::get(agent_query_api::list_aipow_settled_work))
+        .route("/aipow/commitments", axum::routing::get(agent_query_api::list_aipow_commitments))
         .route(
-            "/poiw/commitments/{address}",
-            axum::routing::get(agent_query_api::get_poiw_commitment),
+            "/aipow/commitments/{address}",
+            axum::routing::get(agent_query_api::get_aipow_commitment),
         )
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -930,9 +930,9 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_service_request
         ,agent_query_api::list_registry
         ,agent_query_api::get_registry
-        ,agent_query_api::list_poiw_settled_work
-        ,agent_query_api::list_poiw_commitments
-        ,agent_query_api::get_poiw_commitment
+        ,agent_query_api::list_aipow_settled_work
+        ,agent_query_api::list_aipow_commitments
+        ,agent_query_api::get_aipow_commitment
     ),
     components(schemas(
         ApiErrorBody,
@@ -974,11 +974,11 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::ServiceRequestLifecycleResponse,
         agent_query_api::RegistryDto,
         agent_query_api::RegistryResponse,
-        agent_query_api::PoiwSettledWorkDto,
-        agent_query_api::PoiwSettledWorkResponse,
-        agent_query_api::PoiwCommitmentDto,
-        agent_query_api::PoiwCommitmentListResponse,
-        agent_query_api::PoiwCommitmentResponse,
+        agent_query_api::AipowSettledWorkDto,
+        agent_query_api::AipowSettledWorkResponse,
+        agent_query_api::AipowCommitmentDto,
+        agent_query_api::AipowCommitmentListResponse,
+        agent_query_api::AipowCommitmentResponse,
         agent_query_api::RegistryListResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,

@@ -1,4 +1,4 @@
-# PoIW Shadow-Scoring Data Plane
+# AIPoW Shadow-Scoring Data Plane
 
 ## Status
 
@@ -9,7 +9,7 @@
 
 ## Purpose
 
-Proof of Intelligent Work (PoIW) scoring consumes settled, evidence-graded
+Artificial Intelligence Proof of Work (AIPoW) scoring consumes settled, evidence-graded
 work from public chain data. This document specifies the first, phase-A
 form of that data plane: settlement events recorded by the `tosctld`
 chain indexer and served over the authenticated HTTP query API, so a
@@ -47,7 +47,7 @@ settlement-receipt schema.
 
 ## Endpoint
 
-`GET /poiw/settled-work?from_seqno=&to_seqno=&offset=&limit=`
+`GET /aipow/settled-work?from_seqno=&to_seqno=&offset=&limit=`
 (authenticated, same bearer scheme as the other query endpoints).
 
 Each row: `address`, `request_id` (empty for Task Escrows), `kind`
@@ -68,12 +68,12 @@ yet. Until it lands, consumers apply this published mapping:
 | Capability class, work units | not available; single default class |
 
 Self-declared or unsettled work never appears in this feed at all, which
-preserves the PoIW rule that `Declared`-level claims earn zero.
+preserves the AIPoW rule that `Declared`-level claims earn zero.
 
 ## Boundaries
 
 - This is a read-only reporting surface. It mints nothing, pays nothing,
-  and grants no authority; PoIW reward creation is a separate,
+  and grants no authority; AIPoW reward creation is a separate,
   design-stage protocol mechanism with its own launch gates.
 - `earner`/`payer` are contract-role addresses (agent/creator,
   owner/caller). Control-domain and wash-trade classification happen in

@@ -31,7 +31,7 @@ pub mod elector;
 pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
-pub mod poiw_commitment;
+pub mod aipow_commitment;
 pub mod proof_attestation;
 pub mod provider;
 pub mod service_actor;
@@ -63,10 +63,10 @@ pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant
 pub use liquid_controller::{ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement};
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
-pub use poiw_commitment::{
-    POIW_COMMITMENT_STATUS_CHALLENGED, POIW_COMMITMENT_STATUS_COMMITTED,
-    POIW_COMMITMENT_STATUS_FINAL, POIW_COMMITMENT_STATUS_REJECTED, PoiwCommitmentContract,
-    PoiwCommitmentData, PoiwCommitmentInit,
+pub use aipow_commitment::{
+    AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
+    AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AipowCommitmentContract,
+    AipowCommitmentData, AipowCommitmentInit,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

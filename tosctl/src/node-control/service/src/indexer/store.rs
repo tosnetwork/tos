@@ -52,16 +52,16 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
                 ON service_request_lifecycle(service_address, status);",
         )
     },
-    |conn| conn.execute_batch(POIW_SETTLEMENT_SCHEMA),
+    |conn| conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA),
 ];
 
-/// v3: settlement events for the PoIW shadow-scoring data plane. One row
+/// v3: settlement events for the AIPoW shadow-scoring data plane. One row
 /// per observed settlement (a Task Escrow reaching `settled`, or a
 /// Service Actor request answered within its deadline), keyed so
 /// re-observation is idempotent. `seqno` is the block in which the
 /// transition was *observed* by the scan -- an upper bound on, not
 /// necessarily equal to, the block that executed it.
-const POIW_SETTLEMENT_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS poiw_settlement_events (
+const AIPOW_SETTLEMENT_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS aipow_settlement_events (
         address TEXT NOT NULL,
         request_id TEXT NOT NULL DEFAULT '',
         kind TEXT NOT NULL,
@@ -73,8 +73,8 @@ const POIW_SETTLEMENT_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS poiw_settlement
         observed_at INTEGER NOT NULL,
         PRIMARY KEY(address, request_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_poiw_settlement_seqno
-        ON poiw_settlement_events(seqno);";
+    CREATE INDEX IF NOT EXISTS idx_aipow_settlement_seqno
+        ON aipow_settlement_events(seqno);";
 
 /// One indexed account: either a recognized contract (`kind` is one of
 /// `task_escrow`/`dispute`/`service_actor`/`capability_registry`) or
@@ -101,11 +101,11 @@ pub struct ServiceRequestRecord {
     pub dto_json: String,
 }
 
-/// One observed settlement, recorded for the PoIW shadow-scoring data
+/// One observed settlement, recorded for the AIPoW shadow-scoring data
 /// plane. `request_id` is empty for Task Escrow settlements and the
 /// request number for Service Actor responses.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PoiwSettlementRecord {
+pub struct AipowSettlementRecord {
     pub address: String,
     pub request_id: String,
     pub kind: String,
@@ -177,7 +177,7 @@ impl IndexerStore {
             CREATE INDEX IF NOT EXISTS idx_service_request_status
                 ON service_request_lifecycle(service_address, status);",
         )?;
-        conn.execute_batch(POIW_SETTLEMENT_SCHEMA)?;
+        conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA)?;
         Ok(())
     }
 
@@ -453,10 +453,10 @@ impl IndexerStore {
     /// IGNORE`): a settlement is a terminal, once-only transition, so a
     /// re-scan or a later re-observation of the same settled contract
     /// must not move the event to a different seqno.
-    pub fn record_poiw_settlement(&self, record: &PoiwSettlementRecord) -> anyhow::Result<()> {
+    pub fn record_aipow_settlement(&self, record: &AipowSettlementRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         conn.execute(
-            "INSERT OR IGNORE INTO poiw_settlement_events
+            "INSERT OR IGNORE INTO aipow_settlement_events
                 (address, request_id, kind, earner, payer, amount, attested, seqno, observed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -477,27 +477,27 @@ impl IndexerStore {
     /// Lists settlement events with `from_seqno <= seqno <= to_seqno`,
     /// ordered by `(seqno, address, request_id)` for stable pagination,
     /// returning `(page, total_matching)`.
-    pub fn list_poiw_settlements(
+    pub fn list_aipow_settlements(
         &self,
         from_seqno: u32,
         to_seqno: u32,
         offset: usize,
         limit: usize,
-    ) -> anyhow::Result<(Vec<PoiwSettlementRecord>, usize)> {
+    ) -> anyhow::Result<(Vec<AipowSettlementRecord>, usize)> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let total: usize = conn.query_row(
-            "SELECT COUNT(*) FROM poiw_settlement_events WHERE seqno >= ?1 AND seqno <= ?2",
+            "SELECT COUNT(*) FROM aipow_settlement_events WHERE seqno >= ?1 AND seqno <= ?2",
             params![from_seqno, to_seqno],
             |row| row.get::<_, i64>(0),
         )? as usize;
         let mut stmt = conn.prepare(
             "SELECT address, request_id, kind, earner, payer, amount, attested, seqno, observed_at
-             FROM poiw_settlement_events WHERE seqno >= ?1 AND seqno <= ?2
+             FROM aipow_settlement_events WHERE seqno >= ?1 AND seqno <= ?2
              ORDER BY seqno, address, request_id LIMIT ?3 OFFSET ?4",
         )?;
         let rows = stmt
             .query_map(params![from_seqno, to_seqno, limit as i64, offset as i64], |row| {
-                Ok(PoiwSettlementRecord {
+                Ok(AipowSettlementRecord {
                     address: row.get(0)?,
                     request_id: row.get(1)?,
                     kind: row.get(2)?,
@@ -924,8 +924,8 @@ mod tests {
         request_id: &str,
         seqno: u32,
         amount: u64,
-    ) -> PoiwSettlementRecord {
-        PoiwSettlementRecord {
+    ) -> AipowSettlementRecord {
+        AipowSettlementRecord {
             address: address.to_owned(),
             request_id: request_id.to_owned(),
             kind: "task_escrow".to_owned(),
@@ -939,52 +939,52 @@ mod tests {
     }
 
     #[test]
-    fn poiw_settlement_first_observation_wins() {
+    fn aipow_settlement_first_observation_wins() {
         let store = IndexerStore::open_in_memory().unwrap();
         let mut event = settlement("0:task", "", 7, 500);
         event.attested = true;
-        store.record_poiw_settlement(&event).unwrap();
+        store.record_aipow_settlement(&event).unwrap();
 
         // A settlement is terminal; a replayed observation at a later
         // seqno (e.g. after a rescan) must not move or change the event.
         let mut replay = event.clone();
         replay.seqno = 9;
         replay.amount = 999;
-        store.record_poiw_settlement(&replay).unwrap();
+        store.record_aipow_settlement(&replay).unwrap();
 
-        let (rows, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        let (rows, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
         assert_eq!(total, 1);
         assert_eq!(rows, vec![event]);
     }
 
     #[test]
-    fn poiw_settlements_filter_by_seqno_range_and_paginate() {
+    fn aipow_settlements_filter_by_seqno_range_and_paginate() {
         let store = IndexerStore::open_in_memory().unwrap();
         for i in 1..=5u32 {
-            store.record_poiw_settlement(&settlement(&format!("0:t{i}"), "", i, i.into())).unwrap();
+            store.record_aipow_settlement(&settlement(&format!("0:t{i}"), "", i, i.into())).unwrap();
         }
-        let (rows, total) = store.list_poiw_settlements(2, 4, 0, 10).unwrap();
+        let (rows, total) = store.list_aipow_settlements(2, 4, 0, 10).unwrap();
         assert_eq!(total, 3);
         assert_eq!(rows.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![2, 3, 4]);
 
-        let (page, page_total) = store.list_poiw_settlements(2, 4, 1, 1).unwrap();
+        let (page, page_total) = store.list_aipow_settlements(2, 4, 1, 1).unwrap();
         assert_eq!(page_total, 3);
         assert_eq!(page.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![3]);
 
-        let (empty, none) = store.list_poiw_settlements(6, u32::MAX, 0, 10).unwrap();
+        let (empty, none) = store.list_aipow_settlements(6, u32::MAX, 0, 10).unwrap();
         assert_eq!(none, 0);
         assert!(empty.is_empty());
     }
 
     #[test]
-    fn poiw_settlements_key_on_address_and_request_id() {
+    fn aipow_settlements_key_on_address_and_request_id() {
         let store = IndexerStore::open_in_memory().unwrap();
         // One service actor answering two requests yields two distinct
         // events; the same request re-observed stays one event.
-        store.record_poiw_settlement(&settlement("0:svc", "0", 3, 10)).unwrap();
-        store.record_poiw_settlement(&settlement("0:svc", "1", 4, 20)).unwrap();
-        store.record_poiw_settlement(&settlement("0:svc", "1", 8, 20)).unwrap();
-        let (rows, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        store.record_aipow_settlement(&settlement("0:svc", "0", 3, 10)).unwrap();
+        store.record_aipow_settlement(&settlement("0:svc", "1", 4, 20)).unwrap();
+        store.record_aipow_settlement(&settlement("0:svc", "1", 8, 20)).unwrap();
+        let (rows, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
         assert_eq!(total, 2);
         assert_eq!(
             rows.iter().map(|r| (r.request_id.as_str(), r.seqno)).collect::<Vec<_>>(),

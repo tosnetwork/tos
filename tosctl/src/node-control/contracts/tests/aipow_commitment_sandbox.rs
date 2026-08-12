@@ -4,10 +4,10 @@
  * Licensed under the GNU General Public License v3.0.
  */
 
-//! Sandbox (offline TVM) lifecycle tests for the PoIW score-commitment
+//! Sandbox (offline TVM) lifecycle tests for the AIPoW score-commitment
 //! contract.
 //!
-//! These execute the compiled contract embedded in `PoiwCommitmentContract`
+//! These execute the compiled contract embedded in `AipowCommitmentContract`
 //! against the in-process executor: deployment and get-method inspection,
 //! the bonded challenge path (insufficient bond, zero evidence, and
 //! after-deadline rejections), permissionless finalization returning the
@@ -17,9 +17,9 @@
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::{
-    POIW_COMMITMENT_STATUS_CHALLENGED, POIW_COMMITMENT_STATUS_COMMITTED,
-    POIW_COMMITMENT_STATUS_FINAL, POIW_COMMITMENT_STATUS_REJECTED, PoiwCommitmentContract,
-    PoiwCommitmentInit,
+    AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
+    AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AipowCommitmentContract,
+    AipowCommitmentInit,
 };
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
@@ -48,11 +48,11 @@ impl Fixture {
     fn new() -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
-        let committer = bc.treasury("poiw-committer", 1_000 * TOS).expect("committer");
-        let reviewer = bc.treasury("poiw-reviewer", 1_000 * TOS).expect("reviewer");
-        let challenger = bc.treasury("poiw-challenger", 1_000 * TOS).expect("challenger");
+        let committer = bc.treasury("aipow-committer", 1_000 * TOS).expect("committer");
+        let reviewer = bc.treasury("aipow-reviewer", 1_000 * TOS).expect("reviewer");
+        let challenger = bc.treasury("aipow-challenger", 1_000 * TOS).expect("challenger");
         let window_deadline = u64::from(bc.now()) + 3_600;
-        let init = PoiwCommitmentInit {
+        let init = AipowCommitmentInit {
             committer: committer.address().clone(),
             reviewer: reviewer.address().clone(),
             epoch: 27_260,
@@ -61,8 +61,8 @@ impl Fixture {
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
         };
-        let commitment = PoiwCommitmentContract::calculate_address(-1, &init).expect("address");
-        let state_init = PoiwCommitmentContract::build_state_init(&init).expect("state init");
+        let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
+        let state_init = AipowCommitmentContract::build_state_init(&init).expect("state init");
         // Deploy value = bond + fee/storage margin, mirroring Task Escrow's
         // budget-plus-margin funding convention.
         let deploy = MessageBuilder::internal(committer.address(), &commitment, COMMIT_BOND + TOS)
@@ -95,11 +95,11 @@ impl Fixture {
             .unwrap_or(0)
     }
 
-    fn data(&self) -> contracts::PoiwCommitmentData {
+    fn data(&self) -> contracts::AipowCommitmentData {
         let stack = self
             .bc
-            .run_get_method(&self.commitment, "get_poiw_commitment_data", vec![])
-            .expect("get_poiw_commitment_data")
+            .run_get_method(&self.commitment, "get_aipow_commitment_data", vec![])
+            .expect("get_aipow_commitment_data")
             .expect_success()
             .stack
             .clone();
@@ -108,7 +108,7 @@ impl Fixture {
             .map(sandbox_stack_item_to_entry)
             .collect::<anyhow::Result<Vec<_>>>()
             .expect("stack conversion");
-        PoiwCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries))
+        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries))
             .expect("decode_data")
     }
 }
@@ -149,7 +149,7 @@ fn sandbox_stack_item_to_entry(
 fn deploys_committed_and_readable() {
     let f = Fixture::new();
     let data = f.data();
-    assert_eq!(data.status, POIW_COMMITMENT_STATUS_COMMITTED);
+    assert_eq!(data.status, AIPOW_COMMITMENT_STATUS_COMMITTED);
     assert_eq!(data.epoch, 27_260);
     assert_eq!(data.window_deadline, f.window_deadline);
     assert_eq!(data.commit_bond, COMMIT_BOND);
@@ -166,17 +166,17 @@ fn finalize_after_window_returns_the_bond() {
     let committer_addr = f.committer.address().clone();
 
     // Before the deadline, finalize is rejected.
-    f.send_from(&committer_addr, PoiwCommitmentContract::finalize(1).unwrap())
+    f.send_from(&committer_addr, AipowCommitmentContract::finalize(1).unwrap())
         .expect_exit_code(ERR_WINDOW_OPEN);
-    assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_COMMITTED);
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
 
     f.bc.set_now((f.window_deadline + 1) as u32);
     let before = f.balance(&committer_addr);
     // Permissionless: an outsider (the challenger treasury here) finalizes,
     // yet the bond goes to the committer.
     let outsider = f.challenger.address().clone();
-    f.send_from(&outsider, PoiwCommitmentContract::finalize(2).unwrap()).expect_success();
-    assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_FINAL);
+    f.send_from(&outsider, AipowCommitmentContract::finalize(2).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
     let delta = f.balance(&committer_addr) - before;
     assert!(
         delta > COMMIT_BOND - TOS / 100 && delta <= COMMIT_BOND,
@@ -184,11 +184,11 @@ fn finalize_after_window_returns_the_bond() {
     );
 
     // Terminal: further finalize or challenge attempts are rejected.
-    f.send_from(&outsider, PoiwCommitmentContract::finalize(3).unwrap())
+    f.send_from(&outsider, AipowCommitmentContract::finalize(3).unwrap())
         .expect_exit_code(ERR_NOT_COMMITTED);
     f.send_from_with_value(
         &outsider,
-        PoiwCommitmentContract::challenge(4, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(4, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_exit_code(ERR_NOT_COMMITTED);
@@ -202,16 +202,16 @@ fn challenge_requires_bond_evidence_and_open_window() {
     // Insufficient bond is rejected.
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
         COMMIT_BOND / 2,
     )
     .expect_exit_code(ERR_INSUFFICIENT_BOND);
-    assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_COMMITTED);
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
 
     // Zero evidence is reserved for "no challenge" and rejected.
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(2, [0x00; 32]).unwrap(),
+        AipowCommitmentContract::challenge(2, [0x00; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_exit_code(ERR_ZERO_EVIDENCE);
@@ -219,12 +219,12 @@ fn challenge_requires_bond_evidence_and_open_window() {
     // A well-formed challenge is recorded with the attached value as bond.
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(3, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(3, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_success();
     let data = f.data();
-    assert_eq!(data.status, POIW_COMMITMENT_STATUS_CHALLENGED);
+    assert_eq!(data.status, AIPOW_COMMITMENT_STATUS_CHALLENGED);
     assert_eq!(&data.challenger, f.challenger.address());
     assert_eq!(data.challenge_evidence_hash, [0xEE; 32]);
     assert_eq!(data.challenge_bond, COMMIT_BOND + TOS);
@@ -232,12 +232,12 @@ fn challenge_requires_bond_evidence_and_open_window() {
     // A second challenge and a finalize are both rejected now.
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(4, [0xDD; 32]).unwrap(),
+        AipowCommitmentContract::challenge(4, [0xDD; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_exit_code(ERR_NOT_COMMITTED);
     f.bc.set_now((f.window_deadline + 1) as u32);
-    f.send_from(&challenger_addr, PoiwCommitmentContract::finalize(5).unwrap())
+    f.send_from(&challenger_addr, AipowCommitmentContract::finalize(5).unwrap())
         .expect_exit_code(ERR_NOT_COMMITTED);
 }
 
@@ -248,7 +248,7 @@ fn challenge_after_the_deadline_is_rejected() {
     f.bc.set_now((f.window_deadline + 1) as u32);
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_exit_code(ERR_WINDOW_CLOSED);
@@ -261,27 +261,27 @@ fn upheld_challenge_rejects_the_root_and_pays_the_challenger() {
     let reviewer_addr = f.reviewer.address().clone();
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_success();
 
     // Only the reviewer may rule; a malformed ruling value is rejected.
-    f.send_from(&challenger_addr, PoiwCommitmentContract::rule(2, true).unwrap())
+    f.send_from(&challenger_addr, AipowCommitmentContract::rule(2, true).unwrap())
         .expect_exit_code(ERR_NOT_REVIEWER);
     {
         // uphold outside {0, 1}: craft the body manually.
         use chain_block::IBitstring;
         let mut body = chain_block::BuilderData::new();
-        body.append_u32(contracts::poiw_commitment::PWC_RULE_OPCODE).unwrap();
+        body.append_u32(contracts::aipow_commitment::APW_RULE_OPCODE).unwrap();
         body.append_u64(3).unwrap();
         body.append_u8(7).unwrap();
         f.send_from(&reviewer_addr, body.into_cell().unwrap()).expect_exit_code(ERR_INVALID_RULING);
     }
 
     let before = f.balance(&challenger_addr);
-    f.send_from(&reviewer_addr, PoiwCommitmentContract::rule(4, true).unwrap()).expect_success();
-    assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_REJECTED);
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(4, true).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
     let expected = 2 * COMMIT_BOND + TOS;
     let delta = f.balance(&challenger_addr) - before;
     assert!(
@@ -290,7 +290,7 @@ fn upheld_challenge_rejects_the_root_and_pays_the_challenger() {
     );
 
     // Terminal: ruling again is rejected.
-    f.send_from(&reviewer_addr, PoiwCommitmentContract::rule(5, true).unwrap())
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(5, true).unwrap())
         .expect_exit_code(ERR_NOT_CHALLENGED);
 }
 
@@ -302,14 +302,14 @@ fn dismissed_challenge_finalizes_and_pays_the_committer() {
     let committer_addr = f.committer.address().clone();
     f.send_from_with_value(
         &challenger_addr,
-        PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_success();
 
     let before = f.balance(&committer_addr);
-    f.send_from(&reviewer_addr, PoiwCommitmentContract::rule(2, false).unwrap()).expect_success();
-    assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_FINAL);
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
     let expected = 2 * COMMIT_BOND + TOS;
     let delta = f.balance(&committer_addr) - before;
     assert!(
@@ -321,7 +321,7 @@ fn dismissed_challenge_finalizes_and_pays_the_committer() {
     let mut fresh = Fixture::new();
     let fresh_reviewer = fresh.reviewer.address().clone();
     fresh
-        .send_from(&fresh_reviewer, PoiwCommitmentContract::rule(1, true).unwrap())
+        .send_from(&fresh_reviewer, AipowCommitmentContract::rule(1, true).unwrap())
         .expect_exit_code(ERR_NOT_CHALLENGED);
 }
 
@@ -334,7 +334,7 @@ fn unknown_ops_trailing_garbage_and_bounces_are_handled() {
     {
         use chain_block::IBitstring;
         let mut body = chain_block::BuilderData::new();
-        body.append_u32(0x5057_43FF).unwrap();
+        body.append_u32(0x4150_57FF).unwrap();
         body.append_u64(1).unwrap();
         f.send_from(&challenger_addr, body.into_cell().unwrap()).expect_exit_code(ERR_UNKNOWN_OP);
     }
@@ -343,23 +343,23 @@ fn unknown_ops_trailing_garbage_and_bounces_are_handled() {
     {
         use chain_block::IBitstring;
         let mut body = chain_block::BuilderData::new();
-        body.append_u32(contracts::poiw_commitment::PWC_CHALLENGE_OPCODE).unwrap();
+        body.append_u32(contracts::aipow_commitment::APW_CHALLENGE_OPCODE).unwrap();
         body.append_u64(2).unwrap();
         body.append_u256(&[0xEE; 32]).unwrap();
         body.append_u8(0xAB).unwrap();
         f.send_from_with_value(&challenger_addr, body.into_cell().unwrap(), COMMIT_BOND + TOS)
             .expect_aborted();
-        assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_COMMITTED);
+        assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
     }
 
     // A bounced message carrying an otherwise-valid reviewer ruling is
     // silently ignored with state untouched.
     {
         let mut msg = MessageBuilder::internal(f.reviewer.address(), &f.commitment, TOS / 10)
-            .body(PoiwCommitmentContract::rule(3, true).unwrap())
+            .body(AipowCommitmentContract::rule(3, true).unwrap())
             .build();
         msg.int_header_mut().expect("internal header").bounced = true;
         f.bc.send_message(msg).expect("send bounced").expect_success();
-        assert_eq!(f.data().status, POIW_COMMITMENT_STATUS_COMMITTED);
+        assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
     }
 }

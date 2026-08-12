@@ -29,12 +29,12 @@ use std::time::Duration;
 use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::{
-    CapabilityRegistryContract, ChainProvider, DisputeContract, PoiwCommitmentContract,
+    CapabilityRegistryContract, ChainProvider, DisputeContract, AipowCommitmentContract,
     ServiceActorContract, TaskEscrowContract,
 };
 
 use crate::indexer::store::{
-    IndexedRecord, IndexerStore, PoiwSettlementRecord, ServiceRequestRecord,
+    IndexedRecord, IndexerStore, AipowSettlementRecord, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -91,7 +91,7 @@ impl KnownCodeHashes {
         by_hash.insert(DisputeContract::code()?.repr_hash(), "dispute");
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
-        by_hash.insert(PoiwCommitmentContract::code()?.repr_hash(), "poiw_commitment");
+        by_hash.insert(AipowCommitmentContract::code()?.repr_hash(), "aipow_commitment");
         Ok(Self { by_hash })
     }
 
@@ -338,9 +338,9 @@ async fn decode_and_store(
                         .map(|dto| dto.budget)
                         .unwrap_or(0)
                 };
-                // A settled escrow is terminal; `record_poiw_settlement`
+                // A settled escrow is terminal; `record_aipow_settlement`
                 // keeps the first observation, so re-visits are no-ops.
-                store.record_poiw_settlement(&PoiwSettlementRecord {
+                store.record_aipow_settlement(&AipowSettlementRecord {
                     address: address.to_owned(),
                     request_id: String::new(),
                     kind: "task_escrow".to_owned(),
@@ -417,28 +417,28 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&CapabilityRegistryRecordDto::from(&data))?,
             })
         }
-        "poiw_commitment" => {
+        "aipow_commitment" => {
             let stack = chain_provider
-                .run_get_method(address.to_owned(), "get_poiw_commitment_data", vec![])
+                .run_get_method(address.to_owned(), "get_aipow_commitment_data", vec![])
                 .await?;
-            let data = PoiwCommitmentContract::decode_data(&stack)?;
+            let data = AipowCommitmentContract::decode_data(&stack)?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
                 creator: Some(data.committer.to_string()),
                 counterparty: Some(data.reviewer.to_string()),
-                status: Some(poiw_commitment_status_name(data.status).to_owned()),
+                status: Some(aipow_commitment_status_name(data.status).to_owned()),
                 deadline: Some(data.window_deadline),
                 last_seqno: seqno,
                 updated_at: now,
-                dto_json: serde_json::to_string(&PoiwCommitmentRecordDto::from(&data))?,
+                dto_json: serde_json::to_string(&AipowCommitmentRecordDto::from(&data))?,
             })
         }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
     }
 }
 
-fn poiw_commitment_status_name(status: u8) -> &'static str {
+fn aipow_commitment_status_name(status: u8) -> &'static str {
     match status {
         0 => "committed",
         1 => "challenged",
@@ -449,7 +449,7 @@ fn poiw_commitment_status_name(status: u8) -> &'static str {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct PoiwCommitmentRecordDto {
+struct AipowCommitmentRecordDto {
     committer: String,
     reviewer: String,
     status: String,
@@ -463,12 +463,12 @@ struct PoiwCommitmentRecordDto {
     challenge_evidence_hash: String,
 }
 
-impl From<&contracts::PoiwCommitmentData> for PoiwCommitmentRecordDto {
-    fn from(data: &contracts::PoiwCommitmentData) -> Self {
+impl From<&contracts::AipowCommitmentData> for AipowCommitmentRecordDto {
+    fn from(data: &contracts::AipowCommitmentData) -> Self {
         Self {
             committer: data.committer.to_string(),
             reviewer: data.reviewer.to_string(),
-            status: poiw_commitment_status_name(data.status).to_owned(),
+            status: aipow_commitment_status_name(data.status).to_owned(),
             epoch: data.epoch,
             window_deadline: data.window_deadline,
             commit_bond: data.commit_bond,
@@ -615,11 +615,11 @@ async fn refresh_service_request_lifecycle(
         // A `responded` conclusion is the only one this snapshot diff can
         // prove was a real, paid service completion (see the deadline
         // reasoning above); it is the Service Actor analog of a settled
-        // Task Escrow for the PoIW shadow-scoring data plane.
+        // Task Escrow for the AIPoW shadow-scoring data plane.
         if let ("responded", Some(caller), Some(price)) =
             (dto.status.as_str(), &dto.caller, dto.price)
         {
-            store.record_poiw_settlement(&PoiwSettlementRecord {
+            store.record_aipow_settlement(&AipowSettlementRecord {
                 address: address.to_owned(),
                 request_id: request_id.to_string(),
                 kind: "service_request".to_owned(),
@@ -1547,10 +1547,10 @@ mod tests {
         );
 
         // A responded request is a real, paid service completion: exactly
-        // one PoIW settlement event, attributed owner <- caller at the
+        // one AIPoW settlement event, attributed owner <- caller at the
         // service's per-call price, unattested (this fixture deploys with
         // no attestor key). A further refresh must not duplicate it.
-        let (events, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        let (events, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
         assert_eq!(total, 1);
         assert_eq!(events[0].kind, "service_request");
         assert_eq!(events[0].request_id, "0");
@@ -1559,7 +1559,7 @@ mod tests {
         assert_eq!(events[0].amount, 100_000_000);
         assert!(!events[0].attested);
         f.refresh(&store, f.base_now).await;
-        let (_, total_after) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        let (_, total_after) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
         assert_eq!(total_after, 1);
     }
 
@@ -1587,9 +1587,9 @@ mod tests {
             "a refund claimed before its claim window closes must be classified refunded, not swept"
         );
 
-        // A refunded request is not a completed service: no PoIW
+        // A refunded request is not a completed service: no AIPoW
         // settlement event may be recorded for it.
-        let (_, total) = store.list_poiw_settlements(0, u32::MAX, 0, 10).unwrap();
+        let (_, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
         assert_eq!(total, 0);
     }
 
@@ -1699,22 +1699,22 @@ mod tests {
         );
     }
 
-    // ─── PoIW score-commitment classification (real sandbox contract) ───
+    // ─── AIPoW score-commitment classification (real sandbox contract) ───
 
     #[tokio::test]
-    async fn indexer_decodes_a_poiw_commitment_through_its_lifecycle() {
-        use contracts::{PoiwCommitmentContract, PoiwCommitmentInit};
+    async fn indexer_decodes_a_aipow_commitment_through_its_lifecycle() {
+        use contracts::{AipowCommitmentContract, AipowCommitmentInit};
 
         let tos: u64 = 1_000_000_000;
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let base_now = time_format::now();
         bc.set_now(base_now as u32);
-        let committer = bc.treasury("poiw-idx-committer", 1_000 * tos).expect("committer");
-        let reviewer = bc.treasury("poiw-idx-reviewer", 1_000 * tos).expect("reviewer");
-        let challenger = bc.treasury("poiw-idx-challenger", 1_000 * tos).expect("challenger");
+        let committer = bc.treasury("aipow-idx-committer", 1_000 * tos).expect("committer");
+        let reviewer = bc.treasury("aipow-idx-reviewer", 1_000 * tos).expect("reviewer");
+        let challenger = bc.treasury("aipow-idx-challenger", 1_000 * tos).expect("challenger");
         let window_deadline = base_now + 3_600;
-        let init = PoiwCommitmentInit {
+        let init = AipowCommitmentInit {
             committer: committer.address().clone(),
             reviewer: reviewer.address().clone(),
             epoch: 42,
@@ -1723,10 +1723,10 @@ mod tests {
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
         };
-        let commitment = PoiwCommitmentContract::calculate_address(-1, &init).expect("address");
+        let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(committer.address(), &commitment, 6 * tos)
             .bounce(false)
-            .state_init(PoiwCommitmentContract::build_state_init(&init).expect("state init"))
+            .state_init(AipowCommitmentContract::build_state_init(&init).expect("state init"))
             .body(chain_block::Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
@@ -1736,11 +1736,11 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let address = commitment.to_string();
 
-        decode_and_store(&provider_dyn, &store, &address, "poiw_commitment", 1, base_now)
+        decode_and_store(&provider_dyn, &store, &address, "aipow_commitment", 1, base_now)
             .await
             .unwrap();
         let record = store.get(&address).unwrap().unwrap();
-        assert_eq!(record.kind, "poiw_commitment");
+        assert_eq!(record.kind, "aipow_commitment");
         assert_eq!(record.status.as_deref(), Some("committed"));
         assert_eq!(record.creator.as_deref(), Some(committer.address().to_string().as_str()));
         assert_eq!(record.counterparty.as_deref(), Some(reviewer.address().to_string().as_str()));
@@ -1757,10 +1757,10 @@ mod tests {
             &commitment,
             6 * tos,
         )
-        .body(PoiwCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
+        .body(AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
         .build();
         provider.bc.lock().unwrap().send_message(challenge).unwrap().expect_success();
-        decode_and_store(&provider_dyn, &store, &address, "poiw_commitment", 2, base_now)
+        decode_and_store(&provider_dyn, &store, &address, "aipow_commitment", 2, base_now)
             .await
             .unwrap();
         let record = store.get(&address).unwrap().unwrap();
