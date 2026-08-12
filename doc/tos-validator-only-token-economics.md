@@ -10,8 +10,8 @@ five-billion-TOS supply target through validator block rewards. Version 0.6 is
 a deliberate monetary-policy revision: validator block rewards are recalibrated
 to create approximately **500 million TOS**, and the remaining approximately
 **4.5 billion TOS** community-agent allocation is created later through a
-separate protocol reward mechanism (the Power of Intelligence community
-distribution), which is specified outside this document, is not funded at
+separate protocol reward mechanism (the Proof of Intelligent Work, PoIW,
+community distribution), which is specified outside this document, is not funded at
 genesis, and is never held by any treasury wallet. Everything else in this
 document — the bootstrap procedure, genesis balances, election parameters,
 reward routing, non-mechanisms, and transparency rules — is unchanged in
@@ -118,7 +118,8 @@ and the validator's proportional share of the active set's bonus pool.
 The community-agent allocation is a policy target only. It is not created at
 genesis, is not held by any wallet, and is not distributed through ConfigParam
 14 or the Elector. Its reward mechanism, eligibility, and anti-abuse rules are
-specified in the separate Power of Intelligence community distribution design
+specified in the separate Proof of Intelligent Work (PoIW) community
+distribution design
 and must pass their own launch gates before any of that allocation is created.
 
 The main-wallet amount is provisional until the four-validator, two-overlapping-
@@ -1019,7 +1020,7 @@ and slower production releases it later.
 
 The remaining approximately 4.5 billion TOS of the five-billion total-supply
 policy is a community-agent allocation created through a separate protocol
-reward mechanism (the Power of Intelligence community distribution). It is
+reward mechanism (the Proof of Intelligent Work, PoIW, community distribution). It is
 specified outside this document, is not funded at genesis, is never held by a
 treasury wallet, and must pass its own launch gates before any of it is
 created.
