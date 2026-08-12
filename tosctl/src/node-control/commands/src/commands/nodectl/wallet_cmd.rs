@@ -101,6 +101,9 @@ pub struct WalletLsCmd {
     config_fd: Option<i32>,
     #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
     config_format: Option<String>,
+    /// Resolve configured wallet identities without querying chain state.
+    #[arg(long)]
+    offline: bool,
 }
 
 #[derive(clap::Args, Clone)]
@@ -212,6 +215,7 @@ impl WalletCmd {
             format: OutputFormat::Table,
             config_fd: None,
             config_format: None,
+            offline: false,
         };
         cmd.run(&config_path).await
     }
@@ -401,7 +405,7 @@ impl WalletLsCmd {
             _ => anyhow::bail!("--config-fd and --config-format must be used together"),
         };
 
-        if let Err(e) = check_chain_rpc_connection(&rpc_client).await {
+        if !self.offline && let Err(e) = check_chain_rpc_connection(&rpc_client).await {
             if matches!(self.format, OutputFormat::Table) {
                 warn_chain_rpc_unavailable(&e, "State and balances will not be available");
             }
@@ -421,10 +425,10 @@ impl WalletLsCmd {
 
         match self.format {
             OutputFormat::Json => {
-                print_wallets_json(&wallet_list, vault, rpc_client).await?;
+                print_wallets_json(&wallet_list, vault, rpc_client, self.offline).await?;
             }
             OutputFormat::Table => {
-                print_wallets_table(&wallet_list, vault, rpc_client).await;
+                print_wallets_table(&wallet_list, vault, rpc_client, self.offline).await;
             }
         }
         Ok(())
@@ -435,6 +439,7 @@ async fn print_wallets_json(
     wallets: &[(&str, &WalletConfig)],
     vault: Arc<SecretVault>,
     rpc_client: Arc<ClientJsonRpc>,
+    offline: bool,
 ) -> anyhow::Result<()> {
     let mut views = Vec::new();
     for (name, wallet_cfg) in wallets {
@@ -444,7 +449,9 @@ async fn print_wallets_json(
                     let address_str = address
                         .to_string_custom(ADDR_FORMAT_BOUNCE | ADDR_FORMAT_URL_SAFE)
                         .unwrap_or_else(|_| address.to_string());
-                    match rpc_client.get_wallet_information(&address).await {
+                    if offline {
+                        (Some(address_str), None, None, None, None)
+                    } else { match rpc_client.get_wallet_information(&address).await {
                         Ok(info) => (
                             Some(address_str),
                             Some(info.account_state.to_string()),
@@ -453,7 +460,7 @@ async fn print_wallets_json(
                             info.seqno,
                         ),
                         Err(_) => (Some(address_str), None, None, None, None),
-                    }
+                    } }
                 }
                 Err(_) => (None, None, None, None, None),
             };
@@ -474,6 +481,7 @@ async fn print_wallets_table(
     wallets: &[(&str, &WalletConfig)],
     vault: Arc<SecretVault>,
     rpc_client: Arc<ClientJsonRpc>,
+    offline: bool,
 ) {
     println!(
         "\n{} {} ({})\n",
@@ -501,7 +509,9 @@ async fn print_wallets_table(
                         .to_string_custom(ADDR_FORMAT_BOUNCE | ADDR_FORMAT_URL_SAFE)
                         .unwrap_or_else(|_| addr.to_string());
 
-                    match rpc_client.get_wallet_information(&addr).await {
+                    if offline {
+                        (address_str.white(), red_dash.clone(), red_dash.clone(), red_dash.clone(), red_dash.clone())
+                    } else { match rpc_client.get_wallet_information(&addr).await {
                         Ok(info) => (
                             address_str.white(),
                             Cow::Owned(info.account_state.to_string().white()),
@@ -526,7 +536,7 @@ async fn print_wallets_table(
                             red_dash.clone(),
                             red_dash.clone(),
                         ),
-                    }
+                    } }
                 }
                 Err(e) => {
                     let error_message = if e
@@ -928,7 +938,7 @@ impl WalletSendCmd {
 
 #[cfg(test)]
 mod wallet_send_cli_tests {
-    use super::WalletSendCmd;
+    use super::{WalletLsCmd, WalletSendCmd};
     use clap::{Args, Command, FromArgMatches};
 
     #[test]
@@ -956,5 +966,13 @@ mod wallet_send_cli_tests {
         let parsed = WalletSendCmd::from_arg_matches(&matches).unwrap();
         assert_eq!(parsed.config_fd, Some(3));
         assert_eq!(parsed.config_format.as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn parses_offline_wallet_listing() {
+        let command = WalletLsCmd::augment_args(Command::new("ls"));
+        let matches = command.try_get_matches_from(["ls", "--format", "json", "--offline"]).unwrap();
+        let parsed = WalletLsCmd::from_arg_matches(&matches).unwrap();
+        assert!(parsed.offline);
     }
 }
