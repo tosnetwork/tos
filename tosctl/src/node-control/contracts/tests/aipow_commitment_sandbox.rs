@@ -99,7 +99,7 @@ impl Fixture {
             methodology_hash: [0x44; 32],
             total_score: TOTAL_SCORE,
             organic_settled_value: ORGANIC_VALUE,
-            settlement: settlement.clone(),
+            settlement: Some(settlement.clone()),
         };
         let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let state_init = AipowCommitmentContract::build_state_init(&init).expect("state init");
@@ -227,7 +227,7 @@ fn deploys_committed_and_readable() {
     assert_eq!(&data.committer, f.committer.address());
     assert_eq!(&data.reviewer, f.reviewer.address());
     assert_eq!(data.version, contracts::AIPOW_COMMITMENT_VERSION);
-    assert_eq!(data.settlement, f.settlement);
+    assert_eq!(data.settlement, Some(f.settlement.clone()));
     // Nothing is advertised to the settlement while merely committed.
     assert_eq!(f.settlement_registration(COMMIT_EPOCH as u32), None);
 }
@@ -598,4 +598,68 @@ fn unknown_ops_trailing_garbage_and_bounces_are_handled() {
         f.bc.send_message(msg).expect("send bounced").expect_success();
         assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
     }
+}
+
+#[test]
+fn finalize_with_no_settlement_still_finalizes_and_returns_the_bond() {
+    // A commitment deployed with addr_none settlement (registration disabled)
+    // must still finalize and return the bond -- the best-effort registration is
+    // skipped on-chain, never aborting bond settlement.
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let committer = bc.treasury("aipow-committer-ns", 1_000 * TOS).expect("committer");
+    let reviewer = bc.treasury("aipow-reviewer-ns", 1_000 * TOS).expect("reviewer");
+    let window_deadline = u64::from(bc.now()) + 3_600;
+    let init = AipowCommitmentInit {
+        committer: committer.address().clone(),
+        reviewer: reviewer.address().clone(),
+        epoch: COMMIT_EPOCH,
+        window_deadline,
+        commit_bond: COMMIT_BOND,
+        score_root: SCORE_ROOT,
+        methodology_hash: [0x44; 32],
+        total_score: TOTAL_SCORE,
+        organic_settled_value: ORGANIC_VALUE,
+        settlement: None,
+    };
+    let commitment = AipowCommitmentContract::calculate_address(-1, &init).unwrap();
+    let deploy = MessageBuilder::internal(committer.address(), &commitment, COMMIT_BOND + TOS)
+        .bounce(false)
+        .state_init(AipowCommitmentContract::build_state_init(&init).unwrap())
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+
+    let read_status = |bc: &Blockchain| -> u8 {
+        let stack =
+            bc.run_get_method(&commitment, "get_aipow_commitment_data", vec![]).unwrap().expect_success().stack.clone();
+        let entries = stack.iter().map(sandbox_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>().unwrap();
+        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries)).unwrap().status
+    };
+
+    bc.set_now((window_deadline + 1) as u32);
+    let before = bc
+        .get_account(committer.address())
+        .and_then(|a| a.balance().and_then(|c| c.coins.as_u64()))
+        .unwrap_or(0);
+    let finalize = MessageBuilder::internal(reviewer.address(), &commitment, TOS / 2)
+        .body(AipowCommitmentContract::finalize(1).unwrap())
+        .build();
+    bc.send_message(finalize).expect("finalize").expect_success();
+    assert_eq!(read_status(&bc), AIPOW_COMMITMENT_STATUS_FINAL);
+    let after = bc
+        .get_account(committer.address())
+        .and_then(|a| a.balance().and_then(|c| c.coins.as_u64()))
+        .unwrap_or(0);
+    let delta = after - before;
+    assert!(
+        delta > COMMIT_BOND - TOS / 100 && delta <= COMMIT_BOND,
+        "committer still gets the bond back with registration disabled, got {delta}"
+    );
+    // decode_data round-trips addr_none as None.
+    let stack =
+        bc.run_get_method(&commitment, "get_aipow_commitment_data", vec![]).unwrap().expect_success().stack.clone();
+    let entries = stack.iter().map(sandbox_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>().unwrap();
+    let data = AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries)).unwrap();
+    assert_eq!(data.settlement, None);
 }

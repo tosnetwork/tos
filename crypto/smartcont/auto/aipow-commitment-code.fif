@@ -120,42 +120,48 @@ PROGRAM{
   send_registration PROCINLINE:<{
     //  settlement epoch score_root total_score organic_settled_value
     s4 PUSH	//  settlement epoch score_root total_score organic_settled_value settlement
-    SBITS	//  settlement epoch score_root total_score organic_settled_value _5
-    3 LESSINT	//  settlement epoch score_root total_score organic_settled_value _7
+    2 PLDU	//  settlement epoch score_root total_score organic_settled_value _6
+    2 LESSINT	//  settlement epoch score_root total_score organic_settled_value _8
     IF:<{	//  settlement epoch score_root total_score organic_settled_value
       5 BLKDROP	//
     }>ELSE<{	//  settlement epoch score_root total_score organic_settled_value
-      0 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _9=0
-      1095783169 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _9=0 _10=1095783169
-      NEWC	//  settlement epoch score_root total_score organic_settled_value _9=0 _10=1095783169 _11
-      32 STU	//  settlement epoch score_root total_score organic_settled_value _9=0 _13
-      64 STU	//  settlement epoch score_root total_score organic_settled_value _15
-      s1 s4 XCHG	//  settlement organic_settled_value score_root total_score epoch _15
-      32 STU	//  settlement organic_settled_value score_root total_score _17
-      s1 s2 XCHG	//  settlement organic_settled_value total_score score_root _17
-      256 STU	//  settlement organic_settled_value total_score _19
-      128 STU	//  settlement organic_settled_value _21
-      128 STU	//  settlement _23
+      s3 PUSH
+      32 PUSHPOW2DEC	//  settlement epoch score_root total_score organic_settled_value epoch _9=4294967295
+      GREATER	//  settlement epoch score_root total_score organic_settled_value _10
+      IFJMP:<{	//  settlement epoch score_root total_score organic_settled_value
+        5 BLKDROP	//
+      }>	//  settlement epoch score_root total_score organic_settled_value
+      0 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12=0
+      1095783169 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12=0 _13=1095783169
+      NEWC	//  settlement epoch score_root total_score organic_settled_value _12=0 _13=1095783169 _14
+      32 STU	//  settlement epoch score_root total_score organic_settled_value _12=0 _16
+      64 STU	//  settlement epoch score_root total_score organic_settled_value _18
+      s1 s4 XCHG	//  settlement organic_settled_value score_root total_score epoch _18
+      32 STU	//  settlement organic_settled_value score_root total_score _20
+      s1 s2 XCHG	//  settlement organic_settled_value total_score score_root _20
+      256 STU	//  settlement organic_settled_value total_score _22
+      128 STU	//  settlement organic_settled_value _24
+      128 STU	//  settlement _26
       ENDC	//  settlement body
-      1 PUSHINT	//  settlement body _25=1
-      0 PUSHINT	//  settlement body _25=1 _26=0
-      DUP	//  settlement body _25=1 _26=0 _27=0
-      24 PUSHINT	//  settlement body _25=1 _26=0 _27=0 _28=24
-      NEWC	//  settlement body _25=1 _26=0 _27=0 _28=24 _29
-      6 STU	//  settlement body _25=1 _26=0 _27=0 _31
-      s0 s5 XCHG2	//  _27=0 body _25=1 _26=0 _31 settlement
-      STSLICER	//  _27=0 body _25=1 _26=0 _32
-      50000000 PUSHINT	//  _27=0 body _25=1 _26=0 _32 _33=50000000
-      STTOMIS	//  _27=0 body _25=1 _26=0 _34
-      s1 s4 XCHG	//  _26=0 body _25=1 _27=0 _34
-      105 STU	//  _26=0 body _25=1 _44
-      s1 s3 XCHG	//  _25=1 body _26=0 _44
-      1 STU	//  _25=1 body _46
-      s1 s2 XCHG	//  body _25=1 _46
-      1 STU	//  body _48
-      STREF	//  _49
-      ENDC	//  _50
-      1 PUSHINT	//  _50 _51=1
+      1 PUSHINT	//  settlement body _28=1
+      0 PUSHINT	//  settlement body _28=1 _29=0
+      DUP	//  settlement body _28=1 _29=0 _30=0
+      24 PUSHINT	//  settlement body _28=1 _29=0 _30=0 _31=24
+      NEWC	//  settlement body _28=1 _29=0 _30=0 _31=24 _32
+      6 STU	//  settlement body _28=1 _29=0 _30=0 _34
+      s0 s5 XCHG2	//  _30=0 body _28=1 _29=0 _34 settlement
+      STSLICER	//  _30=0 body _28=1 _29=0 _35
+      50000000 PUSHINT	//  _30=0 body _28=1 _29=0 _35 _36=50000000
+      STTOMIS	//  _30=0 body _28=1 _29=0 _37
+      s1 s4 XCHG	//  _29=0 body _28=1 _30=0 _37
+      105 STU	//  _29=0 body _28=1 _47
+      s1 s3 XCHG	//  _28=1 body _29=0 _47
+      1 STU	//  _28=1 body _49
+      s1 s2 XCHG	//  body _28=1 _49
+      1 STU	//  body _51
+      STREF	//  _52
+      ENDC	//  _53
+      1 PUSHINT	//  _53 _54=1
       SENDRAWMSG
     }>
   }>

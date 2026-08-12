@@ -235,11 +235,13 @@ impl AipowDeployCmd {
             total_score: self.total_score,
             organic_settled_value: self.organic_settled_value,
             // A commitment registers its finalized root to this settlement
-            // account; omitting it leaves the default (zero) address, which the
-            // contract treats as "do not advertise".
+            // account; omitting it stores addr_none, so the root finalizes but
+            // is never advertised.
             settlement: match &self.settlement {
-                Some(addr) => addr.parse().map_err(|e| anyhow::anyhow!("invalid --settlement address: {e}"))?,
-                None => MsgAddressInt::default(),
+                Some(addr) => Some(
+                    addr.parse().map_err(|e| anyhow::anyhow!("invalid --settlement address: {e}"))?,
+                ),
+                None => None,
             },
         };
         let address = AipowCommitmentContract::calculate_address(self.workchain, &init)?;

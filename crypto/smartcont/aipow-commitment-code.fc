@@ -54,8 +54,11 @@
 ;;   ^[challenger:MsgAddress challenge_evidence_hash:uint256]
 ;;   ^[settlement:MsgAddress]
 ;;       The AIPoW settlement account this commitment registers to on
-;;       finalization (D6). addr_none disables registration (the root still
-;;       finalizes, it simply is not advertised).
+;;       finalization (D6). A non-internal address (addr_none/addr_extern)
+;;       disables registration (the root still finalizes, it is simply not
+;;       advertised). For a valid settlement the registration is atomic with
+;;       finalization (both or neither, retried with more value if underfunded);
+;;       see send_registration for the full semantics.
 ;;
 ;; The deploy value must fund the committer bond plus a fee/storage reserve that
 ;; also covers the registration fee sent on finalization.
@@ -181,13 +184,38 @@ const int err::review_open = 2110;
 }
 
 ;; Emit the authenticated registration to the settlement (sender == this
-;; commitment). addr_none settlement disables it. The register body is carried by
-;; reference (it exceeds a comfortable inline budget). Bounceable so a rejected
-;; registration (e.g. an epoch behind the settlement cursor) returns the fee.
+;; commitment). The register body is carried by reference (it exceeds a
+;; comfortable inline budget). Bounceable so a rejected registration (e.g. an
+;; epoch behind the settlement cursor) returns the fee.
+;;
+;; Registration semantics, deliberately chosen:
+;;   * When the settlement is NOT a routable internal address (addr_none$00 /
+;;     addr_extern$01 -- addr_none is the documented opt-out) or the epoch does
+;;     not fit the settlement's uint32 register field, registration is
+;;     structurally impossible and can never succeed on retry, so it is SKIPPED
+;;     (a no-op) -- finalization proceeds and the bond is returned. This is what
+;;     keeps a commitment deployed (bypassing the SDK) with a malformed
+;;     settlement or an out-of-range epoch from aborting every finalize and
+;;     stranding the bond forever.
+;;   * Otherwise (a valid settlement + in-range epoch) registration is MANDATORY
+;;     and ATOMIC with finalization: the send uses mode 1 (NOT +2), so if it
+;;     cannot be funded the whole finalize action phase aborts and NOTHING is
+;;     committed -- neither the `final` status nor the bond return. Because
+;;     finalize/rule are permissionless and the pre-abort status is preserved,
+;;     anyone simply retries with more attached value. This guarantees the
+;;     invariant "a finalized commitment with a valid settlement is registered"
+;;     -- best-effort (+2) is intentionally NOT used, because `final` is terminal
+;;     and a silently-skipped registration could never be retried, permanently
+;;     hiding valid work from the settlement.
 () send_registration(slice settlement, int epoch, int score_root, int total_score,
                      int organic_settled_value) impure inline {
-  ;; A parsed addr_none is a 2-bit slice; a real addr_std is 267 bits.
-  if (slice_bits(settlement) <= 2) {
+  ;; MsgAddress tag: 0=addr_none, 1=addr_extern, 2=addr_std, 3=addr_var. Only
+  ;; the internal forms (>= 2) are valid message destinations.
+  if (settlement.preload_uint(2) < 2) {
+    return ();
+  }
+  ;; store_uint(epoch, 32) range-checks; an out-of-range epoch would throw.
+  if (epoch > 0xFFFFFFFF) {
     return ();
   }
   cell body = begin_cell()
@@ -198,6 +226,9 @@ const int err::review_open = 2110;
     .store_uint(total_score, 128)
     .store_uint(organic_settled_value, 128)
   .end_cell();
+  ;; mode 1: pay fees separately, errors NOT ignored (see the semantics note
+  ;; above) -- an unfundable registration aborts the finalize atomically and is
+  ;; retried with more value, rather than being silently and permanently skipped.
   send_raw_message(begin_cell()
     .store_uint(0x18, 6)              ;; bounceable internal message
     .store_slice(settlement)

@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABJ8AART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXAroEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgL8jvtXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKwkQi1QnByAQfRA2UVMQXlQTDgNWEU8TAREUARETVhXIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQJXHgBwgAvMgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVBKhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAsnCAEMjLBVAEzxZY+gISy2rJAfsAQwAk10nBA5JfBY44cIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiA5ZWEIIQQVBXA7qPK1cQgQg5EREtxwUBEREB8vSBCDgLwAEb8vQM0wfRgQg6IcAAIsABsfL04w/gVxEPghBBUFcEuuMCXw9bgQg78vAJCgsA8BCrEJpzUaUQmhCJB1GFByEQZxBWEEUDBAIREQIBERABERLIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRYoHFwgBDIywVQBM8WWPoCEstqyQH7AAH6cisIEHtUFglQViIQXVRBVCMQPyJWEgMCERACAREVAREUVhbIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQUqAScXCAEMjLBVAEzxZY+gISy2rJAfsAUDMMAfyBCDgLwAEb8vSBCD74Iyi+8vQM0XNUObUmED8vAwIREQIBERIBERPIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQM3FwgBDIywVQBM8WWPoCEstqyQH7AHENAIYk10nBA5JfBY44cIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiAChwgBDIywVQBM8WWPoCEstqyQH7ANbh1eg=";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABLEAART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXAroEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgL8jvtXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKwkQi1QnByAQfRA2UVMQXlQTDgNWEU8TAREUARETVhXIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQJXHgBwgAvMgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVBKhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAxHCAEMjLBVAEzxZY+gISy2rJAfsAQwAk1wsBwQKSXwWOQCOEH7ySXwXgcIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiA5ZWEIIQQVBXA7qPK1cQgQg5EREtxwUBEREB8vSBCDgLwAEb8vQM0wfRgQg6IcAAIsABsfL04w/gVxEPghBBUFcEuuMCXw9bgQg78vAJCgsA8BCrEJpzUaUQmhCJB1GFByEQZxBWEEUDBAIREQIBERABERLIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRYoHFwgBDIywVQBM8WWPoCEstqyQH7AAH6cisIEHtUFglQViIQXVRBVCMQPyJWEgMCERACAREVAREUVhbIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQUqAScXCAEMjLBVAEzxZY+gISy2rJAfsAUDMMAfyBCDgLwAEb8vSBCD74Iyi+8vQM0XNUObUmED8vAwIREQIBERIBERPIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQM3FwgBDIywVQBM8WWPoCEstqyQH7AHENAJgk1wsBwQKSXwWOQCOEH7ySXwXgcIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiAChwgBDIywVQBM8WWPoCEstqyQH7AC1bjPE=";
 
 /// The commitment layout version this SDK writes and the contract understands.
 pub const AIPOW_COMMITMENT_VERSION: u16 = 1;
@@ -54,9 +54,10 @@ pub struct AipowCommitmentInit {
     /// native path derives the pool from it and the on-chain schedule params.
     pub organic_settled_value: u128,
     /// The AIPoW settlement account this commitment registers to on
-    /// finalization (D6). The native settlement path re-verifies the commitment
-    /// independently, so this is only a routing hint.
-    pub settlement: MsgAddressInt,
+    /// finalization (D6), or `None` to not advertise (stored as `addr_none`).
+    /// The native settlement path re-verifies the commitment independently, so
+    /// this is only a routing hint.
+    pub settlement: Option<MsgAddressInt>,
 }
 
 pub struct AipowCommitmentContract;
@@ -85,8 +86,9 @@ pub struct AipowCommitmentData {
     pub challenge_evidence_hash: [u8; 32],
     /// Layout version tag (D9).
     pub version: u16,
-    /// The settlement account this commitment registers to on finalization.
-    pub settlement: MsgAddressInt,
+    /// The settlement account this commitment registers to on finalization, or
+    /// `None` when registration is disabled (`addr_none`).
+    pub settlement: Option<MsgAddressInt>,
 }
 
 impl AipowCommitmentContract {
@@ -100,6 +102,15 @@ impl AipowCommitmentContract {
         }
         if init.commit_bond == 0 {
             anyhow::bail!("commit_bond must be positive");
+        }
+        // The finalize registration narrows the epoch to the settlement's
+        // uint32 register field (`store_uint(epoch, 32)` on-chain). An epoch
+        // above u32::MAX would raise a range-check exception when finalizing,
+        // permanently stranding the bond, so reject it at deploy time -- the
+        // address is derived from this data, so a valid commitment can never be
+        // deployed past this bound.
+        if init.epoch > u64::from(u32::MAX) {
+            anyhow::bail!("epoch must fit in u32 (the settlement registration epoch width)");
         }
         let mut data = BuilderData::new();
         data.append_u16(AIPOW_COMMITMENT_VERSION)?;
@@ -122,7 +133,15 @@ impl AipowCommitmentContract {
         challenge.append_u256(&[0; 32])?;
         data.checked_append_reference(challenge.into_cell()?)?;
         let mut settlement = BuilderData::new();
-        init.settlement.write_to(&mut settlement)?;
+        match &init.settlement {
+            // A real internal address is the register destination.
+            Some(addr) => addr.write_to(&mut settlement)?,
+            // addr_none$00: registration is disabled (best-effort, skipped
+            // on-chain), so finalization still returns the bond.
+            None => {
+                settlement.append_bits(0, 2)?;
+            }
+        }
         data.checked_append_reference(settlement.into_cell()?)?;
         Ok(data.into_cell()?)
     }
@@ -142,7 +161,16 @@ impl AipowCommitmentContract {
         let mut committer_slice = stack.slice(0)?;
         let mut reviewer_slice = stack.slice(1)?;
         let mut challenger_slice = stack.slice(12)?;
-        let mut settlement_slice = stack.slice(15)?;
+        let settlement_slice = stack.slice(15)?;
+        // The stack->bytes roundtrip byte-pads a short slice, so detect the
+        // MsgAddress form by its 2-bit tag: 0=addr_none / 1=addr_extern are not
+        // internal (registration disabled) -> None; 2=addr_std / 3=addr_var are.
+        let settlement = if settlement_slice.get_bits(0, 2).unwrap_or(0) < 2 {
+            None
+        } else {
+            let mut s = settlement_slice;
+            Some(MsgAddressInt::construct_from(&mut s)?)
+        };
         Ok(AipowCommitmentData {
             committer: MsgAddressInt::construct_from(&mut committer_slice)?,
             reviewer: MsgAddressInt::construct_from(&mut reviewer_slice)?,
@@ -159,7 +187,7 @@ impl AipowCommitmentContract {
             challenger: MsgAddressInt::construct_from(&mut challenger_slice)?,
             challenge_evidence_hash: parse_hash(stack, 13)?,
             version: stack.u64(14)? as u16,
-            settlement: MsgAddressInt::construct_from(&mut settlement_slice)?,
+            settlement,
         })
     }
 
@@ -248,7 +276,7 @@ mod tests {
             methodology_hash: [0x44; 32],
             total_score: 1_000_000,
             organic_settled_value: 42_000_000_000,
-            settlement: MsgAddressInt::with_standart(None, -1, [0x55; 32].into()).unwrap(),
+            settlement: Some(MsgAddressInt::with_standart(None, -1, [0x55; 32].into()).unwrap()),
         }
     }
 
@@ -278,6 +306,19 @@ mod tests {
         let mut zero_bond = init();
         zero_bond.commit_bond = 0;
         assert!(AipowCommitmentContract::build_data(&zero_bond).is_err());
+    }
+
+    #[test]
+    fn build_data_bounds_the_epoch_to_u32() {
+        // The finalize registration stores the epoch in a uint32 field; an
+        // epoch above u32::MAX would abort finalize and strand the bond, so the
+        // boundary value is accepted but one past it is rejected at deploy.
+        let mut max = init();
+        max.epoch = u64::from(u32::MAX);
+        assert!(AipowCommitmentContract::build_data(&max).is_ok());
+        let mut over = init();
+        over.epoch = u64::from(u32::MAX) + 1;
+        assert!(AipowCommitmentContract::build_data(&over).is_err());
     }
 
     #[test]
