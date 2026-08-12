@@ -1006,6 +1006,17 @@ bool ValidateQuery::try_unpack_mc_state() {
                  << " have been enabled in global configuration, but we support only " << supported_version()
                  << " (upgrade validator software?)";
     }
+    // Consensus-safe activation (Phase C, F15): capAipow may be enabled only
+    // together with a complete, mutually consistent AIPoW parameter set. A
+    // block whose config activates the capability without it is rejected, so
+    // the feature can never be half-activated. Dormant while capAipow is off.
+    if (config_->aipow_enabled()) {
+      auto aipow_status = config_->check_aipow_config();
+      if (aipow_status.is_error()) {
+        return reject_query("capAipow is enabled but the AIPoW configuration is incomplete or invalid: "s +
+                            aipow_status.message().str());
+      }
+    }
 
     old_shard_conf_ = std::make_unique<block::ShardConfig>(*config_);
     if (!is_masterchain()) {

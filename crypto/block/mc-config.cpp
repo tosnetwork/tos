@@ -2174,6 +2174,104 @@ td::Result<SizeLimitsConfig> Config::do_get_size_limits_config(td::Ref<vm::CellS
   return limits;
 }
 
+td::Result<AipowConfig> Config::get_aipow_config() const {
+  auto cell = get_config_param(90);
+  if (cell.is_null()) {
+    return td::Status::Error("configuration parameter 90 (AipowConfig) is absent");
+  }
+  block::gen::AipowConfig::Record rec;
+  AipowConfig res;
+  if (!(tlb::unpack_cell(cell, rec) && block::tlb::t_Tomis.as_integer_to(rec.schedule_cap, res.schedule_cap) &&
+        block::tlb::t_Tomis.as_integer_to(rec.cold_start_floor, res.cold_start_floor))) {
+    return td::Status::Error("cannot unpack AipowConfig from configuration parameter 90");
+  }
+  res.k_num = rec.k_num;
+  res.k_den = rec.k_den;
+  res.challenge_mult_num = rec.challenge_mult_num;
+  res.challenge_mult_den = rec.challenge_mult_den;
+  return res;
+}
+
+td::Result<AipowMaturation> Config::get_aipow_maturation() const {
+  auto cell = get_config_param(91);
+  if (cell.is_null()) {
+    return td::Status::Error("configuration parameter 91 (AipowMaturation) is absent");
+  }
+  block::gen::AipowMaturation::Record rec;
+  if (!tlb::unpack_cell(cell, rec)) {
+    return td::Status::Error("cannot unpack AipowMaturation from configuration parameter 91");
+  }
+  AipowMaturation res;
+  res.immediate_bps = rec.immediate_bps;
+  res.stream_epochs = rec.stream_epochs;
+  res.epoch_seconds = rec.epoch_seconds;
+  res.maturation_version = rec.maturation_version;
+  return res;
+}
+
+td::Result<AipowLimits> Config::get_aipow_limits() const {
+  auto cell = get_config_param(92);
+  if (cell.is_null()) {
+    return td::Status::Error("configuration parameter 92 (AipowLimits) is absent");
+  }
+  block::gen::AipowLimits::Record rec;
+  AipowLimits res;
+  if (!(tlb::unpack_cell(cell, rec) && block::tlb::t_Tomis.as_integer_to(rec.total_cap, res.total_cap))) {
+    return td::Status::Error("cannot unpack AipowLimits from configuration parameter 92");
+  }
+  return res;
+}
+
+td::Result<AipowRegistry> Config::get_aipow_registry() const {
+  auto cell = get_config_param(93);
+  if (cell.is_null()) {
+    return td::Status::Error("configuration parameter 93 (AipowRegistry) is absent");
+  }
+  block::gen::AipowRegistry::Record rec;
+  if (!tlb::unpack_cell(cell, rec)) {
+    return td::Status::Error("cannot unpack AipowRegistry from configuration parameter 93");
+  }
+  AipowRegistry res;
+  res.settlement_addr = rec.settlement_addr;
+  res.methodology_hash = rec.methodology_hash;
+  res.rate_card_hash = rec.rate_card_hash;
+  res.distributor_code_hashes = rec.distributor_code_hashes;
+  return res;
+}
+
+td::Status Config::check_aipow_config() const {
+  // Consensus-safe activation guard (Phase C, F15): once capAipow is set, a
+  // block is valid only if the complete, mutually consistent AIPoW parameter
+  // set is present. Absence or a partial/malformed set is a hard error here,
+  // never a silent default.
+  TRY_RESULT(cfg, get_aipow_config());
+  TRY_RESULT(mat, get_aipow_maturation());
+  TRY_RESULT(lim, get_aipow_limits());
+  TRY_RESULT(reg, get_aipow_registry());
+  if (cfg.k_den == 0 || cfg.challenge_mult_den == 0) {
+    return td::Status::Error("AipowConfig has a zero denominator");
+  }
+  if (td::sgn(cfg.schedule_cap) <= 0) {
+    return td::Status::Error("AipowConfig schedule_cap must be positive");
+  }
+  if (td::sgn(cfg.cold_start_floor) < 0) {
+    return td::Status::Error("AipowConfig cold_start_floor must be non-negative");
+  }
+  if (mat.immediate_bps > 10000) {
+    return td::Status::Error("AipowMaturation immediate_bps exceeds 10000");
+  }
+  if (mat.stream_epochs == 0 || mat.epoch_seconds == 0) {
+    return td::Status::Error("AipowMaturation stream_epochs and epoch_seconds must be nonzero");
+  }
+  if (td::sgn(lim.total_cap) <= 0) {
+    return td::Status::Error("AipowLimits total_cap must be positive");
+  }
+  if (reg.settlement_addr.is_zero() || reg.methodology_hash.is_zero()) {
+    return td::Status::Error("AipowRegistry settlement_addr and methodology_hash must be set");
+  }
+  return td::Status::OK();
+}
+
 std::unique_ptr<vm::Dictionary> Config::get_suspended_addresses(tos::UnixTime now) const {
   td::Ref<vm::Cell> param = get_config_param(44);
   gen::SuspendedAddressList::Record rec;
