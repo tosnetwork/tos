@@ -8,6 +8,16 @@ ConfigParam 14 values in
 It is reproducible development evidence, not the independent sustained-network
 confirmation required before production genesis.
 
+> **Recalibration note (August 12, 2026):** the measured block rates and
+> methodology below remain the calibration basis, but the specific ConfigParam
+> 14 values derived here (5.699830088 / 3.352841228 TOS) targeted the
+> superseded ~5-billion validator-creation policy of specification v0.5. The
+> v0.6 policy targets approximately 499,899,000 TOS of post-genesis validator
+> creation, giving recalibrated candidate values of **0.569879384 TOS
+> (masterchain)** and **0.335223167 TOS (basechain)** at the same measured
+> 2.5 + 2.5 blocks-per-second rates and the same 1.7:1 ratio. The historical
+> figures below are retained unmodified as the record of this rehearsal.
+
 ## Test configuration
 
 - Four equal-weight genesis validators in ConfigParam 34

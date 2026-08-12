@@ -89,10 +89,14 @@ The validator-led production zerostate allocates a provisional **101,000 TOS**:
 | Config contract | 500 TOS | `-1:555...555` |
 
 There is no PoW giver, general treasury, team, investor, foundation, or
-ecosystem allocation. Nearly all native TOS is created later for produced
-blocks under ConfigParam 14 and routed through the existing Elector reward
-path. Five billion TOS and seven years are approximate policy targets rather
-than a hard consensus cap or deadline. See
+ecosystem allocation. Approximately 500 million TOS is created later for
+produced blocks under ConfigParam 14 and routed through the existing Elector
+reward path; the remaining community-agent allocation (approximately 4.5
+billion TOS of the five-billion total-supply policy) is created through a
+separate protocol reward mechanism, is not funded at genesis, and is never
+held by a treasury wallet. Five hundred million TOS of validator creation,
+five billion TOS of total supply, and seven years are approximate policy
+targets rather than a hard consensus cap or deadline. See
 [TOS Validator-Led Distribution and Bootstrap Economics](tos-validator-only-token-economics.md).
 
 ## Related Docs

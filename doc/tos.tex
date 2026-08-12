@@ -980,8 +980,11 @@ the protocol's complaint and penalty rules.
 
 \subsection{Supply Policy}
 
-The initial distribution is designed to avoid a large insider premine and to create nearly
-all TOS through ordinary validator block rewards. The current production policy is:
+The initial distribution is designed to avoid a large insider premine. Approximately
+500 million TOS is created through ordinary validator block rewards; the remaining
+community-agent allocation (approximately 4.5 billion TOS of the five-billion total-supply
+policy) is created through a separate protocol reward mechanism, is not funded at genesis
+and is never held by a treasury wallet. The current production policy is:
 
 \begin{longtable}{p{0.48\textwidth}p{0.38\textwidth}}
 \toprule
@@ -990,27 +993,31 @@ Item & Policy target \\
 \endhead
 Smallest unit & 1 \nanotos \\
 Unit conversion & 1 TOS = 1,000,000,000 \nanotos \\
-Approximate gross native-creation target & 5,000,000,000 TOS \\
+Approximate total network supply target & 5,000,000,000 TOS \\
+Approximate validator-reward creation target & 500,000,000 TOS \\
+Community-agent allocation (separate mechanism) & 4,500,000,000 TOS \\
 Provisional main-wallet genesis balance & 100,000 TOS \\
 Elector operating reserve & 500 TOS \\
 Configuration-contract operating reserve & 500 TOS \\
 Provisional total genesis creation & 101,000 TOS \\
-Reference post-genesis validator creation & 4,999,899,000 TOS \\
+Reference post-genesis validator creation & 499,899,000 TOS \\
 Proof-of-work giver allocation & 0 TOS \\
-Team, investor, foundation and ecosystem allocation & 0 TOS \\
-General protocol-treasury allocation & 0 TOS \\
-Target distribution duration & Approximately seven years \\
+Team, investor, foundation and treasury allocation & 0 TOS \\
+Target validator distribution duration & Approximately seven years \\
 Treatment of network outages & No creation and no later catch-up \\
 Reward termination & Configuration governance tapers or sets ConfigParam 14 to zero \\
 New hard consensus supply cap & None in this policy \\
 \bottomrule
 \end{longtable}
 
-Five billion TOS and seven years are policy calibration targets, not an exact consensus cap,
-a guaranteed completion date or a statement about future market value. The actual total and
-completion date depend on finalized block production, shard behavior, validator
-availability, configuration activation and the eventual governance transaction that stops
-native block creation.
+Five hundred million TOS of validator creation, five billion TOS of total supply and seven
+years are policy calibration targets, not an exact consensus cap, a guaranteed completion
+date or a statement about future market value. The actual total and completion date depend
+on finalized block production, shard behavior, validator availability, configuration
+activation and the eventual governance transaction that stops native block creation. The
+community-agent allocation is created only through its own separately specified protocol
+reward mechanism with its own launch gates; it is not distributed through ConfigParam 14 or
+the Elector.
 
 \subsection{Genesis Bootstrap and Allocation}
 
@@ -1068,8 +1075,8 @@ creation increases gross native supply, while fees transfer existing TOS.
 
 \subsection{Approximate Seven-Year Distribution}
 
-The reference post-genesis creation target is 4,999,899,000 TOS. For calibration, the
-expected creation rate is modeled as
+The reference post-genesis validator creation target is 499,899,000 TOS. For calibration,
+the expected creation rate is modeled as
 
 \[
   \dot S =
@@ -1084,8 +1091,8 @@ the configured basechain value. Depth adjustment is intended to keep aggregate b
 creation approximately stable across balanced shard splits, but actual finalized chain data
 remains authoritative.
 
-The current implementation candidate uses 5.699830088 TOS per masterchain block and
-3.352841228 TOS per unsplit-basechain block. At the locally measured reference rate of
+The current implementation candidate uses 0.569879384 TOS per masterchain block and
+0.335223167 TOS per unsplit-basechain block. At the locally measured reference rate of
 approximately 2.5 finalized blocks per second for each chain, those values project nearly
 the full post-genesis target from August 1, 2026 to August 1, 2033. They are provisional
 until sustained multi-validator, multi-host, outage and shard split-and-merge measurements
@@ -1104,10 +1111,10 @@ slower production can reach it later. These outcomes must be measured and disclo
 than described as protocol faults.
 
 Governance must monitor finalized creation and begin a public taper review before projected
-gross creation reaches 4.95 billion TOS. It may reduce ConfigParam 14 to manage activation
-delay and must set both masterchain and basechain creation values to zero near the
-five-billion policy target. Transaction and service fees continue after native creation
-stops. Any later proposal to restart native creation is a separate monetary-policy decision
+gross validator creation reaches 495 million TOS. It may reduce ConfigParam 14 to manage
+activation delay and must set both masterchain and basechain creation values to zero near
+the 500-million validator-creation policy target. Transaction and service fees continue
+after native creation stops. Any later proposal to restart native creation is a separate monetary-policy decision
 requiring prominent public review.
 
 \subsection{Broad Distribution and Concentration Controls}
@@ -1194,7 +1201,8 @@ Ordinary authenticated configuration governance retains the ability to change bl
 validator counts, stake limits, election timing and other configurable protocol parameters.
 Every monetary proposal should disclose its proposer, old and proposed values, activation
 conditions, expected supply impact and recorded votes. The ability to change configuration
-is a material governance risk and means the five-billion target is not a hard technical cap.
+is a material governance risk and means neither the 500-million validator-creation target
+nor the five-billion total-supply target is a hard technical cap.
 
 Public descriptions of TOS must be accurate, balanced and consistent with released code and
 accepted network configuration. They must separate implemented functions from plans, avoid

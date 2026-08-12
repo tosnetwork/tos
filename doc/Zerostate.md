@@ -27,11 +27,15 @@ The production validator-led zerostate creates a provisional **101,000 TOS**:
 100,000 TOS in a bounded validator-bootstrap wallet and 500 TOS in each of the
 Elector and Configuration contracts.
 
-Nearly all remaining native TOS is created per produced block under
-ConfigParam 14. ConfigParams 6 and 7 govern extra-currency operations and do
-not control this native block creation. Five billion TOS over roughly seven
-years is a policy calibration target; it is not fully created at genesis and
-is not a hard consensus cap.
+Approximately 500 million TOS is created per produced block under
+ConfigParam 14 and routed to validators. ConfigParams 6 and 7 govern
+extra-currency operations and do not control this native block creation.
+The remaining community-agent allocation (approximately 4.5 billion TOS of
+the five-billion total-supply policy) is created through a separate protocol
+reward mechanism and is not part of the zerostate or of ConfigParam 14.
+These figures are policy calibration targets; nothing beyond the 101,000-TOS
+bootstrap supply is created at genesis, and none of the targets is a hard
+consensus cap.
 
 Production genesis does not allocate native funds to AI actor bootstrap
 programs. Those accounts and services must be deployed later through auditable
