@@ -1,44 +1,59 @@
 ;; Copyright (C) 2025-2026  TOS Network.
-;; AIPoW epoch reward distributor (dry-run / zero-emission slice).
+;; AIPoW epoch reward distributor (Phase C, W4.3: custody + payout).
 ;;
-;; One instance per finalized epoch score root. The operator deploys it
-;; carrying the root, the epoch total score (the pro-rata denominator), the
-;; epoch pool amount, and a reference to the finalized score-commitment
-;; instance the root came from (for off-chain cross-checking). A beneficiary
-;; then claims permissionlessly by presenting its own (identity, score) and
-;; a merkle inclusion proof against the root; the contract recomputes the
-;; root exactly as the AIPoW methodology defines (sha256 leaf/node hashing),
-;; and on a match records a pro-rata amount for that identity, once.
+;; One instance per finalized epoch score root. The settlement account (or an
+;; operator, while dark) deploys it carrying the root, the epoch total score
+;; (the pro-rata denominator), the epoch pool amount, a reference to the
+;; finalized score-commitment instance the root came from (for off-chain
+;; cross-checking), the workchain the scored identities live on, and a snapshot
+;; of the maturation parameters frozen at deploy. The settlement then forwards
+;; the epoch pool (native issuance) to this instance, which holds it and pays
+;; matured reward out to each beneficiary's own committed identity address.
 ;;
-;; Each recorded claim matures over time per the methodology: an immediate
-;; fraction plus a linear stream over a fixed number of epochs from the
-;; claim time. The operator may forfeit a claim (registry-bond fraud
-;; slashing); a forfeited claim's maturation freezes at the forfeit time,
-;; so the unmatured remainder is permanently voided while what had already
-;; matured is preserved.
+;; A beneficiary (or anyone on its behalf, permissionlessly) claims by
+;; presenting the identity's (identity, score) and a merkle inclusion proof
+;; against the root; the contract recomputes the root exactly as the AIPoW
+;; methodology defines (sha256 leaf/node hashing), and on a match records a
+;; pro-rata amount for that identity, once, and immediately pays the matured
+;; (immediate) tranche to `addr_std(earner_workchain, identity)` -- the
+;; committed identity itself, never the caller. The remaining stream is paid by
+;; subsequent permissionless `payout` pokes as it matures.
 ;;
-;; This slice is deliberately zero-emission: it records claims and their
-;; maturation but neither holds nor moves reward funds. Reward creation is
-;; the separate native minting path (phase C), which will read the matured
-;; amount this contract computes. Maturation parameters are v0 draft
-;; constants here; phase C moves them to configuration governance.
+;; Each recorded claim matures over time per the snapshot: an immediate
+;; fraction plus a linear stream over a fixed number of epochs from the claim
+;; time. The operator may forfeit a claim (registry-bond fraud slashing); a
+;; forfeited claim's maturation freezes at the forfeit time, so the unmatured
+;; remainder is permanently voided (its funds stay in this instance) while what
+;; had already matured is preserved and remains payable.
+;;
+;; Custody model: this instance holds the epoch pool as its balance and sends
+;; exactly the matured delta to the identity on each payout (send mode 1, fees
+;; from balance), so the identity receives exactly its matured amount. The
+;; deployer/settlement funds it with the pool plus a small gas/fee reserve.
 ;;
 ;; Persistent data layout:
+;;   version:uint16            (layout tag)
 ;;   operator:MsgAddress
 ;;   epoch:uint64
+;;   earner_workchain:int8     (workchain the scored identities are paid on)
 ;;   total_score:uint128       (pro-rata denominator; must be > 0)
-;;   pool:Coins                (nominal epoch pool this slice does not move)
+;;   pool:Coins                (nominal epoch pool; the pro-rata numerator base)
 ;;   claimed_count:uint32
 ;;   claimed_score:uint128     (running sum of claimed scores; bounds the
 ;;                              aggregate recorded amount to <= pool even if
 ;;                              total_score is understated)
+;;   immediate_bps:uint16      (maturation snapshot, frozen at deploy)
+;;   stream_epochs:uint16
+;;   mat_epoch_seconds:uint32
 ;;   ^[score_root:uint256 commitment_ref:uint256]
 ;;   ^claims  (udict: identity uint256 ->
-;;             amount:Coins claimed_at:uint64 forfeited:uint1 forfeit_at:uint64)
+;;             amount:Coins claimed_at:uint64 forfeited:uint1 forfeit_at:uint64
+;;             paid:Coins)
 ;;
 ;; Internal messages:
 ;;   claim#41504401 query_id:uint64 identity:uint256 score:uint128
 ;;                  proof:^ProofChain = InternalMsgBody;
+;;   payout#41504403 query_id:uint64 identity:uint256 = InternalMsgBody;
 ;;   forfeit#41504402 query_id:uint64 identity:uint256 = InternalMsgBody;
 ;;
 ;; ProofChain cell (canonical): a node is exactly sibling:uint256
@@ -49,6 +64,7 @@
 
 const int op::claim = 0x41504401;
 const int op::forfeit = 0x41504402;
+const int op::payout = 0x41504403;
 
 const int err::invalid_total_score = 2200;
 const int err::already_claimed = 2201;
@@ -62,19 +78,17 @@ const int err::score_exceeds_total = 2208;
 const int err::zero_score = 2209;
 const int err::insufficient_value = 2210;
 const int err::malformed_proof = 2211;
+const int err::nothing_to_pay = 2212;
 
-;; Maturation (methodology v0 draft): 25% immediate, the remaining 75%
-;; streamed linearly over 8 epochs of 65,536 seconds each from claim time.
-const int mat::immediate_bps = 2500;
-const int mat::stream_epochs = 8;
-const int mat::epoch_seconds = 65536;
+;; The distributor layout version this code understands.
+const int distributor_version = 1;
 
 ;; Bounds the proof walk: 2^60 members is far beyond any real epoch and
 ;; keeps gas bounded against a hostile deep proof chain.
 const int max_proof_depth = 60;
 
-;; A claim must carry at least this much value so a permissionless claim funds
-;; its own gas and a share of the dict's ongoing storage rent rather than
+;; A claim/payout must carry at least this much value so a permissionless poke
+;; funds its own gas and a share of the dict's ongoing storage rent rather than
 ;; draining the contract. v0 draft constant; phase C moves it to governance.
 const int min_claim_value = 50000000;  ;; 0.05 TOS
 
@@ -94,56 +108,108 @@ int node_hash(int left, int right) inline {
   .end_cell().begin_parse());
 }
 
-;; Matured amount of a claim at `at_time`. A forfeited claim's maturation
-;; freezes at forfeit_at.
-int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, int at_time) inline {
+;; Matured amount of a claim at `at_time`, per the deploy-snapshot maturation
+;; parameters. A forfeited claim's maturation freezes at forfeit_at.
+int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, int at_time,
+                    int immediate_bps, int stream_epochs, int mat_epoch_seconds) inline {
   int eff = at_time;
   if (forfeited) {
     if (forfeit_at < eff) { eff = forfeit_at; }
   }
-  int immediate = muldiv(amount, mat::immediate_bps, 10000);
+  int immediate = muldiv(amount, immediate_bps, 10000);
   if (eff <= claimed_at) {
     return immediate;
   }
-  int elapsed = (eff - claimed_at) / mat::epoch_seconds;
-  if (elapsed > mat::stream_epochs) { elapsed = mat::stream_epochs; }
-  int streamed = muldiv(amount - immediate, elapsed, mat::stream_epochs);
+  int elapsed = (eff - claimed_at) / mat_epoch_seconds;
+  if (elapsed > stream_epochs) { elapsed = stream_epochs; }
+  int streamed = muldiv(amount - immediate, elapsed, stream_epochs);
   return immediate + streamed;
 }
 
-(slice, int, int, int, int, int, int, int, cell) load_state() inline {
+;; Pay `amount` to the committed identity on its workchain. mode 1: send exactly
+;; `amount`, fees from the contract balance, non-bounceable (a reward to an
+;; as-yet-uninitialized wallet must not bounce back). A non-positive amount is a
+;; no-op.
+() pay_identity(int workchain, int identity, int amount) impure inline {
+  if (amount <= 0) { return (); }
+  slice dest = begin_cell()
+    .store_uint(4, 3)              ;; addr_std$10, anycast:nothing
+    .store_int(workchain, 8)
+    .store_uint(identity, 256)
+  .end_cell().begin_parse();
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)           ;; non-bounceable internal message
+    .store_slice(dest)
+    .store_tomis(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+  .end_cell(), 1);
+}
+
+(int, slice, int, int, int, int, int, int, int, int, int, int, int, cell) load_state() inline {
   slice ds = get_data().begin_parse();
+  int version = ds~load_uint(16);
   slice op_addr = ds~load_msg_addr();
   int epoch = ds~load_uint(64);
+  int earner_workchain = ds~load_int(8);
   int total_score = ds~load_uint(128);
   int pool = ds~load_tomis();
   int claimed_count = ds~load_uint(32);
   int claimed_score = ds~load_uint(128);
+  int immediate_bps = ds~load_uint(16);
+  int stream_epochs = ds~load_uint(16);
+  int mat_epoch_seconds = ds~load_uint(32);
   slice roots = ds~load_ref().begin_parse();
   int score_root = roots~load_uint(256);
   int commitment_ref = roots~load_uint(256);
   roots.end_parse();
   cell claims = ds~load_dict();
   ds.end_parse();
-  return (op_addr, epoch, total_score, pool, claimed_count, claimed_score,
-    score_root, commitment_ref, claims);
+  return (version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+    commitment_ref, claims);
 }
 
-() save_state(slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-             int claimed_score, int score_root, int commitment_ref, cell claims) impure inline {
+() save_state(int version, slice op_addr, int epoch, int earner_workchain, int total_score,
+             int pool, int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
+             int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) impure inline {
   set_data(begin_cell()
+    .store_uint(version, 16)
     .store_slice(op_addr)
     .store_uint(epoch, 64)
+    .store_int(earner_workchain, 8)
     .store_uint(total_score, 128)
     .store_tomis(pool)
     .store_uint(claimed_count, 32)
     .store_uint(claimed_score, 128)
+    .store_uint(immediate_bps, 16)
+    .store_uint(stream_epochs, 16)
+    .store_uint(mat_epoch_seconds, 32)
     .store_ref(begin_cell()
       .store_uint(score_root, 256)
       .store_uint(commitment_ref, 256)
     .end_cell())
     .store_dict(claims)
   .end_cell());
+}
+
+;; Pack a claim record. `paid` is the cumulative amount already sent to the
+;; identity, so a payout only ever sends newly-matured value.
+builder pack_claim(int amount, int claimed_at, int forfeited, int forfeit_at, int paid) inline {
+  return begin_cell()
+    .store_tomis(amount)
+    .store_uint(claimed_at, 64)
+    .store_uint(forfeited, 1)
+    .store_uint(forfeit_at, 64)
+    .store_tomis(paid);
+}
+
+(int, int, int, int, int) unpack_claim(slice entry) inline {
+  int amount = entry~load_tomis();
+  int claimed_at = entry~load_uint(64);
+  int forfeited = entry~load_uint(1);
+  int forfeit_at = entry~load_uint(64);
+  int paid = entry~load_tomis();
+  return (amount, claimed_at, forfeited, forfeit_at, paid);
 }
 
 ;; Recompute the root from a leaf and a canonical proof chain. Each node is
@@ -192,13 +258,19 @@ int fold_proof(int leaf, cell proof) inline_ref {
   int flags = full_msg~load_uint(4);
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
-  if (in_msg.slice_empty?()) { return (); }
+  if (in_msg.slice_empty?()) {
+    ;; Empty body: accepted as a no-op. This covers the deploy message and the
+    ;; settlement's pool-forwarding message (plain value with no body); the
+    ;; forwarded value simply funds this instance's payout balance.
+    return ();
+  }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
 
-  (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-   int claimed_score, int score_root, int commitment_ref, cell claims) = load_state();
+  (int version, slice op_addr, int epoch, int earner_workchain, int total_score, int pool,
+   int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
+   int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) = load_state();
 
   if (op == op::claim) {
     ;; A permissionless claim must fund its own gas and storage rent so it
@@ -231,95 +303,111 @@ int fold_proof(int leaf, cell proof) inline_ref {
     ;; matches the methodology's integer allocation; the dust from flooring
     ;; is simply never allocated. Maturation is measured from now().
     int amount = muldiv(pool, score, total_score);
-    claims~udict_set_builder(256, identity, begin_cell()
-      .store_tomis(amount)
-      .store_uint(now(), 64)
-      .store_uint(0, 1)
-      .store_uint(0, 64));
+    ;; The immediate tranche is matured at claim time; pay it to the identity
+    ;; now and record it as paid so the stream never double-pays.
+    int matured = compute_matured(amount, now(), 0, 0, now(),
+      immediate_bps, stream_epochs, mat_epoch_seconds);
+    claims~udict_set_builder(256, identity,
+      pack_claim(amount, now(), 0, 0, matured));
     claimed_count += 1;
     claimed_score += score;
-    save_state(op_addr, epoch, total_score, pool, claimed_count, claimed_score,
-      score_root, commitment_ref, claims);
+    save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      commitment_ref, claims);
+    pay_identity(earner_workchain, identity, matured);
+    return ();
+  }
+
+  if (op == op::payout) {
+    ;; Permissionless: pay the newly-matured delta of an already-claimed
+    ;; identity to that identity's address. Must fund its own gas.
+    throw_unless(err::insufficient_value, msg_value >= min_claim_value);
+    int identity = in_msg~load_uint(256);
+    in_msg.end_parse();
+    (slice entry, int found) = claims.udict_get?(256, identity);
+    throw_unless(err::not_claimed, found);
+    (int amount, int claimed_at, int forfeited, int forfeit_at, int paid) = unpack_claim(entry);
+    int matured = compute_matured(amount, claimed_at, forfeited, forfeit_at, now(),
+      immediate_bps, stream_epochs, mat_epoch_seconds);
+    int delta = matured - paid;
+    throw_unless(err::nothing_to_pay, delta > 0);
+    claims~udict_set_builder(256, identity,
+      pack_claim(amount, claimed_at, forfeited, forfeit_at, paid + delta));
+    save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      commitment_ref, claims);
+    pay_identity(earner_workchain, identity, delta);
     return ();
   }
 
   if (op == op::forfeit) {
     ;; Operator-only: void the unmatured remainder of a claim (registry-bond
     ;; fraud slashing). Maturation freezes at forfeit time; a claim may be
-    ;; forfeited once.
+    ;; forfeited once. Already-paid value stays with the identity; the frozen
+    ;; unmatured remainder is never sent.
     throw_unless(err::not_operator, equal_slice_bits(sender, op_addr));
     int identity = in_msg~load_uint(256);
     in_msg.end_parse();
     (slice entry, int found) = claims.udict_get?(256, identity);
     throw_unless(err::not_claimed, found);
-    int amount = entry~load_tomis();
-    int claimed_at = entry~load_uint(64);
-    int forfeited = entry~load_uint(1);
+    (int amount, int claimed_at, int forfeited, int forfeit_at, int paid) = unpack_claim(entry);
     throw_if(err::already_forfeited, forfeited);
-    claims~udict_set_builder(256, identity, begin_cell()
-      .store_tomis(amount)
-      .store_uint(claimed_at, 64)
-      .store_uint(1, 1)
-      .store_uint(now(), 64));
-    save_state(op_addr, epoch, total_score, pool, claimed_count, claimed_score,
-      score_root, commitment_ref, claims);
+    claims~udict_set_builder(256, identity,
+      pack_claim(amount, claimed_at, 1, now(), paid));
+    save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      commitment_ref, claims);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, int, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
-  (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
-   int claimed_score, int score_root, int commitment_ref, cell claims) = load_state();
+(int, slice, int, int, int, int, int, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
+  (int version, slice op_addr, int epoch, int earner_workchain, int total_score, int pool,
+   int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
+   int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) = load_state();
   claims~impure_touch();
-  return (op_addr, epoch, total_score, pool, claimed_count, claimed_score,
-    score_root, commitment_ref);
+  return (version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root, commitment_ref);
 }
 
-;; (found, amount, claimed_at, forfeited, forfeit_at) for `identity`.
-(int, int, int, int, int) get_claim(int identity) method_id {
-  (_, _, _, _, _, _, _, _, cell claims) = load_state();
+;; (found, amount, claimed_at, forfeited, forfeit_at, paid) for `identity`.
+(int, int, int, int, int, int) get_claim(int identity) method_id {
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
-    return (0, 0, 0, 0, 0);
+    return (0, 0, 0, 0, 0, 0);
   }
-  int amount = entry~load_tomis();
-  int claimed_at = entry~load_uint(64);
-  int forfeited = entry~load_uint(1);
-  int forfeit_at = entry~load_uint(64);
-  return (1, amount, claimed_at, forfeited, forfeit_at);
+  (int amount, int claimed_at, int forfeited, int forfeit_at, int paid) = unpack_claim(entry);
+  return (1, amount, claimed_at, forfeited, forfeit_at, paid);
 }
 
 ;; (found, matured) for `identity` at a caller-supplied `at_time`. This is for
 ;; off-chain simulation/inspection of the maturation curve; a value-bearing
-;; consumer (the phase C native path) must use `get_matured_now`, never a
-;; caller-controlled time.
+;; consumer must use `get_matured_now`, never a caller-controlled time.
 (int, int) get_matured(int identity, int at_time) method_id {
-  (_, _, _, _, _, _, _, _, cell claims) = load_state();
+  (_, _, _, _, _, _, _, _, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
+   _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);
   }
-  int amount = entry~load_tomis();
-  int claimed_at = entry~load_uint(64);
-  int forfeited = entry~load_uint(1);
-  int forfeit_at = entry~load_uint(64);
-  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, at_time));
+  (int amount, int claimed_at, int forfeited, int forfeit_at, _) = unpack_claim(entry);
+  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, at_time,
+    immediate_bps, stream_epochs, mat_epoch_seconds));
 }
 
-;; (found, matured) for `identity` at chain time. This is the canonical getter
-;; the native minting path reads: the maturation time is `now()` and cannot be
-;; influenced by the caller.
+;; (found, matured) for `identity` at chain time. The maturation time is `now()`
+;; and cannot be influenced by the caller.
 (int, int) get_matured_now(int identity) method_id {
-  (_, _, _, _, _, _, _, _, cell claims) = load_state();
+  (_, _, _, _, _, _, _, _, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
+   _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);
   }
-  int amount = entry~load_tomis();
-  int claimed_at = entry~load_uint(64);
-  int forfeited = entry~load_uint(1);
-  int forfeit_at = entry~load_uint(64);
-  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, now()));
+  (int amount, int claimed_at, int forfeited, int forfeit_at, _) = unpack_claim(entry);
+  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, now(),
+    immediate_bps, stream_epochs, mat_epoch_seconds));
 }

@@ -1855,13 +1855,20 @@ mod tests {
         let init = AipowDistributorInit {
             operator: operator.address().clone(),
             epoch: 42,
+            // Pay earners on the same (masterchain) workchain the distributor is
+            // deployed on so the immediate-tranche payment is delivered in the
+            // in-memory sandbox, which does not route cross-workchain messages.
+            earner_workchain: -1,
             total_score: 1_000_000,
             pool: 10 * tos,
+            maturation: contracts::AipowMaturation::methodology_v0(),
             score_root: root,
             commitment_ref: [0x99; 32],
         };
         let distributor = AipowDistributorContract::calculate_address(-1, &init).expect("address");
-        let deploy = MessageBuilder::internal(operator.address(), &distributor, 2 * tos)
+        // Fund with the pool plus a reserve: a claim now pays the immediate
+        // tranche out of the instance balance.
+        let deploy = MessageBuilder::internal(operator.address(), &distributor, 13 * tos)
             .bounce(false)
             .state_init(AipowDistributorContract::build_state_init(&init).expect("state init"))
             .body(chain_block::Cell::default())

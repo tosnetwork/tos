@@ -19,7 +19,7 @@ use common::app_config::AipowDistributorConfig;
 use contracts::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
 use contracts::{
     AipowCommitmentContract, AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
-    AIPOW_COMMITMENT_STATUS_FINAL,
+    AipowMaturation, AIPOW_COMMITMENT_STATUS_FINAL,
 };
 use std::path::Path;
 
@@ -219,8 +219,13 @@ impl AipowDistDeployCmd {
         let init = AipowDistributorInit {
             operator: operator.clone(),
             epoch: self.epoch,
+            // Scored identities are paid on the basechain where agent wallets
+            // live; the maturation curve uses the methodology v0 snapshot. Phase
+            // C surfaces both as governance/CLI parameters.
+            earner_workchain: 0,
             total_score: total,
             pool: pool_nanotos,
+            maturation: AipowMaturation::methodology_v0(),
             score_root: root,
             commitment_ref,
         };
