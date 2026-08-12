@@ -182,7 +182,7 @@ async def wait_sidecar(socket_path: Path, timeout: float = 60) -> bool:
     while time.time() < deadline:
         try:
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.settimeout(10)
+            client.settimeout(35)
             client.connect(str(socket_path))
             client.sendall(b"GET /healthz HTTP/1.1\r\nHost: unix\r\nConnection: close\r\n\r\n")
             response = b""
