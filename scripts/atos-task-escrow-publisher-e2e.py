@@ -111,7 +111,7 @@ def write_tosctl_config() -> None:
                 "wallets": {},
                 "pools": {},
                 "bindings": {},
-                "chain_rpc": {"urls": [f"http://{RPC}/"]},
+                "chain_rpc": {"urls": [RPC_URL]},
                 "http": {},
                 "master_wallet": None,
                 "tick_interval": 40,
@@ -177,10 +177,12 @@ async def wait_rpc(timeout: float = 180) -> bool:
 
 async def wait_sidecar(socket_path: Path, timeout: float = 60) -> bool:
     deadline = time.time() + timeout
+    last_response = b""
+    last_error = ""
     while time.time() < deadline:
         try:
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.settimeout(2)
+            client.settimeout(10)
             client.connect(str(socket_path))
             client.sendall(b"GET /healthz HTTP/1.1\r\nHost: unix\r\nConnection: close\r\n\r\n")
             response = b""
@@ -190,11 +192,16 @@ async def wait_sidecar(socket_path: Path, timeout: float = 60) -> bool:
                     break
                 response += chunk
             client.close()
-            if b" 200 " in response and b'"status":"ready"' in response:
+            last_response = response
+            if response.startswith(b"HTTP/1.1 200") and b'"status":"ready"' in response:
                 return True
-        except Exception:
-            pass
+        except Exception as error:
+            last_error = repr(error)
         await asyncio.sleep(1)
+    if last_response:
+        print("publisher health last response:", last_response.decode(errors="replace"))
+    elif last_error:
+        print("publisher health last error:", last_error)
     return False
 
 
@@ -277,11 +284,16 @@ async def run_checks(faucet) -> None:
     code_hash = "tvm-cell-sha256:" + state["code_hash"]
     check("TaskEscrow code hash derived", len(state["code_hash"]) == 64, code_hash)
 
+    master = rpc_call("getMasterchainInfo")["result"]
+    genesis_root_hash = master["init"]["root_hash"]
+    genesis_file_hash = master["init"]["file_hash"]
+
     runtime_dir = WORKDIR / "run"
     state_dir = WORKDIR / "publisher-state"
     runtime_dir.mkdir(mode=0o700)
     state_dir.mkdir(mode=0o700)
     socket_path = runtime_dir / "task-escrow-publisher.sock"
+    journal_identity = "atos-task-escrow-localnet-e2e-v1"
     publisher_config = WORKDIR / "publisher.json"
     publisher_config.write_text(
         json.dumps(
@@ -290,12 +302,15 @@ async def run_checks(faucet) -> None:
                 "network": "tos-localnet",
                 "socketPath": str(socket_path),
                 "statePath": str(state_dir / "state.db"),
+                "journalIdentity": journal_identity,
                 "backend": {
                     "network": "tos-localnet",
                     "tosctlBinary": str(TOSCTL),
                     "tosctlConfig": str(CONFIG),
                     "vaultUrl": f"file://{VAULT}?master_key={MASTER_KEY}",
                     "rpcUrl": RPC_URL,
+                    "genesisRootHash": genesis_root_hash,
+                    "genesisFileHash": genesis_file_hash,
                     "wallets": {
                         creator: "creator",
                         provider: "provider",
@@ -310,6 +325,18 @@ async def run_checks(faucet) -> None:
                     "pollIntervalMillis": 500,
                     "transactionLookback": 32,
                 },
+                "policy": {
+                    "allowedCreators": [creator],
+                    "allowedAgents": [provider],
+                    "allowedVerifiers": [verifier],
+                    "allowedPolicyHashes": [
+                        "sha256:" + "11" * 32,
+                        "sha256:" + "33" * 32,
+                    ],
+                    "allowedCodeHashes": [code_hash],
+                    "maxBudgetNanoTOS": BUDGET,
+                    "maxFundingNanoTOS": BUDGET + OVERHEAD,
+                },
             },
             indent=2,
         )
@@ -321,6 +348,12 @@ async def run_checks(faucet) -> None:
     sidecar_stderr = sidecar_stderr_path.open("wb")
     environment = dict(os.environ)
     environment["TOS_TASK_ESCROW_PUBLISHER_CONFIG"] = str(publisher_config)
+    enrollment_output = await command(
+        str(sidecar_binary), "init-journal", env=environment, timeout=120
+    )
+    enrollment = json.loads(enrollment_output.splitlines()[-1])
+    journal_binding = enrollment.get("binding", "")
+    check("publisher journal enrolled", bool(journal_binding), enrollment_output)
     sidecar_process = await asyncio.create_subprocess_exec(
         str(sidecar_binary),
         env=environment,
@@ -346,6 +379,8 @@ async def run_checks(faucet) -> None:
                     "network": "tos-localnet",
                     "rpcUrl": RPC_URL,
                     "publisherSocket": str(socket_path),
+                    "publisherJournalIdentity": journal_identity,
+                    "publisherJournalBinding": journal_binding,
                     "allowedCodeHash": code_hash,
                     "creator": creator,
                     "agent": provider,
