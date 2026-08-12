@@ -50,3 +50,6 @@ build/
 
 # Claude Code agent workspaces (transient per-session state)
 .claude/
+
+# Throwaway per-run workdirs created by the scripts/*-e2e.py localnet rehearsals
+test/integration/.*-e2e/
