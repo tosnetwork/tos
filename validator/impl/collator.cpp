@@ -5238,12 +5238,16 @@ bool Collator::create_mc_state_extra() {
     // validators would reject. Dormant while capAipow is off.
     {
       auto new_config = block::Config::unpack_config(cfg_smc_config, config_addr, block::ConfigInfo::needCapabilities);
-      if (new_config.is_ok()) {
-        auto cfg = new_config.move_as_ok();
-        if (cfg->aipow_enabled() && cfg->check_aipow_config().is_error()) {
-          return fatal_error(
-              "refusing to install a configuration that enables capAipow without a complete AIPoW parameter set");
-        }
+      // Symmetric with validate-query: an unpack failure is fatal here too, so
+      // the collator never installs a configuration the validator would reject.
+      if (new_config.is_error()) {
+        return fatal_error("cannot unpack the new configuration to check AIPoW activation: "s +
+                           new_config.move_as_error().message().str());
+      }
+      auto cfg = new_config.move_as_ok();
+      if (cfg->aipow_enabled() && cfg->check_aipow_config().is_error()) {
+        return fatal_error(
+            "refusing to install a configuration that enables capAipow without a complete AIPoW parameter set");
       }
     }
     vm::CellBuilder cb;
