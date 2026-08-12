@@ -20,7 +20,9 @@ capabilities --format json` exposes the versioned
 `tosctl.task-escrow-cli.v1` contract. It declares the exact build-state,
 create and send commands, flags and lifecycle operations used by the
 publisher. Enrollment also executes one side-effect-free `build-state` probe;
-it never invokes create or send as a readiness test.
+the response includes the exact `budget_nanotos` value and every immutable
+StateInit field is checked with the same canonical validator used by deploy.
+Enrollment never invokes create or send as a readiness test.
 
 The atomic flags conflict with their decimal equivalents. This avoids
 rounding an escrow budget or payout through IEEE-754 before it reaches the
