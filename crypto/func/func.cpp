@@ -163,7 +163,14 @@ int generate_output(std::ostream& outs, std::ostream& errs) {
   if (asm_preamble) {
     outs << "\"Asm.fif\" include\n";
   }
-  outs << "// automatically generated from " << generated_from << std::endl;
+  // generated_from accumulates one trailing separator space per source
+  // file; trim it so the emitted header line carries no trailing
+  // whitespace (tracked generated artifacts must pass `git diff --check`).
+  std::string generated_from_trimmed = generated_from;
+  while (!generated_from_trimmed.empty() && generated_from_trimmed.back() == ' ') {
+    generated_from_trimmed.pop_back();
+  }
+  outs << "// automatically generated from " << generated_from_trimmed << std::endl;
   if (program_envelope) {
     outs << "PROGRAM{\n";
   }

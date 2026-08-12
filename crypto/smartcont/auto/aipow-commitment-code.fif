@@ -1,5 +1,4 @@
-"Asm.fif" include
-// automatically generated from `crypto/smartcont/stdlib.fc` `crypto/smartcont/aipow-commitment-code.fc` 
+// automatically generated from `smartcont/stdlib.fc` `smartcont/aipow-commitment-code.fc`
 PROGRAM{
   DECLPROC send_value
   DECLPROC load_state
@@ -23,7 +22,7 @@ PROGRAM{
     SENDRAWMSG
   }>
   load_state PROCINLINE:<{
-    // 
+    //
     c4 PUSH	//  _1
     CTOS	//  ds
     LDMSGADDR	//  committer ds
@@ -91,14 +90,14 @@ PROGRAM{
     1 PUSHINT	//  msg_value in_msg full_msg flags _9=1
     AND	//  msg_value in_msg full_msg _10
     IFJMP:<{	//  msg_value in_msg full_msg
-      3 BLKDROP	// 
+      3 BLKDROP	//
     }>	//  msg_value in_msg full_msg
     LDMSGADDR	//  msg_value in_msg _112 _111
     DROP	//  msg_value in_msg sender
     OVER	//  msg_value in_msg sender in_msg
     SEMPTY	//  msg_value in_msg sender _14
     IFJMP:<{	//  msg_value in_msg sender
-      3 BLKDROP	// 
+      3 BLKDROP	//
     }>	//  msg_value in_msg sender
     SWAP	//  msg_value sender in_msg
     32 LDU	//  msg_value sender op in_msg
@@ -233,13 +232,12 @@ PROGRAM{
         send_value INLINECALLDICT
       }>
     }>	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash
-    13 BLKDROP	// 
+    13 BLKDROP	//
     2107 PUSHINT	//  _107=2107
     THROWANY
   }>
   get_aipow_commitment_data PROC:<{
-    // 
+    //
     load_state INLINECALLDICT	//  _1 _2 _3 _4 _5 _6 _7 _8 _9 _10 _11
   }>
 }END>c
-2 boc+>B "/tmp/claude-1000/-home-tomi/269eeb95-a311-4f40-8d3c-c7ab0fbb5462/scratchpad/aipow.boc" B>file

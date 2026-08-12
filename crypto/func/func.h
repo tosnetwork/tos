@@ -1147,7 +1147,9 @@ struct AsmOp {
   }
   static AsmOp Const(int arg, std::string push_op, td::RefInt256 origin = {});
   static AsmOp Comment(std::string comment) {
-    return AsmOp(a_none, std::string{"// "} + comment);
+    // An empty comment must emit `//` alone, not `// ` -- tracked
+    // generated artifacts must pass `git diff --check`.
+    return AsmOp(a_none, comment.empty() ? std::string{"//"} : std::string{"// "} + comment);
   }
   static AsmOp Custom(std::string custom_op) {
     return AsmOp(a_custom, 255, 255, custom_op);
