@@ -163,16 +163,26 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Destination address")]
     to: String,
 
-    #[arg(long, conflicts_with = "amount_nanotos", help = "Amount in TOS (e.g. 1.5)")]
+    #[arg(
+        long,
+        conflicts_with = "amount_nanotos",
+        required_unless_present = "amount_nanotos",
+        help = "Amount in TOS (e.g. 1.5)"
+    )]
     amount: Option<f64>,
 
-    #[arg(long, conflicts_with = "amount", help = "Exact amount in nanoTOS")]
+    #[arg(
+        long,
+        conflicts_with = "amount",
+        required_unless_present = "amount",
+        help = "Exact amount in nanoTOS for automation"
+    )]
     amount_nanotos: Option<u64>,
 
     #[arg(long, help = "Optional message/comment")]
     message: Option<String>,
 
-    #[arg(long, help = "Skip the interactive transfer confirmation")]
+    #[arg(long, help = "Confirm the transfer non-interactively")]
     yes: bool,
     #[arg(long, requires = "config_format")]
     config_fd: Option<i32>,
@@ -836,15 +846,16 @@ impl WalletSendCmd {
         let amount_nanotos = match (self.amount, self.amount_nanotos) {
             (Some(amount), None) => tos_to_nanotos(amount),
             (None, Some(amount)) if amount > 0 => amount,
-            _ => anyhow::bail!("exactly one of --amount or --amount-nanotos is required"),
+            _ => anyhow::bail!("Exactly one positive amount is required"),
         };
+        let amount_tos = amount_nanotos as f64 / 1_000_000_000.0;
 
         if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
             .contains(&amount_nanotos)
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
-                amount_nanotos as f64 / 1_000_000_000.0,
+                amount_tos,
                 display_tos(from_wallet_info.balance)
             );
         }
@@ -873,7 +884,7 @@ impl WalletSendCmd {
             self.from,
             from_wallet_address,
             dest_addr,
-            amount_nanotos as f64 / 1_000_000_000.0,
+            amount_tos,
             if let Some(msg) = &self.message {
                 format!("\n  Comment: {}", msg)
             } else {
