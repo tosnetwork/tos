@@ -32,6 +32,7 @@ pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod aipow_commitment;
+pub mod aipow_distributor;
 pub mod aipow_merkle;
 pub mod proof_attestation;
 pub mod provider;
@@ -68,6 +69,10 @@ pub use aipow_commitment::{
     AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
     AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AipowCommitmentContract,
     AipowCommitmentData, AipowCommitmentInit,
+};
+pub use aipow_distributor::{
+    AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
+    AIPOW_DISTRIBUTOR_CLAIM_OPCODE,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

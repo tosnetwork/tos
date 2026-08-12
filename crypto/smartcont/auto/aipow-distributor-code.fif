@@ -1,0 +1,227 @@
+// automatically generated from `smartcont/stdlib.fc` `smartcont/aipow-distributor-code.fc`
+PROGRAM{
+  DECLPROC leaf_hash
+  DECLPROC node_hash
+  DECLPROC load_state
+  DECLPROC save_state
+  DECLPROC fold_proof
+  DECLPROC recv_internal
+  107809 DECLMETHOD get_aipow_distributor_data
+  81332 DECLMETHOD get_claim
+  leaf_hash PROCINLINE:<{
+    //  identity score
+    0 PUSHINT	//  identity score _2=0
+    NEWC	//  identity score _2=0 _3
+    8 STU	//  identity score _5
+    s1 s2 XCHG	//  score identity _5
+    256 STU	//  score _7
+    128 STU	//  _9
+    ENDC	//  _10
+    CTOS	//  _11
+    SHA256U	//  _12
+  }>
+  node_hash PROCINLINE:<{
+    //  left right
+    1 PUSHINT	//  left right _2=1
+    NEWC	//  left right _2=1 _3
+    8 STU	//  left right _5
+    s1 s2 XCHG	//  right left _5
+    256 STU	//  right _7
+    256 STU	//  _9
+    ENDC	//  _10
+    CTOS	//  _11
+    SHA256U	//  _12
+  }>
+  load_state PROCINLINE:<{
+    //
+    c4 PUSH	//  _1
+    CTOS	//  ds
+    LDMSGADDR	//  op_addr ds
+    64 LDU	//  op_addr epoch ds
+    128 LDU	//  op_addr epoch total_score ds
+    LDTOMIS	//  op_addr epoch total_score pool ds
+    32 LDU	//  op_addr epoch total_score pool claimed_count ds
+    LDREF	//  op_addr epoch total_score pool claimed_count _22 ds
+    SWAP	//  op_addr epoch total_score pool claimed_count ds _22
+    CTOS	//  op_addr epoch total_score pool claimed_count ds roots
+    256 LDU	//  op_addr epoch total_score pool claimed_count ds score_root roots
+    256 LDU	//  op_addr epoch total_score pool claimed_count ds score_root commitment_ref roots
+    ENDS
+    s0 s2 XCHG	//  op_addr epoch total_score pool claimed_count commitment_ref score_root ds
+    LDDICT	//  op_addr epoch total_score pool claimed_count commitment_ref score_root claims ds
+    ENDS
+    s1 s2 XCHG	//  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+  }>
+  save_state PROCINLINE:<{
+    //  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+    s0 s2 XCHG
+    NEWC	//  op_addr epoch total_score pool claimed_count claims commitment_ref score_root _8
+    256 STU	//  op_addr epoch total_score pool claimed_count claims commitment_ref _10
+    256 STU	//  op_addr epoch total_score pool claimed_count claims _12
+    ENDC	//  op_addr epoch total_score pool claimed_count claims _13
+    NEWC	//  op_addr epoch total_score pool claimed_count claims _13 _14
+    s0 s7 XCHG2	//  _13 epoch total_score pool claimed_count claims _14 op_addr
+    STSLICER	//  _13 epoch total_score pool claimed_count claims _15
+    s1 s5 XCHG	//  _13 claims total_score pool claimed_count epoch _15
+    64 STU	//  _13 claims total_score pool claimed_count _17
+    s1 s3 XCHG	//  _13 claims claimed_count pool total_score _17
+    128 STU	//  _13 claims claimed_count pool _19
+    SWAP	//  _13 claims claimed_count _19 pool
+    STTOMIS	//  _13 claims claimed_count _20
+    32 STU	//  _13 claims _22
+    s1 s2 XCHG	//  claims _13 _22
+    STREF	//  claims _23
+    STDICT	//  _24
+    ENDC	//  _25
+    c4 POP
+  }>
+  fold_proof PROCREF:<{
+    //  leaf proof
+    //  current proof
+    //  current cur_cell
+    0 PUSHINT	//  current cur_cell depth=0
+    DUP	//  current cur_cell depth=0 done=0
+    WHILE:<{
+      DUP	//  current cur_cell depth done done
+      0 EQINT	//  current cur_cell depth done _9
+    }>DO<{	//  current cur_cell depth done
+      2203 PUSHINT	//  current cur_cell depth done _10=2203
+      s2 PUSH	//  current cur_cell depth done _10=2203 depth
+      60 GTINT	//  current cur_cell depth done _10=2203 _12
+      THROWANYIF
+      s2 PUSH	//  current cur_cell depth done cur_cell
+      CTOS	//  current cur_cell depth done ps
+      DUP	//  current cur_cell depth done ps ps
+      SBITS	//  current cur_cell depth done ps _16
+      257 PUSHINT	//  current cur_cell depth done ps _16 _17=257
+      LESS	//  current cur_cell depth done ps _18
+      IF:<{	//  current cur_cell depth done ps
+        2DROP	//  current cur_cell depth
+        1 PUSHINT	//  current cur_cell depth done=1
+      }>ELSE<{	//  current cur_cell depth done ps
+        256 LDU	//  current cur_cell depth done sibling ps
+        1 LDU	//  current cur_cell depth done sibling is_left ps
+        SWAP	//  current cur_cell depth done sibling ps is_left
+        IF:<{	//  current cur_cell depth done sibling ps
+          s0 s5 XCHG	//  ps cur_cell depth done sibling current
+          node_hash INLINECALLDICT	//  ps cur_cell depth done current
+        }>ELSE<{	//  current cur_cell depth done sibling ps
+          s5 s5 XCHG2	//  ps cur_cell depth done current sibling
+          node_hash INLINECALLDICT	//  ps cur_cell depth done current
+        }>
+        s4 PUSH	//  ps cur_cell depth done current ps
+        SREFS	//  ps cur_cell depth done current _30
+        0 GTINT	//  ps cur_cell depth done current _32
+        IF:<{	//  ps cur_cell depth done current
+          s3 POP	//  ps current depth done
+          s0 s3 XCHG	//  done current depth ps
+          LDREF	//  done current depth _43 _42
+          DROP	//  done current depth cur_cell
+          SWAP	//  done current cur_cell depth
+          INC	//  done current cur_cell depth
+        }>ELSE<{	//  ps cur_cell depth done current
+          NIP
+          1 PUSHINT
+          s4 POP
+          -ROT	//  done current cur_cell depth
+        }>
+        3 ROLL	//  current cur_cell depth done
+      }>
+    }>	//  current cur_cell depth done
+    3 BLKDROP	//  current
+  }>
+  recv_internal PROC:<{
+    //  msg_value in_msg_full in_msg
+    s2 POP	//  in_msg in_msg_full
+    CTOS	//  in_msg full_msg
+    4 LDU	//  in_msg flags full_msg
+    SWAP
+    1 PUSHINT	//  in_msg full_msg flags _11=1
+    AND	//  in_msg full_msg _12
+    IFJMP:<{	//  in_msg full_msg
+      2DROP	//
+    }>	//  in_msg full_msg
+    LDMSGADDR	//  in_msg _85 _84
+    2DROP	//  in_msg
+    DUP	//  in_msg in_msg
+    SEMPTY	//  in_msg _18
+    IFJMP:<{	//  in_msg
+      DROP	//
+    }>	//  in_msg
+    32 LDU	//  op in_msg
+    64 LDU	//  op query_id in_msg
+    NIP	//  op in_msg
+    load_state INLINECALLDICT	//  op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+    s0 s9 XCHG
+    1095779329 PUSHINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref op _38=1095779329
+    EQUAL	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _39
+    IFJMP:<{	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
+      2200 PUSHINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200
+      s5 PUSH	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200 total_score
+      0 GTINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200 _42
+      THROWANYIFNOT
+      s0 s7 XCHG	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root in_msg
+      256 LDU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity in_msg
+      128 LDU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score in_msg
+      LDREF	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof in_msg
+      ENDS
+      s2 s10 PUSH2
+      8 PUSHPOW2	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof identity claims _58=256
+      DICTUGET
+      NULLSWAPIFNOT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof existing found
+      2201 PUSHINT
+      s2 POP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof _62=2201 found
+      THROWANYIF
+      s2 s1 PUSH2	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof identity score
+      leaf_hash INLINECALLDICT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof _65
+      SWAP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _65 proof
+      fold_proof INLINECALLDICT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score computed_root
+      2202 PUSHINT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score computed_root _67=2202
+      s1 s4 XCPU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _67=2202 computed_root score_root
+      EQUAL	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _67=2202 _68
+      THROWANYIFNOT
+      s4 s5 s(-1) PU2XC	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity pool score total_score
+      MULDIV	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity amount
+      NEWC	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity amount _73
+      SWAP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity _73 amount
+      STTOMIS	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity _74
+      s0 s1 s9 XCHG3
+      8 PUSHPOW2	//  score_root commitment_ref op_addr epoch total_score pool claimed_count _74 identity claims _75=256
+      DICTUSETB	//  score_root commitment_ref op_addr epoch total_score pool claimed_count claims
+      SWAP	//  score_root commitment_ref op_addr epoch total_score pool claims claimed_count
+      INC	//  score_root commitment_ref op_addr epoch total_score pool claims claimed_count
+      s5 s7 XCHG
+      s4 s6 XCHG
+      s3 s5 XCHG
+      s4 s1 s3 XCHG3
+      -ROT	//  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+      save_state INLINECALLDICT
+    }>	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
+    9 BLKDROP	//
+    2204 PUSHINT	//  _80=2204
+    THROWANY
+  }>
+  get_aipow_distributor_data PROC:<{
+    //
+    load_state INLINECALLDICT	//  op_addr epoch total_score pool claimed_count score_root commitment_ref _10
+    DROP	//  op_addr epoch total_score pool claimed_count score_root commitment_ref
+  }>
+  get_claim PROC:<{
+    //  identity
+    load_state INLINECALLDICT	//  identity _22 _23 _24 _25 _26 _27 _28 _29
+    7 1 BLKDROP2	//  identity claims
+    8 PUSHPOW2	//  identity claims _12=256
+    DICTUGET
+    NULLSWAPIFNOT	//  entry found
+    0 EQINT	//  entry _15
+    IFJMP:<{	//  entry
+      DROP	//
+      0 PUSHINT	//  _16=0
+      DUP	//  _16=0 _17=0
+    }>	//  entry
+    LDTOMIS	//  _33 _32
+    DROP	//  amount
+    1 PUSHINT	//  amount _21=1
+    SWAP	//  _21=1 amount
+  }>
+}END>c

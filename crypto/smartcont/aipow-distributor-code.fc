@@ -1,0 +1,190 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; AIPoW epoch reward distributor (dry-run / zero-emission slice).
+;;
+;; One instance per finalized epoch score root. The operator deploys it
+;; carrying the root, the epoch total score (the pro-rata denominator), the
+;; epoch pool amount, and a reference to the finalized score-commitment
+;; instance the root came from (for off-chain cross-checking). A beneficiary
+;; then claims permissionlessly by presenting its own (identity, score) and
+;; a merkle inclusion proof against the root; the contract recomputes the
+;; root exactly as the AIPoW methodology defines (sha256 leaf/node hashing),
+;; and on a match records a pro-rata amount for that identity, once.
+;;
+;; This slice is deliberately zero-emission: it records claims but neither
+;; holds nor moves reward funds. Reward creation is the separate native
+;; minting path (phase C); maturation streaming and bond-slash forfeiture
+;; are later slices. What is proven here is the trust-minimized core: an
+;; identity is in a finalized root, has not already claimed, and is owed a
+;; deterministic pro-rata amount.
+;;
+;; Persistent data layout:
+;;   operator:MsgAddress
+;;   epoch:uint64
+;;   total_score:uint128       (pro-rata denominator; must be > 0)
+;;   pool:Coins                (nominal epoch pool this slice does not move)
+;;   claimed_count:uint32
+;;   ^[score_root:uint256 commitment_ref:uint256]
+;;   ^claims                    (udict: identity uint256 -> claimed Coins)
+;;
+;; Internal messages:
+;;   claim#41504401 query_id:uint64 identity:uint256 score:uint128
+;;                  proof:^ProofChain = InternalMsgBody;
+;;
+;; ProofChain cell: sibling:uint256 sibling_is_left:uint1 [next:^ProofChain]?
+;;   An empty proof cell (the single-member tree, leaf == root) has fewer
+;;   than 257 data bits and terminates the walk immediately.
+
+const int op::claim = 0x41504401;
+
+const int err::invalid_total_score = 2200;
+const int err::already_claimed = 2201;
+const int err::bad_proof = 2202;
+const int err::proof_too_deep = 2203;
+const int err::unknown_op = 2204;
+
+;; Bounds the proof walk: 2^60 members is far beyond any real epoch and
+;; keeps gas bounded against a hostile deep proof chain.
+const int max_proof_depth = 60;
+
+int leaf_hash(int identity, int score) inline {
+  return string_hash(begin_cell()
+    .store_uint(0, 8)
+    .store_uint(identity, 256)
+    .store_uint(score, 128)
+  .end_cell().begin_parse());
+}
+
+int node_hash(int left, int right) inline {
+  return string_hash(begin_cell()
+    .store_uint(1, 8)
+    .store_uint(left, 256)
+    .store_uint(right, 256)
+  .end_cell().begin_parse());
+}
+
+(slice, int, int, int, int, int, int, cell) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice op_addr = ds~load_msg_addr();
+  int epoch = ds~load_uint(64);
+  int total_score = ds~load_uint(128);
+  int pool = ds~load_tomis();
+  int claimed_count = ds~load_uint(32);
+  slice roots = ds~load_ref().begin_parse();
+  int score_root = roots~load_uint(256);
+  int commitment_ref = roots~load_uint(256);
+  roots.end_parse();
+  cell claims = ds~load_dict();
+  ds.end_parse();
+  return (op_addr, epoch, total_score, pool, claimed_count, score_root, commitment_ref, claims);
+}
+
+() save_state(slice op_addr, int epoch, int total_score, int pool, int claimed_count,
+             int score_root, int commitment_ref, cell claims) impure inline {
+  set_data(begin_cell()
+    .store_slice(op_addr)
+    .store_uint(epoch, 64)
+    .store_uint(total_score, 128)
+    .store_tomis(pool)
+    .store_uint(claimed_count, 32)
+    .store_ref(begin_cell()
+      .store_uint(score_root, 256)
+      .store_uint(commitment_ref, 256)
+    .end_cell())
+    .store_dict(claims)
+  .end_cell());
+}
+
+;; Recompute the root from a leaf and a proof chain. Bounded by
+;; max_proof_depth; throws proof_too_deep past it.
+int fold_proof(int leaf, cell proof) inline_ref {
+  int current = leaf;
+  cell cur_cell = proof;
+  int depth = 0;
+  int done = 0;
+  while (done == 0) {
+    throw_if(err::proof_too_deep, depth > max_proof_depth);
+    slice ps = cur_cell.begin_parse();
+    if (ps.slice_bits() < 257) {
+      done = 1;
+    } else {
+      int sibling = ps~load_uint(256);
+      int is_left = ps~load_uint(1);
+      if (is_left) {
+        current = node_hash(sibling, current);
+      } else {
+        current = node_hash(current, sibling);
+      }
+      if (ps.slice_refs() > 0) {
+        cur_cell = ps~load_ref();
+        depth += 1;
+      } else {
+        done = 1;
+      }
+    }
+  }
+  return current;
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  msg_value~impure_touch();
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  slice sender = full_msg~load_msg_addr();
+  sender~impure_touch();
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
+   int score_root, int commitment_ref, cell claims) = load_state();
+
+  if (op == op::claim) {
+    throw_unless(err::invalid_total_score, total_score > 0);
+    int identity = in_msg~load_uint(256);
+    int score = in_msg~load_uint(128);
+    cell proof = in_msg~load_ref();
+    in_msg.end_parse();
+
+    ;; Permissionless and idempotent: an identity may claim once. A repeat
+    ;; is rejected rather than silently overwriting the recorded amount.
+    (slice existing, int found) = claims.udict_get?(256, identity);
+    existing~impure_touch();
+    throw_if(err::already_claimed, found);
+
+    int computed_root = fold_proof(leaf_hash(identity, score), proof);
+    throw_unless(err::bad_proof, computed_root == score_root);
+
+    ;; Deterministic pro-rata share of the nominal pool. Floor division
+    ;; matches the methodology's integer allocation; the dust from flooring
+    ;; is simply never allocated.
+    int amount = muldiv(pool, score, total_score);
+    claims~udict_set_builder(256, identity, begin_cell().store_tomis(amount));
+    claimed_count += 1;
+    save_state(op_addr, epoch, total_score, pool, claimed_count, score_root,
+      commitment_ref, claims);
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
+  (slice op_addr, int epoch, int total_score, int pool, int claimed_count,
+   int score_root, int commitment_ref, cell claims) = load_state();
+  claims~impure_touch();
+  return (op_addr, epoch, total_score, pool, claimed_count, score_root, commitment_ref);
+}
+
+;; Returns (found, amount): whether `identity` has claimed and the recorded
+;; pro-rata amount.
+(int, int) get_claim(int identity) method_id {
+  (_, _, _, _, _, _, _, cell claims) = load_state();
+  (slice entry, int found) = claims.udict_get?(256, identity);
+  if (found == 0) {
+    return (0, 0);
+  }
+  int amount = entry~load_tomis();
+  return (1, amount);
+}
