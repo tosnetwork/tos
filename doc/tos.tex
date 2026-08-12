@@ -983,8 +983,9 @@ the protocol's complaint and penalty rules.
 The initial distribution is designed to avoid a large insider premine. Approximately
 500 million TOS is created through ordinary validator block rewards; the remaining
 community-agent allocation (approximately 4.5 billion TOS of the five-billion total-supply
-policy) is created through a separate protocol reward mechanism, is not funded at genesis
-and is never held by a treasury wallet. The current production policy is:
+policy) is created through Proof of Intelligent Work (PoIW), a separate protocol reward
+mechanism described below, is not funded at genesis and is never held by a treasury
+wallet. The current production policy is:
 
 \begin{longtable}{p{0.48\textwidth}p{0.38\textwidth}}
 \toprule
@@ -995,7 +996,7 @@ Smallest unit & 1 \nanotos \\
 Unit conversion & 1 TOS = 1,000,000,000 \nanotos \\
 Approximate total network supply target & 5,000,000,000 TOS \\
 Approximate validator-reward creation target & 500,000,000 TOS \\
-Community-agent allocation (separate mechanism) & 4,500,000,000 TOS \\
+Community-agent allocation (Proof of Intelligent Work) & 4,500,000,000 TOS \\
 Provisional main-wallet genesis balance & 100,000 TOS \\
 Elector operating reserve & 500 TOS \\
 Configuration-contract operating reserve & 500 TOS \\
@@ -1015,9 +1016,9 @@ years are policy calibration targets, not an exact consensus cap, a guaranteed c
 date or a statement about future market value. The actual total and completion date depend
 on finalized block production, shard behavior, validator availability, configuration
 activation and the eventual governance transaction that stops native block creation. The
-community-agent allocation is created only through its own separately specified protocol
-reward mechanism with its own launch gates; it is not distributed through ConfigParam 14 or
-the Elector.
+community-agent allocation is created only through Proof of Intelligent Work, described in
+its own subsection below, with its own launch gates; it is not distributed through
+ConfigParam 14 or the Elector.
 
 \subsection{Genesis Bootstrap and Allocation}
 
@@ -1116,6 +1117,63 @@ activation delay and must set both masterchain and basechain creation values to 
 the 500-million validator-creation policy target. Transaction and service fees continue
 after native creation stops. Any later proposal to restart native creation is a separate monetary-policy decision
 requiring prominent public review.
+
+\subsection{Proof of Intelligent Work: The Community Distribution}
+
+The community-agent allocation of approximately 4.5 billion TOS is created through
+\textbf{Proof of Intelligent Work (PoIW)}. PoIW is a direct extension of the proof-of-work
+issuance model that Bitcoin established: permissionless participation, protocol-automatic
+creation, no issuer, no sale, and no reward for merely holding tokens --- with the hash
+puzzle replaced by verified useful work. Where a Bitcoin miner proves expended computation
+on an arbitrary puzzle, a PoIW participant proves completed, evidence-graded, on-chain
+settled intelligent work: model inference, storage provision, and verification services
+performed for the network's agent-service layer. One honest difference is always stated
+plainly: Bitcoin's proof of work secures consensus itself, while TOS consensus is secured
+by staked validators; PoIW secures and provisions the service-capacity layer --- the real
+compute, storage and verification supply without which an agent network is an empty chain.
+Both are network-essential work compensated by protocol issuance; neither is an investment
+contract.
+
+PoIW rewards are scored per epoch from settled work only:
+
+\begin{itemize}
+  \item \textbf{Evidence-graded scoring.} Every settled work unit carries an evidence
+        level. Self-declared claims earn exactly zero; real consumer settlements,
+        benchmarked challenges, audited, attested and independently replicated work earn
+        progressively higher multipliers. Raising verifiability is the only way to raise
+        earnings.
+  \item \textbf{Rate-card valuation.} Work is valued by protocol-published rate cards per
+        capability class, capped by the price an arm's-length consumer actually settled ---
+        so self-dealing cannot mint score.
+  \item \textbf{Concentration limits.} Per-control-domain shares of each epoch pool decay
+        beyond a published threshold and are hard-capped, under the same
+        common-control disclosure rules as validator independence.
+\end{itemize}
+
+Emission is coupled to demand, not to the calendar. Each epoch pool is the smaller of a
+published schedule ceiling and a multiple of trailing organic settled value --- real,
+arm's-length, settled demand, excluding challenge tasks and related-payer settlements.
+An empty network emits only a small published cold-start floor; a growing network releases
+faster; the un-emitted difference is never created and never back-filled. Release speed is
+therefore a measurement of real network growth, not a promise, and extraction without
+contribution is structurally unprofitable. Bounded, randomized challenge tasks let honest
+capacity earn before organic volume exists, capped both as a pool share and as a multiple
+of organic demand. Each epoch reward matures over subsequent epochs, with the unmatured
+portion forfeited on proven fraud; maturation is a payment schedule for completed work,
+never a yield product.
+
+Like validator rewards, PoIW tokens are created by the protocol at distribution time and
+credited directly to the earning account. No treasury wallet ever holds the allocation, no
+company operates a claim portal, and no entity can redirect the distribution. Scoring runs
+in open-source, independently reimplemented off-chain scorers whose epoch score roots are
+committed on-chain and exposed to a bonded public challenge window before any distribution
+occurs.
+
+PoIW is a specified design with published launch gates, including security review of the
+underlying settlement contracts, independent scorer reproduction, adversarial economic
+testing, and counsel review of the then-current United States and European Union
+regulatory texts. None of the community allocation is created before those gates pass, and
+none of this section promises a completion date, a reward rate or any token value.
 
 \subsection{Broad Distribution and Concentration Controls}
 
