@@ -114,12 +114,11 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) {
-    ;; Empty body = the protocol's epoch-settlement mint. Not handled in this
-    ;; checkpoint; the settle path (receive, advance the ledger, forward the
-    ;; pool to the derived distributor) is added with the distributor layout in
-    ;; the next checkpoint. Until then, and while dark, an empty-body message is
-    ;; rejected rather than silently held.
-    throw(err::unknown_op);
+    ;; Empty body: accepted as a no-op (this also covers the deploy message).
+    ;; In the next checkpoint an empty body from the zero (special-mint) source
+    ;; becomes the settle path -- receive the pool, advance the ledger, and
+    ;; forward to the derived distributor. While dark, no such mint arrives.
+    return ();
   }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
@@ -188,7 +187,10 @@ cell pack_registration(slice commitment_addr, int score_root, int total_score,
   (_, _, _, _, _, _, _, cell registrations) = load_state();
   (cell rec_cell, int found) = registrations.udict_get_ref?(32, epoch);
   if (found == 0) {
-    return (0, null(), 0, 0, 0, 0);
+    ;; Not found: return an empty slice for the address slot (never read by the
+    ;; caller once found == 0) rather than a null, which some stack consumers
+    ;; cannot represent.
+    return (0, begin_cell().end_cell().begin_parse(), 0, 0, 0, 0);
   }
   slice rec = rec_cell.begin_parse();
   slice commitment_addr = rec~load_msg_addr();

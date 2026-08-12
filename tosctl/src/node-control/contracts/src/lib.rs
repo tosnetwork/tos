@@ -34,6 +34,7 @@ pub mod nominator_pool;
 pub mod aipow_commitment;
 pub mod aipow_distributor;
 pub mod aipow_merkle;
+pub mod aipow_settlement;
 pub mod proof_attestation;
 pub mod provider;
 pub mod service_actor;
@@ -75,6 +76,10 @@ pub use aipow_distributor::{
     AipowDistributorInit, AIPOW_DISTRIBUTOR_CLAIM_OPCODE, AIPOW_DISTRIBUTOR_FORFEIT_OPCODE,
     AIPOW_MATURATION_EPOCH_SECONDS, AIPOW_MATURATION_IMMEDIATE_BPS, AIPOW_MATURATION_STREAM_EPOCHS,
     AIPOW_MIN_CLAIM_VALUE,
+};
+pub use aipow_settlement::{
+    AipowRegistration, AipowSettlementContract, AipowSettlementData, AipowSettlementInit,
+    AIPOW_SETTLEMENT_REGISTER_OPCODE, AIPOW_SETTLEMENT_SKIP_OPCODE, AIPOW_SETTLEMENT_VERSION,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;
