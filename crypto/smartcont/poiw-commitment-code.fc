@@ -1,0 +1,182 @@
+;; Copyright (C) 2025-2026  TOS Network.
+;; PoIW epoch score-commitment actor with a bonded public challenge window.
+;;
+;; One instance per committed epoch score root (same actor-per-address
+;; pattern as Agent Account, Task Escrow, Capability Registry, Service Actor
+;; and Dispute). The committer deploys the instance carrying the epoch, the
+;; score root, the methodology commitment, and a bond funded from the deploy
+;; value. Anyone may challenge the root with at least a matching bond before
+;; the window deadline; an unchallenged commitment finalizes permissionlessly
+;; after the deadline and returns the committer's bond. A challenged
+;; commitment is ruled by the reviewer: upholding the challenge rejects the
+;; root and awards both bonds to the challenger; dismissing it finalizes the
+;; root and awards both bonds to the committer.
+;;
+;; This contract records and adjudicates commitments only. It does not
+;; create, hold, or distribute PoIW rewards -- the separate distributor
+;; consumes finalized roots; a rejected root is simply never consumed.
+;;
+;; Persistent data layout:
+;;   committer:MsgAddress
+;;   reviewer:MsgAddress
+;;   status:uint8          (0 = committed, 1 = challenged, 2 = final,
+;;                          3 = rejected)
+;;   epoch:uint64
+;;   window_deadline:uint64 (unix; challenges strictly before, finalize at or
+;;                           after)
+;;   commit_bond:tomis
+;;   challenge_bond:tomis
+;;   ^[score_root:uint256 methodology_hash:uint256]
+;;   ^[challenger:MsgAddress challenge_evidence_hash:uint256]
+;;
+;; Internal messages:
+;;   challenge#50574301 query_id:uint64 challenge_evidence_hash:uint256
+;;       = InternalMsgBody;
+;;   finalize#50574302 query_id:uint64 = InternalMsgBody;
+;;   rule#50574303 query_id:uint64 uphold:uint8 = InternalMsgBody;
+
+const int op::challenge = 0x50574301;
+const int op::finalize = 0x50574302;
+const int op::rule = 0x50574303;
+
+const int status::committed = 0;
+const int status::challenged = 1;
+const int status::final = 2;
+const int status::rejected = 3;
+
+const int err::not_committed = 2100;
+const int err::window_closed = 2101;
+const int err::insufficient_bond = 2102;
+const int err::window_open = 2103;
+const int err::not_challenged = 2104;
+const int err::not_reviewer = 2105;
+const int err::invalid_ruling = 2106;
+const int err::unknown_op = 2107;
+const int err::zero_evidence = 2108;
+
+;; mode 1: send exactly `amount`, fees paid from the contract balance.
+() send_value(slice destination, int amount, int mode) impure inline {
+  send_raw_message(begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(destination)
+    .store_tomis(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+  .end_cell(), mode);
+}
+
+(slice, slice, int, int, int, int, int, int, int, slice, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  slice committer = ds~load_msg_addr();
+  slice reviewer = ds~load_msg_addr();
+  int status = ds~load_uint(8);
+  int epoch = ds~load_uint(64);
+  int window_deadline = ds~load_uint(64);
+  int commit_bond = ds~load_tomis();
+  int challenge_bond = ds~load_tomis();
+  slice root = ds~load_ref().begin_parse();
+  int score_root = root~load_uint(256);
+  int methodology_hash = root~load_uint(256);
+  root.end_parse();
+  slice chal = ds~load_ref().begin_parse();
+  slice challenger = chal~load_msg_addr();
+  int challenge_evidence_hash = chal~load_uint(256);
+  chal.end_parse();
+  ds.end_parse();
+  return (committer, reviewer, status, epoch, window_deadline, commit_bond, challenge_bond,
+    score_root, methodology_hash, challenger, challenge_evidence_hash);
+}
+
+() save_state(slice committer, slice reviewer, int status, int epoch, int window_deadline,
+             int commit_bond, int challenge_bond, int score_root, int methodology_hash,
+             slice challenger, int challenge_evidence_hash) impure inline {
+  set_data(begin_cell()
+    .store_slice(committer)
+    .store_slice(reviewer)
+    .store_uint(status, 8)
+    .store_uint(epoch, 64)
+    .store_uint(window_deadline, 64)
+    .store_tomis(commit_bond)
+    .store_tomis(challenge_bond)
+    .store_ref(begin_cell()
+      .store_uint(score_root, 256)
+      .store_uint(methodology_hash, 256)
+    .end_cell())
+    .store_ref(begin_cell()
+      .store_slice(challenger)
+      .store_uint(challenge_evidence_hash, 256)
+    .end_cell())
+  .end_cell());
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  var full_msg = in_msg_full.begin_parse();
+  int flags = full_msg~load_uint(4);
+  if (flags & 1) { return (); }  ;; ignore bounced messages
+  slice sender = full_msg~load_msg_addr();
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  int query_id = in_msg~load_uint(64);
+  query_id~impure_touch();
+
+  (slice committer, slice reviewer, int status, int epoch, int window_deadline,
+   int commit_bond, int challenge_bond, int score_root, int methodology_hash,
+   slice challenger, int challenge_evidence_hash) = load_state();
+
+  if (op == op::challenge) {
+    throw_unless(err::not_committed, status == status::committed);
+    throw_unless(err::window_closed, now() < window_deadline);
+    ;; Skin in the game must at least match the committer's: a challenge
+    ;; that upholds wins both bonds, a dismissed one forfeits its own.
+    throw_unless(err::insufficient_bond, msg_value >= commit_bond);
+    int new_evidence_hash = in_msg~load_uint(256);
+    in_msg.end_parse();
+    ;; Zero is reserved for "no challenge" and is never a valid commitment.
+    throw_unless(err::zero_evidence, new_evidence_hash != 0);
+    save_state(committer, reviewer, status::challenged, epoch, window_deadline,
+      commit_bond, msg_value, score_root, methodology_hash, sender, new_evidence_hash);
+    return ();
+  }
+
+  if (op == op::finalize) {
+    ;; Permissionless: after an unchallenged window, anyone may finalize;
+    ;; the bond always returns to the committer, whoever sends this.
+    throw_unless(err::not_committed, status == status::committed);
+    throw_unless(err::window_open, now() >= window_deadline);
+    in_msg.end_parse();
+    save_state(committer, reviewer, status::final, epoch, window_deadline,
+      commit_bond, challenge_bond, score_root, methodology_hash, challenger,
+      challenge_evidence_hash);
+    send_value(committer, commit_bond, 1);
+    return ();
+  }
+
+  if (op == op::rule) {
+    throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
+    throw_unless(err::not_challenged, status == status::challenged);
+    int uphold = in_msg~load_uint(8);
+    in_msg.end_parse();
+    throw_unless(err::invalid_ruling, (uphold == 0) | (uphold == 1));
+    if (uphold) {
+      ;; The challenge stands: the root is rejected and the challenger is
+      ;; made whole plus the committer's bond.
+      save_state(committer, reviewer, status::rejected, epoch, window_deadline,
+        commit_bond, challenge_bond, score_root, methodology_hash, challenger,
+        challenge_evidence_hash);
+      send_value(challenger, commit_bond + challenge_bond, 1);
+    } else {
+      ;; The challenge is dismissed: the root finalizes and the frivolous
+      ;; challenger's bond compensates the committer.
+      save_state(committer, reviewer, status::final, epoch, window_deadline,
+        commit_bond, challenge_bond, score_root, methodology_hash, challenger,
+        challenge_evidence_hash);
+      send_value(committer, commit_bond + challenge_bond, 1);
+    }
+    return ();
+  }
+
+  throw(err::unknown_op);
+}
+
+(slice, slice, int, int, int, int, int, int, int, slice, int) get_poiw_commitment_data() method_id {
+  return load_state();
+}

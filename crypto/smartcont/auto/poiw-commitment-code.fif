@@ -1,0 +1,245 @@
+"Asm.fif" include
+// automatically generated from `crypto/smartcont/stdlib.fc` `crypto/smartcont/poiw-commitment-code.fc` 
+PROGRAM{
+  DECLPROC send_value
+  DECLPROC load_state
+  DECLPROC save_state
+  DECLPROC recv_internal
+  68511 DECLMETHOD get_poiw_commitment_data
+  send_value PROCINLINE:<{
+    //  destination amount mode
+    0 PUSHINT	//  destination amount mode _3=0
+    16 PUSHINT	//  destination amount mode _3=0 _4=16
+    NEWC	//  destination amount mode _3=0 _4=16 _5
+    6 STU	//  destination amount mode _3=0 _7
+    s0 s4 XCHG2	//  _3=0 amount mode _7 destination
+    STSLICER	//  _3=0 amount mode _8
+    ROT	//  _3=0 mode _8 amount
+    STTOMIS	//  _3=0 mode _9
+    s1 s2 XCHG	//  mode _3=0 _9
+    107 STU	//  mode _23
+    ENDC	//  mode _24
+    SWAP	//  _24 mode
+    SENDRAWMSG
+  }>
+  load_state PROCINLINE:<{
+    // 
+    c4 PUSH	//  _1
+    CTOS	//  ds
+    LDMSGADDR	//  committer ds
+    LDMSGADDR	//  committer reviewer ds
+    8 LDU	//  committer reviewer status ds
+    64 LDU	//  committer reviewer status epoch ds
+    64 LDU	//  committer reviewer status epoch window_deadline ds
+    LDTOMIS	//  committer reviewer status epoch window_deadline commit_bond ds
+    LDTOMIS	//  committer reviewer status epoch window_deadline commit_bond challenge_bond ds
+    LDREF	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _28 ds
+    SWAP	//  committer reviewer status epoch window_deadline commit_bond challenge_bond ds _28
+    CTOS	//  committer reviewer status epoch window_deadline commit_bond challenge_bond ds root
+    256 LDU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond ds score_root root
+    256 LDU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond ds score_root methodology_hash root
+    ENDS
+    s0 s2 XCHG	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root ds
+    LDREF	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root _41 ds
+    SWAP	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root ds _41
+    CTOS	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root ds chal
+    LDMSGADDR	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root ds challenger chal
+    256 LDU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root ds challenger challenge_evidence_hash chal
+    ENDS
+    s0 s2 XCHG	//  committer reviewer status epoch window_deadline commit_bond challenge_bond methodology_hash score_root challenge_evidence_hash challenger ds
+    ENDS
+    s3 s0 s0 XCHG3	//  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+  }>
+  save_state PROCINLINE:<{
+    //  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+    NEWC
+    ROT	//  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenge_evidence_hash _11 challenger
+    STSLICER	//  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenge_evidence_hash _12
+    256 STU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash _14
+    ENDC	//  committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash _15
+    s0 s2 XCHG
+    NEWC	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _15 methodology_hash score_root _16
+    256 STU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _15 methodology_hash _18
+    256 STU	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _15 _20
+    ENDC	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _15 _21
+    NEWC	//  committer reviewer status epoch window_deadline commit_bond challenge_bond _15 _21 _22
+    s0 s9 XCHG2	//  _21 reviewer status epoch window_deadline commit_bond challenge_bond _15 _22 committer
+    STSLICER	//  _21 reviewer status epoch window_deadline commit_bond challenge_bond _15 _23
+    s0 s7 XCHG2	//  _21 _15 status epoch window_deadline commit_bond challenge_bond _23 reviewer
+    STSLICER	//  _21 _15 status epoch window_deadline commit_bond challenge_bond _24
+    s1 s5 XCHG	//  _21 _15 challenge_bond epoch window_deadline commit_bond status _24
+    8 STU	//  _21 _15 challenge_bond epoch window_deadline commit_bond _26
+    s1 s3 XCHG	//  _21 _15 challenge_bond commit_bond window_deadline epoch _26
+    64 STU	//  _21 _15 challenge_bond commit_bond window_deadline _28
+    64 STU	//  _21 _15 challenge_bond commit_bond _30
+    SWAP	//  _21 _15 challenge_bond _30 commit_bond
+    STTOMIS	//  _21 _15 challenge_bond _31
+    SWAP	//  _21 _15 _31 challenge_bond
+    STTOMIS	//  _21 _15 _32
+    s1 s2 XCHG	//  _15 _21 _32
+    STREF	//  _15 _33
+    STREF	//  _34
+    ENDC	//  _35
+    c4 POP
+  }>
+  recv_internal PROC:<{
+    //  msg_value in_msg_full in_msg
+    SWAP	//  msg_value in_msg in_msg_full
+    CTOS	//  msg_value in_msg full_msg
+    4 LDU	//  msg_value in_msg flags full_msg
+    SWAP
+    1 PUSHINT	//  msg_value in_msg full_msg flags _9=1
+    AND	//  msg_value in_msg full_msg _10
+    IFJMP:<{	//  msg_value in_msg full_msg
+      3 BLKDROP	// 
+    }>	//  msg_value in_msg full_msg
+    LDMSGADDR	//  msg_value in_msg _112 _111
+    DROP	//  msg_value in_msg sender
+    OVER	//  msg_value in_msg sender in_msg
+    SEMPTY	//  msg_value in_msg sender _14
+    IFJMP:<{	//  msg_value in_msg sender
+      3 BLKDROP	// 
+    }>	//  msg_value in_msg sender
+    SWAP	//  msg_value sender in_msg
+    32 LDU	//  msg_value sender op in_msg
+    64 LDU	//  msg_value sender op query_id in_msg
+    NIP	//  msg_value sender op in_msg
+    load_state INLINECALLDICT	//  msg_value sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+    s12 PUSH
+    1347896065 PUSHINT	//  msg_value sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash op _37=1347896065
+    EQUAL	//  msg_value sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash _38
+    IFJMP:<{	//  msg_value sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+      2DROP
+      s2 POP
+      s9 POP	//  msg_value sender score_root in_msg committer reviewer status epoch window_deadline commit_bond methodology_hash
+      2100 PUSHINT	//  msg_value sender score_root in_msg committer reviewer status epoch window_deadline commit_bond methodology_hash _39=2100
+      s0 s5 XCHG	//  msg_value sender score_root in_msg committer reviewer _39=2100 epoch window_deadline commit_bond methodology_hash status
+      0 EQINT	//  msg_value sender score_root in_msg committer reviewer _39=2100 epoch window_deadline commit_bond methodology_hash _41
+      s1 s5 XCHG	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _39=2100 _41
+      THROWANYIFNOT
+      2101 PUSHINT	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _43=2101
+      NOW	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _43=2101 _44
+      s3 PUSH	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _43=2101 _44 window_deadline
+      LESS	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _43=2101 _45
+      THROWANYIFNOT
+      2102 PUSHINT	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _47=2102
+      s10 s1 PUSH2	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _47=2102 msg_value commit_bond
+      GEQ	//  msg_value sender score_root in_msg committer reviewer methodology_hash epoch window_deadline commit_bond _47=2102 _48
+      THROWANYIFNOT
+      s0 s6 XCHG	//  msg_value sender score_root commit_bond committer reviewer methodology_hash epoch window_deadline in_msg
+      256 LDU	//  msg_value sender score_root commit_bond committer reviewer methodology_hash epoch window_deadline new_evidence_hash in_msg
+      ENDS
+      2108 PUSHINT	//  msg_value sender score_root commit_bond committer reviewer methodology_hash epoch window_deadline new_evidence_hash _55=2108
+      OVER	//  msg_value sender score_root commit_bond committer reviewer methodology_hash epoch window_deadline new_evidence_hash _55=2108 new_evidence_hash
+      0 NEQINT	//  msg_value sender score_root commit_bond committer reviewer methodology_hash epoch window_deadline new_evidence_hash _55=2108 _57
+      THROWANYIFNOT
+      s5 s9 XCHG
+      s4 s8 XCHG
+      1 PUSHINT
+      s0 s8 XCHG
+      s3 s7 XCHG
+      5 2 REVERSE
+      s4 s3 s3 XCHG3	//  committer reviewer _59=1 epoch window_deadline commit_bond msg_value score_root methodology_hash sender new_evidence_hash
+      save_state INLINECALLDICT
+    }>	//  msg_value sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+    s14 POP	//  challenge_evidence_hash sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger
+    s11 PUSH
+    1347896066 PUSHINT	//  challenge_evidence_hash sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger op _61=1347896066
+    EQUAL	//  challenge_evidence_hash sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger _62
+    IFJMP:<{	//  challenge_evidence_hash sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger
+      s11 POP
+      s11 POP	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root
+      2100 PUSHINT	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root _63=2100
+      s0 s6 XCHG	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer _63=2100 epoch window_deadline commit_bond challenge_bond score_root status
+      0 EQINT	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer _63=2100 epoch window_deadline commit_bond challenge_bond score_root _65
+      s1 s6 XCHG	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _63=2100 _65
+      THROWANYIFNOT
+      2103 PUSHINT	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _67=2103
+      NOW	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _67=2103 _68
+      s4 PUSH	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _67=2103 _68 window_deadline
+      GEQ	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _67=2103 _69
+      THROWANYIFNOT
+      s0 s7 XCHG	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond in_msg
+      ENDS
+      2 PUSHINT	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond _72=2
+      s6 PUSH
+      s0 s9 XCHG
+      s6 s8 XCHG
+      s7 s0 s2 XC2PU
+      s5 s7 XCHG
+      s4 s6 XCHG
+      s0 s5 XCHG
+      s0 s4 XCHG
+      s11 s1 s3 XCHG3
+      s0 s12 XCHG	//  commit_bond committer committer reviewer _72=2 epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+      save_state INLINECALLDICT
+      SWAP
+      1 PUSHINT	//  committer commit_bond _74=1
+      send_value INLINECALLDICT
+    }>	//  challenge_evidence_hash sender op in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger
+    s0 s11 XCHG
+    1347896067 PUSHINT	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash op _76=1347896067
+    EQUAL	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash _77
+    IFJMP:<{	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash
+      2105 PUSHINT	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash _78=2105
+      s12 s8 XCPU	//  challenge_evidence_hash _78=2105 challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash sender reviewer
+      SDEQ	//  challenge_evidence_hash _78=2105 challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash _79
+      s1 s12 XCHG	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root _78=2105 _79
+      THROWANYIFNOT
+      2104 PUSHINT	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root _81=2104
+      s0 s6 XCHG	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer _81=2104 epoch window_deadline commit_bond challenge_bond score_root status
+      1 EQINT	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer _81=2104 epoch window_deadline commit_bond challenge_bond score_root _83
+      s1 s6 XCHG	//  challenge_evidence_hash methodology_hash challenger in_msg committer reviewer score_root epoch window_deadline commit_bond challenge_bond _81=2104 _83
+      THROWANYIFNOT
+      s0 s7 XCHG	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond in_msg
+      8 LDU	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold in_msg
+      ENDS
+      2106 PUSHINT	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106
+      OVER	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106 uphold
+      0 EQINT	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106 _92
+      s2 PUSH	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106 _92 uphold
+      1 EQINT	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106 _92 _94
+      OR	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond uphold _90=2106 _95
+      THROWANYIFNOT
+      IF:<{	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond
+        s5 s6 XCHG
+        s4 s5 XCHG
+        3 PUSHINT
+        s5 s1 XCPU
+        s4 s5 XCHG
+        s0 s3 XCHG
+        s1 s4 s2 PUXC2
+        s1 s11 s0 XCHG3
+        s10 s12 PUXC	//  commit_bond challenge_bond challenger committer reviewer _97=3 epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+        save_state INLINECALLDICT
+        -ROT	//  challenger commit_bond challenge_bond
+        ADD	//  challenger _99
+        1 PUSHINT	//  challenger _99 _100=1
+        send_value INLINECALLDICT
+      }>ELSE<{	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond
+        2 PUSHINT	//  challenge_evidence_hash methodology_hash challenger challenge_bond committer reviewer score_root epoch window_deadline commit_bond _102=2
+        s6 PUSH
+        s6 s8 XCHG2
+        s7 s0 s2 XC2PU
+        s5 s6 XCHG
+        s0 s4 XCHG
+        s1 s5 s3 PUXC2
+        s12 s3 s13 XCHG3
+        s1 s11 XCHG	//  commit_bond challenge_bond committer committer reviewer _102=2 epoch window_deadline commit_bond challenge_bond score_root methodology_hash challenger challenge_evidence_hash
+        save_state INLINECALLDICT
+        -ROT	//  committer commit_bond challenge_bond
+        ADD	//  committer _104
+        1 PUSHINT	//  committer _104 _105=1
+        send_value INLINECALLDICT
+      }>
+    }>	//  challenge_evidence_hash sender challenger in_msg committer reviewer status epoch window_deadline commit_bond challenge_bond score_root methodology_hash
+    13 BLKDROP	// 
+    2107 PUSHINT	//  _107=2107
+    THROWANY
+  }>
+  get_poiw_commitment_data PROC:<{
+    // 
+    load_state INLINECALLDICT	//  _1 _2 _3 _4 _5 _6 _7 _8 _9 _10 _11
+  }>
+}END>c
+2 boc+>B "/tmp/claude-1000/-home-tomi/269eeb95-a311-4f40-8d3c-c7ab0fbb5462/scratchpad/poiw-commitment.boc" B>file
