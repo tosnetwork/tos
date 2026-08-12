@@ -1778,6 +1778,7 @@ mod tests {
             methodology_hash: [0x44; 32],
             total_score: 1_000_000,
             organic_settled_value: 42 * u128::from(tos),
+            settlement: chain_block::MsgAddressInt::default(),
         };
         let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(committer.address(), &commitment, 6 * tos)

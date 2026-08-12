@@ -104,6 +104,11 @@ pub struct AipowDeployCmd {
     amount: Option<f64>,
     #[arg(short = 'w', long = "workchain", default_value = "-1")]
     workchain: i32,
+    #[arg(
+        long,
+        help = "AIPoW settlement account address this commitment registers to on finalization; omit to disable registration"
+    )]
+    settlement: Option<String>,
     #[arg(long)]
     yes: bool,
     #[arg(short, long, default_value = "table")]
@@ -229,6 +234,13 @@ impl AipowDeployCmd {
             )?,
             total_score: self.total_score,
             organic_settled_value: self.organic_settled_value,
+            // A commitment registers its finalized root to this settlement
+            // account; omitting it leaves the default (zero) address, which the
+            // contract treats as "do not advertise".
+            settlement: match &self.settlement {
+                Some(addr) => addr.parse().map_err(|e| anyhow::anyhow!("invalid --settlement address: {e}"))?,
+                None => MsgAddressInt::default(),
+            },
         };
         let address = AipowCommitmentContract::calculate_address(self.workchain, &init)?;
         let state_init = AipowCommitmentContract::build_state_init(&init)?;

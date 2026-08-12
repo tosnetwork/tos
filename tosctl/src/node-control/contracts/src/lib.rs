@@ -68,8 +68,8 @@ pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapper
 pub use nominator_pool::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl};
 pub use aipow_commitment::{
     AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
-    AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AipowCommitmentContract,
-    AipowCommitmentData, AipowCommitmentInit,
+    AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AIPOW_COMMITMENT_VERSION,
+    AipowCommitmentContract, AipowCommitmentData, AipowCommitmentInit,
 };
 pub use aipow_distributor::{
     compute_matured, AipowClaim, AipowDistributorContract, AipowDistributorData,

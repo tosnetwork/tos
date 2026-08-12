@@ -10,7 +10,10 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDAEAA2MAART/APSkE/S88sgLAQIBYgIDBOrQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kD6QNMH0z/TP9M/+gD6ANQB0NP/0//Tf9N/0QTUAdD6QNP/0QLREEUQNEMAL4IQQVBXAbrjAlcRLoIQQVBXArrjAi6CEEFQVwO64wI/DYIQQVBXBLoEBQYHAGWhlwHaiaH0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBaIgiiBohgEBpls0NTuBCDQHwAAX8vSBCDX4IyW58vSBCD1TuMcFU8jHBbHy8oEINlPCvvL0CNP/0YEIPCHDAPL0cfgjgggJOoCgEJoYGRBnBVFjVBNUED1B0FLuCADoPj6BCDQJwAAZ8vSBCDf4Iye+8vQK0XIpDBCbVBoEEIoQeRBoBxBGA04VD8hYzxbL/8kEyMv/E8v/y3/Lf8nIUArPFlAIzxYWywcUyz8Syz/LPwH6AgH6AhLMzMntVAFxcIAQyMsFUATPFlj6AhLLaskB+wACTD6BCDlR+8cFH/L0gQg4CcABGfL0CtMH0YEIOiHAACLAAbHy9OMPCQoB7I7sgQg4CcABGfL0gQg++CMmvvL0CtFzVDeTJBA9TeBS8BERyFjPFsv/yQTIy/8Ty//Lf8t/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UAXFwgBDIywVQBM8WWPoCEstqyQH7AAFx4F8PgQg78vALAKTIWM8Wy//JBMjL/xPL/8t/y3/JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQSoSDCAI4VcXCAEMjLBVAEzxZY+gISy2rJAfsAkVviAMQQiRB4c1GDEHgQZwVRYwUQNEEwVC7QERDIWM8Wy//JBMjL/xPL/8t/y3/JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRZoHFwgBDIywVQBM8WWPoCEstqyQH7AADEcilQm1QaBBCJEHgGUXQGEEVEMBAvERAeyFjPFsv/yQTIy/8Ty//Lf8t/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UWaBxcIAQyMsFUATPFlj6AhLLaskB+wAAKHCAEMjLBVAEzxZY+gISy2rJAfsAz7fErw==";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABJ8AART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXAroEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgL8jvtXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKwkQi1QnByAQfRA2UVMQXlQTDgNWEU8TAREUARETVhXIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQJXHgBwgAvMgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVBKhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAsnCAEMjLBVAEzxZY+gISy2rJAfsAQwAk10nBA5JfBY44cIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiA5ZWEIIQQVBXA7qPK1cQgQg5EREtxwUBEREB8vSBCDgLwAEb8vQM0wfRgQg6IcAAIsABsfL04w/gVxEPghBBUFcEuuMCXw9bgQg78vAJCgsA8BCrEJpzUaUQmhCJB1GFByEQZxBWEEUDBAIREQIBERABERLIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRYoHFwgBDIywVQBM8WWPoCEstqyQH7AAH6cisIEHtUFglQViIQXVRBVCMQPyJWEgMCERACAREVAREUVhbIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQUqAScXCAEMjLBVAEzxZY+gISy2rJAfsAUDMMAfyBCDgLwAEb8vSBCD74Iyi+8vQM0XNUObUmED8vAwIREQIBERIBERPIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQM3FwgBDIywVQBM8WWPoCEstqyQH7AHENAIYk10nBA5JfBY44cIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCCvrwgPoCFMtoE8sAEssAzMlx+wDiAChwgBDIywVQBM8WWPoCEstqyQH7ANbh1eg=";
+
+/// The commitment layout version this SDK writes and the contract understands.
+pub const AIPOW_COMMITMENT_VERSION: u16 = 1;
 
 pub const APW_CHALLENGE_OPCODE: u32 = 0x4150_5701;
 pub const APW_FINALIZE_OPCODE: u32 = 0x4150_5702;
@@ -50,6 +53,10 @@ pub struct AipowCommitmentInit {
     /// The epoch's organic settled value the committer binds; the phase C
     /// native path derives the pool from it and the on-chain schedule params.
     pub organic_settled_value: u128,
+    /// The AIPoW settlement account this commitment registers to on
+    /// finalization (D6). The native settlement path re-verifies the commitment
+    /// independently, so this is only a routing hint.
+    pub settlement: MsgAddressInt,
 }
 
 pub struct AipowCommitmentContract;
@@ -76,6 +83,10 @@ pub struct AipowCommitmentData {
     /// The zero address until a challenge is recorded.
     pub challenger: MsgAddressInt,
     pub challenge_evidence_hash: [u8; 32],
+    /// Layout version tag (D9).
+    pub version: u16,
+    /// The settlement account this commitment registers to on finalization.
+    pub settlement: MsgAddressInt,
 }
 
 impl AipowCommitmentContract {
@@ -91,6 +102,7 @@ impl AipowCommitmentContract {
             anyhow::bail!("commit_bond must be positive");
         }
         let mut data = BuilderData::new();
+        data.append_u16(AIPOW_COMMITMENT_VERSION)?;
         init.committer.write_to(&mut data)?;
         init.reviewer.write_to(&mut data)?;
         data.append_u8(AIPOW_COMMITMENT_STATUS_COMMITTED)?;
@@ -109,6 +121,9 @@ impl AipowCommitmentContract {
         MsgAddressInt::default().write_to(&mut challenge)?;
         challenge.append_u256(&[0; 32])?;
         data.checked_append_reference(challenge.into_cell()?)?;
+        let mut settlement = BuilderData::new();
+        init.settlement.write_to(&mut settlement)?;
+        data.checked_append_reference(settlement.into_cell()?)?;
         Ok(data.into_cell()?)
     }
 
@@ -127,6 +142,7 @@ impl AipowCommitmentContract {
         let mut committer_slice = stack.slice(0)?;
         let mut reviewer_slice = stack.slice(1)?;
         let mut challenger_slice = stack.slice(12)?;
+        let mut settlement_slice = stack.slice(15)?;
         Ok(AipowCommitmentData {
             committer: MsgAddressInt::construct_from(&mut committer_slice)?,
             reviewer: MsgAddressInt::construct_from(&mut reviewer_slice)?,
@@ -142,6 +158,8 @@ impl AipowCommitmentContract {
             organic_settled_value: parse_u128(stack, 11)?,
             challenger: MsgAddressInt::construct_from(&mut challenger_slice)?,
             challenge_evidence_hash: parse_hash(stack, 13)?,
+            version: stack.u64(14)? as u16,
+            settlement: MsgAddressInt::construct_from(&mut settlement_slice)?,
         })
     }
 
@@ -230,6 +248,7 @@ mod tests {
             methodology_hash: [0x44; 32],
             total_score: 1_000_000,
             organic_settled_value: 42_000_000_000,
+            settlement: MsgAddressInt::with_standart(None, -1, [0x55; 32].into()).unwrap(),
         }
     }
 

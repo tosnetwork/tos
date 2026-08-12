@@ -21,10 +21,16 @@
 ;; reserve so the contract can always pay for its own outgoing bond returns.
 ;;
 ;; This contract records and adjudicates commitments only. It does not
-;; create, hold, or distribute AIPoW rewards -- the separate distributor
-;; consumes finalized roots; a rejected root is simply never consumed.
+;; create, hold, or distribute AIPoW rewards. On finalization it sends an
+;; authenticated registration (sender == this commitment) to the AIPoW
+;; settlement account it was deployed against, carrying its epoch and committed
+;; tuple; the native settlement path independently re-verifies the commitment's
+;; real previous-state (code hash, version, status == final, tuple) before
+;; minting, so the registration is only a hint, not a trust grant. A rejected
+;; root never registers and is never consumed.
 ;;
 ;; Persistent data layout:
+;;   version:uint16        (D9 layout tag)
 ;;   committer:MsgAddress
 ;;   reviewer:MsgAddress
 ;;   status:uint8          (0 = committed, 1 = challenged, 2 = final,
@@ -46,6 +52,13 @@
 ;;       staked on, and the phase C native path mints from a committed pool
 ;;       rather than an operator-chosen one.
 ;;   ^[challenger:MsgAddress challenge_evidence_hash:uint256]
+;;   ^[settlement:MsgAddress]
+;;       The AIPoW settlement account this commitment registers to on
+;;       finalization (D6). addr_none disables registration (the root still
+;;       finalizes, it simply is not advertised).
+;;
+;; The deploy value must fund the committer bond plus a fee/storage reserve that
+;; also covers the registration fee sent on finalization.
 ;;
 ;; Internal messages:
 ;;   challenge#41505701 query_id:uint64 challenge_evidence_hash:uint256
@@ -53,11 +66,24 @@
 ;;   finalize#41505702 query_id:uint64 = InternalMsgBody;
 ;;   rule#41505703 query_id:uint64 uphold:uint8 = InternalMsgBody;
 ;;   timeout#41505704 query_id:uint64 = InternalMsgBody;
+;; Outgoing on finalization:
+;;   register#41505301 query_id:uint64 epoch:uint32 score_root:uint256
+;;       total_score:uint128 organic_settled_value:uint128  -> settlement.
 
 const int op::challenge = 0x41505701;
 const int op::finalize = 0x41505702;
 const int op::rule = 0x41505703;
 const int op::timeout = 0x41505704;
+
+;; The settlement account's register opcode this commitment emits on finalize.
+const int settlement_op::register = 0x41505301;
+
+;; The commitment layout version this code understands (D9).
+const int commitment_version = 1;
+
+;; Value attached to the finalization registration so the settlement funds its
+;; own gas/storage for recording the nomination. v0 draft constant.
+const int registration_value = 50000000;  ;; 0.05 TOS
 
 const int status::committed = 0;
 const int status::challenged = 1;
@@ -91,8 +117,12 @@ const int err::review_open = 2110;
   .end_cell(), mode);
 }
 
-(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int) load_state() inline {
+;; load_state returns the original fields first, then `version` and the
+;; `settlement` address appended, so the on-chain data getter's original stack
+;; indices stay stable while the two new fields are exposed at the end.
+(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) load_state() inline {
   slice ds = get_data().begin_parse();
+  int version = ds~load_uint(16);
   slice committer = ds~load_msg_addr();
   slice reviewer = ds~load_msg_addr();
   int status = ds~load_uint(8);
@@ -111,17 +141,21 @@ const int err::review_open = 2110;
   slice challenger = chal~load_msg_addr();
   int challenge_evidence_hash = chal~load_uint(256);
   chal.end_parse();
+  slice stl = ds~load_ref().begin_parse();
+  slice settlement = stl~load_msg_addr();
+  stl.end_parse();
   ds.end_parse();
   return (committer, reviewer, status, epoch, window_deadline, review_deadline,
     commit_bond, challenge_bond, score_root, methodology_hash, total_score,
-    organic_settled_value, challenger, challenge_evidence_hash);
+    organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
 }
 
 () save_state(slice committer, slice reviewer, int status, int epoch, int window_deadline,
              int review_deadline, int commit_bond, int challenge_bond, int score_root,
              int methodology_hash, int total_score, int organic_settled_value,
-             slice challenger, int challenge_evidence_hash) impure inline {
+             slice challenger, int challenge_evidence_hash, int version, slice settlement) impure inline {
   set_data(begin_cell()
+    .store_uint(version, 16)
     .store_slice(committer)
     .store_slice(reviewer)
     .store_uint(status, 8)
@@ -140,7 +174,39 @@ const int err::review_open = 2110;
       .store_slice(challenger)
       .store_uint(challenge_evidence_hash, 256)
     .end_cell())
+    .store_ref(begin_cell()
+      .store_slice(settlement)
+    .end_cell())
   .end_cell());
+}
+
+;; Emit the authenticated registration to the settlement (sender == this
+;; commitment). addr_none settlement disables it. The register body is carried by
+;; reference (it exceeds a comfortable inline budget). Bounceable so a rejected
+;; registration (e.g. an epoch behind the settlement cursor) returns the fee.
+() send_registration(slice settlement, int epoch, int score_root, int total_score,
+                     int organic_settled_value) impure inline {
+  ;; A parsed addr_none is a 2-bit slice; a real addr_std is 267 bits.
+  if (slice_bits(settlement) <= 2) {
+    return ();
+  }
+  cell body = begin_cell()
+    .store_uint(settlement_op::register, 32)
+    .store_uint(0, 64)                ;; query_id (the settlement ignores it)
+    .store_uint(epoch, 32)
+    .store_uint(score_root, 256)
+    .store_uint(total_score, 128)
+    .store_uint(organic_settled_value, 128)
+  .end_cell();
+  send_raw_message(begin_cell()
+    .store_uint(0x18, 6)              ;; bounceable internal message
+    .store_slice(settlement)
+    .store_tomis(registration_value)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32) ;; other + ihr_fee + fwd_fee + created_lt + created_at
+    .store_uint(0, 1)                 ;; init: nothing
+    .store_uint(1, 1)                 ;; body: right (^X)
+    .store_ref(body)
+  .end_cell(), 1);
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
@@ -156,7 +222,7 @@ const int err::review_open = 2110;
   (slice committer, slice reviewer, int status, int epoch, int window_deadline,
    int review_deadline, int commit_bond, int challenge_bond, int score_root,
    int methodology_hash, int total_score, int organic_settled_value,
-   slice challenger, int challenge_evidence_hash) = load_state();
+   slice challenger, int challenge_evidence_hash, int version, slice settlement) = load_state();
 
   if (op == op::challenge) {
     throw_unless(err::not_committed, status == status::committed);
@@ -175,7 +241,7 @@ const int err::review_open = 2110;
     throw_unless(err::zero_evidence, new_evidence_hash != 0);
     save_state(committer, reviewer, status::challenged, epoch, window_deadline,
       now() + review_window, commit_bond, commit_bond, score_root, methodology_hash,
-      total_score, organic_settled_value, sender, new_evidence_hash);
+      total_score, organic_settled_value, sender, new_evidence_hash, version, settlement);
     int excess = msg_value - commit_bond;
     if (excess > 0) {
       send_value(sender, excess, 1);
@@ -191,8 +257,10 @@ const int err::review_open = 2110;
     in_msg.end_parse();
     save_state(committer, reviewer, status::final, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-      total_score, organic_settled_value, challenger, challenge_evidence_hash);
+      total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
     send_value(committer, commit_bond, 1);
+    ;; Advertise the finalized root to the settlement (D6).
+    send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
     return ();
   }
 
@@ -207,15 +275,17 @@ const int err::review_open = 2110;
       ;; made whole plus the committer's bond.
       save_state(committer, reviewer, status::rejected, epoch, window_deadline,
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-        total_score, organic_settled_value, challenger, challenge_evidence_hash);
+        total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
       send_value(challenger, commit_bond + challenge_bond, 1);
     } else {
       ;; The challenge is dismissed: the root finalizes and the frivolous
       ;; challenger's bond compensates the committer.
       save_state(committer, reviewer, status::final, epoch, window_deadline,
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-        total_score, organic_settled_value, challenger, challenge_evidence_hash);
+        total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
       send_value(committer, commit_bond + challenge_bond, 1);
+      ;; A dismissed challenge finalizes the root: advertise it (D6).
+      send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
     }
     return ();
   }
@@ -230,7 +300,7 @@ const int err::review_open = 2110;
     in_msg.end_parse();
     save_state(committer, reviewer, status::rejected, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-      total_score, organic_settled_value, challenger, challenge_evidence_hash);
+      total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
     send_value(committer, commit_bond, 1);
     send_value(challenger, challenge_bond, 1);
     return ();
@@ -239,6 +309,8 @@ const int err::review_open = 2110;
   throw(err::unknown_op);
 }
 
-(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int) get_aipow_commitment_data() method_id {
+;; The original 14 fields keep their stack indices; `version` (14) and the
+;; `settlement` address (15) are appended so existing decoders are unaffected.
+(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) get_aipow_commitment_data() method_id {
   return load_state();
 }

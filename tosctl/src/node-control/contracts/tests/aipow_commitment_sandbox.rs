@@ -20,14 +20,20 @@ use chain_block::{Cell, MsgAddressInt};
 use contracts::{
     AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
     AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AipowCommitmentContract,
-    AipowCommitmentInit,
+    AipowCommitmentInit, AipowDistributorContract, AipowMaturation, AipowSettlementContract,
+    AipowSettlementInit,
 };
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
 const COMMIT_BOND: u64 = 5 * TOS;
+const COMMIT_EPOCH: u64 = 27_260;
 const TOTAL_SCORE: u128 = 1_000_000;
 const ORGANIC_VALUE: u128 = 42 * TOS as u128;
+const SCORE_ROOT: [u8; 32] = [0x33; 32];
+/// The settlement's cursor: at or below the commitment epoch so its finalize
+/// registration is accepted (register requires epoch >= cursor).
+const SETTLEMENT_NEXT_EPOCH: u32 = COMMIT_EPOCH as u32;
 const ERR_NOT_COMMITTED: i32 = 2100;
 const ERR_WINDOW_CLOSED: i32 = 2101;
 const ERR_INSUFFICIENT_BOND: i32 = 2102;
@@ -48,7 +54,30 @@ struct Fixture {
     reviewer: Treasury,
     challenger: Treasury,
     commitment: MsgAddressInt,
+    settlement: MsgAddressInt,
     window_deadline: u64,
+}
+
+/// Deploy a real AIPoW settlement (the finalize registration target) so the
+/// full finalize -> register -> settlement chain runs against a live account.
+fn deploy_settlement(bc: &mut Blockchain, deployer: &MsgAddressInt) -> MsgAddressInt {
+    let init = AipowSettlementInit {
+        next_epoch: SETTLEMENT_NEXT_EPOCH,
+        epoch_seconds: 65_536,
+        register_grace: 3_600,
+        earner_workchain: -1,
+        maturation: AipowMaturation::methodology_v0(),
+        total_cap: 4_500_000_000 * TOS,
+        distributor_code: AipowDistributorContract::code().unwrap(),
+    };
+    let addr = AipowSettlementContract::calculate_address(-1, &init).unwrap();
+    let deploy = MessageBuilder::internal(deployer, &addr, 2 * TOS)
+        .bounce(false)
+        .state_init(AipowSettlementContract::build_state_init(&init).unwrap())
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("settlement deploy").expect_success();
+    addr
 }
 
 impl Fixture {
@@ -58,17 +87,19 @@ impl Fixture {
         let committer = bc.treasury("aipow-committer", 1_000 * TOS).expect("committer");
         let reviewer = bc.treasury("aipow-reviewer", 1_000 * TOS).expect("reviewer");
         let challenger = bc.treasury("aipow-challenger", 1_000 * TOS).expect("challenger");
+        let settlement = deploy_settlement(&mut bc, committer.address());
         let window_deadline = u64::from(bc.now()) + 3_600;
         let init = AipowCommitmentInit {
             committer: committer.address().clone(),
             reviewer: reviewer.address().clone(),
-            epoch: 27_260,
+            epoch: COMMIT_EPOCH,
             window_deadline,
             commit_bond: COMMIT_BOND,
-            score_root: [0x33; 32],
+            score_root: SCORE_ROOT,
             methodology_hash: [0x44; 32],
             total_score: TOTAL_SCORE,
             organic_settled_value: ORGANIC_VALUE,
+            settlement: settlement.clone(),
         };
         let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let state_init = AipowCommitmentContract::build_state_init(&init).expect("state init");
@@ -80,7 +111,29 @@ impl Fixture {
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, committer, reviewer, challenger, commitment, window_deadline }
+        Self { bc, committer, reviewer, challenger, commitment, settlement, window_deadline }
+    }
+
+    /// The registration the settlement recorded for `epoch`, if the commitment
+    /// finalized and advertised it.
+    fn settlement_registration(&self, epoch: u32) -> Option<contracts::AipowRegistration> {
+        let arg = vec![tos_vm::stack::StackItem::int(epoch as i64)];
+        let stack = self
+            .bc
+            .run_get_method(&self.settlement, "get_registration", arg)
+            .expect("get_registration")
+            .expect_success()
+            .stack
+            .clone();
+        let entries = stack
+            .iter()
+            .map(sandbox_stack_item_to_entry)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .expect("stack conversion");
+        AipowSettlementContract::decode_registration(&common::tvm_stack_parser::TvmStackParser::new(
+            entries,
+        ))
+        .expect("decode_registration")
     }
 
     fn send_from_with_value(
@@ -94,7 +147,9 @@ impl Fixture {
     }
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> tos_sandbox::SendResult {
-        self.send_from_with_value(from, body, TOS / 10)
+        // Half a TOS covers masterchain gas comfortably, including the extra work
+        // when finalize/dismiss also emit the settlement registration.
+        self.send_from_with_value(from, body, TOS / 2)
     }
 
     fn balance(&self, addr: &MsgAddressInt) -> u64 {
@@ -171,6 +226,79 @@ fn deploys_committed_and_readable() {
     assert_eq!(data.organic_settled_value, ORGANIC_VALUE);
     assert_eq!(&data.committer, f.committer.address());
     assert_eq!(&data.reviewer, f.reviewer.address());
+    assert_eq!(data.version, contracts::AIPOW_COMMITMENT_VERSION);
+    assert_eq!(data.settlement, f.settlement);
+    // Nothing is advertised to the settlement while merely committed.
+    assert_eq!(f.settlement_registration(COMMIT_EPOCH as u32), None);
+}
+
+#[test]
+fn permissionless_finalize_registers_the_committed_tuple_with_the_settlement() {
+    let mut f = Fixture::new();
+    let outsider = f.challenger.address().clone();
+    f.bc.set_now((f.window_deadline + 1) as u32);
+    f.send_from(&outsider, AipowCommitmentContract::finalize(1).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
+
+    // The finalize emitted an authenticated register to the settlement: the
+    // settlement recorded the commitment address as the nomination source and
+    // the committed economic tuple.
+    let reg = f.settlement_registration(COMMIT_EPOCH as u32).expect("registered on finalize");
+    assert_eq!(reg.commitment_addr, f.commitment);
+    assert_eq!(reg.score_root, SCORE_ROOT);
+    assert_eq!(reg.total_score, TOTAL_SCORE);
+    assert_eq!(reg.organic_settled_value, ORGANIC_VALUE);
+}
+
+#[test]
+fn a_dismissed_challenge_finalizes_and_registers() {
+    let mut f = Fixture::new();
+    let challenger_addr = f.challenger.address().clone();
+    let reviewer_addr = f.reviewer.address().clone();
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    // Dismissing the challenge finalizes the root, which registers it.
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
+    let reg = f.settlement_registration(COMMIT_EPOCH as u32).expect("registered on dismiss");
+    assert_eq!(reg.commitment_addr, f.commitment);
+    assert_eq!(reg.total_score, TOTAL_SCORE);
+}
+
+#[test]
+fn a_rejected_root_never_registers() {
+    // Upheld challenge (root rejected): no registration.
+    let mut f = Fixture::new();
+    let challenger_addr = f.challenger.address().clone();
+    let reviewer_addr = f.reviewer.address().clone();
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, true).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
+    assert_eq!(f.settlement_registration(COMMIT_EPOCH as u32), None, "rejected root not advertised");
+
+    // Review timeout (also rejected): no registration.
+    let mut g = Fixture::new();
+    let g_challenger = g.challenger.address().clone();
+    g.send_from_with_value(
+        &g_challenger,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    let review_deadline = g.data().review_deadline;
+    g.bc.set_now((review_deadline + 1) as u32);
+    g.send_from(&g_challenger, AipowCommitmentContract::timeout(2).unwrap()).expect_success();
+    assert_eq!(g.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
+    assert_eq!(g.settlement_registration(COMMIT_EPOCH as u32), None, "timed-out root not advertised");
 }
 
 #[test]
