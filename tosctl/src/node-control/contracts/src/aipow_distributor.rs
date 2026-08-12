@@ -12,9 +12,48 @@ use common::tvm_stack_parser::TvmStackParser;
 
 use crate::aipow_merkle::ProofStep;
 
-pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "te6cckECCAEAAYAAART/APSkE/S88sgLAQIBYgIDAYjQMtDTAwFxsJFb4PpAWyDHAJEw4NMf0z8x7UTQ+kDTP9N/+gDTH9QB0NP/0//RAvQE0RIJghBBUEQBuuMCXwmBCJzy8AQCASAGBwHegQiYJcIA8vQH0//Tf9TRUyqDB/QOb6GBCJky8vJTIXDIywcSy//Lf8nQ+QIB2zyBCJpRFLry9FRkYamEyAH6AkAZgwf0QwGkEFcQRhA1RBNZAsjL/8v/ychQB88WFcs/E8t/AfoCyx8SzPQAye1UBQC2cCCTIMAAjlCBCJsiwjzy8iLQINdJgQEBuZJbcY450//TAAGeBXHIywcSy//L/8nQ+QKfUFVxyMsHEsv/y//J0PkC4iTXSsIAljMD1DABpJQxcTRZ4lUC4uhfAwBhve2naiaH0gaZ/pv/0AaY/qAOhp/+n/6IF6AmiJNjjBg/oHN9DgAEmYOBBwfQAYOIDAA7vSkPaiaH0gaZ/pv/0AaY/qAOhp/+n/6IF6AmiJGEnp8Jqw==";
+pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "te6cckECCwEAAngAART/APSkE/S88sgLAQIBYgIDAp7QMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0z/Tf/oA0x/UAdDT/9P/0QL0BNESKYIQQVBEAbrjAgmCEEFQRAK64wJfCoEInPLwBAUCASAHCAH2OTmBCJgkwgDy9AbT/9N/1NFTKYMH9A5voYEImTLy8lMhcMjLBxLL/8t/ydD5AgHbPIEImlEZuvL0VGNRqYRwIPgjyFAE+gITyz8SywDLP0AYgwf0QwakEEcQNlUiAsjL/8v/ychQB88WFcs/E8t/AfoCyx8SzPQAye1UBgDGgQidUafHBRry9AbT/9FTB4MH9A5voYEIngHy9PoA0z/TADCBCJ8B8vL4I3HIUAT6AhLLPxLLAMs/QBiDB/RDEEcQNkVAAsjL/8v/ychQB88WFcs/E8t/AfoCyx8SzPQAye1UALZwIJMgwACOUIEImyLCPPLyItAg10mBAQG5kltxjjnT/9MAAZ4FccjLBxLL/8v/ydD5Ap9QVXHIywcSy//L/8nQ+QLiJNdKwgCWMwPUMAGklDFxNFniVQLi6F8DAgFmCQoAO70pD2omh9IGmf6b/9AGmP6gDoaf/p/+iBegJoiRhADTsxq7UTQ+kDTP9N/+gDTH9QB0NP/0//RAvQE0RJscRKDB/QOb6HAAJNbcCDg+gDTP9MA0z8wcQUCmFMBuZExkTDikTDiIoEJxIEnEKmEUxK7kmwxjhMCoasPIMIIkjB43lEhoViptAKg4oAB1s207UTQ+kDTP9N/+gDTH9QB0NP/0//RAvQE0RJscYMH9A5vocAAljBwVHAAIOD6ANM/0wDTPzBxVTCAnzREX";
 
 pub const AIPOW_DISTRIBUTOR_CLAIM_OPCODE: u32 = 0x4150_4401;
+pub const AIPOW_DISTRIBUTOR_FORFEIT_OPCODE: u32 = 0x4150_4402;
+
+/// Maturation parameters (methodology v0 draft). Kept in sync with the
+/// contract's constants; a divergence would make the SDK's `compute_matured`
+/// disagree with `get_matured` on chain.
+pub const AIPOW_MATURATION_IMMEDIATE_BPS: u128 = 2_500;
+pub const AIPOW_MATURATION_STREAM_EPOCHS: u128 = 8;
+pub const AIPOW_MATURATION_EPOCH_SECONDS: u64 = 65_536;
+
+/// One recorded claim's maturation state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AipowClaim {
+    pub amount: u64,
+    pub claimed_at: u64,
+    pub forfeited: bool,
+    pub forfeit_at: u64,
+}
+
+/// The matured amount of a claim at `at_time`, computed identically to the
+/// contract's `compute_matured`: an immediate fraction plus a linear stream
+/// over the maturation epochs from claim time, frozen at forfeit time when
+/// forfeited. Pure integer arithmetic, so the SDK and the on-chain
+/// get-method agree.
+pub fn compute_matured(claim: &AipowClaim, at_time: u64) -> u64 {
+    let effective = if claim.forfeited {
+        at_time.min(claim.forfeit_at)
+    } else {
+        at_time
+    };
+    let amount = u128::from(claim.amount);
+    let immediate = amount * AIPOW_MATURATION_IMMEDIATE_BPS / 10_000;
+    if effective <= claim.claimed_at {
+        return immediate as u64;
+    }
+    let elapsed = u128::from((effective - claim.claimed_at) / AIPOW_MATURATION_EPOCH_SECONDS)
+        .min(AIPOW_MATURATION_STREAM_EPOCHS);
+    let streamed = (amount - immediate) * elapsed / AIPOW_MATURATION_STREAM_EPOCHS;
+    (immediate + streamed) as u64
+}
 
 /// Deployment parameters for one epoch reward distributor.
 ///
@@ -102,13 +141,36 @@ impl AipowDistributorContract {
         })
     }
 
-    /// Decode the result of `get_claim`: `(found, amount)`.
-    pub fn decode_claim(stack: &TvmStackParser) -> anyhow::Result<Option<u64>> {
+    /// Decode `get_claim`: `(found, amount, claimed_at, forfeited, forfeit_at)`.
+    pub fn decode_claim(stack: &TvmStackParser) -> anyhow::Result<Option<AipowClaim>> {
+        let found = stack.u64(0)? != 0;
+        if !found {
+            return Ok(None);
+        }
+        Ok(Some(AipowClaim {
+            amount: stack.u64(1)?,
+            claimed_at: stack.u64(2)?,
+            forfeited: stack.u64(3)? != 0,
+            forfeit_at: stack.u64(4)?,
+        }))
+    }
+
+    /// Decode `get_matured`: `(found, matured)`.
+    pub fn decode_matured(stack: &TvmStackParser) -> anyhow::Result<Option<u64>> {
         let found = stack.u64(0)? != 0;
         if !found {
             return Ok(None);
         }
         Ok(Some(stack.u64(1)?))
+    }
+
+    /// Operator-only forfeit of a claim's unmatured remainder.
+    pub fn forfeit(query_id: u64, identity: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
+        let mut body = BuilderData::new();
+        body.append_u32(AIPOW_DISTRIBUTOR_FORFEIT_OPCODE)?;
+        body.append_u64(query_id)?;
+        body.append_raw(&identity, 256)?;
+        Ok(body.into_cell()?)
     }
 
     /// A beneficiary claim: `(identity, score)` plus a merkle inclusion
@@ -245,5 +307,49 @@ mod tests {
         let slice = SliceData::load_cell(cell).unwrap();
         assert_eq!(slice.remaining_bits(), 0);
         assert_eq!(slice.remaining_references(), 0);
+    }
+
+    #[test]
+    fn maturation_curve_matches_the_methodology() {
+        let e = AIPOW_MATURATION_EPOCH_SECONDS;
+        let claim = AipowClaim { amount: 8000, claimed_at: 1_000, forfeited: false, forfeit_at: 0 };
+        // Immediately: 25% only.
+        assert_eq!(compute_matured(&claim, 1_000), 2000);
+        assert_eq!(compute_matured(&claim, 500), 2000); // before claim clamps to immediate
+        // After 1 epoch: 25% + 1/8 of the 75% stream (6000) = 2000 + 750.
+        assert_eq!(compute_matured(&claim, 1_000 + e), 2750);
+        // After 4 epochs: 2000 + 3000.
+        assert_eq!(compute_matured(&claim, 1_000 + 4 * e), 5000);
+        // After 8+ epochs: fully matured.
+        assert_eq!(compute_matured(&claim, 1_000 + 8 * e), 8000);
+        assert_eq!(compute_matured(&claim, 1_000 + 100 * e), 8000);
+    }
+
+    #[test]
+    fn forfeit_freezes_maturation_at_the_forfeit_time() {
+        let e = AIPOW_MATURATION_EPOCH_SECONDS;
+        // Forfeited at 2 epochs: matured is frozen at 25% + 2/8 of 6000.
+        let claim = AipowClaim {
+            amount: 8000,
+            claimed_at: 1_000,
+            forfeited: true,
+            forfeit_at: 1_000 + 2 * e,
+        };
+        let frozen = 2000 + 6000 * 2 / 8;
+        assert_eq!(compute_matured(&claim, 1_000 + 2 * e), frozen);
+        // Later than the forfeit: still frozen, the remainder is voided.
+        assert_eq!(compute_matured(&claim, 1_000 + 100 * e), frozen);
+        // Earlier than the forfeit: the normal (smaller) matured value.
+        assert_eq!(compute_matured(&claim, 1_000 + e), 2750);
+    }
+
+    #[test]
+    fn forfeit_message_encodes_identity() {
+        let body = AipowDistributorContract::forfeit(9, [0x55; 32]).unwrap();
+        let mut slice = SliceData::load_cell(body).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), AIPOW_DISTRIBUTOR_FORFEIT_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 9);
+        assert_eq!(slice.get_next_bytes(32).unwrap(), vec![0x55; 32]);
+        assert_eq!(slice.remaining_bits(), 0);
     }
 }

@@ -10,12 +10,18 @@
 ;; root exactly as the AIPoW methodology defines (sha256 leaf/node hashing),
 ;; and on a match records a pro-rata amount for that identity, once.
 ;;
-;; This slice is deliberately zero-emission: it records claims but neither
-;; holds nor moves reward funds. Reward creation is the separate native
-;; minting path (phase C); maturation streaming and bond-slash forfeiture
-;; are later slices. What is proven here is the trust-minimized core: an
-;; identity is in a finalized root, has not already claimed, and is owed a
-;; deterministic pro-rata amount.
+;; Each recorded claim matures over time per the methodology: an immediate
+;; fraction plus a linear stream over a fixed number of epochs from the
+;; claim time. The operator may forfeit a claim (registry-bond fraud
+;; slashing); a forfeited claim's maturation freezes at the forfeit time,
+;; so the unmatured remainder is permanently voided while what had already
+;; matured is preserved.
+;;
+;; This slice is deliberately zero-emission: it records claims and their
+;; maturation but neither holds nor moves reward funds. Reward creation is
+;; the separate native minting path (phase C), which will read the matured
+;; amount this contract computes. Maturation parameters are v0 draft
+;; constants here; phase C moves them to configuration governance.
 ;;
 ;; Persistent data layout:
 ;;   operator:MsgAddress
@@ -24,23 +30,35 @@
 ;;   pool:Coins                (nominal epoch pool this slice does not move)
 ;;   claimed_count:uint32
 ;;   ^[score_root:uint256 commitment_ref:uint256]
-;;   ^claims                    (udict: identity uint256 -> claimed Coins)
+;;   ^claims  (udict: identity uint256 ->
+;;             amount:Coins claimed_at:uint64 forfeited:uint1 forfeit_at:uint64)
 ;;
 ;; Internal messages:
 ;;   claim#41504401 query_id:uint64 identity:uint256 score:uint128
 ;;                  proof:^ProofChain = InternalMsgBody;
+;;   forfeit#41504402 query_id:uint64 identity:uint256 = InternalMsgBody;
 ;;
 ;; ProofChain cell: sibling:uint256 sibling_is_left:uint1 [next:^ProofChain]?
 ;;   An empty proof cell (the single-member tree, leaf == root) has fewer
 ;;   than 257 data bits and terminates the walk immediately.
 
 const int op::claim = 0x41504401;
+const int op::forfeit = 0x41504402;
 
 const int err::invalid_total_score = 2200;
 const int err::already_claimed = 2201;
 const int err::bad_proof = 2202;
 const int err::proof_too_deep = 2203;
 const int err::unknown_op = 2204;
+const int err::not_operator = 2205;
+const int err::not_claimed = 2206;
+const int err::already_forfeited = 2207;
+
+;; Maturation (methodology v0 draft): 25% immediate, the remaining 75%
+;; streamed linearly over 8 epochs of 65,536 seconds each from claim time.
+const int mat::immediate_bps = 2500;
+const int mat::stream_epochs = 8;
+const int mat::epoch_seconds = 65536;
 
 ;; Bounds the proof walk: 2^60 members is far beyond any real epoch and
 ;; keeps gas bounded against a hostile deep proof chain.
@@ -60,6 +78,23 @@ int node_hash(int left, int right) inline {
     .store_uint(left, 256)
     .store_uint(right, 256)
   .end_cell().begin_parse());
+}
+
+;; Matured amount of a claim at `at_time`. A forfeited claim's maturation
+;; freezes at forfeit_at.
+int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, int at_time) inline {
+  int eff = at_time;
+  if (forfeited) {
+    if (forfeit_at < eff) { eff = forfeit_at; }
+  }
+  int immediate = muldiv(amount, mat::immediate_bps, 10000);
+  if (eff <= claimed_at) {
+    return immediate;
+  }
+  int elapsed = (eff - claimed_at) / mat::epoch_seconds;
+  if (elapsed > mat::stream_epochs) { elapsed = mat::stream_epochs; }
+  int streamed = muldiv(amount - immediate, elapsed, mat::stream_epochs);
+  return immediate + streamed;
 }
 
 (slice, int, int, int, int, int, int, cell) load_state() inline {
@@ -131,7 +166,6 @@ int fold_proof(int leaf, cell proof) inline_ref {
   int flags = full_msg~load_uint(4);
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
-  sender~impure_touch();
   if (in_msg.slice_empty?()) { return (); }
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
@@ -158,10 +192,37 @@ int fold_proof(int leaf, cell proof) inline_ref {
 
     ;; Deterministic pro-rata share of the nominal pool. Floor division
     ;; matches the methodology's integer allocation; the dust from flooring
-    ;; is simply never allocated.
+    ;; is simply never allocated. Maturation is measured from now().
     int amount = muldiv(pool, score, total_score);
-    claims~udict_set_builder(256, identity, begin_cell().store_tomis(amount));
+    claims~udict_set_builder(256, identity, begin_cell()
+      .store_tomis(amount)
+      .store_uint(now(), 64)
+      .store_uint(0, 1)
+      .store_uint(0, 64));
     claimed_count += 1;
+    save_state(op_addr, epoch, total_score, pool, claimed_count, score_root,
+      commitment_ref, claims);
+    return ();
+  }
+
+  if (op == op::forfeit) {
+    ;; Operator-only: void the unmatured remainder of a claim (registry-bond
+    ;; fraud slashing). Maturation freezes at forfeit time; a claim may be
+    ;; forfeited once.
+    throw_unless(err::not_operator, equal_slice_bits(sender, op_addr));
+    int identity = in_msg~load_uint(256);
+    in_msg.end_parse();
+    (slice entry, int found) = claims.udict_get?(256, identity);
+    throw_unless(err::not_claimed, found);
+    int amount = entry~load_tomis();
+    int claimed_at = entry~load_uint(64);
+    int forfeited = entry~load_uint(1);
+    throw_if(err::already_forfeited, forfeited);
+    claims~udict_set_builder(256, identity, begin_cell()
+      .store_tomis(amount)
+      .store_uint(claimed_at, 64)
+      .store_uint(1, 1)
+      .store_uint(now(), 64));
     save_state(op_addr, epoch, total_score, pool, claimed_count, score_root,
       commitment_ref, claims);
     return ();
@@ -177,14 +238,30 @@ int fold_proof(int leaf, cell proof) inline_ref {
   return (op_addr, epoch, total_score, pool, claimed_count, score_root, commitment_ref);
 }
 
-;; Returns (found, amount): whether `identity` has claimed and the recorded
-;; pro-rata amount.
-(int, int) get_claim(int identity) method_id {
+;; (found, amount, claimed_at, forfeited, forfeit_at) for `identity`.
+(int, int, int, int, int) get_claim(int identity) method_id {
+  (_, _, _, _, _, _, _, cell claims) = load_state();
+  (slice entry, int found) = claims.udict_get?(256, identity);
+  if (found == 0) {
+    return (0, 0, 0, 0, 0);
+  }
+  int amount = entry~load_tomis();
+  int claimed_at = entry~load_uint(64);
+  int forfeited = entry~load_uint(1);
+  int forfeit_at = entry~load_uint(64);
+  return (1, amount, claimed_at, forfeited, forfeit_at);
+}
+
+;; (found, matured) for `identity` at `at_time`.
+(int, int) get_matured(int identity, int at_time) method_id {
   (_, _, _, _, _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);
   }
   int amount = entry~load_tomis();
-  return (1, amount);
+  int claimed_at = entry~load_uint(64);
+  int forfeited = entry~load_uint(1);
+  int forfeit_at = entry~load_uint(64);
+  return (1, compute_matured(amount, claimed_at, forfeited, forfeit_at, at_time));
 }

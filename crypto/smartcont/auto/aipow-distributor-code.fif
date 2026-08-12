@@ -2,12 +2,14 @@
 PROGRAM{
   DECLPROC leaf_hash
   DECLPROC node_hash
+  DECLPROC compute_matured
   DECLPROC load_state
   DECLPROC save_state
   DECLPROC fold_proof
   DECLPROC recv_internal
   107809 DECLMETHOD get_aipow_distributor_data
   81332 DECLMETHOD get_claim
+  76906 DECLMETHOD get_matured
   leaf_hash PROCINLINE:<{
     //  identity score
     0 PUSHINT	//  identity score _2=0
@@ -31,6 +33,46 @@ PROGRAM{
     ENDC	//  _10
     CTOS	//  _11
     SHA256U	//  _12
+  }>
+  compute_matured PROCINLINE:<{
+    //  amount claimed_at forfeited forfeit_at at_time
+    //  amount claimed_at forfeited forfeit_at eff
+    s0 s2 XCHG	//  amount claimed_at eff forfeit_at forfeited
+    IF:<{	//  amount claimed_at eff forfeit_at
+      s0 s1 PUSH2	//  amount claimed_at eff forfeit_at forfeit_at eff
+      LESS	//  amount claimed_at eff forfeit_at _6
+      IF:<{	//  amount claimed_at eff forfeit_at
+        NIP	//  amount claimed_at eff
+      }>ELSE<{
+        DROP	//  amount claimed_at eff
+      }>
+    }>ELSE<{
+      DROP	//  amount claimed_at eff
+    }>
+    s2 PUSH
+    2500 PUSHINT
+    10000 PUSHINT	//  amount claimed_at eff amount _8=2500 _9=10000
+    MULDIV	//  amount claimed_at eff immediate
+    s1 s2 PUSH2	//  amount claimed_at eff immediate eff claimed_at
+    LEQ	//  amount claimed_at eff immediate _11
+    IF:<{	//  amount claimed_at eff immediate
+      3 1 BLKDROP2	//  immediate
+    }>ELSE<{	//  amount claimed_at eff immediate
+      s0 s2 XCHG	//  amount immediate eff claimed_at
+      SUB	//  amount immediate _13
+      16 RSHIFT#	//  amount immediate elapsed
+      DUP	//  amount immediate elapsed elapsed
+      8 GTINT	//  amount immediate elapsed _17
+      IF:<{	//  amount immediate elapsed
+        DROP	//  amount immediate
+        8 PUSHINT	//  amount immediate elapsed=8
+      }>	//  amount immediate elapsed
+      s2 s1 XCPU	//  elapsed immediate amount immediate
+      SUB	//  elapsed immediate _20
+      ROT	//  immediate _20 elapsed
+      3 MULRSHIFT#	//  immediate streamed
+      ADD	//  _23
+    }>
   }>
   load_state PROCINLINE:<{
     //
@@ -141,64 +183,117 @@ PROGRAM{
     IFJMP:<{	//  in_msg full_msg
       2DROP	//
     }>	//  in_msg full_msg
-    LDMSGADDR	//  in_msg _85 _84
-    2DROP	//  in_msg
-    DUP	//  in_msg in_msg
-    SEMPTY	//  in_msg _18
-    IFJMP:<{	//  in_msg
-      DROP	//
-    }>	//  in_msg
-    32 LDU	//  op in_msg
-    64 LDU	//  op query_id in_msg
-    NIP	//  op in_msg
-    load_state INLINECALLDICT	//  op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims
-    s0 s9 XCHG
-    1095779329 PUSHINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref op _38=1095779329
-    EQUAL	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _39
-    IFJMP:<{	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
-      2200 PUSHINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200
-      s5 PUSH	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200 total_score
-      0 GTINT	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _40=2200 _42
+    LDMSGADDR	//  in_msg _135 _134
+    DROP	//  in_msg sender
+    OVER	//  in_msg sender in_msg
+    SEMPTY	//  in_msg sender _16
+    IFJMP:<{	//  in_msg sender
+      2DROP	//
+    }>	//  in_msg sender
+    SWAP	//  sender in_msg
+    32 LDU	//  sender op in_msg
+    64 LDU	//  sender op query_id in_msg
+    NIP	//  sender op in_msg
+    load_state INLINECALLDICT	//  sender op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+    s9 PUSH
+    1095779329 PUSHINT	//  sender op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims op _36=1095779329
+    EQUAL	//  sender op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims _37
+    IFJMP:<{	//  sender op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+      s9 POP
+      s9 POP	//  commitment_ref claims in_msg op_addr epoch total_score pool claimed_count score_root
+      2200 PUSHINT	//  commitment_ref claims in_msg op_addr epoch total_score pool claimed_count score_root _38=2200
+      s4 PUSH	//  commitment_ref claims in_msg op_addr epoch total_score pool claimed_count score_root _38=2200 total_score
+      0 GTINT	//  commitment_ref claims in_msg op_addr epoch total_score pool claimed_count score_root _38=2200 _40
       THROWANYIFNOT
-      s0 s7 XCHG	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root in_msg
-      256 LDU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity in_msg
-      128 LDU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score in_msg
-      LDREF	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof in_msg
+      s0 s6 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count in_msg
+      256 LDU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity in_msg
+      128 LDU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score in_msg
+      LDREF	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof in_msg
       ENDS
-      s2 s10 PUSH2
-      8 PUSHPOW2	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof identity claims _58=256
+      s2 s9 PUSH2
+      8 PUSHPOW2	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof identity claims _56=256
       DICTUGET
-      NULLSWAPIFNOT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof existing found
+      NULLSWAPIFNOT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof existing found
       2201 PUSHINT
-      s2 POP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof _62=2201 found
+      s2 POP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof _60=2201 found
       THROWANYIF
-      s2 s1 PUSH2	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof identity score
-      leaf_hash INLINECALLDICT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score proof _65
-      SWAP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _65 proof
-      fold_proof INLINECALLDICT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score computed_root
-      2202 PUSHINT	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score computed_root _67=2202
-      s1 s4 XCPU	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _67=2202 computed_root score_root
-      EQUAL	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity score _67=2202 _68
+      s2 s1 PUSH2	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof identity score
+      leaf_hash INLINECALLDICT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score proof _63
+      SWAP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score _63 proof
+      fold_proof INLINECALLDICT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score computed_root
+      2202 PUSHINT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score computed_root _65=2202
+      s1 s9 XCPU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score _65=2202 computed_root score_root
+      EQUAL	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity score _65=2202 _66
       THROWANYIFNOT
-      s4 s5 s(-1) PU2XC	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity pool score total_score
-      MULDIV	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity amount
-      NEWC	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity amount _73
-      SWAP	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity _73 amount
-      STTOMIS	//  claims commitment_ref op_addr epoch total_score pool claimed_count score_root identity _74
-      s0 s1 s9 XCHG3
-      8 PUSHPOW2	//  score_root commitment_ref op_addr epoch total_score pool claimed_count _74 identity claims _75=256
-      DICTUSETB	//  score_root commitment_ref op_addr epoch total_score pool claimed_count claims
-      SWAP	//  score_root commitment_ref op_addr epoch total_score pool claims claimed_count
-      INC	//  score_root commitment_ref op_addr epoch total_score pool claims claimed_count
-      s5 s7 XCHG
-      s4 s6 XCHG
-      s3 s5 XCHG
-      s4 s1 s3 XCHG3
-      -ROT	//  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+      s3 s4 s(-1) PU2XC	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity pool score total_score
+      MULDIV	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount
+      0 PUSHINT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount _71=0
+      DUP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount _71=0 _72=0
+      NOW	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount _71=0 _72=0 _73
+      NEWC	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount _71=0 _72=0 _73 _74
+      s0 s4 XCHG2	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _73 _71=0 _72=0 _74 amount
+      STTOMIS	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _73 _71=0 _72=0 _75
+      s1 s3 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _72=0 _71=0 _73 _75
+      64 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _72=0 _71=0 _77
+      s1 s2 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _71=0 _72=0 _77
+      1 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _71=0 _79
+      64 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _81
+      s0 s1 s8 XCHG3
+      8 PUSHPOW2	//  commitment_ref claimed_count score_root op_addr epoch total_score pool _81 identity claims _82=256
+      DICTUSETB	//  commitment_ref claimed_count score_root op_addr epoch total_score pool claims
+      s0 s6 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count
+      INC	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count
+      s4 s7 XCHG
+      s3 s6 XCHG
+      3 3 BLKSWAP	//  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
       save_state INLINECALLDICT
-    }>	//  claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
-    9 BLKDROP	//
-    2204 PUSHINT	//  _80=2204
+    }>	//  sender op in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+    s0 s9 XCHG
+    1095779330 PUSHINT	//  sender claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref op _87=1095779330
+    EQUAL	//  sender claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _88
+    IFJMP:<{	//  sender claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
+      2205 PUSHINT	//  sender claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _89=2205
+      s10 s7 XCPU	//  _89=2205 claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref sender op_addr
+      SDEQ	//  _89=2205 claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref _90
+      s1 s10 XCHG	//  commitment_ref claims in_msg op_addr epoch total_score pool claimed_count score_root _89=2205 _90
+      THROWANYIFNOT
+      s0 s6 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count in_msg
+      256 LDU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity in_msg
+      ENDS
+      s0 s7 PUSH2
+      8 PUSHPOW2	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity identity claims _99=256
+      DICTUGET
+      NULLSWAPIFNOT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity entry found
+      2206 PUSHINT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity entry found _101=2206
+      SWAP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity entry _101=2206 found
+      THROWANYIFNOT
+      LDTOMIS	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount entry
+      64 LDU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at entry
+      1 LDU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at _165 _164
+      DROP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at forfeited
+      2207 PUSHINT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at forfeited _114=2207
+      SWAP	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at _114=2207 forfeited
+      THROWANYIF
+      NOW	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at _117
+      1 PUSHINT	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at _117 _118=1
+      NEWC	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity amount claimed_at _117 _118=1 _119
+      s0 s4 XCHG2	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _118=1 claimed_at _117 _119 amount
+      STTOMIS	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _118=1 claimed_at _117 _120
+      s1 s2 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _118=1 _117 claimed_at _120
+      64 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _118=1 _117 _122
+      s1 s2 XCHG	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _117 _118=1 _122
+      1 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _117 _124
+      64 STU	//  commitment_ref claims score_root op_addr epoch total_score pool claimed_count identity _126
+      s0 s1 s8 XCHG3
+      8 PUSHPOW2	//  commitment_ref claimed_count score_root op_addr epoch total_score pool _126 identity claims _127=256
+      DICTUSETB	//  commitment_ref claimed_count score_root op_addr epoch total_score pool claims
+      s4 s7 XCHG
+      s3 s6 XCHG
+      s5 s4 s0 XCHG3	//  op_addr epoch total_score pool claimed_count score_root commitment_ref claims
+      save_state INLINECALLDICT
+    }>	//  sender claims in_msg op_addr epoch total_score pool claimed_count score_root commitment_ref
+    10 BLKDROP	//
+    2204 PUSHINT	//  _130=2204
     THROWANY
   }>
   get_aipow_distributor_data PROC:<{
@@ -208,7 +303,7 @@ PROGRAM{
   }>
   get_claim PROC:<{
     //  identity
-    load_state INLINECALLDICT	//  identity _22 _23 _24 _25 _26 _27 _28 _29
+    load_state INLINECALLDICT	//  identity _37 _38 _39 _40 _41 _42 _43 _44
     7 1 BLKDROP2	//  identity claims
     8 PUSHPOW2	//  identity claims _12=256
     DICTUGET
@@ -217,11 +312,38 @@ PROGRAM{
     IFJMP:<{	//  entry
       DROP	//
       0 PUSHINT	//  _16=0
-      DUP	//  _16=0 _17=0
+      s0 s0 s0 PUSH3	//  _16=0 _17=0 _18=0 _19=0
+      DUP	//  _16=0 _17=0 _18=0 _19=0 _20=0
     }>	//  entry
-    LDTOMIS	//  _33 _32
-    DROP	//  amount
-    1 PUSHINT	//  amount _21=1
-    SWAP	//  _21=1 amount
+    LDTOMIS	//  amount entry
+    64 LDU	//  amount claimed_at entry
+    1 LDU	//  amount claimed_at forfeited entry
+    64 LDU	//  amount claimed_at forfeited _54 _53
+    DROP	//  amount claimed_at forfeited forfeit_at
+    1 PUSHINT	//  amount claimed_at forfeited forfeit_at _36=1
+    4 -ROLL	//  _36=1 amount claimed_at forfeited forfeit_at
+  }>
+  get_matured PROC:<{
+    //  identity at_time
+    load_state INLINECALLDICT	//  identity at_time _36 _37 _38 _39 _40 _41 _42 _43
+    7 1 BLKDROP2	//  identity at_time claims
+    s1 s2 XCHG
+    8 PUSHPOW2	//  at_time identity claims _13=256
+    DICTUGET
+    NULLSWAPIFNOT	//  at_time entry found
+    0 EQINT	//  at_time entry _16
+    IFJMP:<{	//  at_time entry
+      2DROP	//
+      0 PUSHINT	//  _17=0
+      DUP	//  _17=0 _18=0
+    }>	//  at_time entry
+    LDTOMIS	//  at_time amount entry
+    64 LDU	//  at_time amount claimed_at entry
+    1 LDU	//  at_time amount claimed_at forfeited entry
+    64 LDU	//  at_time amount claimed_at forfeited _53 _52
+    DROP	//  at_time amount claimed_at forfeited forfeit_at
+    1 PUSHINT	//  at_time amount claimed_at forfeited forfeit_at _34=1
+    s0 s5 XCHG	//  _34=1 amount claimed_at forfeited forfeit_at at_time
+    compute_matured INLINECALLDICT	//  _34=1 _35
   }>
 }END>c

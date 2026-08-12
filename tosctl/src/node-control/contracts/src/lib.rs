@@ -71,8 +71,9 @@ pub use aipow_commitment::{
     AipowCommitmentData, AipowCommitmentInit,
 };
 pub use aipow_distributor::{
-    AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
-    AIPOW_DISTRIBUTOR_CLAIM_OPCODE,
+    compute_matured, AipowClaim, AipowDistributorContract, AipowDistributorData,
+    AipowDistributorInit, AIPOW_DISTRIBUTOR_CLAIM_OPCODE, AIPOW_DISTRIBUTOR_FORFEIT_OPCODE,
+    AIPOW_MATURATION_EPOCH_SECONDS, AIPOW_MATURATION_IMMEDIATE_BPS, AIPOW_MATURATION_STREAM_EPOCHS,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;
