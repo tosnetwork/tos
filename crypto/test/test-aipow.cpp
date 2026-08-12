@@ -4,12 +4,99 @@
     Licensed under the GNU General Public License v3.0.
 */
 #include "block/aipow.h"
+#include "block/block-parse.h"
+#include "vm/cells/CellBuilder.h"
+#include "vm/cells/CellSlice.h"
+#include "vm/dict.h"
 #include "td/utils/tests.h"
 
 namespace {
 
 using td::make_refint;
 using td::RefInt256;
+
+// A distinct, reproducible 256-bit value (seed in the low 64 bits, big-endian).
+td::Bits256 mk_bits(unsigned long long seed) {
+  td::Bits256 b;
+  b.set_zero();
+  unsigned char* d = b.data();
+  for (int i = 0; i < 8; i++) {
+    d[31 - i] = (unsigned char)(seed >> (8 * i));
+  }
+  return b;
+}
+
+td::Ref<vm::Cell> dummy_ref() {
+  vm::CellBuilder cb;
+  cb.store_long_bool(0xD1, 8);
+  return cb.finalize();
+}
+
+// Build a commitment "economic tuple" ref: score_root methodology total_score organic.
+td::Ref<vm::Cell> build_econ_tuple(td::Bits256 score_root, long long total_score, long long organic) {
+  vm::CellBuilder cb;
+  cb.store_bits_bool(score_root);
+  cb.store_bits_bool(mk_bits(0x44));  // methodology_hash
+  cb.store_int256_bool(make_refint(total_score), 128, false);
+  cb.store_int256_bool(make_refint(organic), 128, false);
+  return cb.finalize();
+}
+
+// Build a commitment account data cell (W4.2 layout) with the fields the parser reads.
+td::Ref<vm::Cell> build_commitment(td::uint16 version, td::uint8 status, td::uint64 epoch,
+                                   td::Bits256 score_root, long long total_score, long long organic) {
+  vm::CellBuilder cb;
+  cb.store_long_bool(version, 16);
+  block::tlb::t_MsgAddressInt.store_std_address(cb, -1, mk_bits(0x11));  // committer
+  block::tlb::t_MsgAddressInt.store_std_address(cb, -1, mk_bits(0x22));  // reviewer
+  cb.store_long_bool(status, 8);
+  cb.store_long_bool((long long)epoch, 64);
+  cb.store_long_bool(1000, 64);  // window_deadline (unused by the parser)
+  cb.store_long_bool(0, 64);     // review_deadline
+  block::tlb::t_Tomis.store_integer_value(cb, *make_refint(5000000000LL));  // commit_bond
+  block::tlb::t_Tomis.store_integer_value(cb, *make_refint(0));             // challenge_bond
+  cb.store_ref(build_econ_tuple(score_root, total_score, organic));        // ^economic tuple
+  vm::CellBuilder chal;
+  block::tlb::t_MsgAddressInt.store_std_address(chal, -1, mk_bits(0));  // challenger (dummy std)
+  chal.store_int256_bool(make_refint(0), 256, false);
+  cb.store_ref(chal.finalize());   // ^[challenger evidence]
+  vm::CellBuilder stl;
+  block::tlb::t_MsgAddressInt.store_std_address(stl, -1, mk_bits(0x99));
+  cb.store_ref(stl.finalize());    // ^[settlement]
+  return cb.finalize();
+}
+
+// Build one registration record (W4.1 pack_registration).
+td::Ref<vm::Cell> build_registration_record(td::int32 wc, td::Bits256 commitment_addr,
+                                            td::Bits256 score_root, long long total_score,
+                                            long long organic, td::uint32 registered_at) {
+  vm::CellBuilder cb;
+  block::tlb::t_MsgAddressInt.store_std_address(cb, wc, commitment_addr);
+  cb.store_bits_bool(score_root);
+  cb.store_int256_bool(make_refint(total_score), 128, false);
+  cb.store_int256_bool(make_refint(organic), 128, false);
+  cb.store_long_bool(registered_at, 32);
+  return cb.finalize();
+}
+
+// Build a settlement account data cell (W4.1 layout) with an optional registrations dict.
+td::Ref<vm::Cell> build_settlement(td::uint32 next_epoch, long long minted_total, long long total_cap,
+                                   td::Ref<vm::Cell> registrations_root) {
+  vm::CellBuilder cb;
+  cb.store_long_bool(1, 16);            // version
+  cb.store_long_bool(next_epoch, 32);
+  cb.store_long_bool(65536, 32);        // epoch_seconds
+  cb.store_long_bool(3600, 32);         // register_grace
+  cb.store_long_bool(-1, 8);            // earner_workchain (int8)
+  cb.store_long_bool(2500, 16);         // immediate_bps
+  cb.store_long_bool(8, 16);            // stream_epochs
+  cb.store_long_bool(65536, 32);        // mat_epoch_seconds
+  block::tlb::t_Tomis.store_integer_value(cb, *make_refint(minted_total));
+  block::tlb::t_Tomis.store_integer_value(cb, *make_refint(total_cap));
+  cb.store_ref(dummy_ref());            // ^distributor_code
+  cb.store_maybe_ref(registrations_root);  // registrations HashmapE
+  return cb.finalize();
+}
 
 block::AipowConfig make_cfg(td::uint32 k_num, td::uint32 k_den, long long schedule_cap,
                             long long cold_start_floor) {
@@ -259,4 +346,129 @@ TEST(Aipow, derivation_is_a_pure_deterministic_function) {
       CHECK((td::uint64)gen_utime >= skippable_at);
     }
   }
+}
+
+TEST(Aipow, parse_settlement_ledger_roundtrips) {
+  auto data = build_settlement(27260, 1000, 4500000000000000000LL, {});
+  block::aipow::SettlementLedger led;
+  CHECK(block::aipow::parse_settlement_ledger(data, led));
+  CHECK(led.version == 1);
+  CHECK(led.next_epoch == 27260);
+  CHECK(led.epoch_seconds == 65536);
+  CHECK(led.register_grace == 3600);
+  CHECK(led.earner_workchain == -1);
+  CHECK(led.immediate_bps == 2500);
+  CHECK(led.stream_epochs == 8);
+  CHECK(led.mat_epoch_seconds == 65536);
+  CHECK(td::cmp(led.minted_total, 1000) == 0);
+  CHECK(td::cmp(led.total_cap, 4500000000000000000LL) == 0);
+  CHECK(led.distributor_code.not_null());
+  CHECK(led.registrations.is_null());  // empty dict
+  // A short cell fails to parse.
+  block::aipow::SettlementLedger bad;
+  CHECK(!block::aipow::parse_settlement_ledger(dummy_ref(), bad));
+}
+
+TEST(Aipow, find_registration_looks_up_by_epoch) {
+  auto root_addr = mk_bits(0xC0);
+  auto score = mk_bits(0x5C);
+  vm::Dictionary dict{32};
+  auto rec = build_registration_record(-1, root_addr, score, 4000000, 9000000000LL, 12345);
+  td::BitArray<32> key;
+  key.store_ulong(27263);
+  CHECK(dict.set_ref(key, rec));
+
+  auto reg = block::aipow::find_registration(dict.get_root_cell(), 27263);
+  CHECK(reg.found);
+  CHECK(reg.commitment_workchain == -1);
+  CHECK(reg.commitment_addr == root_addr);
+  CHECK(reg.score_root == score);
+  CHECK(td::cmp(reg.total_score, 4000000) == 0);
+  CHECK(td::cmp(reg.organic_settled_value, 9000000000LL) == 0);
+  CHECK(reg.registered_at == 12345);
+
+  // A different epoch is not found; an empty dict is not found.
+  CHECK(!block::aipow::find_registration(dict.get_root_cell(), 27264).found);
+  CHECK(!block::aipow::find_registration(td::Ref<vm::Cell>{}, 27263).found);
+}
+
+TEST(Aipow, parse_commitment_state_roundtrips) {
+  auto score = mk_bits(0x5C);
+  auto data = build_commitment(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL);
+  block::aipow::CommitmentState c;
+  CHECK(block::aipow::parse_commitment_state(data, c));
+  CHECK(c.version == 1);
+  CHECK(c.status == block::aipow::kCommitmentStatusFinal);
+  CHECK(c.epoch == 27263);
+  CHECK(c.score_root == score);
+  CHECK(td::cmp(c.total_score, 4000000) == 0);
+  CHECK(td::cmp(c.organic_settled_value, 9000000000LL) == 0);
+}
+
+TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
+  auto score = mk_bits(0x5C);
+  auto addr = mk_bits(0xC0);
+  auto rec = build_registration_record(-1, addr, score, 4000000, 9000000000LL, 1);
+  vm::Dictionary dict{32};
+  td::BitArray<32> key;
+  key.store_ulong(27263);
+  dict.set_ref(key, rec);
+  auto reg = block::aipow::find_registration(dict.get_root_cell(), 27263);
+  CHECK(reg.found);
+
+  auto good = [&](td::uint16 ver, td::uint8 status, td::uint64 epoch, td::Bits256 root, long long ts,
+                  long long org) {
+    block::aipow::CommitmentState c;
+    CHECK(block::aipow::parse_commitment_state(build_commitment(ver, status, epoch, root, ts, org), c));
+    return block::aipow::commitment_authorizes(reg, c, 1, 27263);
+  };
+
+  // Exact match, status final -> authorized.
+  CHECK(good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL));
+  // Not final -> not authorized.
+  CHECK(!good(1, 0, 27263, score, 4000000, 9000000000LL));
+  CHECK(!good(1, 3 /*rejected*/, 27263, score, 4000000, 9000000000LL));
+  // Wrong version -> not authorized.
+  CHECK(!good(2, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL));
+  // Epoch mismatch (commitment epoch != registration key) -> not authorized.
+  CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27264, score, 4000000, 9000000000LL));
+  // Root / total_score / organic mismatch -> not authorized.
+  CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, mk_bits(0x77), 4000000, 9000000000LL));
+  CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000001, 9000000000LL));
+  CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000001LL));
+}
+
+TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
+  // Wire the parsers to compute_epoch_mint: a settlement at the cursor epoch with
+  // a registration and a matching final commitment mints the derived pool.
+  auto score = mk_bits(0x5C);
+  auto addr = mk_bits(0xC0);
+  long long organic = 1000;
+  vm::Dictionary dict{32};
+  td::BitArray<32> key;
+  key.store_ulong(27260);
+  dict.set_ref(key, build_registration_record(-1, addr, score, 4000000, organic, 1));
+  auto settlement = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+
+  block::aipow::SettlementLedger led;
+  CHECK(block::aipow::parse_settlement_ledger(settlement, led));
+  auto reg = block::aipow::find_registration(led.registrations, led.next_epoch);
+  CHECK(reg.found);
+  block::aipow::CommitmentState c;
+  CHECK(block::aipow::parse_commitment_state(
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, led.next_epoch, score, 4000000, organic), c));
+  bool authorized = block::aipow::commitment_authorizes(reg, c, 1, led.next_epoch);
+  CHECK(authorized);
+
+  auto cfg = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic / 2 = 500
+  block::aipow::SettlementCursor cursor;
+  cursor.next_epoch = led.next_epoch;
+  cursor.minted_total = led.minted_total;
+  cursor.epoch_seconds = led.epoch_seconds;
+  cursor.register_grace = led.register_grace;
+  auto r = block::aipow::compute_epoch_mint(cfg, make_limits(4500000000000000000LL), cursor, authorized,
+                                            reg.organic_settled_value, 0);
+  CHECK(r.is_mint());
+  CHECK(r.epoch == 27260);
+  CHECK(td::cmp(r.amount, 500) == 0);
 }

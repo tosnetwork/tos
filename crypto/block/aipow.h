@@ -5,6 +5,8 @@
 */
 #pragma once
 #include "common/refint.h"
+#include "common/bitstring.h"
+#include "vm/cells.h"
 #include "block/mc-config.h"
 
 namespace block {
@@ -87,6 +89,81 @@ td::RefInt256 compute_epoch_pool(const AipowConfig& cfg, const td::RefInt256& or
 EpochSettlement compute_epoch_mint(const AipowConfig& cfg, const AipowLimits& limits,
                                    const SettlementCursor& cursor, bool has_valid_commitment,
                                    const td::RefInt256& organic_settled_value, td::uint32 gen_utime);
+
+/*
+ * Canonical raw-parsers over the W4.1/W4.2 contract data cells (W4.5 part 1).
+ *
+ * The collator and validate-query resolve the settlement + commitment accounts
+ * from consensus state and feed the parsed values into compute_epoch_mint via
+ * ONE shared code path (this module), so there is no produce/check drift. The
+ * parsers are strict: every field is fetched with a checked read and a parse
+ * that runs short or malformed returns false (the caller mints nothing). The
+ * account layout is additionally implied by the registry code-hash check the
+ * caller performs before parsing.
+ *
+ * These are pure over the input cells: no account resolution, no config, no
+ * time -- only bit-exact fetches, so every node parses identically.
+ */
+
+// The settlement account's ledger (the fields the derivation reads, W4.1 layout).
+struct SettlementLedger {
+  td::uint16 version{0};
+  td::uint32 next_epoch{0};
+  td::uint32 epoch_seconds{0};
+  td::uint32 register_grace{0};
+  td::int32 earner_workchain{0};
+  td::uint16 immediate_bps{0};
+  td::uint16 stream_epochs{0};
+  td::uint32 mat_epoch_seconds{0};
+  td::RefInt256 minted_total;
+  td::RefInt256 total_cap;
+  td::Ref<vm::Cell> distributor_code;
+  td::Ref<vm::Cell> registrations;  // dict root cell (null when empty)
+};
+
+// A per-epoch registration recorded by the settlement (W4.1 pack_registration).
+struct Registration {
+  bool found{false};
+  td::int32 commitment_workchain{0};
+  td::Bits256 commitment_addr;  // the nominating commitment's account id
+  td::Bits256 score_root;
+  td::RefInt256 total_score;
+  td::RefInt256 organic_settled_value;
+  td::uint32 registered_at{0};
+};
+
+// The commitment's economic state (the fields the derivation verifies, W4.2 layout).
+struct CommitmentState {
+  td::uint16 version{0};
+  td::uint8 status{0};  // 0 committed, 1 challenged, 2 final, 3 rejected
+  td::uint64 epoch{0};
+  td::Bits256 score_root;
+  td::RefInt256 total_score;
+  td::RefInt256 organic_settled_value;
+};
+
+// The AIPoW commitment `status == final` value (mirrors the FunC status::final).
+constexpr td::uint8 kCommitmentStatusFinal = 2;
+
+// Parse the settlement account data cell. Returns false on a short/malformed cell.
+bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out);
+
+// Look up the registration for `epoch` in the settlement's registrations dict
+// (udict 32 -> ^record). Returns a record with found=false if absent, or on a
+// malformed dict/record.
+Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::uint32 epoch);
+
+// Parse the commitment account data cell. Returns false on a short/malformed cell.
+bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out);
+
+// True iff a resolved commitment authorizes the epoch's mint: the expected
+// layout version, status == final, its epoch equals the settled `epoch` (the
+// registration dict key), and every committed field exactly matches the recorded
+// registration (score_root, total_score, organic). The caller must separately
+// have verified the commitment account's code hash against the registry (that
+// resolution is not pure over cells).
+bool commitment_authorizes(const Registration& reg, const CommitmentState& commitment,
+                           td::uint16 expected_commitment_version, td::uint32 epoch);
 
 }  // namespace aipow
 }  // namespace block
