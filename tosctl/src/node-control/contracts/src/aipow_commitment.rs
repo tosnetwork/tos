@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECCwEAAyQAART/APSkE/S88sgLAQIBYgIDBNjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kD6QNMH0z/TP9M/+gD6ANQB0NP/0//RAtQB0PpA0//RAtFDAC2CEEFQVwG64wI/LIIQQVBXArrjAiyCEEFQVwO64wI9C4IQQVBXBLoEBQYHAFWhlwHaiaH0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6IFqAOh9IGn/6IFooYBAf5bMjM5gQg0BcAAFfL0gQg1+CMjufL0gQg9U5bHBVOmxwWx8vKBCDZTpL7y9AbT/9GBCDwhwwDy9HH4I4IICTqAoBB4FhcQRQNRQFQSMlQrzMhYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQSCADYPDyBCDQHwAAX8vSBCDf4IyW+8vQI0XInChB5VBgCEGgQVxBGBUwTDchYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQBcXCAEMjLBVAEzxZY+gISy2rJAfsAAf48gQg5UdnHBR3y9IEIOAfAARfy9AjTB9GBCDohwAAiwAGx8vSOV3InUHlUGAIQZxBWBFRBZE0+HMhYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRZoHFwgBDIywVQBM8WWPoCEstqyQH7AOMNCQH6jniBCDgHwAEX8vSBCD74IyS+8vQI0XNUNXEqQ8NS38hYzxbL/8kCyMv/y//JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRQM3FwgBDIywVQBM8WWPoCEstqyQH7AAFxcIAQyMsFUATPFlj6AhLLaskB+wDgXw0KADyhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAsBBnEFZzUWEQVhBFA1RBU0HAUr7IWM8Wy//JAsjL/8v/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UWaBxcIAQyMsFUATPFlj6AhLLaskB+wAACoEIO/Lw4P+Bcg==";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDAEAA2MAART/APSkE/S88sgLAQIBYgIDBOrQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kD6QNMH0z/TP9M/+gD6ANQB0NP/0//Tf9N/0QTUAdD6QNP/0QLREEUQNEMAL4IQQVBXAbrjAlcRLoIQQVBXArrjAi6CEEFQVwO64wI/DYIQQVBXBLoEBQYHAGWhlwHaiaH0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBaIgiiBohgEBpls0NTuBCDQHwAAX8vSBCDX4IyW58vSBCD1TuMcFU8jHBbHy8oEINlPCvvL0CNP/0YEIPCHDAPL0cfgjgggJOoCgEJoYGRBnBVFjVBNUED1B0FLuCADoPj6BCDQJwAAZ8vSBCDf4Iye+8vQK0XIpDBCbVBoEEIoQeRBoBxBGA04VD8hYzxbL/8kEyMv/E8v/y3/Lf8nIUArPFlAIzxYWywcUyz8Syz/LPwH6AgH6AhLMzMntVAFxcIAQyMsFUATPFlj6AhLLaskB+wACTD6BCDlR+8cFH/L0gQg4CcABGfL0CtMH0YEIOiHAACLAAbHy9OMPCQoB7I7sgQg4CcABGfL0gQg++CMmvvL0CtFzVDeTJBA9TeBS8BERyFjPFsv/yQTIy/8Ty//Lf8t/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UAXFwgBDIywVQBM8WWPoCEstqyQH7AAFx4F8PgQg78vALAKTIWM8Wy//JBMjL/xPL/8t/y3/JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VQSoSDCAI4VcXCAEMjLBVAEzxZY+gISy2rJAfsAkVviAMQQiRB4c1GDEHgQZwVRYwUQNEEwVC7QERDIWM8Wy//JBMjL/xPL/8t/y3/JyFAKzxZQCM8WFssHFMs/Ess/yz8B+gIB+gISzMzJ7VRZoHFwgBDIywVQBM8WWPoCEstqyQH7AADEcilQm1QaBBCJEHgGUXQGEEVEMBAvERAeyFjPFsv/yQTIy/8Ty//Lf8t/ychQCs8WUAjPFhbLBxTLPxLLP8s/AfoCAfoCEszMye1UWaBxcIAQyMsFUATPFlj6AhLLaskB+wAAKHCAEMjLBVAEzxZY+gISy2rJAfsAz7fErw==";
 
 pub const APW_CHALLENGE_OPCODE: u32 = 0x4150_5701;
 pub const APW_FINALIZE_OPCODE: u32 = 0x4150_5702;
@@ -43,6 +43,13 @@ pub struct AipowCommitmentInit {
     pub commit_bond: u64,
     pub score_root: [u8; 32],
     pub methodology_hash: [u8; 32],
+    /// The epoch's total score (pro-rata denominator) the committer binds and
+    /// bonds, so a distributor over this finalized root can be checked against
+    /// the denominator that was staked on rather than a free operator param.
+    pub total_score: u128,
+    /// The epoch's organic settled value the committer binds; the phase C
+    /// native path derives the pool from it and the on-chain schedule params.
+    pub organic_settled_value: u128,
 }
 
 pub struct AipowCommitmentContract;
@@ -62,6 +69,10 @@ pub struct AipowCommitmentData {
     pub challenge_bond: u64,
     pub score_root: [u8; 32],
     pub methodology_hash: [u8; 32],
+    /// The committed pro-rata denominator (decimal via Display; a u128).
+    pub total_score: u128,
+    /// The committed epoch organic settled value (a u128).
+    pub organic_settled_value: u128,
     /// The zero address until a challenge is recorded.
     pub challenger: MsgAddressInt,
     pub challenge_evidence_hash: [u8; 32],
@@ -91,6 +102,8 @@ impl AipowCommitmentContract {
         append_tomis(&mut data, 0)?;
         let mut root = BuilderData::new();
         root.append_u256(&init.score_root)?.append_u256(&init.methodology_hash)?;
+        append_u128(&mut root, init.total_score)?;
+        append_u128(&mut root, init.organic_settled_value)?;
         data.checked_append_reference(root.into_cell()?)?;
         let mut challenge = BuilderData::new();
         MsgAddressInt::default().write_to(&mut challenge)?;
@@ -113,7 +126,7 @@ impl AipowCommitmentContract {
     pub fn decode_data(stack: &TvmStackParser) -> anyhow::Result<AipowCommitmentData> {
         let mut committer_slice = stack.slice(0)?;
         let mut reviewer_slice = stack.slice(1)?;
-        let mut challenger_slice = stack.slice(10)?;
+        let mut challenger_slice = stack.slice(12)?;
         Ok(AipowCommitmentData {
             committer: MsgAddressInt::construct_from(&mut committer_slice)?,
             reviewer: MsgAddressInt::construct_from(&mut reviewer_slice)?,
@@ -125,8 +138,10 @@ impl AipowCommitmentContract {
             challenge_bond: stack.u64(7)?,
             score_root: parse_hash(stack, 8)?,
             methodology_hash: parse_hash(stack, 9)?,
+            total_score: parse_u128(stack, 10)?,
+            organic_settled_value: parse_u128(stack, 11)?,
             challenger: MsgAddressInt::construct_from(&mut challenger_slice)?,
-            challenge_evidence_hash: parse_hash(stack, 11)?,
+            challenge_evidence_hash: parse_hash(stack, 13)?,
         })
     }
 
@@ -169,6 +184,19 @@ fn append_tomis(builder: &mut BuilderData, amount: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn append_u128(builder: &mut BuilderData, value: u128) -> anyhow::Result<()> {
+    builder.append_raw(&value.to_be_bytes(), 128)?;
+    Ok(())
+}
+
+fn parse_u128(stack: &TvmStackParser, index: usize) -> anyhow::Result<u128> {
+    let bytes = stack.number_bytes(index, 16)?;
+    let array: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("stack entry {} is not a 128-bit value", index))?;
+    Ok(u128::from_be_bytes(array))
+}
+
 fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> {
     stack
         .number_bytes(index, 32)?
@@ -200,6 +228,8 @@ mod tests {
             commit_bond: 5_000_000_000,
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
+            total_score: 1_000_000,
+            organic_settled_value: 42_000_000_000,
         }
     }
 

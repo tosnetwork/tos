@@ -508,6 +508,8 @@ struct AipowCommitmentRecordDto {
     challenge_bond: u64,
     score_root: String,
     methodology_hash: String,
+    total_score: String,
+    organic_settled_value: String,
     challenger: String,
     challenge_evidence_hash: String,
 }
@@ -525,6 +527,8 @@ impl From<&contracts::AipowCommitmentData> for AipowCommitmentRecordDto {
             challenge_bond: data.challenge_bond,
             score_root: hex::encode(data.score_root),
             methodology_hash: hex::encode(data.methodology_hash),
+            total_score: data.total_score.to_string(),
+            organic_settled_value: data.organic_settled_value.to_string(),
             challenger: data.challenger.to_string(),
             challenge_evidence_hash: hex::encode(data.challenge_evidence_hash),
         }
@@ -1772,6 +1776,8 @@ mod tests {
             commit_bond: 5 * tos,
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
+            total_score: 1_000_000,
+            organic_settled_value: 42 * u128::from(tos),
         };
         let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(committer.address(), &commitment, 6 * tos)
@@ -1799,6 +1805,9 @@ mod tests {
         assert_eq!(dto["epoch"], 42);
         assert_eq!(dto["score_root"], hex::encode([0x33u8; 32]));
         assert_eq!(dto["commit_bond"], 5 * tos);
+        // The committed economic tuple is surfaced by the indexer.
+        assert_eq!(dto["total_score"], "1000000");
+        assert_eq!(dto["organic_settled_value"], (42 * u128::from(tos)).to_string());
 
         // Drive a real challenge through the contract, then re-decode: the
         // stored record must follow the status transition.

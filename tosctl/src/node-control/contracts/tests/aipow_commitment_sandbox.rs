@@ -26,6 +26,8 @@ use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
 const COMMIT_BOND: u64 = 5 * TOS;
+const TOTAL_SCORE: u128 = 1_000_000;
+const ORGANIC_VALUE: u128 = 42 * TOS as u128;
 const ERR_NOT_COMMITTED: i32 = 2100;
 const ERR_WINDOW_CLOSED: i32 = 2101;
 const ERR_INSUFFICIENT_BOND: i32 = 2102;
@@ -65,6 +67,8 @@ impl Fixture {
             commit_bond: COMMIT_BOND,
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
+            total_score: TOTAL_SCORE,
+            organic_settled_value: ORGANIC_VALUE,
         };
         let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
         let state_init = AipowCommitmentContract::build_state_init(&init).expect("state init");
@@ -162,6 +166,9 @@ fn deploys_committed_and_readable() {
     assert_eq!(data.challenge_bond, 0);
     assert_eq!(data.score_root, [0x33; 32]);
     assert_eq!(data.methodology_hash, [0x44; 32]);
+    // The committer binds the full economic tuple, not just the root.
+    assert_eq!(data.total_score, TOTAL_SCORE);
+    assert_eq!(data.organic_settled_value, ORGANIC_VALUE);
     assert_eq!(&data.committer, f.committer.address());
     assert_eq!(&data.reviewer, f.reviewer.address());
 }

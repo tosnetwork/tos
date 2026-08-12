@@ -85,6 +85,16 @@ pub struct AipowDeployCmd {
     score_root: String,
     #[arg(long, help = "32-byte methodology commitment (hex)")]
     methodology_hash: String,
+    #[arg(
+        long,
+        help = "Epoch total score (pro-rata denominator); bound and bonded so a distributor over this root can be checked against it"
+    )]
+    total_score: u128,
+    #[arg(
+        long,
+        help = "Epoch organic settled value in nanotos; bound so the phase C native path derives the pool from a committed value"
+    )]
+    organic_settled_value: u128,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
     #[arg(
@@ -217,6 +227,8 @@ impl AipowDeployCmd {
                 "methodology-hash",
                 &Some(self.methodology_hash.clone()),
             )?,
+            total_score: self.total_score,
+            organic_settled_value: self.organic_settled_value,
         };
         let address = AipowCommitmentContract::calculate_address(self.workchain, &init)?;
         let state_init = AipowCommitmentContract::build_state_init(&init)?;
@@ -325,6 +337,8 @@ struct AipowDataView {
     challenge_bond: u64,
     score_root: String,
     methodology_hash: String,
+    total_score: String,
+    organic_settled_value: String,
     challenger: String,
     challenge_evidence_hash: String,
 }
@@ -352,6 +366,8 @@ fn data_view(address: &MsgAddressInt, data: AipowCommitmentData) -> AipowDataVie
         challenge_bond: data.challenge_bond,
         score_root: hex::encode(data.score_root),
         methodology_hash: hex::encode(data.methodology_hash),
+        total_score: data.total_score.to_string(),
+        organic_settled_value: data.organic_settled_value.to_string(),
         challenger: data.challenger.to_string(),
         challenge_evidence_hash: hex::encode(data.challenge_evidence_hash),
     }
@@ -379,6 +395,8 @@ impl AipowShowCmd {
             println!("Review deadline: {}", view.review_deadline);
             println!("Commit bond (nanotos):    {}", view.commit_bond);
             println!("Challenge bond (nanotos): {}", view.challenge_bond);
+            println!("Total score:  {}", view.total_score);
+            println!("Organic settled value (nanotos): {}", view.organic_settled_value);
             println!("Score root: {}", view.score_root);
         }
         Ok(())

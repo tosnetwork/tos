@@ -37,7 +37,14 @@
 ;;                           after)
 ;;   commit_bond:tomis
 ;;   challenge_bond:tomis
-;;   ^[score_root:uint256 methodology_hash:uint256]
+;;   ^[score_root:uint256 methodology_hash:uint256
+;;     total_score:uint128 organic_settled_value:uint128]
+;;       The committer binds the full economic tuple, not just the root: the
+;;       pro-rata denominator (total_score) and the epoch's organic settled
+;;       value are committed and bonded here, so a distributor deployed over a
+;;       finalized root can be checked against the denominator the committer
+;;       staked on, and the phase C native path mints from a committed pool
+;;       rather than an operator-chosen one.
 ;;   ^[challenger:MsgAddress challenge_evidence_hash:uint256]
 ;;
 ;; Internal messages:
@@ -84,7 +91,7 @@ const int err::review_open = 2110;
   .end_cell(), mode);
 }
 
-(slice, slice, int, int, int, int, int, int, int, int, slice, int) load_state() inline {
+(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int) load_state() inline {
   slice ds = get_data().begin_parse();
   slice committer = ds~load_msg_addr();
   slice reviewer = ds~load_msg_addr();
@@ -97,6 +104,8 @@ const int err::review_open = 2110;
   slice root = ds~load_ref().begin_parse();
   int score_root = root~load_uint(256);
   int methodology_hash = root~load_uint(256);
+  int total_score = root~load_uint(128);
+  int organic_settled_value = root~load_uint(128);
   root.end_parse();
   slice chal = ds~load_ref().begin_parse();
   slice challenger = chal~load_msg_addr();
@@ -104,13 +113,14 @@ const int err::review_open = 2110;
   chal.end_parse();
   ds.end_parse();
   return (committer, reviewer, status, epoch, window_deadline, review_deadline,
-    commit_bond, challenge_bond, score_root, methodology_hash, challenger,
-    challenge_evidence_hash);
+    commit_bond, challenge_bond, score_root, methodology_hash, total_score,
+    organic_settled_value, challenger, challenge_evidence_hash);
 }
 
 () save_state(slice committer, slice reviewer, int status, int epoch, int window_deadline,
              int review_deadline, int commit_bond, int challenge_bond, int score_root,
-             int methodology_hash, slice challenger, int challenge_evidence_hash) impure inline {
+             int methodology_hash, int total_score, int organic_settled_value,
+             slice challenger, int challenge_evidence_hash) impure inline {
   set_data(begin_cell()
     .store_slice(committer)
     .store_slice(reviewer)
@@ -123,6 +133,8 @@ const int err::review_open = 2110;
     .store_ref(begin_cell()
       .store_uint(score_root, 256)
       .store_uint(methodology_hash, 256)
+      .store_uint(total_score, 128)
+      .store_uint(organic_settled_value, 128)
     .end_cell())
     .store_ref(begin_cell()
       .store_slice(challenger)
@@ -143,7 +155,8 @@ const int err::review_open = 2110;
 
   (slice committer, slice reviewer, int status, int epoch, int window_deadline,
    int review_deadline, int commit_bond, int challenge_bond, int score_root,
-   int methodology_hash, slice challenger, int challenge_evidence_hash) = load_state();
+   int methodology_hash, int total_score, int organic_settled_value,
+   slice challenger, int challenge_evidence_hash) = load_state();
 
   if (op == op::challenge) {
     throw_unless(err::not_committed, status == status::committed);
@@ -162,7 +175,7 @@ const int err::review_open = 2110;
     throw_unless(err::zero_evidence, new_evidence_hash != 0);
     save_state(committer, reviewer, status::challenged, epoch, window_deadline,
       now() + review_window, commit_bond, commit_bond, score_root, methodology_hash,
-      sender, new_evidence_hash);
+      total_score, organic_settled_value, sender, new_evidence_hash);
     int excess = msg_value - commit_bond;
     if (excess > 0) {
       send_value(sender, excess, 1);
@@ -178,7 +191,7 @@ const int err::review_open = 2110;
     in_msg.end_parse();
     save_state(committer, reviewer, status::final, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-      challenger, challenge_evidence_hash);
+      total_score, organic_settled_value, challenger, challenge_evidence_hash);
     send_value(committer, commit_bond, 1);
     return ();
   }
@@ -194,14 +207,14 @@ const int err::review_open = 2110;
       ;; made whole plus the committer's bond.
       save_state(committer, reviewer, status::rejected, epoch, window_deadline,
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-        challenger, challenge_evidence_hash);
+        total_score, organic_settled_value, challenger, challenge_evidence_hash);
       send_value(challenger, commit_bond + challenge_bond, 1);
     } else {
       ;; The challenge is dismissed: the root finalizes and the frivolous
       ;; challenger's bond compensates the committer.
       save_state(committer, reviewer, status::final, epoch, window_deadline,
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-        challenger, challenge_evidence_hash);
+        total_score, organic_settled_value, challenger, challenge_evidence_hash);
       send_value(committer, commit_bond + challenge_bond, 1);
     }
     return ();
@@ -217,7 +230,7 @@ const int err::review_open = 2110;
     in_msg.end_parse();
     save_state(committer, reviewer, status::rejected, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-      challenger, challenge_evidence_hash);
+      total_score, organic_settled_value, challenger, challenge_evidence_hash);
     send_value(committer, commit_bond, 1);
     send_value(challenger, challenge_bond, 1);
     return ();
@@ -226,6 +239,6 @@ const int err::review_open = 2110;
   throw(err::unknown_op);
 }
 
-(slice, slice, int, int, int, int, int, int, int, int, slice, int) get_aipow_commitment_data() method_id {
+(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int) get_aipow_commitment_data() method_id {
   return load_state();
 }

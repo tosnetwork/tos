@@ -133,6 +133,18 @@ async def tosctl_json(config: Path, *args: str):
     return json.loads(await tosctl(config, *args, "--format", "json"))
 
 
+async def tosctl_status(config: Path, *args: str):
+    """Run tosctl and return (returncode, stdout+stderr) for negative tests."""
+    env = dict(os.environ)
+    env["VAULT_URL"] = f"file://{config.parent}/e2e-vault.json?master_key={MASTER_KEY}"
+    proc = await asyncio.create_subprocess_exec(
+        TOSCTL, *args, "-c", str(config),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+    )
+    out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
+    return proc.returncode, out.decode() + err.decode()
+
+
 def norm_addr(addr: str) -> str:
     return Address(addr).to_str(is_user_friendly=False).lower()
 
@@ -459,12 +471,16 @@ async def run_checks(faucet) -> None:
         score_root = output["score_root_hex"]
         methodology_hash = hashlib.sha256(b"aipow-methodology-v0").hexdigest()
         window_deadline = int(time.time()) + 40
+        committed_total_score = str(commitment["envelope"]["total_score"])
+        committed_organic = str(commitment["envelope"]["organic_settled_value"])
         deploy_out = await tosctl_json(
             CONFIG_A, "agent", "aipow", "deploy", "--name", "e2e-commit",
             "--committer", creator1, "--reviewer", creator2,
             "--epoch", str(epoch), "--window-deadline", str(window_deadline),
             "--commit-bond", "2", "--score-root", score_root,
             "--methodology-hash", methodology_hash,
+            "--total-score", committed_total_score,
+            "--organic-settled-value", committed_organic,
             "--from", "creator1", "-w", "0", "--yes",
         )
         commitment_addr = norm_addr(deploy_out["address"])
@@ -479,6 +495,10 @@ async def run_checks(faucet) -> None:
               show["score_root"] == score_root, str(show))
         check("on-chain status is committed", show["status"] == "committed", str(show))
         check("on-chain epoch matches", show["epoch"] == epoch, str(show))
+        check("on-chain total score matches the committed envelope",
+              show["total_score"] == committed_total_score, str(show))
+        check("on-chain organic settled value matches the committed envelope",
+              show["organic_settled_value"] == committed_organic, str(show))
 
         found, body = await poll_http_predicate(
             "/aipow/commitments",
@@ -514,6 +534,37 @@ async def run_checks(faucet) -> None:
         bond_delta = balance(creator1) - committer_before
         check("committer's bond returned on finalize",
               int(1.9 * NANO) < bond_delta <= 2 * NANO, str(bond_delta))
+
+        print("\n=== VERIFIED BINDING: distributor deploy checks the finalized commitment ===")
+        # Positive: an entries file that reproduces the committed single-member
+        # root, bound to the finalized commitment by address. The CLI queries
+        # the commitment, requires it final with a matching root/total/epoch,
+        # and derives the reference from its account id.
+        agent_score = output["organic"][0]["score"]
+        bound_file = WORKDIR / "bound-entries.json"
+        bound_file.write_text(json.dumps([{"identity": addr_hex(agent), "score": agent_score}]))
+        bound_out = await tosctl_json(
+            CONFIG_A, "agent", "aipow-dist", "deploy", "--name", "e2e-dist-bound",
+            "--operator", creator1, "--epoch", str(epoch),
+            "--entries-file", str(bound_file), "--pool", "6",
+            "--commitment", commitment_addr,
+            "--from", "creator1", "-w", "0", "--yes",
+        )
+        check("distributor binds to the finalized commitment", "address" in bound_out,
+              str(bound_out))
+        # Negative: a mismatched entries file against the same commitment is
+        # rejected -- the denominator/root binding is enforced, not decorative.
+        mismatch_file = WORKDIR / "mismatch-entries.json"
+        mismatch_file.write_text(json.dumps([{"identity": addr_hex(creator1), "score": 12345}]))
+        rc, combined = await tosctl_status(
+            CONFIG_A, "agent", "aipow-dist", "deploy", "--name", "e2e-dist-bad",
+            "--operator", creator1, "--epoch", str(epoch),
+            "--entries-file", str(mismatch_file), "--pool", "6",
+            "--commitment", commitment_addr,
+            "--from", "creator1", "-w", "0", "--yes",
+        )
+        check("a distributor that mismatches the commitment is rejected",
+              rc != 0 and "does not match" in combined, f"rc={rc} out={combined[-400:]}")
 
         print("\n=== DISTRIBUTOR: deploy over an entries file and claim a share ===")
         # A small published scoring: three real chain accounts with scores
@@ -588,6 +639,8 @@ async def run_checks(faucet) -> None:
             "--epoch", str(epoch), "--window-deadline", str(ch_deadline),
             "--commit-bond", "2", "--score-root", score_root,
             "--methodology-hash", methodology_hash,
+            "--total-score", committed_total_score,
+            "--organic-settled-value", committed_organic,
             "--from", "creator1", "-w", "0", "--yes",
         )
         ch_addr = norm_addr(ch_out["address"])

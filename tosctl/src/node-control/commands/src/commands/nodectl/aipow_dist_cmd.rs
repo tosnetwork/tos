@@ -17,7 +17,10 @@ use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::app_config::AipowDistributorConfig;
 use contracts::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
-use contracts::{AipowDistributorContract, AipowDistributorData, AipowDistributorInit};
+use contracts::{
+    AipowCommitmentContract, AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
+    AIPOW_COMMITMENT_STATUS_FINAL,
+};
 use std::path::Path;
 
 const DIST_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -107,8 +110,17 @@ pub struct AipowDistDeployCmd {
     entries_file: String,
     #[arg(long, help = "Nominal epoch pool in TOS this slice records against")]
     pool: f64,
-    #[arg(long, help = "32-byte reference to the finalized score commitment (hex)")]
-    commitment_ref: String,
+    #[arg(
+        long,
+        conflicts_with = "commitment_ref",
+        help = "Finalized score-commitment address to bind to; it is queried and must be final with a matching root, total score, and epoch, and its account id becomes the commitment reference"
+    )]
+    commitment: Option<String>,
+    #[arg(
+        long,
+        help = "32-byte reference to the finalized score commitment (hex); the raw, unverified alternative to --commitment"
+    )]
+    commitment_ref: Option<String>,
     #[arg(
         long,
         help = "Optional 32-byte score root (hex) to require the entries file to match, as a guard against the wrong file"
@@ -149,16 +161,68 @@ impl AipowDistDeployCmd {
         }
         let total = total_score(&entries)?;
         let pool_nanotos = common::chain_utils::tos_to_nanotos(self.pool);
+
+        let path = Path::new(config_path);
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+
+        // Bind the distributor to a finalized commitment. With --commitment,
+        // the commitment is queried and must be final with a root, total
+        // score, and epoch that match this deployment; its account id then
+        // becomes the reference, so the binding is provable rather than a
+        // free operator-supplied hash. --commitment-ref keeps the raw path.
+        let commitment_ref = match (&self.commitment, &self.commitment_ref) {
+            (Some(addr_raw), None) => {
+                let commitment_addr =
+                    addr_raw.parse::<MsgAddressInt>().context("invalid commitment address")?;
+                let provider = contracts::contract_provider!(rpc_client.clone());
+                let stack = provider
+                    .get_method(commitment_addr.to_string(), "get_aipow_commitment_data", vec![])
+                    .await?;
+                let commitment = AipowCommitmentContract::decode_data(&stack)?;
+                if commitment.status != AIPOW_COMMITMENT_STATUS_FINAL {
+                    anyhow::bail!(
+                        "commitment {} is not final (status {}); a distributor may only be deployed over a finalized root",
+                        commitment_addr,
+                        commitment.status
+                    );
+                }
+                if commitment.score_root != root {
+                    anyhow::bail!(
+                        "commitment root {} does not match the entries-file root {}",
+                        hex::encode(commitment.score_root),
+                        hex::encode(root)
+                    );
+                }
+                if commitment.total_score != total {
+                    anyhow::bail!(
+                        "commitment total_score {} does not match the entries-file total {}",
+                        commitment.total_score,
+                        total
+                    );
+                }
+                if commitment.epoch != self.epoch {
+                    anyhow::bail!(
+                        "commitment epoch {} does not match --epoch {}",
+                        commitment.epoch,
+                        self.epoch
+                    );
+                }
+                let bytes = commitment_addr.address().get_bytestring(0);
+                bytes.try_into().map_err(|_| {
+                    anyhow::anyhow!("commitment address is not a 256-bit account id")
+                })?
+            }
+            (None, Some(raw)) => parse_required_hash("commitment-ref", &Some(raw.clone()))?,
+            _ => anyhow::bail!("provide exactly one of --commitment or --commitment-ref"),
+        };
+
         let init = AipowDistributorInit {
             operator: operator.clone(),
             epoch: self.epoch,
             total_score: total,
             pool: pool_nanotos,
             score_root: root,
-            commitment_ref: parse_required_hash(
-                "commitment-ref",
-                &Some(self.commitment_ref.clone()),
-            )?,
+            commitment_ref,
         };
         let address = AipowDistributorContract::calculate_address(self.workchain, &init)?;
         let state_init = AipowDistributorContract::build_state_init(&init)?;
@@ -167,9 +231,6 @@ impl AipowDistDeployCmd {
             let hash = hex.rsplit(':').next().unwrap_or(&hex);
             format!("aipow-dist-{}-{}", self.epoch, &hash[..hash.len().min(8)])
         });
-
-        let path = Path::new(config_path);
-        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         if let Some(existing) = config.aipow_distributors.get(&record_name) {
             if existing.address != address.to_string() {
                 anyhow::bail!(

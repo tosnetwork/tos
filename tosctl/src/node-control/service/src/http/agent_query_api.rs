@@ -857,6 +857,12 @@ pub struct AipowCommitmentDto {
     pub challenge_bond: u64,
     pub score_root: String,
     pub methodology_hash: String,
+    /// The committed pro-rata denominator (decimal string, u128).
+    #[serde(default)]
+    pub total_score: String,
+    /// The committed epoch organic settled value (decimal string, u128).
+    #[serde(default)]
+    pub organic_settled_value: String,
     /// The zero address until a challenge is recorded.
     pub challenger: String,
     pub challenge_evidence_hash: String,
