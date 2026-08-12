@@ -152,11 +152,10 @@ async def main(rpc_addr, control_addr, num_validators, workdir, boot_timeout, de
 
         rpc_host, rpc_port_text = rpc_addr.rsplit(":", 1)
         rpc_addresses = [f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)]
-        async with asyncio.TaskGroup() as tg:
-            _ = tg.create_task(dht.run())
-            for i, node in enumerate(nodes):
-                extra = ["--json-rpc-address", rpc_addresses[i]]
-                _ = tg.create_task(node.run(StartOptions(args=extra)))
+        node_tasks = [asyncio.create_task(dht.run())]
+        for i, node in enumerate(nodes):
+            extra = ["--json-rpc-address", rpc_addresses[i]]
+            node_tasks.append(asyncio.create_task(node.run(StartOptions(args=extra))))
 
         print(f"[localnet] validators={num_validators}; waiting for masterchain block #1 ...")
         await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=boot_timeout)
@@ -212,6 +211,9 @@ async def main(rpc_addr, control_addr, num_validators, workdir, boot_timeout, de
             await asyncio.Event().wait()
         finally:
             control_server.shutdown()
+            for task in node_tasks:
+                task.cancel()
+            await asyncio.gather(*node_tasks, return_exceptions=True)
 
 
 if __name__ == "__main__":
