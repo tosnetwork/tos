@@ -252,6 +252,8 @@ const int status::disputed = 7;
     throw_unless(121, has_verifier);
     throw_unless(122, now() <= review_deadline);
     dispute_hash = in_msg~load_uint(256);
+    ;; Zero is reserved for "no dispute" and is never a valid commitment.
+    throw_unless(127, dispute_hash != 0);
     in_msg.end_parse();
     save_state(creator, agent, has_agent, verifier, has_verifier, budget, deadline,
       status::disputed, result_hash, evidence_hash, policy_hash, review_period,
