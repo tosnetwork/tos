@@ -4,6 +4,7 @@
     Licensed under the GNU General Public License v3.0.
 */
 #include "block/aipow.h"
+#include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
@@ -566,4 +567,24 @@ TEST(Aipow, derive_masterchain_skips_an_unregistered_epoch_only_past_grace) {
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_skip());
   CHECK(r.epoch == 10);
+}
+
+TEST(Aipow, config_registry_carries_the_commitment_code_hash) {
+  // Build a ConfigParam 93 (AipowRegistry) cell to the block.tlb schema and
+  // confirm the commitment_code_hash (in the anonymous ref) round-trips -- this
+  // is the audited hash the native settle path pins a commitment's code to.
+  vm::CellBuilder cb;
+  cb.store_bits_bool(mk_bits(0x01));  // settlement_addr
+  cb.store_bits_bool(mk_bits(0x02));  // methodology_hash
+  cb.store_bits_bool(mk_bits(0x03));  // rate_card_hash
+  vm::CellBuilder ref;
+  ref.store_bits_bool(mk_bits(0xCC));  // ^[ commitment_code_hash ]
+  cb.store_ref(ref.finalize());
+  cb.store_long_bool(0, 1);  // distributor_code_hashes: empty HashmapE
+  auto cell = cb.finalize();
+
+  block::gen::AipowRegistry::Record rec;
+  CHECK(tlb::unpack_cell(cell, rec));
+  CHECK(rec.settlement_addr == mk_bits(0x01));
+  CHECK(rec.r1.commitment_code_hash == mk_bits(0xCC));
 }

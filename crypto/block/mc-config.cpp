@@ -2235,6 +2235,7 @@ td::Result<AipowRegistry> Config::get_aipow_registry() const {
   res.settlement_addr = rec.settlement_addr;
   res.methodology_hash = rec.methodology_hash;
   res.rate_card_hash = rec.rate_card_hash;
+  res.commitment_code_hash = rec.r1.commitment_code_hash;
   res.distributor_code_hashes = rec.distributor_code_hashes;
   return res;
 }
@@ -2271,6 +2272,11 @@ td::Status Config::check_aipow_config() const {
   }
   if (reg.settlement_addr.is_zero() || reg.methodology_hash.is_zero() || reg.rate_card_hash.is_zero()) {
     return td::Status::Error("AipowRegistry settlement_addr, methodology_hash and rate_card_hash must be set");
+  }
+  if (reg.commitment_code_hash.is_zero()) {
+    // The native settle path pins a registered commitment's code to this hash;
+    // an unset hash would authorize no commitment (and is a misconfiguration).
+    return td::Status::Error("AipowRegistry commitment_code_hash must be set");
   }
   // distributor_code_hashes may be empty: in the Model B architecture the
   // settlement address is the trust anchor and the code-hash set is defence in

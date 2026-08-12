@@ -439,6 +439,8 @@ struct AipowRegistry {  // ConfigParam 93
   td::Bits256 settlement_addr;    // the AIPoW settlement contract (masterchain account id)
   td::Bits256 methodology_hash;   // frozen scoring methodology hash
   td::Bits256 rate_card_hash;     // frozen priced rate-card hash
+  td::Bits256 commitment_code_hash;  // the audited AIPoW commitment code cell hash; the native
+                                     // settle path pins a registered commitment's code to this
   td::Ref<vm::CellSlice> distributor_code_hashes;  // HashmapE 256 True: audited distributor code hashes
 };
 

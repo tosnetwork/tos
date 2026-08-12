@@ -890,8 +890,9 @@ aipow_limits#_ total_cap:Tomis = AipowLimits;
 _ AipowLimits = ConfigParam 92; // the AIPoW total supply cap (running total is in the settlement contract)
 
 aipow_registry#_ settlement_addr:bits256 methodology_hash:bits256 rate_card_hash:bits256
+  ^[ commitment_code_hash:bits256 ]
   distributor_code_hashes:(HashmapE 256 True) = AipowRegistry;
-_ AipowRegistry = ConfigParam 93; // settlement address + frozen methodology/rate-card + audited distributor code hashes
+_ AipowRegistry = ConfigParam 93; // settlement address + frozen methodology/rate-card + the audited commitment code hash + audited distributor code hashes
 
 
 //
