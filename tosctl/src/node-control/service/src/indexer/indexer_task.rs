@@ -29,8 +29,8 @@ use std::time::Duration;
 use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::{
-    CapabilityRegistryContract, ChainProvider, DisputeContract, AipowCommitmentContract,
-    ServiceActorContract, TaskEscrowContract,
+    AipowCommitmentContract, AipowDistributorContract, CapabilityRegistryContract, ChainProvider,
+    DisputeContract, ServiceActorContract, TaskEscrowContract,
 };
 
 use crate::indexer::store::{
@@ -92,6 +92,7 @@ impl KnownCodeHashes {
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
         by_hash.insert(AipowCommitmentContract::code()?.repr_hash(), "aipow_commitment");
+        by_hash.insert(AipowDistributorContract::code()?.repr_hash(), "aipow_distributor");
         Ok(Self { by_hash })
     }
 
@@ -434,7 +435,52 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&AipowCommitmentRecordDto::from(&data))?,
             })
         }
+        "aipow_distributor" => {
+            let stack = chain_provider
+                .run_get_method(address.to_owned(), "get_aipow_distributor_data", vec![])
+                .await?;
+            let data = AipowDistributorContract::decode_data(&stack)?;
+            store.upsert(&IndexedRecord {
+                address: address.to_owned(),
+                kind: kind.to_owned(),
+                creator: Some(data.operator.to_string()),
+                counterparty: None,
+                // A distributor has no single lifecycle status; expose the
+                // running claimed count in the status column so the list
+                // endpoints have something to filter/show.
+                status: Some(format!("claimed:{}", data.claimed_count)),
+                deadline: None,
+                last_seqno: seqno,
+                updated_at: now,
+                dto_json: serde_json::to_string(&AipowDistributorRecordDto::from(&data))?,
+            })
+        }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct AipowDistributorRecordDto {
+    operator: String,
+    epoch: u64,
+    total_score: String,
+    pool: u64,
+    claimed_count: u32,
+    score_root: String,
+    commitment_ref: String,
+}
+
+impl From<&contracts::AipowDistributorData> for AipowDistributorRecordDto {
+    fn from(data: &contracts::AipowDistributorData) -> Self {
+        Self {
+            operator: data.operator.to_string(),
+            epoch: data.epoch,
+            total_score: data.total_score.to_string(),
+            pool: data.pool,
+            claimed_count: data.claimed_count,
+            score_root: hex::encode(data.score_root),
+            commitment_ref: hex::encode(data.commitment_ref),
+        }
     }
 }
 
@@ -1769,5 +1815,72 @@ mod tests {
         assert_eq!(dto["challenger"], challenger.address().to_string());
         assert_eq!(dto["challenge_evidence_hash"], hex::encode([0xEEu8; 32]));
         assert_eq!(dto["challenge_bond"], 6 * tos);
+    }
+
+    #[tokio::test]
+    async fn indexer_decodes_an_aipow_distributor_and_follows_claims() {
+        use contracts::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
+        use contracts::{AipowDistributorContract, AipowDistributorInit};
+
+        let tos: u64 = 1_000_000_000;
+        let mut bc = Blockchain::new().expect("blockchain");
+        bc.set_workchain(-1);
+        let base_now = time_format::now();
+        bc.set_now(base_now as u32);
+        let operator = bc.treasury("aipow-dist-op", 1_000 * tos).expect("operator");
+        let caller = bc.treasury("aipow-dist-caller", 1_000 * tos).expect("caller");
+        let members = vec![
+            ScoreEntry { identity: [0x11; 32], score: 400_000 },
+            ScoreEntry { identity: [0x22; 32], score: 600_000 },
+        ];
+        let root = score_root(&members).unwrap();
+        let init = AipowDistributorInit {
+            operator: operator.address().clone(),
+            epoch: 42,
+            total_score: 1_000_000,
+            pool: 10 * tos,
+            score_root: root,
+            commitment_ref: [0x99; 32],
+        };
+        let distributor = AipowDistributorContract::calculate_address(-1, &init).expect("address");
+        let deploy = MessageBuilder::internal(operator.address(), &distributor, 2 * tos)
+            .bounce(false)
+            .state_init(AipowDistributorContract::build_state_init(&init).expect("state init"))
+            .body(chain_block::Cell::default())
+            .build();
+        bc.send_message(deploy).expect("deploy").expect_success();
+
+        let provider = Arc::new(SandboxChainProvider { bc: StdMutex::new(bc) });
+        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = distributor.to_string();
+
+        decode_and_store(&provider_dyn, &store, &address, "aipow_distributor", 1, base_now)
+            .await
+            .unwrap();
+        let record = store.get(&address).unwrap().unwrap();
+        assert_eq!(record.kind, "aipow_distributor");
+        assert_eq!(record.status.as_deref(), Some("claimed:0"));
+        assert_eq!(record.creator.as_deref(), Some(operator.address().to_string().as_str()));
+        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
+        assert_eq!(dto["epoch"], 42);
+        assert_eq!(dto["total_score"], "1000000");
+        assert_eq!(dto["pool"], 10 * tos);
+        assert_eq!(dto["score_root"], hex::encode(root));
+
+        // Drive a real claim through the contract, then re-decode: the
+        // claimed count in the stored record must advance.
+        let proof = inclusion_proof(&members, &[0x11; 32]).unwrap();
+        let claim = MessageBuilder::internal(caller.address(), &distributor, tos / 2)
+            .body(AipowDistributorContract::claim(1, [0x11; 32], 400_000, &proof).unwrap())
+            .build();
+        provider.bc.lock().unwrap().send_message(claim).unwrap().expect_success();
+        decode_and_store(&provider_dyn, &store, &address, "aipow_distributor", 2, base_now)
+            .await
+            .unwrap();
+        let record = store.get(&address).unwrap().unwrap();
+        assert_eq!(record.status.as_deref(), Some("claimed:1"));
+        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
+        assert_eq!(dto["claimed_count"], 1);
     }
 }

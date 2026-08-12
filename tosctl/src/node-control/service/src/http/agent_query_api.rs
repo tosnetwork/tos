@@ -918,6 +918,82 @@ pub async fn get_aipow_commitment(
     Ok(axum::Json(AipowCommitmentResponse { ok: true, result }))
 }
 
+// --- AIPoW reward distributors (chain-wide, indexer-backed) ---
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct AipowDistributorDto {
+    pub address: String,
+    pub operator: String,
+    pub epoch: u64,
+    /// The epoch total score (pro-rata denominator), as a decimal string
+    /// because it is a u128.
+    pub total_score: String,
+    pub pool: u64,
+    pub claimed_count: u32,
+    pub score_root: String,
+    pub commitment_ref: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct AipowDistributorListResponse {
+    pub ok: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub result: Vec<AipowDistributorDto>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct AipowDistributorResponse {
+    pub ok: bool,
+    pub result: AipowDistributorDto,
+}
+
+#[utoipa::path(get, path = "/aipow/distributors", params(IndexedListQuery), responses(
+    (status = 200, body = AipowDistributorListResponse), (status = 400, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn list_aipow_distributors(
+    State(state): State<AppState>,
+    Query(query): Query<IndexedListQuery>,
+) -> Result<axum::Json<AipowDistributorListResponse>, AppError> {
+    validate_indexed_query(&query)?;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (rows, total) = state
+        .indexer_store
+        .list("aipow_distributor", &indexed_list_filters(&query), offset, limit)
+        .map_err(|e| AppError::internal(format!("{e:#}")))?;
+    let result = rows
+        .into_iter()
+        .filter_map(|r| indexed_dto::<AipowDistributorDto>(&r.dto_json, &r.address, false))
+        .collect();
+    Ok(axum::Json(AipowDistributorListResponse { ok: true, total, offset, limit, result }))
+}
+
+#[utoipa::path(get, path = "/aipow/distributors/{address}", params(("address" = String, Path, description = "AIPoW distributor address")), responses(
+    (status = 200, body = AipowDistributorResponse), (status = 400, body = ApiErrorResponse),
+    (status = 404, body = ApiErrorResponse)
+), security(("bearerAuth" = [])))]
+pub async fn get_aipow_distributor(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<axum::Json<AipowDistributorResponse>, AppError> {
+    let address = parse_address(&raw)?;
+    let rec = state
+        .indexer_store
+        .get(&address.to_string())
+        .map_err(|e| AppError::internal(format!("{e:#}")))?
+        .filter(|r| r.kind == "aipow_distributor")
+        .ok_or_else(|| AppError::not_found("no AIPoW distributor indexed at this address"))?;
+    let result = indexed_dto::<AipowDistributorDto>(&rec.dto_json, &rec.address, false)
+        .ok_or_else(|| {
+            AppError::invalid_contract_state(
+                "indexed AIPoW distributor record could not be decoded",
+            )
+        })?;
+    Ok(axum::Json(AipowDistributorResponse { ok: true, result }))
+}
+
 // --- AIPoW shadow-scoring data plane ---
 //
 // Settlement events observed by the chain indexer, exposed for the AIPoW
@@ -1820,6 +1896,62 @@ mod tests {
         let missing = "-1:".to_owned() + &"9".repeat(64);
         let response = routes(false, state)
             .oneshot(get(format!("/aipow/commitments/{missing}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
+    }
+
+    #[tokio::test]
+    async fn aipow_distributors_list_and_lookup_from_the_indexer() {
+        let f = Fixture::new();
+        let state = test_state_with_provider(test_app_config(), f.provider.clone()).await;
+        let address = "-1:".to_owned() + &"6".repeat(64);
+        let dto = serde_json::json!({
+            "operator": "-1:".to_owned() + &"1".repeat(64),
+            "epoch": 42,
+            "total_score": "1000000",
+            "pool": 10_000_000_000u64,
+            "claimed_count": 3,
+            "score_root": "33".repeat(32),
+            "commitment_ref": "99".repeat(32),
+        });
+        state
+            .indexer_store
+            .upsert(&crate::indexer::IndexedRecord {
+                address: address.clone(),
+                kind: "aipow_distributor".to_owned(),
+                creator: Some("-1:".to_owned() + &"1".repeat(64)),
+                counterparty: None,
+                status: Some("claimed:3".to_owned()),
+                deadline: None,
+                last_seqno: 5,
+                updated_at: 1_234,
+                dto_json: dto.to_string(),
+            })
+            .unwrap();
+
+        let response =
+            routes(false, state.clone()).oneshot(get("/aipow/distributors")).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let v = json_body(response).await;
+        assert_eq!(v["total"], 1);
+        assert_eq!(v["result"][0]["address"], address);
+        assert_eq!(v["result"][0]["epoch"], 42);
+        assert_eq!(v["result"][0]["total_score"], "1000000");
+        assert_eq!(v["result"][0]["claimed_count"], 3);
+
+        let response = routes(false, state.clone())
+            .oneshot(get(format!("/aipow/distributors/{address}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let v = json_body(response).await;
+        assert_eq!(v["result"]["pool"], 10_000_000_000u64);
+        assert_eq!(v["result"]["score_root"], "33".repeat(32));
+
+        let missing = "-1:".to_owned() + &"8".repeat(64);
+        let response = routes(false, state)
+            .oneshot(get(format!("/aipow/distributors/{missing}")))
             .await
             .unwrap();
         assert_eq!(response.status(), 404);

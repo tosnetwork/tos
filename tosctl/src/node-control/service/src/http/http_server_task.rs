@@ -167,6 +167,14 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
             "/aipow/commitments/{address}",
             axum::routing::get(agent_query_api::get_aipow_commitment),
         )
+        .route(
+            "/aipow/distributors",
+            axum::routing::get(agent_query_api::list_aipow_distributors),
+        )
+        .route(
+            "/aipow/distributors/{address}",
+            axum::routing::get(agent_query_api::get_aipow_distributor),
+        )
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -933,6 +941,8 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::list_aipow_settled_work
         ,agent_query_api::list_aipow_commitments
         ,agent_query_api::get_aipow_commitment
+        ,agent_query_api::list_aipow_distributors
+        ,agent_query_api::get_aipow_distributor
     ),
     components(schemas(
         ApiErrorBody,
@@ -979,6 +989,9 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::AipowCommitmentDto,
         agent_query_api::AipowCommitmentListResponse,
         agent_query_api::AipowCommitmentResponse,
+        agent_query_api::AipowDistributorDto,
+        agent_query_api::AipowDistributorListResponse,
+        agent_query_api::AipowDistributorResponse,
         agent_query_api::RegistryListResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,
