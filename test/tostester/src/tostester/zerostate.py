@@ -51,6 +51,10 @@ class NetworkConfig:
     # native mint path resolves NoSettlement and nothing mints.
     enable_aipow: bool = False
     aipow_settlement_addr: int = 0x5555555555555555555555555555555555555555555555555555555555555555
+    # The audited commitment code hash the native settle path pins (ConfigParam 93).
+    # Must be the real hash of the deployed commitment code for the native mint to
+    # authorize a commitment; default is a placeholder (dark boot / no real mint).
+    aipow_commitment_code_hash: int = 0x3333333333333333333333333333333333333333333333333333333333333333
 
 
 @dataclass
@@ -461,6 +465,7 @@ def create_zerostate(
         # settlement address is a placeholder until a settlement is deployed there.
         aipow_capability = "1024"
         settlement_hex = f"0x{config.aipow_settlement_addr:064x}"
+        commitment_code_hash_hex = f"0x{config.aipow_commitment_code_hash:064x}"
         aipow_config_params = (
             # 90 AipowConfig: k = 1/1, schedule_cap = 1000 TOS, no floor, mult 1/1.
             "<b 1 32 u, 1 32 u, 1000000000000 Tomi, 0 Tomi, 1 32 u, 1 32 u, b> 90 config!\n"
@@ -473,7 +478,7 @@ def create_zerostate(
             f"<b {settlement_hex} 256 u, "
             "0x1111111111111111111111111111111111111111111111111111111111111111 256 u, "
             "0x2222222222222222222222222222222222222222222222222222222222222222 256 u, "
-            "<b 0x3333333333333333333333333333333333333333333333333333333333333333 256 u, b> ref, "
+            f"<b {commitment_code_hash_hex} 256 u, b> ref, "
             "dictnew dict, b> 93 config!\n"
         )
     else:

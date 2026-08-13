@@ -22,7 +22,8 @@ use chain_block::MsgAddressInt;
 use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use contracts::{
-    AipowDistributorContract, AipowMaturation, AipowSettlementContract, AipowSettlementInit,
+    AipowCommitmentContract, AipowDistributorContract, AipowMaturation, AipowSettlementContract,
+    AipowSettlementInit,
 };
 use std::path::Path;
 
@@ -105,18 +106,24 @@ impl AipowSettlementParamsCmd {
         // maturation bounds, so an invalid parameter set fails here.
         let init = self.build_init()?;
         let address = AipowSettlementContract::calculate_address(self.workchain, &init)?;
+        // ConfigParam 93 (AipowRegistry) bundles the settlement address with the
+        // audited commitment code hash the native settle path pins; emit it here so
+        // governance registers a consistent set.
+        let commitment_code_hash = AipowCommitmentContract::code()?.repr_hash();
         if self.format == OutputFormat::Json {
             println!(
                 "{}",
                 serde_json::json!({
                     "address": address.to_string(),
                     "account_id_hex": hex::encode(address.address().get_bytestring(0)),
+                    "commitment_code_hash": hex::encode(commitment_code_hash.as_slice()),
                     "next_epoch": self.next_epoch,
                     "challenge_window": self.challenge_window,
                 })
             );
         } else {
             println!("{} settlement address: {}", "OK".green().bold(), address);
+            println!("  commitment_code_hash: {}", hex::encode(commitment_code_hash.as_slice()));
         }
         Ok(())
     }

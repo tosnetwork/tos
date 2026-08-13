@@ -135,6 +135,7 @@ pub struct AipowShowCmd {
 
 #[derive(Clone, clap::ValueEnum)]
 enum AipowOperation {
+    Announce,
     Challenge,
     Finalize,
     Rule,
@@ -482,6 +483,7 @@ impl AipowSendCmd {
         }
 
         let body = match self.operation {
+            AipowOperation::Announce => AipowCommitmentContract::announce(self.query_id)?,
             AipowOperation::Challenge => AipowCommitmentContract::challenge(
                 self.query_id,
                 parse_required_hash("challenge-evidence-hash", &self.challenge_evidence_hash)?,
