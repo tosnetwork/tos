@@ -162,30 +162,39 @@ Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::
   key.store_ulong(epoch);
   auto rec_ref = dict.lookup_ref(key);
   if (rec_ref.is_null()) {
-    return reg;  // not found
+    return reg;  // truly absent from the dictionary -> not found (Skip-eligible)
   }
+  // The epoch IS present in the dictionary. found is set true here, BEFORE the
+  // record is parsed, so a present-but-malformed record is NOT treated as
+  // unregistered: derive must return NoSettlement (a registered epoch is never
+  // skippable on-chain -- skip_registered), never Skip. A malformed record then
+  // fails authorization (its garbage address/tuple never authorizes a mint).
+  reg.found = true;
   vm::CellSlice rcs = vm::load_cell_slice(rec_ref);
   // commitment_addr:MsgAddress score_root:256 total_score:128 organic:128 registered_at:32
   tos::WorkchainId workchain;
   tos::StdSmcAddress addr;
   if (!block::tlb::t_MsgAddressInt.extract_std_address(rcs, workchain, addr, false)) {
-    return reg;  // a non-standard commitment address is unauthorized -> not found
+    return reg;  // present but a non-standard commitment address -> unauthorized
   }
   reg.commitment_workchain = workchain;
   reg.commitment_addr = addr;
   unsigned long long registered_at;
   if (!(rcs.fetch_bits_to(reg.score_root) && rcs.fetch_uint256_to(128, reg.total_score) &&
         rcs.fetch_uint256_to(128, reg.organic_settled_value) && rcs.fetch_uint_to(32, registered_at))) {
-    return reg;  // malformed record -> not found
+    return reg;  // present but malformed -> unauthorized (found stays true)
   }
   if (!rcs.empty_ext()) {
-    return reg;  // trailing garbage -> not found (strict)
+    return reg;  // present but trailing garbage -> unauthorized (found stays true)
   }
   reg.registered_at = (td::uint32)registered_at;
-  reg.found = true;
   return reg;
   } catch (vm::VmError&) {
-    return Registration{};  // a malformed dict/record -> not found (never throws)
+    // A malformed dict/record must never throw, and must never be mistaken for an
+    // absent (Skip-eligible) epoch -- treat it conservatively as present but
+    // unauthorized (found=true, garbage fields), so derive returns NoSettlement.
+    reg.found = true;
+    return reg;
   }
 }
 
@@ -269,6 +278,14 @@ bool commitment_authorizes(const Registration& reg, const CommitmentState& commi
 
 EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
                                               const AccountResolver& resolve) {
+  // Totality: a missing resolver is a caller programming error, not a state that
+  // should abort consensus derivation -> fail closed. (The resolver itself must
+  // be deterministic and read consensus state only; that is the caller's
+  // contract, so a deterministic resolver exception is a deterministic reject on
+  // every node, not a fork.)
+  if (!resolve) {
+    return EpochSettlement::none();
+  }
   // The settlement account lives on the masterchain (workchain -1).
   ResolvedAccount settlement = resolve(-1, ctx.settlement_addr);
   if (!settlement.exists) {
@@ -289,12 +306,17 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   cursor.minted_total = ledger.minted_total;
   cursor.epoch_seconds = ledger.epoch_seconds;
   cursor.register_grace = ledger.register_grace;
-  // Enforce the cap against the settlement's OWN stored total_cap (what the FunC
-  // settle checks), so a clamped mint always passes its cap guard. The config
-  // AipowLimits.total_cap is the declared limit, validated to equal this at
-  // activation.
+  // Enforce BOTH caps: the config's declared hard limit (ConfigParam 92) AND the
+  // settlement's OWN stored total_cap. Using the minimum makes ConfigParam 92 an
+  // actual consensus issuance limit (not merely informational) while still never
+  // exceeding the stored cap the FunC settle checks -- so a clamped mint always
+  // passes the on-chain cap guard even if the two caps disagree.
   AipowLimits ledger_limits;
   ledger_limits.total_cap = ledger.total_cap;
+  if (is_usable(ctx.limits.total_cap) && ledger_limits.total_cap.not_null() &&
+      ctx.limits.total_cap < ledger_limits.total_cap) {
+    ledger_limits.total_cap = ctx.limits.total_cap;
+  }
 
   Registration reg = find_registration(ledger.registrations, cursor.next_epoch);
   if (reg.found) {

@@ -193,6 +193,7 @@ using AccountResolver = std::function<ResolvedAccount(td::int32 workchain, const
 // Immutable inputs to the decision, from the block's config.
 struct MasterchainMintContext {
   AipowConfig config;
+  AipowLimits limits;                       // ConfigParam 92: the declared hard supply cap
   td::Bits256 settlement_addr;              // ConfigParam 93 settlement_addr (masterchain)
   td::Bits256 commitment_code_hash;         // the expected AIPoW commitment code cell hash (registry)
   td::uint16 expected_commitment_version{1};

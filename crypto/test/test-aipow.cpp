@@ -614,15 +614,90 @@ TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
 }
 
-TEST(Aipow, parsers_return_not_found_on_malformed_input_instead_of_throwing) {
+TEST(Aipow, parsers_fail_closed_on_malformed_input_instead_of_throwing) {
   // A garbage cell as the registrations root must not throw (the dict ops would
-  // otherwise raise a vm exception in consensus code); it returns not-found.
+  // otherwise raise a vm exception in consensus code). It is treated
+  // conservatively as present-but-unauthorized (found=true, never Skip-eligible),
+  // so a corrupt dict cannot advance the cursor via a Skip the contract rejects.
   auto garbage = dummy_ref();  // an 8-bit cell, not a valid dictionary node
   auto reg = block::aipow::find_registration(garbage, 27260);
-  CHECK(!reg.found);
-  // A garbage cell is not a valid settlement ledger or commitment either.
+  CHECK(reg.found);  // conservative: not mistaken for an absent epoch
+  // A garbage cell is not a valid settlement ledger or commitment (returns
+  // false, no throw).
   block::aipow::SettlementLedger led;
   CHECK(!block::aipow::parse_settlement_ledger(garbage, led));
   block::aipow::CommitmentState c;
   CHECK(!block::aipow::parse_commitment_state(garbage, c));
+}
+
+TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
+  // ConfigParam 92 is an enforced hard limit: derive clamps the pool to
+  // min(config cap, stored cap) - minted, so a settlement deployed with a larger
+  // stored cap cannot mint past the declared config cap.
+  auto score = mk_bits(0x5C);
+  auto commitment_addr = mk_bits(0xC0);
+  auto settlement_addr = mk_bits(0x99);
+  auto commit_code_hash = mk_bits(0xCC);
+  long long organic = 1000;  // pool = organic / 1 = 1000 (k = 1/1)
+
+  vm::Dictionary dict{32};
+  td::BitArray<32> key;
+  key.store_ulong(27260);
+  dict.set_ref(key, build_registration_record(-1, commitment_addr, score, 4000000, organic, 1));
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto commitment_data =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+    } else if (wc == -1 && addr == commitment_addr) {
+      a.exists = true;
+      a.data = commitment_data;
+      a.code_hash = commit_code_hash;
+    }
+    return a;
+  };
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 1, 1000000000LL, 0);
+  ctx.limits = make_limits(400);  // config cap 400 < pool 1000 and << stored 4.5e18
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = commit_code_hash;
+  ctx.expected_commitment_version = 1;
+  auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  CHECK(r.is_mint());
+  CHECK(td::cmp(r.amount, 400) == 0);  // clamped to the config cap, not 1000
+}
+
+TEST(Aipow, a_present_but_malformed_registration_is_no_settlement_not_a_skip) {
+  // A dictionary entry EXISTS for the cursor epoch but its record is garbage.
+  // find_registration must report found (so the epoch is not Skip-eligible: the
+  // on-chain skip_registered guard would reject a skip), and derive must return
+  // NoSettlement even far past the grace deadline.
+  vm::Dictionary dict{32};
+  td::BitArray<32> key;
+  key.store_ulong(10);
+  dict.set_ref(key, dummy_ref());  // an 8-bit garbage record, not pack_registration
+  auto reg = block::aipow::find_registration(dict.get_root_cell(), 10);
+  CHECK(reg.found);  // present in the dict, though unparseable
+
+  auto settlement_addr = mk_bits(0x99);
+  auto settlement_data = build_settlement(10, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+    }
+    return a;
+  };
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 2, 1000000000LL, 0);
+  ctx.limits = make_limits(4500000000000000000LL);
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.expected_commitment_version = 1;
+  ctx.gen_utime = 4000000000u;  // far past any grace deadline
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
 }
