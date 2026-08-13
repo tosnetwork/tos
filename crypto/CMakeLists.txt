@@ -528,7 +528,6 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
   GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
   GenFif(DEST smartcont/auto/native-registry-code SOURCE smartcont/native-registry-code.fc NAME native-registry)
-  GenFif(DEST smartcont/auto/native-registry-v2-code SOURCE smartcont/native-registry-v2-code.fc NAME native-registry-v2)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
