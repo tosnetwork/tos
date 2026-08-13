@@ -195,6 +195,19 @@ std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& regis
 // Parse the commitment account data cell. Returns false on a short/malformed cell.
 bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out);
 
+// C1 (address binding): compute the canonical deploy address (account id) a
+// commitment with the given AUDITED `code` and current `data` must have --
+// hash(StateInit{code, initial_data}), where initial_data is `data` with the four
+// mutable fields reset to their deploy defaults (status -> committed, challenge_bond
+// -> 0, review_deadline -> 0, challenge ref -> the default). Because a resolved
+// account's current code equals the audited code once its code hash matches the
+// registry, an account whose id does NOT equal this canonical address was deployed
+// with different (e.g. SETCODE-capable) code and must not be trusted to have run the
+// audited state machine. Returns false if `data` does not parse to the commitment
+// layout (fail closed). Public so the derivation and its tests share one code path.
+bool commitment_canonical_address(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data,
+                                  td::Bits256& out);
+
 // True iff a resolved commitment authorizes a candidate's mint: the expected
 // layout version, status == final, its epoch equals the settled `epoch`, every
 // committed field exactly matches the candidate (score_root, total_score,
@@ -222,6 +235,9 @@ bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentStat
 struct ResolvedAccount {
   bool exists{false};
   td::Bits256 code_hash;   // hash of the account's code cell
+  td::Ref<vm::Cell> code;  // the account's code cell (== the audited code once the
+                           // code_hash matches, so the C1 address binding can rebuild
+                           // the deploy StateInit from it)
   td::Ref<vm::Cell> data;  // the account's data cell
 };
 

@@ -3087,6 +3087,7 @@ bool ValidateQuery::prepare_aipow_mint() {
     }
     out.exists = true;
     out.code_hash = acc.code->get_hash().bits();
+    out.code = acc.code;
     out.data = acc.data;
     return out;
   };

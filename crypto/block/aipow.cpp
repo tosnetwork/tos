@@ -337,6 +337,153 @@ bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentStat
   return true;
 }
 
+namespace {
+
+// Copy the next `nbits` inline bits from `cs` into `cb` verbatim (no refs).
+bool copy_bits(vm::CellSlice& cs, vm::CellBuilder& cb, unsigned nbits) {
+  td::Ref<vm::CellSlice> sub = cs.fetch_subslice(nbits, 0);
+  return sub.not_null() && cb.append_cellslice_bool(sub);
+}
+
+// Copy one MsgAddress (variable width, no refs) from `cs` into `cb` verbatim.
+// Measures the field on a probe copy (any address form) so the exact deploy-time
+// bits are preserved.
+bool copy_msg_address(vm::CellSlice& cs, vm::CellBuilder& cb) {
+  vm::CellSlice probe = cs;
+  if (!block::tlb::t_MsgAddress.skip(probe)) {
+    return false;
+  }
+  unsigned nbits = cs.size() - probe.size();
+  return copy_bits(cs, cb, nbits);
+}
+
+// Copy one Grams/Tomis value (variable width, no refs) from `cs` into `cb`.
+bool copy_grams(vm::CellSlice& cs, vm::CellBuilder& cb) {
+  vm::CellSlice probe = cs;
+  if (block::tlb::t_Tomis.as_integer_skip(probe).is_null()) {
+    return false;
+  }
+  unsigned nbits = cs.size() - probe.size();
+  return copy_bits(cs, cb, nbits);
+}
+
+// The deploy-time challenge ref: MsgAddressInt::default() (addr_std$10
+// anycast:nothing workchain:0 address:0) followed by a zero 256-bit evidence
+// hash -- exactly what the commitment SDK writes at deploy before any challenge.
+td::Ref<vm::Cell> build_default_challenge_cell() {
+  vm::CellBuilder cb;
+  if (!(cb.store_long_bool(0b100, 3) &&  // addr_std$10 + anycast:nothing
+        cb.store_long_bool(0, 8) &&      // workchain 0 (int8)
+        cb.store_zeroes_bool(256) &&     // address 0
+        cb.store_zeroes_bool(256))) {    // evidence hash 0
+    return {};
+  }
+  td::Ref<vm::Cell> out;
+  return cb.finalize_to(out) ? out : td::Ref<vm::Cell>{};
+}
+
+// Reconstruct a commitment's DEPLOY-TIME data cell from its current data, by
+// copying every immutable field verbatim and resetting the four mutable ones to
+// their deploy defaults (status -> committed(0), review_deadline -> 0,
+// challenge_bond -> 0, challenge ref -> the default). This must mirror the
+// commitment SDK's build_data byte for byte; any parse failure returns null (the
+// caller then skips the candidate, fail closed). Layout (mirrors
+// parse_commitment_state):
+//   version:16 committer:MsgAddress reviewer:MsgAddress status:8 epoch:64
+//   window_deadline:64 review_deadline:64 commit_bond:Grams challenge_bond:Grams
+//   ^tuple ^challenge ^settlement
+td::Ref<vm::Cell> reconstruct_commitment_init_data(const td::Ref<vm::Cell>& data) {
+  if (data.is_null()) {
+    return {};
+  }
+  try {
+    vm::CellSlice cs = vm::load_cell_slice(data);
+    vm::CellBuilder cb;
+    if (!copy_bits(cs, cb, 16)) {  // version
+      return {};
+    }
+    if (!copy_msg_address(cs, cb)) {  // committer
+      return {};
+    }
+    if (!copy_msg_address(cs, cb)) {  // reviewer
+      return {};
+    }
+    if (!(cs.skip_first(8) && cb.store_long_bool(0, 8))) {  // status -> committed(0)
+      return {};
+    }
+    if (!copy_bits(cs, cb, 64)) {  // epoch
+      return {};
+    }
+    if (!copy_bits(cs, cb, 64)) {  // window_deadline
+      return {};
+    }
+    if (!(cs.skip_first(64) && cb.store_long_bool(0, 64))) {  // review_deadline -> 0
+      return {};
+    }
+    if (!copy_grams(cs, cb)) {  // commit_bond
+      return {};
+    }
+    if (block::tlb::t_Tomis.as_integer_skip(cs).is_null() ||  // challenge_bond -> 0
+        !block::tlb::t_Tomis.null_value(cb)) {
+      return {};
+    }
+    if (cs.size() != 0 || cs.size_refs() != 3) {
+      return {};  // trailing inline bits or an unexpected ref count
+    }
+    if (!cb.store_ref_bool(cs.fetch_ref())) {  // ^tuple (immutable)
+      return {};
+    }
+    cs.fetch_ref();  // discard the current ^challenge
+    td::Ref<vm::Cell> def = build_default_challenge_cell();
+    if (def.is_null() || !cb.store_ref_bool(std::move(def))) {  // ^challenge -> default
+      return {};
+    }
+    if (!cb.store_ref_bool(cs.fetch_ref())) {  // ^settlement (immutable)
+      return {};
+    }
+    td::Ref<vm::Cell> out;
+    return cb.finalize_to(out) ? out : td::Ref<vm::Cell>{};
+  } catch (vm::VmError&) {
+    return {};
+  }
+}
+
+// StateInit{code,data}: fixed_prefix(0) special(0) code:(just ^) data:(just ^)
+// library:(empty) -- data bits 0,0,1,1,0 with refs [code, data]. Mirrors
+// block::StateInit::write_to and the commitment SDK's build_state_init, so its
+// hash equals the account's deploy address.
+td::Ref<vm::Cell> build_commitment_state_init(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data) {
+  if (code.is_null() || data.is_null()) {
+    return {};
+  }
+  vm::CellBuilder cb;
+  if (!(cb.store_long_bool(0, 1) &&                        // fixed_prefix: nothing
+        cb.store_long_bool(0, 1) &&                        // special: nothing
+        cb.store_long_bool(1, 1) && cb.store_ref_bool(code) &&
+        cb.store_long_bool(1, 1) && cb.store_ref_bool(data) &&
+        cb.store_long_bool(0, 1))) {                       // library: empty
+    return {};
+  }
+  td::Ref<vm::Cell> out;
+  return cb.finalize_to(out) ? out : td::Ref<vm::Cell>{};
+}
+
+}  // namespace
+
+bool commitment_canonical_address(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data,
+                                  td::Bits256& out) {
+  td::Ref<vm::Cell> init_data = reconstruct_commitment_init_data(data);
+  if (init_data.is_null()) {
+    return false;
+  }
+  td::Ref<vm::Cell> state_init = build_commitment_state_init(code, init_data);
+  if (state_init.is_null()) {
+    return false;
+  }
+  out = td::Bits256{state_init->get_hash().bits()};
+  return true;
+}
+
 EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
                                               const AccountResolver& resolve) {
   // Totality: a missing resolver is a caller programming error, not a state that
@@ -414,6 +561,16 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   for (const EpochCandidate& c : candidates) {  // ascending address order (min first)
     ResolvedAccount commitment = resolve(c.workchain, c.account_id);
     if (!(commitment.exists && commitment.code_hash == ctx.commitment_code_hash)) {
+      continue;
+    }
+    // C1: the current code hash matching the audited hash is NOT enough on an
+    // account model -- a bootstrap contract can SETCODE itself to the audited code
+    // after forging a `final` state, bypassing the challenge machine. Bind the
+    // account id to the deploy StateInit of the audited code + reconstructed initial
+    // data; only an account genuinely deployed with the audited code can match.
+    td::Bits256 canonical;
+    if (!commitment_canonical_address(commitment.code, commitment.data, canonical) ||
+        canonical != c.account_id) {
       continue;
     }
     CommitmentState cstate;

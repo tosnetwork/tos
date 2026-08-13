@@ -73,6 +73,24 @@ td::Ref<vm::Cell> build_commitment(td::uint16 version, td::uint8 status, td::uin
   return cb.finalize();
 }
 
+// A distinctive cell standing in for the audited commitment code. Any fixed cell
+// works: the C1 address binding only requires a candidate's account id to equal the
+// hash of StateInit{this code, the reconstructed deploy data}.
+td::Ref<vm::Cell> commitment_code() {
+  vm::CellBuilder cb;
+  cb.store_long_bool(0xA1C0DEull, 24);
+  return cb.finalize();
+}
+
+// The canonical deploy address (account id) a commitment with the given audited
+// `code` and current `data` must have to pass the C1 binding. Candidates are keyed
+// by this in the settlement so the native path resolves + binds the same account.
+td::Bits256 canonical_commitment_addr(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data) {
+  td::Bits256 addr;
+  CHECK(block::aipow::commitment_canonical_address(code, data, addr));
+  return addr;
+}
+
 // A single candidate for build_registrations: (account_id, workchain, score_root,
 // total_score, organic, registered_at).
 struct Cand {
@@ -523,15 +541,16 @@ TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
 
 TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitment) {
   auto score = mk_bits(0x5C);
-  auto commitment_addr = mk_bits(0xC0);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;
 
-  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto commitment_data =
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto commitment_addr = canonical_commitment_addr(code, commitment_data);
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
 
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
     block::aipow::ResolvedAccount a;
@@ -542,6 +561,7 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
     } else if (wc == -1 && addr == commitment_addr) {
       a.exists = true;
       a.data = commitment_data;
+      a.code = code;
       a.code_hash = commit_code_hash;
     }
     return a;
@@ -685,15 +705,16 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   // min(config cap, stored cap) - minted, so a settlement deployed with a larger
   // stored cap cannot mint past the declared config cap.
   auto score = mk_bits(0x5C);
-  auto commitment_addr = mk_bits(0xC0);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;  // pool = organic / 1 = 1000 (k = 1/1)
 
-  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto commitment_data =
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto commitment_addr = canonical_commitment_addr(code, commitment_data);
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
     block::aipow::ResolvedAccount a;
     if (wc == -1 && addr == settlement_addr) {
@@ -702,6 +723,7 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
     } else if (wc == -1 && addr == commitment_addr) {
       a.exists = true;
       a.data = commitment_data;
+      a.code = code;
       a.code_hash = commit_code_hash;
     }
     return a;
@@ -760,17 +782,18 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
   // min-address VALID candidate, naming it as the winner.
   auto score = mk_bits(0x5C);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;
 
-  auto bogus_id = mk_bits(0x10);    // smaller address, bogus
-  auto genuine_id = mk_bits(0x40);  // larger address, genuine
+  auto genuine_commitment =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto bogus_id = mk_bits(0x10);  // small address (24 leading zero bytes), bogus
+  auto genuine_id = canonical_commitment_addr(code, genuine_commitment);  // a SHA256, larger
   auto root = build_registrations(
       27260, {Cand{bogus_id, -1, mk_bits(0xBB), 4000000, organic, 1},
               Cand{genuine_id, -1, score, 4000000, organic, 2}});
   auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
-  auto genuine_commitment =
-      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
 
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
     block::aipow::ResolvedAccount a;
@@ -781,10 +804,12 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
       // The bogus candidate resolves to an account with the WRONG code hash.
       a.exists = true;
       a.data = build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, mk_bits(0xBB), 4000000, organic);
+      a.code = code;
       a.code_hash = mk_bits(0xBAD);
     } else if (wc == -1 && addr == genuine_id) {
       a.exists = true;
       a.data = genuine_commitment;
+      a.code = code;
       a.code_hash = commit_code_hash;
     }
     return a;
@@ -813,19 +838,21 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
   // (NoSettlement), so a fabricated commitment cannot be minted before a real,
   // observable dispute window has elapsed on the settlement's trusted clock.
   auto score = mk_bits(0x5C);
-  auto commitment_addr = mk_bits(0xC0);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;
   td::uint32 reg_at = 1000000;  // settlement-recorded nomination time
   long long good_window = (long long)reg_at + block::aipow::kAipowChallengeWindow;
 
   auto make_ctx = [&](long long window_deadline, td::uint32 gen_utime) {
-    auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, reg_at}});
-    auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
     auto commitment_data =
         build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic,
                          window_deadline);
+    // window_deadline is an immutable field, so it is part of the canonical address.
+    auto commitment_addr = canonical_commitment_addr(code, commitment_data);
+    auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, reg_at}});
+    auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
     auto resolver = [=](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
       block::aipow::ResolvedAccount a;
       if (wc == -1 && addr == settlement_addr) {
@@ -834,6 +861,7 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
       } else if (wc == -1 && addr == commitment_addr) {
         a.exists = true;
         a.data = commitment_data;
+        a.code = code;
         a.code_hash = commit_code_hash;
       }
       return a;
@@ -857,7 +885,9 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
     auto r = make_ctx(good_window, (td::uint32)good_window);
     CHECK(r.is_mint());
     CHECK(r.epoch == 27260);
-    CHECK(r.winner_id == commitment_addr);
+    CHECK(r.winner_id == canonical_commitment_addr(
+                             code, build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score,
+                                                    4000000, organic, good_window)));
     CHECK(td::cmp(r.amount, 500) == 0);
   }
   // A window that closed one second too early is never mintable, even well past
@@ -872,15 +902,16 @@ TEST(Aipow, derive_requires_the_commitments_reviewer_to_be_the_registry_reviewer
   // committer that names a reviewer it controls (to dismiss challenges) must not be
   // able to mint, even with an otherwise-valid commitment.
   auto score = mk_bits(0x5C);
-  auto commitment_addr = mk_bits(0xC0);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;
-  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   // build_commitment fixes the reviewer at mk_bits(0x22) on the masterchain.
   auto commitment_data =
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto commitment_addr = canonical_commitment_addr(code, commitment_data);
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
     block::aipow::ResolvedAccount a;
     if (wc == -1 && addr == settlement_addr) {
@@ -889,6 +920,7 @@ TEST(Aipow, derive_requires_the_commitments_reviewer_to_be_the_registry_reviewer
     } else if (wc == -1 && addr == commitment_addr) {
       a.exists = true;
       a.data = commitment_data;
+      a.code = code;
       a.code_hash = commit_code_hash;
     }
     return a;
@@ -966,19 +998,20 @@ TEST(Aipow, derive_requires_the_committed_methodology_to_match_the_registry) {
   // M2: a genuine, final commitment (audited code) that committed under a methodology
   // other than the registry's must not mint.
   auto score = mk_bits(0x5C);
-  auto commitment_addr = mk_bits(0xC0);
   auto settlement_addr = mk_bits(0x99);
-  auto commit_code_hash = mk_bits(0xCC);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
   long long organic = 1000;
-  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto commitment_data =  // build_commitment fixes methodology at mk_bits(0x44)
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto commitment_addr = canonical_commitment_addr(code, commitment_data);
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
     block::aipow::ResolvedAccount a;
     if (wc == -1 && addr == settlement_addr) { a.exists = true; a.data = settlement_data; }
     else if (wc == -1 && addr == commitment_addr) {
-      a.exists = true; a.data = commitment_data; a.code_hash = commit_code_hash;
+      a.exists = true; a.data = commitment_data; a.code = code; a.code_hash = commit_code_hash;
     }
     return a;
   };
@@ -994,4 +1027,58 @@ TEST(Aipow, derive_requires_the_committed_methodology_to_match_the_registry) {
   };
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx_for(mk_bits(0x44)), resolver).is_mint());
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx_for(mk_bits(0xAB)), resolver).is_none());
+}
+
+TEST(Aipow, derive_binds_a_candidate_to_its_canonical_deploy_address_C1) {
+  // C1: matching the audited code HASH is not enough. A bootstrap contract can
+  // SETCODE itself to the audited code after forging a `final` state, so at mint
+  // time it presents the audited code hash + a valid-looking final commitment. The
+  // native path additionally requires the account id to equal the hash of the deploy
+  // StateInit{audited code, reconstructed initial data}; a bootstrap deployed with
+  // different (SETCODE-capable) code has a different account id and is rejected.
+  auto score = mk_bits(0x5C);
+  auto settlement_addr = mk_bits(0x99);
+  auto code = commitment_code();
+  auto commit_code_hash = td::Bits256{code->get_hash().bits()};
+  long long organic = 1000;
+  auto commitment_data =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto canonical = canonical_commitment_addr(code, commitment_data);
+
+  // Resolve `registered_id` to an account presenting the audited code hash + the
+  // (forged) final commitment -- exactly what a SETCODE'd bootstrap would show.
+  auto make = [&](td::Bits256 registered_id) {
+    auto root = build_registrations(27260, {Cand{registered_id, -1, score, 4000000, organic, 1}});
+    auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
+    auto resolver = [=](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+      block::aipow::ResolvedAccount a;
+      if (wc == -1 && addr == settlement_addr) {
+        a.exists = true;
+        a.data = settlement_data;
+      } else if (wc == -1 && addr == registered_id) {
+        a.exists = true;
+        a.data = commitment_data;
+        a.code = code;
+        a.code_hash = commit_code_hash;
+      }
+      return a;
+    };
+    block::aipow::MasterchainMintContext ctx;
+    ctx.config = make_cfg(1, 2, 1000000000LL, 0);
+    ctx.settlement_addr = settlement_addr;
+    ctx.commitment_code_hash = commit_code_hash;
+    ctx.reviewer_addr = mk_bits(0x22);
+    ctx.methodology_hash = mk_bits(0x44);
+    ctx.expected_commitment_version = 1;
+    ctx.gen_utime = 700000;  // past the provenance window, so only C1 gates the mint
+    return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  };
+
+  // Registered under its real canonical deploy address -> genuine -> mints.
+  CHECK(make(canonical).is_mint());
+  // Registered under any other address (a bootstrap whose real deploy code differs):
+  // the audited code hash matches, but the account id is not the canonical StateInit
+  // hash, so C1 rejects it and nothing mints (the cursor holds, not yet skippable).
+  CHECK(make(mk_bits(0xC0)).is_none());
+  CHECK(make(mk_bits(0xDEAD)).is_none());
 }
