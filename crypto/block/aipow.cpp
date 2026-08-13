@@ -251,6 +251,7 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   out.version = (td::uint16)version;
   out.status = (td::uint8)status;
   out.epoch = epoch;
+  out.window_deadline = window_deadline;
   // Exactly three refs (economic tuple, challenger, settlement) and no leftover
   // inline data after the bonds.
   if (cs.size_refs() != 3) {
@@ -292,6 +293,19 @@ bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentStat
   }
   if (!is_usable(commitment.organic_settled_value) || !is_usable(candidate.organic_settled_value) ||
       td::cmp(commitment.organic_settled_value, candidate.organic_settled_value) != 0) {
+    return false;
+  }
+  // Provenance floor (W4.7): the commitment's challenge window must have been open
+  // for at least kAipowChallengeWindow after the candidate's settlement-recorded
+  // registration. window_deadline is a commitment deploy parameter and untrusted on
+  // its own, but registered_at is the settlement's own clock (the committer cannot
+  // backdate it), so requiring window_deadline >= registered_at + kAipowChallengeWindow
+  // forces the challenge op to have accepted disputes across a real, observable
+  // window -- a commitment that closed its window early (to finalize instantly) is
+  // rejected. The window must ALSO have elapsed relative to gen_utime; that check
+  // is in derive (it needs the block's consensus time).
+  if ((td::uint64)commitment.window_deadline <
+      (td::uint64)candidate.registered_at + kAipowChallengeWindow) {
     return false;
   }
   return true;
@@ -345,33 +359,48 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   // nomination cannot exclude the genuine one (both are candidates) nor freeze
   // the epoch (an all-bogus set falls through to the skip path below).
   //
-  // SECURITY LIMITATION (hard mainnet launch gate, tracked in the Phase C plan
-  // D6/D10): the code-hash pin below proves only that a candidate account runs
+  // PROVENANCE (W4.7): the code-hash pin proves only that a candidate account runs
   // the audited commitment CODE, not that its finalization was legitimate. A
-  // commitment's `window_deadline` is a deploy parameter, so an attacker can
-  // deploy the genuine code with a past window and a fabricated tuple, finalize
-  // instantly (no real challenge window), and register a forged economic value.
-  // The challenge/bond/reviewer mechanism -- not this code -- is what must make a
-  // fabricated tuple uneconomic. Native mint MUST NOT be activated on mainnet
-  // until the commitment enforces a code-measured challenge window and a
-  // threshold reviewer policy are finalized+audited. Dark (capAipow off) => inert.
+  // commitment's window_deadline is a deploy parameter, so it cannot be trusted on
+  // its own. Provenance is therefore enforced against the settlement's OWN clock:
+  // a candidate mints only if its commitment kept the challenge window open for a
+  // full kAipowChallengeWindow after the settlement-recorded registration
+  // (commitment_authorizes) AND that window has actually elapsed relative to the
+  // block's gen_utime (the check below). Because the settlement records
+  // registered_at with its own now() at nomination (which the committer cannot
+  // backdate) and the mint waits out the window, a fabricated commitment is forced
+  // to sit through a real, observable dispute window during which the
+  // challenge/bond/reviewer mechanism can reject it -- it can no longer be
+  // finalized instantly. (The reviewer policy that makes disputing economic, D10,
+  // remains a separate launch gate. Dark => inert.)
   std::vector<EpochCandidate> candidates = list_epoch_candidates(ledger.registrations, cursor.next_epoch);
   for (const EpochCandidate& c : candidates) {  // ascending address order (min first)
     ResolvedAccount commitment = resolve(c.workchain, c.account_id);
-    if (commitment.exists && commitment.code_hash == ctx.commitment_code_hash) {
-      CommitmentState cstate;
-      if (parse_commitment_state(commitment.data, cstate) &&
-          commitment_authorizes(c, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
-        // The min-address valid candidate wins.
-        EpochSettlement r = compute_epoch_mint(ctx.config, ledger_limits, cursor, true,
-                                               c.organic_settled_value, ctx.gen_utime);
-        if (r.is_mint()) {
-          r.winner_id = c.account_id;
-          r.winner_workchain = c.workchain;
-        }
-        return r;
-      }
+    if (!(commitment.exists && commitment.code_hash == ctx.commitment_code_hash)) {
+      continue;
     }
+    CommitmentState cstate;
+    if (!parse_commitment_state(commitment.data, cstate) ||
+        !commitment_authorizes(c, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
+      continue;
+    }
+    // The challenge window must have ELAPSED on the block's consensus clock before
+    // this candidate can mint. A candidate still inside its window is not yet a
+    // valid winner (it may yet be challenged); it is skipped, and because
+    // kAipowChallengeWindow < register_grace the epoch is not skippable yet either,
+    // so compute_epoch_mint(false) below returns NoSettlement (wait), never a skip
+    // that would strand a soon-to-be-valid mint.
+    if ((td::uint64)ctx.gen_utime < (td::uint64)c.registered_at + kAipowChallengeWindow) {
+      continue;
+    }
+    // The min-address valid candidate that has cleared its challenge window wins.
+    EpochSettlement r = compute_epoch_mint(ctx.config, ledger_limits, cursor, true,
+                                           c.organic_settled_value, ctx.gen_utime);
+    if (r.is_mint()) {
+      r.winner_id = c.account_id;
+      r.winner_workchain = c.workchain;
+    }
+    return r;
   }
 
   // No valid candidate (an unregistered epoch, or one with only bogus

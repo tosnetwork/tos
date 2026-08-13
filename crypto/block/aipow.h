@@ -151,6 +151,7 @@ struct CommitmentState {
   td::uint16 version{0};
   td::uint8 status{0};  // 0 committed, 1 challenged, 2 final, 3 rejected
   td::uint64 epoch{0};
+  td::uint64 window_deadline{0};  // unix; challenges accepted strictly before this
   td::Bits256 score_root;
   td::RefInt256 total_score;
   td::RefInt256 organic_settled_value;
@@ -158,6 +159,18 @@ struct CommitmentState {
 
 // The AIPoW commitment `status == final` value (mirrors the FunC status::final).
 constexpr td::uint8 kCommitmentStatusFinal = 2;
+
+// The provenance floor (W4.7): the minimum span (seconds) a candidate's challenge
+// window must have been OPEN and then ELAPSED, measured from the settlement's
+// trusted registration time, before its commitment may mint. This is what makes a
+// real, observable dispute window mandatory: a commitment cannot backdate or
+// shorten it, because its window_deadline is checked against the settlement-recorded
+// registered_at (a clock the committer does not control), and the mint waits until
+// the block's gen_utime is past registered_at + this span. A native constant for
+// v0 (audited, fixed); promote to a governed config param before mainnet. MUST be
+// strictly less than the settlement's register_grace, so a valid candidate always
+// mints before its epoch becomes skippable.
+constexpr td::uint32 kAipowChallengeWindow = 7u * 24 * 3600;  // 7 days
 
 // Parse the settlement account data cell. Returns false on a short/malformed cell.
 bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out);

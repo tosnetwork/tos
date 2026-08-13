@@ -44,16 +44,21 @@ td::Ref<vm::Cell> build_econ_tuple(td::Bits256 score_root, long long total_score
   return cb.finalize();
 }
 
+// A window_deadline comfortably past the provenance floor for a candidate
+// registered near t=0 (kAipowChallengeWindow = 7 days = 604800s).
+constexpr long long kDefaultWindowDeadline = 700000;
+
 // Build a commitment account data cell (W4.2 layout) with the fields the parser reads.
 td::Ref<vm::Cell> build_commitment(td::uint16 version, td::uint8 status, td::uint64 epoch,
-                                   td::Bits256 score_root, long long total_score, long long organic) {
+                                   td::Bits256 score_root, long long total_score, long long organic,
+                                   long long window_deadline = kDefaultWindowDeadline) {
   vm::CellBuilder cb;
   cb.store_long_bool(version, 16);
   block::tlb::t_MsgAddressInt.store_std_address(cb, -1, mk_bits(0x11));  // committer
   block::tlb::t_MsgAddressInt.store_std_address(cb, -1, mk_bits(0x22));  // reviewer
   cb.store_long_bool(status, 8);
   cb.store_long_bool((long long)epoch, 64);
-  cb.store_long_bool(1000, 64);  // window_deadline (unused by the parser)
+  cb.store_long_bool(window_deadline, 64);
   cb.store_long_bool(0, 64);     // review_deadline
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(5000000000LL));  // commit_bond
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(0));             // challenge_bond
@@ -462,6 +467,22 @@ TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, mk_bits(0x77), 4000000, 9000000000LL));
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000001, 9000000000LL));
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000001LL));
+
+  // Provenance floor: window_deadline must cover registered_at(1) + the challenge
+  // window. A commitment whose window closed a second too early is unauthorized
+  // even though every economic field matches (it could not have held a full
+  // dispute window open).
+  auto with_window = [&](long long window_deadline) {
+    block::aipow::CommitmentState c;
+    CHECK(block::aipow::parse_commitment_state(
+        build_commitment(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL,
+                         window_deadline),
+        c));
+    return block::aipow::commitment_authorizes(cand, c, 1, 27263);
+  };
+  CHECK(with_window(1 + block::aipow::kAipowChallengeWindow));       // exactly enough -> authorized
+  CHECK(!with_window(1 + block::aipow::kAipowChallengeWindow - 1));  // one second short -> rejected
+  CHECK(!with_window(0));                                            // a past/zero window -> rejected
 }
 
 TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
@@ -527,7 +548,7 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
-  ctx.gen_utime = 0;
+  ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_mint());
@@ -679,6 +700,7 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
+  ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_mint());
   CHECK(td::cmp(r.amount, 400) == 0);  // clamped to the config cap, not 1000
@@ -757,7 +779,7 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
-  ctx.gen_utime = 0;
+  ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_mint());
@@ -765,4 +787,61 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
   CHECK(td::cmp(r.amount, 500) == 0);
   CHECK(r.winner_id == genuine_id);       // the genuine (larger-address) candidate wins
   CHECK(r.winner_workchain == -1);
+}
+
+TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
+  // A genuine, final commitment whose economic tuple matches, but the block clock
+  // has NOT yet passed registered_at + kAipowChallengeWindow: the mint must wait
+  // (NoSettlement), so a fabricated commitment cannot be minted before a real,
+  // observable dispute window has elapsed on the settlement's trusted clock.
+  auto score = mk_bits(0x5C);
+  auto commitment_addr = mk_bits(0xC0);
+  auto settlement_addr = mk_bits(0x99);
+  auto commit_code_hash = mk_bits(0xCC);
+  long long organic = 1000;
+  td::uint32 reg_at = 1000000;  // settlement-recorded nomination time
+  long long good_window = (long long)reg_at + block::aipow::kAipowChallengeWindow;
+
+  auto make_ctx = [&](long long window_deadline, td::uint32 gen_utime) {
+    auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, reg_at}});
+    auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
+    auto commitment_data =
+        build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic,
+                         window_deadline);
+    auto resolver = [=](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+      block::aipow::ResolvedAccount a;
+      if (wc == -1 && addr == settlement_addr) {
+        a.exists = true;
+        a.data = settlement_data;
+      } else if (wc == -1 && addr == commitment_addr) {
+        a.exists = true;
+        a.data = commitment_data;
+        a.code_hash = commit_code_hash;
+      }
+      return a;
+    };
+    block::aipow::MasterchainMintContext ctx;
+    ctx.config = make_cfg(1, 2, 1000000000LL, 0);  // pool = 500
+    ctx.settlement_addr = settlement_addr;
+    ctx.commitment_code_hash = commit_code_hash;
+    ctx.expected_commitment_version = 1;
+    ctx.gen_utime = gen_utime;
+    return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  };
+
+  // Window open long enough, but one second before it elapses -> no mint yet, and
+  // (grace not reached) not a skip either: the cursor holds.
+  CHECK(make_ctx(good_window, (td::uint32)(good_window - 1)).is_none());
+  // The instant the window elapses -> mint.
+  {
+    auto r = make_ctx(good_window, (td::uint32)good_window);
+    CHECK(r.is_mint());
+    CHECK(r.epoch == 27260);
+    CHECK(r.winner_id == commitment_addr);
+    CHECK(td::cmp(r.amount, 500) == 0);
+  }
+  // A window that closed one second too early is never mintable, even well past
+  // registered_at + the window: the commitment could not have held a full dispute
+  // window, so it is rejected (NoSettlement, not a forged mint).
+  CHECK(make_ctx(good_window - 1, (td::uint32)(good_window + 1000)).is_none());
 }
