@@ -247,5 +247,13 @@ struct MasterchainMintContext {
 EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
                                               const AccountResolver& resolve);
 
+// Build the mint context from the block's config (ConfigParams 90/92/93) at
+// gen_utime. Returns false -- fail closed, no mint -- when AIPoW is not enabled
+// (capAipow off) or any required parameter is absent/malformed. Both the collator
+// (produce) and validate-query (check) call THIS to build an identical context,
+// so the two paths cannot drift in how they read config.
+bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_utime,
+                                    MasterchainMintContext& out);
+
 }  // namespace aipow
 }  // namespace block

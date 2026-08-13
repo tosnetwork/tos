@@ -22,6 +22,7 @@
 #include <ctime>
 
 #include "adnl/utils.hpp"
+#include "block/aipow.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -2386,6 +2387,16 @@ bool Collator::init_value_create() {
       LOG(WARNING) << "minting of " << value_flow_.minted.to_str() << " disabled: no minting smart contract defined";
       value_flow_.minted.set_zero();
     }
+    // Phase C: the AIPoW aggregate epoch mint is base grams to the settlement
+    // account (ConfigParam 93), NOT the extra-currency minter (ConfigParam 2), so
+    // it is added AFTER the minter-contract guard above and settled by its own
+    // special message. Dark (a no-op) while capAipow is off.
+    if (!compute_aipow_epoch_mint()) {
+      return fatal_error("cannot compute the AIPoW epoch mint");
+    }
+    if (aipow_mint_amount_.not_null()) {
+      value_flow_.minted.tomis += aipow_mint_amount_;
+    }
   } else if (workchain() == basechainId) {
     value_flow_.created = block::CurrencyCollection{basechain_create_fee_ >> tos::shard_prefix_length(shard_)};
   }
@@ -3301,7 +3312,116 @@ bool Collator::create_special_transaction(block::CurrencyCollection amount, Ref<
 bool Collator::create_special_transactions() {
   CHECK(is_masterchain());
   return create_special_transaction(value_flow_.recovered, config_->get_config_param(3, 1), recover_create_msg_) &&
-         create_special_transaction(value_flow_.minted, config_->get_config_param(2, 0), mint_msg_);
+         create_special_transaction(value_flow_.minted, config_->get_config_param(2, 0), mint_msg_) &&
+         create_aipow_mint_transaction();
+}
+
+/**
+ * Computes the AIPoW aggregate epoch mint this masterchain block originates
+ * (Phase C, Model B). Dark while capAipow is off: build_masterchain_mint_context
+ * fails closed and this is a no-op. When enabled, resolves the settlement + the
+ * cursor epoch's candidate commitments from the PRE-BLOCK masterchain state (this
+ * runs in init_value_create, before any transaction mutates an account, so the
+ * resolver sees the deterministic block-start state that validate-query also
+ * reads) and calls the single shared derivation. On a Mint decision it records
+ * the amount, the settlement address, and the winning commitment id; the amount
+ * is added to value_flow_.minted and the settle message is emitted later in
+ * create_aipow_mint_transaction().
+ *
+ * @returns True on success (including the dark/no-mint case), false on a fatal
+ *          error.
+ */
+bool Collator::compute_aipow_epoch_mint() {
+  aipow_mint_amount_ = td::RefInt256{};
+  if (!is_masterchain()) {
+    return true;
+  }
+  block::aipow::MasterchainMintContext ctx;
+  if (!block::aipow::build_masterchain_mint_context(*config_, now_, ctx)) {
+    return true;  // capAipow off or config incomplete -> no mint (fail closed)
+  }
+  // Resolve an account from the pre-block masterchain state. AIPoW accounts are
+  // masterchain-only, so only workchain -1 is resolvable; anything else is
+  // treated as absent (deterministic).
+  block::aipow::AccountResolver resolver =
+      [this](td::int32 workchain, const td::Bits256& account_id) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount out;
+    if (workchain != tos::masterchainId) {
+      return out;
+    }
+    auto acc_res = make_account(account_id.bits(), false);
+    if (acc_res.is_error()) {
+      // A genuine state-access failure is deterministic; surface it as absent so
+      // derive stays total. (make_account only errors on a corrupt stored state,
+      // which would fail the block elsewhere too.)
+      return out;
+    }
+    block::Account* acc = acc_res.move_as_ok();
+    if (acc == nullptr || acc->status != block::Account::acc_active || acc->code.is_null() ||
+        acc->data.is_null()) {
+      return out;
+    }
+    out.exists = true;
+    out.code_hash = acc->code->get_hash().bits();
+    out.data = acc->data;
+    return out;
+  };
+  block::aipow::EpochSettlement decision = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  if (decision.is_mint()) {
+    if (decision.amount.is_null() || !decision.amount->is_valid() || td::sgn(decision.amount) <= 0) {
+      return fatal_error("AIPoW epoch mint derived an invalid amount");
+    }
+    aipow_mint_amount_ = decision.amount;
+    aipow_settlement_addr_ = ctx.settlement_addr;
+    aipow_mint_winner_id_ = decision.winner_id;
+    LOG(INFO) << "AIPoW epoch mint: " << td::dec_string(aipow_mint_amount_) << " nanotomis to settlement "
+              << aipow_settlement_addr_.to_hex() << " for epoch " << decision.epoch;
+  }
+  return true;
+}
+
+/**
+ * Emits the AIPoW settle message for the mint recorded by compute_aipow_epoch_mint.
+ * A base-gram special mint from the masterchain minter (-1:00..00) to the
+ * settlement account, whose body is the 256-bit winner id the settle path reads.
+ * A no-op when no mint is due (dark, or nothing settled this block).
+ *
+ * @returns True on success, false on a fatal error.
+ */
+bool Collator::create_aipow_mint_transaction() {
+  CHECK(is_masterchain());
+  if (aipow_mint_amount_.is_null()) {
+    return true;  // no AIPoW mint this block
+  }
+  block::CurrencyCollection amount{aipow_mint_amount_};
+  CHECK(aipow_mint_msg_.is_null());
+  tos::LogicalTime lt = start_lt;
+  vm::CellBuilder cb;
+  Ref<vm::Cell> msg;
+  // int_msg_info$0, src = -1:00..00 (the masterchain minter the settlement
+  // authenticates), dest = -1:settlement, value = amount, body = winner id inline.
+  if (!(cb.store_long_bool(6, 4)             // int_msg_info$0 ihr_disabled:1 bounce:1 bounced:0
+        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
+        && cb.store_zeroes_bool(256)         //   src = -1:00..00
+        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
+        && cb.store_bits_bool(aipow_settlement_addr_.bits(), 256)  //   dest = -1:settlement
+        && amount.store(cb)                  // value:CurrencyCollection
+        && cb.store_zeroes_bool(4 + 4)       // extra_flags:(VarUInteger 16) fwd_fee:Tomis
+        && cb.store_long_bool(lt, 64)        // created_lt:uint64
+        && cb.store_long_bool(now_, 32)      // created_at:uint32
+        && cb.store_zeroes_bool(1)           // init:(Maybe) = nothing
+        && cb.store_long_bool(0, 1)          // body:(Either X ^X) = left (inline)
+        && cb.store_bits_bool(aipow_mint_winner_id_.bits(), 256)  // body = winner id (settle reads exactly this)
+        && cb.finalize_to(msg))) {
+    return fatal_error("cannot generate the AIPoW settle mint message");
+  }
+  CHECK(block::gen::t_Message_Any.validate_ref(msg));
+  CHECK(block::tlb::t_Message.validate_ref(msg));
+  if (process_one_new_message(block::NewOutMsg{lt, msg, Ref<vm::Cell>{}, 0}, false, &aipow_mint_msg_) != 1) {
+    return fatal_error("cannot generate the AIPoW settle transaction");
+  }
+  CHECK(aipow_mint_msg_.not_null());
+  return true;
 }
 
 /**

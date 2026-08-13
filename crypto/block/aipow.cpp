@@ -409,5 +409,30 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   return compute_epoch_mint(ctx.config, ledger_limits, cursor, false, td::RefInt256{}, ctx.gen_utime);
 }
 
+bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_utime,
+                                    MasterchainMintContext& out) {
+  // Fail closed unless capAipow is set: dark by default, no mint path.
+  if (!config.aipow_enabled()) {
+    return false;
+  }
+  auto cfg = config.get_aipow_config();
+  auto lim = config.get_aipow_limits();
+  auto reg = config.get_aipow_registry();
+  // A block that sets capAipow without a complete, valid AIPoW parameter set is
+  // rejected at config-install time (check_aipow_config); here we still fail
+  // closed so a partial/malformed config can never originate a mint.
+  if (cfg.is_error() || lim.is_error() || reg.is_error()) {
+    return false;
+  }
+  out.config = cfg.move_as_ok();
+  out.limits = lim.move_as_ok();
+  auto registry = reg.move_as_ok();
+  out.settlement_addr = registry.settlement_addr;
+  out.commitment_code_hash = registry.commitment_code_hash;
+  out.expected_commitment_version = 1;  // the layout version the native path understands (D9)
+  out.gen_utime = gen_utime;
+  return true;
+}
+
 }  // namespace aipow
 }  // namespace block
