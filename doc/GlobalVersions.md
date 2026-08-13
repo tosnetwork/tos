@@ -526,6 +526,77 @@ the real threshold multisig, cap-consistency check, supply-cap dry-run), not cod
 those are closed, native AIPoW minting is **testnet/devnet only** and must remain
 unactivatable on mainnet.
 
+### Mainnet activation runbook (governance)
+
+The gates above say *what* must be true; this is the ordered *how*. Every step is
+backed by a native fail-closed guard (noted inline), so a misconfiguration halts
+issuance rather than mis-mints — but governance must still perform and verify each
+step, in this order, before `capAipow` is set. All of this is safe to rehearse on a
+throwaway testnet first (that is what `scripts/aipow-native-mint-e2e.py` automates in
+miniature).
+
+1. **Finish gate 4 (audits).** Complete the external audit + red-team of the
+   settlement/commitment/distributor contracts and the consensus mint math
+   (per-epoch once-only, cap, collator/validator divergence, custody/replay). Do not
+   proceed until sign-off. Code freeze the audited artifacts.
+
+2. **Deploy the reviewer multisig (gate 3).** Deploy the real **M-of-N threshold
+   multisig** that will govern challenge resolution. Record its masterchain account
+   id; it becomes `AipowRegistry.reviewer_addr`. A single-key reviewer is
+   testnet-only.
+
+3. **Deploy the settlement account.** Deploy the audited settlement code with
+   `build_data`: `challenge_window < register_grace` (SDK-enforced, and native M1
+   re-checks), `total_cap` = the intended supply cap, `distributor_code` = the audited
+   distributor code, `commitment_code` = the audited commitment code (H1 auth; the
+   native cross-checks its hash against the registry). Record the resulting settlement
+   address; it becomes `AipowRegistry.settlement_addr`.
+
+4. **Publish + ratify ConfigParams 90–93 (gate 5).** They ship **absent** at genesis;
+   a partial or inconsistent set is a hard config error the activation guard
+   (`check_aipow_config`) rejects once `capAipow` is set. Set, and governance-ratify:
+   - **ConfigParam 90 — `AipowConfig`:** the pool formula (`k_num/k_den`,
+     `schedule_cap`, `cold_start_floor`, challenge multiplier).
+   - **ConfigParam 91 — `AipowMaturation`:** the distributor maturation snapshot
+     (`immediate_bps`, `stream_epochs`, `mat_epoch_seconds`) — must equal what the
+     settlement was deployed with.
+   - **ConfigParam 92 — `AipowLimits`:** `total_cap` (the ~4.5B cap).
+   - **ConfigParam 93 — `AipowRegistry`:** `settlement_addr` (step 3),
+     `commitment_code_hash` (the audited commitment code every real commitment runs),
+     `reviewer_addr` (step 2's multisig), `methodology_hash`, `rate_card_hash`, and the
+     audited `distributor_code_hashes`.
+
+5. **Pre-flight consistency checks (do before flipping the bit).** Each is also a
+   native fail-closed guard, so an error blocks issuance — verify them up front anyway:
+   - settlement's stored `total_cap` **==** ConfigParam 92 `total_cap` (gate 5).
+   - settlement's stored `commitment_code` hash **==** ConfigParam 93
+     `commitment_code_hash` (native cross-check; else derive fails closed).
+   - settlement's `challenge_window` **<** `register_grace` (native M1).
+   - ConfigParam 93 `reviewer_addr` **==** the deployed multisig, and every genuine
+     commitment's own `reviewer` equals it (native gate-3 anchor; the commitment `rule`
+     op requires `sender == reviewer`).
+   - ConfigParam 93 `settlement_addr` **==** the deployed settlement, and
+     `commitment_code_hash` **==** the code the deployed commitments actually run
+     (else C1 address binding rejects them).
+
+6. **Supply-cap dry-run (gate 6).** Simulate the ~7-year emission schedule under
+   adversarial demand and confirm cumulative emission ≤ the cap (the native clamps
+   each pool to the remaining cap and terminates at exhaustion; the dry-run confirms
+   the schedule as a whole).
+
+7. **Activate, all-validators-first.** Only now set `capAipow` (bit `1024`) in
+   ConfigParam 8, following the same sequence as the version Rollout plan below: every
+   validator must run a binary that supports the AIPoW path before the bit is set, or
+   validators would diverge. If any ConfigParam 90–93 is missing or inconsistent when
+   the bit is set, `check_aipow_config` makes the block invalid — activation is blocked
+   at the config-install level, not silently mis-minted.
+
+8. **Post-activation.** Monitor the first epochs: the settlement `minted_total`
+   advances by exactly each derived pool, the cursor advances once per settled epoch,
+   and cumulative issuance stays under the cap. Keep the reviewer multisig keys and the
+   settlement's gas/forward reserve funded (an underfunded settle fails closed and
+   halts issuance until refunded).
+
 ## Rollout plan
 
 Enabling version 14/15 on a live TOS network is a consensus-level change and must not be done by
