@@ -902,18 +902,14 @@ impl CommonMsgInfo {
     ///
     pub fn dest_account_address(&self) -> Option<AccountId> {
         match self {
-            CommonMsgInfo::IntMsgInfo(header) => {
-                match header.dst {
-                    MsgAddressInt::AddrStd(ref std) => Some(std.address.clone()),
-                    MsgAddressInt::AddrVar(ref var) => Some(var.address.clone()),
-                }
-            }
-            CommonMsgInfo::ExtInMsgInfo(header) => {
-                match header.dst {
-                    MsgAddressInt::AddrStd(ref std) => Some(std.address.clone()),
-                    MsgAddressInt::AddrVar(ref var) => Some(var.address.clone()),
-                }
-            }
+            CommonMsgInfo::IntMsgInfo(header) => match header.dst {
+                MsgAddressInt::AddrStd(ref std) => Some(std.address.clone()),
+                MsgAddressInt::AddrVar(ref var) => Some(var.address.clone()),
+            },
+            CommonMsgInfo::ExtInMsgInfo(header) => match header.dst {
+                MsgAddressInt::AddrStd(ref std) => Some(std.address.clone()),
+                MsgAddressInt::AddrVar(ref var) => Some(var.address.clone()),
+            },
             _ => None,
         }
     }

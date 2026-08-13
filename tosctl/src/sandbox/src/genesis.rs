@@ -14,7 +14,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chain_block::{CurrencyCollection, Deserializable, ShardStateUnsplit, read_single_root_boc};
+use chain_block::{read_single_root_boc, CurrencyCollection, Deserializable, ShardStateUnsplit};
 
 use crate::error::{SandboxError, SandboxResult};
 
@@ -50,7 +50,9 @@ fn find_tos_root() -> Option<PathBuf> {
 ///   `crypto/fift/lib` / `crypto/smartcont`. Falls back to `~/tos` or
 ///   relative paths.
 /// * `CREATE_STATE_PATH` -- override the path to the `create-state` binary.
-pub fn generate_zerostate_total_balance(fif_path: impl AsRef<Path>) -> SandboxResult<CurrencyCollection> {
+pub fn generate_zerostate_total_balance(
+    fif_path: impl AsRef<Path>,
+) -> SandboxResult<CurrencyCollection> {
     let tos_root = find_tos_root();
 
     let create_state_bin = env::var("CREATE_STATE_PATH")
@@ -70,7 +72,8 @@ pub fn generate_zerostate_total_balance(fif_path: impl AsRef<Path>) -> SandboxRe
         SandboxError::ConfigError("Cannot find crypto/smartcont. Set TOS_ROOT.".into())
     })?;
 
-    let tmp = tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
+    let tmp =
+        tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
     let fif_path = fif_path
         .as_ref()
         .canonicalize()
@@ -98,10 +101,12 @@ pub fn generate_zerostate_total_balance(fif_path: impl AsRef<Path>) -> SandboxRe
 
     let boc_path = tmp.path().join("zerostate.boc");
     if !boc_path.exists() {
-        return Err(SandboxError::Serialization("create-state did not produce zerostate.boc".into()));
+        return Err(SandboxError::Serialization(
+            "create-state did not produce zerostate.boc".into(),
+        ));
     }
-    let boc_bytes =
-        std::fs::read(&boc_path).map_err(|e| SandboxError::Serialization(format!("read BOC: {e}")))?;
+    let boc_bytes = std::fs::read(&boc_path)
+        .map_err(|e| SandboxError::Serialization(format!("read BOC: {e}")))?;
     let cell = read_single_root_boc(boc_bytes)
         .map_err(|e| SandboxError::Serialization(format!("parse BOC: {e}")))?;
     let state = ShardStateUnsplit::construct_from_cell(cell)

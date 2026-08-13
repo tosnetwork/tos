@@ -6,7 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use crate::{serde_utils, socket_utils::resolve_ip, WalletVersion};
+use crate::{WalletVersion, serde_utils, socket_utils::resolve_ip};
 use adnl::{client::AdnlClientConfig, common::Timeouts};
 use anyhow::Context;
 use chain_block::Ed25519KeyOption;
@@ -1017,7 +1017,9 @@ impl AppConfig {
     pub fn load_fd(fd: i32, format: &str) -> anyhow::Result<Self> {
         use std::io::Read;
         use std::os::fd::FromRawFd;
-        if fd < 3 { anyhow::bail!("config fd must be at least 3"); }
+        if fd < 3 {
+            anyhow::bail!("config fd must be at least 3");
+        }
         let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
         let mut data = String::new();
         file.read_to_string(&mut data).context("Failed to read config fd")?;
@@ -1027,18 +1029,10 @@ impl AppConfig {
     fn parse(data: &str, format: &str, source: &str) -> anyhow::Result<Self> {
         let mut config = match format {
             "yaml" | "yml" => serde_yaml2::from_str::<Self>(&data).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to parse YAML config '{}'. Error: {}",
-                    source,
-                    e
-                )
+                anyhow::anyhow!("Failed to parse YAML config '{}'. Error: {}", source, e)
             })?,
             "json" => serde_json::from_str::<Self>(&data).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to parse JSON config '{}'. Error: {}",
-                    source,
-                    e
-                )
+                anyhow::anyhow!("Failed to parse JSON config '{}'. Error: {}", source, e)
             })?,
             other => anyhow::bail!("Unsupported config extension: {other}"),
         };
@@ -1065,7 +1059,12 @@ mod tests {
         use std::io::{Seek, Write};
         use std::os::fd::IntoRawFd;
         let path = std::env::temp_dir().join(format!("tosctl-config-fd-{}", std::process::id()));
-        let mut file = std::fs::OpenOptions::new().create_new(true).read(true).write(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         serde_json::to_writer(&mut file, &minimal_config_json()).unwrap();
         file.flush().unwrap();
         file.rewind().unwrap();

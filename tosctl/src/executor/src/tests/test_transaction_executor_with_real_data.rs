@@ -10,13 +10,13 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::blockchain_config::BlockchainConfig;
-use pretty_assertions::assert_eq;
-use std::io::{BufRead, BufReader};
 use chain_block::{
     base64_decode, read_single_root_boc, Account, AccountStorage, Block, Cell, ConfigParams,
     CurrencyCollection, Deserializable, Message, MsgAddressInt, Result, Serializable, ShardAccount,
     StateInit, StorageInfo, TrComputePhase, Transaction, UnixTime,
 };
+use pretty_assertions::assert_eq;
+use std::io::{BufRead, BufReader};
 
 mod common;
 

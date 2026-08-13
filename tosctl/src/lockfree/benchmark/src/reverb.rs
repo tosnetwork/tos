@@ -16,17 +16,14 @@ where
     let then = Instant::now();
     let mut threads = Vec::with_capacity(nthread);
 
-    for i in 0 .. nthread {
+    for i in 0..nthread {
         let queue = queue.clone();
         threads.push(thread::spawn(move || {
             let start = i as u128 * niter / nthread as u128;
-            let end = if i + 1 == nthread {
-                niter
-            } else {
-                (i as u128 + 1) * niter / nthread as u128
-            };
+            let end =
+                if i + 1 == nthread { niter } else { (i as u128 + 1) * niter / nthread as u128 };
 
-            for j in start .. end {
+            for j in start..end {
                 let popped = queue.pop();
                 queue.push(j);
                 queue.push(i as u128 + j);
@@ -82,9 +79,7 @@ impl Queue for Mutex<LinkedList<u128>> {
 }
 
 fn main() {
-    println!(
-        "A program which reverberates messages through a plain queue channel"
-    );
+    println!("A program which reverberates messages through a plain queue channel");
 
     const SAMPLES: usize = 5;
     const NITER: u128 = 0x10000;
@@ -96,23 +91,14 @@ fn main() {
         let mut linked = Duration::default();
         let mut lockfree = Duration::default();
 
-        for _ in 0 .. SAMPLES {
+        for _ in 0..SAMPLES {
             deque += measure::<Mutex<VecDeque<_>>>(nthread, NITER);
             linked += measure::<Mutex<LinkedList<_>>>(nthread, NITER);
             lockfree += measure::<LfQueue<_>>(nthread, NITER);
         }
 
-        println!(
-            "Mutexed VecDeque with {} threads total time: {:?}",
-            nthread, deque
-        );
-        println!(
-            "Mutexed LinkedList with {} threads total time: {:?}",
-            nthread, linked
-        );
-        println!(
-            "Lockfree Queue with {} threads total time: {:?}",
-            nthread, lockfree
-        );
+        println!("Mutexed VecDeque with {} threads total time: {:?}", nthread, deque);
+        println!("Mutexed LinkedList with {} threads total time: {:?}", nthread, linked);
+        println!("Lockfree Queue with {} threads total time: {:?}", nthread, lockfree);
     }
 }

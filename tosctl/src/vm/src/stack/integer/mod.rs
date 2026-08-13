@@ -10,8 +10,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::stack::integer::behavior::{OperationBehavior, Quiet, Signaling};
-use num_traits::{One, Signed, Zero};
 use chain_block::{fail, BuilderData, ExceptionCode, Result, SliceData};
+use num_traits::{One, Signed, Zero};
 
 #[macro_use]
 pub mod behavior;

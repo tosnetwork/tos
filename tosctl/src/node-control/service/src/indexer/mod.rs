@@ -9,4 +9,4 @@
 pub mod indexer_task;
 pub mod store;
 
-pub use store::{IndexedRecord, IndexerStore, ListFilters, AipowSettlementRecord};
+pub use store::{AipowSettlementRecord, IndexedRecord, IndexerStore, ListFilters};

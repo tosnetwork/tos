@@ -2,8 +2,8 @@ mod rpk_config;
 
 use log::{error, info};
 use rustls::client::danger::HandshakeSignatureValid;
-use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::pki_types::{CertificateDer, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, Error, SignatureScheme};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -54,10 +54,7 @@ impl ClientCertVerifier for OptionalRpkClientVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         if dss.scheme != SignatureScheme::ED25519 {
-            return Err(Error::General(format!(
-                "unsupported signature scheme: {:?}",
-                dss.scheme
-            )));
+            return Err(Error::General(format!("unsupported signature scheme: {:?}", dss.scheme)));
         }
 
         let pub_key = rpk_config::extract_ed25519_pubkey(cert.as_ref())
@@ -79,14 +76,10 @@ impl ClientCertVerifier for OptionalRpkClientVerifier {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    env_logger::builder().filter_level(log::LevelFilter::Info).init();
 
-    let bind_addr: SocketAddr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:4433".to_string())
-        .parse()?;
+    let bind_addr: SocketAddr =
+        std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:4433".to_string()).parse()?;
 
     let (server_key, server_pub) = rpk_config::generate_ed25519_key()?;
     info!("Server public key: {}", hex::encode(server_pub));
@@ -95,9 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rustls_config = rustls::ServerConfig::builder_with_provider(provider.into())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_client_cert_verifier(Arc::new(OptionalRpkClientVerifier))
-        .with_cert_resolver(Arc::new(
-            rustls::server::AlwaysResolvesServerRawPublicKeys::new(Arc::new(certified_key)),
-        ));
+        .with_cert_resolver(Arc::new(rustls::server::AlwaysResolvesServerRawPublicKeys::new(
+            Arc::new(certified_key),
+        )));
     rustls_config.alpn_protocols = vec![ALPN.to_vec()];
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
@@ -145,11 +138,8 @@ async fn handle_request(
     (mut send, mut recv): (quinn::SendStream, quinn::RecvStream),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let request = recv.read_to_end(64 * 1024).await?;
-    let first_line = String::from_utf8_lossy(&request)
-        .lines()
-        .next()
-        .unwrap_or("<empty>")
-        .to_string();
+    let first_line =
+        String::from_utf8_lossy(&request).lines().next().unwrap_or("<empty>").to_string();
     info!("Received request: {first_line:?}");
 
     let body = format!("Hello from rpk-server (Rust)\nRequest: {first_line}\n");

@@ -7,9 +7,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable,
-    ExternalInboundMessageHeader, IBitstring, Message, MsgAddressExt, MsgAddressInt, Serializable,
-    SliceData, StateInit,
+    BuilderData, Coins, Deserializable, ExternalInboundMessageHeader, IBitstring, Message,
+    MsgAddressExt, MsgAddressInt, Serializable, SliceData, StateInit, base64_decode,
+    read_single_root_boc,
 };
 
 use crate::ContractProvider;
@@ -255,10 +255,10 @@ mod tests {
     use super::*;
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     struct MockProvider {

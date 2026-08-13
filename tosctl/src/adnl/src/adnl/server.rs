@@ -17,6 +17,9 @@ use crate::{
     },
     dump,
 };
+use chain_block::{
+    base64_encode, error, fail, Ed25519KeyOption, KeyId, KeyOption, KeyOptionJson, Result,
+};
 use futures::prelude::*;
 use rand::RngCore;
 #[cfg(feature = "telemetry")]
@@ -38,9 +41,6 @@ use tl_api::{
         PublicKey,
     },
     AnyBoxedSerialize, IntoBoxed, TLObject,
-};
-use chain_block::{
-    base64_encode, error, fail, Ed25519KeyOption, KeyId, KeyOption, KeyOptionJson, Result,
 };
 
 #[derive(serde::Deserialize, serde::Serialize)]

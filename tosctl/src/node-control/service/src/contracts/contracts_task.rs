@@ -8,6 +8,8 @@
  */
 use crate::runtime_config::RuntimeConfig;
 use anyhow::Context;
+use chain_block::{Cell, MsgAddressInt, write_boc};
+use chain_rpc_client::v2::data_models::AccountState;
 use common::{app_config::AppConfig, snapshot::SnapshotStore, task_cancellation::CancellationCtx};
 use contracts::{ChainProvider, NominatorWrapper, Wallet};
 use std::{
@@ -15,8 +17,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use chain_block::{Cell, MsgAddressInt, write_boc};
-use chain_rpc_client::v2::data_models::AccountState;
 
 /// Minimal required balance for the master wallet before it can be deployed.
 /// Note: 0.1 TOS to cover the gas cost of the deploy transaction.
@@ -38,8 +38,7 @@ pub(crate) async fn run(
     let pools = runtime_cfg.pools();
     let wallets = runtime_cfg.wallets();
     let chain_provider = runtime_cfg.chain_provider();
-    let monitor =
-        ContractsMonitor { master_wallet, pools, wallets, chain_provider, _store: store };
+    let monitor = ContractsMonitor { master_wallet, pools, wallets, chain_provider, _store: store };
     monitor.run_loop(cancellation_ctx, app_config.tick_interval).await
 }
 
@@ -100,11 +99,8 @@ impl ContractsMonitor {
     }
 
     async fn account_info(&self, address: &MsgAddressInt) -> anyhow::Result<(AccountState, u64)> {
-        let info = self
-            .chain_provider
-            .get_address_info(address)
-            .await
-            .context("get_address_info")?;
+        let info =
+            self.chain_provider.get_address_info(address).await.context("get_address_info")?;
         Ok((info.state, info.balance))
     }
 
@@ -407,7 +403,10 @@ impl ContractsMonitor {
 mod tests {
     use super::ContractsMonitor;
     use axum::{Json, Router, extract::State, routing::post};
+    use chain_block::{Cell, MsgAddressInt, StateInit};
+    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
     use common::snapshot::SnapshotStore;
+    use contracts::DefaultChainProvider;
     use contracts::{ChainProvider, NominatorWrapper, SmartContract, Wallet};
     use std::{
         collections::HashMap,
@@ -416,9 +415,6 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         },
     };
-    use chain_block::{Cell, MsgAddressInt, StateInit};
-    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-    use contracts::DefaultChainProvider;
 
     #[derive(Clone)]
     struct MockRpcState {

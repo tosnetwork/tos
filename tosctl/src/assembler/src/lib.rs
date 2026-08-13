@@ -9,9 +9,9 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::{BuilderData, Cell, SliceData};
 pub use debug::DbgInfo;
 use std::{collections::HashMap, ops::RangeInclusive};
-use chain_block::{BuilderData, Cell, SliceData};
 
 mod errors;
 pub use errors::{

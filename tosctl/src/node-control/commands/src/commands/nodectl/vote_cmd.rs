@@ -166,9 +166,7 @@ impl VoteCmd {
     pub async fn run_offer_ls_shortcut() -> anyhow::Result<()> {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into());
-        let cmd = VoteOfferLsCmd {
-            format: super::output_format::OutputFormat::Table,
-        };
+        let cmd = VoteOfferLsCmd { format: super::output_format::OutputFormat::Table };
         cmd.run(&config_path).await
     }
 
@@ -176,9 +174,7 @@ impl VoteCmd {
     pub async fn run_election_ls_shortcut() -> anyhow::Result<()> {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into());
-        let cmd = VoteElectionLsCmd {
-            format: super::output_format::OutputFormat::Table,
-        };
+        let cmd = VoteElectionLsCmd { format: super::output_format::OutputFormat::Table };
         cmd.run(&config_path).await
     }
 }
@@ -199,7 +195,9 @@ impl VoteOfferLsCmd {
         use colored::Colorize;
         use common::app_config::AppConfig;
         use common::time_format::format_ts;
-        use contracts::{ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from};
+        use contracts::{
+            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from,
+        };
         use std::path::Path;
         use std::sync::Arc;
 
@@ -227,16 +225,19 @@ impl VoteOfferLsCmd {
         }
 
         if self.format == super::output_format::OutputFormat::Json {
-            let views: Vec<serde_json::Value> = proposals.iter().map(|p| {
-                serde_json::json!({
-                    "param_id": p.param.id,
-                    "is_critical": p.is_critical,
-                    "expires": format_ts(p.expires as u64),
-                    "voters": p.voters.len(),
-                    "weight_remaining": p.weight_remaining,
-                    "hash": hex::encode(p.hash),
+            let views: Vec<serde_json::Value> = proposals
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "param_id": p.param.id,
+                        "is_critical": p.is_critical,
+                        "expires": format_ts(p.expires as u64),
+                        "voters": p.voters.len(),
+                        "weight_remaining": p.weight_remaining,
+                        "hash": hex::encode(p.hash),
+                    })
                 })
-            }).collect();
+                .collect();
             println!("{}", serde_json::to_string_pretty(&views)?);
         } else {
             println!();
@@ -279,7 +280,9 @@ impl VoteOfferDiffCmd {
         use colored::Colorize;
         use common::app_config::AppConfig;
         use common::time_format::format_ts;
-        use contracts::{ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from};
+        use contracts::{
+            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from,
+        };
         use std::path::Path;
         use std::sync::Arc;
 
@@ -291,7 +294,10 @@ impl VoteOfferDiffCmd {
         let hash_bytes_vec = hex::decode(self.hash.trim_start_matches("0x"))
             .map_err(|e| anyhow::anyhow!("Invalid hex hash: {}", e))?;
         if hash_bytes_vec.len() != 32 {
-            anyhow::bail!("Proposal hash must be 32 bytes (64 hex chars), got {}", hash_bytes_vec.len());
+            anyhow::bail!(
+                "Proposal hash must be 32 bytes (64 hex chars), got {}",
+                hash_bytes_vec.len()
+            );
         }
         let mut hash_bytes = [0u8; 32];
         hash_bytes.copy_from_slice(&hash_bytes_vec);
@@ -325,7 +331,10 @@ impl VoteOfferDiffCmd {
                 println!("  {:<20} W={} / L={}", "Wins / Losses:".bold(), p.wins, p.losses);
                 println!();
                 if p.param.cell.is_some() {
-                    println!("  {}", "New cell value: present (param has a proposed value)".green());
+                    println!(
+                        "  {}",
+                        "New cell value: present (param has a proposed value)".green()
+                    );
                 } else {
                     println!("  {}", "New cell value: none (param deletion or reset)".yellow());
                 }
@@ -344,11 +353,12 @@ impl VoteOfferCastCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use super::utils::{load_config_vault_rpc_client, make_wallet, wallet_info};
         use anyhow::Context;
+        use chain_block::write_boc;
         use colored::Colorize;
         use common::time_format::format_ts;
         use contracts::{
-            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, SmartContract,
-            Wallet, config_contract, contract_provider_from,
+            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, SmartContract, Wallet,
+            config_contract, contract_provider_from,
         };
         use control_client::{
             client_adnl::ControlClientAdnl,
@@ -357,7 +367,6 @@ impl VoteOfferCastCmd {
         };
         use std::path::Path;
         use std::sync::Arc;
-        use chain_block::write_boc;
 
         let config_path = Path::new(config_path);
 
@@ -461,11 +470,8 @@ impl VoteOfferCastCmd {
 
         // --- Connect to node via ADNL control ---
         println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) = config
-            .nodes
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+        let (node_name, node_cfg) =
+            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
         let adnl_config = node_cfg.to_node_adnl_config(None).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await.context("Failed to connect to validator node via ADNL")?;
@@ -477,7 +483,8 @@ impl VoteOfferCastCmd {
         let vset = parse_config_param_34(&vset_bytes)?;
 
         // --- Get validator config to find our key ---
-        let validator_config = client.get_validator_config().await.context("get_validator_config")?;
+        let validator_config =
+            client.get_validator_config().await.context("get_validator_config")?;
 
         // Search through recent validator keys to find one in the current vset
         let mut validators_sorted = validator_config.validators.clone();
@@ -500,10 +507,8 @@ impl VoteOfferCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) = vset
-                .list()
-                .iter()
-                .position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) =
+                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -538,13 +543,11 @@ impl VoteOfferCastCmd {
 
         // --- Build and sign the vote ---
         println!("{}", "Signing vote...".cyan());
-        let unsigned_body = config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
+        let unsigned_body =
+            config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
 
         let signature = client
-            .sign(&SignRq {
-                key_hash: key_id,
-                data: unsigned_body.data().to_vec(),
-            })
+            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
             .await
             .context("sign vote")?;
         println!("  {} Vote signed", "OK".green().bold());
@@ -573,19 +576,12 @@ impl VoteOfferCastCmd {
         let boc = write_boc(&msg_cell)?;
         client.send_boc(&boc).await.context("send vote BOC")?;
 
-        println!(
-            "\n{} Vote cast successfully!",
-            "OK".green().bold()
-        );
+        println!("\n{} Vote cast successfully!", "OK".green().bold());
         println!("  Proposal hash:    {}", hex::encode(proposal.hash));
         println!("  Param ID:         {}", proposal.param.id);
         println!("  Validator index:  {}", validator_idx);
         println!();
-        println!(
-            "  {}",
-            "Use 'tosctl vote offer ls' to verify your vote is recorded."
-                .dimmed()
-        );
+        println!("  {}", "Use 'tosctl vote offer ls' to verify your vote is recorded.".dimmed());
         println!();
 
         Ok(())
@@ -646,11 +642,7 @@ impl VoteComplaintLsCmd {
         println!("  {}", "\u{2500}".repeat(76));
 
         for (i, election) in past.iter().enumerate() {
-            let banned_count = election
-                .frozen_map
-                .values()
-                .filter(|f| f.banned)
-                .count();
+            let banned_count = election.frozen_map.values().filter(|f| f.banned).count();
             println!(
                 "  {:<4} {:<14} {:<22} {:<16} {:<8} {}",
                 i + 1,
@@ -673,11 +665,8 @@ impl VoteComplaintLsCmd {
                     if frozen.banned {
                         let pubkey_hex: String =
                             pubkey.iter().map(|b| format!("{:02x}", b)).collect();
-                        let wallet_hex: String = frozen
-                            .wallet_addr
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect();
+                        let wallet_hex: String =
+                            frozen.wallet_addr.iter().map(|b| format!("{:02x}", b)).collect();
                         println!(
                             "  Election {}: pubkey={}... wallet={}... stake={} TOS",
                             election.election_id,
@@ -695,10 +684,7 @@ impl VoteComplaintLsCmd {
             "  {}",
             "Note: Complaints are submitted against validators in past elections.".dimmed()
         );
-        println!(
-            "  {}",
-            "Banned validators have already been penalized.".dimmed()
-        );
+        println!("  {}", "Banned validators have already been penalized.".dimmed());
         println!();
 
         Ok(())
@@ -709,10 +695,11 @@ impl VoteComplaintCastCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use super::utils::{load_config_vault_rpc_client, make_wallet, wallet_info};
         use anyhow::Context;
+        use chain_block::write_boc;
         use colored::Colorize;
         use contracts::{
-            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract,
-            Wallet, elector, contract_provider_from,
+            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract, Wallet,
+            contract_provider_from, elector,
         };
         use control_client::{
             client_adnl::ControlClientAdnl,
@@ -721,7 +708,6 @@ impl VoteComplaintCastCmd {
         };
         use std::path::Path;
         use std::sync::Arc;
-        use chain_block::write_boc;
 
         let config_path = Path::new(config_path);
 
@@ -752,31 +738,23 @@ impl VoteComplaintCastCmd {
         let elector = ElectorWrapperImpl::new(contract_provider_from(chain_provider));
 
         let past = elector.past_elections().await?;
-        let target_election = past
-            .iter()
-            .find(|e| e.election_id == self.election_id as u64);
+        let target_election = past.iter().find(|e| e.election_id == self.election_id as u64);
 
         if target_election.is_none() {
-            let election_ids: Vec<String> = past.iter().map(|e| e.election_id.to_string()).collect();
+            let election_ids: Vec<String> =
+                past.iter().map(|e| e.election_id.to_string()).collect();
             anyhow::bail!(
                 "Election ID {} not found in past elections. Available: [{}]",
                 self.election_id,
                 election_ids.join(", ")
             );
         }
-        println!(
-            "  {} Election {} found in past elections",
-            "OK".green().bold(),
-            self.election_id
-        );
+        println!("  {} Election {} found in past elections", "OK".green().bold(), self.election_id);
 
         // --- Connect to node via ADNL control ---
         println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) = config
-            .nodes
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+        let (node_name, node_cfg) =
+            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
         let adnl_config = node_cfg.to_node_adnl_config(None).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await.context("Failed to connect to validator node via ADNL")?;
@@ -788,7 +766,8 @@ impl VoteComplaintCastCmd {
         let vset = parse_config_param_34(&vset_bytes)?;
 
         // --- Get validator config to find our key ---
-        let validator_config = client.get_validator_config().await.context("get_validator_config")?;
+        let validator_config =
+            client.get_validator_config().await.context("get_validator_config")?;
 
         // Search through recent validator keys to find one in the current vset
         let mut validators_sorted = validator_config.validators.clone();
@@ -811,10 +790,8 @@ impl VoteComplaintCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) = vset
-                .list()
-                .iter()
-                .position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) =
+                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -845,10 +822,7 @@ impl VoteComplaintCastCmd {
         )?;
 
         let signature = client
-            .sign(&SignRq {
-                key_hash: key_id,
-                data: unsigned_body.data().to_vec(),
-            })
+            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
             .await
             .context("sign complaint vote")?;
         println!("  {} Complaint vote signed", "OK".green().bold());
@@ -891,19 +865,12 @@ impl VoteComplaintCastCmd {
         let boc = write_boc(&msg_cell)?;
         client.send_boc(&boc).await.context("send complaint vote BOC")?;
 
-        println!(
-            "\n{} Complaint vote cast successfully!",
-            "OK".green().bold()
-        );
+        println!("\n{} Complaint vote cast successfully!", "OK".green().bold());
         println!("  Election ID:      {}", self.election_id);
         println!("  Complaint hash:   {}", hex::encode(complaint_hash));
         println!("  Validator index:  {}", validator_idx);
         println!();
-        println!(
-            "  {}",
-            "Use 'tosctl vote complaint ls' to verify complaint status."
-                .dimmed()
-        );
+        println!("  {}", "Use 'tosctl vote complaint ls' to verify complaint status.".dimmed());
         println!();
 
         Ok(())
@@ -925,7 +892,9 @@ impl VoteElectionLsCmd {
         use colored::Colorize;
         use common::app_config::AppConfig;
         use common::chain_utils::display_tos;
-        use contracts::{DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from};
+        use contracts::{
+            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from,
+        };
         use std::path::Path;
         use std::sync::Arc;
 
@@ -957,15 +926,19 @@ impl VoteElectionLsCmd {
         }
 
         if self.format == super::output_format::OutputFormat::Json {
-            let participants: Vec<serde_json::Value> = info.participants.iter().map(|p| {
-                let pubkey_hex: String =
-                    p.pub_key.iter().map(|b| format!("{:02x}", b)).collect();
-                serde_json::json!({
-                    "public_key": pubkey_hex,
-                    "stake": display_tos(p.stake),
-                    "max_factor": p.max_factor,
+            let participants: Vec<serde_json::Value> = info
+                .participants
+                .iter()
+                .map(|p| {
+                    let pubkey_hex: String =
+                        p.pub_key.iter().map(|b| format!("{:02x}", b)).collect();
+                    serde_json::json!({
+                        "public_key": pubkey_hex,
+                        "stake": display_tos(p.stake),
+                        "max_factor": p.max_factor,
+                    })
                 })
-            }).collect();
+                .collect();
             let obj = serde_json::json!({
                 "election_id": info.election_id,
                 "elect_close": info.elect_close,
@@ -993,8 +966,7 @@ impl VoteElectionLsCmd {
             println!("  {}", "\u{2500}".repeat(96));
 
             for (i, p) in info.participants.iter().enumerate() {
-                let pubkey_hex: String =
-                    p.pub_key.iter().map(|b| format!("{:02x}", b)).collect();
+                let pubkey_hex: String = p.pub_key.iter().map(|b| format!("{:02x}", b)).collect();
                 let pubkey_display = if pubkey_hex.len() > 64 {
                     pubkey_hex[..64].to_string()
                 } else {
@@ -1019,11 +991,12 @@ impl VoteElectionCastCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use super::utils::{load_config_vault_rpc_client, make_wallet, wallet_info};
         use anyhow::Context;
+        use chain_block::{UnixTime, write_boc};
         use colored::Colorize;
         use common::chain_utils::display_tos;
         use contracts::{
-            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract,
-            Wallet, contract_provider_from, nominator,
+            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract, Wallet,
+            contract_provider_from, nominator,
         };
         use control_client::{
             client_adnl::ControlClientAdnl,
@@ -1035,7 +1008,6 @@ impl VoteElectionCastCmd {
         };
         use std::path::Path;
         use std::sync::Arc;
-        use chain_block::{UnixTime, write_boc};
 
         let config_path = Path::new(config_path);
 
@@ -1083,11 +1055,8 @@ impl VoteElectionCastCmd {
 
         // --- Connect to node via ADNL control ---
         println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) = config
-            .nodes
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+        let (node_name, node_cfg) =
+            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
         let adnl_config = node_cfg.to_node_adnl_config(None).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await.context("Failed to connect to validator node via ADNL")?;
@@ -1101,11 +1070,7 @@ impl VoteElectionCastCmd {
         // --- Generate validator key pair ---
         println!("{}", "Generating validator key pair...".cyan());
         let key_hash = client.generate_key_pair().await.context("generate_key_pair")?;
-        println!(
-            "  {} Key hash: {}",
-            "OK".green().bold(),
-            hex::encode(&key_hash)
-        );
+        println!("  {} Key hash: {}", "OK".green().bold(), hex::encode(&key_hash));
 
         // Register permanent key
         client
@@ -1131,20 +1096,13 @@ impl VoteElectionCastCmd {
 
         // Export public key
         let pub_key = client.export_key_pub(&key_hash).await.context("export_key_pub")?;
-        println!(
-            "  {} Public key: {}",
-            "OK".green().bold(),
-            hex::encode(&pub_key)
-        );
+        println!("  {} Public key: {}", "OK".green().bold(), hex::encode(&pub_key));
 
         // --- Generate ADNL address ---
         println!("{}", "Generating ADNL address...".cyan());
         let adnl_key_hash = client.generate_key_pair().await.context("generate ADNL key pair")?;
         client
-            .add_adnl_address(&AddAdnlAddressRq {
-                key_hash: adnl_key_hash.clone(),
-                category: 0,
-            })
+            .add_adnl_address(&AddAdnlAddressRq { key_hash: adnl_key_hash.clone(), category: 0 })
             .await
             .context("add_adnl_address")?;
         client
@@ -1155,11 +1113,7 @@ impl VoteElectionCastCmd {
             })
             .await
             .context("add_validator_adnl_addr")?;
-        println!(
-            "  {} ADNL address: {}",
-            "OK".green().bold(),
-            hex::encode(&adnl_key_hash)
-        );
+        println!("  {} ADNL address: {}", "OK".green().bold(), hex::encode(&adnl_key_hash));
 
         // --- Determine wallet and stake ---
         let wallet_name = self.wallet.as_deref().unwrap_or(node_name);
@@ -1205,10 +1159,7 @@ impl VoteElectionCastCmd {
         data_to_sign.extend_from_slice(&adnl_key_hash);
 
         let signature = client
-            .sign(&SignRq {
-                key_hash: key_hash.clone(),
-                data: data_to_sign,
-            })
+            .sign(&SignRq { key_hash: key_hash.clone(), data: data_to_sign })
             .await
             .context("sign election bid")?;
         println!("  {} Bid signed", "OK".green().bold());
@@ -1232,10 +1183,7 @@ impl VoteElectionCastCmd {
         let boc = write_boc(&msg_cell)?;
         client.send_boc(&boc).await.context("send election bid BOC")?;
 
-        println!(
-            "\n{} Election bid submitted successfully!",
-            "OK".green().bold()
-        );
+        println!("\n{} Election bid submitted successfully!", "OK".green().bold());
         println!("  Election ID:  {}", election_id);
         println!("  Stake:        {} TOS", display_tos(stake_nanotos));
         println!("  Public key:   {}", hex::encode(&pub_key));
@@ -1243,8 +1191,7 @@ impl VoteElectionCastCmd {
         println!();
         println!(
             "  {}",
-            "Use 'tosctl vote election ls' to verify your bid appears in participants."
-                .dimmed()
+            "Use 'tosctl vote election ls' to verify your bid appears in participants.".dimmed()
         );
         println!();
 

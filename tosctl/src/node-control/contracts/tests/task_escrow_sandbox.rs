@@ -346,9 +346,7 @@ fn trailing_bits_after_a_well_formed_op_are_rejected() {
         .unwrap();
     chain_block::IBitstring::append_u64(&mut body, 1).unwrap();
     chain_block::IBitstring::append_u32(&mut body, 0xDEAD_BEEF).unwrap();
-    f.send_from(&creator_addr, body.into_cell().unwrap())
-        .expect_aborted()
-        .expect_exit_code(9);
+    f.send_from(&creator_addr, body.into_cell().unwrap()).expect_aborted().expect_exit_code(9);
     assert_eq!(f.status(), STATUS_OPEN, "the malformed cancel must not have taken effect");
 }
 
@@ -484,8 +482,7 @@ fn creator_disputes_and_verifier_resolves() {
     f.send_from(&verifier_addr, TaskEscrowContract::resolve(8, 3 * TOS).unwrap())
         .expect_aborted()
         .expect_exit_code(125);
-    f.send_from(&verifier_addr, TaskEscrowContract::resolve(9, TOS).unwrap())
-        .expect_success();
+    f.send_from(&verifier_addr, TaskEscrowContract::resolve(9, TOS).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
     assert!(f.balance(&f.escrow.clone()) < TOS / 100, "escrow must be drained");
 }
@@ -816,8 +813,11 @@ fn creator_can_rotate_and_revoke_the_attestor_key_others_rejected() {
     assert!(!f.has_attestor());
 
     // Creator rotates in an attestor key: settle now requires a signature.
-    f.send_from(&creator_addr, TaskEscrowContract::rotate_attestor_key(2, attestor_pubkey).unwrap())
-        .expect_success();
+    f.send_from(
+        &creator_addr,
+        TaskEscrowContract::rotate_attestor_key(2, attestor_pubkey).unwrap(),
+    )
+    .expect_success();
     assert!(f.has_attestor());
 
     f.send_from(&agent_addr, TaskEscrowContract::claim(3).unwrap()).expect_success();

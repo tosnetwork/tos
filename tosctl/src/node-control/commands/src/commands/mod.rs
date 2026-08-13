@@ -6,6 +6,6 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+pub(crate) mod chain_rpc;
 pub mod cli_cmd;
 pub(crate) mod nodectl;
-pub(crate) mod chain_rpc;

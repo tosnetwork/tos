@@ -84,8 +84,10 @@ impl Fixture {
             .map(sandbox_stack_item_to_entry)
             .collect::<anyhow::Result<Vec<_>>>()
             .expect("stack conversion");
-        CapabilityRegistryContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries))
-            .expect("decode_data")
+        CapabilityRegistryContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+            entries,
+        ))
+        .expect("decode_data")
     }
 
     fn balance(&self, addr: &MsgAddressInt) -> u64 {
@@ -104,7 +106,9 @@ fn sandbox_stack_item_to_entry(
     item: &tos_vm::stack::StackItem,
 ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, slice,
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
     if let Ok(int) = item.as_integer() {
@@ -114,11 +118,15 @@ fn sandbox_stack_item_to_entry(
     }
     if let Ok(slice) = item.as_slice() {
         let bytes = slice.clone().get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     if let Ok(cell) = item.as_cell() {
         let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     anyhow::bail!("unsupported sandbox stack item")
 }
@@ -151,8 +159,10 @@ fn owner_can_update_metadata_others_rejected() {
     let outsider = f.outsider.address().clone();
     f.send_from(
         &outsider,
-        CapabilityRegistryContract::update_metadata(1, [0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32])
-            .unwrap(),
+        CapabilityRegistryContract::update_metadata(
+            1, [0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32],
+        )
+        .unwrap(),
     )
     .expect_aborted()
     .expect_exit_code(ERR_NOT_OWNER);
@@ -160,8 +170,10 @@ fn owner_can_update_metadata_others_rejected() {
     let owner = f.owner.address().clone();
     f.send_from(
         &owner,
-        CapabilityRegistryContract::update_metadata(2, [0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32])
-            .unwrap(),
+        CapabilityRegistryContract::update_metadata(
+            2, [0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32],
+        )
+        .unwrap(),
     )
     .expect_success();
     let data = f.data();
@@ -208,11 +220,7 @@ fn only_owner_can_stake_increasing_recorded_bond() {
     let outsider_msg = tos_sandbox::MessageBuilder::internal(&outsider, &f.registry, stake_amount)
         .body(CapabilityRegistryContract::stake(1).unwrap())
         .build();
-    f.bc
-        .send_message(outsider_msg)
-        .expect("send")
-        .expect_aborted()
-        .expect_exit_code(ERR_NOT_OWNER);
+    f.bc.send_message(outsider_msg).expect("send").expect_aborted().expect_exit_code(ERR_NOT_OWNER);
     assert_eq!(f.data().bond, TOS, "a rejected non-owner stake must not affect the recorded bond");
 
     let owner = f.owner.address().clone();
@@ -243,7 +251,10 @@ fn owner_can_withdraw_bond_within_limit_others_and_overdraw_rejected() {
     f.send_from(&owner, CapabilityRegistryContract::withdraw_bond(3, 2 * TOS).unwrap())
         .expect_success();
     let delta = f.balance(&owner) - owner_before;
-    assert!(delta > 2 * TOS - TOS / 100 && delta <= 2 * TOS, "unexpected withdrawal delta: {delta}");
+    assert!(
+        delta > 2 * TOS - TOS / 100 && delta <= 2 * TOS,
+        "unexpected withdrawal delta: {delta}"
+    );
     assert_eq!(f.data().bond, 3 * TOS);
 }
 
@@ -285,7 +296,10 @@ fn deactivate_refunds_owner_blocks_updates_and_reactivate_restores() {
     f.send_from(&owner, CapabilityRegistryContract::deactivate(2).unwrap()).expect_success();
     assert!(!f.data().active);
     assert_eq!(f.data().bond, 0);
-    assert!(f.balance(&owner) > owner_before + 2 * TOS - TOS / 10, "deactivate did not refund bond");
+    assert!(
+        f.balance(&owner) > owner_before + 2 * TOS - TOS / 10,
+        "deactivate did not refund bond"
+    );
     assert!(f.balance(&f.registry.clone()) < TOS / 100, "registry balance should be drained");
 
     // update_metadata requires the entry to be active.

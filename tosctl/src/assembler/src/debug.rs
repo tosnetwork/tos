@@ -9,13 +9,13 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::{Cell, UInt256};
 use serde::{
     de::{Error, MapAccess, Visitor},
     ser::SerializeMap,
     Deserialize, Serialize,
 };
 use std::collections::BTreeMap;
-use chain_block::{Cell, UInt256};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DbgPos {

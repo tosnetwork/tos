@@ -9,11 +9,11 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::{Deserializable, SliceData, StateInit};
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode};
 use pprof::criterion::{Output, PProfProfiler};
 use std::time::Duration;
-// use tos_assembler::compile_code_to_cell;
-use chain_block::{Deserializable, SliceData, StateInit};
+use tos_assembler::compile_code_to_cell;
 use tos_vm::{
     executor::{gas::gas_state::Gas, Engine},
     stack::{

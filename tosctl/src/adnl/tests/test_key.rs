@@ -11,13 +11,13 @@
 use adnl::common::AdnlCryptoUtils;
 #[cfg(feature = "node")]
 use adnl::node::AddressCache;
+use chain_block::Ed25519KeyOption;
+#[cfg(feature = "node")]
+use chain_block::{base64_encode, KeyId};
 use rand::Rng;
 use std::convert::TryInto;
 #[cfg(feature = "node")]
 use std::sync::{Arc, Barrier};
-use chain_block::Ed25519KeyOption;
-#[cfg(feature = "node")]
-use chain_block::{base64_encode, KeyId};
 
 #[cfg(feature = "node")]
 include!("../../common/src/test.rs");

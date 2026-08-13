@@ -10,15 +10,15 @@
 //! the address and initial [`StateInit`]; the wrapper adds high-level helpers
 //! for querying balance, sending messages, and running get-methods.
 
-use chain_block::{Account, Cell, MsgAddressInt, SliceData, StateInit};
-use tos_vm::stack::StackItem;
 use crate::{
-    result::{SendResult, GetMethodResult},
     blockchain::Blockchain,
     error::SandboxResult,
     message_builder::MessageBuilder,
+    result::{GetMethodResult, SendResult},
     treasury::Treasury,
 };
+use chain_block::{Account, Cell, MsgAddressInt, SliceData, StateInit};
+use tos_vm::stack::StackItem;
 
 // ---------------------------------------------------------------------------
 // ContractProvider trait
@@ -78,10 +78,7 @@ impl<T: ContractProvider> SandboxContract<T> {
     /// Returns `0` if the account does not exist.
     pub fn get_balance(&self, bc: &Blockchain) -> u64 {
         bc.get_account(self.address())
-            .and_then(|acc| {
-                acc.balance()
-                    .and_then(|cc| cc.coins.as_u64())
-            })
+            .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
     }
 

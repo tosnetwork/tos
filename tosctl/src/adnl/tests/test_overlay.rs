@@ -19,6 +19,10 @@ use adnl::{
     AddressSearchContext, DhtSearchPolicy, OverlayNode, OverlayNodeInfo, OverlayNodesSearchContext,
     OverlayParams, OverlayShortId, OverlayUtils, RaptorqDecoder, RaptorqEncoder, RldpNode,
 };
+use chain_block::{
+    base64_decode, base64_encode, error, fail, sha256_digest, Ed25519KeyOption, KeyId, KeyOption,
+    Result, UInt256, UnixTime,
+};
 use rand::Rng;
 #[cfg(feature = "dump")]
 use std::path::PathBuf;
@@ -47,10 +51,6 @@ use tl_api::{
         tos_node::capabilities::Capabilities,
     },
     AnyBoxedSerialize, IntoBoxed, TLObject,
-};
-use chain_block::{
-    base64_decode, base64_encode, error, fail, sha256_digest, Ed25519KeyOption, KeyId, KeyOption,
-    Result, UInt256, UnixTime,
 };
 
 #[path = "./test_utils.rs"]

@@ -17,8 +17,8 @@ use crate::{
     },
     stack::{continuation::ContinuationData, savelist::SaveList, StackItem},
 };
-use std::{mem, ops::Range};
 use chain_block::{error, fail, ExceptionCode, Result, Status};
+use std::{mem, ops::Range};
 
 // Utilities ******************************************************************
 

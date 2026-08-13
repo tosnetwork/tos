@@ -10,18 +10,17 @@ use crate::v2::data_models::{
     AccountAgentCapability, AccountCapabilityRes, AccountDelegationGrant, AccountSessionCapability,
     GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
     GetMasterchainInfoRes, GetShardsRes, GetTransactionsRes, GetWalletInformationRes,
-    LifecycleGrantRequest, LifecycleMutationResultRes, LifecycleRevokeRequest,
-    RunGetMethodParams, RunGetMethodRes, SigningPayloadRes, SubmissionResultRes,
-    TransactionIntentRes,
+    LifecycleGrantRequest, LifecycleMutationResultRes, LifecycleRevokeRequest, RunGetMethodParams,
+    RunGetMethodRes, SigningPayloadRes, SubmissionResultRes, TransactionIntentRes,
 };
 use anyhow::Context;
 use base64::Engine;
+use chain_block::{ConfigParamEnum, MsgAddressInt, read_boc};
+use chain_rpc_rs::client::{ApiClientV2, ApiKey, Network};
 use std::{
     collections::HashSet,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use chain_block::{ConfigParamEnum, MsgAddressInt, read_boc};
-use chain_rpc_rs::client::{ApiClientV2, ApiKey, Network};
 
 struct EndpointClient {
     url: String,
@@ -321,11 +320,7 @@ impl ClientJsonRpc {
         }
         let json_params_str = json_params.to_string();
         let res = self.json_rpc("getAccountSessions", json_params).await.map_err(|e| {
-            anyhow::anyhow!(
-                "Request `getAccountSessions({})` return error: {}",
-                json_params_str,
-                e
-            )
+            anyhow::anyhow!("Request `getAccountSessions({})` return error: {}", json_params_str, e)
         })?;
         Ok(serde_json::from_value::<Vec<AccountSessionCapability>>(res)?)
     }
@@ -349,11 +344,7 @@ impl ClientJsonRpc {
         }
         let json_params_str = json_params.to_string();
         let res = self.json_rpc("getAccountAgents", json_params).await.map_err(|e| {
-            anyhow::anyhow!(
-                "Request `getAccountAgents({})` return error: {}",
-                json_params_str,
-                e
-            )
+            anyhow::anyhow!("Request `getAccountAgents({})` return error: {}", json_params_str, e)
         })?;
         Ok(serde_json::from_value::<Vec<AccountAgentCapability>>(res)?)
     }
@@ -396,9 +387,9 @@ impl ClientJsonRpc {
             .await
             .context("getAddressBalance")?;
         // Response is just a quoted string like "1234567"
-        res.as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("get_address_balance: expected string response, got: {}", res))
+        res.as_str().map(|s| s.to_string()).ok_or_else(|| {
+            anyhow::anyhow!("get_address_balance: expected string response, got: {}", res)
+        })
     }
 
     pub async fn get_address_state(&self, address: &MsgAddressInt) -> anyhow::Result<String> {
@@ -406,16 +397,14 @@ impl ClientJsonRpc {
             .json_rpc("getAddressState", serde_json::json!({"address": address.to_string()}))
             .await
             .context("getAddressState")?;
-        res.as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("get_address_state: expected string response, got: {}", res))
+        res.as_str().map(|s| s.to_string()).ok_or_else(|| {
+            anyhow::anyhow!("get_address_state: expected string response, got: {}", res)
+        })
     }
 
     pub async fn get_shards(&self, seqno: u32) -> anyhow::Result<GetShardsRes> {
-        let res = self
-            .json_rpc("shards", serde_json::json!({"seqno": seqno}))
-            .await
-            .context("shards")?;
+        let res =
+            self.json_rpc("shards", serde_json::json!({"seqno": seqno})).await.context("shards")?;
         Ok(serde_json::from_value(res)?)
     }
 
@@ -453,7 +442,8 @@ impl ClientJsonRpc {
         if let Some(hash) = after_hash {
             params["after_hash"] = serde_json::json!(hash);
         }
-        let res = self.json_rpc("getBlockTransactions", params).await.context("getBlockTransactions")?;
+        let res =
+            self.json_rpc("getBlockTransactions", params).await.context("getBlockTransactions")?;
         Ok(serde_json::from_value(res)?)
     }
 
@@ -500,10 +490,8 @@ impl ClientJsonRpc {
         if let Some(data) = init_data {
             json_params["init_data"] = serde_json::json!(data);
         }
-        let res = self
-            .json_rpc("getSigningPayload", json_params)
-            .await
-            .context("getSigningPayload")?;
+        let res =
+            self.json_rpc("getSigningPayload", json_params).await.context("getSigningPayload")?;
         Ok(serde_json::from_value(res)?)
     }
 
@@ -532,7 +520,9 @@ impl ClientJsonRpc {
         req: &LifecycleGrantRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("grantAccountDelegation", json_params).await
+        let res = self
+            .json_rpc("grantAccountDelegation", json_params)
+            .await
             .context("grantAccountDelegation")?;
         Ok(serde_json::from_value(res)?)
     }
@@ -542,7 +532,9 @@ impl ClientJsonRpc {
         req: &LifecycleRevokeRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("revokeAccountDelegation", json_params).await
+        let res = self
+            .json_rpc("revokeAccountDelegation", json_params)
+            .await
             .context("revokeAccountDelegation")?;
         Ok(serde_json::from_value(res)?)
     }
@@ -552,7 +544,9 @@ impl ClientJsonRpc {
         req: &LifecycleGrantRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("grantAccountSession", json_params).await
+        let res = self
+            .json_rpc("grantAccountSession", json_params)
+            .await
             .context("grantAccountSession")?;
         Ok(serde_json::from_value(res)?)
     }
@@ -562,7 +556,9 @@ impl ClientJsonRpc {
         req: &LifecycleRevokeRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("revokeAccountSession", json_params).await
+        let res = self
+            .json_rpc("revokeAccountSession", json_params)
+            .await
             .context("revokeAccountSession")?;
         Ok(serde_json::from_value(res)?)
     }
@@ -572,8 +568,8 @@ impl ClientJsonRpc {
         req: &LifecycleGrantRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("grantAccountAgent", json_params).await
-            .context("grantAccountAgent")?;
+        let res =
+            self.json_rpc("grantAccountAgent", json_params).await.context("grantAccountAgent")?;
         Ok(serde_json::from_value(res)?)
     }
 
@@ -582,8 +578,8 @@ impl ClientJsonRpc {
         req: &LifecycleRevokeRequest,
     ) -> anyhow::Result<LifecycleMutationResultRes> {
         let json_params = serde_json::to_value(req)?;
-        let res = self.json_rpc("revokeAccountAgent", json_params).await
-            .context("revokeAccountAgent")?;
+        let res =
+            self.json_rpc("revokeAccountAgent", json_params).await.context("revokeAccountAgent")?;
         Ok(serde_json::from_value(res)?)
     }
 
@@ -607,7 +603,6 @@ impl ClientJsonRpc {
         let wallet_info = serde_json::from_value::<GetWalletInformationRes>(res)?;
         Ok(wallet_info)
     }
-
 }
 
 #[cfg(test)]

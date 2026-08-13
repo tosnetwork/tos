@@ -10,13 +10,13 @@ use crate::{
     adnl::{common::AtomicPair, telemetry::AverageTotal},
     rldp::{send::SendPacketV2, RldpNode},
 };
+use chain_block::{fail, Result};
 use rand::{Rng, SeedableRng};
 use std::{
     cmp::{max, Ordering as CmpOrdering},
     sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering},
     time::Instant,
 };
-use chain_block::{fail, Result};
 
 struct AtomicFixedPoint(AtomicU64);
 

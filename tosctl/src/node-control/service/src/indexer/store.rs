@@ -961,7 +961,9 @@ mod tests {
     fn aipow_settlements_filter_by_seqno_range_and_paginate() {
         let store = IndexerStore::open_in_memory().unwrap();
         for i in 1..=5u32 {
-            store.record_aipow_settlement(&settlement(&format!("0:t{i}"), "", i, i.into())).unwrap();
+            store
+                .record_aipow_settlement(&settlement(&format!("0:t{i}"), "", i, i.into()))
+                .unwrap();
         }
         let (rows, total) = store.list_aipow_settlements(2, 4, 0, 10).unwrap();
         assert_eq!(total, 3);

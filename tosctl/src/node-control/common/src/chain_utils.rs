@@ -33,15 +33,10 @@ pub fn display_tos(nanotos: u64) -> String {
 /// Parse a nanotos decimal string and format as TOS (4 decimal places).
 /// Returns the original string if it cannot be parsed.
 pub fn display_tos_from_str(nanotos_str: &str) -> String {
-    nanotos_str
-        .trim()
-        .parse::<u64>()
-        .map(display_tos)
-        .unwrap_or_else(|_| nanotos_str.to_string())
+    nanotos_str.trim().parse::<u64>().map(display_tos).unwrap_or_else(|_| nanotos_str.to_string())
 }
 
 // ─── Backward-compatible aliases ───────────────────────��─────────────────
-
 
 #[cfg(test)]
 mod tests {

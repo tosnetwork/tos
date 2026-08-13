@@ -35,8 +35,8 @@ use crate::{
     },
     stack::integer::behavior::{Quiet, Signaling},
 };
-use std::{fmt, ops::Range};
 use chain_block::{Result, Status};
+use std::{fmt, ops::Range};
 
 // ( - )
 fn execute_nop(engine: &mut Engine) -> Status {

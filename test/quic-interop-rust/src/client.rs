@@ -7,9 +7,7 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    env_logger::builder().filter_level(log::LevelFilter::Info).init();
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -19,17 +17,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let server_addr: SocketAddr = args[1].parse()?;
     let server_pub_str = &args[2];
-    let server_pub_bytes = if server_pub_str.len() == 64
-        && server_pub_str.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        hex::decode(server_pub_str)?
-    } else {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD.decode(server_pub_str)?
-    };
-    let server_pub: [u8; 32] = server_pub_bytes
-        .try_into()
-        .map_err(|_| "server pubkey must be 32 bytes")?;
+    let server_pub_bytes =
+        if server_pub_str.len() == 64 && server_pub_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            hex::decode(server_pub_str)?
+        } else {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.decode(server_pub_str)?
+        };
+    let server_pub: [u8; 32] =
+        server_pub_bytes.try_into().map_err(|_| "server pubkey must be 32 bytes")?;
 
     info!("Connecting to {server_addr}");
     info!("Server pubkey: {}", hex::encode(server_pub));
@@ -70,12 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create endpoint
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    let mut endpoint = quinn::Endpoint::new(
-        endpoint_config,
-        None,
-        socket,
-        Arc::new(quinn::TokioRuntime),
-    )?;
+    let mut endpoint =
+        quinn::Endpoint::new(endpoint_config, None, socket, Arc::new(quinn::TokioRuntime))?;
     endpoint.set_default_client_config(client_config);
 
     info!("Connecting...");
@@ -96,7 +88,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     endpoint.rebind(new_socket)?;
 
     info!("--- Sending second request (post-migration, new DCID) ---");
-    match tokio::time::timeout(Duration::from_secs(5), do_request(&connection, b"GET /second HTTP/1.1\r\nHost: test\r\n\r\n")).await {
+    match tokio::time::timeout(
+        Duration::from_secs(5),
+        do_request(&connection, b"GET /second HTTP/1.1\r\nHost: test\r\n\r\n"),
+    )
+    .await
+    {
         Ok(Ok(resp2)) => {
             info!("Response 2:\n{}", String::from_utf8_lossy(&resp2));
             info!("  Phase 3: Path migration + DCID rotation [OK]");
@@ -111,7 +108,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     info!("--- Sending third request (after CID rotation) ---");
-    match tokio::time::timeout(Duration::from_secs(5), do_request(&connection, b"GET /third HTTP/1.1\r\nHost: test\r\n\r\n")).await {
+    match tokio::time::timeout(
+        Duration::from_secs(5),
+        do_request(&connection, b"GET /third HTTP/1.1\r\nHost: test\r\n\r\n"),
+    )
+    .await
+    {
         Ok(Ok(resp3)) => {
             info!("Response 3:\n{}", String::from_utf8_lossy(&resp3));
             info!("  Phase 4: CID rotation via lifetime [OK]");

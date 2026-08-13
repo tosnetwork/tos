@@ -9,10 +9,10 @@
 use super::{ElectionsInfo, ElectorWrapper, FrozenParticipant, Participant, PastElections};
 use crate::{ContractProvider, SmartContract};
 use anyhow::Context;
+use chain_block::{Coins, Deserializable, HashmapE, HashmapType, MsgAddressInt};
 use common::tvm_stack_parser::TvmStackParser;
 use std::{collections::HashMap, sync::Arc};
 use tl_api::tos::tvm::StackEntry;
-use chain_block::{Coins, Deserializable, HashmapE, HashmapType, MsgAddressInt};
 
 pub struct ElectorWrapperImpl {
     provider: Arc<dyn ContractProvider>,
@@ -178,13 +178,13 @@ fn parse_past_elections_stack(stack: &TvmStackParser) -> anyhow::Result<Vec<Past
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chain_block::{BuilderData, Cell, Coins, IBitstring, Serializable, SliceData};
     use tl_api::tos::tvm::{
         List, Number, Tuple, cell, list,
         numberdecimal::NumberDecimal,
         stackentry::{StackEntryCell, StackEntryList, StackEntryNumber, StackEntryTuple},
         tuple,
     };
-    use chain_block::{BuilderData, Cell, Coins, IBitstring, Serializable, SliceData};
 
     fn create_number_entry(value: &str) -> StackEntry {
         StackEntry::Tvm_StackEntryNumber(StackEntryNumber {

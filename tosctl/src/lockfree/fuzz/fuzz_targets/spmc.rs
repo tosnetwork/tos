@@ -37,7 +37,7 @@ impl Machine for SubVm {
             0 | 3 | 4 | 6 => {
                 self.sender.send(Box::new(self.state));
                 self.state = self.state.wrapping_add(1);
-            },
+            }
 
             1 => {
                 if self.children.len() == MAX_THREADS_PER_SUB_VM {
@@ -52,19 +52,19 @@ impl Machine for SubVm {
                     vm.run(&mut bytecode);
                     vm.state
                 }))
-            },
+            }
 
             2 => {
                 if let Some(thread) = self.children.pop() {
                     self.state = self.state.wrapping_add(thread.join().unwrap())
                 }
-            },
+            }
 
             5 => {
                 let (sender, receiver) = spmc::create();
                 self.sender = sender;
                 self.receiver = receiver;
-            },
+            }
 
             _ => unreachable!(),
         }

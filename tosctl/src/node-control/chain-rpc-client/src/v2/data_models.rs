@@ -7,9 +7,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::v2::RPCStackEntry;
+use chain_block::{AccountId, MsgAddrStd, MsgAddress};
 use common::serde_utils;
 use std::fmt::{Display, Formatter};
-use chain_block::{AccountId, MsgAddrStd, MsgAddress};
 
 pub fn make_addr(account_id: &AccountId) -> anyhow::Result<MsgAddress> {
     let addr = MsgAddress::AddrStd(MsgAddrStd {

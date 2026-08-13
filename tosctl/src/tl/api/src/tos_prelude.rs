@@ -15,6 +15,7 @@ use crate::{
     Result, Serializer, TLObject,
 };
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use chain_block::{base64_encode, error, fail, Ed25519KeyOption};
 use extfmt::Hexlify;
 use ordered_float::OrderedFloat;
 use serde_derive::{Deserialize, Serialize};
@@ -24,7 +25,6 @@ use std::{
     hash::Hash,
     io::{Read, Write},
 };
-use chain_block::{base64_encode, error, fail, Ed25519KeyOption};
 
 const MAX_BYTES_DEBUG_LEN: usize = 4;
 

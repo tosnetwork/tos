@@ -9,8 +9,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::adnl::node::AdnlNode;
-use std::sync::Arc;
 use chain_block::Result;
+use std::sync::Arc;
 
 mod adnl;
 pub use crate::adnl::*;

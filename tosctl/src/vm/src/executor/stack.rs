@@ -26,8 +26,8 @@ use crate::{
         StackItem,
     },
 };
-use std::cmp;
 use chain_block::{fail, ExceptionCode, Status};
+use std::cmp;
 
 // Stack manipulation *********************************************************
 

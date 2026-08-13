@@ -1,0 +1,4 @@
+# Stable-only configuration shared by every repository-owned Rust source file.
+edition = "2021"
+newline_style = "Unix"
+use_small_heuristics = "Max"

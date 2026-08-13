@@ -9,8 +9,8 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use std::fmt;
 use chain_block::Error;
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Position {

@@ -74,9 +74,7 @@ fn get_hostname() -> String {
 
 /// Format a `SystemTime` as `YYYYMMDD_HHMMSS` in UTC.
 fn format_timestamp(t: SystemTime) -> String {
-    let dur = t
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+    let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     let secs = dur.as_secs();
 
     // Manual UTC breakdown (no chrono dependency required).
@@ -189,11 +187,8 @@ impl BackupCreateCmd {
         // 4. Copy tosctl config file
         let tosctl_cfg = Path::new(tosctl_config_path);
         if tosctl_cfg.exists() {
-            let file_name = tosctl_cfg
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let file_name =
+                tosctl_cfg.file_name().unwrap_or_default().to_string_lossy().to_string();
             std::fs::copy(tosctl_cfg, format!("{}/{}", staging_dir, file_name))?;
             backed_up.push(file_name.clone());
             println!("  {} {}", "+".green(), file_name);
@@ -215,9 +210,8 @@ impl BackupCreateCmd {
         let archive_path = format!("{}/{}", self.output, archive_name);
 
         // Create tar.gz archive
-        let status = Command::new("tar")
-            .args(["-czf", &archive_path, "-C", &staging_dir, "."])
-            .status()?;
+        let status =
+            Command::new("tar").args(["-czf", &archive_path, "-C", &staging_dir, "."]).status()?;
 
         if !status.success() {
             anyhow::bail!("tar command failed with exit code: {:?}", status.code());
@@ -227,12 +221,7 @@ impl BackupCreateCmd {
         let size_kb = metadata.len() / 1024;
 
         println!();
-        println!(
-            "{} Backup created: {} ({} KB)",
-            "OK".green().bold(),
-            archive_path,
-            size_kb
-        );
+        println!("{} Backup created: {} ({} KB)", "OK".green().bold(), archive_path, size_kb);
         println!();
 
         Ok(())
@@ -285,15 +274,10 @@ impl BackupRestoreCmd {
         });
 
         // Extract archive to temp dir
-        let status = Command::new("tar")
-            .args(["-xzf", &self.file, "-C", &extract_dir])
-            .status()?;
+        let status = Command::new("tar").args(["-xzf", &self.file, "-C", &extract_dir]).status()?;
 
         if !status.success() {
-            anyhow::bail!(
-                "Failed to extract archive (tar exit code: {:?})",
-                status.code()
-            );
+            anyhow::bail!("Failed to extract archive (tar exit code: {:?})", status.code());
         }
 
         let mut restored: Vec<String> = Vec::new();
@@ -343,16 +327,9 @@ impl BackupRestoreCmd {
 
         println!();
         if restored.is_empty() {
-            println!(
-                "{} No recognized files found in archive.",
-                "WARN".yellow().bold()
-            );
+            println!("{} No recognized files found in archive.", "WARN".yellow().bold());
         } else {
-            println!(
-                "{} Restored {} item(s) successfully.",
-                "OK".green().bold(),
-                restored.len()
-            );
+            println!("{} Restored {} item(s) successfully.", "OK".green().bold(), restored.len());
         }
         println!();
 
@@ -420,11 +397,7 @@ impl BackupVerifyCmd {
 
         println!();
         if has_config && has_keyring {
-            println!(
-                "{} Archive is valid ({} entries).",
-                "OK".green().bold(),
-                entries.len()
-            );
+            println!("{} Archive is valid ({} entries).", "OK".green().bold(), entries.len());
         } else {
             println!(
                 "{} Archive is readable but may be incomplete ({} entries).",

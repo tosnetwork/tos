@@ -9,6 +9,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::common::hash;
+use chain_block::{base64_decode, base64_encode, Ed25519KeyOption, UInt256};
 use std::{convert::TryInto, mem};
 use tl_api::{
     deserialize_boxed,
@@ -20,7 +21,6 @@ use tl_api::{
     },
     BoxedSerialize, IntoBoxed, Signing,
 };
-use chain_block::{base64_decode, base64_encode, Ed25519KeyOption, UInt256};
 
 // TODO: will be refactored in tl_api
 #[macro_export]

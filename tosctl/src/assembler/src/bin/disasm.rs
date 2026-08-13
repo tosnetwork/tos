@@ -9,10 +9,10 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::{error, read_boc, write_boc, Cell, SliceData, Status};
 use clap::{Parser, Subcommand};
 use std::{collections::HashSet, io::Write, process::ExitCode};
 use tos_assembler::disasm::{disasm_ex, fmt::print_tree_of_cells, loader::Loader};
-use chain_block::{error, read_boc, write_boc, Cell, SliceData, Status};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

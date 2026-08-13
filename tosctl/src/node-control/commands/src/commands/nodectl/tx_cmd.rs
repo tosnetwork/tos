@@ -135,16 +135,8 @@ impl TxBuildIntentCmd {
             println!("  {}", "Transaction Intent".bold());
             println!("  {}", "\u{2500}".repeat(40));
             println!("  {:<22} {}", "From:".dimmed(), result.from);
-            println!(
-                "  {:<22} {}",
-                "Account model:".dimmed(),
-                result.account_model
-            );
-            println!(
-                "  {:<22} {}",
-                "Auth version:".dimmed(),
-                result.authorization_version
-            );
+            println!("  {:<22} {}", "Account model:".dimmed(), result.account_model);
+            println!("  {:<22} {}", "Auth version:".dimmed(), result.authorization_version);
             println!();
         }
 
@@ -171,22 +163,10 @@ impl TxSigningPayloadCmd {
             println!();
             println!("  {}", "Signing Payload".bold());
             println!("  {}", "\u{2500}".repeat(40));
-            println!(
-                "  {:<22} {}",
-                "Version:".dimmed(),
-                result.payload_version
-            );
-            println!(
-                "  {:<22} {}",
-                "Encoding:".dimmed(),
-                result.payload_encoding
-            );
+            println!("  {:<22} {}", "Version:".dimmed(), result.payload_version);
+            println!("  {:<22} {}", "Encoding:".dimmed(), result.payload_encoding);
             println!("  {:<22} {}", "Chain ID:".dimmed(), result.chain_id);
-            println!(
-                "  {:<22} {}",
-                "Payload:".dimmed(),
-                result.payload
-            );
+            println!("  {:<22} {}", "Payload:".dimmed(), result.payload);
             println!();
         }
 
@@ -198,9 +178,8 @@ impl TxSubmitSignedCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
-        let result = rpc_client
-            .submit_signed_transaction(&self.boc, self.signer.as_deref())
-            .await?;
+        let result =
+            rpc_client.submit_signed_transaction(&self.boc, self.signer.as_deref()).await?;
 
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -211,22 +190,10 @@ impl TxSubmitSignedCmd {
             println!(
                 "  {:<22} {}",
                 "Accepted:".dimmed(),
-                if result.accepted {
-                    "yes".green().to_string()
-                } else {
-                    "no".red().to_string()
-                }
+                if result.accepted { "yes".green().to_string() } else { "no".red().to_string() }
             );
-            println!(
-                "  {:<22} {}",
-                "Tx hash:".dimmed(),
-                result.transaction_hash
-            );
-            println!(
-                "  {:<22} {}",
-                "Submission ID:".dimmed(),
-                result.submission_id
-            );
+            println!("  {:<22} {}", "Tx hash:".dimmed(), result.transaction_hash);
+            println!("  {:<22} {}", "Submission ID:".dimmed(), result.submission_id);
             println!();
         }
 

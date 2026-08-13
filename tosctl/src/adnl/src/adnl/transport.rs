@@ -10,6 +10,7 @@ use crate::adnl::{
     common::{add_unbound_object_to_map, add_unbound_object_to_map_with_update, TARGET},
     node::AdnlNode,
 };
+use chain_block::{error, fail, Error, Result};
 use std::{
     collections::{HashMap, VecDeque},
     fmt::{Display, Formatter},
@@ -23,7 +24,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use chain_block::{error, fail, Error, Result};
 
 const MASK_TCP_ADDRESS: u32 = 0x40444E4C;
 const SIZE_TCP_ADDRESS: usize = 10;

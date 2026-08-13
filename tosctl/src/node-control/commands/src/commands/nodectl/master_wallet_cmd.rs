@@ -10,6 +10,7 @@ use crate::commands::nodectl::{
     output_format::OutputFormat,
     utils::{load_config_vault_rpc_client, wallet_info},
 };
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use colored::Colorize;
 use common::{
     app_config::{KeyConfig, WalletConfig},
@@ -17,7 +18,6 @@ use common::{
 };
 use secrets_vault::{types::secret::Secret, vault::SecretVault};
 use std::{path::Path, sync::Arc};
-use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Master wallet info")]

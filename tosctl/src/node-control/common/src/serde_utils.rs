@@ -7,8 +7,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 pub mod account_status_as_str {
-    use std::fmt::Formatter;
     use chain_block::AccountStatus;
+    use std::fmt::Formatter;
 
     pub fn serialize<S>(v: &AccountStatus, s: S) -> std::result::Result<S::Ok, S::Error>
     where

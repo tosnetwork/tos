@@ -24,6 +24,10 @@ use crate::{
     telemetry::{Metric, MetricBuilder},
     transport::{udp_sender_receiver, udp_tcp_sender_receiver, AdnlReceiver, AdnlSender},
 };
+use chain_block::{
+    base64_encode, error, fail, lz4_compress, lz4_decompress, sha256_digest, Ed25519KeyOption,
+    KeyId, KeyOption, KeyOptionJson, Lz4DecompressMode, Result, UInt256,
+};
 use rand::Rng;
 use std::{
     borrow::Cow,
@@ -63,10 +67,6 @@ use tl_api::{
         pub_::publickey::Aes as AesKey,
     },
     IntoBoxed, TLObject,
-};
-use chain_block::{
-    base64_encode, error, fail, lz4_compress, lz4_decompress, sha256_digest, Ed25519KeyOption,
-    KeyId, KeyOption, KeyOptionJson, Lz4DecompressMode, Result, UInt256,
 };
 
 #[macro_export]

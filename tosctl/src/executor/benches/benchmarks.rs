@@ -9,15 +9,15 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use criterion::{criterion_group, criterion_main, Criterion};
-use serde::{Deserialize, Serialize};
 use chain_block::{
     error, fail, Account, Cell, ConfigParams, Deserializable, Result, Serializable, Status,
     Transaction, TransactionDescr,
 };
+use criterion::{criterion_group, criterion_main, Criterion};
+use serde::{Deserialize, Serialize};
 use tos_executor::{
-    BlockchainConfig, ExecuteParams, OrdinaryTransactionExecutor, TickTockTransactionExecutor,
-    TransactionExecutor,
+    BlockchainConfig, ExecuteParams, ExecutorError, OrdinaryTransactionExecutor,
+    TickTockTransactionExecutor, TransactionExecutor,
 };
 
 #[path = "../src/tests/common/mod.rs"]
@@ -32,7 +32,7 @@ fn replay_transaction_by_files(
     config: &str,
 ) {
     let config = read_config(config).unwrap();
-    let mc_state_proof = mc_state_proof_cell_with_config(config);
+    let mc_state_proof = mc_state_proof_cell_with_config(config, None);
     replay_transaction(c, acc, acc_after, tr, "", mc_state_proof);
 }
 

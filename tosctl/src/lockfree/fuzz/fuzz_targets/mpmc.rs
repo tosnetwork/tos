@@ -46,7 +46,7 @@ impl Machine for SubVm {
                     vm.run(&mut bytecode);
                     vm.state
                 }))
-            },
+            }
 
             2 | 6 => {
                 if self.children.len() == MAX_THREADS_PER_SUB_VM {
@@ -61,19 +61,19 @@ impl Machine for SubVm {
                     vm.run(&mut bytecode);
                     vm.state
                 }))
-            },
+            }
 
             1 | 4 => {
                 if let Some(thread) = self.children.pop() {
                     self.state = self.state.wrapping_add(thread.join().unwrap())
                 }
-            },
+            }
 
             3 => {
                 let (sender, receiver) = mpmc::create();
                 self.sender = sender;
                 self.receiver = receiver;
-            },
+            }
 
             _ => unreachable!(),
         }
@@ -102,7 +102,7 @@ impl Machine for SenderVm {
             0 | 1 | 3 => {
                 self.sender.send(Box::new(self.state));
                 self.state = self.state.wrapping_add(1);
-            },
+            }
 
             2 => self.end = true,
 

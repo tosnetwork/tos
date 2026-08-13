@@ -17,9 +17,9 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <bitset>
 #include <cctype>
 #include <cstdlib>
-#include <bitset>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -64,6 +64,9 @@ std::string current_dir() {
 }
 
 std::string load_source(std::string name) {
+  if (name.rfind("smartcont/auto/", 0) == 0) {
+    return td::read_file_str(std::string{TOS_CRYPTO_BUILD_DIR} + "/" + name).move_as_ok();
+  }
   return td::read_file_str(current_dir() + "../../crypto/" + name).move_as_ok();
 }
 
@@ -146,7 +149,7 @@ std::string create_state_binary() {
   }
   candidates.emplace_back("crypto/create-state");        // CTest from build/
   candidates.emplace_back("build/crypto/create-state");  // direct run from repo root
-  candidates.emplace_back("../crypto/create-state");      // direct run from build/test/
+  candidates.emplace_back("../crypto/create-state");     // direct run from build/test/
 
   for (const auto& candidate : candidates) {
     auto real = td::realpath(candidate);
@@ -169,6 +172,10 @@ std::string fift_lib_dir() {
 
 std::string smartcont_dir() {
   return current_dir() + "../../crypto/smartcont/";
+}
+
+std::string generated_smartcont_dir() {
+  return std::string{TOS_CRYPTO_BUILD_DIR} + "/smartcont/";
 }
 
 std::string hex_bytes(td::Slice hex) {
@@ -221,8 +228,7 @@ std::string sign_b64(const td::Ed25519::PrivateKey& private_key, td::Slice data)
 // data corruption) that root-hash regression cannot detect on its own — a
 // broken `sign_b64` would produce a different-but-internally-consistent BOC
 // whose root hash would just become the new golden.
-void check_signature_b64(const td::Ed25519::PublicKey& public_key, td::Slice data,
-                         td::Slice signature_b64) {
+void check_signature_b64(const td::Ed25519::PublicKey& public_key, td::Slice data, td::Slice signature_b64) {
   auto sig = td::base64_decode(signature_b64).move_as_ok();
   CHECK(sig.size() == 64);
   CHECK(public_key.verify_signature(data, sig).is_ok());
@@ -279,8 +285,7 @@ void write_deterministic_zerostate_keys(const std::string& dir) {
   td::write_file(dir + TD_DIR_SLASH + "config-master.pk", td::hex_decode(kConfigMasterPkHex).move_as_ok()).ensure();
   std::string validator_public_keys;
   for (auto private_key_hex : kGenesisValidatorPkHex) {
-    auto private_key =
-        td::Ed25519::PrivateKey(td::SecureString(td::hex_decode(private_key_hex).move_as_ok()));
+    auto private_key = td::Ed25519::PrivateKey(td::SecureString(td::hex_decode(private_key_hex).move_as_ok()));
     validator_public_keys += private_key.get_public_key().move_as_ok().as_octet_string().as_slice().str();
   }
   td::write_file(dir + TD_DIR_SLASH + "validator-keys.pub", validator_public_keys).ensure();
@@ -320,22 +325,21 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   write_deterministic_zerostate_keys(temp_dir);
 
-  auto patched_script =
-      replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now", td::Slice(td::to_string(kDeterministicZerostateNow)));
+  auto patched_script = replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now",
+                                           td::Slice(td::to_string(kDeterministicZerostateNow)));
   auto script_path = temp_dir + TD_DIR_SLASH + script_name.str();
   td::write_file(script_path, patched_script).ensure();
 
   auto stdout_path = temp_dir + TD_DIR_SLASH + "stdout.txt";
   auto stderr_path = temp_dir + TD_DIR_SLASH + "stderr.txt";
-  auto include_path = PSTRING() << fift_lib_dir() << ":" << smartcont_dir();
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << generated_smartcont_dir() << ":" << smartcont_dir();
   // SOURCE_DATE_EPOCH pins the `now`/gen_utime stamped inside mkemptyShardState
   // (Workchain.fif) — which the script-only `now` text-replacement can't reach —
   // so the generated zerostate is byte-deterministic. Match kDeterministicZerostateNow.
-  auto command =
-      PSTRING() << "cd " << shell_quote(temp_dir) << " && SOURCE_DATE_EPOCH=" << kDeterministicZerostateNow << " "
-                << shell_quote(create_state_binary()) << " -I "
-                << shell_quote(include_path) << " " << shell_quote(script_path) << " > " << shell_quote(stdout_path)
-                << " 2> " << shell_quote(stderr_path);
+  auto command = PSTRING() << "cd " << shell_quote(temp_dir) << " && SOURCE_DATE_EPOCH=" << kDeterministicZerostateNow
+                           << " " << shell_quote(create_state_binary()) << " -I " << shell_quote(include_path) << " "
+                           << shell_quote(script_path) << " > " << shell_quote(stdout_path) << " 2> "
+                           << shell_quote(stderr_path);
 
   auto rc = std::system(command.c_str());
   if (rc != 0) {
@@ -364,8 +368,8 @@ std::string run_validator_fift_script_regression() {
   auto wallet_arg = std::string("@wallet.addr");
   auto adnl_hex = kScriptAdnlAddrHex.str();
   auto elect_time = td::to_string(kValidatorElectTime);
-  auto request_expected = build_validator_elect_request(kValidatorElectTime, kValidatorMaxFactor, hex_bytes(kScriptWalletAddrHex),
-                                                        hex_bytes(kScriptAdnlAddrHex));
+  auto request_expected = build_validator_elect_request(kValidatorElectTime, kValidatorMaxFactor,
+                                                        hex_bytes(kScriptWalletAddrHex), hex_bytes(kScriptAdnlAddrHex));
 
   auto request_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-req.fif")).move_as_ok();
   request_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
@@ -391,22 +395,19 @@ std::string run_validator_fift_script_regression() {
           .move_as_ok();
   single_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(single_lookup, "wallet.addr", kScriptWalletAddrHex);
-  auto single_run = fift::mem_run_fift(std::move(single_lookup),
-                                       {"aba", wallet_arg, elect_time, "2", adnl_hex, pubkey_b64, signature_b64,
-                                        "single-query.boc", "7"})
+  auto single_run = fift::mem_run_fift(std::move(single_lookup), {"aba", wallet_arg, elect_time, "2", adnl_hex,
+                                                                  pubkey_b64, signature_b64, "single-query.boc", "7"})
                         .move_as_ok();
   auto single_boc = single_run.source_lookup.read_file("single-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(single_boc).move_as_ok().not_null());
 
   auto controller_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/liquid-staking/controller-elect-signed.fif"))
-          .move_as_ok();
+      fift::create_mem_source_lookup(load_source("smartcont/liquid-staking/controller-elect-signed.fif")).move_as_ok();
   controller_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(controller_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto controller_run =
-      fift::mem_run_fift(std::move(controller_lookup),
-                         {"aba", wallet_arg, elect_time, "2", adnl_hex, pubkey_b64, signature_b64,
-                          "controller-query.boc", "7"})
+      fift::mem_run_fift(std::move(controller_lookup), {"aba", wallet_arg, elect_time, "2", adnl_hex, pubkey_b64,
+                                                        signature_b64, "controller-query.boc", "7"})
           .move_as_ok();
   auto controller_boc = controller_run.source_lookup.read_file("controller-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(controller_boc).move_as_ok().not_null());
@@ -429,13 +430,13 @@ std::string run_governance_vote_fift_script_regression() {
   auto complaint_hash_arg = "0x20304050";
   auto elect_id_arg = "0x89ABCDEF";
 
-  auto config_req_lookup = fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
+  auto config_req_lookup =
+      fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
   config_req_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto config_req_run =
-      fift::mem_run_fift(std::move(config_req_lookup),
-                         {"aba", td::to_string(kConfigVoteSeqno), td::to_string(kRelativeExpireAt),
-                          td::to_string(kValidatorIndex), proposal_hash_arg})
-          .move_as_ok();
+  auto config_req_run = fift::mem_run_fift(std::move(config_req_lookup),
+                                           {"aba", td::to_string(kConfigVoteSeqno), td::to_string(kRelativeExpireAt),
+                                            td::to_string(kValidatorIndex), proposal_hash_arg})
+                            .move_as_ok();
   auto config_req = config_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
   CHECK(config_req == build_config_vote_ext_request(kConfigVoteSeqno, expire_at, kValidatorIndex, kProposalHash));
   auto config_signature_b64 = sign_b64(private_key, config_req);
@@ -444,10 +445,9 @@ std::string run_governance_vote_fift_script_regression() {
   auto config_int_req_lookup =
       fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
   config_int_req_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto config_int_req_run =
-      fift::mem_run_fift(std::move(config_int_req_lookup),
-                         {"aba", "-i", td::to_string(kValidatorIndex), proposal_hash_arg})
-          .move_as_ok();
+  auto config_int_req_run = fift::mem_run_fift(std::move(config_int_req_lookup),
+                                               {"aba", "-i", td::to_string(kValidatorIndex), proposal_hash_arg})
+                                .move_as_ok();
   auto config_int_req = config_int_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
   CHECK(config_int_req == build_config_vote_int_request(kValidatorIndex, kProposalHash));
   auto config_int_signature_b64 = sign_b64(private_key, config_int_req);
@@ -470,9 +470,8 @@ std::string run_governance_vote_fift_script_regression() {
   config_internal_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(config_internal_lookup, "config.addr", kScriptConfigAddrHex);
   auto config_internal_run =
-      fift::mem_run_fift(std::move(config_internal_lookup),
-                         {"aba", "-i", td::to_string(kValidatorIndex), proposal_hash_arg, pubkey_b64,
-                          config_int_signature_b64})
+      fift::mem_run_fift(std::move(config_internal_lookup), {"aba", "-i", td::to_string(kValidatorIndex),
+                                                             proposal_hash_arg, pubkey_b64, config_int_signature_b64})
           .move_as_ok();
   auto config_internal_boc = config_internal_run.source_lookup.read_file("vote-msg-body.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(config_internal_boc).move_as_ok().not_null());
@@ -492,9 +491,8 @@ std::string run_governance_vote_fift_script_regression() {
       fift::create_mem_source_lookup(load_source("smartcont/complaint-vote-signed.fif")).move_as_ok();
   complaint_signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   auto complaint_signed_run =
-      fift::mem_run_fift(std::move(complaint_signed_lookup),
-                         {"aba", td::to_string(kValidatorIndex), elect_id_arg, complaint_hash_arg, pubkey_b64,
-                          complaint_signature_b64})
+      fift::mem_run_fift(std::move(complaint_signed_lookup), {"aba", td::to_string(kValidatorIndex), elect_id_arg,
+                                                              complaint_hash_arg, pubkey_b64, complaint_signature_b64})
           .move_as_ok();
   auto complaint_signed_boc = complaint_signed_run.source_lookup.read_file("vote-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(complaint_signed_boc).move_as_ok().not_null());
@@ -818,10 +816,9 @@ TEST(Toslib, HighloadWalletV2) {
 
 TEST(Toslib, AutoDnsFiftScript) {
   const td::Slice auto_dns_addr = "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX";
-  auto fift_output =
-      fift::mem_run_fift(load_source("smartcont/auto-dns.fif"),
-                         {"aba", auto_dns_addr.str(), "prolong", "alpha.beta", "60"})
-          .move_as_ok();
+  auto fift_output = fift::mem_run_fift(load_source("smartcont/auto-dns.fif"),
+                                        {"aba", auto_dns_addr.str(), "prolong", "alpha.beta", "60"})
+                         .move_as_ok();
 
   auto boc = fift_output.source_lookup.read_file("dns-msg-body.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
@@ -835,10 +832,10 @@ TEST(Toslib, ManualDnsFiftScript) {
   source_lookup.write_file("dns-wallet.pk", priv_key.as_octet_string().as_slice()).ensure();
   source_lookup.write_file("dns-wallet-dns1.addr", td::Slice(addr_file)).ensure();
 
-  auto fift_output = fift::mem_run_fift(std::move(source_lookup),
-                                        {"aba", "dns-wallet", "1", "add", "alpha.beta", "cat", "1", "text",
-                                         "hello", "delete", "beta.alpha", "cat", "7"})
-                         .move_as_ok();
+  auto fift_output =
+      fift::mem_run_fift(std::move(source_lookup), {"aba", "dns-wallet", "1", "add", "alpha.beta", "cat", "1", "text",
+                                                    "hello", "delete", "beta.alpha", "cat", "7"})
+          .move_as_ok();
 
   auto boc = fift_output.source_lookup.read_file("dns-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
@@ -1213,12 +1210,12 @@ TEST(Toslib, WalletV5) {
   // Build initial data: is_signature_allowed(1) + seqno(32) + wallet_id(32) + public_key(256) + extensions(dict)
   td::uint32 wallet_id = 42;
   auto data = vm::CellBuilder()
-      .store_long(-1, 1)       // is_signature_allowed = true
-      .store_long(0, 32)       // seqno = 0
-      .store_long(wallet_id, 32)
-      .store_bytes(pub_key.as_octet_string())
-      .store_zeroes(1)         // empty extensions dict
-      .finalize();
+                  .store_long(-1, 1)  // is_signature_allowed = true
+                  .store_long(0, 32)  // seqno = 0
+                  .store_long(wallet_id, 32)
+                  .store_bytes(pub_key.as_octet_string())
+                  .store_zeroes(1)  // empty extensions dict
+                  .finalize();
 
   tos::SmartContract::State state{code, data};
   auto wallet = tos::SmartContract::create(state);
@@ -1266,8 +1263,8 @@ TEST(Toslib, WalletV5) {
   auto ext_msg = msg_cb.finalize();
 
   // Send external message
-  auto ans = wallet.write().send_external_message(
-      ext_msg, tos::SmartContract::Args().set_now(9999).set_global_id(global_id));
+  auto ans =
+      wallet.write().send_external_message(ext_msg, tos::SmartContract::Args().set_now(9999).set_global_id(global_id));
   CHECK(ans.success);
 
   // Verify seqno incremented
@@ -1290,8 +1287,8 @@ TEST(Toslib, WalletV5) {
   bad_msg_cb.append_cellslice(vm::load_cell_slice(bad_body));
   bad_msg_cb.store_bytes(bad_sig);
 
-  auto bad_ans = wallet.write().send_external_message(
-      bad_msg_cb.finalize(), tos::SmartContract::Args().set_now(9999).set_global_id(1));
+  auto bad_ans = wallet.write().send_external_message(bad_msg_cb.finalize(),
+                                                      tos::SmartContract::Args().set_now(9999).set_global_id(1));
   CHECK(!bad_ans.success);  // should fail: global_id mismatch
 
   // Seqno should not have changed

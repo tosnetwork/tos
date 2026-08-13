@@ -13,8 +13,8 @@ use crate::{
     executor::math::DivMode,
     stack::{integer::IntegerData, StackItem},
 };
-use std::{fmt, ops::Range};
 use chain_block::{error, Cell, Result, SliceData};
+use std::{fmt, ops::Range};
 
 macro_rules! param {
     ($self:ident, $id:ident) => {{

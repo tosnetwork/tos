@@ -13,11 +13,11 @@ use crate::{
     assert_json_eq, generate_test_account, generate_test_message, generate_test_stateinit,
     AccountTestOptions, StateInitTestOptions,
 };
-use std::{fs::read, path::Path};
 use chain_block::{
     read_single_root_boc, write_boc, AccountId, IBitstring, ShardStateUnsplit, Transaction,
     TransactionProcessingStatus,
 };
+use std::{fs::read, path::Path};
 
 fn assert_json_eq_file(json: &str, name: &str) {
     let expected =

@@ -34,8 +34,8 @@ mod stack;
 mod tuple;
 mod types;
 
-pub use engine::*;
 use chain_block::{BuilderData, Cell, IBitstring, Result};
+pub use engine::*;
 
 #[cfg(test)]
 #[path = "../tests/test_executor.rs"]

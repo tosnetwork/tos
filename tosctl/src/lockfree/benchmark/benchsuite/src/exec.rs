@@ -102,14 +102,14 @@ impl Executor {
         let count = Arc::new(AtomicUsize::new(0));
         let exit = Arc::new(AtomicBool::new(false));
 
-        for _ in 0 .. self.threads {
+        for _ in 0..self.threads {
             let shared = shared.clone();
             let exit = exit.clone();
             let count = count.clone();
             threads.push(thread::spawn(move || {
                 let mut target = shared.init_thread();
                 while !exit.load(Acquire) {
-                    for _ in 0 .. ITER_PER_TRY {
+                    for _ in 0..ITER_PER_TRY {
                         target.round();
                     }
                     count.fetch_add(ITER_PER_TRY, Relaxed);

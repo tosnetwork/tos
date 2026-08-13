@@ -116,7 +116,11 @@ pub struct PoolNominatorCreateCmd {
     owner: String,
     #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
-    #[arg(long, help = "Validator reward share in basis points (e.g. 4000 = 40%)", default_value_t = 4000)]
+    #[arg(
+        long,
+        help = "Validator reward share in basis points (e.g. 4000 = 40%)",
+        default_value_t = 4000
+    )]
     validator_reward_share: u16,
     #[arg(long, help = "Maximum number of nominators", default_value_t = 40)]
     max_nominators: u16,
@@ -226,7 +230,11 @@ pub enum PoolLiquidAction {
 #[derive(clap::Args, Clone)]
 #[command(about = "Liquid pool consistency check")]
 pub struct PoolLiquidCheckCmd {
-    #[arg(short = 'n', long = "name", help = "Pool name from config (optional; checks all controllers if omitted)")]
+    #[arg(
+        short = 'n',
+        long = "name",
+        help = "Pool name from config (optional; checks all controllers if omitted)"
+    )]
     name: Option<String>,
 }
 
@@ -417,18 +425,13 @@ impl PoolLsCmd {
                 .iter()
                 .map(|(name, pool)| {
                     let (pool_type, address) = match pool {
-                        PoolConfig::SNP { address, .. } => (
-                            "single-nominator",
-                            address.as_deref().unwrap_or("-"),
-                        ),
-                        PoolConfig::CorePool { addresses, .. } => (
-                            "core",
-                            addresses[0].as_str(),
-                        ),
-                        PoolConfig::NominatorPool { address, .. } => (
-                            "nominator-pool",
-                            address.as_deref().unwrap_or("-"),
-                        ),
+                        PoolConfig::SNP { address, .. } => {
+                            ("single-nominator", address.as_deref().unwrap_or("-"))
+                        }
+                        PoolConfig::CorePool { addresses, .. } => ("core", addresses[0].as_str()),
+                        PoolConfig::NominatorPool { address, .. } => {
+                            ("nominator-pool", address.as_deref().unwrap_or("-"))
+                        }
                     };
                     serde_json::json!({
                         "name": name,
@@ -450,18 +453,13 @@ impl PoolLsCmd {
 
             for (name, pool) in &pool_list {
                 let (pool_type, address) = match pool {
-                    PoolConfig::SNP { address, .. } => (
-                        "single-nominator",
-                        address.as_deref().unwrap_or("-"),
-                    ),
-                    PoolConfig::CorePool { addresses, .. } => (
-                        "core",
-                        addresses[0].as_str(),
-                    ),
-                    PoolConfig::NominatorPool { address, .. } => (
-                        "nominator-pool",
-                        address.as_deref().unwrap_or("-"),
-                    ),
+                    PoolConfig::SNP { address, .. } => {
+                        ("single-nominator", address.as_deref().unwrap_or("-"))
+                    }
+                    PoolConfig::CorePool { addresses, .. } => ("core", addresses[0].as_str()),
+                    PoolConfig::NominatorPool { address, .. } => {
+                        ("nominator-pool", address.as_deref().unwrap_or("-"))
+                    }
                 };
                 println!("  {:<20} {:<18} {}", name, pool_type, address);
             }
@@ -495,11 +493,8 @@ impl PoolRmCmd {
             .collect();
 
         if !referencing_bindings.is_empty() {
-            let nodes = referencing_bindings
-                .iter()
-                .map(|n| n.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let nodes =
+                referencing_bindings.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ");
             anyhow::bail!(
                 "Cannot remove pool '{}': referenced by binding(s) for node(s): {}",
                 self.name,
@@ -528,11 +523,11 @@ impl PoolRmCmd {
 
 impl PoolImportCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         // Validate address
         let addr_trimmed = self.address.trim();
@@ -556,10 +551,7 @@ impl PoolImportCmd {
             );
         }
 
-        let pool_config = PoolConfig::SNP {
-            address: Some(addr_trimmed.to_string()),
-            owner: None,
-        };
+        let pool_config = PoolConfig::SNP { address: Some(addr_trimmed.to_string()), owner: None };
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
 
@@ -575,6 +567,7 @@ impl PoolImportCmd {
 
 impl PoolGetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::{
             app_config::{AppConfig, PoolConfig},
@@ -582,7 +575,6 @@ impl PoolGetCmd {
         };
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = super::utils::try_create_rpc_client(&config).await?;
@@ -600,8 +592,9 @@ impl PoolGetCmd {
                         "type": "single-nominator",
                     });
                     if let Some(addr_str) = address {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         obj["address"] = serde_json::json!(addr.to_string());
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
                             obj["balance"] = serde_json::json!(display_tos(info.balance));
@@ -616,8 +609,9 @@ impl PoolGetCmd {
                 PoolConfig::CorePool { addresses, validator_share } => {
                     let mut addrs_info = Vec::new();
                     for addr_str in addresses {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         let mut entry = serde_json::json!({"address": addr.to_string()});
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
                             entry["balance"] = serde_json::json!(display_tos(info.balance));
@@ -649,8 +643,9 @@ impl PoolGetCmd {
                         "min_nominator_stake_tos": *min_nominator_stake as f64 / 1_000_000_000.0,
                     });
                     if let Some(addr_str) = address {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         obj["address"] = serde_json::json!(addr.to_string());
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
                             obj["balance"] = serde_json::json!(display_tos(info.balance));
@@ -671,8 +666,9 @@ impl PoolGetCmd {
                     println!("  {}", "\u{2500}".repeat(56).dimmed());
 
                     if let Some(addr_str) = address {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         println!("  {:<12} {}", "Address:".cyan(), addr);
 
                         let info = rpc_client.get_address_information(&addr).await?;
@@ -694,11 +690,16 @@ impl PoolGetCmd {
                     println!("  {}", "\u{2500}".repeat(56).dimmed());
                     println!("  {:<18} {}", "Validator share:".cyan(), validator_share);
                     for (i, addr_str) in addresses.iter().enumerate() {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         let info = rpc_client.get_address_information(&addr).await?;
                         println!("  {:<18} {}", format!("Address[{}]:", i).cyan(), addr);
-                        println!("  {:<18} {}", format!("Balance[{}]:", i).cyan(), display_tos(info.balance));
+                        println!(
+                            "  {:<18} {}",
+                            format!("Balance[{}]:", i).cyan(),
+                            display_tos(info.balance)
+                        );
                         println!("  {:<18} {}", format!("State[{}]:", i).cyan(), info.state);
                     }
                     println!();
@@ -713,25 +714,34 @@ impl PoolGetCmd {
                 } => {
                     println!("\n{} Pool '{}' (nominator-pool)", "Pool".cyan().bold(), self.name);
                     println!("  {}", "\u{2500}".repeat(56).dimmed());
-                    println!("  {:<24} {}%", "Validator reward share:".cyan(), *validator_reward_share as f64 / 100.0);
+                    println!(
+                        "  {:<24} {}%",
+                        "Validator reward share:".cyan(),
+                        *validator_reward_share as f64 / 100.0
+                    );
                     println!("  {:<24} {}", "Max nominators:".cyan(), max_nominators);
-                    println!("  {:<24} {} TOS", "Min validator stake:".cyan(), *min_validator_stake as f64 / 1_000_000_000.0);
-                    println!("  {:<24} {} TOS", "Min nominator stake:".cyan(), *min_nominator_stake as f64 / 1_000_000_000.0);
+                    println!(
+                        "  {:<24} {} TOS",
+                        "Min validator stake:".cyan(),
+                        *min_validator_stake as f64 / 1_000_000_000.0
+                    );
+                    println!(
+                        "  {:<24} {} TOS",
+                        "Min nominator stake:".cyan(),
+                        *min_nominator_stake as f64 / 1_000_000_000.0
+                    );
 
                     if let Some(addr_str) = address {
-                        let addr = MsgAddressInt::from_str(addr_str)
-                            .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
+                        let addr = MsgAddressInt::from_str(addr_str).map_err(|_| {
+                            anyhow::anyhow!("Invalid pool address in config: {}", addr_str)
+                        })?;
                         println!("  {:<24} {}", "Address:".cyan(), addr);
 
                         let info = rpc_client.get_address_information(&addr).await?;
                         println!("  {:<24} {}", "Balance:".cyan(), display_tos(info.balance));
                         println!("  {:<24} {}", "State:".cyan(), info.state);
                     } else if let Some(owner_str) = owner {
-                        println!(
-                            "  {:<24} {} (not yet deployed)",
-                            "Owner:".cyan(),
-                            owner_str
-                        );
+                        println!("  {:<24} {} (not yet deployed)", "Owner:".cyan(), owner_str);
                     } else {
                         println!("  {}", "No address or owner configured".yellow());
                     }
@@ -838,17 +848,11 @@ impl PoolNominatorCreateCmd {
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
 
-        println!(
-            "{} Nominator pool '{}' created\n",
-            "OK".green().bold(),
-            self.name,
-        );
+        println!("{} Nominator pool '{}' created\n", "OK".green().bold(), self.name,);
         println!("  {:<12} {}", "Address:".cyan(), pool_addr_str);
         println!(
             "\n  Fund this address with at least 2 TOS, then run:\n  {}",
-            format!("tosctl pool nominator activate --name {}", self.name)
-                .yellow()
-                .bold()
+            format!("tosctl pool nominator activate --name {}", self.name).yellow().bold()
         );
         println!();
 
@@ -858,18 +862,16 @@ impl PoolNominatorCreateCmd {
 
 impl PoolNominatorActivateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use colored::Colorize;
-        use common::{
-            app_config::PoolConfig,
-            chain_utils::display_tos,
-            task_cancellation::CancellationCtx,
-        };
-        use contracts::Wallet;
-        use contracts::NominatorPoolWrapperImpl;
-        use std::path::Path;
-        use std::str::FromStr;
         use chain_block::{Cell, MsgAddressInt, write_boc};
         use chain_rpc_client::v2::data_models::AccountState;
+        use colored::Colorize;
+        use common::{
+            app_config::PoolConfig, chain_utils::display_tos, task_cancellation::CancellationCtx,
+        };
+        use contracts::NominatorPoolWrapperImpl;
+        use contracts::Wallet;
+        use std::path::Path;
+        use std::str::FromStr;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -881,7 +883,14 @@ impl PoolNominatorActivateCmd {
             .get(&self.name)
             .ok_or_else(|| anyhow::anyhow!("Pool '{}' not found in config", self.name))?;
 
-        let (pool_addr_str, owner_name, validator_reward_share, max_nominators, min_validator_stake, min_nominator_stake) = match pool {
+        let (
+            pool_addr_str,
+            owner_name,
+            validator_reward_share,
+            max_nominators,
+            min_validator_stake,
+            min_nominator_stake,
+        ) = match pool {
             PoolConfig::NominatorPool {
                 address,
                 owner,
@@ -902,7 +911,14 @@ impl PoolNominatorActivateCmd {
                         "Pool '{}' has no owner configured. Run `tosctl pool nominator create` with --owner.",
                         self.name
                     ))?;
-                (addr.clone(), owner_name.clone(), *validator_reward_share, *max_nominators, *min_validator_stake, *min_nominator_stake)
+                (
+                    addr.clone(),
+                    owner_name.clone(),
+                    *validator_reward_share,
+                    *max_nominators,
+                    *min_validator_stake,
+                    *min_nominator_stake,
+                )
             }
             _ => anyhow::bail!("Pool '{}' is not a nominator pool", self.name),
         };
@@ -936,10 +952,7 @@ impl PoolNominatorActivateCmd {
 
         // Find the validator address by searching bindings referencing this pool,
         // or by iterating wallets to find a match.
-        let binding = config
-            .bindings
-            .iter()
-            .find(|(_, b)| b.pool.as_deref() == Some(&self.name));
+        let binding = config.bindings.iter().find(|(_, b)| b.pool.as_deref() == Some(&self.name));
 
         let validator_addr_bytes: [u8; 32] = if let Some((_, bind)) = binding {
             // Use the binding's wallet as the validator
@@ -947,7 +960,8 @@ impl PoolNominatorActivateCmd {
                 .wallets
                 .get(&bind.wallet)
                 .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found in config", bind.wallet))?;
-            let (vaddr, _) = super::utils::wallet_address(validator_wallet_cfg, vault.clone()).await?;
+            let (vaddr, _) =
+                super::utils::wallet_address(validator_wallet_cfg, vault.clone()).await?;
             let hash = vaddr.address().get_bytestring(0);
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&hash);
@@ -1029,10 +1043,7 @@ impl PoolNominatorActivateCmd {
         println!("  {:<26} {}", "Balance:".cyan(), display_tos(pool_info.balance));
         println!();
 
-        println!(
-            "Deploying nominator pool '{}' ({})...",
-            self.name, pool_addr
-        );
+        println!("Deploying nominator pool '{}' ({})...", self.name, pool_addr);
 
         // Get owner wallet info for seqno
         let owner_wallet_info = rpc_client.get_wallet_information(&owner_addr).await?;
@@ -1093,16 +1104,13 @@ impl PoolNominatorActivateCmd {
 
 impl PoolNominatorUpdateValidatorSetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
-        use common::{
-            app_config::PoolConfig,
-            task_cancellation::CancellationCtx,
-        };
+        use common::{app_config::PoolConfig, task_cancellation::CancellationCtx};
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -1115,11 +1123,12 @@ impl PoolNominatorUpdateValidatorSetCmd {
             .ok_or_else(|| anyhow::anyhow!("Pool '{}' not found in config", self.name))?;
 
         let pool_addr_str = match pool {
-            PoolConfig::NominatorPool { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Pool '{}' has no address configured (not yet deployed?)", self.name)
-                })?,
+            PoolConfig::NominatorPool { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Pool '{}' has no address configured (not yet deployed?)",
+                    self.name
+                )
+            })?,
             _ => anyhow::bail!("Pool '{}' is not a nominator pool", self.name),
         };
 
@@ -1132,11 +1141,11 @@ impl PoolNominatorUpdateValidatorSetCmd {
             .iter()
             .find(|(_, b)| b.pool.as_deref() == Some(&self.name))
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No binding found referencing pool '{}'. Bind a node to this pool first.",
-                    self.name
-                )
-            })?;
+            anyhow::anyhow!(
+                "No binding found referencing pool '{}'. Bind a node to this pool first.",
+                self.name
+            )
+        })?;
 
         let wallet_name = &binding.1.wallet;
         let wallet_cfg = config
@@ -1163,22 +1172,13 @@ impl PoolNominatorUpdateValidatorSetCmd {
         b.append_u64(1u64)?;
         let payload = b.into_cell()?;
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, wallet_name)
+                .await?;
 
-        println!(
-            "\nSending update_validator_set to pool '{}' ({})...",
-            self.name, pool_addr
-        );
+        println!("\nSending update_validator_set to pool '{}' ({})...", self.name, pool_addr);
 
-        let msg = wallet
-            .message(pool_addr.clone(), 1_100_000_000, payload)
-            .await?;
+        let msg = wallet.message(pool_addr.clone(), 1_100_000_000, payload).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -1193,11 +1193,7 @@ impl PoolNominatorUpdateValidatorSetCmd {
         )
         .await?;
 
-        println!(
-            "\n{} update_validator_set sent to pool '{}'\n",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("\n{} update_validator_set sent to pool '{}'\n", "OK".green().bold(), self.name);
 
         Ok(())
     }
@@ -1205,17 +1201,15 @@ impl PoolNominatorUpdateValidatorSetCmd {
 
 impl PoolNominatorDepositCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
-            app_config::PoolConfig,
-            chain_utils::tos_to_nanotos,
-            task_cancellation::CancellationCtx,
+            app_config::PoolConfig, chain_utils::tos_to_nanotos, task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         if self.amount <= 0.0 {
             anyhow::bail!("Deposit amount must be positive");
@@ -1233,11 +1227,12 @@ impl PoolNominatorDepositCmd {
 
         let (pool_addr_str, owner_name) = match pool {
             PoolConfig::NominatorPool { address, owner, .. } => {
-                let addr = address
-                    .as_ref()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Pool '{}' has no address configured (not yet deployed?)", self.name)
-                    })?;
+                let addr = address.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Pool '{}' has no address configured (not yet deployed?)",
+                        self.name
+                    )
+                })?;
                 (addr.clone(), owner.clone())
             }
             _ => anyhow::bail!("Pool '{}' is not a nominator pool", self.name),
@@ -1290,22 +1285,16 @@ impl PoolNominatorDepositCmd {
 
         let amount_nanotos = tos_to_nanotos(self.amount);
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            &wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, &wallet_name)
+                .await?;
 
         println!(
             "\nDepositing {} TOS to nominator pool '{}' ({})...",
             self.amount, self.name, pool_addr
         );
 
-        let msg = wallet
-            .message(pool_addr.clone(), amount_nanotos, body)
-            .await?;
+        let msg = wallet.message(pool_addr.clone(), amount_nanotos, body).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -1333,16 +1322,13 @@ impl PoolNominatorDepositCmd {
 
 impl PoolNominatorWithdrawCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
-        use common::{
-            app_config::PoolConfig,
-            task_cancellation::CancellationCtx,
-        };
+        use common::{app_config::PoolConfig, task_cancellation::CancellationCtx};
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -1356,11 +1342,12 @@ impl PoolNominatorWithdrawCmd {
 
         let (pool_addr_str, owner_name) = match pool {
             PoolConfig::NominatorPool { address, owner, .. } => {
-                let addr = address
-                    .as_ref()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Pool '{}' has no address configured (not yet deployed?)", self.name)
-                    })?;
+                let addr = address.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Pool '{}' has no address configured (not yet deployed?)",
+                        self.name
+                    )
+                })?;
                 (addr.clone(), owner.clone())
             }
             _ => anyhow::bail!("Pool '{}' is not a nominator pool", self.name),
@@ -1410,13 +1397,9 @@ impl PoolNominatorWithdrawCmd {
         b.append_raw(&[0x77], 8)?; // 'w'
         let body = b.into_cell()?;
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            &wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, &wallet_name)
+                .await?;
 
         println!(
             "\nSending withdrawal request to nominator pool '{}' ({})...",
@@ -1425,9 +1408,7 @@ impl PoolNominatorWithdrawCmd {
 
         // Send 1 TOS for gas with the withdrawal comment
         let gas_fee: u64 = 1_000_000_000;
-        let msg = wallet
-            .message(pool_addr.clone(), gas_fee, body)
-            .await?;
+        let msg = wallet.message(pool_addr.clone(), gas_fee, body).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -1442,11 +1423,7 @@ impl PoolNominatorWithdrawCmd {
         )
         .await?;
 
-        println!(
-            "\n{} Withdrawal request sent to pool '{}'\n",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("\n{} Withdrawal request sent to pool '{}'\n", "OK".green().bold(), self.name);
 
         Ok(())
     }
@@ -1468,7 +1445,7 @@ impl PoolSingleCreateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use contracts::nominator::{NominatorWrapperImpl, NOMINATOR_POOL_WORKCHAIN};
+        use contracts::nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
         use std::path::Path;
 
         let config_path = Path::new(config_path);
@@ -1515,19 +1492,13 @@ impl PoolSingleCreateCmd {
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
 
-        println!(
-            "\n{} Single-nominator pool '{}' created\n",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("\n{} Single-nominator pool '{}' created\n", "OK".green().bold(), self.name);
         println!("  {:<12} {}", "Address:".cyan(), pool_addr_str);
         println!("  {:<12} {}", "Owner:".cyan(), owner_addr);
         println!("  {:<12} {}", "Validator:".cyan(), validator_addr);
         println!(
             "\n  Fund this address with at least 2 TOS, then run:\n  {}",
-            format!("tosctl pool single activate --name {}", self.name)
-                .yellow()
-                .bold()
+            format!("tosctl pool single activate --name {}", self.name).yellow().bold()
         );
         println!();
 
@@ -1537,18 +1508,16 @@ impl PoolSingleCreateCmd {
 
 impl PoolSingleActivateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use colored::Colorize;
-        use common::{
-            app_config::PoolConfig,
-            chain_utils::display_tos,
-            task_cancellation::CancellationCtx,
-        };
-        use contracts::Wallet;
-        use contracts::nominator::{NominatorWrapperImpl, NOMINATOR_POOL_WORKCHAIN};
-        use std::path::Path;
-        use std::str::FromStr;
         use chain_block::{Cell, MsgAddressInt, write_boc};
         use chain_rpc_client::v2::data_models::AccountState;
+        use colored::Colorize;
+        use common::{
+            app_config::PoolConfig, chain_utils::display_tos, task_cancellation::CancellationCtx,
+        };
+        use contracts::Wallet;
+        use contracts::nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
+        use std::path::Path;
+        use std::str::FromStr;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -1562,12 +1531,12 @@ impl PoolSingleActivateCmd {
 
         let (pool_addr_str, owner_name) = match pool {
             PoolConfig::SNP { address, owner } => {
-                let addr = address
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Pool '{}' has no address configured", self.name))?;
-                let owner_name = owner
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Pool '{}' has no owner configured", self.name))?;
+                let addr = address.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Pool '{}' has no address configured", self.name)
+                })?;
+                let owner_name = owner.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Pool '{}' has no owner configured", self.name)
+                })?;
                 (addr.clone(), owner_name.clone())
             }
             _ => anyhow::bail!("Pool '{}' is not a single-nominator pool", self.name),
@@ -1633,8 +1602,7 @@ impl PoolSingleActivateCmd {
         })?;
 
         // Build state_init
-        let state_init =
-            NominatorWrapperImpl::build_state_init(&owner_addr, &validator_addr)?;
+        let state_init = NominatorWrapperImpl::build_state_init(&owner_addr, &validator_addr)?;
 
         // Check pool balance (must have funds to deploy)
         if pool_info.balance < 1_000_000_000 {
@@ -1645,10 +1613,7 @@ impl PoolSingleActivateCmd {
             );
         }
 
-        println!(
-            "Deploying single-nominator pool '{}' ({})...",
-            self.name, pool_addr
-        );
+        println!("Deploying single-nominator pool '{}' ({})...", self.name, pool_addr);
 
         // Get owner wallet info for seqno
         let owner_wallet_info = rpc_client.get_wallet_information(&owner_addr).await?;
@@ -1696,12 +1661,7 @@ impl PoolSingleActivateCmd {
         )
         .await?;
 
-        println!(
-            "\n{} Pool '{}' ({}) activated\n",
-            "OK".green().bold(),
-            self.name,
-            pool_addr
-        );
+        println!("\n{} Pool '{}' ({}) activated\n", "OK".green().bold(), self.name, pool_addr);
 
         Ok(())
     }
@@ -1709,17 +1669,15 @@ impl PoolSingleActivateCmd {
 
 impl PoolSingleWithdrawCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
-            app_config::PoolConfig,
-            chain_utils::tos_to_nanotos,
-            task_cancellation::CancellationCtx,
+            app_config::PoolConfig, chain_utils::tos_to_nanotos, task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -1733,12 +1691,12 @@ impl PoolSingleWithdrawCmd {
 
         let (pool_addr_str, owner_name) = match pool {
             PoolConfig::SNP { address, owner } => {
-                let addr = address
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Pool '{}' has no address configured", self.name))?;
-                let owner_name = owner
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Pool '{}' has no owner configured", self.name))?;
+                let addr = address.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Pool '{}' has no address configured", self.name)
+                })?;
+                let owner_name = owner.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Pool '{}' has no owner configured", self.name)
+                })?;
                 (addr.clone(), owner_name.clone())
             }
             _ => anyhow::bail!("Pool '{}' is not a single-nominator pool", self.name),
@@ -1778,10 +1736,7 @@ impl PoolSingleWithdrawCmd {
         )
         .await?;
 
-        println!(
-            "\nWithdrawing {} TOS from pool '{}' ({})...",
-            self.amount, self.name, pool_addr
-        );
+        println!("\nWithdrawing {} TOS from pool '{}' ({})...", self.amount, self.name, pool_addr);
 
         let gas_fee: u64 = 1_000_000_000; // 1 TOS for gas
         let msg = wallet
@@ -1833,15 +1788,15 @@ impl PoolLiquidCmd {
 
 impl PoolLiquidCheckCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
-        use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
+        use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = AppConfig::load(config_path)?;
@@ -2026,11 +1981,11 @@ impl PoolLiquidControllerCmd {
 
 impl PoolLiquidControllerCreateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let mut config = AppConfig::load(config_path)?;
@@ -2038,14 +1993,20 @@ impl PoolLiquidControllerCreateCmd {
         // Validate pool address format
         let pool_addr_trimmed = self.pool_address.trim();
         let pool_addr = MsgAddressInt::from_str(pool_addr_trimmed).map_err(|_| {
-            anyhow::anyhow!("Invalid pool address: '{}'. Expected raw or base64url format", pool_addr_trimmed)
+            anyhow::anyhow!(
+                "Invalid pool address: '{}'. Expected raw or base64url format",
+                pool_addr_trimmed
+            )
         })?;
 
         // Validate optional controller addresses
         let ctrl0_addr = if let Some(ref addr) = self.controller_0_address {
             let trimmed = addr.trim();
             MsgAddressInt::from_str(trimmed).map_err(|_| {
-                anyhow::anyhow!("Invalid controller-0 address: '{}'. Expected raw or base64url format", trimmed)
+                anyhow::anyhow!(
+                    "Invalid controller-0 address: '{}'. Expected raw or base64url format",
+                    trimmed
+                )
             })?;
             Some(trimmed.to_string())
         } else {
@@ -2055,7 +2016,10 @@ impl PoolLiquidControllerCreateCmd {
         let ctrl1_addr = if let Some(ref addr) = self.controller_1_address {
             let trimmed = addr.trim();
             MsgAddressInt::from_str(trimmed).map_err(|_| {
-                anyhow::anyhow!("Invalid controller-1 address: '{}'. Expected raw or base64url format", trimmed)
+                anyhow::anyhow!(
+                    "Invalid controller-1 address: '{}'. Expected raw or base64url format",
+                    trimmed
+                )
             })?;
             Some(trimmed.to_string())
         } else {
@@ -2081,11 +2045,7 @@ impl PoolLiquidControllerCreateCmd {
                 }
             }
             Err(e) => {
-                println!(
-                    "  {} Could not verify pool address: {}",
-                    "[WARNING]".yellow().bold(),
-                    e
-                );
+                println!("  {} Could not verify pool address: {}", "[WARNING]".yellow().bold(), e);
                 println!(
                     "  {}",
                     "The pool may not be deployed yet. Continuing with config setup.".dimmed()
@@ -2124,7 +2084,9 @@ impl PoolLiquidControllerCreateCmd {
         if config.pools.contains_key(&name_0) || config.pools.contains_key(&name_1) {
             anyhow::bail!(
                 "Controller set '{}' already exists in config (found '{}' or '{}')",
-                self.name, name_0, name_1
+                self.name,
+                name_0,
+                name_1
             );
         }
 
@@ -2142,12 +2104,10 @@ impl PoolLiquidControllerCreateCmd {
         config.pools.insert(name_1.clone(), controller_1);
         super::utils::save_config(&config, config_path)?;
 
-        let ctrl0_status = ctrl0_addr
-            .as_deref()
-            .unwrap_or("(pending -- use `controller add` after deployment)");
-        let ctrl1_status = ctrl1_addr
-            .as_deref()
-            .unwrap_or("(pending -- use `controller add` after deployment)");
+        let ctrl0_status =
+            ctrl0_addr.as_deref().unwrap_or("(pending -- use `controller add` after deployment)");
+        let ctrl1_status =
+            ctrl1_addr.as_deref().unwrap_or("(pending -- use `controller add` after deployment)");
 
         println!("\n{}", "Liquid Staking Controller Set".cyan().bold());
         println!("{}", "\u{2500}".repeat(72).dimmed());
@@ -2161,22 +2121,29 @@ impl PoolLiquidControllerCreateCmd {
 
         // Deploy controllers if --deploy is set
         if self.deploy && has_pending {
-            use contracts::contract_codes::{DEPLOY_CONTROLLER_0_BOC, DEPLOY_CONTROLLER_1_BOC};
-            use super::utils::{load_config_vault_rpc_client, get_wallet_config, make_wallet, wallet_info, wait_for_seqno_change, SEND_TIMEOUT};
+            use super::utils::{
+                SEND_TIMEOUT, get_wallet_config, load_config_vault_rpc_client, make_wallet,
+                wait_for_seqno_change, wallet_info,
+            };
+            use chain_block::{read_single_root_boc, write_boc};
             use common::task_cancellation::CancellationCtx;
-            use chain_block::{write_boc, read_single_root_boc};
             use contracts::Wallet;
+            use contracts::contract_codes::{DEPLOY_CONTROLLER_0_BOC, DEPLOY_CONTROLLER_1_BOC};
 
-            let wallet_name = self.wallet.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("--wallet is required with --deploy")
-            })?;
+            let wallet_name = self
+                .wallet
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--wallet is required with --deploy"))?;
 
             println!("\n{}", "Deploying controllers to liquid pool...".cyan().bold());
 
             let (config2, vault, rpc_client2) = load_config_vault_rpc_client(config_path).await?;
-            let wallet_cfg = get_wallet_config(wallet_name, &config2.wallets, config2.master_wallet.as_ref())?;
-            let (from_addr, from_info, from_secret) = wallet_info(rpc_client2.clone(), wallet_cfg, vault.clone()).await?;
-            let wallet = make_wallet(rpc_client2.clone(), wallet_cfg, from_secret, wallet_name).await?;
+            let wallet_cfg =
+                get_wallet_config(wallet_name, &config2.wallets, config2.master_wallet.as_ref())?;
+            let (from_addr, from_info, from_secret) =
+                wallet_info(rpc_client2.clone(), wallet_cfg, vault.clone()).await?;
+            let wallet =
+                make_wallet(rpc_client2.clone(), wallet_cfg, from_secret, wallet_name).await?;
 
             let deploy_amount: u64 = 1_100_000_000; // 1.1 TOS per controller
 
@@ -2185,16 +2152,27 @@ impl PoolLiquidControllerCreateCmd {
                 println!("  Deploying controller 0...");
                 let body_boc = hex::decode(DEPLOY_CONTROLLER_0_BOC)?;
                 let body_cell = read_single_root_boc(body_boc)?;
-                let msg = wallet.build_message(
-                    pool_addr.clone(), deploy_amount, body_cell,
-                    false, from_info.seqno, None, None,
-                ).await?;
+                let msg = wallet
+                    .build_message(
+                        pool_addr.clone(),
+                        deploy_amount,
+                        body_cell,
+                        false,
+                        from_info.seqno,
+                        None,
+                        None,
+                    )
+                    .await?;
                 let msg_boc = write_boc(&msg)?;
                 rpc_client2.send_boc(&msg_boc).await?;
                 wait_for_seqno_change(
-                    rpc_client2.clone(), &from_addr, from_info.seqno,
-                    &CancellationCtx::default(), SEND_TIMEOUT,
-                ).await?;
+                    rpc_client2.clone(),
+                    &from_addr,
+                    from_info.seqno,
+                    &CancellationCtx::default(),
+                    SEND_TIMEOUT,
+                )
+                .await?;
                 println!("  {} Controller 0 deploy message sent", "OK".green().bold());
             }
 
@@ -2204,22 +2182,35 @@ impl PoolLiquidControllerCreateCmd {
 
             // Deploy controller 1 — re-fetch seqno since it changed
             if ctrl1_addr.is_none() {
-                let (_, from_info2, from_secret2) = wallet_info(rpc_client2.clone(), wallet_cfg, vault.clone()).await?;
-                let wallet2 = make_wallet(rpc_client2.clone(), wallet_cfg, from_secret2, wallet_name).await?;
+                let (_, from_info2, from_secret2) =
+                    wallet_info(rpc_client2.clone(), wallet_cfg, vault.clone()).await?;
+                let wallet2 =
+                    make_wallet(rpc_client2.clone(), wallet_cfg, from_secret2, wallet_name).await?;
 
                 println!("  Deploying controller 1...");
                 let body_boc = hex::decode(DEPLOY_CONTROLLER_1_BOC)?;
                 let body_cell = read_single_root_boc(body_boc)?;
-                let msg = wallet2.build_message(
-                    pool_addr.clone(), deploy_amount, body_cell,
-                    false, from_info2.seqno, None, None,
-                ).await?;
+                let msg = wallet2
+                    .build_message(
+                        pool_addr.clone(),
+                        deploy_amount,
+                        body_cell,
+                        false,
+                        from_info2.seqno,
+                        None,
+                        None,
+                    )
+                    .await?;
                 let msg_boc = write_boc(&msg)?;
                 rpc_client2.send_boc(&msg_boc).await?;
                 wait_for_seqno_change(
-                    rpc_client2.clone(), &from_addr, from_info2.seqno,
-                    &CancellationCtx::default(), SEND_TIMEOUT,
-                ).await?;
+                    rpc_client2.clone(),
+                    &from_addr,
+                    from_info2.seqno,
+                    &CancellationCtx::default(),
+                    SEND_TIMEOUT,
+                )
+                .await?;
                 println!("  {} Controller 1 deploy message sent", "OK".green().bold());
             }
 
@@ -2230,20 +2221,24 @@ impl PoolLiquidControllerCreateCmd {
         } else if has_pending && !self.deploy {
             println!("  {}", "Next steps:".yellow().bold());
             println!("  Deploy controllers with:");
-            println!("     tosctl pool liquid controller create -n {} -p {} --deploy --wallet <wallet-name>",
-                self.name, pool_addr_trimmed);
+            println!(
+                "     tosctl pool liquid controller create -n {} -p {} --deploy --wallet <wallet-name>",
+                self.name, pool_addr_trimmed
+            );
             println!();
             println!("  Or deploy manually and register addresses:");
-            println!("     tosctl pool liquid controller add -n {}_0 -a <controller-0-address>", self.name);
-            println!("     tosctl pool liquid controller add -n {}_1 -a <controller-1-address>", self.name);
+            println!(
+                "     tosctl pool liquid controller add -n {}_0 -a <controller-0-address>",
+                self.name
+            );
+            println!(
+                "     tosctl pool liquid controller add -n {}_1 -a <controller-1-address>",
+                self.name
+            );
             println!();
         }
 
-        println!(
-            "{} Controller set '{}' saved to config\n",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("{} Controller set '{}' saved to config\n", "OK".green().bold(), self.name);
 
         Ok(())
     }
@@ -2251,6 +2246,7 @@ impl PoolLiquidControllerCreateCmd {
 
 impl PoolLiquidControllerUpdateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use common::chain_utils::display_tos;
@@ -2258,7 +2254,6 @@ impl PoolLiquidControllerUpdateCmd {
         use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = AppConfig::load(config_path)?;
@@ -2347,7 +2342,9 @@ impl PoolLiquidControllerLsCmd {
 
         if controller_entries.is_empty() {
             println!("\n{}\n", "No liquid staking controllers configured".yellow());
-            println!("  Use `tosctl pool liquid controller create` or `tosctl pool liquid controller add` to add one.");
+            println!(
+                "  Use `tosctl pool liquid controller create` or `tosctl pool liquid controller add` to add one."
+            );
             println!();
             return Ok(());
         }
@@ -2377,6 +2374,7 @@ impl PoolLiquidControllerLsCmd {
 
 impl PoolLiquidControllerGetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use common::chain_utils::display_tos;
@@ -2384,7 +2382,6 @@ impl PoolLiquidControllerGetCmd {
         use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = AppConfig::load(config_path)?;
@@ -2397,14 +2394,12 @@ impl PoolLiquidControllerGetCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured. Use `controller add` to set it.",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Controller '{}' has no address configured. Use `controller add` to set it.",
+                    self.name
+                )
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller (SNP) type", self.name),
         };
 
@@ -2436,7 +2431,11 @@ impl PoolLiquidControllerGetCmd {
             hex::encode(data.saved_validator_set_hash)
         );
         println!("  {:<28} {}", "Validator set changes:".cyan(), data.validator_set_changes_count);
-        println!("  {:<28} {}", "Validator set change time:".cyan(), data.validator_set_change_time);
+        println!(
+            "  {:<28} {}",
+            "Validator set change time:".cyan(),
+            data.validator_set_change_time
+        );
         println!("  {:<28} {}", "Stake held for:".cyan(), data.stake_held_for);
         println!("  {:<28} {}", "Borrowed amount:".cyan(), display_tos(data.borrowed_amount));
         println!("  {:<28} {}", "Borrowing time:".cyan(), data.borrowing_time);
@@ -2448,11 +2447,11 @@ impl PoolLiquidControllerGetCmd {
 
 impl PoolLiquidControllerAddCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         // Validate address
         let addr_trimmed = self.address.trim();
@@ -2475,10 +2474,7 @@ impl PoolLiquidControllerAddCmd {
                 // Update existing entry with the address
                 config.pools.insert(
                     self.name.clone(),
-                    PoolConfig::SNP {
-                        address: Some(addr_trimmed.to_string()),
-                        owner: None,
-                    },
+                    PoolConfig::SNP { address: Some(addr_trimmed.to_string()), owner: None },
                 );
                 super::utils::save_config(&config, config_path)?;
 
@@ -2496,10 +2492,7 @@ impl PoolLiquidControllerAddCmd {
             );
         }
 
-        let pool_config = PoolConfig::SNP {
-            address: Some(addr_trimmed.to_string()),
-            owner: None,
-        };
+        let pool_config = PoolConfig::SNP { address: Some(addr_trimmed.to_string()), owner: None };
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
 
@@ -2515,15 +2508,15 @@ impl PoolLiquidControllerAddCmd {
 
 impl PoolLiquidControllerStopCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
-        use contracts::liquid_controller::ControllerWrapper;
         use contracts::Wallet;
+        use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = common::app_config::AppConfig::load(config_path)?;
@@ -2536,14 +2529,9 @@ impl PoolLiquidControllerStopCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -2586,20 +2574,27 @@ impl PoolLiquidControllerStopCmd {
             // FUNDS_STAKEN
             println!("  {}", "Controller has funds staked in the elector.".yellow());
             println!("  To stop, wait for the validation cycle to end, then:");
-            println!("  1. Run `tosctl pool liquid controller update-validator-set -n {}`", self.name);
+            println!(
+                "  1. Run `tosctl pool liquid controller update-validator-set -n {}`",
+                self.name
+            );
             println!("     (repeat until validator_set_changes_count >= 2)");
-            println!("  2. Run `tosctl pool liquid controller withdraw -n {} --amount <all>`", self.name);
+            println!(
+                "  2. Run `tosctl pool liquid controller withdraw -n {} --amount <all>`",
+                self.name
+            );
             println!();
         } else if data.state == 0 && data.borrowed_amount > 0 {
             // REST with outstanding loan: need to return it
             println!("  {}", "Controller has an outstanding loan.".yellow());
-            println!("  Sending return_unused_loan to return {} TOS to the pool...",
-                display_tos(data.borrowed_amount));
+            println!(
+                "  Sending return_unused_loan to return {} TOS to the pool...",
+                display_tos(data.borrowed_amount)
+            );
             println!();
 
             // Send the return_unused_loan message
-            let (_, vault, _) =
-                super::utils::load_config_vault_rpc_client(config_path).await?;
+            let (_, vault, _) = super::utils::load_config_vault_rpc_client(config_path).await?;
 
             let binding = config
                 .bindings
@@ -2622,8 +2617,7 @@ impl PoolLiquidControllerStopCmd {
                 super::utils::wallet_address(wallet_cfg, vault.clone()).await?;
             let wallet_info = rpc_client.get_wallet_information(&wallet_addr).await?;
 
-            let payload =
-                contracts::liquid_controller::controller_messages::return_unused_loan(1)?;
+            let payload = contracts::liquid_controller::controller_messages::return_unused_loan(1)?;
 
             let wallet = super::utils::make_wallet(
                 rpc_client.clone(),
@@ -2634,9 +2628,7 @@ impl PoolLiquidControllerStopCmd {
             .await?;
 
             let gas_fee: u64 = 1_100_000_000;
-            let msg = wallet
-                .message(controller_addr.clone(), gas_fee, payload)
-                .await?;
+            let msg = wallet.message(controller_addr.clone(), gas_fee, payload).await?;
 
             let boc = chain_block::write_boc(&msg)?;
             rpc_client.send_boc(&boc).await?;
@@ -2680,16 +2672,16 @@ impl PoolLiquidControllerStopCmd {
 
 impl PoolLiquidControllerStopWithdrawCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
-        use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
         use contracts::Wallet;
+        use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -2702,14 +2694,9 @@ impl PoolLiquidControllerStopWithdrawCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -2791,27 +2778,22 @@ impl PoolLiquidControllerStopWithdrawCmd {
         let (wallet_addr, wallet_secret) =
             super::utils::wallet_address(wallet_cfg, vault.clone()).await?;
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, wallet_name)
+                .await?;
 
         // Step 1: return unused loan if borrowed
         if data.borrowed_amount > 0 {
-            println!("  Step 1: Returning unused loan ({} TOS) to pool...",
-                display_tos(data.borrowed_amount));
+            println!(
+                "  Step 1: Returning unused loan ({} TOS) to pool...",
+                display_tos(data.borrowed_amount)
+            );
 
             let wallet_info = rpc_client.get_wallet_information(&wallet_addr).await?;
-            let payload =
-                contracts::liquid_controller::controller_messages::return_unused_loan(1)?;
+            let payload = contracts::liquid_controller::controller_messages::return_unused_loan(1)?;
 
             let gas_fee: u64 = 1_100_000_000;
-            let msg = wallet
-                .message(controller_addr.clone(), gas_fee, payload)
-                .await?;
+            let msg = wallet.message(controller_addr.clone(), gas_fee, payload).await?;
 
             let boc = chain_block::write_boc(&msg)?;
             rpc_client.send_boc(&boc).await?;
@@ -2840,17 +2822,14 @@ impl PoolLiquidControllerStopWithdrawCmd {
         let withdrawable = current_balance.saturating_sub(min_storage);
 
         if withdrawable > 0 {
-            println!("  Step 2: Withdrawing {} TOS from controller...",
-                display_tos(withdrawable));
+            println!("  Step 2: Withdrawing {} TOS from controller...", display_tos(withdrawable));
 
             let wallet_info = rpc_client.get_wallet_information(&wallet_addr).await?;
             let payload =
                 contracts::liquid_controller::controller_messages::withdraw(2, withdrawable)?;
 
             let gas_fee: u64 = 1_100_000_000;
-            let msg = wallet
-                .message(controller_addr.clone(), gas_fee, payload)
-                .await?;
+            let msg = wallet.message(controller_addr.clone(), gas_fee, payload).await?;
 
             let boc = chain_block::write_boc(&msg)?;
             rpc_client.send_boc(&boc).await?;
@@ -2865,11 +2844,17 @@ impl PoolLiquidControllerStopWithdrawCmd {
             )
             .await?;
 
-            println!("  {} Withdrawal of {} TOS sent.", "OK".green().bold(),
-                display_tos(withdrawable));
+            println!(
+                "  {} Withdrawal of {} TOS sent.",
+                "OK".green().bold(),
+                display_tos(withdrawable)
+            );
         } else {
-            println!("  Step 2: No funds available to withdraw (balance {} TOS, min storage {} TOS).",
-                display_tos(current_balance), display_tos(min_storage));
+            println!(
+                "  Step 2: No funds available to withdraw (balance {} TOS, min storage {} TOS).",
+                display_tos(current_balance),
+                display_tos(min_storage)
+            );
         }
 
         println!(
@@ -2884,17 +2869,15 @@ impl PoolLiquidControllerStopWithdrawCmd {
 
 impl PoolLiquidControllerDepositCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
-            app_config::PoolConfig,
-            chain_utils::tos_to_nanotos,
-            task_cancellation::CancellationCtx,
+            app_config::PoolConfig, chain_utils::tos_to_nanotos, task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         if self.amount <= 0.0 {
             anyhow::bail!("Deposit amount must be positive");
@@ -2911,14 +2894,9 @@ impl PoolLiquidControllerDepositCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -2961,22 +2939,16 @@ impl PoolLiquidControllerDepositCmd {
 
         let amount_nanotos = tos_to_nanotos(self.amount);
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, wallet_name)
+                .await?;
 
         println!(
             "\nDepositing {} TOS to controller '{}' ({})...",
             self.amount, self.name, controller_addr
         );
 
-        let msg = wallet
-            .message(controller_addr.clone(), amount_nanotos, payload)
-            .await?;
+        let msg = wallet.message(controller_addr.clone(), amount_nanotos, payload).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -3004,17 +2976,15 @@ impl PoolLiquidControllerDepositCmd {
 
 impl PoolLiquidControllerWithdrawCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
-            app_config::PoolConfig,
-            chain_utils::tos_to_nanotos,
-            task_cancellation::CancellationCtx,
+            app_config::PoolConfig, chain_utils::tos_to_nanotos, task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         if self.amount <= 0.0 {
             anyhow::bail!("Withdraw amount must be positive");
@@ -3031,14 +3001,9 @@ impl PoolLiquidControllerWithdrawCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -3081,13 +3046,9 @@ impl PoolLiquidControllerWithdrawCmd {
         let payload =
             contracts::liquid_controller::controller_messages::withdraw(1, amount_nanotos)?;
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, wallet_name)
+                .await?;
 
         println!(
             "\nWithdrawing {} TOS from controller '{}' ({})...",
@@ -3096,9 +3057,7 @@ impl PoolLiquidControllerWithdrawCmd {
 
         // Send 1.1 TOS for gas with the withdraw payload
         let gas_fee: u64 = 1_100_000_000;
-        let msg = wallet
-            .message(controller_addr.clone(), gas_fee, payload)
-            .await?;
+        let msg = wallet.message(controller_addr.clone(), gas_fee, payload).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -3126,16 +3085,13 @@ impl PoolLiquidControllerWithdrawCmd {
 
 impl PoolLiquidControllerUpdateValidatorSetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::{MsgAddressInt, write_boc};
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
-        use common::{
-            app_config::PoolConfig,
-            task_cancellation::CancellationCtx,
-        };
+        use common::{app_config::PoolConfig, task_cancellation::CancellationCtx};
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::{MsgAddressInt, write_boc};
-        use chain_rpc_client::v2::data_models::AccountState;
 
         let config_path = Path::new(config_path);
         let (config, vault, rpc_client) =
@@ -3148,14 +3104,9 @@ impl PoolLiquidControllerUpdateValidatorSetCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -3194,25 +3145,18 @@ impl PoolLiquidControllerUpdateValidatorSetCmd {
         }
 
         // Build update_validator_hash payload (op=0x17bfe11b, query_id=1)
-        let payload =
-            contracts::liquid_controller::controller_messages::update_validator_hash(1)?;
+        let payload = contracts::liquid_controller::controller_messages::update_validator_hash(1)?;
 
-        let wallet = super::utils::make_wallet(
-            rpc_client.clone(),
-            wallet_cfg,
-            wallet_secret,
-            wallet_name,
-        )
-        .await?;
+        let wallet =
+            super::utils::make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, wallet_name)
+                .await?;
 
         println!(
             "\nSending update_validator_hash to controller '{}' ({})...",
             self.name, controller_addr
         );
 
-        let msg = wallet
-            .message(controller_addr.clone(), 1_100_000_000, payload)
-            .await?;
+        let msg = wallet.message(controller_addr.clone(), 1_100_000_000, payload).await?;
 
         let boc = write_boc(&msg)?;
         rpc_client.send_boc(&boc).await?;
@@ -3239,15 +3183,15 @@ impl PoolLiquidControllerUpdateValidatorSetCmd {
 
 impl PoolLiquidControllerAprCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use common::chain_utils::{display_tos, nanotos_to_tos};
         use contracts::ControllerWrapperImpl;
-        use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
+        use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = common::app_config::AppConfig::load(config_path)?;
@@ -3260,14 +3204,9 @@ impl PoolLiquidControllerAprCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -3329,10 +3268,16 @@ impl PoolLiquidControllerAprCmd {
             println!("  {}", "Current cycle estimate:".yellow().bold());
             println!("  {:<28} {} TOS", "Validator own funds:".cyan(), format!("{:.4}", own_tos));
             println!("  {:<28} {} TOS", "Total staked:".cyan(), format!("{:.4}", total_staked));
-            println!("  {:<28} {:.2}x", "Leverage:".cyan(),
-                if own_tos > 0.0 { total_staked / own_tos } else { 0.0 });
+            println!(
+                "  {:<28} {:.2}x",
+                "Leverage:".cyan(),
+                if own_tos > 0.0 { total_staked / own_tos } else { 0.0 }
+            );
             println!();
-            println!("  {}", "Note: Actual APR depends on elector rewards and pool interest".dimmed());
+            println!(
+                "  {}",
+                "Note: Actual APR depends on elector rewards and pool interest".dimmed()
+            );
             println!("  {}", "rate, which are only known after the cycle completes.".dimmed());
 
             // Typical TOS validation round is ~18h (65536 seconds)
@@ -3342,7 +3287,10 @@ impl PoolLiquidControllerAprCmd {
             // If we know the pool interest rate (SHARE_BASIS = 65536), we can estimate
             // Assume typical 1% per round interest as a reference
             println!();
-            println!("  {}", "Reference APR projections (per-round reward scenarios):".yellow().bold());
+            println!(
+                "  {}",
+                "Reference APR projections (per-round reward scenarios):".yellow().bold()
+            );
             for reward_bps in [50u64, 100, 200, 500] {
                 let reward_rate = reward_bps as f64 / 10000.0;
                 let round_reward = total_staked * reward_rate / 100.0; // reward in TOS
@@ -3353,9 +3301,11 @@ impl PoolLiquidControllerAprCmd {
                 } else {
                     0.0
                 };
-                println!("  {:<28} {:.2}%",
+                println!(
+                    "  {:<28} {:.2}%",
                     format!("  If reward = {:.2}% /round:", reward_rate).cyan(),
-                    apr);
+                    apr
+                );
             }
         } else if data.state == 0 && data.borrowed_amount == 0 {
             println!("  {}", "Controller is idle (REST, no outstanding loan).".dimmed());
@@ -3376,15 +3326,15 @@ impl PoolLiquidControllerAprCmd {
 
 impl PoolLiquidControllerTestLoanCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        use chain_block::MsgAddressInt;
         use colored::Colorize;
         use common::app_config::PoolConfig;
         use common::chain_utils::{display_tos, tos_to_nanotos};
         use contracts::ControllerWrapperImpl;
-        use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
+        use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
         use std::str::FromStr;
-        use chain_block::MsgAddressInt;
 
         let config_path = Path::new(config_path);
         let config = common::app_config::AppConfig::load(config_path)?;
@@ -3397,14 +3347,9 @@ impl PoolLiquidControllerTestLoanCmd {
             .ok_or_else(|| anyhow::anyhow!("Controller '{}' not found in config", self.name))?;
 
         let controller_addr_str = match pool {
-            PoolConfig::SNP { address, .. } => address
-                .as_ref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Controller '{}' has no address configured",
-                        self.name
-                    )
-                })?,
+            PoolConfig::SNP { address, .. } => address.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Controller '{}' has no address configured", self.name)
+            })?,
             _ => anyhow::bail!("Config entry '{}' is not a controller type", self.name),
         };
 
@@ -3431,8 +3376,12 @@ impl PoolLiquidControllerTestLoanCmd {
         println!("  {:<28} {} TOS", "Current balance:".cyan(), display_tos(balance));
         println!("  {:<28} {}", "Approved:".cyan(), data.approved);
         println!("  {:<28} {} TOS", "Requested credit:".cyan(), display_tos(credit_nanotos));
-        println!("  {:<28} {} bps ({:.4}%)", "Interest rate:".cyan(),
-            self.interest, self.interest as f64 / 100.0);
+        println!(
+            "  {:<28} {} bps ({:.4}%)",
+            "Interest rate:".cyan(),
+            self.interest,
+            self.interest as f64 / 100.0
+        );
         println!();
 
         if !data.approved {
@@ -3442,8 +3391,11 @@ impl PoolLiquidControllerTestLoanCmd {
         }
 
         if data.borrowed_amount > 0 {
-            println!("  {} Controller already has an outstanding loan of {} TOS.",
-                "WARN".yellow().bold(), display_tos(data.borrowed_amount));
+            println!(
+                "  {} Controller already has an outstanding loan of {} TOS.",
+                "WARN".yellow().bold(),
+                display_tos(data.borrowed_amount)
+            );
             println!("  Multiple loans are prohibited; return the current loan first.");
             println!();
         }
@@ -3454,16 +3406,31 @@ impl PoolLiquidControllerTestLoanCmd {
                 let eligible = result.validator_amount >= result.required_balance;
 
                 println!("  {}", "Loan feasibility analysis:".yellow().bold());
-                println!("  {:<28} {} TOS", "Required balance:".cyan(),
-                    display_tos(result.required_balance));
-                println!("  {:<28} {} TOS", "Validator own funds:".cyan(),
-                    display_tos(result.validator_amount));
-                println!("  {:<28} {} TOS", "Surplus / deficit:".cyan(),
+                println!(
+                    "  {:<28} {} TOS",
+                    "Required balance:".cyan(),
+                    display_tos(result.required_balance)
+                );
+                println!(
+                    "  {:<28} {} TOS",
+                    "Validator own funds:".cyan(),
+                    display_tos(result.validator_amount)
+                );
+                println!(
+                    "  {:<28} {} TOS",
+                    "Surplus / deficit:".cyan(),
                     if result.validator_amount >= result.required_balance {
-                        format!("+{}", display_tos(result.validator_amount - result.required_balance))
+                        format!(
+                            "+{}",
+                            display_tos(result.validator_amount - result.required_balance)
+                        )
                     } else {
-                        format!("-{}", display_tos(result.required_balance - result.validator_amount))
-                    });
+                        format!(
+                            "-{}",
+                            display_tos(result.required_balance - result.validator_amount)
+                        )
+                    }
+                );
                 println!();
 
                 if eligible {
@@ -3478,8 +3445,10 @@ impl PoolLiquidControllerTestLoanCmd {
                         "NOT ELIGIBLE".red().bold(),
                         display_tos(deficit),
                     );
-                    println!("  Top up the controller with at least {} TOS to qualify.",
-                        display_tos(deficit));
+                    println!(
+                        "  Top up the controller with at least {} TOS to qualify.",
+                        display_tos(deficit)
+                    );
                 }
             }
             Err(e) => {

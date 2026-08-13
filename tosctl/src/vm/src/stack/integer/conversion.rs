@@ -13,9 +13,9 @@ use crate::stack::integer::{
     utils::{check_overflow, twos_complement},
     Int, IntegerData,
 };
+use chain_block::{error, fail, Error, ExceptionCode, Result};
 use num_traits::Num;
 use std::ops::RangeInclusive;
-use chain_block::{error, fail, Error, ExceptionCode, Result};
 
 impl IntegerData {
     /// Constructs new IntegerData from u32 in a fastest way.

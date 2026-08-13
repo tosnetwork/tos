@@ -14,13 +14,13 @@ use crate::{
     },
 };
 use anyhow::Context;
+use chain_block::{ValidatorSet, write_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx};
 use contracts::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, Wallet, config_contract,
     contract_provider,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use chain_block::{ValidatorSet, write_boc};
 
 const SEND_VOTE_AMOUNT: u64 = 1_000_000_000;
 

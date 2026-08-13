@@ -10,14 +10,8 @@ pub struct ApiResponse<T> {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ApiResponseResult<T> {
-    Success {
-        result: T,
-    },
-    Error {
-        result: Option<String>,
-        error: Option<String>,
-        code: u32,
-    },
+    Success { result: T },
+    Error { result: Option<String>, error: Option<String>, code: u32 },
 }
 
 /// Represents `@type: raw.fullAccountState`.
@@ -353,12 +347,6 @@ pub struct JsonRpcResponse<T> {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcResult<T> {
-    Success {
-        result: T,
-    },
-    Error {
-        result: Option<String>,
-        error: Option<String>,
-        code: u32,
-    },
+    Success { result: T },
+    Error { result: Option<String>, error: Option<String>, code: u32 },
 }

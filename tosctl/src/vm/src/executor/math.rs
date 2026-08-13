@@ -28,8 +28,8 @@ use crate::{
         StackItem,
     },
 };
-use std::{borrow::Cow, cmp::Ordering, mem};
 use chain_block::{fail, Bitmask, ExceptionCode, Result, Status};
+use std::{borrow::Cow, cmp::Ordering, mem};
 
 // Common definitions *********************************************************
 

@@ -42,11 +42,8 @@ jobs:
     # TODO: Preserve ccache cache between runs once we get rid of warning suppression mappings.
 
     # Rust toolchain needed for Rust crates under tosctl/src.
-    - name: Install pinned Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: 1.91.1
-        profile: minimal
+    - name: Install repository-pinned Rust toolchain
+      run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
       run: |

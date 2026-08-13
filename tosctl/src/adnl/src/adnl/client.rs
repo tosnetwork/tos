@@ -9,6 +9,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::common::{AdnlHandshake, AdnlStream, AdnlStreamCrypto, Query, TaggedTlObject, Timeouts};
+use chain_block::{error, fail, Ed25519KeyOption, KeyOption, KeyOptionJson, Result};
 use rand::{Rng, RngCore};
 use std::{
     convert::TryInto,
@@ -29,7 +30,6 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed, TLObject,
 };
-use chain_block::{error, fail, Ed25519KeyOption, KeyOption, KeyOptionJson, Result};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct AdnlClientConfigJson {

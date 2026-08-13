@@ -13,8 +13,8 @@ use super::{
     loader::Loader,
     types::{Code, Instruction, InstructionParameter},
 };
-use std::collections::HashMap;
 use chain_block::{fail, Cell, HashmapE, HashmapType, Result, SliceData};
+use std::collections::HashMap;
 
 fn match_dictpushconst_dictugetjmp(
     pair: &mut [Instruction],

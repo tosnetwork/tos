@@ -4,8 +4,8 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit,
+    BuilderData, Coins, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit,
+    base64_decode, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -211,9 +211,7 @@ impl TaskEscrowContract {
     }
 
     pub fn dispute(query_id: u64, dispute_hash: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
-        message(TASK_DISPUTE_OPCODE, query_id, |b| {
-            b.append_raw(&dispute_hash, 256).map(|_| ())
-        })
+        message(TASK_DISPUTE_OPCODE, query_id, |b| b.append_raw(&dispute_hash, 256).map(|_| ()))
     }
 
     pub fn resolve(query_id: u64, payout: u64) -> anyhow::Result<chain_block::Cell> {
@@ -277,10 +275,10 @@ mod tests {
     use chain_block::{Deserializable, Serializable, SliceData};
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {

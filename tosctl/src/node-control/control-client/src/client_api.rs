@@ -6,8 +6,8 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use common::serde_utils;
 use chain_block::AccountStatus;
+use common::serde_utils;
 
 // --- Custom overlay types ---
 

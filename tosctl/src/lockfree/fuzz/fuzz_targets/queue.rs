@@ -32,13 +32,13 @@ impl Machine for QueueMachine {
                 1 => {
                     self.queue.pop();
                     break;
-                },
+                }
 
                 2 | 3 => {
                     let val = bytecode.next().unwrap_or(0);
                     self.queue.push(Box::new(val));
                     break;
-                },
+                }
 
                 _ => unreachable!(),
             }

@@ -22,6 +22,7 @@ use crate::{
     quic::QuicNode,
     rldp::{Constraints, RldpNode},
 };
+use chain_block::{base64_encode, error, fail, KeyId, KeyOption, Result, UInt256, UnixTime};
 use num_traits::pow::Pow;
 use std::{
     borrow::Borrow,
@@ -82,7 +83,6 @@ use tl_api::{
 };
 #[cfg(feature = "telemetry")]
 use tl_api::{BoxedSerialize, Constructor};
-use chain_block::{base64_encode, error, fail, KeyId, KeyOption, Result, UInt256, UnixTime};
 
 mod broadcast;
 use broadcast::{

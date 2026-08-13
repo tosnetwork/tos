@@ -9,8 +9,8 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use std::{collections::HashMap, slice::ChunksMut};
 use chain_block::{fail, Cell, Result, /*Bitmask,*/ SliceData};
+use std::{collections::HashMap, slice::ChunksMut};
 
 #[derive(Debug, Default, Clone)]
 pub struct Code {

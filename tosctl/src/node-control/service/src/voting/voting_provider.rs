@@ -7,12 +7,12 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::client::AdnlClientConfig;
+use chain_block::{SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{ControlClient, SignRq},
 };
 use std::{collections::HashMap, str::FromStr};
-use chain_block::{SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
 
 #[derive(Clone)]
 pub struct ValidatorEntry {

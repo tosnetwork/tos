@@ -8,24 +8,22 @@
  */
 use crate::client_api::{
     Account, AddAdnlAddressRq, AddCollatorRq, AddLiteserverRq, AddValidatorAdnlAddrRq,
-    AddValidatorPermKeyRq, AddValidatorTempKeyRq, BlockchainConfigInfo, ClientAPI,
+    AddValidatorPermKeyRq, AddValidatorTempKeyRq, BlockchainConfigInfo, ClientAPI, CollatorEntry,
     CollatorNodeWhitelist, CollatorNodeWhitelistRq, CollatorsList, CollatorsListShard,
-    CollatorEntry, CustomOverlayConfig, CustomOverlayNode, CustomOverlaysConfig,
-    ShardDescriptor, EngineValidatorConfig, NodeStats, ShardAccountState, Shutdown, SignRq,
+    CustomOverlayConfig, CustomOverlayNode, CustomOverlaysConfig, EngineValidatorConfig, NodeStats,
+    ShardAccountState, ShardDescriptor, Shutdown, SignRq,
 };
 use adnl::client::{AdnlClient, AdnlClientConfig, AdnlClientConfigJson};
 use anyhow::Context;
+use chain_block::{BlockIdExt, Deserializable, ShardAccount, UInt256, UnixTime, write_boc};
 use std::time::Instant;
 use tl_api::{
     AnyBoxedSerialize, TLObject, serialize_boxed,
     tos::{
-        self,
-        engine::validator::ControlQueryError as ControlQueryError,
-        raw::ShardAccountState as ShardAccountState_TL,
-        rpc::engine::validator::ControlQuery as ControlQuery,
+        self, engine::validator::ControlQueryError, raw::ShardAccountState as ShardAccountState_TL,
+        rpc::engine::validator::ControlQuery,
     },
 };
-use chain_block::{BlockIdExt, Deserializable, ShardAccount, UInt256, UnixTime, write_boc};
 
 pub trait ToFromTL {
     type Rq;
@@ -388,10 +386,7 @@ impl ToFromTL for ShowCollatorNodeWhitelistRqRs {
         let wl = downcast::<tl_api::tos::engine::validator::CollatorNodeWhitelist>(rs)?;
         let inner = wl.only();
         let adnl_ids = inner.adnl_ids.iter().map(|id| hex::encode(id.as_slice())).collect();
-        Ok(CollatorNodeWhitelist {
-            enabled: tl_to_bool(&inner.enabled),
-            adnl_ids,
-        })
+        Ok(CollatorNodeWhitelist { enabled: tl_to_bool(&inner.enabled), adnl_ids })
     }
 }
 
@@ -418,10 +413,8 @@ impl ToFromTL for SetCollatorOptionsJsonRqRs {
     type Rs = ();
 
     fn serialize(json: &Self::Rq) -> anyhow::Result<TLObject> {
-        Ok(tos::rpc::engine::validator::SetCollatorOptionsJson {
-            json: json.clone(),
-        }
-        .into_tl_object())
+        Ok(tos::rpc::engine::validator::SetCollatorOptionsJson { json: json.clone() }
+            .into_tl_object())
     }
 
     fn deserialize(_: TLObject) -> anyhow::Result<Self::Rs> {
@@ -439,10 +432,7 @@ impl ToFromTL for AddCollatorRqRs {
         let adnl_id = UInt256::from_raw(rq.adnl_id.clone(), 256);
         Ok(tos::rpc::engine::validator::AddCollator {
             adnl_id,
-            shard: tos::tos_node::shardid::ShardId {
-                workchain: rq.workchain,
-                shard: rq.shard,
-            },
+            shard: tos::tos_node::shardid::ShardId { workchain: rq.workchain, shard: rq.shard },
         }
         .into_tl_object())
     }
@@ -462,10 +452,7 @@ impl ToFromTL for DelCollatorRqRs {
         let adnl_id = UInt256::from_raw(rq.adnl_id.clone(), 256);
         Ok(tos::rpc::engine::validator::DelCollator {
             adnl_id,
-            shard: tos::tos_node::shardid::ShardId {
-                workchain: rq.workchain,
-                shard: rq.shard,
-            },
+            shard: tos::tos_node::shardid::ShardId { workchain: rq.workchain, shard: rq.shard },
         }
         .into_tl_object())
     }
@@ -541,11 +528,7 @@ impl ToFromTL for GetStatsRqRs {
     fn deserialize(rs: TLObject) -> anyhow::Result<Self::Rs> {
         let stats = downcast::<tl_api::tos::engine::validator::Stats>(rs)?;
         let inner = stats.only();
-        let pairs = inner
-            .stats
-            .into_iter()
-            .map(|s| (s.key.clone(), s.value.clone()))
-            .collect();
+        let pairs = inner.stats.into_iter().map(|s| (s.key.clone(), s.value.clone())).collect();
         Ok(NodeStats { stats: pairs })
     }
 }
@@ -580,11 +563,7 @@ impl ToFromTL for AddLiteserverRqRs {
 
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
         let key_hash = UInt256::from_raw(rq.key_hash.clone(), 256);
-        Ok(tos::rpc::engine::validator::AddLiteserver {
-            key_hash,
-            port: rq.port,
-        }
-        .into_tl_object())
+        Ok(tos::rpc::engine::validator::AddLiteserver { key_hash, port: rq.port }.into_tl_object())
     }
 
     fn deserialize(_: TLObject) -> anyhow::Result<Self::Rs> {
@@ -610,22 +589,17 @@ fn custom_overlay_config_to_tl(
             );
         }
         let adnl_id = UInt256::from_raw(adnl_bytes, 256);
-        nodes.push(
-            tl_api::tos::engine::validator::customoverlaynode::CustomOverlayNode {
-                adnl_id,
-                msg_sender: bool_to_tl(node.msg_sender),
-                msg_sender_priority: node.msg_sender_priority,
-                block_sender: bool_to_tl(node.block_sender),
-            },
-        );
+        nodes.push(tl_api::tos::engine::validator::customoverlaynode::CustomOverlayNode {
+            adnl_id,
+            msg_sender: bool_to_tl(node.msg_sender),
+            msg_sender_priority: node.msg_sender_priority,
+            block_sender: bool_to_tl(node.block_sender),
+        });
     }
     let sender_shards = config
         .sender_shards
         .iter()
-        .map(|s| tos::tos_node::shardid::ShardId {
-            workchain: s.workchain,
-            shard: s.shard,
-        })
+        .map(|s| tos::tos_node::shardid::ShardId { workchain: s.workchain, shard: s.shard })
         .collect();
     Ok(tl_api::tos::engine::validator::customoverlay::CustomOverlay {
         name: config.name.clone(),
@@ -653,10 +627,7 @@ fn tl_to_custom_overlay_config(
     let sender_shards = tl
         .sender_shards
         .iter()
-        .map(|s| ShardDescriptor {
-            workchain: s.workchain,
-            shard: s.shard,
-        })
+        .map(|s| ShardDescriptor { workchain: s.workchain, shard: s.shard })
         .collect();
     CustomOverlayConfig {
         name: tl.name.clone(),
@@ -690,10 +661,7 @@ impl ToFromTL for DelCustomOverlayRqRs {
     type Rs = ();
 
     fn serialize(name: &Self::Rq) -> anyhow::Result<TLObject> {
-        Ok(tos::rpc::engine::validator::DelCustomOverlay {
-            name: name.clone(),
-        }
-        .into_tl_object())
+        Ok(tos::rpc::engine::validator::DelCustomOverlay { name: name.clone() }.into_tl_object())
     }
 
     fn deserialize(_: TLObject) -> anyhow::Result<Self::Rs> {
@@ -948,8 +916,7 @@ impl ClientAPI for ControlClientAdnl {
         categories: Vec<i32>,
         priority_categories: Vec<i32>,
     ) -> anyhow::Result<()> {
-        self.do_rq::<AddQuicAddrRqRs>(&(ip, port, categories, priority_categories))
-            .await
+        self.do_rq::<AddQuicAddrRqRs>(&(ip, port, categories, priority_categories)).await
     }
 
     // --- Custom overlay management ---

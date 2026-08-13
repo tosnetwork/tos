@@ -41,9 +41,7 @@ impl MessageBuilder {
             dst.clone(),
             CurrencyCollection::with_coins(value),
         );
-        Self {
-            message: Message::with_int_header(hdr),
-        }
+        Self { message: Message::with_int_header(hdr) }
     }
 
     /// Create a builder for an external inbound message.
@@ -51,9 +49,7 @@ impl MessageBuilder {
     /// The source address is set to `MsgAddressExt::AddrNone` (i.e. off-chain).
     pub fn external(dst: &MsgAddressInt) -> Self {
         let hdr = ExternalInboundMessageHeader::new(MsgAddressExt::AddrNone, dst.clone());
-        Self {
-            message: Message::with_ext_in_header(hdr),
-        }
+        Self { message: Message::with_ext_in_header(hdr) }
     }
 
     /// Set the `bounce` flag on the message header.
@@ -70,8 +66,7 @@ impl MessageBuilder {
     ///
     /// The cell is converted to a [`SliceData`] via serialization.
     pub fn body(mut self, body: Cell) -> Self {
-        let slice = SliceData::load_cell_ref(&body)
-            .unwrap_or_default();
+        let slice = SliceData::load_cell_ref(&body).unwrap_or_default();
         self.message.set_body(slice);
         self
     }
@@ -107,9 +102,7 @@ mod tests {
     fn internal_message_round_trip() {
         let src = test_addr(0, 1);
         let dst = test_addr(0, 2);
-        let msg = MessageBuilder::internal(&src, &dst, 1_000_000_000)
-            .bounce(true)
-            .build();
+        let msg = MessageBuilder::internal(&src, &dst, 1_000_000_000).bounce(true).build();
 
         let hdr = msg.int_header().expect("should be internal");
         assert!(hdr.bounce);

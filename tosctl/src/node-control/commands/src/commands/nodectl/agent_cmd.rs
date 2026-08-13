@@ -7,9 +7,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 
-use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::aipow_cmd::AipowCmd;
 use super::aipow_dist_cmd::AipowDistCmd;
+use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
 use super::proof_attestation_cmd::ProofAttestationCmd;
@@ -3452,7 +3452,10 @@ fn resolve_nanotos(
 // that value in the signed action and refunds the remaining budget; it is not
 // the same as an omitted amount. Keep every funding/value path strictly
 // positive while allowing only the explicit atomic payout form to be zero.
-fn resolve_payout_nanotos(value_tos: Option<f64>, value_nanotos: Option<u64>) -> anyhow::Result<u64> {
+fn resolve_payout_nanotos(
+    value_tos: Option<f64>,
+    value_nanotos: Option<u64>,
+) -> anyhow::Result<u64> {
     if value_tos.is_none() && value_nanotos == Some(0) {
         return Ok(0);
     }

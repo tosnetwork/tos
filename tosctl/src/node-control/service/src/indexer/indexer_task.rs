@@ -34,7 +34,7 @@ use contracts::{
 };
 
 use crate::indexer::store::{
-    IndexedRecord, IndexerStore, AipowSettlementRecord, ServiceRequestRecord,
+    AipowSettlementRecord, IndexedRecord, IndexerStore, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -1399,8 +1399,11 @@ mod tests {
             if result.exit_code != 0 {
                 anyhow::bail!("get-method {method} error: exit_code={}", result.exit_code);
             }
-            let entries =
-                result.stack.iter().map(lifecycle_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>()?;
+            let entries = result
+                .stack
+                .iter()
+                .map(lifecycle_stack_item_to_entry)
+                .collect::<anyhow::Result<Vec<_>>>()?;
             Ok(TvmStackParser::new(entries))
         }
 
@@ -1470,7 +1473,9 @@ mod tests {
         item: &tos_vm::stack::StackItem,
     ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
         use tl_api::tos::tvm::{
-            Number, StackEntry, numberdecimal::NumberDecimal, slice,
+            Number, StackEntry,
+            numberdecimal::NumberDecimal,
+            slice,
             stackentry::{StackEntryNumber, StackEntrySlice},
         };
         if matches!(item, tos_vm::stack::StackItem::None) {
@@ -1813,13 +1818,9 @@ mod tests {
 
         // Drive a real challenge through the contract, then re-decode: the
         // stored record must follow the status transition.
-        let challenge = MessageBuilder::internal(
-            challenger.address(),
-            &commitment,
-            6 * tos,
-        )
-        .body(AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
-        .build();
+        let challenge = MessageBuilder::internal(challenger.address(), &commitment, 6 * tos)
+            .body(AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
+            .build();
         provider.bc.lock().unwrap().send_message(challenge).unwrap().expect_success();
         decode_and_store(&provider_dyn, &store, &address, "aipow_commitment", 2, base_now)
             .await
@@ -1839,7 +1840,7 @@ mod tests {
 
     #[tokio::test]
     async fn indexer_decodes_an_aipow_distributor_and_follows_claims() {
-        use contracts::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
+        use contracts::aipow_merkle::{ScoreEntry, inclusion_proof, score_root};
         use contracts::{AipowDistributorContract, AipowDistributorInit};
 
         let tos: u64 = 1_000_000_000;

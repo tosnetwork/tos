@@ -10,12 +10,12 @@
  */
 use super::*;
 use crate::{serialize_config, serialize_config_param, SerializationMode};
-use std::fmt::Debug;
 use chain_block::{
     write_boc, BuilderData, ConfigParam3, ConfigParam32, ConfigParam33, ConfigParam35,
     ConfigParam36, ConfigParam37, ConfigParam39, ConfigParam4, ConfigParam6, ConfigParamEnum,
     ConfigVotingSetup, IBitstring, NoncriticalParams, Number16, SigPubKey, VarUInteger32,
 };
+use std::fmt::Debug;
 
 include!("./test_common.rs");
 

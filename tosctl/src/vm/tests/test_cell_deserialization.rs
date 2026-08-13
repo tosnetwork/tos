@@ -9,10 +9,10 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use tos_assembler::CompileError;
 use chain_block::{
     BuilderData, CellType, ExceptionCode, IBitstring, SimpleLib, SliceData, StateInitLib,
 };
+use tos_assembler::CompileError;
 use tos_vm::{
     boolean, int,
     stack::{integer::IntegerData, Stack, StackItem},

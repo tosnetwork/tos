@@ -10,8 +10,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::stack::{savelist::SaveList, SliceData, Stack, StackItem};
-use std::{fmt, mem};
 use chain_block::{error, Cell, ExceptionCode, Result};
+use std::{fmt, mem};
 
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum ContinuationType {

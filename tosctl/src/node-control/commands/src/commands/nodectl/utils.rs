@@ -7,6 +7,11 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
+use chain_block::MsgAddressInt;
+use chain_rpc_client::v2::{
+    client_json_rpc::ClientJsonRpc,
+    data_models::{AccountState, GetWalletInformationRes},
+};
 use colored::Colorize;
 use common::{
     app_config::{AppConfig, WalletConfig},
@@ -19,11 +24,6 @@ use secrets_vault::{
     vault_builder::SecretVaultBuilder,
 };
 use std::{collections::HashMap, fs, path::Path, sync::Arc};
-use chain_block::MsgAddressInt;
-use chain_rpc_client::v2::{
-    client_json_rpc::ClientJsonRpc,
-    data_models::{AccountState, GetWalletInformationRes},
-};
 
 const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 pub const SEND_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(15);

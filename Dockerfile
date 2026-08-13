@@ -13,7 +13,7 @@ COPY ./ ./
 RUN mkdir build && \
         cd build && \
         cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DPORTABLE=1 -DTOS_ARCH= -DTOS_USE_JEMALLOC=ON .. && \
-        ninja storage-daemon storage-daemon-cli toslibjson fift func validator-engine validator-engine-console \
+        ninja storage-daemon storage-daemon-cli toslibjson fift func gen_fif validator-engine validator-engine-console \
     generate-random-id dht-server lite-client tol rldp-http-proxy dht-server proxy-liteserver create-state \
     blockchain-explorer emulator toslibjson http-proxy adnl-proxy dht-ping-servers dht-resolve
 
@@ -47,7 +47,7 @@ COPY --from=builder /tos/build/tol/tol /usr/local/bin/
 COPY --from=builder /tos/build/crypto/fift /usr/local/bin/
 COPY --from=builder /tos/build/crypto/func /usr/local/bin/
 COPY --from=builder /tos/crypto/smartcont/* /usr/share/tos/smartcont/
-COPY --from=builder /tos/crypto/smartcont/auto/* /usr/share/tos/smartcont/auto/
+COPY --from=builder /tos/build/crypto/smartcont/auto/* /usr/share/tos/smartcont/auto/
 COPY --from=builder /tos/crypto/fift/lib/* /usr/lib/fift/
 
 WORKDIR /var/tos-work/db

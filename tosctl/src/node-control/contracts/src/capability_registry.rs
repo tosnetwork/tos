@@ -4,8 +4,8 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit,
+    BuilderData, Coins, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit,
+    base64_decode, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -87,7 +87,10 @@ impl CapabilityRegistryContract {
         Ok(StateInit::with_code_and_data(Self::code()?, Self::build_data(init)?))
     }
 
-    pub fn calculate_address(wc: i32, init: &CapabilityRegistryInit) -> anyhow::Result<MsgAddressInt> {
+    pub fn calculate_address(
+        wc: i32,
+        init: &CapabilityRegistryInit,
+    ) -> anyhow::Result<MsgAddressInt> {
         let cell = Self::build_state_init(init)?.write_to_new_cell()?.into_cell()?;
         Ok(MsgAddressInt::with_params(wc, cell.hash(0))?)
     }
@@ -200,10 +203,10 @@ mod tests {
     use chain_block::{Deserializable, Serializable, SliceData};
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {
@@ -260,11 +263,7 @@ mod tests {
     #[test]
     fn encodes_update_metadata_message() {
         let body = CapabilityRegistryContract::update_metadata(
-            1,
-            [0xAA; 32],
-            [0xBB; 32],
-            [0xCC; 32],
-            [0xDD; 32],
+            1, [0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32],
         )
         .unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();

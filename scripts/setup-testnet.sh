@@ -52,7 +52,7 @@ install -m0755 "$BUILD/utils/generate-random-id"                         "$INSTA
 mkdir -p "$INSTALL_SHARE/fift/lib" "$INSTALL_SHARE/smartcont/auto"
 cp -r "$REPO_ROOT/crypto/fift/lib"/* "$INSTALL_SHARE/fift/lib/"
 cp "$REPO_ROOT/crypto/smartcont"/*.fif "$INSTALL_SHARE/smartcont/" 2>/dev/null || true
-cp "$REPO_ROOT/crypto/smartcont"/auto/* "$INSTALL_SHARE/smartcont/auto/" 2>/dev/null || true
+cp "$BUILD/crypto/smartcont"/auto/* "$INSTALL_SHARE/smartcont/auto/"
 cp "$REPO_ROOT/crypto/smartcont"/stdlib.fc "$INSTALL_SHARE/smartcont/" 2>/dev/null || true
 
 # ── Run Python setup (uses the tested network.py infrastructure) ──

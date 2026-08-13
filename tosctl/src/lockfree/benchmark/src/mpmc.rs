@@ -16,10 +16,10 @@ where
     let then = Instant::now();
     let mut threads = Vec::with_capacity(nthread * 2);
 
-    for i in 0 .. nthread as u128 {
+    for i in 0..nthread as u128 {
         let sender = sender.clone();
         threads.push(thread::spawn(move || {
-            for j in i .. i + niter {
+            for j in i..i + niter {
                 sender.send(j).unwrap();
             }
             (0, 0)
@@ -94,8 +94,7 @@ impl Channel for Mutexed {
     type Receiver = MutexedReceiver;
 
     fn create() -> (Self::Sender, Self::Receiver) {
-        let inner =
-            MutexedInner { senders: 1, receivers: 1, queue: VecDeque::new() };
+        let inner = MutexedInner { senders: 1, receivers: 1, queue: VecDeque::new() };
         let inner = Arc::new(Mutex::new(inner));
 
         let sender = MutexedSender { inner: inner.clone() };
@@ -183,8 +182,7 @@ impl Channel for Std {
 
 impl Sender for std_mpsc::Sender<u128> {
     fn send(&self, val: u128) -> Result<(), mpmc::NoRecv<u128>> {
-        self.send(val)
-            .map_err(|std_mpsc::SendError(message)| mpmc::NoRecv { message })
+        self.send(val).map_err(|std_mpsc::SendError(message)| mpmc::NoRecv { message })
     }
 }
 
@@ -214,26 +212,18 @@ fn main() {
         let mut std = Duration::default();
         let mut lockfree = Duration::default();
 
-        for _ in 0 .. SAMPLES {
+        for _ in 0..SAMPLES {
             deque += measure::<Mutexed>(nthread, NITER);
             std += measure::<Std>(nthread, NITER);
             lockfree += measure::<Lockfree>(nthread, NITER);
         }
 
-        println!(
-            "Mutexed VecDeque with {} threads total time: {:?}",
-            nthread * 2,
-            deque
-        );
+        println!("Mutexed VecDeque with {} threads total time: {:?}", nthread * 2, deque);
         println!(
             "Mutexed Std's MPSC (as MPMC)  with {} threads total time: {:?}",
             nthread * 2,
             std
         );
-        println!(
-            "Lockfree MPMC with {} threads total time: {:?}",
-            nthread * 2,
-            lockfree
-        );
+        println!("Lockfree MPMC with {} threads total time: {:?}", nthread * 2, lockfree);
     }
 }

@@ -9,6 +9,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::common::Version;
+use chain_block::UInt256;
 use tl_api::{
     deserialize_boxed,
     tos::{
@@ -17,7 +18,6 @@ use tl_api::{
     },
     IntoBoxed, TLObject,
 };
-use chain_block::UInt256;
 
 fn print_tl_object(answer: TLObject) {
     if answer.is::<RldpMessage>() {

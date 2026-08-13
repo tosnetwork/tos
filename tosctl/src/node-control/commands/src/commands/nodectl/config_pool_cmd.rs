@@ -12,6 +12,8 @@ use crate::commands::nodectl::{
         calculate_wallet_address, save_config, try_create_rpc_client, warn_chain_rpc_unavailable,
     },
 };
+use chain_block::{ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, MsgAddressInt};
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use colored::Colorize;
 use common::{
     app_config::{AppConfig, PoolConfig},
@@ -20,8 +22,6 @@ use common::{
 use contracts::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
 use secrets_vault::{vault::SecretVault, vault_builder::SecretVaultBuilder};
 use std::{path::Path, str::FromStr, sync::Arc};
-use chain_block::{ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, MsgAddressInt};
-use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage pools in the configuration")]
@@ -89,11 +89,8 @@ impl PoolAddCmd {
             anyhow::bail!("At least one of --address or --owner must be specified");
         }
 
-        let normalized_address = self
-            .address
-            .as_deref()
-            .map(|addr| normalize_address(addr, "address"))
-            .transpose()?;
+        let normalized_address =
+            self.address.as_deref().map(|addr| normalize_address(addr, "address")).transpose()?;
         let normalized_owner =
             self.owner.as_deref().map(|owner| normalize_address(owner, "owner")).transpose()?;
 
@@ -460,7 +457,7 @@ mod tests {
     use common::{
         WalletVersion,
         app_config::{
-            AppConfig, BindingStatus, HttpConfig, KeyConfig, NodeBinding, ChainRpcConfig,
+            AppConfig, BindingStatus, ChainRpcConfig, HttpConfig, KeyConfig, NodeBinding,
             WalletConfig,
         },
     };

@@ -7,13 +7,13 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::{ContractProvider, Wallet, smart_contract::SmartContract};
-use common::{WalletVersion, signer::Signer, time_format};
-use std::sync::Arc;
 use chain_block::{
     BuilderData, Cell, CurrencyCollection, ExternalInboundMessageHeader, IBitstring,
     InternalMessageHeader, Message, MsgAddressExt, MsgAddressInt, OutAction, OutActions,
     Serializable, SliceData, StateInit, base64_decode, read_single_root_boc,
 };
+use common::{WalletVersion, signer::Signer, time_format};
+use std::sync::Arc;
 
 // TOS compatibility: needs verification — wallet code cells must be validated against TOS network
 pub const V1R3_CODE: &str = "b5ee9c7241010101005f0000baff0020dd2082014c97ba218201339cbab19c71b0ed44d0d31fd70bffe304e0a4f260810200d71820d70b1fed44d0d31fd3ffd15112baf2a122f901541044f910f2a2f80001d31f3120d74a96d307d402fb00ded1a4c8cb1fcbffc9ed54b5b86e42";

@@ -159,10 +159,10 @@ impl Target for MutexMixed {
             Some(&j) => {
                 map.insert(key, i.wrapping_add(j));
                 map.remove(&make_key(j));
-            },
+            }
             None => {
                 map.insert(key, i);
-            },
+            }
         }
     }
 }
@@ -183,10 +183,10 @@ impl Target for LockfreeMixed {
             Some(j) => {
                 self.inner.insert(key, i.wrapping_add(j));
                 self.inner.remove(&make_key(j));
-            },
+            }
             None => {
                 self.inner.insert(key, i);
-            },
+            }
         }
     }
 }

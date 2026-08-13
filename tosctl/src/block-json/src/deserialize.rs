@@ -8,9 +8,9 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::*;
 use serde_json::{Map, Value};
 use std::str::FromStr;
-use chain_block::*;
 
 #[allow(dead_code)]
 trait ParseJson {

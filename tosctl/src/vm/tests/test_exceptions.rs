@@ -10,9 +10,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 mod common;
+use chain_block::{ExceptionCode, SliceData};
 use common::*;
 use tos_assembler::CompileError;
-use chain_block::{ExceptionCode, SliceData};
 use tos_vm::{
     boolean, int,
     stack::{integer::IntegerData, Stack, StackItem},

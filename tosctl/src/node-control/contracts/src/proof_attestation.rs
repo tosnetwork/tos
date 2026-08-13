@@ -4,8 +4,8 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Deserializable, IBitstring, MsgAddressInt,
-    Serializable, StateInit,
+    BuilderData, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit, base64_decode,
+    read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -66,7 +66,10 @@ impl ProofAttestationContract {
         Ok(StateInit::with_code_and_data(Self::code()?, Self::build_data(init)?))
     }
 
-    pub fn calculate_address(wc: i32, init: &ProofAttestationInit) -> anyhow::Result<MsgAddressInt> {
+    pub fn calculate_address(
+        wc: i32,
+        init: &ProofAttestationInit,
+    ) -> anyhow::Result<MsgAddressInt> {
         let cell = Self::build_state_init(init)?.write_to_new_cell()?.into_cell()?;
         Ok(MsgAddressInt::with_params(wc, cell.hash(0))?)
     }
@@ -112,7 +115,10 @@ impl ProofAttestationContract {
         crate::domain_bound_hash(attestation_address, attested_hash)
     }
 
-    pub fn rotate_key(query_id: u64, new_public_key: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
+    pub fn rotate_key(
+        query_id: u64,
+        new_public_key: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
         message(ATT_ROTATE_KEY_OPCODE, query_id, |b| b.append_u256(&new_public_key).map(|_| ()))
     }
 
@@ -145,10 +151,10 @@ mod tests {
     use common::tvm_stack_parser::TvmStackParser;
     use ed25519_dalek::{Signer, SigningKey};
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {

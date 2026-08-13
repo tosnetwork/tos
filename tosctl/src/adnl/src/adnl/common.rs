@@ -8,6 +8,11 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+#[cfg(any(feature = "client", feature = "server", feature = "node"))]
+use chain_block::KeyOption;
+use chain_block::{
+    fail, sha256_digest, sha256_digest_slices, AesCtr, KeyId, Result, UInt256, UnixTime,
+};
 use core::ops::Range;
 use rand::Rng;
 #[cfg(any(feature = "client", feature = "node", feature = "server"))]
@@ -22,7 +27,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tl_api::{
     deserialize_boxed_bundle, serialize_boxed, serialize_boxed_append,
     tos::{
@@ -36,11 +40,7 @@ use tl_api::{
     },
     AnyBoxedSerialize, BoxedSerialize, IntoBoxed, TLObject,
 };
-#[cfg(any(feature = "client", feature = "server", feature = "node"))]
-use chain_block::KeyOption;
-use chain_block::{
-    fail, sha256_digest, sha256_digest_slices, AesCtr, KeyId, Result, UInt256, UnixTime,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(any(feature = "node", feature = "server"))]
 pub(crate) const TARGET: &str = "adnl";

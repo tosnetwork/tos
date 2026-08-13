@@ -7,12 +7,12 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::runtime_config::RuntimeConfig;
+use chain_block::UnixTime;
 use common::{
     app_config::AppConfig,
     task_cancellation::{CancellationCtx, CancellationReason},
 };
 use std::sync::{Arc, Mutex};
-use chain_block::UnixTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
@@ -174,15 +174,15 @@ impl TaskController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::app_config::{HttpConfig, ChainRpcConfig};
+    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+    use common::app_config::{ChainRpcConfig, HttpConfig};
+    use contracts::ChainProvider;
     use contracts::{NominatorWrapper, Wallet};
     use secrets_vault::vault::SecretVault;
     use std::{
         collections::HashMap,
         sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
-    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-    use contracts::ChainProvider;
 
     struct NoopRuntimeConfig {
         app_config: Arc<AppConfig>,

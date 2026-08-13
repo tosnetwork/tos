@@ -72,7 +72,10 @@ impl AdminBtcTeleportRmCmd {
         println!("{}", "\u{2500}".repeat(40).dimmed());
         println!();
         println!("  {}", "This command removes BTC teleport integration.".white());
-        println!("  {}", "It is an expert-only operation inherited from legacy operator tooling.".white());
+        println!(
+            "  {}",
+            "It is an expert-only operation inherited from legacy operator tooling.".white()
+        );
         println!();
         println!("  {}", "BTC teleport is not used in standard TOS validator operations.".yellow());
         println!("  {}", "If you need this functionality, contact TOS support.".dimmed());

@@ -20,10 +20,7 @@ pub trait NominatorPoolWrapper: SmartContract + Send + Sync {
     /// Get the full pool data (parsed persistent storage)
     async fn get_pool_data(&self) -> anyhow::Result<NominatorPoolData>;
     /// Get data for a specific nominator by their 256-bit address
-    async fn get_nominator_data(
-        &self,
-        nominator_addr: &[u8; 32],
-    ) -> anyhow::Result<NominatorData>;
+    async fn get_nominator_data(&self, nominator_addr: &[u8; 32]) -> anyhow::Result<NominatorData>;
     /// Check whether there are pending withdraw requests
     async fn has_withdraw_requests(&self) -> anyhow::Result<bool>;
 }

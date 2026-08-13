@@ -207,10 +207,12 @@ fn resolve_dispute_address(
 impl DisputeDeployCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_tos_amount("amount", self.amount)?;
-        let claimant = self.claimant.parse::<MsgAddressInt>().context("invalid claimant address")?;
+        let claimant =
+            self.claimant.parse::<MsgAddressInt>().context("invalid claimant address")?;
         let respondent =
             self.respondent.parse::<MsgAddressInt>().context("invalid respondent address")?;
-        let reviewer = self.reviewer.parse::<MsgAddressInt>().context("invalid reviewer address")?;
+        let reviewer =
+            self.reviewer.parse::<MsgAddressInt>().context("invalid reviewer address")?;
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let attestor_pubkey =
@@ -536,7 +538,8 @@ impl DisputeSendCmd {
         if !self.yes && !confirm("Confirm Dispute message?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,

@@ -58,12 +58,12 @@ impl Bytecode {
     }
 
     pub fn code_seg(&self) -> &[u8] {
-        &self.data[self.sym_size * 256 ..]
+        &self.data[self.sym_size * 256..]
     }
 
     pub fn symbol(&self, index: u8) -> &[u8] {
         let start = self.sym_size * index as usize;
-        &self.data[start .. start + self.sym_size]
+        &self.data[start..start + self.sym_size]
     }
 
     pub fn next(&mut self) -> Option<u8> {
@@ -120,19 +120,19 @@ where
                 self.threads.push(thread::spawn(move || {
                     new.run(&mut bytecode);
                 }))
-            },
+            }
 
             129 | 57 => {
                 if let Some(thread) = self.threads.pop() {
                     thread.join().unwrap()
                 }
-            },
+            }
 
             _ => {
                 let new_op = bytecode.next().unwrap_or(1);
                 let byte = byte.wrapping_mul(new_op) ^ byte;
                 self.machine.interpret(byte, bytecode);
-            },
+            }
         }
     }
 }

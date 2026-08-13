@@ -9,11 +9,11 @@
 use super::{NominatorRoles, NominatorWrapper, PoolConfig, PoolData};
 use crate::{ContractProvider, SmartContract};
 use anyhow::Context;
-use std::sync::Arc;
 use chain_block::{
     BuilderData, Deserializable, MsgAddressInt, Serializable, SliceData, StateInit,
     read_single_root_boc,
 };
+use std::sync::Arc;
 
 /// Code for single-nominator contract v1.1
 /// Compiled from TOS-adapted FunC source using TOS FunC compiler (2026-04-13)
@@ -159,9 +159,9 @@ impl NominatorWrapper for NominatorWrapperImpl {
 mod tests {
     use super::*;
     use crate::contract_provider;
-    use std::str::FromStr;
     use chain_block::MsgAddressInt;
     use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+    use std::str::FromStr;
 
     fn open_nominator() -> Option<NominatorWrapperImpl> {
         let nominator_addr =

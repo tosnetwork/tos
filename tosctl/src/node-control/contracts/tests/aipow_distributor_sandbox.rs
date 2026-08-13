@@ -23,7 +23,7 @@
 //! poke, malformed proof, unknown op, payout of an unclaimed identity).
 
 use chain_block::{Cell, MsgAddressInt};
-use contracts::aipow_merkle::{inclusion_proof, score_root, ProofStep, ScoreEntry};
+use contracts::aipow_merkle::{ProofStep, ScoreEntry, inclusion_proof, score_root};
 use contracts::{AipowDistributorContract, AipowDistributorInit, AipowMaturation};
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
@@ -72,7 +72,8 @@ const TOTAL_SCORE: u128 = 1_000_000;
 /// The immediate tranche the contract pays at claim time for a recorded
 /// `amount`, matching `compute_matured` at claim time (25% floored).
 fn immediate(amount: u64) -> u64 {
-    (u128::from(amount) * u128::from(AipowMaturation::methodology_v0().immediate_bps) / 10_000) as u64
+    (u128::from(amount) * u128::from(AipowMaturation::methodology_v0().immediate_bps) / 10_000)
+        as u64
 }
 
 /// The address an identity is paid at: `addr_std(EARNER_WC, identity)`.
@@ -105,8 +106,7 @@ impl Fixture {
             score_root: root,
             commitment_ref: [0x99; 32],
         };
-        let distributor =
-            AipowDistributorContract::calculate_address(-1, &init).expect("address");
+        let distributor = AipowDistributorContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(operator.address(), &distributor, deploy_value)
             .bounce(false)
             .state_init(AipowDistributorContract::build_state_init(&init).expect("state init"))
@@ -121,8 +121,9 @@ impl Fixture {
     }
 
     fn send_with_value(&mut self, body: Cell, value: u64) -> tos_sandbox::SendResult {
-        let msg =
-            MessageBuilder::internal(self.caller.address(), &self.distributor, value).body(body).build();
+        let msg = MessageBuilder::internal(self.caller.address(), &self.distributor, value)
+            .body(body)
+            .build();
         self.bc.send_message(msg).expect("send")
     }
 
@@ -146,9 +147,9 @@ impl Fixture {
     }
 
     fn identity_arg(identity: [u8; 32]) -> tos_vm::stack::StackItem {
-        tos_vm::stack::StackItem::int(
-            tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(identity),
-        )
+        tos_vm::stack::StackItem::int(tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(
+            identity,
+        ))
     }
 
     fn parse_stack(stack: &[tos_vm::stack::StackItem]) -> common::tvm_stack_parser::TvmStackParser {
@@ -176,10 +177,7 @@ impl Fixture {
     }
 
     fn matured(&self, identity: [u8; 32], at_time: u64) -> Option<u64> {
-        let arg = vec![
-            Self::identity_arg(identity),
-            tos_vm::stack::StackItem::int(at_time as i64),
-        ];
+        let arg = vec![Self::identity_arg(identity), tos_vm::stack::StackItem::int(at_time as i64)];
         let stack = self
             .bc
             .run_get_method(&self.distributor, "get_matured", arg)
@@ -187,18 +185,24 @@ impl Fixture {
             .expect_success()
             .stack
             .clone();
-        AipowDistributorContract::decode_matured(&Self::parse_stack(&stack)).expect("decode_matured")
+        AipowDistributorContract::decode_matured(&Self::parse_stack(&stack))
+            .expect("decode_matured")
     }
 
     fn matured_now(&self, identity: [u8; 32]) -> Option<u64> {
         let stack = self
             .bc
-            .run_get_method(&self.distributor, "get_matured_now", vec![Self::identity_arg(identity)])
+            .run_get_method(
+                &self.distributor,
+                "get_matured_now",
+                vec![Self::identity_arg(identity)],
+            )
             .expect("get_matured_now")
             .expect_success()
             .stack
             .clone();
-        AipowDistributorContract::decode_matured(&Self::parse_stack(&stack)).expect("decode_matured")
+        AipowDistributorContract::decode_matured(&Self::parse_stack(&stack))
+            .expect("decode_matured")
     }
 
     fn now(&self) -> u64 {
@@ -225,7 +229,9 @@ fn sandbox_stack_item_to_entry(
     item: &tos_vm::stack::StackItem,
 ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, slice,
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
     if let Ok(int) = item.as_integer() {
@@ -235,11 +241,15 @@ fn sandbox_stack_item_to_entry(
     }
     if let Ok(slice) = item.as_slice() {
         let bytes = slice.clone().get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     if let Ok(cell) = item.as_cell() {
         let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     anyhow::bail!("unsupported sandbox stack item")
 }
@@ -271,13 +281,9 @@ fn every_member_claims_its_pro_rata_share_and_is_paid_the_immediate_tranche() {
         assert_eq!(f.claim_amount(entry.identity), None, "unclaimed before claim");
         assert_eq!(f.earner_balance(entry.identity), 0, "unpaid before claim");
         let proof = inclusion_proof(&members, &entry.identity).unwrap();
-        let body = AipowDistributorContract::claim(
-            index as u64,
-            entry.identity,
-            entry.score,
-            &proof,
-        )
-        .unwrap();
+        let body =
+            AipowDistributorContract::claim(index as u64, entry.identity, entry.score, &proof)
+                .unwrap();
         // The claim emits exactly one payment (the immediate tranche).
         f.send(body).expect_success().expect_out_msgs(1);
 
@@ -302,10 +308,8 @@ fn every_member_claims_its_pro_rata_share_and_is_paid_the_immediate_tranche() {
     // denominator -- the cumulative cap is satisfied with no slack left.
     assert_eq!(f.data().claimed_score, TOTAL_SCORE);
     // The five flooring shares sum to at most the pool; dust is unallocated.
-    let total: u64 = members
-        .iter()
-        .map(|e| (u128::from(POOL) * e.score / TOTAL_SCORE) as u64)
-        .sum();
+    let total: u64 =
+        members.iter().map(|e| (u128::from(POOL) * e.score / TOTAL_SCORE) as u64).sum();
     assert!(total <= POOL);
 }
 
@@ -319,8 +323,7 @@ fn claim_pays_the_immediate_tranche_and_payout_streams_the_rest() {
     let entry = &members[2]; // identity 0x33, score 300_000 -> 3 TOS share
     let id = entry.identity;
     let proof = inclusion_proof(&members, &id).unwrap();
-    f.send(AipowDistributorContract::claim(0, id, entry.score, &proof).unwrap())
-        .expect_success();
+    f.send(AipowDistributorContract::claim(0, id, entry.score, &proof).unwrap()).expect_success();
     let amount = f.claim(id).unwrap().amount;
     let claimed_at = f.claim(id).unwrap().claimed_at;
 
@@ -329,34 +332,27 @@ fn claim_pays_the_immediate_tranche_and_payout_streams_the_rest() {
     assert_eq!(f.earner_balance(id), immediate(amount));
 
     // Right after the claim nothing more has matured: a payout poke is rejected.
-    f.send(AipowDistributorContract::payout(1, id).unwrap())
-        .expect_exit_code(ERR_NOTHING_TO_PAY);
+    f.send(AipowDistributorContract::payout(1, id).unwrap()).expect_exit_code(ERR_NOTHING_TO_PAY);
 
     // Advance four epochs and poke: the newly-matured delta is paid and paid
     // advances to the four-epoch matured value.
     f.bc.set_now((claimed_at + 4 * e) as u32);
     let matured_4 = f.matured_now(id).unwrap();
-    f.send(AipowDistributorContract::payout(2, id).unwrap())
-        .expect_success()
-        .expect_out_msgs(1);
+    f.send(AipowDistributorContract::payout(2, id).unwrap()).expect_success().expect_out_msgs(1);
     assert_eq!(f.claim(id).unwrap().paid, matured_4);
     assert_eq!(f.earner_balance(id), matured_4);
 
     // A second poke at the same time has nothing new to pay.
-    f.send(AipowDistributorContract::payout(3, id).unwrap())
-        .expect_exit_code(ERR_NOTHING_TO_PAY);
+    f.send(AipowDistributorContract::payout(3, id).unwrap()).expect_exit_code(ERR_NOTHING_TO_PAY);
 
     // Past full maturation the identity has received the whole amount.
     f.bc.set_now((claimed_at + 8 * e) as u32);
-    f.send(AipowDistributorContract::payout(4, id).unwrap())
-        .expect_success()
-        .expect_out_msgs(1);
+    f.send(AipowDistributorContract::payout(4, id).unwrap()).expect_success().expect_out_msgs(1);
     assert_eq!(f.claim(id).unwrap().paid, amount);
     assert_eq!(f.earner_balance(id), amount);
 
     // Fully paid: another poke is rejected.
-    f.send(AipowDistributorContract::payout(5, id).unwrap())
-        .expect_exit_code(ERR_NOTHING_TO_PAY);
+    f.send(AipowDistributorContract::payout(5, id).unwrap()).expect_exit_code(ERR_NOTHING_TO_PAY);
 }
 
 #[test]
@@ -453,17 +449,19 @@ fn a_second_claim_by_the_same_identity_is_rejected() {
 fn a_zero_total_score_distributor_cannot_be_built() {
     // build_data rejects a zero total_score outright, so a zero-denominator
     // distributor can never be deployed through the SDK.
-    assert!(contracts::AipowDistributorContract::build_data(&AipowDistributorInit {
-        operator: MsgAddressInt::with_standart(None, -1, [1; 32].into()).unwrap(),
-        epoch: 1,
-        earner_workchain: 0,
-        total_score: 0,
-        pool: POOL,
-        maturation: AipowMaturation::methodology_v0(),
-        score_root: [1; 32],
-        commitment_ref: [0; 32],
-    })
-    .is_err());
+    assert!(
+        contracts::AipowDistributorContract::build_data(&AipowDistributorInit {
+            operator: MsgAddressInt::with_standart(None, -1, [1; 32].into()).unwrap(),
+            epoch: 1,
+            earner_workchain: 0,
+            total_score: 0,
+            pool: POOL,
+            maturation: AipowMaturation::methodology_v0(),
+            score_root: [1; 32],
+            commitment_ref: [0; 32],
+        })
+        .is_err()
+    );
     let _ = ERR_INVALID_TOTAL_SCORE;
 }
 
@@ -583,13 +581,7 @@ fn a_claim_matures_on_chain_matching_the_sdk_curve() {
     for elapsed in [0u64, 1, 4, 8, 100] {
         let at = claimed_at + elapsed * epoch_secs;
         let sdk = contracts::compute_matured(
-            &contracts::AipowClaim {
-                amount,
-                claimed_at,
-                forfeited: false,
-                forfeit_at: 0,
-                paid: 0,
-            },
+            &contracts::AipowClaim { amount, claimed_at, forfeited: false, forfeit_at: 0, paid: 0 },
             &mat,
             at,
         );
@@ -643,22 +635,38 @@ fn operator_forfeit_freezes_maturation_and_is_once_only() {
     let epoch_secs = u64::from(AipowMaturation::methodology_v0().epoch_seconds);
     let entry = &members[1]; // 0x22, score 200_000
     let proof = inclusion_proof(&members, &entry.identity).unwrap();
-    send(&mut bc, outsider.address(), AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap())
-        .expect_success();
+    send(
+        &mut bc,
+        outsider.address(),
+        AipowDistributorContract::claim(0, entry.identity, entry.score, &proof).unwrap(),
+    )
+    .expect_success();
 
     let read_claim = |bc: &Blockchain| -> contracts::AipowClaim {
         let arg = vec![tos_vm::stack::StackItem::int(
             tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(entry.identity),
         )];
-        let stack = bc.run_get_method(&distributor, "get_claim", arg).unwrap().expect_success().stack.clone();
+        let stack = bc
+            .run_get_method(&distributor, "get_claim", arg)
+            .unwrap()
+            .expect_success()
+            .stack
+            .clone();
         AipowDistributorContract::decode_claim(&Fixture::parse_stack(&stack)).unwrap().unwrap()
     };
     let read_matured = |bc: &Blockchain, at: u64| -> u64 {
         let arg = vec![
-            tos_vm::stack::StackItem::int(tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(entry.identity)),
+            tos_vm::stack::StackItem::int(
+                tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(entry.identity),
+            ),
             tos_vm::stack::StackItem::int(at as i64),
         ];
-        let stack = bc.run_get_method(&distributor, "get_matured", arg).unwrap().expect_success().stack.clone();
+        let stack = bc
+            .run_get_method(&distributor, "get_matured", arg)
+            .unwrap()
+            .expect_success()
+            .stack
+            .clone();
         AipowDistributorContract::decode_matured(&Fixture::parse_stack(&stack)).unwrap().unwrap()
     };
     let claimed = read_claim(&bc);
@@ -667,13 +675,21 @@ fn operator_forfeit_freezes_maturation_and_is_once_only() {
     assert_eq!(claimed.paid, immediate(claimed.amount));
 
     // A non-operator cannot forfeit.
-    send(&mut bc, outsider.address(), AipowDistributorContract::forfeit(1, entry.identity).unwrap())
-        .expect_exit_code(2205);
+    send(
+        &mut bc,
+        outsider.address(),
+        AipowDistributorContract::forfeit(1, entry.identity).unwrap(),
+    )
+    .expect_exit_code(2205);
 
     // Advance two epochs, then the operator forfeits.
     bc.set_now((claimed_at + 2 * epoch_secs) as u32);
-    send(&mut bc, operator.address(), AipowDistributorContract::forfeit(2, entry.identity).unwrap())
-        .expect_success();
+    send(
+        &mut bc,
+        operator.address(),
+        AipowDistributorContract::forfeit(2, entry.identity).unwrap(),
+    )
+    .expect_success();
     let after = read_claim(&bc);
     assert!(after.forfeited);
     assert_eq!(after.forfeit_at, claimed_at + 2 * epoch_secs);
@@ -696,8 +712,12 @@ fn operator_forfeit_freezes_maturation_and_is_once_only() {
         .expect_exit_code(ERR_NOTHING_TO_PAY);
 
     // A second forfeit is rejected.
-    send(&mut bc, operator.address(), AipowDistributorContract::forfeit(3, entry.identity).unwrap())
-        .expect_exit_code(2207);
+    send(
+        &mut bc,
+        operator.address(),
+        AipowDistributorContract::forfeit(3, entry.identity).unwrap(),
+    )
+    .expect_exit_code(2207);
     // Forfeiting an unclaimed identity is rejected.
     send(&mut bc, operator.address(), AipowDistributorContract::forfeit(4, [0xEE; 32]).unwrap())
         .expect_exit_code(2206);
@@ -772,13 +792,7 @@ fn on_chain_maturation_matches_the_sdk_for_non_round_amounts() {
         claimed_at + 100 * e,
     ] {
         let sdk = contracts::compute_matured(
-            &contracts::AipowClaim {
-                amount,
-                claimed_at,
-                forfeited: false,
-                forfeit_at: 0,
-                paid: 0,
-            },
+            &contracts::AipowClaim { amount, claimed_at, forfeited: false, forfeit_at: 0, paid: 0 },
             &mat,
             at,
         );
@@ -804,8 +818,7 @@ fn on_chain_maturation_matches_the_sdk_at_boundary_bps() {
         let amount = claimed.amount;
         let claimed_at = claimed.claimed_at;
         // Immediate paid at claim time equals the bps fraction of the amount.
-        let expect_immediate =
-            (u128::from(amount) * u128::from(immediate_bps) / 10_000) as u64;
+        let expect_immediate = (u128::from(amount) * u128::from(immediate_bps) / 10_000) as u64;
         assert_eq!(claimed.paid, expect_immediate, "bps={immediate_bps} immediate");
         for at in [claimed_at, claimed_at + e, claimed_at + 4 * e, claimed_at + 8 * e] {
             let sdk = contracts::compute_matured(
@@ -856,13 +869,7 @@ fn forfeit_between_epoch_boundaries_matches_the_sdk() {
     // Frozen value the contract reports at several later times equals the SDK.
     for at in [forfeit_at, forfeit_at + e, claimed_at + 100 * e] {
         let sdk = contracts::compute_matured(
-            &contracts::AipowClaim {
-                amount,
-                claimed_at,
-                forfeited: true,
-                forfeit_at,
-                paid: 0,
-            },
+            &contracts::AipowClaim { amount, claimed_at, forfeited: true, forfeit_at, paid: 0 },
             &mat,
             at,
         );

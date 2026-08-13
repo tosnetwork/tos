@@ -20,10 +20,7 @@ async fn main() {
         "address": address,
     });
 
-    match api_client
-        .json_rpc("getAddressInformation", params, serde_json::json!(1))
-        .await
-    {
+    match api_client.json_rpc("getAddressInformation", params, serde_json::json!(1)).await {
         Ok(response) => println!("Response: {:#?}", response),
         Err(e) => {
             eprintln!("{:?}", e);

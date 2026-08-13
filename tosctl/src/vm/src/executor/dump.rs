@@ -16,8 +16,8 @@ use crate::{
     },
     stack::StackItem,
 };
-use std::{cmp, str, sync::Arc};
 use chain_block::{fail, ExceptionCode, Mask, Status};
+use std::{cmp, str, sync::Arc};
 
 const STR: u8 = 0x01;
 const HEX: u8 = 0x02;

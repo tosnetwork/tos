@@ -6,12 +6,12 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use clap::{Args, command};
-use common::app_config::AppConfig;
-use std::{path::Path, sync::Arc};
 use chain_block::BuilderData;
 use chain_block_json::{SerializationMode, serialize_known_config_param};
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+use clap::{Args, command};
+use common::app_config::AppConfig;
+use std::{path::Path, sync::Arc};
 
 #[derive(Args, Debug, Clone)]
 #[command(about = "Get current config parameter from masterchain state (TOS chain RPC)")]

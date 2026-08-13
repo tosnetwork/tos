@@ -41,7 +41,7 @@ where
     let map = Arc::new(M::default());
     let (mut sender, receiver) = C::create();
 
-    for _ in 0 .. nthread {
+    for _ in 0..nthread {
         let map = map.clone();
         let receiver = receiver.clone();
         let joiner = thread::spawn(move || {
@@ -62,9 +62,9 @@ where
     let then = Instant::now();
 
     let mut pairs = Vec::with_capacity(step1);
-    for i in 0 .. step1 {
+    for i in 0..step1 {
         let mut key = String::with_capacity(step1 * nest1 * 2 + 1);
-        for j in 0 .. nest1 {
+        for j in 0..nest1 {
             write!(key, "{}{}", i * j, (i + j) as u8 as char).unwrap();
         }
         let mut val = format!("{}", i);
@@ -83,9 +83,9 @@ where
 
     thread::sleep(Duration::from_millis(sleep1));
 
-    for i in 0 .. step2 {
+    for i in 0..step2 {
         let mut key = String::with_capacity(nest2 * step2 * 2 + 1);
-        for j in 0 .. nest2 {
+        for j in 0..nest2 {
             write!(key, "{}{}", (i + j) as u8 as char, (i + j * 2)).unwrap();
         }
         let mut val = format!("{}", i);
@@ -167,9 +167,7 @@ trait Receiver {
             match self.recv() {
                 Ok(req) => break Some(req),
                 Err(spmc::NoSender) => break None,
-                Err(spmc::NoMessage) => {
-                    thread::sleep(Duration::from_millis(32))
-                },
+                Err(spmc::NoMessage) => thread::sleep(Duration::from_millis(32)),
             }
         }
     }
@@ -212,9 +210,7 @@ impl Channel for Std {
 
 impl Sender for std_mpsc::Sender<Request> {
     fn send(&mut self, val: Request) -> Result<(), spmc::NoRecv<Request>> {
-        (&*self)
-            .send(val)
-            .map_err(|std_mpsc::SendError(message)| spmc::NoRecv { message })
+        (&*self).send(val).map_err(|std_mpsc::SendError(message)| spmc::NoRecv { message })
     }
 }
 
@@ -244,20 +240,11 @@ fn main() {
     for &nthread in &[2, 4, 8, 16] {
         println!();
 
-        let std = measure::<Std, Mutex<_>>(
-            nthread, STEP1, STEP2, NEST1, NEST2, SLEEP1, SLEEP2,
-        );
-        let lockfree = measure::<Lockfree, LfMap<_, _>>(
-            nthread, STEP1, STEP2, NEST1, NEST2, SLEEP1, SLEEP2,
-        );
+        let std = measure::<Std, Mutex<_>>(nthread, STEP1, STEP2, NEST1, NEST2, SLEEP1, SLEEP2);
+        let lockfree =
+            measure::<Lockfree, LfMap<_, _>>(nthread, STEP1, STEP2, NEST1, NEST2, SLEEP1, SLEEP2);
 
-        println!(
-            "Mutexed HashMap and Std's MPSC with {} threads total time: {:?}",
-            nthread, std
-        );
-        println!(
-            "Lockfree structures with {} threads total time: {:?}",
-            nthread, lockfree
-        );
+        println!("Mutexed HashMap and Std's MPSC with {} threads total time: {:?}", nthread, std);
+        println!("Lockfree structures with {} threads total time: {:?}", nthread, lockfree);
     }
 }

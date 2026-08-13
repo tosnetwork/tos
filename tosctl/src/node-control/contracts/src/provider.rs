@@ -7,13 +7,13 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
-use common::tvm_stack_parser::TvmStackParser;
-use std::sync::Arc;
-use tl_api::tos::tvm::StackEntry;
 use chain_block::MsgAddressInt;
 use chain_rpc_client::v2::{
     RPCStackEntry, client_json_rpc::ClientJsonRpc, data_models::RunGetMethodParams,
 };
+use common::tvm_stack_parser::TvmStackParser;
+use std::sync::Arc;
+use tl_api::tos::tvm::StackEntry;
 
 /// Creates a new `ContractProvider` instance backed by `ContractProviderImpl`.
 ///

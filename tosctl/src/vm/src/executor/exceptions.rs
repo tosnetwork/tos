@@ -22,8 +22,8 @@ use crate::{
     },
     stack::{continuation::ContinuationType, StackItem},
 };
-use std::ops::Range;
 use chain_block::{fail, Exception, ExceptionCode, Status};
+use std::ops::Range;
 
 //Utilities **********************************************************************************
 //(c c' -)

@@ -12,8 +12,8 @@ use crate::{
     stack_utils::{bytes_to_stack_entry, i64_to_stack_entry},
 };
 use anyhow::Context;
-use std::sync::Arc;
 use chain_block::MsgAddressInt;
+use std::sync::Arc;
 
 /// Implementation of the configuration contract wrapper
 ///
@@ -214,6 +214,7 @@ impl ConfigContractWrapper for ConfigContractImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chain_block::{BuilderData, Cell, IBitstring, write_boc};
     use common::tvm_stack_parser::TvmStackParser;
     use std::collections::HashMap;
     use tl_api::tos::tvm::{
@@ -222,7 +223,6 @@ mod tests {
         stackentry::{StackEntryCell, StackEntryList, StackEntryNumber, StackEntryTuple},
         tuple,
     };
-    use chain_block::{BuilderData, Cell, IBitstring, write_boc};
 
     // ===== Stack entry helper functions =====
 

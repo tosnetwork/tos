@@ -27,11 +27,7 @@ impl SendResult {
 
     /// Returns all transactions that targeted the given address.
     pub fn transactions_for(&self, addr: &MsgAddressInt) -> Vec<&Transaction> {
-        self.transactions
-            .iter()
-            .filter(|(a, _)| a == addr)
-            .map(|(_, tr)| tr)
-            .collect()
+        self.transactions.iter().filter(|(a, _)| a == addr).map(|(_, tr)| tr).collect()
     }
 
     /// Total number of transactions in the cascade.
@@ -61,11 +57,7 @@ impl SendResult {
         let descr = self.read_primary_description();
         match descr.compute_ph {
             TrComputePhase::Vm(ref vm) => {
-                assert_eq!(
-                    vm.exit_code, code,
-                    "expected exit code {code}, got {}",
-                    vm.exit_code
-                );
+                assert_eq!(vm.exit_code, code, "expected exit code {code}, got {}", vm.exit_code);
             }
             TrComputePhase::Skipped(TrComputePhaseSkipped { reason }) => {
                 panic!(
@@ -79,24 +71,16 @@ impl SendResult {
 
     /// Asserts the number of outbound messages produced by the first transaction.
     pub fn expect_out_msgs(&self, count: usize) -> &Self {
-        let tr = self
-            .first_transaction()
-            .expect("expected at least one transaction");
+        let tr = self.first_transaction().expect("expected at least one transaction");
         let actual = tr.out_msgs.len().expect("failed to read out_msgs length");
-        assert_eq!(
-            actual, count,
-            "expected {count} outbound messages, got {actual}"
-        );
+        assert_eq!(actual, count, "expected {count} outbound messages, got {actual}");
         self
     }
 
     /// Asserts the total number of transactions in the cascade.
     pub fn expect_transaction_count(&self, count: usize) -> &Self {
         let actual = self.transaction_count();
-        assert_eq!(
-            actual, count,
-            "expected {count} transactions, got {actual}"
-        );
+        assert_eq!(actual, count, "expected {count} transactions, got {actual}");
         self
     }
 
@@ -104,9 +88,7 @@ impl SendResult {
     /// ordinary transaction. Panics if there are no transactions or the
     /// description is not `TransactionDescr::Ordinary`.
     pub fn read_primary_description(&self) -> TransactionDescrOrdinary {
-        let tr = self
-            .first_transaction()
-            .expect("no transactions in SendResult");
+        let tr = self.first_transaction().expect("no transactions in SendResult");
         match tr.read_description().expect("failed to read transaction description") {
             TransactionDescr::Ordinary(descr) => descr,
             other => panic!("expected ordinary transaction description, got {other:?}"),
@@ -136,10 +118,9 @@ impl GetMethodResult {
     /// converting it to `i128`. Panics if the stack item is not an integer or
     /// if the value does not fit in `i128`.
     pub fn int_at(&self, index: usize) -> i128 {
-        let item = self
-            .stack
-            .get(index)
-            .unwrap_or_else(|| panic!("stack index {index} out of bounds (len {})", self.stack.len()));
+        let item = self.stack.get(index).unwrap_or_else(|| {
+            panic!("stack index {index} out of bounds (len {})", self.stack.len())
+        });
         item.as_integer()
             .unwrap_or_else(|e| panic!("stack[{index}] is not an integer: {e}"))
             .as_integer_value(i128::MIN..=i128::MAX)
@@ -149,24 +130,18 @@ impl GetMethodResult {
     /// Extracts a `Cell` from the result stack at the given `index`.
     /// Panics if the stack item is not a cell.
     pub fn cell_at(&self, index: usize) -> Cell {
-        let item = self
-            .stack
-            .get(index)
-            .unwrap_or_else(|| panic!("stack index {index} out of bounds (len {})", self.stack.len()));
-        item.as_cell()
-            .unwrap_or_else(|e| panic!("stack[{index}] is not a cell: {e}"))
-            .clone()
+        let item = self.stack.get(index).unwrap_or_else(|| {
+            panic!("stack index {index} out of bounds (len {})", self.stack.len())
+        });
+        item.as_cell().unwrap_or_else(|e| panic!("stack[{index}] is not a cell: {e}")).clone()
     }
 
     /// Extracts a `SliceData` from the result stack at the given `index`.
     /// Panics if the stack item is not a slice.
     pub fn slice_at(&self, index: usize) -> SliceData {
-        let item = self
-            .stack
-            .get(index)
-            .unwrap_or_else(|| panic!("stack index {index} out of bounds (len {})", self.stack.len()));
-        item.as_slice()
-            .unwrap_or_else(|e| panic!("stack[{index}] is not a slice: {e}"))
-            .clone()
+        let item = self.stack.get(index).unwrap_or_else(|| {
+            panic!("stack index {index} out of bounds (len {})", self.stack.len())
+        });
+        item.as_slice().unwrap_or_else(|e| panic!("stack[{index}] is not a slice: {e}")).clone()
     }
 }

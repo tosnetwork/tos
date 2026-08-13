@@ -16,12 +16,12 @@ include!("../../common/src/test.rs");
 use adnl::client::{AdnlClient, AdnlClientConfig};
 #[cfg(feature = "server")]
 use adnl::server::{AdnlServer, AdnlServerConfig};
+#[cfg(all(feature = "client", feature = "server"))]
+use chain_block::Result;
 #[cfg(feature = "client")]
 use std::time::Instant;
 #[cfg(feature = "server")]
 use std::{thread::sleep, time::Duration};
-#[cfg(all(feature = "client", feature = "server"))]
-use chain_block::Result;
 
 #[cfg(feature = "client")]
 const ADNL_CLIENT_CONFIG: &str = "{

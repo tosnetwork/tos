@@ -16,10 +16,10 @@ use chain_block::MsgAddressInt;
 use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::app_config::AipowDistributorConfig;
-use contracts::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
+use contracts::aipow_merkle::{ScoreEntry, inclusion_proof, score_root};
 use contracts::{
-    AipowCommitmentContract, AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
-    AipowMaturation, AIPOW_COMMITMENT_STATUS_FINAL,
+    AIPOW_COMMITMENT_STATUS_FINAL, AipowCommitmentContract, AipowDistributorContract,
+    AipowDistributorData, AipowDistributorInit, AipowMaturation,
 };
 use std::path::Path;
 
@@ -73,8 +73,8 @@ struct EntryJson {
 fn load_entries(path: &str) -> anyhow::Result<Vec<ScoreEntry>> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read entries file {path}"))?;
-    let raw: Vec<EntryJson> =
-        serde_json::from_str(&text).context("entries file must be a JSON array of {identity, score}")?;
+    let raw: Vec<EntryJson> = serde_json::from_str(&text)
+        .context("entries file must be a JSON array of {identity, score}")?;
     raw.into_iter()
         .map(|e| {
             let identity = parse_required_hash("identity", &Some(e.identity))?;
@@ -250,7 +250,11 @@ impl AipowDistDeployCmd {
             .iter()
             .find(|(name, entry)| *name != &record_name && entry.address == address.to_string())
         {
-            anyhow::bail!("distributor address {} is already tracked as '{}'", address, existing_name);
+            anyhow::bail!(
+                "distributor address {} is already tracked as '{}'",
+                address,
+                existing_name
+            );
         }
         let payer_cfg =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
@@ -383,10 +387,7 @@ pub struct AipowDistShowCmd {
     address: Option<String>,
     #[arg(long, help = "Local record name from `agent aipow-dist ls`")]
     name: Option<String>,
-    #[arg(
-        long,
-        help = "Optional identity (hex) to also report the claim and matured amount for"
-    )]
+    #[arg(long, help = "Optional identity (hex) to also report the claim and matured amount for")]
     identity: Option<String>,
     #[arg(long, help = "Unix time to evaluate maturation at; defaults to now")]
     at_time: Option<u64>,
@@ -405,7 +406,10 @@ fn resolve_dist_address(
             .aipow_distributors
             .get(name)
             .ok_or_else(|| {
-                anyhow::anyhow!("distributor record '{}' not found; see `agent aipow-dist ls`", name)
+                anyhow::anyhow!(
+                    "distributor record '{}' not found; see `agent aipow-dist ls`",
+                    name
+                )
             })?
             .address
             .clone(),
@@ -447,9 +451,8 @@ impl AipowDistShowCmd {
         let address = resolve_dist_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let provider = contracts::contract_provider!(rpc_client);
-        let stack = provider
-            .get_method(address.to_string(), "get_aipow_distributor_data", vec![])
-            .await?;
+        let stack =
+            provider.get_method(address.to_string(), "get_aipow_distributor_data", vec![]).await?;
         let data = AipowDistributorContract::decode_data(&stack)?;
         let view = data_view(&address, data);
 
@@ -601,7 +604,8 @@ impl AipowDistClaimCmd {
         if !self.yes && !confirm("Confirm AIPoW distributor claim?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,
@@ -664,7 +668,8 @@ impl AipowDistForfeitCmd {
         if !self.yes && !confirm("Confirm AIPoW distributor forfeit?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,
@@ -709,11 +714,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aipow-dist-entries-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let good = dir.join("good.json");
-        std::fs::write(
-            &good,
-            format!(r#"[{{"identity":"{}","score":500}}]"#, "ab".repeat(32)),
-        )
-        .unwrap();
+        std::fs::write(&good, format!(r#"[{{"identity":"{}","score":500}}]"#, "ab".repeat(32)))
+            .unwrap();
         let entries = load_entries(good.to_str().unwrap()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].identity, [0xAB; 32]);

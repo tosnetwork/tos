@@ -12,6 +12,7 @@ use adnl::{
     common::AdnlPeers, node::AdnlNode, DhtNode, DhtSearchPolicy, OverlayNode, OverlayNodeInfo,
     OverlayNodesSearchContext, OverlayParams, OverlayShortId,
 };
+use chain_block::{base64_encode, fail, KeyOption, Result};
 use std::{
     future::Future,
     sync::{
@@ -21,7 +22,6 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
-use chain_block::{base64_encode, fail, KeyOption, Result};
 
 #[path = "./test_utils.rs"]
 mod test_utils;

@@ -6,9 +6,9 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::{ValidatorSet, config_params::ConfigParam15};
 use control_client::client_api::Account as ControlClientAccount;
 use std::collections::HashMap;
-use chain_block::{ValidatorSet, config_params::ConfigParam15};
 
 fn serialize_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
 where

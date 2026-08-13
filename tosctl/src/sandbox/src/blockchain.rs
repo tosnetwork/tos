@@ -13,17 +13,16 @@ use std::collections::{HashMap, VecDeque};
 use std::mem;
 
 use chain_block::{
-    Account, ConfigParams, CurrencyCollection, Deserializable, McStateExtra,
-    MerkleProof, Message, MsgAddressInt, Serializable, ShardIdent, ShardStateUnsplit,
-    Transaction, tos_method_id,
+    tos_method_id, Account, ConfigParams, CurrencyCollection, Deserializable, McStateExtra,
+    MerkleProof, Message, MsgAddressInt, Serializable, ShardIdent, ShardStateUnsplit, Transaction,
 };
 use tos_executor::{
     BlockchainConfig, ExecuteParams, OrdinaryTransactionExecutor, TransactionExecutor,
 };
 use tos_vm::{
-    SmartContractInfo,
     executor::{gas::gas_state::Gas, Engine},
     stack::{savelist::SaveList, Stack, StackItem},
+    SmartContractInfo,
 };
 
 use crate::{
@@ -261,10 +260,7 @@ impl Blockchain {
             }
         }
 
-        Ok(SendResult {
-            transactions: all_txs,
-            external_out_messages: ext_outs,
-        })
+        Ok(SendResult { transactions: all_txs, external_out_messages: ext_outs })
     }
 
     /// Execute a single message against its destination account.
@@ -279,11 +275,7 @@ impl Blockchain {
 
         // 2. Look up or create a default (uninit) account.
         let addr_key = addr.to_string();
-        let mut account = self
-            .accounts
-            .get(&addr_key)
-            .cloned()
-            .unwrap_or_default();
+        let mut account = self.accounts.get(&addr_key).cloned().unwrap_or_default();
 
         // 3. Serialize message to a Cell.
         let msg_cell = msg.serialize().map_err(|e| {
@@ -345,9 +337,7 @@ impl Blockchain {
             .get_account(address)
             .ok_or_else(|| SandboxError::AccountNotFound(address.to_string()))?;
 
-        let code = account
-            .get_code()
-            .ok_or(SandboxError::NoCode)?;
+        let code = account.get_code().ok_or(SandboxError::NoCode)?;
         let data = account.get_data().unwrap_or_default();
 
         let method_id = tos_method_id(method);
@@ -358,12 +348,9 @@ impl Blockchain {
         let mc_state_root = mc_proof.proof.clone();
 
         // Build SmartContractInfo from the account and the raw mc state.
-        let mut smc_info = SmartContractInfo::with_params(
-            Some(account),
-            None,
-            Some(mc_state_root.clone()),
-        )
-        .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
+        let mut smc_info =
+            SmartContractInfo::with_params(Some(account), None, Some(mc_state_root.clone()))
+                .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
 
         smc_info.unix_time = self.block_unixtime;
         smc_info.block_lt = self.next_lt;
@@ -379,9 +366,7 @@ impl Blockchain {
         ctrls
             .put(7, smc_info.as_temp_data_item())
             .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
-        ctrls
-            .put(4, StackItem::Cell(data))
-            .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
+        ctrls.put(4, StackItem::Cell(data)).map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
 
         // Gas: generous limit for get-methods.
         let gas = Gas::new(1_000_000, 0, 1_000_000, 1_000_000);
@@ -390,21 +375,15 @@ impl Blockchain {
         let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_root)
             .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
 
-        let libraries = vec![
-            account.libraries().inner(),
-            mc_state.libraries().clone().inner(),
-        ];
+        let libraries = vec![account.libraries().inner(), mc_state.libraries().clone().inner()];
 
         let caps = smc_info.config_params.capabilities();
         let mut vm = Engine::with_capabilities(caps)
             .setup_checked(code, ctrls, stack, gas, libraries)
             .map_err(|e| SandboxError::ExecutionFailed(e.into()))?;
 
-        let block_version = smc_info
-            .config_params
-            .get_global_version()
-            .map(|gv| gv.version)
-            .unwrap_or(0);
+        let block_version =
+            smc_info.config_params.get_global_version().map(|gv| gv.version).unwrap_or(0);
         vm.set_block_version(block_version);
 
         let result = vm.execute();
@@ -419,11 +398,7 @@ impl Blockchain {
             }
         };
 
-        Ok(GetMethodResult {
-            exit_code,
-            gas_used: vm.gas_used(),
-            stack: result_stack,
-        })
+        Ok(GetMethodResult { exit_code, gas_used: vm.gas_used(), stack: result_stack })
     }
 
     // ------------------------------------------------------------------
@@ -453,10 +428,7 @@ impl Blockchain {
         mc_state.set_seq_no(mc_seqno);
         mc_state.set_global_id(42);
 
-        let mut extra = McStateExtra {
-            config: config.clone(),
-            ..Default::default()
-        };
+        let mut extra = McStateExtra { config: config.clone(), ..Default::default() };
 
         // Populate fake previous-block references so that prev_blocks_info
         // lookups inside the VM succeed.
@@ -479,12 +451,8 @@ impl Blockchain {
             .add_fake_id(mc_seqno - 30, true)
             .map_err(|e| SandboxError::ConfigError(format!("prev_blocks key: {e}")))?;
 
-        extra.last_key_block = extra
-            .prev_blocks
-            .get_prev_key_block(mc_seqno)
-            .ok()
-            .flatten()
-            .map(|r| r.into());
+        extra.last_key_block =
+            extra.prev_blocks.get_prev_key_block(mc_seqno).ok().flatten().map(|r| r.into());
 
         mc_state
             .write_custom(Some(&extra))
@@ -494,11 +462,8 @@ impl Blockchain {
         let proof_cell = mc_state
             .serialize()
             .map_err(|e| SandboxError::Serialization(format!("mc state serialize: {e}")))?;
-        let merkle_proof = MerkleProof {
-            hash: proof_cell.hash(0),
-            depth: proof_cell.depth(0),
-            proof: proof_cell,
-        };
+        let merkle_proof =
+            MerkleProof { hash: proof_cell.hash(0), depth: proof_cell.depth(0), proof: proof_cell };
         merkle_proof
             .serialize()
             .map_err(|e| SandboxError::Serialization(format!("merkle proof serialize: {e}")))

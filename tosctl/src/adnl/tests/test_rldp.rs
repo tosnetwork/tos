@@ -19,6 +19,10 @@ use adnl::{
     },
     node::{AdnlNode, IpAddress},
 };
+use chain_block::{
+    base64_decode, read_boc, BlockIdExt, BlockProof, Deserializable, KeyId, KeyOption, Result,
+    ShardIdent, UInt256,
+};
 use dht::{DhtSearchPolicy, OverlayNodesSearchContext};
 use overlay::OverlayUtils;
 use rldp::RldpNode;
@@ -34,10 +38,6 @@ use tl_api::{
         rpc::{overlay::Query as OverlayQuery, tos_node::DownloadKeyBlockProof},
     },
     BoxedSerialize, TLObject,
-};
-use chain_block::{
-    base64_decode, read_boc, BlockIdExt, BlockProof, Deserializable, KeyId, KeyOption, Result,
-    ShardIdent, UInt256,
 };
 
 #[path = "./test_utils.rs"]

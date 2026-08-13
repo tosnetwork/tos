@@ -11,27 +11,26 @@ use crate::commands::nodectl::{
     utils::{
         SEND_TIMEOUT, check_chain_rpc_connection, get_wallet_config, load_config_vault,
         load_config_vault_rpc_client, make_wallet, save_config, wait_for_seqno_change,
-        wallet_address, wallet_info, warn_missing_secret, warn_chain_rpc_unavailable,
+        wallet_address, wallet_info, warn_chain_rpc_unavailable, warn_missing_secret,
     },
 };
 use anyhow::Context;
+use chain_block::{ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, Cell, MsgAddressInt, write_boc};
+use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountState};
 use colored::Colorize;
 use common::{
     WalletVersion,
     app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
+    chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
     time_format,
-    chain_utils::{display_tos, tos_to_nanotos},
 };
 use contracts::{
-    ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet, contract_provider,
-    nominator,
+    ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet, contract_provider, nominator,
 };
 use elections::providers::{DefaultElectionsProvider, ElectionsProvider};
 use secrets_vault::{errors::error::VaultError, vault::SecretVault};
 use std::{borrow::Cow, io::Write, path::Path, sync::Arc};
-use chain_block::{ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, Cell, MsgAddressInt, write_boc};
-use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountState};
 
 const WALLET_SEND_GAS: u64 = 1_000_000; // 0.001 TOS
 /// Value in nanotos required by elector to execute stake operations.

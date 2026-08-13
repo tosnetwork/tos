@@ -47,31 +47,23 @@ where
 
     let then = Instant::now();
 
-    for i in 0 .. nthread {
+    for i in 0..nthread {
         let storage = storage.clone();
         let state = state.clone();
         threads.push(thread::spawn(move || {
             let start = i * nhash / nthread;
-            let end = if i + 1 == nthread {
-                nhash
-            } else {
-                (i + 1) * nhash / nthread
-            };
+            let end = if i + 1 == nthread { nhash } else { (i + 1) * nhash / nthread };
 
-            for j in start .. end {
+            for j in start..end {
                 let mut data = Vec::with_capacity((i + j) as usize);
 
-                for n in 0 .. i + j {
+                for n in 0..i + j {
                     data.push(n as u8);
                 }
 
                 let divisor = i / ndiv + 1;
                 let remaining = j % divisor;
-                mine_hash(
-                    &mut data,
-                    Requirement { divisor, remaining },
-                    &state,
-                );
+                mine_hash(&mut data, Requirement { divisor, remaining }, &state);
 
                 storage.add(Requirement { divisor, remaining }, data.into())
             }
@@ -111,14 +103,14 @@ impl Storage for LfMap<Requirement, LfStack<Arc<[u8]>>> {
                 Some((_, stack)) => {
                     stack.push(data);
                     Preview::Discard
-                },
+                }
 
                 None => {
                     let stack = LfStack::new();
                     stack.push(data.clone());
                     cache = Some(data);
                     Preview::New(stack)
-                },
+                }
             }
         });
     }
@@ -143,18 +135,12 @@ fn main() {
         let mut mutexed = Duration::default();
         let mut lockfree = Duration::default();
 
-        for i in 0x40 .. 0x48 {
+        for i in 0x40..0x48 {
             mutexed += measure::<Mutex<_>>(nthread, NHASH, i);
             lockfree += measure::<LfMap<_, _>>(nthread, NHASH, i);
         }
 
-        println!(
-            "Mutexed structures with {} threads total time: {:?}",
-            nthread, mutexed
-        );
-        println!(
-            "Lockfree structures with {} threads total time: {:?}",
-            nthread, lockfree
-        );
+        println!("Mutexed structures with {} threads total time: {:?}", nthread, mutexed);
+        println!("Lockfree structures with {} threads total time: {:?}", nthread, lockfree);
     }
 }

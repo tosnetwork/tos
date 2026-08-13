@@ -55,9 +55,7 @@ pub fn update_validator_set(query_id: u64) -> anyhow::Result<Cell> {
 /// Processes up to `limit` pending withdraw requests from nominators.
 pub fn process_withdraw_requests(query_id: u64, limit: u8) -> anyhow::Result<Cell> {
     let mut b = BuilderData::new();
-    b.append_u32(opcodes::PROCESS_WITHDRAW_REQUESTS)?
-        .append_u64(query_id)?
-        .append_u8(limit)?;
+    b.append_u32(opcodes::PROCESS_WITHDRAW_REQUESTS)?.append_u64(query_id)?.append_u8(limit)?;
     Ok(b.into_cell()?)
 }
 

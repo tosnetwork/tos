@@ -20,7 +20,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chain_block::{Cell, read_single_root_boc};
+use chain_block::{read_single_root_boc, Cell};
 
 use crate::error::{SandboxError, SandboxResult};
 
@@ -78,9 +78,7 @@ fn find_tos_root() -> Option<PathBuf> {
 /// resulting BOC cannot be deserialized.
 pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
     if sources.is_empty() {
-        return Err(SandboxError::InvalidMessage(
-            "compile_func: no source files provided".into(),
-        ));
+        return Err(SandboxError::InvalidMessage("compile_func: no source files provided".into()));
     }
 
     let tos_root = find_tos_root();
@@ -102,9 +100,7 @@ pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
         .ok()
         .or_else(|| tos_root.as_ref().map(|r| r.join("build/crypto/fift")))
         .ok_or_else(|| {
-            SandboxError::ConfigError(
-                "Cannot find fift binary. Set TOS_ROOT or FIFT_PATH.".into(),
-            )
+            SandboxError::ConfigError("Cannot find fift binary. Set TOS_ROOT or FIFT_PATH.".into())
         })?;
 
     // Resolve fift include path
@@ -120,8 +116,8 @@ pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
         .unwrap_or_default();
 
     // Create a temp directory for intermediate files
-    let tmp = tempfile::tempdir()
-        .map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
+    let tmp =
+        tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
     let fif_path = tmp.path().join("output.fif");
     let boc_path = tmp.path().join("output.boc");
 
@@ -158,23 +154,16 @@ pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
         .arg(&fift_script_path)
         .output()
         .map_err(|e| {
-            SandboxError::ConfigError(format!(
-                "Failed to run fift at {}: {e}",
-                fift_bin.display()
-            ))
+            SandboxError::ConfigError(format!("Failed to run fift at {}: {e}", fift_bin.display()))
         })?;
     if !fift_output.status.success() {
         let stderr = String::from_utf8_lossy(&fift_output.stderr);
-        return Err(SandboxError::Serialization(format!(
-            "fift assembly failed:\n{stderr}"
-        )));
+        return Err(SandboxError::Serialization(format!("fift assembly failed:\n{stderr}")));
     }
 
     // Step 3: Read the BOC and deserialize
     if !boc_path.exists() {
-        return Err(SandboxError::Serialization(
-            "fift did not produce output BOC".into(),
-        ));
+        return Err(SandboxError::Serialization("fift did not produce output BOC".into()));
     }
     let boc_bytes = std::fs::read(&boc_path)
         .map_err(|e| SandboxError::Serialization(format!("read BOC: {e}")))?;
@@ -194,9 +183,8 @@ pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
 /// let code = compile_func_with_stdlib(&["contracts/counter.fc"]).unwrap();
 /// ```
 pub fn compile_func_with_stdlib(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
-    let tos_root = find_tos_root().ok_or_else(|| {
-        SandboxError::ConfigError("Cannot find TOS root for stdlib.fc".into())
-    })?;
+    let tos_root = find_tos_root()
+        .ok_or_else(|| SandboxError::ConfigError("Cannot find TOS root for stdlib.fc".into()))?;
 
     let stdlib = tos_root.join("crypto/smartcont/stdlib.fc");
     if !stdlib.exists() {
@@ -252,7 +240,8 @@ mod tests {
         )
         .unwrap();
 
-        let cell = compile_func_with_stdlib(&[&src]).expect("compilation with stdlib should succeed");
+        let cell =
+            compile_func_with_stdlib(&[&src]).expect("compilation with stdlib should succeed");
         assert!(cell.bit_length() > 0 || cell.references_count() > 0);
     }
 }

@@ -8,6 +8,7 @@
  */
 use super::{AdnlServerThread, TcpAuthState};
 use crate::common::{AdnlPeers, AdnlStream, AdnlStreamCrypto, TaggedAdnlMessage, Timeouts};
+use chain_block::{fail, KeyId, Result, UInt256};
 use rand::{Rng, RngCore};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -15,11 +16,6 @@ use std::sync::{
 };
 #[cfg(feature = "telemetry")]
 use std::time::Instant;
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-    time::{timeout, Duration},
-};
 use tl_api::{
     deserialize_boxed, serialize_boxed, serialize_boxed_append,
     tos::{
@@ -32,7 +28,11 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed,
 };
-use chain_block::{fail, KeyId, Result, UInt256};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+    time::{timeout, Duration},
+};
 
 const TOTAL_QUERIES: usize = 64;
 const BUNDLE_LEN: usize = 1024;

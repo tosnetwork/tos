@@ -25,7 +25,7 @@ use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 const TOS: u64 = 1_000_000_000;
 const EPOCH_SECONDS: u32 = 65_536;
 const REGISTER_GRACE: u32 = 3600;
-const CHALLENGE_WINDOW: u32 = 900;  // < REGISTER_GRACE (deploy invariant)
+const CHALLENGE_WINDOW: u32 = 900; // < REGISTER_GRACE (deploy invariant)
 const TOTAL_CAP: u64 = 4_500_000_000 * TOS;
 /// The distributors are deployed on, and pay identities on, this workchain. The
 /// test keeps it on the masterchain the settlement lives on so the settle
@@ -134,7 +134,12 @@ impl Fixture {
         self.send_from_value(from, body, TOS)
     }
 
-    fn send_from_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> tos_sandbox::SendResult {
+    fn send_from_value(
+        &mut self,
+        from: &MsgAddressInt,
+        body: Cell,
+        value: u64,
+    ) -> tos_sandbox::SendResult {
         let msg = MessageBuilder::internal(from, &self.settlement, value).body(body).build();
         self.bc.send_message(msg).expect("send")
     }
@@ -143,11 +148,25 @@ impl Fixture {
     /// data): the body carries `nom.data`, so the settlement's H1 check
     /// (sender == hash(StateInit(commitment_code, data))) passes.
     #[allow(clippy::too_many_arguments)]
-    fn register(&mut self, nom: &(MsgAddressInt, Cell), query_id: u64, epoch: u32, score_root: [u8; 32],
-                total_score: u128, organic: u128, value: u64) -> tos_sandbox::SendResult {
-        let body =
-            AipowSettlementContract::register(query_id, epoch, score_root, total_score, organic, nom.1.clone())
-                .unwrap();
+    fn register(
+        &mut self,
+        nom: &(MsgAddressInt, Cell),
+        query_id: u64,
+        epoch: u32,
+        score_root: [u8; 32],
+        total_score: u128,
+        organic: u128,
+        value: u64,
+    ) -> tos_sandbox::SendResult {
+        let body = AipowSettlementContract::register(
+            query_id,
+            epoch,
+            score_root,
+            total_score,
+            organic,
+            nom.1.clone(),
+        )
+        .unwrap();
         let msg = MessageBuilder::internal(&nom.0, &self.settlement, value).body(body).build();
         self.bc.send_message(msg).expect("register")
     }
@@ -186,10 +205,7 @@ impl Fixture {
     }
 
     fn candidate(&self, epoch: u32, id: [u8; 32]) -> Option<contracts::AipowCandidate> {
-        let arg = vec![
-            tos_vm::stack::StackItem::int(epoch as i64),
-            id_arg(id),
-        ];
+        let arg = vec![tos_vm::stack::StackItem::int(epoch as i64), id_arg(id)];
         let stack = self
             .bc
             .run_get_method(&self.settlement, "get_candidate", arg)
@@ -197,7 +213,8 @@ impl Fixture {
             .expect_success()
             .stack
             .clone();
-        AipowSettlementContract::decode_candidate(&Self::parse_stack(&stack)).expect("decode_candidate")
+        AipowSettlementContract::decode_candidate(&Self::parse_stack(&stack))
+            .expect("decode_candidate")
     }
 
     fn min_candidate(&self, epoch: u32) -> Option<[u8; 32]> {
@@ -215,7 +232,12 @@ impl Fixture {
 
     /// The distributor address the settle path would deploy for the `winner_id`
     /// candidate of `epoch` funded with `pool`, per the settlement's derivation.
-    fn derived_distributor(&self, epoch: u32, winner_id: [u8; 32], pool: u64) -> Option<MsgAddressInt> {
+    fn derived_distributor(
+        &self,
+        epoch: u32,
+        winner_id: [u8; 32],
+        pool: u64,
+    ) -> Option<MsgAddressInt> {
         let arg = vec![
             tos_vm::stack::StackItem::int(epoch as i64),
             id_arg(winner_id),
@@ -265,7 +287,12 @@ impl Fixture {
 
     /// Send a settle-shaped message (a winner id body) from an arbitrary
     /// (non-minter) sender.
-    fn settle_from(&mut self, from: &MsgAddressInt, winner_id: [u8; 32], value: u64) -> tos_sandbox::SendResult {
+    fn settle_from(
+        &mut self,
+        from: &MsgAddressInt,
+        winner_id: [u8; 32],
+        value: u64,
+    ) -> tos_sandbox::SendResult {
         let msg = MessageBuilder::internal(from, &self.settlement, value)
             .body(AipowSettlementContract::settle_body(winner_id).unwrap())
             .build();
@@ -287,10 +314,10 @@ fn sandbox_stack_item_to_entry(
     item: &tos_vm::stack::StackItem,
 ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
     if let Ok(int) = item.as_integer() {
         return Ok(StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
@@ -299,11 +326,15 @@ fn sandbox_stack_item_to_entry(
     }
     if let Ok(slice) = item.as_slice() {
         let bytes = slice.clone().get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     if let Ok(cell) = item.as_cell() {
         let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     anyhow::bail!("unsupported sandbox stack item")
 }
@@ -359,7 +390,8 @@ fn register_rejects_settled_epoch_and_zero_total_score() {
 
     // epoch_settled and zero_total_score are checked before the H1 auth, so a
     // canonical nominator still trips them.
-    f.register(&n, 1, next_epoch - 1, [0xAB; 32], 1_000_000, 1, TOS).expect_exit_code(ERR_EPOCH_SETTLED);
+    f.register(&n, 1, next_epoch - 1, [0xAB; 32], 1_000_000, 1, TOS)
+        .expect_exit_code(ERR_EPOCH_SETTLED);
     f.register(&n, 2, next_epoch, [0xAB; 32], 0, 1, TOS).expect_exit_code(ERR_ZERO_TOTAL_SCORE);
     assert_eq!(f.candidate_count(next_epoch), 0);
 }
@@ -395,7 +427,8 @@ fn register_rejects_a_nomination_too_late_for_its_challenge_window() {
     // One second later the window would end after the skip deadline -> too late.
     let late = nominator(2);
     f.bc.set_now((skippable_at - CHALLENGE_WINDOW as u64 + 1) as u32);
-    f.register(&late, 1, epoch, [0xAB; 32], 1_000_000, 1, TOS).expect_exit_code(ERR_TOO_LATE_TO_REGISTER);
+    f.register(&late, 1, epoch, [0xAB; 32], 1_000_000, 1, TOS)
+        .expect_exit_code(ERR_TOO_LATE_TO_REGISTER);
     assert_eq!(f.candidate_count(epoch), 1, "the late nomination is not admitted");
 }
 
@@ -433,8 +466,10 @@ fn register_rejects_a_non_canonical_sender() {
     // evict a genuine nomination.
     let mut f = Fixture::new();
     let epoch = f.next_epoch;
-    let impostor = f.committer.address().clone();  // a wallet, not a canonical commitment
-    let body = AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 1, commitment_code()).unwrap();
+    let impostor = f.committer.address().clone(); // a wallet, not a canonical commitment
+    let body =
+        AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 1, commitment_code())
+            .unwrap();
     // Carry a sufficient bond so the auth check (not the bond check) is what rejects.
     f.send_from_value(&impostor, body, TOS).expect_exit_code(ERR_UNAUTHORIZED_REGISTRATION);
     assert_eq!(f.candidate_count(epoch), 0, "no candidate admitted");
@@ -484,7 +519,7 @@ fn the_candidate_set_is_bounded_and_keeps_the_smallest_addresses() {
     // the eight smallest addresses.
     let mut ids: Vec<[u8; 32]> = Vec::new();
     for i in 0..9u64 {
-        let c = nominator(100 + i);  // distinct canonical commitments
+        let c = nominator(100 + i); // distinct canonical commitments
         ids.push(account_id(&c.0));
         // A larger candidate set costs more gas per insert on masterchain, so
         // fund these registrations generously.
@@ -550,7 +585,10 @@ fn the_cursor_epochs_candidate_bucket_is_frozen_against_eviction() {
         "the late same-epoch nomination did not enter the bucket"
     );
     for id in &ids {
-        assert!(f.candidate(epoch, *id).is_some(), "every original cursor-epoch candidate is retained");
+        assert!(
+            f.candidate(epoch, *id).is_some(),
+            "every original cursor-epoch candidate is retained"
+        );
     }
 }
 
@@ -605,7 +643,11 @@ fn derived_distributor_address_matches_a_real_deployment() {
     let pool = 7 * TOS;
 
     // An unregistered candidate has no derivable distributor.
-    assert_eq!(f.derived_distributor(epoch, winner, pool), None, "no derivation before registration");
+    assert_eq!(
+        f.derived_distributor(epoch, winner, pool),
+        None,
+        "no derivation before registration"
+    );
 
     f.register(&n, 1, epoch, score_root, total_score, 9 * TOS as u128, TOS).expect_success();
 

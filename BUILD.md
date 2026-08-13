@@ -75,6 +75,17 @@ Common targets:
 - `lite-client`
 - `validator-engine-console`
 
+FunC and Fift intermediates are generated only under the CMake build tree:
+
+```text
+build-clang21/crypto/smartcont/auto/
+```
+
+The source tree must remain unchanged after a build. Files below
+`crypto/smartcont/auto/` are not source or release artifacts and must never be
+committed. Canonical contract releases consist of the `.fc` source, a frozen
+BOC, its hashes, and a release manifest.
+
 ## Rust Workspace
 
 The Rust workspace root is:
@@ -83,10 +94,10 @@ The Rust workspace root is:
 tosctl/src/Cargo.toml
 ```
 
-The pinned toolchain is declared in:
+The repository-wide pinned toolchain is declared in:
 
 ```bash
-tosctl/src/rust-toolchain.toml
+rust-toolchain.toml
 ```
 
 Build from the workspace root:
@@ -95,3 +106,18 @@ Build from the workspace root:
 cd tosctl/src
 cargo build
 ```
+
+The repository pins Rust 1.97.1, including rustfmt and Clippy. The root-level
+file applies even when Cargo is invoked with `--manifest-path`. Do not override
+it with `+stable`, `+nightly`, or an IDE-specific toolchain. Use the canonical
+formatting targets:
+
+```bash
+make fmt
+make fmt-check
+```
+
+`fmt-check` is non-mutating and is enforced in CI. The root-level
+`rustfmt.toml` applies one stable-only policy to the main workspace and every
+standalone repository-owned Cargo project. Vendored and generated sources are
+not reformatted as if they were hand-maintained source.

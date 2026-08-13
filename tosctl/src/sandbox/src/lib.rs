@@ -13,9 +13,9 @@ pub mod genesis;
 pub mod message_builder;
 pub mod result;
 pub mod snapshot;
-pub mod treasury;
 #[cfg(test)]
 mod tests;
+pub mod treasury;
 
 pub use blockchain::Blockchain;
 pub use compile::{compile_func, compile_func_with_stdlib};

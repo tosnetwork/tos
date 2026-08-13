@@ -42,11 +42,7 @@ impl ControllerWrapper for ControllerWrapperImpl {
     async fn get_controller_data(&self) -> anyhow::Result<ControllerData> {
         let stack = self
             .provider
-            .get_method(
-                self.controller_addr.to_string(),
-                "get_validator_controller_data",
-                vec![],
-            )
+            .get_method(self.controller_addr.to_string(), "get_validator_controller_data", vec![])
             .await?;
 
         let state = stack.i64(0).context("parse state")? as i32;
@@ -55,8 +51,7 @@ impl ControllerWrapper for ControllerWrapperImpl {
         let stake_amount_sent = stack.i64(3).context("parse stake_amount_sent")? as u64;
         let stake_at = stack.i64(4).context("parse stake_at")? as u32;
         let saved_validator_set_hash = {
-            let bytes =
-                stack.number_bytes(5, 32).context("parse saved_validator_set_hash")?;
+            let bytes = stack.number_bytes(5, 32).context("parse saved_validator_set_hash")?;
             let mut array = [0u8; 32];
             array.copy_from_slice(&bytes);
             array
@@ -94,19 +89,13 @@ impl ControllerWrapper for ControllerWrapperImpl {
             .get_method(
                 self.controller_addr.to_string(),
                 "required_balance_for_loan",
-                vec![
-                    i64_to_stack_entry(credit as i64),
-                    i64_to_stack_entry(interest as i64),
-                ],
+                vec![i64_to_stack_entry(credit as i64), i64_to_stack_entry(interest as i64)],
             )
             .await?;
 
         let required_balance = stack.i64(0).context("parse required_balance")? as u64;
         let validator_amount = stack.i64(1).context("parse validator_amount")? as u64;
 
-        Ok(LoanBalanceRequirement {
-            required_balance,
-            validator_amount,
-        })
+        Ok(LoanBalanceRequirement { required_balance, validator_amount })
     }
 }

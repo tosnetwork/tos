@@ -385,16 +385,14 @@ impl<X: Default + Serializable + Deserializable, Y: Augmentable> BinTreeAug<X, Y
     pub fn set_extra(&mut self, key: SliceData, aug: &Y) -> bool {
         let original = self.data.clone();
         match Self::internal_set_extra(&original, key, aug) {
-            Ok(Some(new_data)) => {
-                match SliceData::load_builder(new_data) {
-                    Ok(d) => {
-                        self.data = d;
-                        self.extra = aug.clone();
-                        true
-                    }
-                    Err(_) => false,
+            Ok(Some(new_data)) => match SliceData::load_builder(new_data) {
+                Ok(d) => {
+                    self.data = d;
+                    self.extra = aug.clone();
+                    true
                 }
-            }
+                Err(_) => false,
+            },
             _ => false,
         }
     }

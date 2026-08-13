@@ -9,6 +9,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::node::{AdnlNodeConfig, AdnlNodeConfigJson};
+use chain_block::{fail, sha256_digest, Result};
 use std::{
     env,
     ffi::OsString,
@@ -17,7 +18,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
 };
-use chain_block::{fail, sha256_digest, Result};
 
 const ENV_VAR_PORT: &str = "BASE_PORT";
 

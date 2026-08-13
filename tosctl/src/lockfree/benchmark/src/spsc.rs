@@ -26,7 +26,7 @@ where
         }
     });
 
-    for i in 0 .. niter {
+    for i in 0..niter {
         sender.send(i).unwrap();
     }
 
@@ -154,9 +154,7 @@ impl Channel for Std {
 
 impl Sender for std_mpsc::Sender<u128> {
     fn send(&mut self, val: u128) -> Result<(), spsc::NoRecv<u128>> {
-        (&*self)
-            .send(val)
-            .map_err(|std_mpsc::SendError(message)| spsc::NoRecv { message })
+        (&*self).send(val).map_err(|std_mpsc::SendError(message)| spsc::NoRecv { message })
     }
 }
 
@@ -177,7 +175,7 @@ fn main() {
     let mut std = Duration::default();
     let mut lockfree = Duration::default();
 
-    for _ in 0 .. SAMPLES {
+    for _ in 0..SAMPLES {
         deque += measure::<Mutexed>(NITER);
         std += measure::<Std>(NITER);
         lockfree += measure::<Lockfree>(NITER);

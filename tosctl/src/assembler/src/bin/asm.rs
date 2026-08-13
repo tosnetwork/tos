@@ -9,10 +9,10 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::Cell;
 use clap::Parser;
 use std::{error::Error, io::Write, process::ExitCode};
 use tos_assembler::{DbgInfo, Engine, Units};
-use chain_block::Cell;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

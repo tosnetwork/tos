@@ -7,6 +7,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use super::*;
+use chain_block::{
+    BuilderData, Cell, Coins, ConfigParam15, Deserializable, MsgAddressInt, SliceData,
+    ValidatorSet, read_single_root_boc,
+};
 use common::{
     app_config::{ElectionsConfig, NodeBinding, StakePolicy},
     snapshot::SnapshotStore,
@@ -20,10 +24,6 @@ use contracts::{
 };
 use mockall::mock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use chain_block::{
-    BuilderData, Cell, Coins, ConfigParam15, Deserializable, MsgAddressInt, SliceData,
-    ValidatorSet, read_single_root_boc,
-};
 
 // ---- Address helpers ----
 

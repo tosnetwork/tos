@@ -66,7 +66,6 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use tl_api::tos::tvm::StackEntry;
 use chain_block::{ConfigParamEnum, MsgAddressInt};
 use chain_rpc_client::v2::{
     RPCStackEntry,
@@ -76,6 +75,7 @@ use chain_rpc_client::v2::{
         GetMasterchainInfoRes, GetShardsRes, GetWalletInformationRes, RunGetMethodParams,
     },
 };
+use tl_api::tos::tvm::StackEntry;
 
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -274,7 +274,14 @@ impl ChainProvider for DefaultChainProvider {
         count: u32,
     ) -> anyhow::Result<BlockTransactionsPage> {
         self.client
-            .get_block_transactions_page(workchain, &shard.to_string(), seqno, after_lt, after_hash, count)
+            .get_block_transactions_page(
+                workchain,
+                &shard.to_string(),
+                seqno,
+                after_lt,
+                after_hash,
+                count,
+            )
             .await
     }
 }

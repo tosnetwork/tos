@@ -436,7 +436,10 @@ impl AccountStatusCmd {
 
             println!();
             println!("  {}", "Account Status".bold());
-            println!("  {}", "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+            println!(
+                "  {}",
+                "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
+            );
             println!("  {:<18} {}", "Address:".dimmed(), address);
             println!("  {:<18} {} TOS", "Balance:".dimmed(), balance_display);
             println!("  {:<18} {}", "State:".dimmed(), state_display);
@@ -483,7 +486,11 @@ fn extension_notes(ext: &Option<serde_json::Value>) -> String {
     // multisig: threshold
     if let Some(thresh) = obj.get("threshold") {
         if let Some(total) = obj.get("total_signers") {
-            parts.push(format!("threshold:{}/{}", format_json_value_inline(thresh), format_json_value_inline(total)));
+            parts.push(format!(
+                "threshold:{}/{}",
+                format_json_value_inline(thresh),
+                format_json_value_inline(total)
+            ));
         } else {
             parts.push(format!("threshold:{}", format_json_value_inline(thresh)));
         }
@@ -491,7 +498,9 @@ fn extension_notes(ext: &Option<serde_json::Value>) -> String {
     // Fallback: show up to 2 keys for unrecognized extensions
     if parts.is_empty() {
         for (i, (k, v)) in obj.iter().enumerate() {
-            if i >= 2 { break; }
+            if i >= 2 {
+                break;
+            }
             let vs = format_json_value_inline(v);
             let vs_trunc = if vs.len() > 20 { format!("{}...", &vs[..20]) } else { vs };
             parts.push(format!("{}:{}", k, vs_trunc));
@@ -502,7 +511,9 @@ fn extension_notes(ext: &Option<serde_json::Value>) -> String {
 
 fn print_delegations_table(items: &[AccountDelegationGrant]) {
     let has_notes = items.iter().any(|i| {
-        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+        i.constraints_extensions
+            .as_ref()
+            .map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
     });
     let width = if has_notes { 160 } else { 138 };
     println!();
@@ -543,14 +554,8 @@ fn print_delegations_table(items: &[AccountDelegationGrant]) {
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let grantee = if item.grantee.len() > 16 { &item.grantee[..16] } else { &item.grantee };
             let revocable = if item.revocable { "yes" } else { "no" };
-            let created = item
-                .created_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
-            let expires = item
-                .expires_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
+            let created = item.created_at.map(format_ts).unwrap_or_else(|| "-".to_string());
+            let expires = item.expires_at.map(format_ts).unwrap_or_else(|| "-".to_string());
             if has_notes {
                 let notes = extension_notes(&item.constraints_extensions);
                 println!(
@@ -568,14 +573,7 @@ fn print_delegations_table(items: &[AccountDelegationGrant]) {
             } else {
                 println!(
                     "  {:<18} {:<18} {:<16} {:<12} {:<12} {:<10} {:<20} {}",
-                    item.id,
-                    account,
-                    grantee,
-                    item.scope,
-                    item.status,
-                    revocable,
-                    created,
-                    expires,
+                    item.id, account, grantee, item.scope, item.status, revocable, created, expires,
                 );
             }
         }
@@ -585,7 +583,9 @@ fn print_delegations_table(items: &[AccountDelegationGrant]) {
 
 fn print_sessions_table(items: &[AccountSessionCapability]) {
     let has_notes = items.iter().any(|i| {
-        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+        i.constraints_extensions
+            .as_ref()
+            .map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
     });
     let width = if has_notes { 150 } else { 128 };
     println!();
@@ -624,14 +624,8 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
-            let created = item
-                .created_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
-            let expires = item
-                .expires_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
+            let created = item.created_at.map(format_ts).unwrap_or_else(|| "-".to_string());
+            let expires = item.expires_at.map(format_ts).unwrap_or_else(|| "-".to_string());
             if has_notes {
                 let notes = extension_notes(&item.constraints_extensions);
                 println!(
@@ -648,13 +642,7 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
             } else {
                 println!(
                     "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
-                    item.session_id,
-                    account,
-                    principal,
-                    item.scope,
-                    item.status,
-                    created,
-                    expires,
+                    item.session_id, account, principal, item.scope, item.status, created, expires,
                 );
             }
         }
@@ -664,7 +652,9 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
 
 fn print_agents_table(items: &[AccountAgentCapability]) {
     let has_notes = items.iter().any(|i| {
-        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+        i.constraints_extensions
+            .as_ref()
+            .map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
     });
     let width = if has_notes { 150 } else { 128 };
     println!();
@@ -703,14 +693,8 @@ fn print_agents_table(items: &[AccountAgentCapability]) {
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
-            let created = item
-                .created_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
-            let expires = item
-                .expires_at
-                .map(format_ts)
-                .unwrap_or_else(|| "-".to_string());
+            let created = item.created_at.map(format_ts).unwrap_or_else(|| "-".to_string());
+            let expires = item.expires_at.map(format_ts).unwrap_or_else(|| "-".to_string());
             if has_notes {
                 let notes = extension_notes(&item.constraints_extensions);
                 println!(
@@ -727,13 +711,7 @@ fn print_agents_table(items: &[AccountAgentCapability]) {
             } else {
                 println!(
                     "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
-                    item.agent_id,
-                    account,
-                    principal,
-                    item.scope,
-                    item.status,
-                    created,
-                    expires,
+                    item.agent_id, account, principal, item.scope, item.status, created, expires,
                 );
             }
         }
@@ -758,7 +736,11 @@ fn print_lifecycle_json_section(title: &str, value: &serde_json::Value) {
             let mut entries: Vec<_> = map.iter().collect();
             entries.sort_by(|a, b| a.0.cmp(b.0));
             for (key, field_value) in entries {
-                println!("  {:<22} {}", format!("{key}:").dimmed(), format_json_value_inline(field_value));
+                println!(
+                    "  {:<22} {}",
+                    format!("{key}:").dimmed(),
+                    format_json_value_inline(field_value)
+                );
             }
         }
         _ => {
@@ -813,7 +795,11 @@ impl AccountCapabilityCmd {
             println!("  {:<22} {}", "Delegation source:".dimmed(), capability.delegation_source);
             println!("  {:<22} {}", "Session source:".dimmed(), capability.session_source);
             println!("  {:<22} {}", "Agent source:".dimmed(), capability.agent_source);
-            println!("  {:<22} {}", "Capability maturity:".dimmed(), capability.capability_maturity);
+            println!(
+                "  {:<22} {}",
+                "Capability maturity:".dimmed(),
+                capability.capability_maturity
+            );
             if let Some(supported) = capability.supports_sponsorship {
                 println!("  {:<22} {}", "Sponsorship support:".dimmed(), supported);
             }
@@ -922,21 +908,22 @@ impl AccountTxsCmd {
         let txs_res = rpc_client.get_transactions(&address, lt, &hash_b64, limit).await?;
 
         if self.format == OutputFormat::Json {
-            let views: Vec<serde_json::Value> = txs_res.transactions.iter().map(|tx| {
-                serde_json::json!({
-                    "lt": tx.lt,
-                    "utime": tx.utime,
-                    "time": format_ts(tx.utime as u64),
-                    "hash": tx.hash,
+            let views: Vec<serde_json::Value> = txs_res
+                .transactions
+                .iter()
+                .map(|tx| {
+                    serde_json::json!({
+                        "lt": tx.lt,
+                        "utime": tx.utime,
+                        "time": format_ts(tx.utime as u64),
+                        "hash": tx.hash,
+                    })
                 })
-            }).collect();
+                .collect();
             println!("{}", serde_json::to_string_pretty(&views)?);
         } else {
             println!();
-            println!(
-                "{}",
-                format!("Recent Transactions for {}", self.address).bold()
-            );
+            println!("{}", format!("Recent Transactions for {}", self.address).bold());
             println!("{}", "\u{2500}".repeat(72));
             println!(
                 "  {:<4} {:<18} {:<22} {}",
@@ -949,18 +936,8 @@ impl AccountTxsCmd {
 
             for (i, tx) in txs_res.transactions.iter().enumerate() {
                 let time_str = format_ts(tx.utime as u64);
-                let hash_short = if tx.hash.len() > 16 {
-                    &tx.hash[..16]
-                } else {
-                    &tx.hash
-                };
-                println!(
-                    "  {:<4} {:<18} {:<22} {}...",
-                    i + 1,
-                    tx.lt,
-                    time_str,
-                    hash_short,
-                );
+                let hash_short = if tx.hash.len() > 16 { &tx.hash[..16] } else { &tx.hash };
+                println!("  {:<4} {:<18} {:<22} {}...", i + 1, tx.lt, time_str, hash_short,);
             }
 
             if txs_res.transactions.is_empty() {
@@ -1054,11 +1031,7 @@ impl AccountSendBocCmd {
             println!("{}", serde_json::to_string_pretty(&obj)?);
         } else {
             println!();
-            println!(
-                "  {} BOC sent successfully ({} bytes)",
-                "OK".green().bold(),
-                boc_bytes.len()
-            );
+            println!("  {} BOC sent successfully ({} bytes)", "OK".green().bold(), boc_bytes.len());
             println!();
         }
 
@@ -1087,22 +1060,21 @@ impl AccountBookmarkCmd {
                 entries.sort_by_key(|(name, _)| (*name).clone());
 
                 if cmd.format == OutputFormat::Json {
-                    let views: Vec<serde_json::Value> = entries.iter().map(|(name, address)| {
-                        serde_json::json!({
-                            "name": name,
-                            "address": address,
+                    let views: Vec<serde_json::Value> = entries
+                        .iter()
+                        .map(|(name, address)| {
+                            serde_json::json!({
+                                "name": name,
+                                "address": address,
+                            })
                         })
-                    }).collect();
+                        .collect();
                     println!("{}", serde_json::to_string_pretty(&views)?);
                 } else {
                     println!();
                     println!("  {}", "Account Bookmarks".bold());
                     println!("  {}", "\u{2500}".repeat(60));
-                    println!(
-                        "  {:<20} {}",
-                        "Name".bold(),
-                        "Address".bold(),
-                    );
+                    println!("  {:<20} {}", "Name".bold(), "Address".bold(),);
                     println!("  {}", "\u{2500}".repeat(60));
 
                     for (name, address) in entries {
@@ -1124,9 +1096,7 @@ impl AccountBookmarkAddCmd {
             .map_err(|e| anyhow::anyhow!("Invalid address '{}': {}", self.address, e))?;
 
         let mut config = AppConfig::load(config_path)?;
-        config
-            .bookmarks
-            .insert(self.name.clone(), self.address.clone());
+        config.bookmarks.insert(self.name.clone(), self.address.clone());
         save_config(&config, config_path)?;
 
         println!("OK Bookmark '{}' added → {}", self.name, self.address);

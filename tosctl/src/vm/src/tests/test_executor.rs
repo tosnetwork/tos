@@ -25,11 +25,11 @@ use crate::{
         Stack, StackItem,
     },
 };
-use std::collections::HashSet;
 use chain_block::{
     BuilderData, Cell, CurrencyCollection, Deserializable, ExceptionCode, IBitstring, SliceData,
     Status,
 };
+use std::collections::HashSet;
 
 #[test]
 fn test_assert_stack() {

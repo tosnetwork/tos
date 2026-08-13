@@ -16,7 +16,9 @@ use common::{
     snapshot::SnapshotStore,
     task_cancellation::CancellationCtx,
 };
-use contracts::{ChainProvider, ElectorWrapperImpl, NominatorWrapper, Wallet, contract_provider_from};
+use contracts::{
+    ChainProvider, ElectorWrapperImpl, NominatorWrapper, Wallet, contract_provider_from,
+};
 use secrets_vault::vault::SecretVault;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

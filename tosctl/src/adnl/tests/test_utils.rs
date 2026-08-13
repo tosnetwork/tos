@@ -14,6 +14,7 @@ use adnl::{
     DhtNode, OverlayNode, OverlayNodeInfo, OverlayNodesSearchContext, OverlayParams,
     OverlayShortId, RldpNode,
 };
+use chain_block::{base64_decode, error, KeyId, UInt256};
 use std::{
     io::{BufRead, BufReader},
     sync::Arc,
@@ -27,7 +28,6 @@ use tl_api::{
     },
     IntoBoxed,
 };
-use chain_block::{base64_decode, error, KeyId, UInt256};
 
 include!("../../common/src/config.rs");
 include!("../../common/src/test.rs");

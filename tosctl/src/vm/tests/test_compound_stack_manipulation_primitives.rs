@@ -14,10 +14,10 @@ mod common;
 use common::create;
 use common::{test_case, test_case_with_bytecode, test_framework::Expects};
 
-use tos_assembler::CompileError;
 #[cfg(feature = "ci_run")]
 use chain_block::{BuilderData, Cell};
 use chain_block::{ExceptionCode, SliceData};
+use tos_assembler::CompileError;
 #[cfg(feature = "ci_run")]
 use tos_vm::stack::continuation::ContinuationData;
 use tos_vm::{

@@ -51,10 +51,7 @@ impl BadHash {
     }
 
     fn get(&self, index: usize) -> u8 {
-        index
-            .checked_rem(self.bytes.len())
-            .map(|index| self.bytes[index])
-            .unwrap_or(0)
+        index.checked_rem(self.bytes.len()).map(|index| self.bytes[index]).unwrap_or(0)
     }
 }
 
@@ -98,12 +95,12 @@ impl Machine for MapMachine {
                 self.key1 = bytecode.next().unwrap_or(0);
                 self.key2 = bytecode.next().unwrap_or(0);
                 self.key3 = bytecode.next().unwrap_or(0);
-            },
+            }
 
             1 | 5 => {
                 let key = self.make_key(bytecode);
                 self.map.insert(key, self.val);
-            },
+            }
 
             2 => {
                 self.key0 = bytecode.next().unwrap_or(0);
@@ -112,7 +109,7 @@ impl Machine for MapMachine {
                 self.key3 = bytecode.next().unwrap_or(0);
                 let key = self.make_key(bytecode);
                 self.val = self.map.get(&key).map_or(0, |guard| *guard.val());
-            },
+            }
 
             3 => {
                 let key = self.make_key(bytecode);
@@ -120,7 +117,7 @@ impl Machine for MapMachine {
                 self.key2 = self.key0;
                 self.key0 = bytecode.next().unwrap_or(0);
                 self.key3 ^= self.key0;
-            },
+            }
 
             4 => {
                 let key = self.make_key(bytecode);
@@ -128,37 +125,30 @@ impl Machine for MapMachine {
                 self.key3 = self.key1;
                 self.key1 = bytecode.next().unwrap_or(0);
                 self.key2 ^= self.val;
-            },
+            }
 
             6 => {
                 self.key1 = self.val;
-            },
+            }
 
             7 => {
                 let key = self.make_key(bytecode);
                 let decision = bytecode.next().unwrap_or(0);
                 let inc = bytecode.next().unwrap_or(0);
-                self.map.insert_with(key, |key, val, stored| {
-                    match decision % 8 {
-                        0 | 1 => Preview::Discard,
-                        2 | 3 => Preview::Keep,
-                        4 => Preview::New(
-                            inc.wrapping_add(key.get(1))
-                                .wrapping_add(stored.map_or(0, |&(_, x)| x))
-                                .wrapping_add(val.map_or(0, |x| *x)),
-                        ),
-                        5 => Preview::New(inc.wrapping_add(key.get(2))),
-                        6 => Preview::New(
-                            inc.wrapping_add(stored.map_or(0, |&(_, x)| x)),
-                        ),
-                        7 => Preview::New(
-                            key.get(3)
-                                .wrapping_add(stored.map_or(0, |&(_, x)| x)),
-                        ),
-                        _ => unreachable!(),
-                    }
+                self.map.insert_with(key, |key, val, stored| match decision % 8 {
+                    0 | 1 => Preview::Discard,
+                    2 | 3 => Preview::Keep,
+                    4 => Preview::New(
+                        inc.wrapping_add(key.get(1))
+                            .wrapping_add(stored.map_or(0, |&(_, x)| x))
+                            .wrapping_add(val.map_or(0, |x| *x)),
+                    ),
+                    5 => Preview::New(inc.wrapping_add(key.get(2))),
+                    6 => Preview::New(inc.wrapping_add(stored.map_or(0, |&(_, x)| x))),
+                    7 => Preview::New(key.get(3).wrapping_add(stored.map_or(0, |&(_, x)| x))),
+                    _ => unreachable!(),
                 });
-            },
+            }
 
             8 => {
                 let key = self.make_key(bytecode);
@@ -168,22 +158,18 @@ impl Machine for MapMachine {
                 };
                 let decision = bytecode.next().unwrap_or(0);
                 let test = bytecode.next().unwrap_or(0);
-                self.map.reinsert_with(removed, |&(_, val), stored| {
-                    match decision % 5 {
-                        0 => val.wrapping_add(test) % 2 == 0,
-                        1 => val.wrapping_mul(test) % 2 == 0,
-                        2 => {
-                            let res = val.wrapping_mul(
-                                test ^ stored.map_or(0, |&(_, x)| x),
-                            );
-                            res % 2 == 0
-                        },
-                        3 => stored.is_some(),
-                        4 => stored.is_none(),
-                        _ => unreachable!(),
+                self.map.reinsert_with(removed, |&(_, val), stored| match decision % 5 {
+                    0 => val.wrapping_add(test) % 2 == 0,
+                    1 => val.wrapping_mul(test) % 2 == 0,
+                    2 => {
+                        let res = val.wrapping_mul(test ^ stored.map_or(0, |&(_, x)| x));
+                        res % 2 == 0
                     }
+                    3 => stored.is_some(),
+                    4 => stored.is_none(),
+                    _ => unreachable!(),
                 });
-            },
+            }
 
             9 => {
                 let mut sum = 0u8;
@@ -193,19 +179,19 @@ impl Machine for MapMachine {
                     sum = sum.wrapping_add(k).wrapping_add(*v);
                 }
                 self.key2 = sum;
-            },
+            }
 
             10 => {
                 let key = self.make_key(bytecode);
                 if let Some(removed) = self.map.remove(&key) {
                     self.map.reinsert(removed);
                 }
-            },
+            }
 
             11 => {
                 let key = self.make_key(bytecode);
                 self.map.remove(&key);
-            },
+            }
 
             12 => {
                 let key = self.make_key(bytecode);
@@ -214,7 +200,7 @@ impl Machine for MapMachine {
                         inside.map_or(val, |&(_, v)| v) % 2 == 1
                     });
                 }
-            },
+            }
 
             _ => unreachable!(),
         }

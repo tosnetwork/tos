@@ -17,9 +17,9 @@ use crate::stack::integer::{
     },
     IntegerData,
 };
+use chain_block::{Result, Status};
 use num_traits::Zero;
 use std::ops::AddAssign;
-use chain_block::{Result, Status};
 
 // [x / y] -> (q, r)  :  q*y + r = x  :  |r| < |y|
 #[derive(Copy, Clone, Eq, PartialEq)]

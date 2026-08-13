@@ -84,8 +84,7 @@ impl ThreadExec {
 
 impl Drop for ThreadExec {
     fn drop(&mut self) {
-        let prev =
-            unsafe { self.inner.as_ref().status.swap(DISCONNECTED, Relaxed) };
+        let prev = unsafe { self.inner.as_ref().status.swap(DISCONNECTED, Relaxed) };
         if prev == DISCONNECTED {
             unsafe { OwnedAlloc::from_raw(self.inner) };
         }
@@ -122,8 +121,7 @@ impl ThreadSpawner {
 
 impl Drop for ThreadSpawner {
     fn drop(&mut self) {
-        let prev =
-            unsafe { self.inner.as_ref().status.swap(DISCONNECTED, Relaxed) };
+        let prev = unsafe { self.inner.as_ref().status.swap(DISCONNECTED, Relaxed) };
         if prev == DISCONNECTED {
             unsafe { OwnedAlloc::from_raw(self.inner) };
         }
@@ -140,11 +138,7 @@ pub struct JoinHandle<T> {
 
 impl<T> fmt::Debug for JoinHandle<T> {
     fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            fmtr,
-            "JoinHandle {} addr: {:?} {}",
-            '{', &self.shared as *const _, '}'
-        )
+        write!(fmtr, "JoinHandle {} addr: {:?} {}", '{', &self.shared as *const _, '}')
     }
 }
 
@@ -160,12 +154,7 @@ impl<T> JoinHandle<T> {
             }
 
             if prev == PANICKED {
-                break Err(self
-                    .spawner
-                    .take()
-                    .unwrap()
-                    .join_for_real()
-                    .unwrap_err());
+                break Err(self.spawner.take().unwrap().join_for_real().unwrap_err());
             }
 
             thread::park();

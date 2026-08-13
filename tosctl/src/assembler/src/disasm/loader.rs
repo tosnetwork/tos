@@ -13,9 +13,9 @@ use super::{
     handlers::Handlers,
     types::{Code, Instruction, InstructionParameter, OperationBehavior},
 };
+use chain_block::{fail, Cell, Result, SliceData, UInt256};
 use num_traits::Zero;
 use std::{cmp::Ordering, collections::HashMap, ops::Not};
-use chain_block::{fail, Cell, Result, SliceData, UInt256};
 
 macro_rules! create_handler_1 {
     ($func_name:ident, $opc:literal, $mnemonic:literal) => {

@@ -5,8 +5,8 @@
  */
 use chain_block::Deserializable;
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, IBitstring, MsgAddressInt,
-    Serializable, StateInit,
+    BuilderData, Coins, IBitstring, MsgAddressInt, Serializable, StateInit, base64_decode,
+    read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -73,11 +73,7 @@ pub struct AipowClaim {
 /// frozen at forfeit time when forfeited. Pure integer arithmetic, so the SDK
 /// and the on-chain get-method agree.
 pub fn compute_matured(claim: &AipowClaim, mat: &AipowMaturation, at_time: u64) -> u64 {
-    let effective = if claim.forfeited {
-        at_time.min(claim.forfeit_at)
-    } else {
-        at_time
-    };
+    let effective = if claim.forfeited { at_time.min(claim.forfeit_at) } else { at_time };
     let amount = u128::from(claim.amount);
     let immediate = amount * u128::from(mat.immediate_bps) / 10_000;
     if effective <= claim.claimed_at {
@@ -303,8 +299,9 @@ fn append_u128(builder: &mut BuilderData, value: u128) -> anyhow::Result<()> {
 
 fn parse_u128(stack: &TvmStackParser, index: usize) -> anyhow::Result<u128> {
     let bytes = stack.number_bytes(index, 16)?;
-    let array: [u8; 16] =
-        bytes.try_into().map_err(|_| anyhow::anyhow!("stack entry {} is not a 128-bit value", index))?;
+    let array: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("stack entry {} is not a 128-bit value", index))?;
     Ok(u128::from_be_bytes(array))
 }
 
@@ -318,7 +315,7 @@ fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aipow_merkle::{inclusion_proof, score_root, ScoreEntry};
+    use crate::aipow_merkle::{ScoreEntry, inclusion_proof, score_root};
     use chain_block::SliceData;
 
     fn init() -> AipowDistributorInit {
@@ -393,8 +390,13 @@ mod tests {
     fn maturation_curve_matches_the_methodology() {
         let m = AipowMaturation::methodology_v0();
         let e = u64::from(m.epoch_seconds);
-        let claim =
-            AipowClaim { amount: 8000, claimed_at: 1_000, forfeited: false, forfeit_at: 0, paid: 0 };
+        let claim = AipowClaim {
+            amount: 8000,
+            claimed_at: 1_000,
+            forfeited: false,
+            forfeit_at: 0,
+            paid: 0,
+        };
         // Immediately: 25% only.
         assert_eq!(compute_matured(&claim, &m, 1_000), 2000);
         assert_eq!(compute_matured(&claim, &m, 500), 2000); // before claim clamps to immediate

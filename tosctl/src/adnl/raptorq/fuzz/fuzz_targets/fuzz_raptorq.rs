@@ -3,22 +3,20 @@
 use arbitrary::Unstructured;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use rand::Rng;
 use rand::prelude::*;
-use raptorq::{Decoder, EncodingPacket, Encoder};
+use rand::Rng;
+use raptorq::{Decoder, Encoder, EncodingPacket};
 use std::mem::size_of;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedU16<const MIN: u16, const MAX: u16> {
-    pub value: u16
+    pub value: u16,
 }
 
 impl<const MIN: u16, const MAX: u16> Arbitrary<'_> for BoundedU16<MIN, MAX> {
     fn arbitrary(u: &mut Unstructured<'_>) -> arbitrary::Result<Self> {
         let value: u16 = u.int_in_range(MIN..=MAX)?;
-        Ok(Self {
-            value
-        })
+        Ok(Self { value })
     }
 
     fn size_hint(_depth: usize) -> (usize, Option<usize>) {
@@ -28,15 +26,13 @@ impl<const MIN: u16, const MAX: u16> Arbitrary<'_> for BoundedU16<MIN, MAX> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedUsize<const MIN: usize, const MAX: usize> {
-    pub value: usize
+    pub value: usize,
 }
 
 impl<const MIN: usize, const MAX: usize> Arbitrary<'_> for BoundedUsize<MIN, MAX> {
     fn arbitrary(u: &mut Unstructured<'_>) -> arbitrary::Result<Self> {
         let value: usize = u.int_in_range(MIN..=MAX)?;
-        Ok(Self {
-            value
-        })
+        Ok(Self { value })
     }
 
     fn size_hint(_depth: usize) -> (usize, Option<usize>) {

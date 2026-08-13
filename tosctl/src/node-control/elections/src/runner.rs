@@ -8,8 +8,12 @@
  */
 use crate::providers::{ElectionsProvider, ValidatorConfig, ValidatorEntry};
 use anyhow::Context as _;
+use chain_block::{
+    Cell, ConfigParam15, MsgAddressInt, UnixTime, ValidatorDescr, ValidatorSet, write_boc,
+};
 use common::{
     app_config::{BindingStatus, ElectionsConfig, NodeBinding, StakePolicy},
+    chain_utils::nanotos_to_dec_string,
     snapshot::{
         ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus, OurElectionParticipant,
         ParticipationStatus, SnapshotStore, StakeSubmission, TimeRange, ValidatorNodeSnapshot,
@@ -17,19 +21,15 @@ use common::{
     },
     task_cancellation::CancellationCtx,
     time_format,
-    chain_utils::nanotos_to_dec_string,
 };
 use contracts::{
-    ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
-    elector::PastElections, nominator,
+    ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet, elector::PastElections,
+    nominator,
 };
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
-};
-use chain_block::{
-    Cell, ConfigParam15, MsgAddressInt, UnixTime, ValidatorDescr, ValidatorSet, write_boc,
 };
 
 #[cfg(test)]

@@ -5,20 +5,16 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime
 use rustls::sign::CertifiedKey;
 use rustls::{DigitallySignedStruct, Error, SignatureScheme};
 
-const ED25519_SPKI_PREFIX: [u8; 12] = [
-    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-];
+const ED25519_SPKI_PREFIX: [u8; 12] =
+    [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
 
 pub fn generate_ed25519_key() -> Result<(Vec<u8>, [u8; 32]), Box<dyn std::error::Error>> {
     let rng = SystemRandom::new();
     let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).map_err(|e| format!("keygen: {e}"))?;
     let key_pair =
         Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).map_err(|e| format!("parse key: {e}"))?;
-    let pub_bytes: [u8; 32] = key_pair
-        .public_key()
-        .as_ref()
-        .try_into()
-        .map_err(|_| "Ed25519 public key not 32 bytes")?;
+    let pub_bytes: [u8; 32] =
+        key_pair.public_key().as_ref().try_into().map_err(|_| "Ed25519 public key not 32 bytes")?;
     Ok((pkcs8.as_ref().to_vec(), pub_bytes))
 }
 
@@ -29,9 +25,7 @@ pub fn make_certified_key(pkcs8_der: &[u8]) -> Result<CertifiedKey, Box<dyn std:
         .key_provider
         .load_private_key(private_key.into())
         .map_err(|e| format!("load private key: {e}"))?;
-    let spki_der = signing_key
-        .public_key()
-        .ok_or("no public key from signing key")?;
+    let spki_der = signing_key.public_key().ok_or("no public key from signing key")?;
     let cert = CertificateDer::from(spki_der.as_ref().to_vec());
     Ok(CertifiedKey::new(vec![cert], signing_key))
 }
@@ -55,9 +49,7 @@ pub struct RpkServerVerifier {
 #[allow(dead_code)]
 impl RpkServerVerifier {
     pub fn new(server_pub: [u8; 32]) -> Self {
-        Self {
-            expected_pub: server_pub,
-        }
+        Self { expected_pub: server_pub }
     }
 }
 
@@ -72,10 +64,7 @@ impl ServerCertVerifier for RpkServerVerifier {
     ) -> Result<ServerCertVerified, Error> {
         let data = end_entity.as_ref();
         let pub_key = extract_ed25519_pubkey(data).ok_or_else(|| {
-            Error::General(format!(
-                "unrecognized server cert format ({} bytes)",
-                data.len(),
-            ))
+            Error::General(format!("unrecognized server cert format ({} bytes)", data.len(),))
         })?;
         if pub_key == self.expected_pub.as_slice() {
             Ok(ServerCertVerified::assertion())
@@ -104,10 +93,7 @@ impl ServerCertVerifier for RpkServerVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         if dss.scheme != SignatureScheme::ED25519 {
-            return Err(Error::General(format!(
-                "unsupported signature scheme: {:?}",
-                dss.scheme
-            )));
+            return Err(Error::General(format!("unsupported signature scheme: {:?}", dss.scheme)));
         }
         let data = cert.as_ref();
         let pub_key = extract_ed25519_pubkey(data)

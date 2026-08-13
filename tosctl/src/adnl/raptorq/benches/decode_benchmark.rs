@@ -21,7 +21,7 @@ fn benchmark(symbol_size: u16, overhead: f64) -> u64 {
         }
 
         let iterations = TARGET_TOTAL_BYTES / elements;
-        let config = ObjectTransmissionInformation::new(0, symbol_size, 0, 1, 1);
+        let config = ObjectTransmissionInformation::new(0, symbol_size.into(), 0, 1, 1);
         let encoder = SourceBlockEncoder::new2(1, &config, &data);
         let elements_and_overhead = (symbol_count as f64 * (1.0 + overhead)) as u32;
         let mut packets = encoder.repair_packets(0, iterations as u32 * elements_and_overhead);

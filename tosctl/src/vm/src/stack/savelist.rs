@@ -10,8 +10,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::stack::StackItem;
-use std::fmt;
 use chain_block::{fail, ExceptionCode, Result};
+use std::fmt;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SaveList {

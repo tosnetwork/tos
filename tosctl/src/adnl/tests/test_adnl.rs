@@ -14,6 +14,7 @@ use adnl::{
     node::{AdnlNode, AdnlSendMethod, AdnlSendMethodDetailed, AdnlStatus, DataCompression},
     server::{AdnlServerConfig, AdnlServerConfigJson},
 };
+use chain_block::{base64_decode, UnixTime};
 use std::{
     fmt::{Display, Formatter},
     sync::{
@@ -30,7 +31,6 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed, TLObject,
 };
-use chain_block::{base64_decode, UnixTime};
 
 include!("../../common/src/config.rs");
 include!("../../common/src/test.rs");

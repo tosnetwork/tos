@@ -32,13 +32,13 @@ impl Machine for StackMachine {
                 1 => {
                     self.stack.pop();
                     break;
-                },
+                }
 
                 2 | 3 => {
                     let val = bytecode.next().unwrap_or(0);
                     self.stack.push(Box::new(val));
                     break;
-                },
+                }
 
                 _ => unreachable!(),
             }

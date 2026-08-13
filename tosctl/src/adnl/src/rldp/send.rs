@@ -12,6 +12,7 @@ use crate::{
     node::AdnlNode,
     rldp::{stat::PacketBandwidthInfo, Constraints, RldpPeer, TransferId},
 };
+use chain_block::{fail, Result, UInt256};
 use std::{
     cmp::min,
     collections::HashMap,
@@ -32,7 +33,6 @@ use tl_api::{
     },
     IntoBoxed, RldpChunk,
 };
-use chain_block::{fail, Result, UInt256};
 
 /// RaptorQ encoder
 pub struct RaptorqEncoder {

@@ -9,8 +9,8 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use tos_assembler::CompileError;
 use chain_block::ExceptionCode;
+use tos_assembler::CompileError;
 use tos_vm::{
     int,
     stack::{integer::IntegerData, Stack, StackItem},

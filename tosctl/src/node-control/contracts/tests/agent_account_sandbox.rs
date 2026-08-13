@@ -5,7 +5,7 @@
  * See the LICENSE file in the root of this repository.
  */
 
-use chain_block::{ed25519_create_private_key, Cell, MsgAddressInt, SliceData};
+use chain_block::{Cell, MsgAddressInt, SliceData, ed25519_create_private_key};
 use contracts::{
     AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract,
     TaskEscrowInit,
@@ -134,7 +134,10 @@ impl Fixture {
     }
 
     fn policy(&self) -> (u64, u64) {
-        let binding = self.bc.run_get_method(&self.account, "get_agent_policy", vec![]).expect("get_agent_policy");
+        let binding = self
+            .bc
+            .run_get_method(&self.account, "get_agent_policy", vec![])
+            .expect("get_agent_policy");
         let stack = binding.expect_success();
         (stack.int_at(0) as u64, stack.int_at(1) as u64)
     }
@@ -255,7 +258,11 @@ fn a_bounced_message_is_ignored_rather_than_parsed_as_a_real_operation() {
     };
     let update_body = AgentAccountContract::build_update_policy_message(1, &policy).unwrap();
     fixture.send_bounced_internal(&owner_addr, update_body).expect_success();
-    assert_eq!(fixture.policy(), (5 * TOS, 6 * TOS), "a bounced message must not affect contract state");
+    assert_eq!(
+        fixture.policy(),
+        (5 * TOS, 6 * TOS),
+        "a bounced message must not affect contract state"
+    );
 }
 
 #[test]
@@ -285,8 +292,7 @@ fn owner_can_update_policy_and_rotate_controller_others_rejected() {
 
     // Non-owner cannot rotate the controller key.
     let new_secret = [0x99; 32];
-    let new_pubkey =
-        ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
+    let new_pubkey = ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
     let rotate_body = AgentAccountContract::build_rotate_controller_message(2, new_pubkey).unwrap();
     fixture
         .send_internal(&outsider_addr, rotate_body.clone())

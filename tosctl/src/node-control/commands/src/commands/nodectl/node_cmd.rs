@@ -28,12 +28,14 @@ pub struct NodeCmd {
 /// Helper: parse a shard descriptor of the form `workchain:shard_hex`
 /// (e.g. `0:8000000000000000`) into `(workchain, shard_i64)`.
 fn parse_shard_descriptor(s: &str) -> anyhow::Result<(i32, i64)> {
-    let (wc_str, shard_str) = s
-        .split_once(':')
-        .ok_or_else(|| anyhow::anyhow!("Invalid shard format '{}'. Expected workchain:shard_hex (e.g. 0:8000000000000000)", s))?;
-    let workchain: i32 = wc_str
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid workchain '{}': {}", wc_str, e))?;
+    let (wc_str, shard_str) = s.split_once(':').ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid shard format '{}'. Expected workchain:shard_hex (e.g. 0:8000000000000000)",
+            s
+        )
+    })?;
+    let workchain: i32 =
+        wc_str.parse().map_err(|e| anyhow::anyhow!("Invalid workchain '{}': {}", wc_str, e))?;
     let shard: i64 = i64::from_str_radix(shard_str.trim_start_matches("0x"), 16)
         .map_err(|e| anyhow::anyhow!("Invalid shard hex '{}': {}", shard_str, e))?;
     Ok((workchain, shard))
@@ -48,11 +50,8 @@ async fn create_control_client(
     use std::path::Path;
 
     let config = AppConfig::load(Path::new(config_path))?;
-    let (node_name, node_cfg) = config
-        .nodes
-        .iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+    let (node_name, node_cfg) =
+        config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
     let adnl_config = node_cfg.to_node_adnl_config(None).await?;
     let mut client = ControlClientAdnl::new(adnl_config, 1);
     client.connect().await?;
@@ -342,13 +341,10 @@ impl NodeCmd {
                 let (block_time_display, sync_status_str) =
                     match rpc_client.get_address_information(&elector_addr).await {
                         Ok(info) => {
-                            let block_time =
-                                common::time_format::format_ts(info.sync_utime);
+                            let block_time = common::time_format::format_ts(info.sync_utime);
                             ("synced".to_string(), block_time)
                         }
-                        Err(_) => {
-                            ("behind".to_string(), "unknown".to_string())
-                        }
+                        Err(_) => ("behind".to_string(), "unknown".to_string()),
                     };
 
                 if cmd.format == super::output_format::OutputFormat::Json {
@@ -438,10 +434,7 @@ impl NodeCmd {
                         .map_err(|e| format!("ADNL config error: {e}"))?;
 
                     let mut client = ControlClientAdnl::new(adnl_config, 1);
-                    client
-                        .connect()
-                        .await
-                        .map_err(|e| format!("ADNL connect error: {e}"))?;
+                    client.connect().await.map_err(|e| format!("ADNL connect error: {e}"))?;
 
                     let start = std::time::Instant::now();
                     client.ping().await.map_err(|e| format!("ADNL ping error: {e}"))?;
@@ -536,16 +529,21 @@ impl NodeCollatorCmd {
                 client.shutdown().await?;
 
                 if cmd.format == super::output_format::OutputFormat::Json {
-                    let shards: Vec<serde_json::Value> = result.shards.iter().map(|shard| {
-                        let collators: Vec<String> = shard.collators.iter().map(|c| hex::encode(&c.adnl_id)).collect();
-                        serde_json::json!({
-                            "workchain": shard.workchain,
-                            "shard": format!("{:016x}", shard.shard as u64),
-                            "self_collate": shard.self_collate,
-                            "select_mode": shard.select_mode,
-                            "collators": collators,
+                    let shards: Vec<serde_json::Value> = result
+                        .shards
+                        .iter()
+                        .map(|shard| {
+                            let collators: Vec<String> =
+                                shard.collators.iter().map(|c| hex::encode(&c.adnl_id)).collect();
+                            serde_json::json!({
+                                "workchain": shard.workchain,
+                                "shard": format!("{:016x}", shard.shard as u64),
+                                "self_collate": shard.self_collate,
+                                "select_mode": shard.select_mode,
+                                "collators": collators,
+                            })
                         })
-                    }).collect();
+                        .collect();
                     let obj = serde_json::json!({
                         "node": node_name,
                         "shards": shards,
@@ -565,7 +563,11 @@ impl NodeCollatorCmd {
                                 "  Shard {}:{:016x}  self_collate={}  mode={}",
                                 shard.workchain,
                                 shard.shard as u64,
-                                if shard.self_collate { "yes".green().to_string() } else { "no".yellow().to_string() },
+                                if shard.self_collate {
+                                    "yes".green().to_string()
+                                } else {
+                                    "no".yellow().to_string()
+                                },
                                 shard.select_mode,
                             );
                             if shard.collators.is_empty() {
@@ -623,10 +625,7 @@ impl NodeCollatorCmd {
                 client.clear_collators_list().await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} Collators list cleared.",
-                    "OK".green().bold()
-                );
+                println!("{} Collators list cleared.", "OK".green().bold());
                 Ok(())
             }
             NodeCollatorAction::Setup => {
@@ -652,10 +651,7 @@ impl NodeCollatorCmd {
                 // 3. Add as ADNL address (category 0)
                 println!("  Adding ADNL address (category 0)...");
                 client
-                    .add_adnl_address(&AddAdnlAddressRq {
-                        key_hash: key_hash.clone(),
-                        category: 0,
-                    })
+                    .add_adnl_address(&AddAdnlAddressRq { key_hash: key_hash.clone(), category: 0 })
                     .await?;
 
                 // 4. Add collator for basechain (workchain 0, full shard)
@@ -671,10 +667,7 @@ impl NodeCollatorCmd {
                 client.shutdown().await?;
 
                 println!();
-                println!(
-                    "{} Collator setup complete.",
-                    "OK".green().bold()
-                );
+                println!("{} Collator setup complete.", "OK".green().bold());
                 println!("  ADNL ID: {}", hex::encode(&key_hash));
                 println!();
                 Ok(())
@@ -687,10 +680,7 @@ impl NodeCollatorCmd {
                 client.clear_collators_list().await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} All collators stopped (collator list cleared).",
-                    "OK".green().bold()
-                );
+                println!("{} All collators stopped (collator list cleared).", "OK".green().bold());
                 Ok(())
             }
         }
@@ -711,13 +701,7 @@ impl NodeCollatorAddCmd {
         let (workchain, shard) = parse_shard_descriptor(&self.shard)?;
 
         let (_node_name, mut client) = create_control_client(config_path).await?;
-        client
-            .add_collator(&AddCollatorRq {
-                adnl_id: adnl_id_bytes,
-                workchain,
-                shard,
-            })
-            .await?;
+        client.add_collator(&AddCollatorRq { adnl_id: adnl_id_bytes, workchain, shard }).await?;
         client.shutdown().await?;
 
         println!(
@@ -745,13 +729,7 @@ impl NodeCollatorRmCmd {
         let (workchain, shard) = parse_shard_descriptor(&self.shard)?;
 
         let (_node_name, mut client) = create_control_client(config_path).await?;
-        client
-            .del_collator(&AddCollatorRq {
-                adnl_id: adnl_id_bytes,
-                workchain,
-                shard,
-            })
-            .await?;
+        client.del_collator(&AddCollatorRq { adnl_id: adnl_id_bytes, workchain, shard }).await?;
         client.shutdown().await?;
 
         println!(
@@ -776,10 +754,7 @@ impl NodeCollatorConfigCmd {
                 client.set_collator_options_json(&cmd.json).await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} Collator options updated.",
-                    "OK".green().bold()
-                );
+                println!("{} Collator options updated.", "OK".green().bold());
                 Ok(())
             }
             NodeCollatorConfigAction::Refresh => {
@@ -841,11 +816,7 @@ impl NodeCollationWhitelistCmd {
                     .await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} Validator {} added to whitelist.",
-                    "OK".green().bold(),
-                    cmd.adnl_id,
-                );
+                println!("{} Validator {} added to whitelist.", "OK".green().bold(), cmd.adnl_id,);
                 Ok(())
             }
             NodeCollationWhitelistAction::Rm(cmd) => {
@@ -885,10 +856,7 @@ impl NodeCollationWhitelistCmd {
                 client.collator_node_set_whitelist_enabled(false).await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} Collation whitelist disabled.",
-                    "OK".green().bold()
-                );
+                println!("{} Collation whitelist disabled.", "OK".green().bold());
                 Ok(())
             }
             NodeCollationWhitelistAction::Ls(cmd) => {
@@ -989,8 +957,9 @@ impl NodeOverlayAddCmd {
         use colored::Colorize;
         use control_client::client_api::{ClientAPI, CustomOverlayConfig};
 
-        let json = std::fs::read_to_string(&self.config_file)
-            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", self.config_file, e))?;
+        let json = std::fs::read_to_string(&self.config_file).map_err(|e| {
+            anyhow::anyhow!("Failed to read config file '{}': {}", self.config_file, e)
+        })?;
 
         let config: CustomOverlayConfig = serde_json::from_str(&json)
             .map_err(|e| anyhow::anyhow!("Failed to parse overlay config JSON: {}", e))?;
@@ -1001,11 +970,7 @@ impl NodeOverlayAddCmd {
         client.add_custom_overlay(&config).await?;
         client.shutdown().await?;
 
-        println!(
-            "{} Custom overlay '{}' added.",
-            "OK".green().bold(),
-            overlay_name,
-        );
+        println!("{} Custom overlay '{}' added.", "OK".green().bold(), overlay_name,);
         Ok(())
     }
 }
@@ -1019,11 +984,7 @@ impl NodeOverlayRmCmd {
         client.del_custom_overlay(&self.name).await?;
         client.shutdown().await?;
 
-        println!(
-            "{} Custom overlay '{}' removed.",
-            "OK".green().bold(),
-            self.name,
-        );
+        println!("{} Custom overlay '{}' removed.", "OK".green().bold(), self.name,);
         Ok(())
     }
 }
@@ -1044,16 +1005,10 @@ impl NodeNetQuicCmd {
                 use control_client::client_api::ClientAPI;
 
                 let (_node_name, mut client) = create_control_client(config_path).await?;
-                client
-                    .add_quic_addr(0, cmd.port as i32, vec![], vec![])
-                    .await?;
+                client.add_quic_addr(0, cmd.port as i32, vec![], vec![]).await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} QUIC address configured on port {}.",
-                    "OK".green().bold(),
-                    cmd.port,
-                );
+                println!("{} QUIC address configured on port {}.", "OK".green().bold(), cmd.port,);
                 Ok(())
             }
         }

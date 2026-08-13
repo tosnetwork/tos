@@ -93,7 +93,9 @@ fn sandbox_stack_item_to_entry(
     item: &tos_vm::stack::StackItem,
 ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, slice,
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
     if let Ok(int) = item.as_integer() {
@@ -103,11 +105,15 @@ fn sandbox_stack_item_to_entry(
     }
     if let Ok(slice) = item.as_slice() {
         let bytes = slice.clone().get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     if let Ok(cell) = item.as_cell() {
         let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     anyhow::bail!("unsupported sandbox stack item")
 }
@@ -171,12 +177,9 @@ fn tampered_hash_invalidates_an_otherwise_valid_signature() {
 
     // The signature is valid for `signed_hash` but is being relayed against
     // a different `attested_hash` -- CHKSIGNU must reject the mismatch.
-    f.send_from(
-        &outsider,
-        ProofAttestationContract::attest(1, tampered_hash, &signature).unwrap(),
-    )
-    .expect_aborted()
-    .expect_exit_code(ERR_BAD_SIGNATURE);
+    f.send_from(&outsider, ProofAttestationContract::attest(1, tampered_hash, &signature).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BAD_SIGNATURE);
 }
 
 #[test]

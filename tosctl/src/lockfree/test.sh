@@ -2,18 +2,14 @@
 
 set -e
 
-test_with_toolchain() {
-    cargo $1 test $2 --target x86_64-unknown-linux-gnu -- --nocapture
-    cargo $1 test $2 --release --target x86_64-unknown-linux-gnu -- --nocapture
+run_tests() {
+    cargo test "$@" --target x86_64-unknown-linux-gnu -- --nocapture
+    cargo test "$@" --release --target x86_64-unknown-linux-gnu -- --nocapture
 }
 
 export RUST_BACKTRACE=1
-export RUSTFLAGS='-C debuginfo=2 -Z sanitizer=address'
-export ASAN_OPTIONS='fast_unwind_on_malloc=0 detect_odr_violation=0'
-export LSAN_OPTIONS="$ASAN_OPTIONS"
-
-test_with_toolchain +nightly --lib
-
 export RUSTFLAGS='-C debuginfo=2'
 
-test_with_toolchain +stable
+# The repository-local rust-toolchain.toml is the single toolchain authority.
+# Do not bypass it with floating +stable or +nightly overrides.
+run_tests

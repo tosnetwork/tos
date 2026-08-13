@@ -157,9 +157,7 @@ impl ObserveCmd {
     pub async fn run_validators_shortcut() -> anyhow::Result<()> {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into());
-        let cmd = ObserveValidatorsCmd {
-            format: super::output_format::OutputFormat::Table,
-        };
+        let cmd = ObserveValidatorsCmd { format: super::output_format::OutputFormat::Table };
         cmd.run(&config_path).await
     }
 
@@ -167,9 +165,7 @@ impl ObserveCmd {
     pub async fn run_efficiency_shortcut() -> anyhow::Result<()> {
         let config_path =
             std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into());
-        let cmd = ObserveEfficiencyCmd {
-            format: super::output_format::OutputFormat::Table,
-        };
+        let cmd = ObserveEfficiencyCmd { format: super::output_format::OutputFormat::Table };
         cmd.run(&config_path).await
     }
 }
@@ -196,14 +192,18 @@ impl ObserveValidatorsCmd {
         let until = format_ts(vset.utime_until() as u64);
 
         if self.format == super::output_format::OutputFormat::Json {
-            let validators: Vec<serde_json::Value> = vset.list().iter().map(|v| {
-                let pubkey_hex: String =
-                    v.public_key.key_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-                serde_json::json!({
-                    "public_key": pubkey_hex,
-                    "weight": v.weight,
+            let validators: Vec<serde_json::Value> = vset
+                .list()
+                .iter()
+                .map(|v| {
+                    let pubkey_hex: String =
+                        v.public_key.key_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+                    serde_json::json!({
+                        "public_key": pubkey_hex,
+                        "weight": v.weight,
+                    })
                 })
-            }).collect();
+                .collect();
             let obj = serde_json::json!({
                 "since": since,
                 "until": until,
@@ -221,12 +221,7 @@ impl ObserveValidatorsCmd {
             println!("  {}  {}", "Total:".bold(), vset.total());
             println!("  {}   {}", "Main:".bold(), vset.main());
             println!();
-            println!(
-                "  {:<4} {:<66} {}",
-                "#".bold(),
-                "Public Key (hex)".bold(),
-                "Weight".bold()
-            );
+            println!("  {:<4} {:<66} {}", "#".bold(), "Public Key (hex)".bold(), "Weight".bold());
             println!("  {}", "\u{2500}".repeat(78));
 
             for (i, validator) in vset.list().iter().enumerate() {
@@ -292,8 +287,7 @@ impl ObserveEfficiencyCmd {
             match rpc_client.get_config_param(15).await {
                 Ok(config_param15) => {
                     if let ConfigParamEnum::ConfigParam15(p) = config_param15 {
-                        let elected_for_hrs =
-                            p.validators_elected_for as f64 / 3600.0;
+                        let elected_for_hrs = p.validators_elected_for as f64 / 3600.0;
 
                         println!();
                         println!("  {}", "Election Parameters (param 15)".bold());
@@ -310,10 +304,7 @@ impl ObserveEfficiencyCmd {
                             "  {:<24} {} sec before",
                             "Elections end:", p.elections_end_before
                         );
-                        println!(
-                            "  {:<24} {} sec after",
-                            "Stake held:", p.stake_held_for
-                        );
+                        println!("  {:<24} {} sec after", "Stake held:", p.stake_held_for);
                     } else {
                         println!();
                         println!(
@@ -391,10 +382,7 @@ impl ObserveAlertSetupCmd {
                 let (bot_token, bot_token_env) = match storage_choice {
                     "1" | "" => {
                         // Environment variable mode
-                        write!(
-                            out,
-                            "  Env var name for bot token [TOSCTL_TELEGRAM_TOKEN]: "
-                        )?;
+                        write!(out, "  Env var name for bot token [TOSCTL_TELEGRAM_TOKEN]: ")?;
                         out.flush()?;
                         let mut env_name = String::new();
                         reader.read_line(&mut env_name)?;
@@ -471,11 +459,7 @@ impl ObserveAlertSetupCmd {
                     }
                 }
 
-                AlertChannel::Telegram {
-                    bot_token,
-                    bot_token_env,
-                    chat_id,
-                }
+                AlertChannel::Telegram { bot_token, bot_token_env, chat_id }
             }
             "webhook" => {
                 write!(out, "  Webhook URL: ")?;
@@ -537,10 +521,7 @@ impl ObserveAlertSetupCmd {
             }
             "skip" | "" => {}
             other => {
-                println!(
-                    "  {}",
-                    format!("Unknown rule type '{}', skipping.", other).yellow()
-                );
+                println!("  {}", format!("Unknown rule type '{}', skipping.", other).yellow());
             }
         }
 
@@ -548,11 +529,7 @@ impl ObserveAlertSetupCmd {
         save_config(&config, path)?;
 
         println!();
-        println!(
-            "  {} Alert channel configured and saved to {}",
-            "OK".green().bold(),
-            config_path
-        );
+        println!("  {} Alert channel configured and saved to {}", "OK".green().bold(), config_path);
         println!();
         Ok(())
     }
@@ -609,8 +586,10 @@ impl ObserveAlertLsCmd {
         let alerts = &config.alerts;
 
         if self.format == super::output_format::OutputFormat::Json {
-            let channels: Vec<serde_json::Value> = alerts.channels.iter().map(|ch| {
-                match ch {
+            let channels: Vec<serde_json::Value> = alerts
+                .channels
+                .iter()
+                .map(|ch| match ch {
                     AlertChannel::Telegram { bot_token_env, chat_id, .. } => {
                         let source = if let Some(env_name) = bot_token_env {
                             format!("env:{}", env_name)
@@ -626,8 +605,8 @@ impl ObserveAlertLsCmd {
                     AlertChannel::Webhook { url } => {
                         serde_json::json!({"type": "webhook", "url": url})
                     }
-                }
-            }).collect();
+                })
+                .collect();
             let rules: Vec<serde_json::Value> = alerts.rules.iter().map(|rule| {
                 match rule {
                     AlertRule::SyncLag { threshold_seconds } => {
@@ -651,11 +630,7 @@ impl ObserveAlertLsCmd {
             println!(
                 "  {:<16} {}",
                 "Enabled:".bold(),
-                if alerts.enabled {
-                    "Yes".green().to_string()
-                } else {
-                    "No".yellow().to_string()
-                }
+                if alerts.enabled { "Yes".green().to_string() } else { "No".yellow().to_string() }
             );
             println!();
 
@@ -664,20 +639,11 @@ impl ObserveAlertLsCmd {
             if alerts.channels.is_empty() {
                 println!("    {}", "(none configured)".dimmed());
             } else {
-                println!(
-                    "    {:<4} {:<12} {}",
-                    "#".bold(),
-                    "Type".bold(),
-                    "Details".bold()
-                );
+                println!("    {:<4} {:<12} {}", "#".bold(), "Type".bold(), "Details".bold());
                 println!("    {}", "\u{2500}".repeat(46));
                 for (i, ch) in alerts.channels.iter().enumerate() {
                     match ch {
-                        AlertChannel::Telegram {
-                            bot_token_env,
-                            chat_id,
-                            ..
-                        } => {
+                        AlertChannel::Telegram { bot_token_env, chat_id, .. } => {
                             let source = if let Some(env_name) = bot_token_env {
                                 format!("token=env:{}", env_name)
                             } else {
@@ -704,12 +670,7 @@ impl ObserveAlertLsCmd {
             if alerts.rules.is_empty() {
                 println!("    {}", "(none configured)".dimmed());
             } else {
-                println!(
-                    "    {:<4} {:<14} {}",
-                    "#".bold(),
-                    "Type".bold(),
-                    "Parameters".bold()
-                );
+                println!("    {:<4} {:<14} {}", "#".bold(), "Type".bold(), "Parameters".bold());
                 println!("    {}", "\u{2500}".repeat(46));
                 for (i, rule) in alerts.rules.iter().enumerate() {
                     match rule {
@@ -778,29 +739,17 @@ impl ObserveAlertTestCmd {
                     let resolved_token = match channel.resolve_telegram_token() {
                         Ok(t) => t,
                         Err(e) => {
-                            println!(
-                                "    {} Cannot resolve bot token: {}",
-                                "FAIL".red().bold(),
-                                e
-                            );
+                            println!("    {} Cannot resolve bot token: {}", "FAIL".red().bold(), e);
                             continue;
                         }
                     };
-                    let url = format!(
-                        "https://api.telegram.org/bot{}/sendMessage",
-                        resolved_token
-                    );
+                    let url = format!("https://api.telegram.org/bot{}/sendMessage", resolved_token);
                     let payload = serde_json::json!({
                         "chat_id": chat_id,
                         "text": test_message,
                         "parse_mode": "HTML"
                     });
-                    match reqwest::Client::new()
-                        .post(&url)
-                        .json(&payload)
-                        .send()
-                        .await
-                    {
+                    match reqwest::Client::new().post(&url).json(&payload).send().await {
                         Ok(resp) => {
                             let status = resp.status();
                             if status.is_success() {
@@ -809,24 +758,13 @@ impl ObserveAlertTestCmd {
                                     "OK".green().bold()
                                 );
                             } else {
-                                let body = resp
-                                    .text()
-                                    .await
-                                    .unwrap_or_else(|_| "(no body)".to_string());
-                                println!(
-                                    "    {} HTTP {}: {}",
-                                    "FAIL".red().bold(),
-                                    status,
-                                    body
-                                );
+                                let body =
+                                    resp.text().await.unwrap_or_else(|_| "(no body)".to_string());
+                                println!("    {} HTTP {}: {}", "FAIL".red().bold(), status, body);
                             }
                         }
                         Err(e) => {
-                            println!(
-                                "    {} Request failed: {}",
-                                "FAIL".red().bold(),
-                                e
-                            );
+                            println!("    {} Request failed: {}", "FAIL".red().bold(), e);
                         }
                     }
                 }
@@ -838,12 +776,7 @@ impl ObserveAlertTestCmd {
                         "message": test_message,
                         "timestamp": chrono_now_iso()
                     });
-                    match reqwest::Client::new()
-                        .post(url)
-                        .json(&payload)
-                        .send()
-                        .await
-                    {
+                    match reqwest::Client::new().post(url).json(&payload).send().await {
                         Ok(resp) => {
                             let status = resp.status();
                             if status.is_success() {
@@ -852,24 +785,13 @@ impl ObserveAlertTestCmd {
                                     "OK".green().bold()
                                 );
                             } else {
-                                let body = resp
-                                    .text()
-                                    .await
-                                    .unwrap_or_else(|_| "(no body)".to_string());
-                                println!(
-                                    "    {} HTTP {}: {}",
-                                    "FAIL".red().bold(),
-                                    status,
-                                    body
-                                );
+                                let body =
+                                    resp.text().await.unwrap_or_else(|_| "(no body)".to_string());
+                                println!("    {} HTTP {}: {}", "FAIL".red().bold(), status, body);
                             }
                         }
                         Err(e) => {
-                            println!(
-                                "    {} Request failed: {}",
-                                "FAIL".red().bold(),
-                                e
-                            );
+                            println!("    {} Request failed: {}", "FAIL".red().bold(), e);
                         }
                     }
                 }
@@ -884,10 +806,7 @@ impl ObserveAlertTestCmd {
 /// Returns current timestamp in ISO 8601 format (no chrono dependency).
 fn chrono_now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     format!("{}", secs)
 }
 
@@ -904,10 +823,7 @@ impl ObserveMetricsShowCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         use colored::Colorize;
 
-        let url = self
-            .endpoint
-            .as_deref()
-            .unwrap_or("http://127.0.0.1:9100/metrics");
+        let url = self.endpoint.as_deref().unwrap_or("http://127.0.0.1:9100/metrics");
 
         println!();
         println!("{}", "Metrics".cyan().bold());
@@ -917,24 +833,13 @@ impl ObserveMetricsShowCmd {
         println!();
 
         let client = reqwest::Client::new();
-        match client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-        {
+        match client.get(url).timeout(std::time::Duration::from_secs(5)).send().await {
             Ok(resp) => {
                 if !resp.status().is_success() {
-                    println!(
-                        "  {} HTTP {} from {}",
-                        "FAIL".red().bold(),
-                        resp.status(),
-                        url
-                    );
+                    println!("  {} HTTP {} from {}", "FAIL".red().bold(), resp.status(), url);
                     println!(
                         "  {}",
-                        "Ensure validator-engine is running with --exporter-address"
-                            .dimmed()
+                        "Ensure validator-engine is running with --exporter-address".dimmed()
                     );
                     println!();
                     return Ok(());
@@ -947,16 +852,10 @@ impl ObserveMetricsShowCmd {
                 }
             }
             Err(e) => {
-                println!(
-                    "  {} Failed to fetch metrics from {}: {}",
-                    "FAIL".red().bold(),
-                    url,
-                    e
-                );
+                println!("  {} Failed to fetch metrics from {}: {}", "FAIL".red().bold(), url, e);
                 println!(
                     "  {}",
-                    "Ensure validator-engine is running with --exporter-address"
-                        .dimmed()
+                    "Ensure validator-engine is running with --exporter-address".dimmed()
                 );
             }
         }
@@ -992,52 +891,41 @@ impl ObserveMetricsPushCmd {
         };
 
         // Scrape metrics from the source (validator exporter)
-        let source_url = self
-            .source
-            .as_deref()
-            .unwrap_or("http://127.0.0.1:9100/metrics");
+        let source_url = self.source.as_deref().unwrap_or("http://127.0.0.1:9100/metrics");
 
-        println!(
-            "  Scraping metrics from {} ...",
-            source_url.white().bold()
-        );
+        println!("  Scraping metrics from {} ...", source_url.white().bold());
 
         let client = reqwest::Client::new();
-        let metrics_text = match client
-            .get(source_url)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                if !resp.status().is_success() {
+        let metrics_text =
+            match client.get(source_url).timeout(std::time::Duration::from_secs(5)).send().await {
+                Ok(resp) => {
+                    if !resp.status().is_success() {
+                        println!(
+                            "  {} HTTP {} from source {}",
+                            "FAIL".red().bold(),
+                            resp.status(),
+                            source_url
+                        );
+                        println!();
+                        return Ok(());
+                    }
+                    resp.text().await?
+                }
+                Err(e) => {
                     println!(
-                        "  {} HTTP {} from source {}",
+                        "  {} Failed to scrape metrics from {}: {}",
                         "FAIL".red().bold(),
-                        resp.status(),
-                        source_url
+                        source_url,
+                        e
+                    );
+                    println!(
+                        "  {}",
+                        "Ensure validator-engine is running with --exporter-address".dimmed()
                     );
                     println!();
                     return Ok(());
                 }
-                resp.text().await?
-            }
-            Err(e) => {
-                println!(
-                    "  {} Failed to scrape metrics from {}: {}",
-                    "FAIL".red().bold(),
-                    source_url,
-                    e
-                );
-                println!(
-                    "  {}",
-                    "Ensure validator-engine is running with --exporter-address"
-                        .dimmed()
-                );
-                println!();
-                return Ok(());
-            }
-        };
+            };
 
         if metrics_text.is_empty() {
             println!("  No metrics returned from source {}", source_url);
@@ -1046,15 +934,8 @@ impl ObserveMetricsPushCmd {
         }
 
         // Push to the gateway
-        let push_url = format!(
-            "{}/metrics/job/{}",
-            gateway_url.trim_end_matches('/'),
-            self.job
-        );
-        println!(
-            "  Pushing to {} ...",
-            push_url.white().bold()
-        );
+        let push_url = format!("{}/metrics/job/{}", gateway_url.trim_end_matches('/'), self.job);
+        println!("  Pushing to {} ...", push_url.white().bold());
 
         match client
             .post(&push_url)
@@ -1073,25 +954,12 @@ impl ObserveMetricsPushCmd {
                     );
                 } else {
                     let status = resp.status();
-                    let body = resp
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "(no body)".to_string());
-                    println!(
-                        "  {} HTTP {}: {}",
-                        "FAIL".red().bold(),
-                        status,
-                        body
-                    );
+                    let body = resp.text().await.unwrap_or_else(|_| "(no body)".to_string());
+                    println!("  {} HTTP {}: {}", "FAIL".red().bold(), status, body);
                 }
             }
             Err(e) => {
-                println!(
-                    "  {} Failed to push metrics to {}: {}",
-                    "FAIL".red().bold(),
-                    push_url,
-                    e
-                );
+                println!("  {} Failed to push metrics to {}: {}", "FAIL".red().bold(), push_url, e);
             }
         }
 

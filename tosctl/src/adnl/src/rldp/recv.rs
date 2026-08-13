@@ -14,6 +14,7 @@ use crate::{
     node::AdnlNode,
     rldp::{Chunk, Constraints, RldpNode, TransferId},
 };
+use chain_block::{error, fail, Result, UInt256};
 #[cfg(feature = "debug")]
 use std::sync::atomic::AtomicPtr;
 use std::{
@@ -37,7 +38,6 @@ use tl_api::{
 };
 #[cfg(feature = "telemetry")]
 use tl_api::{BareSerialize, Constructor};
-use chain_block::{error, fail, Result, UInt256};
 
 enum Complete {
     V1(RldpComplete),

@@ -8,11 +8,11 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use chain_block::*;
 use num::BigInt;
 use num_traits::sign::Signed;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, fmt};
-use chain_block::*;
 
 const VERSION: u32 = 8;
 // Version changes

@@ -20,7 +20,6 @@ use crate::{
         StackItem,
     },
 };
-use num::{bigint::Sign, BigInt};
 use chain_block::{
     fail, BuilderData, Cell, Deserializable, ExceptionCode, GasConsumer, IBitstring, Message,
     MsgAddressInt, MsgForwardPrices, Result, Serializable, SizeLimitsConfig, SliceData, Status,
@@ -28,6 +27,7 @@ use chain_block::{
     ACTION_SET_CODE, CHANGE_SET_LIB_VALID_MODES, SENDMSG_ALL_BALANCE,
     SENDMSG_REMAINING_MSG_BALANCE,
 };
+use num::{bigint::Sign, BigInt};
 
 fn get_bigint(slice: &SliceData) -> BigInt {
     let bits = slice.remaining_bits();

@@ -20,6 +20,7 @@ use crate::{
     },
     declare_counted,
 };
+use chain_block::{base64_encode, error, fail, KeyId, Result, UInt256};
 use rand::Rng;
 #[cfg(feature = "debug")]
 use std::sync::atomic::AtomicPtr;
@@ -55,7 +56,6 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed,
 };
-use chain_block::{base64_encode, error, fail, KeyId, Result, UInt256};
 
 mod recv;
 pub use recv::RaptorqDecoder;

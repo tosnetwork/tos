@@ -5,9 +5,7 @@
  * See the LICENSE file in the root of this repository.
  */
 
-use super::agent_cmd::{
-    confirm, parse_required_hash, send_wallet_message, validate_tos_amount,
-};
+use super::agent_cmd::{confirm, parse_required_hash, send_wallet_message, validate_tos_amount};
 use super::output_format::OutputFormat;
 use super::utils::{
     get_wallet_config, load_config_vault_rpc_client, make_wallet, save_config,
@@ -71,21 +69,18 @@ pub struct AipowDeployCmd {
     reviewer: String,
     #[arg(long, help = "AIPoW epoch number this root scores")]
     epoch: u64,
-    #[arg(
-        long,
-        help = "Unix timestamp: challenges land strictly before, finalize at or after"
-    )]
+    #[arg(long, help = "Unix timestamp: challenges land strictly before, finalize at or after")]
     window_deadline: u64,
-    #[arg(
-        long,
-        help = "Committer bond in TOS; a challenge must attach at least this much"
-    )]
+    #[arg(long, help = "Committer bond in TOS; a challenge must attach at least this much")]
     commit_bond: f64,
     #[arg(long, help = "32-byte epoch score root (hex)")]
     score_root: String,
     #[arg(long, help = "32-byte methodology commitment (hex)")]
     methodology_hash: String,
-    #[arg(long, help = "32-byte priced rate-card commitment (hex); must equal ConfigParam 93 rate_card_hash")]
+    #[arg(
+        long,
+        help = "32-byte priced rate-card commitment (hex); must equal ConfigParam 93 rate_card_hash"
+    )]
     rate_card_hash: String,
     #[arg(
         long,
@@ -203,7 +198,8 @@ impl AipowDeployCmd {
         validate_tos_amount("commit-bond", self.commit_bond)?;
         let committer =
             self.committer.parse::<MsgAddressInt>().context("invalid committer address")?;
-        let reviewer = self.reviewer.parse::<MsgAddressInt>().context("invalid reviewer address")?;
+        let reviewer =
+            self.reviewer.parse::<MsgAddressInt>().context("invalid reviewer address")?;
         let commit_bond = common::chain_utils::tos_to_nanotos(self.commit_bond);
         // Default deploy value: the bond plus a fee/storage margin, mirroring
         // the Task Escrow budget-plus-margin funding convention.
@@ -235,7 +231,10 @@ impl AipowDeployCmd {
                 "methodology-hash",
                 &Some(self.methodology_hash.clone()),
             )?,
-            rate_card_hash: parse_required_hash("rate-card-hash", &Some(self.rate_card_hash.clone()))?,
+            rate_card_hash: parse_required_hash(
+                "rate-card-hash",
+                &Some(self.rate_card_hash.clone()),
+            )?,
             total_score: self.total_score,
             organic_settled_value: self.organic_settled_value,
             // A commitment registers its finalized root to this settlement
@@ -243,7 +242,8 @@ impl AipowDeployCmd {
             // is never advertised.
             settlement: match &self.settlement {
                 Some(addr) => Some(
-                    addr.parse().map_err(|e| anyhow::anyhow!("invalid --settlement address: {e}"))?,
+                    addr.parse()
+                        .map_err(|e| anyhow::anyhow!("invalid --settlement address: {e}"))?,
                 ),
                 None => None,
             },
@@ -506,7 +506,8 @@ impl AipowSendCmd {
         if !self.yes && !confirm("Confirm AIPoW commitment message?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,

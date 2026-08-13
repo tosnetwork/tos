@@ -8,8 +8,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::stack::IntegerData;
-use num::{bigint::ToBigInt, Signed};
 use chain_block::{fail, BuilderData, ExceptionCode, Result};
+use num::{bigint::ToBigInt, Signed};
 
 impl IntegerData {
     pub fn try_serialize_to_vec(

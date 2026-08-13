@@ -12,13 +12,13 @@
 #![allow(dead_code)]
 include!("../../../common/src/log.rs");
 
-use std::{os::raw::c_char, sync::LazyLock};
-use tos_assembler::{compile_code, compile_code_to_builder, CompileError};
 use chain_block::{
     BocWriter, Cell, Deserializable, Error, Exception, ExceptionCode, HashmapE, LibDescr,
     Libraries, MerkleProof, Message, Result, Serializable, ShardAccount, ShardStateUnsplit,
     SliceData, UInt256, UnixTime, SUPPORTED_VERSION,
 };
+use std::{os::raw::c_char, sync::LazyLock};
+use tos_assembler::{compile_code, compile_code_to_builder, CompileError};
 use tos_vm::{
     error::{tvm_exception, tvm_exception_code, tvm_exception_or_custom_code},
     executor::{gas::gas_state::Gas, BehaviorModifiers, Engine},
@@ -150,7 +150,10 @@ impl TestCaseInputs {
         self
     }
 
-    pub fn _with_capability(mut self, capability: chain_block::GlobalCapabilities) -> TestCaseInputs {
+    pub fn _with_capability(
+        mut self,
+        capability: chain_block::GlobalCapabilities,
+    ) -> TestCaseInputs {
         self.skip_fift_check = true;
         self.capabilities |= capability as u64;
         self

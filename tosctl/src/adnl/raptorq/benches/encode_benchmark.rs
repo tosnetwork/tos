@@ -28,7 +28,7 @@ fn benchmark(symbol_size: u16, pre_plan: bool) -> u64 {
 
         let now = Instant::now();
         let iterations = TARGET_TOTAL_BYTES / elements;
-        let config = ObjectTransmissionInformation::new(0, symbol_size, 0, 1, 1);
+        let config = ObjectTransmissionInformation::new(0, symbol_size.into(), 0, 1, 1);
         for _ in 0..iterations {
             let encoder = if let Some(ref plan) = plan {
                 SourceBlockEncoder::with_encoding_plan2(1, &config, &data, plan)

@@ -17,10 +17,7 @@ impl ApiClientV2 {
     pub fn new(network: Network, api_key: Option<ApiKey>) -> Self {
         let base_url = network.to_string();
 
-        Self {
-            base_client: BaseApiClient::new(api_key),
-            base_url,
-        }
+        Self { base_client: BaseApiClient::new(api_key), base_url }
     }
 
     /// Get basic information about the address: balance, code, data, last_transaction_id.
@@ -34,9 +31,7 @@ impl ApiClientV2 {
     ) -> Result<RawFullAccountState, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getAddressInformation", &params)
-            .await
+        self.base_client.get(&self.base_url, "getAddressInformation", &params).await
     }
 
     /// Get extended information about the address.
@@ -54,9 +49,7 @@ impl ApiClientV2 {
     ) -> Result<FullAccountState, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getExtendedAddressInformation", &params)
-            .await
+        self.base_client.get(&self.base_url, "getExtendedAddressInformation", &params).await
     }
 
     /// Retrieve wallet information.
@@ -73,9 +66,7 @@ impl ApiClientV2 {
     ) -> Result<WalletInformation, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getWalletInformation", &params)
-            .await
+        self.base_client.get(&self.base_url, "getWalletInformation", &params).await
     }
 
     /// Get transaction history of a given address.
@@ -117,9 +108,7 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "getTransactions", &params)
-            .await
+        self.base_client.get(&self.base_url, "getTransactions", &params).await
     }
 
     /// Get balance (in nanotomis) of a given address.
@@ -130,9 +119,7 @@ impl ApiClientV2 {
     pub async fn get_address_balance(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getAddressBalance", &params)
-            .await
+        self.base_client.get(&self.base_url, "getAddressBalance", &params).await
     }
 
     /// Get state of a given address. State can be either unitialized, active or frozen.
@@ -143,9 +130,7 @@ impl ApiClientV2 {
     pub async fn get_address_state(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getAddressState", &params)
-            .await
+        self.base_client.get(&self.base_url, "getAddressState", &params).await
     }
 
     /// Packs a raw address into a human-readable format.
@@ -156,9 +141,7 @@ impl ApiClientV2 {
     pub async fn pack_address(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "packAddress", &params)
-            .await
+        self.base_client.get(&self.base_url, "packAddress", &params).await
     }
 
     /// Unpacks a human-readable address into its raw format.
@@ -169,9 +152,7 @@ impl ApiClientV2 {
     pub async fn unpack_address(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "unpackAddress", &params)
-            .await
+        self.base_client.get(&self.base_url, "unpackAddress", &params).await
     }
 
     /// Get NFT or Jetton information.
@@ -182,9 +163,7 @@ impl ApiClientV2 {
     pub async fn get_token_data(&self, address: &str) -> Result<TokenData, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "getTokenData", &params)
-            .await
+        self.base_client.get(&self.base_url, "getTokenData", &params).await
     }
 
     /// Detect address in all possible forms.
@@ -198,9 +177,7 @@ impl ApiClientV2 {
     ) -> Result<DetectAddressResult, ToscenterError> {
         let params = [("address", address)];
 
-        self.base_client
-            .get(&self.base_url, "detectAddress", &params)
-            .await
+        self.base_client.get(&self.base_url, "detectAddress", &params).await
     }
 
     /// Get up-to-date masterchain state.
@@ -209,9 +186,7 @@ impl ApiClientV2 {
     ///
     /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_masterchain_info(&self) -> Result<BlocksMasterchainInfo, ToscenterError> {
-        self.base_client
-            .get(&self.base_url, "getMasterchainInfo", &[])
-            .await
+        self.base_client.get(&self.base_url, "getMasterchainInfo", &[]).await
     }
 
     /// Get masterchain block signatures by sequence number.
@@ -228,9 +203,7 @@ impl ApiClientV2 {
 
         let params = [("seqno", seqno_ref)];
 
-        self.base_client
-            .get(&self.base_url, "getMasterchainBlockSignatures", &params)
-            .await
+        self.base_client.get(&self.base_url, "getMasterchainBlockSignatures", &params).await
     }
 
     /// Get shard block proof.
@@ -260,16 +233,12 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "getShardBlockProof", &params)
-            .await
+        self.base_client.get(&self.base_url, "getShardBlockProof", &params).await
     }
 
     /// Get consensus block and its update timestamp.
     pub async fn get_consensus_block(&self) -> Result<ConsensusBlock, ToscenterError> {
-        self.base_client
-            .get(&self.base_url, "getConsensusBlock", &[])
-            .await
+        self.base_client.get(&self.base_url, "getConsensusBlock", &[]).await
     }
 
     /// Look up block by either seqno, lt or unixtime.
@@ -289,10 +258,8 @@ impl ApiClientV2 {
         lt: Option<u64>,
         unixtime: Option<u64>,
     ) -> Result<TosBlockIdExt, ToscenterError> {
-        let mut params: Vec<(&str, String)> = vec![
-            ("workchain", workchain.to_string()),
-            ("shard", shard.to_string()),
-        ];
+        let mut params: Vec<(&str, String)> =
+            vec![("workchain", workchain.to_string()), ("shard", shard.to_string())];
 
         if let Some(seqno) = seqno {
             params.push(("seqno", seqno.to_string()));
@@ -306,9 +273,7 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "lookupBlock", &params)
-            .await
+        self.base_client.get(&self.base_url, "lookupBlock", &params).await
     }
 
     /// Get shards information.
@@ -322,9 +287,7 @@ impl ApiClientV2 {
 
         let params = [("seqno", seqno_ref)];
 
-        self.base_client
-            .get(&self.base_url, "shards", &params)
-            .await
+        self.base_client.get(&self.base_url, "shards", &params).await
     }
 
     /// Get transactions of the given block.
@@ -374,9 +337,7 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "getBlockTransactions", &params)
-            .await
+        self.base_client.get(&self.base_url, "getBlockTransactions", &params).await
     }
 
     /// Get metadata of a given block.
@@ -411,9 +372,7 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "getBlockHeader", &params)
-            .await
+        self.base_client.get(&self.base_url, "getBlockHeader", &params).await
     }
 
     /// Locate outgoing transaction of destination address by incoming message.
@@ -435,9 +394,7 @@ impl ApiClientV2 {
             ("created_lt", &created_lt.to_string()),
         ];
 
-        self.base_client
-            .get(&self.base_url, "tryLocateTx", &params)
-            .await
+        self.base_client.get(&self.base_url, "tryLocateTx", &params).await
     }
 
     /// Same as previous. Locate outgoing transaction of destination address by incoming message.
@@ -459,9 +416,7 @@ impl ApiClientV2 {
             ("created_lt", &created_lt.to_string()),
         ];
 
-        self.base_client
-            .get(&self.base_url, "tryLocateResultTx", &params)
-            .await
+        self.base_client.get(&self.base_url, "tryLocateResultTx", &params).await
     }
 
     /// Locate incoming transaction of source address by outgoing message.
@@ -483,9 +438,7 @@ impl ApiClientV2 {
             ("created_lt", &created_lt.to_string()),
         ];
 
-        self.base_client
-            .get(&self.base_url, "tryLocateSourceTx", &params)
-            .await
+        self.base_client.get(&self.base_url, "tryLocateSourceTx", &params).await
     }
 
     /// Get config parameter by id.
@@ -507,9 +460,7 @@ impl ApiClientV2 {
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        self.base_client
-            .get(&self.base_url, "getConfigParam", &params)
-            .await
+        self.base_client.get(&self.base_url, "getConfigParam", &params).await
     }
 
     /// Run get method on smart contract.
@@ -531,9 +482,7 @@ impl ApiClientV2 {
             "stack": stack
         });
 
-        self.base_client
-            .post_api(&self.base_url, "runGetMethod", &request_body)
-            .await
+        self.base_client.post_api(&self.base_url, "runGetMethod", &request_body).await
     }
 
     /// Send serialized BOC file: fully packed and serialized external message to blockchain.
@@ -545,9 +494,7 @@ impl ApiClientV2 {
         let body = serde_json::json!({
             "boc": boc,
         });
-        self.base_client
-            .post_api(&self.base_url, "sendBoc", &body)
-            .await
+        self.base_client.post_api(&self.base_url, "sendBoc", &body).await
     }
 
     /// Send serialized BOC file: fully packed and serialized external message to blockchain.
@@ -563,9 +510,7 @@ impl ApiClientV2 {
         let body = serde_json::json!({
             "boc": boc,
         });
-        self.base_client
-            .post_api(&self.base_url, "sendBocReturnHash", &body)
-            .await
+        self.base_client.post_api(&self.base_url, "sendBocReturnHash", &body).await
     }
 
     /// This method takes address, body and init-params (if any), packs it to external message and sends to network.
@@ -602,9 +547,7 @@ impl ApiClientV2 {
             request_body["init_data"] = serde_json::json!(data);
         }
 
-        self.base_client
-            .post_api(&self.base_url, "sendQuery", &request_body)
-            .await
+        self.base_client.post_api(&self.base_url, "sendQuery", &request_body).await
     }
 
     /// Estimate fees required for query processing.
@@ -645,9 +588,7 @@ impl ApiClientV2 {
             request_body["ignore_chksig"] = serde_json::json!(chksig);
         }
 
-        self.base_client
-            .post_api(&self.base_url, "estimateFee", &request_body)
-            .await
+        self.base_client.post_api(&self.base_url, "estimateFee", &request_body).await
     }
 
     /// Generic JSON-RPC method to interact with Toscenter API.
@@ -663,15 +604,9 @@ impl ApiClientV2 {
         params: serde_json::Value,
         id: serde_json::Value,
     ) -> Result<serde_json::Value, ToscenterError> {
-        let request_body = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params,
-            id,
-        };
+        let request_body =
+            JsonRpcRequest { jsonrpc: "2.0".to_string(), method: method.to_string(), params, id };
 
-        self.base_client
-            .post_rpc(&self.base_url, "jsonRPC", &request_body)
-            .await
+        self.base_client.post_rpc(&self.base_url, "jsonRPC", &request_body).await
     }
 }

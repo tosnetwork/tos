@@ -24,13 +24,13 @@ use crate::{
         StackItem,
     },
 };
-use std::sync::{Arc, LazyLock};
 use chain_block::{
     blake2b_digest, fail, keccak256_digest, keccak512_digest, sha256_digest, sha512_digest,
     Bitstring, Ed25519PublicKey, ExceptionCode, GasConsumer, Status, UInt256,
     ED25519_PUBLIC_KEY_LENGTH, ED25519_SIGNATURE_LENGTH, P256_PUBLIC_KEY_LENGTH,
     P256_SIGNATURE_LENGTH,
 };
+use std::sync::{Arc, LazyLock};
 
 fn hash_to_uint(bits: impl AsRef<[u8]>) -> IntegerData {
     IntegerData::from_unsigned_bytes_be(bits)

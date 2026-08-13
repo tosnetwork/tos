@@ -1,0 +1,38 @@
+name: Source hygiene
+
+on:
+  pull_request:
+    branches: [master, testnet, main]
+  push:
+    branches: [master, testnet, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Check Rust formatting with the pinned stable toolchain
+        run: make -C tosctl/src fmt-check
+
+  native-registry-reproducibility:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build FunC and Fift
+        run: cmake --build build --target func fift -j2
+      - name: Reproduce the frozen Native Registry release
+        run: scripts/test-atos-native-registry-v1.sh
+      - name: Verify generated intermediates stay in the build tree
+        run: |
+          cmake --build build --target gen_fif -j2
+          test ! -e crypto/smartcont/auto
+          git diff --exit-code

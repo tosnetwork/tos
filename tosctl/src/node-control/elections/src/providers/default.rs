@@ -10,6 +10,7 @@ use super::traits::ElectionsProvider;
 use crate::providers::traits::{Account, ValidatorConfig, ValidatorEntry};
 use adnl::client::AdnlClientConfig;
 use anyhow::Context;
+use chain_block::{ConfigParam15, ValidatorSet};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{
@@ -19,7 +20,6 @@ use control_client::{
     config_params::{parse_config_param_15, parse_config_param_34, parse_config_param_36},
 };
 use std::collections::HashMap;
-use chain_block::{ConfigParam15, ValidatorSet};
 
 // TOS compatibility: DefaultElectionsProvider communicates with the TOS node via ADNL.
 // Config params 15, 34, 36 are fetched using lite_server.getConfigParams which is

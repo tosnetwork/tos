@@ -7,7 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
-use chain_block::{read_single_root_boc, Cell, SliceData};
+use chain_block::{Cell, SliceData, read_single_root_boc};
 use num::Num;
 use tl_api::tos::tvm::StackEntry;
 
@@ -186,15 +186,15 @@ impl TvmStackParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chain_block::{write_boc, BuilderData, Cell, IBitstring};
+    use chain_block::{BuilderData, Cell, IBitstring, write_boc};
     use tl_api::tos::tvm::{
-        cell, list,
+        List, Number, Tuple, cell, list,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{
             StackEntryCell, StackEntryList, StackEntryNumber, StackEntrySlice, StackEntryTuple,
         },
-        tuple, List, Number, Tuple,
+        tuple,
     };
 
     fn create_number_entry(value: &str) -> StackEntry {

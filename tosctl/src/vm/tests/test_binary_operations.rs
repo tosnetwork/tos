@@ -10,8 +10,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 mod common;
-use common::*;
 use chain_block::ExceptionCode;
+use common::*;
 use tos_vm::{
     int,
     stack::{integer::IntegerData, Stack, StackItem},

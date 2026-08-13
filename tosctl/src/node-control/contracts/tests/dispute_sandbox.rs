@@ -15,8 +15,8 @@
 
 use chain_block::{Cell, MsgAddressInt};
 use contracts::{
-    DisputeContract, DisputeInit, DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN,
-    DISPUTE_STATUS_RESOLVED, RULING_CLAIMANT, RULING_RESPONDENT, RULING_SPLIT,
+    DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN, DISPUTE_STATUS_RESOLVED,
+    DisputeContract, DisputeInit, RULING_CLAIMANT, RULING_RESPONDENT, RULING_SPLIT,
 };
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
@@ -119,7 +119,9 @@ fn sandbox_stack_item_to_entry(
     item: &tos_vm::stack::StackItem,
 ) -> anyhow::Result<tl_api::tos::tvm::StackEntry> {
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, slice,
+        Number, StackEntry,
+        numberdecimal::NumberDecimal,
+        slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
     };
     if let Ok(int) = item.as_integer() {
@@ -129,11 +131,15 @@ fn sandbox_stack_item_to_entry(
     }
     if let Ok(slice) = item.as_slice() {
         let bytes = slice.clone().get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     if let Ok(cell) = item.as_cell() {
         let bytes = chain_block::SliceData::load_cell(cell.clone())?.get_bytestring(0);
-        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } }));
+        return Ok(StackEntry::Tvm_StackEntrySlice(StackEntrySlice {
+            slice: slice::Slice { bytes },
+        }));
     }
     anyhow::bail!("unsupported sandbox stack item")
 }
@@ -272,8 +278,7 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
     let wrong_signature: [u8; 64] = wrong_key.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &reviewer,
-        DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &wrong_signature)
-            .unwrap(),
+        DisputeContract::rule_signed(2, RULING_CLAIMANT, 0, ruling_hash, &wrong_signature).unwrap(),
         TOS / 4,
     )
     .expect_aborted()
@@ -285,8 +290,7 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
     let valid_signature: [u8; 64] = attestor.sign(&domain_hash).to_bytes();
     f.send_from_with_value(
         &outsider,
-        DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
-            .unwrap(),
+        DisputeContract::rule_signed(3, RULING_CLAIMANT, 0, ruling_hash, &valid_signature).unwrap(),
         TOS / 4,
     )
     .expect_aborted()
@@ -296,8 +300,7 @@ fn rule_on_an_attestor_configured_dispute_requires_a_valid_signature() {
     // The reviewer, with the correct attestor signature, resolves the dispute.
     f.send_from_with_value(
         &reviewer,
-        DisputeContract::rule_signed(4, RULING_CLAIMANT, 0, ruling_hash, &valid_signature)
-            .unwrap(),
+        DisputeContract::rule_signed(4, RULING_CLAIMANT, 0, ruling_hash, &valid_signature).unwrap(),
         TOS / 4,
     )
     .expect_success();

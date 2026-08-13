@@ -30,6 +30,7 @@ class Install:
     def fift_include_dirs(self):
         return [
             self.source_dir / "crypto/fift/lib",
+            self.build_dir / "crypto/smartcont",
             self.source_dir / "crypto/smartcont",
         ]
 

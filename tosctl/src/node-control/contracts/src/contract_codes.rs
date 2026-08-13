@@ -28,9 +28,11 @@ pub const LIQUID_POOL_CODE: &str = "b5ee9c72410261010013fd000114ff00f4a413f4bcf2
 /// Deploy controller 0 message body BOC hex.
 /// Source: ~/tos/crypto/smartcont/liquid-staking/deploy_controller0.boc
 /// Sent to the liquid pool address with 1 TOS to deploy the even-slot controller.
-pub const DEPLOY_CONTROLLER_0_BOC: &str = "b5ee9c72410101010012000020b27edcad000000000000000000000000c2ad946c";
+pub const DEPLOY_CONTROLLER_0_BOC: &str =
+    "b5ee9c72410101010012000020b27edcad000000000000000000000000c2ad946c";
 
 /// Deploy controller 1 message body BOC hex.
 /// Source: ~/tos/crypto/smartcont/liquid-staking/deploy_controller1.boc
 /// Sent to the liquid pool address with 1 TOS to deploy the odd-slot controller.
-pub const DEPLOY_CONTROLLER_1_BOC: &str = "b5ee9c72410101010012000020b27edcad000000000000000000000001c12eff9e";
+pub const DEPLOY_CONTROLLER_1_BOC: &str =
+    "b5ee9c72410101010012000020b27edcad000000000000000000000001c12eff9e";

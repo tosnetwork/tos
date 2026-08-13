@@ -66,14 +66,22 @@ pub struct AipowSettlementParamsCmd {
     next_epoch: u32,
     #[arg(long, default_value_t = 65536, help = "Epoch length in seconds")]
     epoch_seconds: u32,
-    #[arg(long, default_value_t = 3600, help = "Seconds after an epoch ends before it may be skipped")]
+    #[arg(
+        long,
+        default_value_t = 3600,
+        help = "Seconds after an epoch ends before it may be skipped"
+    )]
     register_grace: u32,
     #[arg(
         long,
         help = "Seconds a candidate's challenge window must be open + elapsed before the native path mints it; MUST be < register_grace"
     )]
     challenge_window: u32,
-    #[arg(long, default_value_t = 0, help = "Workchain the per-epoch distributors are deployed on")]
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Workchain the per-epoch distributors are deployed on"
+    )]
     earner_workchain: i8,
     #[arg(long, default_value_t = 4_500_000_000, help = "AIPoW supply cap in TOS")]
     total_cap_tos: u64,
@@ -212,9 +220,8 @@ impl AipowSettlementShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let provider = contracts::contract_provider!(rpc_client.clone());
-        let stack = provider
-            .get_method(addr.to_string(), "get_aipow_settlement_data", vec![])
-            .await?;
+        let stack =
+            provider.get_method(addr.to_string(), "get_aipow_settlement_data", vec![]).await?;
         let data = AipowSettlementContract::decode_data(&stack)?;
         if self.format == OutputFormat::Json {
             println!(

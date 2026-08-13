@@ -15,6 +15,7 @@ use adnl::{
     node::AdnlNode,
     RldpNode,
 };
+use chain_block::{crc32_digest, KeyOption};
 use rand::Rng;
 #[cfg(feature = "debug")]
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
@@ -26,7 +27,6 @@ use tl_api::{
     tos::{testobject::TestInt, TestObject},
     AnyBoxedSerialize, TLObject,
 };
-use chain_block::{crc32_digest, KeyOption};
 
 include!("../../common/src/config.rs");
 include!("../../common/src/test.rs");

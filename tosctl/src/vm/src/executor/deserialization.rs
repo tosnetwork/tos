@@ -17,8 +17,8 @@ use crate::{
     },
     stack::{integer::IntegerData, StackItem},
 };
-use std::collections::HashSet;
 use chain_block::{fail, CellType, ExceptionCode, GasConsumer, Mask, Result, SliceData, Status};
+use std::collections::HashSet;
 
 const QUIET: u8 = 0x01; // quiet variant
 const STACK: u8 = 0x02; // length of int in stack

@@ -186,8 +186,10 @@ impl Fixture {
             .map(sandbox_stack_item_to_entry)
             .collect::<anyhow::Result<Vec<_>>>()
             .expect("stack conversion");
-        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries))
-            .expect("decode_data")
+        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+            entries,
+        ))
+        .expect("decode_data")
     }
 }
 
@@ -268,7 +270,8 @@ fn permissionless_announce_registers_the_committed_tuple_with_the_settlement() {
     f.bc.set_now((f.window_deadline + 1) as u32);
     f.send_from(&outsider, AipowCommitmentContract::finalize(2).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
-    let reg2 = f.settlement_candidate(COMMIT_EPOCH as u32).expect("still registered after finalize");
+    let reg2 =
+        f.settlement_candidate(COMMIT_EPOCH as u32).expect("still registered after finalize");
     assert_eq!(reg2.total_score, TOTAL_SCORE);
 }
 
@@ -696,10 +699,22 @@ fn finalize_with_no_settlement_still_finalizes_and_returns_the_bond() {
     bc.send_message(announce).expect("announce").expect_success();
 
     let read_status = |bc: &Blockchain| -> u8 {
-        let stack =
-            bc.run_get_method(&commitment, "get_aipow_commitment_data", vec![]).unwrap().expect_success().stack.clone();
-        let entries = stack.iter().map(sandbox_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>().unwrap();
-        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries)).unwrap().status
+        let stack = bc
+            .run_get_method(&commitment, "get_aipow_commitment_data", vec![])
+            .unwrap()
+            .expect_success()
+            .stack
+            .clone();
+        let entries = stack
+            .iter()
+            .map(sandbox_stack_item_to_entry)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .unwrap();
+        AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(
+            entries,
+        ))
+        .unwrap()
+        .status
     };
 
     bc.set_now((window_deadline + 1) as u32);
@@ -722,9 +737,17 @@ fn finalize_with_no_settlement_still_finalizes_and_returns_the_bond() {
         "committer still gets the bond back with registration disabled, got {delta}"
     );
     // decode_data round-trips addr_none as None.
-    let stack =
-        bc.run_get_method(&commitment, "get_aipow_commitment_data", vec![]).unwrap().expect_success().stack.clone();
-    let entries = stack.iter().map(sandbox_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>().unwrap();
-    let data = AipowCommitmentContract::decode_data(&common::tvm_stack_parser::TvmStackParser::new(entries)).unwrap();
+    let stack = bc
+        .run_get_method(&commitment, "get_aipow_commitment_data", vec![])
+        .unwrap()
+        .expect_success()
+        .stack
+        .clone();
+    let entries =
+        stack.iter().map(sandbox_stack_item_to_entry).collect::<anyhow::Result<Vec<_>>>().unwrap();
+    let data = AipowCommitmentContract::decode_data(
+        &common::tvm_stack_parser::TvmStackParser::new(entries),
+    )
+    .unwrap();
     assert_eq!(data.settlement, None);
 }

@@ -270,7 +270,10 @@ async fn extract_blob_bytes(secret: &Secret) -> anyhow::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::runtime_config::RuntimeConfig;
+    use chain_block::MsgAddressInt;
+    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
     use common::app_config::{AppConfig, AuthConfig, UserEntry};
+    use contracts::ChainProvider;
     use contracts::{NominatorWrapper, Wallet};
     use secrets_vault::{
         crypto::{key_material::KeyMaterial, master_key::MasterKey},
@@ -279,9 +282,6 @@ mod tests {
         vault_builder::SecretVaultBuilder,
     };
     use std::collections::HashMap;
-    use chain_block::MsgAddressInt;
-    use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-    use contracts::ChainProvider;
 
     /// A test-only RuntimeConfig backed by an in-memory vault.
     struct TestRuntimeConfig {

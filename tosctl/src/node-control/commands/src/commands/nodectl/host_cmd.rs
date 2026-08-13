@@ -224,22 +224,13 @@ impl HostAboutCmd {
 
         println!("{}", "About tosctl".cyan().bold());
         println!("{}", "\u{2500}".repeat(40).dimmed());
-        println!(
-            "  Version:       {}",
-            env!("CARGO_PKG_VERSION")
-        );
-        println!(
-            "  Binary:        {}",
-            std::env::current_exe()
-                .unwrap_or_default()
-                .display()
-        );
+        println!("  Version:       {}", env!("CARGO_PKG_VERSION"));
+        println!("  Binary:        {}", std::env::current_exe().unwrap_or_default().display());
         println!("  OS:            {}", std::env::consts::OS);
         println!("  Arch:          {}", std::env::consts::ARCH);
         println!(
             "  Config path:   {}",
-            std::env::var("CONFIG_PATH")
-                .unwrap_or_else(|_| "tosctl-config.json".into())
+            std::env::var("CONFIG_PATH").unwrap_or_else(|_| "tosctl-config.json".into())
         );
         println!();
         Ok(())
@@ -280,32 +271,17 @@ impl HostStatusCmd {
 
             println!("{}", serde_json::to_string_pretty(&obj)?);
         } else {
-            let endpoints_display = if endpoints.is_empty() {
-                "(none)".to_string()
-            } else {
-                endpoints.join(", ")
-            };
+            let endpoints_display =
+                if endpoints.is_empty() { "(none)".to_string() } else { endpoints.join(", ") };
 
             println!();
             println!("{}", "Host Status".bold());
             println!("{}", "───────────".dimmed());
             println!("  {:<18}{}", "Config:".bold(), config_path.display());
             println!("  {:<18}{}", "Endpoints:".bold(), endpoints_display);
-            println!(
-                "  {:<18}{} configured",
-                "Wallets:".bold(),
-                config.wallets.len()
-            );
-            println!(
-                "  {:<18}{} configured",
-                "Pools:".bold(),
-                config.pools.len()
-            );
-            println!(
-                "  {:<18}{} configured",
-                "Nodes:".bold(),
-                config.nodes.len()
-            );
+            println!("  {:<18}{} configured", "Wallets:".bold(), config.wallets.len());
+            println!("  {:<18}{} configured", "Pools:".bold(), config.pools.len());
+            println!("  {:<18}{} configured", "Nodes:".bold(), config.nodes.len());
 
             // Attempt to query chain status via RPC
             println!();
@@ -423,9 +399,7 @@ impl HostModeEnableCmd {
                 }
             }
             "liteserver" => {
-                use control_client::client_api::{
-                    AddAdnlAddressRq, AddLiteserverRq, ClientAPI,
-                };
+                use control_client::client_api::{AddAdnlAddressRq, AddLiteserverRq, ClientAPI};
 
                 println!("{}", "Enable Liteserver".cyan().bold());
                 println!("{}", "\u{2500}".repeat(40).dimmed());
@@ -446,30 +420,20 @@ impl HostModeEnableCmd {
                 // 3. Add as ADNL address (category 0)
                 println!("  Adding ADNL address (category 0)...");
                 client
-                    .add_adnl_address(&AddAdnlAddressRq {
-                        key_hash: key_hash.clone(),
-                        category: 0,
-                    })
+                    .add_adnl_address(&AddAdnlAddressRq { key_hash: key_hash.clone(), category: 0 })
                     .await?;
 
                 // 4. Register liteserver on the node
                 let port = self.port;
                 println!("  Registering liteserver on port {}...", port);
                 client
-                    .add_liteserver(&AddLiteserverRq {
-                        key_hash: key_hash.clone(),
-                        port,
-                    })
+                    .add_liteserver(&AddLiteserverRq { key_hash: key_hash.clone(), port })
                     .await?;
 
                 client.shutdown().await?;
 
                 println!();
-                println!(
-                    "{} Liteserver enabled on port {}.",
-                    "OK".green().bold(),
-                    port
-                );
+                println!("{} Liteserver enabled on port {}.", "OK".green().bold(), port);
                 println!("  Key hash: {}", hex::encode(&key_hash));
                 println!("  Public key (for global config): {}", hex::encode(&pub_key));
                 println!();
@@ -496,17 +460,11 @@ impl HostModeEnableCmd {
                 // 3. Add as ADNL address (category 0)
                 println!("  Adding ADNL address (category 0)...");
                 client
-                    .add_adnl_address(&AddAdnlAddressRq {
-                        key_hash: key_hash.clone(),
-                        category: 0,
-                    })
+                    .add_adnl_address(&AddAdnlAddressRq { key_hash: key_hash.clone(), category: 0 })
                     .await?;
 
                 // 4. Add collator for basechain (workchain 0, full shard)
-                println!(
-                    "  Adding collator for basechain (0:{:016x})...",
-                    i64::MIN as u64
-                );
+                println!("  Adding collator for basechain (0:{:016x})...", i64::MIN as u64);
                 client
                     .add_collator(&AddCollatorRq {
                         adnl_id: key_hash.clone(),
@@ -518,10 +476,7 @@ impl HostModeEnableCmd {
                 client.shutdown().await?;
 
                 println!();
-                println!(
-                    "{} Collator setup complete.",
-                    "OK".green().bold()
-                );
+                println!("{} Collator setup complete.", "OK".green().bold());
                 println!("  ADNL ID: {}", hex::encode(&key_hash));
                 println!();
             }
@@ -544,11 +499,8 @@ impl HostModeEnableCmd {
         use std::path::Path;
 
         let config = AppConfig::load(Path::new(config_path))?;
-        let (node_name, node_cfg) = config
-            .nodes
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+        let (node_name, node_cfg) =
+            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
         let adnl_config = node_cfg.to_node_adnl_config(None).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await?;
@@ -598,10 +550,7 @@ impl HostModeDisableCmd {
                 client.clear_collators_list().await?;
                 client.shutdown().await?;
 
-                println!(
-                    "{} All collators stopped (collator list cleared).",
-                    "OK".green().bold()
-                );
+                println!("{} All collators stopped (collator list cleared).", "OK".green().bold());
             }
             other => {
                 anyhow::bail!(
@@ -637,11 +586,8 @@ impl HostSettingsShowCmd {
             });
             println!("{}", serde_json::to_string_pretty(&obj)?);
         } else {
-            let endpoints_display = if endpoints.is_empty() {
-                "(none)".to_string()
-            } else {
-                endpoints.join(", ")
-            };
+            let endpoints_display =
+                if endpoints.is_empty() { "(none)".to_string() } else { endpoints.join(", ") };
 
             println!();
             println!("{}", "Effective Settings".bold());
@@ -651,40 +597,20 @@ impl HostSettingsShowCmd {
                 "tick_interval:".bold(),
                 format!("{} sec", config.tick_interval)
             );
-            println!(
-                "  {:<20}{}",
-                "chain_rpc urls:".bold(),
-                endpoints_display
-            );
-            println!(
-                "  {:<20}{}",
-                "nodes:".bold(),
-                format!("{} configured", config.nodes.len())
-            );
+            println!("  {:<20}{}", "chain_rpc urls:".bold(), endpoints_display);
+            println!("  {:<20}{}", "nodes:".bold(), format!("{} configured", config.nodes.len()));
             println!(
                 "  {:<20}{}",
                 "wallets:".bold(),
                 format!("{} configured", config.wallets.len())
             );
-            println!(
-                "  {:<20}{}",
-                "pools:".bold(),
-                format!("{} configured", config.pools.len())
-            );
+            println!("  {:<20}{}", "pools:".bold(), format!("{} configured", config.pools.len()));
             println!(
                 "  {:<20}{}",
                 "elections:".bold(),
-                if config.elections.is_some() {
-                    "configured"
-                } else {
-                    "not configured"
-                }
+                if config.elections.is_some() { "configured" } else { "not configured" }
             );
-            println!(
-                "  {:<20}{}",
-                "http bind:".bold(),
-                config.http.bind
-            );
+            println!("  {:<20}{}", "http bind:".bold(), config.http.bind);
             println!();
         }
         Ok(())
@@ -711,11 +637,7 @@ impl HostSettingsGetCmd {
             "elections" => {
                 println!(
                     "{}",
-                    if config.elections.is_some() {
-                        "configured"
-                    } else {
-                        "not configured"
-                    }
+                    if config.elections.is_some() { "configured" } else { "not configured" }
                 );
             }
             "http.bind" => println!("{}", config.http.bind),
@@ -766,10 +688,7 @@ impl HostUpdateCmd {
         println!("{}", "Host Update".cyan().bold());
         println!("{}", "\u{2500}".repeat(40).dimmed());
         println!();
-        println!(
-            "  Current tosctl version: {}",
-            current_version.green()
-        );
+        println!("  Current tosctl version: {}", current_version.green());
 
         // Try to check the latest release from GitHub
         let client = reqwest::Client::new();
@@ -838,16 +757,10 @@ impl HostUpgradeCmd {
         println!("{}", "Host Upgrade".cyan().bold());
         println!("{}", "\u{2500}".repeat(40).dimmed());
         println!();
-        println!(
-            "  tosctl version:           {}",
-            current_version.green()
-        );
+        println!("  tosctl version:           {}", current_version.green());
 
         // Try to detect installed validator-engine version
-        match std::process::Command::new("tos-validator-engine")
-            .arg("--version")
-            .output()
-        {
+        match std::process::Command::new("tos-validator-engine").arg("--version").output() {
             Ok(output) if output.status.success() => {
                 let version_str = String::from_utf8_lossy(&output.stdout);
                 let version_str = version_str.trim();
@@ -865,10 +778,7 @@ impl HostUpgradeCmd {
                 // Some binaries print version to stderr
                 let stderr = stderr.trim();
                 if !stderr.is_empty() {
-                    println!(
-                        "  validator-engine version: {}",
-                        stderr.green()
-                    );
+                    println!("  validator-engine version: {}", stderr.green());
                 } else {
                     println!(
                         "  validator-engine version: {}",
@@ -885,10 +795,7 @@ impl HostUpgradeCmd {
         }
 
         println!();
-        println!(
-            "{}",
-            "Before upgrading, create a backup:".yellow().bold()
-        );
+        println!("{}", "Before upgrading, create a backup:".yellow().bold());
         println!("  tosctl backup create");
         println!();
         println!("Upgrade steps:");
@@ -909,12 +816,8 @@ impl HostArchiveDownloadCmd {
         use std::io::Write;
 
         // Derive output filename from URL
-        let filename = self
-            .url
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("archive.tar.lz4");
+        let filename =
+            self.url.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or("archive.tar.lz4");
 
         let output_path = format!("{}/{}", self.db_path, filename);
 
@@ -926,10 +829,7 @@ impl HostArchiveDownloadCmd {
         if let Some(ref checksum) = self.checksum {
             println!("  Checksum (SHA256): {}", checksum.green());
         } else {
-            println!(
-                "  Checksum: {}",
-                "none provided".yellow()
-            );
+            println!("  Checksum: {}", "none provided".yellow());
         }
         println!();
 
@@ -974,10 +874,7 @@ impl HostArchiveDownloadCmd {
                     last_pct = pct;
                     let mb = downloaded as f64 / 1_048_576.0;
                     let total_mb = total_size as f64 / 1_048_576.0;
-                    print!(
-                        "\r  Progress: {:>5.1} / {:.1} MB ({:>3}%)",
-                        mb, total_mb, pct
-                    );
+                    print!("\r  Progress: {:>5.1} / {:.1} MB ({:>3}%)", mb, total_mb, pct);
                     let _ = std::io::stdout().flush();
                 }
             }
@@ -985,12 +882,7 @@ impl HostArchiveDownloadCmd {
         println!();
 
         let mb = downloaded as f64 / 1_048_576.0;
-        println!(
-            "  {} Downloaded {:.1} MB to {}",
-            "OK".green().bold(),
-            mb,
-            output_path
-        );
+        println!("  {} Downloaded {:.1} MB to {}", "OK".green().bold(), mb, output_path);
 
         // Verify checksum if provided
         if let Some(ref expected) = self.checksum {
@@ -1002,10 +894,7 @@ impl HostArchiveDownloadCmd {
                     actual
                 );
             }
-            println!(
-                "  {} Checksum verified.",
-                "OK".green().bold()
-            );
+            println!("  {} Checksum verified.", "OK".green().bold());
         } else {
             println!(
                 "  {} No checksum provided -- integrity was not verified.",
@@ -1050,10 +939,7 @@ impl HostBenchmarkCmd {
         let elapsed = start.elapsed();
         let _ = std::fs::remove_file(test_file);
 
-        println!(
-            "  Disk write: {:.1} MB/s",
-            100.0 / elapsed.as_secs_f64()
-        );
+        println!("  Disk write: {:.1} MB/s", 100.0 / elapsed.as_secs_f64());
         println!();
         Ok(())
     }

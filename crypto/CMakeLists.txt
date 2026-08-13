@@ -455,7 +455,8 @@ if (JEMALLOC_FOUND)
   target_compile_definitions(mintless-proof-generator PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 
-file(MAKE_DIRECTORY smartcont/auto)
+set(SMARTCONT_AUTO_DIR "${CMAKE_CURRENT_BINARY_DIR}/smartcont/auto")
+file(MAKE_DIRECTORY "${SMARTCONT_AUTO_DIR}")
 if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   set(GENERATE_TLB_CMD tlbc)
   if (NOT USE_EMSCRIPTEN)
@@ -485,16 +486,17 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     set(FUNC_LIB_SOURCE smartcont/stdlib.fc)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN} )
     string(REGEX REPLACE "[^0-9a-zA-Z_]" "_" ID ${ARG_DEST})
-    set(ARG_DEST_FIF "${ARG_DEST}.fif")
+    get_filename_component(ARG_DEST_NAME "${ARG_DEST}" NAME)
+    set(ARG_DEST_FIF "${SMARTCONT_AUTO_DIR}/${ARG_DEST_NAME}.fif")
     add_custom_command(
       COMMENT "Generate ${ARG_DEST_FIF}"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      COMMAND func -PS -o ${ARG_DEST_FIF} ${FUNC_LIB_SOURCE} ${ARG_SOURCE}
+      COMMAND $<TARGET_FILE:func> -PS -o ${ARG_DEST_FIF} ${FUNC_LIB_SOURCE} ${ARG_SOURCE}
       MAIN_DEPENDENCY ${ARG_SOURCE}
       DEPENDS func ${FUNC_LIB_SOURCE}
-      OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/${ARG_DEST_FIF}
+      OUTPUT ${ARG_DEST_FIF}
     )
-    set(ARG_DEST_CPP "${ARG_DEST}.cpp")
+    set(ARG_DEST_CPP "${SMARTCONT_AUTO_DIR}/${ARG_DEST_NAME}.cpp")
 
     if (WIN32)
       set(ARG_LIB_DIR "fift/lib@smartcont")
@@ -505,10 +507,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     add_custom_command(
       COMMENT "Generate ${ARG_DEST_CPP}"
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      COMMAND fift -I${ARG_LIB_DIR} -s asm-to-cpp.fif ${ARG_DEST_FIF} ${ARG_DEST_CPP} ${ARG_NAME}
+      COMMAND $<TARGET_FILE:fift> -I${ARG_LIB_DIR} -s asm-to-cpp.fif ${ARG_DEST_FIF} ${ARG_DEST_CPP} ${ARG_NAME}
       MAIN_DEPENDENCY ${ARG_SOURCE}
       DEPENDS fift ${ARG_DEST_FIF} smartcont/asm-to-cpp.fif fift/lib/Asm.fif
-      OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/${ARG_DEST_CPP}
+      OUTPUT ${ARG_DEST_CPP}
     )
     add_custom_target(gen_fif_${ID} DEPENDS ${ARG_DEST_FIF} ${ARG_DEST_CPP})
     add_dependencies(gen_fif gen_fif_${ID})
@@ -517,6 +519,8 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
+  GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
+  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5)
   GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
@@ -540,6 +544,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
 endif()
 
 add_library(smc-envelope STATIC ${SMC_ENVELOPE_SOURCE})
+target_include_directories(smc-envelope BEFORE PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 target_include_directories(smc-envelope PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(smc-envelope PUBLIC tos_crypto PRIVATE tdutils tos_block)
 if (NOT CMAKE_CROSSCOMPILING)

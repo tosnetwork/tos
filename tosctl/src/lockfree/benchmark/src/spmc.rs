@@ -16,7 +16,7 @@ where
     let then = Instant::now();
     let mut threads = Vec::with_capacity(receivers);
 
-    for _ in 0 .. receivers {
+    for _ in 0..receivers {
         let receiver = receiver.clone();
         threads.push(thread::spawn(move || {
             let mut idle = 0u128;
@@ -31,7 +31,7 @@ where
         }))
     }
 
-    for i in 0 .. niter {
+    for i in 0..niter {
         sender.send(i).unwrap();
     }
 
@@ -166,9 +166,7 @@ impl Channel for Std {
 
 impl Sender for std_mpsc::Sender<u128> {
     fn send(&mut self, val: u128) -> Result<(), spmc::NoRecv<u128>> {
-        (&*self)
-            .send(val)
-            .map_err(|std_mpsc::SendError(message)| spmc::NoRecv { message })
+        (&*self).send(val).map_err(|std_mpsc::SendError(message)| spmc::NoRecv { message })
     }
 }
 
@@ -198,26 +196,14 @@ fn main() {
         let mut std = Duration::default();
         let mut lockfree = Duration::default();
 
-        for _ in 0 .. SAMPLES {
+        for _ in 0..SAMPLES {
             deque += measure::<Mutexed>(nthread, NITER);
             std += measure::<Std>(nthread, NITER);
             lockfree += measure::<Lockfree>(nthread, NITER);
         }
 
-        println!(
-            "Mutexed VecDeque with {} threads total time: {:?}",
-            nthread + 1,
-            deque
-        );
-        println!(
-            "Mutexed Std's MPSC (as SPMC) with {} threads total time: {:?}",
-            nthread + 1,
-            std
-        );
-        println!(
-            "Lockfree SPMC with {} threads total time: {:?}",
-            nthread + 1,
-            lockfree
-        );
+        println!("Mutexed VecDeque with {} threads total time: {:?}", nthread + 1, deque);
+        println!("Mutexed Std's MPSC (as SPMC) with {} threads total time: {:?}", nthread + 1, std);
+        println!("Lockfree SPMC with {} threads total time: {:?}", nthread + 1, lockfree);
     }
 }

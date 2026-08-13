@@ -12,6 +12,9 @@ use adnl::{
     node::{AdnlNode, IpAddress},
     DhtNode, OverlayNode, QuicNode, QuicRateLimitConfig,
 };
+use chain_block::{
+    ed25519_encode_private_key_to_pkcs8, ed25519_generate_private_key, Ed25519KeyOption, KeyId,
+};
 use std::{
     collections::HashSet,
     net::Ipv4Addr,
@@ -21,7 +24,6 @@ use std::{
     },
     time::Duration,
 };
-use tokio_util::sync::CancellationToken;
 use tl_api::{
     deserialize_boxed, serialize_boxed,
     tos::{
@@ -36,9 +38,7 @@ use tl_api::{
     },
     IntoBoxed, TLObject,
 };
-use chain_block::{
-    ed25519_encode_private_key_to_pkcs8, ed25519_generate_private_key, Ed25519KeyOption, KeyId,
-};
+use tokio_util::sync::CancellationToken;
 
 include!("../../common/src/config.rs");
 include!("../../common/src/test.rs");

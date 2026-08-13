@@ -10,13 +10,13 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 mod common;
-use common::*;
-use num::BigInt;
-use std::{collections::HashSet, str::FromStr};
 use chain_block::{
     BuilderData, Cell, CellType, ExceptionCode, HashmapE, IBitstring, MerkleProof, Serializable,
     SimpleLib, SliceData, StateInitLib, UInt256,
 };
+use common::*;
+use num::BigInt;
+use std::{collections::HashSet, str::FromStr};
 use tos_vm::{
     int,
     stack::{

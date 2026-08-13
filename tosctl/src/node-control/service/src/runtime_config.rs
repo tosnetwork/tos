@@ -7,6 +7,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
+use chain_block::MsgAddressInt;
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use common::{
     app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
     time_format,
@@ -30,8 +32,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use chain_block::MsgAddressInt;
-use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 
 pub struct RuntimeConfigStore {
     /// Combined config + dynamic state, swapped atomically on updates.

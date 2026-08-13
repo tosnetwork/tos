@@ -19,13 +19,13 @@ use crate::{
     debug::{DbgNode, DbgPos},
     DbgInfo,
 };
+use chain_block::{error, BuilderData, Cell, HashmapE, HashmapType, SliceData, Status};
 use num::{BigInt, Integer, Num};
 use std::{
     collections::{BTreeMap, HashMap},
     marker::PhantomData,
     ops::Range,
 };
-use chain_block::{error, BuilderData, Cell, HashmapE, HashmapType, SliceData, Status};
 
 trait CommandBehaviourModifier {
     fn modify(code: Vec<u8>) -> Vec<u8>;

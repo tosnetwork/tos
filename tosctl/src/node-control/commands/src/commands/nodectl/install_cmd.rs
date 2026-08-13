@@ -36,10 +36,7 @@ impl InstallCmd {
 impl InstallWizardCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         use colored::Colorize;
-        use common::app_config::{
-            AppConfig, ElectionsConfig, HttpConfig,
-            LogConfig, WalletConfig,
-        };
+        use common::app_config::{AppConfig, ElectionsConfig, HttpConfig, LogConfig, WalletConfig};
         use common::{WalletVersion, app_config::KeyConfig};
         use std::collections::HashMap;
         use std::path::Path;
@@ -69,7 +66,10 @@ impl InstallWizardCmd {
         if fift_found {
             println!("  {} fift binary found", "[OK]".green());
         } else {
-            println!("  {} fift binary not found in PATH (optional, needed for some admin ops)", "[!!]".yellow());
+            println!(
+                "  {} fift binary not found in PATH (optional, needed for some admin ops)",
+                "[!!]".yellow()
+            );
         }
 
         // Check for FIFTPATH
@@ -86,10 +86,7 @@ impl InstallWizardCmd {
         println!("{}", "Step 2: Configuration file".cyan().bold());
         println!();
 
-        let config_path_str = prompt_with_default(
-            "  Config file path",
-            "tosctl-config.json",
-        )?;
+        let config_path_str = prompt_with_default("  Config file path", "tosctl-config.json")?;
         let config_path = Path::new(&config_path_str);
 
         if config_path.exists() {
@@ -104,10 +101,7 @@ impl InstallWizardCmd {
             println!("{}", "Step 3: Chain RPC endpoint".cyan().bold());
             println!();
 
-            let rpc_url = prompt_with_default(
-                "  Chain RPC URL",
-                "http://127.0.0.1:3301/",
-            )?;
+            let rpc_url = prompt_with_default("  Chain RPC URL", "http://127.0.0.1:3301/")?;
             let rpc_api_key = prompt_optional("  Chain RPC API key (leave empty if none)")?;
 
             println!();
@@ -116,10 +110,7 @@ impl InstallWizardCmd {
             println!("{}", "Step 4: Vault key for wallet".cyan().bold());
             println!();
 
-            let key_name = prompt_with_default(
-                "  Key name in vault",
-                "validator-key",
-            )?;
+            let key_name = prompt_with_default("  Key name in vault", "validator-key")?;
 
             println!();
 
@@ -127,15 +118,9 @@ impl InstallWizardCmd {
             println!("{}", "Step 5: Wallet configuration".cyan().bold());
             println!();
 
-            let wallet_name = prompt_with_default(
-                "  Wallet name",
-                "validator",
-            )?;
+            let wallet_name = prompt_with_default("  Wallet name", "validator")?;
 
-            let wallet_version_str = prompt_with_default(
-                "  Wallet version (v3r2 / v4r2)",
-                "v3r2",
-            )?;
+            let wallet_version_str = prompt_with_default("  Wallet version (v3r2 / v4r2)", "v3r2")?;
             let wallet_version = match wallet_version_str.to_lowercase().as_str() {
                 "v4r2" | "v4" => WalletVersion::V4R2,
                 _ => WalletVersion::V3R2,
@@ -213,50 +198,27 @@ impl InstallWizardCmd {
         println!("{}", "Next steps".cyan().bold());
         println!("{}", "-".repeat(56).dimmed());
         println!();
-        println!(
-            "  {} Create a vault key (if not already done):",
-            "1.".white().bold()
-        );
-        println!(
-            "     {}",
-            "tosctl key add --name validator-key".yellow()
-        );
+        println!("  {} Create a vault key (if not already done):", "1.".white().bold());
+        println!("     {}", "tosctl key add --name validator-key".yellow());
         println!();
-        println!(
-            "  {} Add a node to the config:",
-            "2.".white().bold(),
-        );
+        println!("  {} Add a node to the config:", "2.".white().bold(),);
         println!(
             "     {}",
             "tosctl config node add --name default --address 127.0.0.1:3030 --server-key <ADNL_KEY>".yellow()
         );
         println!();
-        println!(
-            "  {} Fund your wallet address, then deploy it:",
-            "3.".white().bold(),
-        );
-        println!(
-            "     {}",
-            "tosctl deploy wallet --name validator".yellow()
-        );
+        println!("  {} Fund your wallet address, then deploy it:", "3.".white().bold(),);
+        println!("     {}", "tosctl deploy wallet --name validator".yellow());
         println!();
-        println!(
-            "  {} Create and activate a staking pool:",
-            "4.".white().bold(),
-        );
+        println!("  {} Create and activate a staking pool:", "4.".white().bold(),);
         println!(
             "     {}",
-            "tosctl pool single create --name my-pool --owner validator --validator validator".yellow()
+            "tosctl pool single create --name my-pool --owner validator --validator validator"
+                .yellow()
         );
-        println!(
-            "     {}",
-            "tosctl pool single activate --name my-pool".yellow()
-        );
+        println!("     {}", "tosctl pool single activate --name my-pool".yellow());
         println!();
-        println!(
-            "  {} Bind the node to the pool and enable elections:",
-            "5.".white().bold(),
-        );
+        println!("  {} Bind the node to the pool and enable elections:", "5.".white().bold(),);
         println!(
             "     {}",
             "tosctl config bind add --node default --wallet validator --pool my-pool".yellow()
@@ -301,11 +263,7 @@ fn prompt_with_default(prompt: &str, default: &str) -> anyhow::Result<String> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     let trimmed = input.trim();
-    if trimmed.is_empty() {
-        Ok(default.to_string())
-    } else {
-        Ok(trimmed.to_string())
-    }
+    if trimmed.is_empty() { Ok(default.to_string()) } else { Ok(trimmed.to_string()) }
 }
 
 /// Prompt the user for an optional value
@@ -316,9 +274,5 @@ fn prompt_optional(prompt: &str) -> anyhow::Result<Option<String>> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     let trimmed = input.trim();
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed.to_string()))
-    }
+    if trimmed.is_empty() { Ok(None) } else { Ok(Some(trimmed.to_string())) }
 }

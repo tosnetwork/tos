@@ -13,16 +13,16 @@ use crate::stack::{
     continuation::ContinuationData,
     integer::{conversion::FromInt, IntegerData},
 };
+use chain_block::{
+    error, fail, BuilderData, Cell, CellType, ExceptionCode, Result, Serializable, SliceData,
+    Status,
+};
 use std::{
     cmp::Ordering,
     fmt, mem,
     ops::{Range, RangeInclusive},
     slice::Iter,
     sync::Arc,
-};
-use chain_block::{
-    error, fail, BuilderData, Cell, CellType, ExceptionCode, Result, Serializable, SliceData,
-    Status,
 };
 
 pub mod continuation;

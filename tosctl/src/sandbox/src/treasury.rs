@@ -9,13 +9,13 @@
 //! trivial contract that unconditionally accepts all incoming messages.
 //! It serves as the primary funding source in sandbox tests.
 
-use chain_block::{
-    Account, AccountId, AccountStorage, BuilderData, Cell, CurrencyCollection, GetRepresentationHash,
-    Message, MsgAddressInt, StateInit, StorageInfo,
-};
 use crate::{
     error::{SandboxError, SandboxResult},
     message_builder::MessageBuilder,
+};
+use chain_block::{
+    Account, AccountId, AccountStorage, BuilderData, Cell, CurrencyCollection,
+    GetRepresentationHash, Message, MsgAddressInt, StateInit, StorageInfo,
 };
 
 /// Default balance assigned to every new treasury (1 billion coins).

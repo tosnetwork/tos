@@ -6,21 +6,21 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use crate::commands::nodectl::output_format::OutputFormat;
 use crate::commands::nodectl::utils::{
     DEPLOY_TIMEOUT, load_config_vault_rpc_client, make_wallet, wait_for_deploy, wallet_info,
 };
-use crate::commands::nodectl::output_format::OutputFormat;
 use base64::Engine;
+use chain_block::{Cell, MsgAddressInt, write_boc};
+use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::{
     WalletVersion,
-    task_cancellation::CancellationCtx,
     chain_utils::{nanotos_to_tos, tos_to_nanotos},
+    task_cancellation::CancellationCtx,
 };
 use contracts::{NominatorWrapperImpl, Wallet};
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr, sync::Arc};
-use chain_block::{Cell, MsgAddressInt, write_boc};
-use chain_rpc_client::v2::data_models::AccountState;
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Deploy contracts (wallet, nominator pool)")]
@@ -439,9 +439,7 @@ impl DeployContractCmd {
         let boc_bytes = if file_bytes.iter().all(|b| b.is_ascii()) {
             // Try base64 decode
             let text = String::from_utf8_lossy(&file_bytes).trim().to_string();
-            base64::engine::general_purpose::STANDARD
-                .decode(&text)
-                .unwrap_or(file_bytes)
+            base64::engine::general_purpose::STANDARD.decode(&text).unwrap_or(file_bytes)
         } else {
             file_bytes
         };
@@ -465,14 +463,7 @@ impl DeployContractCmd {
             let address = MsgAddressInt::from_str(addr_str)
                 .map_err(|e| anyhow::anyhow!("Invalid address: {e}"))?;
             println!("Waiting for contract to become active...");
-            wait_for_deploy(
-                rpc_client,
-                &address,
-                &cancellation_ctx,
-                true,
-                DEPLOY_TIMEOUT,
-            )
-            .await?;
+            wait_for_deploy(rpc_client, &address, &cancellation_ctx, true, DEPLOY_TIMEOUT).await?;
             println!("{}", "Contract is active!".green().bold());
         }
 

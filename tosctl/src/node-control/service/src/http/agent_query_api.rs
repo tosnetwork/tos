@@ -919,8 +919,8 @@ pub async fn get_aipow_commitment(
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "aipow_commitment")
         .ok_or_else(|| AppError::not_found("no AIPoW score commitment indexed at this address"))?;
-    let result = indexed_dto::<AipowCommitmentDto>(&rec.dto_json, &rec.address, false)
-        .ok_or_else(|| {
+    let result =
+        indexed_dto::<AipowCommitmentDto>(&rec.dto_json, &rec.address, false).ok_or_else(|| {
             AppError::invalid_contract_state(
                 "indexed AIPoW score-commitment record could not be decoded",
             )

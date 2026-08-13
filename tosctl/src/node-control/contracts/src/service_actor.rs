@@ -10,8 +10,8 @@
 //! `request_id` and snapshots the policy/attestor key in force at `call`
 //! time, so it resolves independently of every other outstanding request.
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Coins, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit,
+    BuilderData, Coins, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit,
+    base64_decode, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -366,7 +366,9 @@ impl ServiceActorContract {
         query_id: u64,
         request_id: u64,
     ) -> anyhow::Result<chain_block::Cell> {
-        message(SVC_SWEEP_EXPIRED_REQUEST_OPCODE, query_id, |b| b.append_u64(request_id).map(|_| ()))
+        message(SVC_SWEEP_EXPIRED_REQUEST_OPCODE, query_id, |b| {
+            b.append_u64(request_id).map(|_| ())
+        })
     }
 
     /// Owner-only. Affects only requests accepted after this call --
@@ -471,10 +473,10 @@ mod tests {
     use chain_block::{Deserializable, Serializable, SliceData};
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {
@@ -496,7 +498,9 @@ mod tests {
     fn init() -> ServiceActorInit {
         ServiceActorInit {
             owner: MsgAddressInt::with_standart(None, -1, [0x11; 32].into()).unwrap(),
-            authorized_caller: Some(MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap()),
+            authorized_caller: Some(
+                MsgAddressInt::with_standart(None, -1, [0x22; 32].into()).unwrap(),
+            ),
             open_access: false,
             price_per_call: 100_000_000,
             storage_fee: 150_000_000,
@@ -616,7 +620,10 @@ mod tests {
         assert_eq!(slice.get_next_bit().unwrap(), true); // active
         assert_eq!(slice.get_next_bit().unwrap(), true); // open_access
         assert_eq!(slice.get_next_bit().unwrap(), true); // has_authorized_caller
-        assert_eq!(MsgAddressInt::construct_from(&mut slice).unwrap(), svc.authorized_caller.unwrap());
+        assert_eq!(
+            MsgAddressInt::construct_from(&mut slice).unwrap(),
+            svc.authorized_caller.unwrap()
+        );
         assert_eq!(slice.get_next_u32().unwrap(), 50);
         assert_eq!(slice.remaining_bits(), 0);
         assert_eq!(slice.remaining_references(), 1);
@@ -714,8 +721,8 @@ mod tests {
             number("0"),
             number(svc.response_sla.to_string()),
             number(svc.refund_claim_window.to_string()),
-            number("1"), // open_access
-            number("0"), // has_authorized_caller
+            number("1"),                     // open_access
+            number("0"),                     // has_authorized_caller
             address_slice_entry(&svc.owner), // filler, unused when has_authorized_caller = 0
             number("0"),
             hash_number([0; 32]),

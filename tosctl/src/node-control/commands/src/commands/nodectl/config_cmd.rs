@@ -16,11 +16,11 @@ use anyhow::Context;
 use common::{
     WalletVersion,
     app_config::{
-        AppConfig, ElectionsConfig, HttpConfig, KeyConfig, LogConfig, StakePolicy,
-        ChainRpcConfig, WalletConfig,
+        AppConfig, ChainRpcConfig, ElectionsConfig, HttpConfig, KeyConfig, LogConfig, StakePolicy,
+        WalletConfig,
     },
-    task_cancellation::CancellationCtx,
     chain_utils::tos_to_nanotos,
+    task_cancellation::CancellationCtx,
 };
 use std::{collections::HashMap, path::Path};
 
@@ -132,8 +132,8 @@ impl GenerateCmd {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
-                aipow_commitments: HashMap::new(),
-                aipow_distributors: HashMap::new(),
+            aipow_commitments: HashMap::new(),
+            aipow_distributors: HashMap::new(),
             pools: HashMap::new(),
             bindings: HashMap::new(),
             chain_rpc: ChainRpcConfig::default(),

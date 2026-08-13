@@ -94,12 +94,8 @@ jobs:
       # Rust toolchain needed for Rust crates under tosctl/src.
       # Pinned version matches tosctl/src/rust-toolchain.toml
       # ------------------------------------------------------------------
-      - name: Install pinned Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.91.1
-          profile: minimal
-          override: true
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
 
       # ------------------------------------------------------------------
       # Configure CMake — Linux

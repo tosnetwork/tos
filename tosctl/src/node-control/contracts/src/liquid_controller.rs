@@ -6,10 +6,10 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-/// Internal messages for liquid staking controller contract
-mod messages;
 /// Liquid staking controller contract implementation
 mod controller_impl;
+/// Internal messages for liquid staking controller contract
+mod messages;
 /// Trait for liquid staking controller contract
 mod wrapper;
 

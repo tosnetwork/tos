@@ -26,6 +26,7 @@ use crate::{
     overlay::{OverlayId, OverlayShortId, OverlayUtils},
     OverlayNodeInfo,
 };
+use chain_block::{base64_encode, error, fail, KeyId, KeyOption, Result, UInt256};
 use rand::Rng;
 use std::{
     collections::VecDeque,
@@ -62,7 +63,6 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed, Signing, TLObject,
 };
-use chain_block::{base64_encode, error, fail, KeyId, KeyOption, Result, UInt256};
 
 pub const TARGET: &str = "dht";
 

@@ -4,8 +4,8 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Cell, Coins, IBitstring, MsgAddressInt,
-    Serializable, StateInit,
+    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, StateInit, base64_decode,
+    read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -321,8 +321,15 @@ mod tests {
 
     #[test]
     fn encodes_register_and_skip_messages() {
-        let body =
-            AipowSettlementContract::register(1, 42, [0xAB; 32], 1000, 2000, dummy_distributor_code()).unwrap();
+        let body = AipowSettlementContract::register(
+            1,
+            42,
+            [0xAB; 32],
+            1000,
+            2000,
+            dummy_distributor_code(),
+        )
+        .unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), AIPOW_SETTLEMENT_REGISTER_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 1);

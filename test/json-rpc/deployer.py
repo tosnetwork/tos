@@ -21,7 +21,14 @@ import requests
 TOS_ROOT = Path(__file__).resolve().parents[2]  # ~/tos
 FIFT_EXE = TOS_ROOT / "build" / "crypto" / "fift"
 FUNC_EXE = TOS_ROOT / "build" / "crypto" / "func"
-FIFT_INCLUDES = f"{TOS_ROOT / 'crypto/fift/lib'}:{TOS_ROOT / 'crypto/smartcont'}"
+FIFT_INCLUDES = ":".join(
+    str(path)
+    for path in (
+        TOS_ROOT / "crypto/fift/lib",
+        TOS_ROOT / "build/crypto/smartcont",
+        TOS_ROOT / "crypto/smartcont",
+    )
+)
 
 MAIN_WALLET_PK = Path("/tmp/main-wallet.pk")
 MAIN_WALLET_ADDR = "-1:0000000000000000000000000000000000000000000000000000000000000000"

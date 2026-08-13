@@ -401,8 +401,9 @@ impl CapabilityRegistryShowCmd {
         let address = resolve_registry_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let provider = contracts::contract_provider!(rpc_client);
-        let stack =
-            provider.get_method(address.to_string(), "get_capability_registry_data", vec![]).await?;
+        let stack = provider
+            .get_method(address.to_string(), "get_capability_registry_data", vec![])
+            .await?;
         let data = CapabilityRegistryContract::decode_data(&stack)?;
         let view = data_view(&address, data);
         if self.format == OutputFormat::Json {
@@ -622,7 +623,8 @@ impl CapabilityRegistrySendCmd {
         if !self.yes && !confirm("Confirm Capability Registry message?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,

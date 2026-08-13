@@ -14,6 +14,9 @@
 
 use super::*;
 use crate::ExecuteParams;
+use chain_block::{
+    read_single_root_boc, write_boc, Account, Deserializable, Serializable, Transaction,
+};
 use pretty_assertions::assert_eq;
 use std::{
     collections::HashSet,
@@ -23,9 +26,6 @@ use std::{
     },
     thread,
     thread::ThreadId,
-};
-use chain_block::{
-    read_single_root_boc, write_boc, Account, Deserializable, Serializable, Transaction,
 };
 
 static DISABLED_TESTS: LazyLock<Mutex<HashSet<ThreadId>>> = LazyLock::new(Default::default);

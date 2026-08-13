@@ -7,6 +7,8 @@ check                      =
 config                     = --release
 bm_cells                   = 1000000
 
+.PHONY: fmt fmt-check
+
 #### Core
 
 .SECONDEXPANSION:
@@ -31,35 +33,20 @@ docker-image:
 	@docker build --force-rm --no-cache .
 
 fmt:
-	@cargo +nightly fmt $(check) --manifest-path ./adnl/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./adnl/raptorq/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./assembler/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./block/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./block-json/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./executor/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./emulator/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./lockfree/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/catchain/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/consensus-common/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/simplex/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/storage/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/tests/compat_test/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node/validator-session/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/commands/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/common/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/contracts/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/control-client/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/elections/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/nodectl/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/service/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/chain-rpc-client/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./tl/api/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./tl/codegen/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./secrets-vault/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./vm/Cargo.toml
-	@rustfmt +nightly $(check) --edition 2021 --config-path ./ ./common/src/*.rs
-	@rustfmt +nightly $(check) --edition 2021 --config-path ./ ./common/build/*.rs
+	@cargo fmt --all
+	@cargo fmt --all --manifest-path adnl/raptorq/fuzz/Cargo.toml
+	@cargo fmt --all --manifest-path lockfree/fuzz/Cargo.toml
+	@cargo fmt --all --manifest-path lockfree/benchmark/Cargo.toml
+	@cargo fmt --all --manifest-path ../../test/quic-interop-rust/Cargo.toml
+	@rustfmt --edition 2021 --config-path ../.. ./common/src/*.rs ./common/build/*.rs
+
+fmt-check:
+	@cargo fmt --all -- --check
+	@cargo fmt --all --manifest-path adnl/raptorq/fuzz/Cargo.toml -- --check
+	@cargo fmt --all --manifest-path lockfree/fuzz/Cargo.toml -- --check
+	@cargo fmt --all --manifest-path lockfree/benchmark/Cargo.toml -- --check
+	@cargo fmt --all --manifest-path ../../test/quic-interop-rust/Cargo.toml -- --check
+	@rustfmt --check --edition 2021 --config-path ../.. ./common/src/*.rs ./common/build/*.rs
 
 #### Tests
 
@@ -203,7 +190,8 @@ help:
 	@echo "  check_features     - Check with different feature sets"
 	@echo "  clippy             - Run Clippy lints"
 	@echo "  docker-image       - Build Docker image"
-	@echo "  fmt                - Run cargo fmt"
+	@echo "  fmt                - Format all Rust sources with the pinned stable toolchain"
+	@echo "  fmt-check          - Verify Rust formatting without modifying files"
 	@echo "  run                - Run node locally"
 	@echo "  test               - Run all tests"
 	@echo ""

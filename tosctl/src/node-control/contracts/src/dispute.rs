@@ -4,8 +4,8 @@
  * Licensed under the GNU General Public License v3.0.
  */
 use chain_block::{
-    base64_decode, read_single_root_boc, BuilderData, Deserializable, IBitstring, MsgAddressInt,
-    Serializable, StateInit,
+    BuilderData, Deserializable, IBitstring, MsgAddressInt, Serializable, StateInit, base64_decode,
+    read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
@@ -206,10 +206,10 @@ mod tests {
     use chain_block::{Serializable, SliceData};
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
+        Number, StackEntry,
         numberdecimal::NumberDecimal,
         slice,
         stackentry::{StackEntryNumber, StackEntrySlice},
-        Number, StackEntry,
     };
 
     fn number(value: impl Into<String>) -> StackEntry {

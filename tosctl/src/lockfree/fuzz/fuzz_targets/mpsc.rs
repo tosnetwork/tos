@@ -50,19 +50,19 @@ impl Machine for SubVm {
                     let mut vm = SenderVm { sender, state, end: false };
                     vm.run(&mut bytecode);
                 }))
-            },
+            }
 
             2 => {
                 if let Some(thread) = self.children.pop() {
                     thread.join().unwrap()
                 }
-            },
+            }
 
             5 => {
                 let (sender, receiver) = mpsc::create();
                 self.sender = sender;
                 self.receiver = receiver;
-            },
+            }
 
             _ => unreachable!(),
         }
@@ -91,7 +91,7 @@ impl Machine for SenderVm {
             0 | 1 | 3 => {
                 self.sender.send(Box::new(self.state));
                 self.state = self.state.wrapping_add(1);
-            },
+            }
 
             2 => self.end = true,
 

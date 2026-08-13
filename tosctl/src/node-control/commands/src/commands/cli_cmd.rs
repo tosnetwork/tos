@@ -7,6 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::commands::{
+    chain_rpc::get_config_param_cmd::GetConfigParamCmd,
     nodectl::{
         account_cmd::AccountCmd, admin_cmd::AdminCmd, agent_cmd::AgentCmd, auth_cmd::AuthCmd,
         backup_cmd::BackupCmd, config_cmd::ConfigCmd, deploy_cmd::DeployCmd, host_cmd::HostCmd,
@@ -14,7 +15,6 @@ use crate::commands::{
         pool_cmd::PoolCmd, service_api_cmd::ApiCmd, service_cmd::ServiceCmd, tx_cmd::TxCmd,
         vote_cmd::VoteCmd, wallet_cmd::WalletCmd,
     },
-    chain_rpc::get_config_param_cmd::GetConfigParamCmd,
 };
 
 #[derive(clap::Subcommand, Clone)]

@@ -7,8 +7,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
-use std::str::FromStr;
 use chain_block::{ConfigParam15, SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
+use std::str::FromStr;
 
 // TOS compatibility: Config param 15 controls election timing. TOS inherits the same
 // election param structure (validators_elected_for, elections_start_before,

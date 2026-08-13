@@ -5,8 +5,8 @@
 
 //! Blockchain state snapshots for save/restore in tests.
 
-use std::collections::HashMap;
 use chain_block::{Account, MsgAddressInt, Transaction};
+use std::collections::HashMap;
 
 /// A snapshot of the entire blockchain state that can be saved and restored.
 ///

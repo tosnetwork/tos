@@ -13,6 +13,11 @@ use crate::{
     executor::{gas::gas_state::Gas, Engine},
     stack::{integer::IntegerData, savelist::SaveList, Stack, StackItem},
 };
+use chain_block::{
+    error, fail, read_single_root_boc, write_boc, Account, Cell, ConfigParams, CurrencyCollection,
+    Deserializable, ExtBlkRef, HashmapAugType, KeyExtBlkRef, Message, OldMcBlocksInfo, Result,
+    Serializable, Sha256, ShardStateUnsplit, SliceData, UInt256, UnixTime,
+};
 use std::{borrow::Cow, mem};
 use tl_api::{
     tos::tvm::{
@@ -22,11 +27,6 @@ use tl_api::{
         StackEntry,
     },
     IntoBoxed,
-};
-use chain_block::{
-    error, fail, read_single_root_boc, write_boc, Account, Cell, ConfigParams, CurrencyCollection,
-    Deserializable, ExtBlkRef, HashmapAugType, KeyExtBlkRef, Message, OldMcBlocksInfo, Result,
-    Serializable, Sha256, ShardStateUnsplit, SliceData, UInt256, UnixTime,
 };
 
 /*
@@ -401,8 +401,7 @@ pub fn convert_stack(items: &[StackItem]) -> Result<Vec<StackEntry>> {
         let stack_entry = match item {
             StackItem::Integer(value) => {
                 let number = value.to_str_hex();
-                let number =
-                    tl_api::tos::tvm::numberdecimal::NumberDecimal { number }.into_boxed();
+                let number = tl_api::tos::tvm::numberdecimal::NumberDecimal { number }.into_boxed();
                 StackEntryNumber { number }.into_boxed()
             }
             StackItem::Slice(slice) => {

@@ -31,11 +31,11 @@ use crate::{
         Stack, StackItem,
     },
 };
+use chain_block::{fail, ExceptionCode, Mask, Status};
 use std::{
     mem,
     ops::{Range, RangeInclusive},
 };
-use chain_block::{fail, ExceptionCode, Mask, Status};
 
 const CALLX: u8 = 0x40; // CALLX to found value
 const SWITCH: u8 = 0x80; // SWITCH to found value

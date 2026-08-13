@@ -10,6 +10,10 @@
  */
 #![allow(clippy::unreadable_literal)]
 
+use chain_block::{
+    fail, BlockIdExt, CryptoSignature, CryptoSignaturePair, Ed25519KeyOption, Error, KeyOption,
+    Result, ShardIdent, UInt256,
+};
 use std::{
     any::{type_name, Any},
     convert::TryFrom,
@@ -17,10 +21,6 @@ use std::{
     hash::{Hash, Hasher},
     io::{self, Read, Write},
     sync::Arc,
-};
-use chain_block::{
-    fail, BlockIdExt, CryptoSignature, CryptoSignaturePair, Ed25519KeyOption, Error, KeyOption,
-    Result, ShardIdent, UInt256,
 };
 
 macro_rules! _invalid_id {

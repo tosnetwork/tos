@@ -16,6 +16,7 @@ use crate::{
     overlay::{Overlay, OverlayNode, TARGET, TARGET_BROADCAST},
     rldp::{RaptorqDecoder, RaptorqEncoder},
 };
+use chain_block::{base64_encode, error, fail, sha256_digest, KeyId, KeyOption, Result, UInt256};
 #[cfg(feature = "telemetry")]
 use std::sync::atomic::AtomicU32;
 use std::{
@@ -47,7 +48,6 @@ use tl_api::{
     },
     IntoBoxed,
 };
-use chain_block::{base64_encode, error, fail, sha256_digest, KeyId, KeyOption, Result, UInt256};
 
 pub(crate) struct BroadcastCheckInfo {
     bcast_id: BroadcastId,

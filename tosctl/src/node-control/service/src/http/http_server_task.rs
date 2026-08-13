@@ -167,10 +167,7 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
             "/aipow/commitments/{address}",
             axum::routing::get(agent_query_api::get_aipow_commitment),
         )
-        .route(
-            "/aipow/distributors",
-            axum::routing::get(agent_query_api::list_aipow_distributors),
-        )
+        .route("/aipow/distributors", axum::routing::get(agent_query_api::list_aipow_distributors))
         .route(
             "/aipow/distributors/{address}",
             axum::routing::get(agent_query_api::get_aipow_distributor),

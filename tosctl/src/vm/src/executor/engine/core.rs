@@ -31,14 +31,14 @@ use crate::{
         Stack, StackItem,
     },
 };
+use chain_block::{
+    error, fail, BuilderData, Cell, CellType, Deserializable, Error, Exception, ExceptionCode,
+    GasConsumer, GlobalCapabilities, HashmapE, IBitstring, Result, SliceData, Status, UInt256,
+};
 use std::{
     collections::HashSet,
     ops::Range,
     sync::{Arc, LazyLock, Mutex},
-};
-use chain_block::{
-    error, fail, BuilderData, Cell, CellType, Deserializable, Error, Exception, ExceptionCode,
-    GasConsumer, GlobalCapabilities, HashmapE, IBitstring, Result, SliceData, Status, UInt256,
 };
 
 pub(super) type ExecuteHandler = fn(&mut Engine) -> Status;

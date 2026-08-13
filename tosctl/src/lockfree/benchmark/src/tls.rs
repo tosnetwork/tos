@@ -12,10 +12,7 @@ use std::{
         Arc,
     },
 };
-use thread_local::{
-    CachedThreadLocal as CachedLockTls,
-    ThreadLocal as LockTls,
-};
+use thread_local::{CachedThreadLocal as CachedLockTls, ThreadLocal as LockTls};
 
 #[derive(Debug, Clone, Default)]
 struct BlockingTarget {

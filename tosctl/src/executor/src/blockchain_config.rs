@@ -9,13 +9,13 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use num::BigInt;
 use chain_block::{
     fail, AccountId, BurningConfig, Coins, ConfigParam18, ConfigParamEnum, ConfigParams,
     FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities, Mask, MsgAddressInt,
     MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo, StoragePrices, UInt256,
     SUPPORTED_VERSION,
 };
+use num::BigInt;
 
 pub(crate) trait DefaultConfig {
     /// Get default value for masterchain

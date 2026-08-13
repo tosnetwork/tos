@@ -122,19 +122,30 @@ pub struct ProofAttestationSendCmd {
     address: Option<String>,
     #[arg(long, help = "Local record name from `agent attestation ls`")]
     name: Option<String>,
-    #[arg(long, help = "Funding wallet name or master_wallet (attest is permissionless on-chain, \
-                         but still needs a wallet to pay for the message)")]
+    #[arg(
+        long,
+        help = "Funding wallet name or master_wallet (attest is permissionless on-chain, \
+                         but still needs a wallet to pay for the message)"
+    )]
     from: String,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
     #[arg(long, help = "Hash being attested to, for attest")]
     attested_hash: Option<String>,
-    #[arg(long, conflicts_with = "signer_vault_key", help = "Precomputed 64-byte ed25519 \
+    #[arg(
+        long,
+        conflicts_with = "signer_vault_key",
+        help = "Precomputed 64-byte ed25519 \
                                                               signature over --attested-hash, hex, \
-                                                              for attest")]
+                                                              for attest"
+    )]
     signature: Option<String>,
-    #[arg(long, conflicts_with = "signature", help = "Vault key name to sign --attested-hash \
-                                                       with locally, instead of --signature")]
+    #[arg(
+        long,
+        conflicts_with = "signature",
+        help = "Vault key name to sign --attested-hash \
+                                                       with locally, instead of --signature"
+    )]
     signer_vault_key: Option<String>,
     #[arg(long, conflicts_with = "new_signer_vault_key", help = "New public key for rotate-key")]
     new_public_key: Option<String>,
@@ -162,7 +173,10 @@ fn resolve_attestation_address(
             .proof_attestations
             .get(name)
             .ok_or_else(|| {
-                anyhow::anyhow!("Attestation record '{}' not found; see `agent attestation ls`", name)
+                anyhow::anyhow!(
+                    "Attestation record '{}' not found; see `agent attestation ls`",
+                    name
+                )
             })?
             .address
             .clone(),
@@ -433,8 +447,7 @@ impl ProofAttestationSendCmd {
 
         let body = match self.operation {
             ProofAttestationOperation::Attest => {
-                let attested_hash =
-                    parse_required_hash("attested-hash", &self.attested_hash)?;
+                let attested_hash = parse_required_hash("attested-hash", &self.attested_hash)?;
                 let signature = match (&self.signature, &self.signer_vault_key) {
                     (Some(hex), None) => parse_signature(hex)?,
                     (None, Some(name)) => {
@@ -464,7 +477,8 @@ impl ProofAttestationSendCmd {
         if !self.yes && !confirm("Confirm Proof Attestation message?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_config, owner_secret, &self.from).await?;
         send_wallet_message(
             &wallet,
             rpc_client,
