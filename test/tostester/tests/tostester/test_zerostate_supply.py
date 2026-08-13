@@ -378,12 +378,14 @@ def test_genesis_refuses_capaipow_without_parameters(tmp_path):
 # exercise the real C++ accessors + Config::check_aipow_config end to end via
 # create-state's genesis guard: k=3/1, cap 1000 TOS, floor 100 TOS, challenge
 # multiplier 2/1; 25%/8-epoch/65536s maturation; 4.5B cap; nonzero registry
-# anchors and an empty distributor-code set (allowed under Model B).
+# anchors (settlement/methodology/rate-card, plus commitment_code_hash and
+# reviewer_addr in the ^[...] ref) and an empty distributor-code set (allowed
+# under Model B).
 _AIPOW_PARAMS_VALID = (
     "<b 3 32 u, 1 32 u, TM$1000 Tomi, TM$100 Tomi, 2 32 u, 1 32 u, b> 90 config!\n"
     "<b 2500 16 u, 8 16 u, 65536 32 u, 0 16 u, b> 91 config!\n"
     "<b TM$4500000000 Tomi, b> 92 config!\n"
-    "<b 0xA1 256 u, 0xB2 256 u, 0xC3 256 u, 0 1 u, b> 93 config!\n"
+    "<b 0xA1 256 u, 0xB2 256 u, 0xC3 256 u, <b 0xD4 256 u, 0xE5 256 u, b> ref, 0 1 u, b> 93 config!\n"
 )
 
 
@@ -440,6 +442,8 @@ def test_genesis_accepts_and_round_trips_a_complete_aipow_parameter_set(tmp_path
             "TM$1000 Tomi, TM$100 Tomi,", "TM$1000 Tomi, TM$2000 Tomi,"
         ),  # cold_start_floor > schedule_cap
         _AIPOW_PARAMS_VALID.replace("0xC3 256 u,", "0 256 u,"),  # zero rate_card_hash
+        _AIPOW_PARAMS_VALID.replace("0xD4 256 u,", "0 256 u,"),  # zero commitment_code_hash
+        _AIPOW_PARAMS_VALID.replace("0xE5 256 u,", "0 256 u,"),  # zero reviewer_addr
         "".join(
             line + "\n"
             for line in _AIPOW_PARAMS_VALID.splitlines()
@@ -451,6 +455,8 @@ def test_genesis_accepts_and_round_trips_a_complete_aipow_parameter_set(tmp_path
         "zero_denominator",
         "floor_exceeds_cap",
         "zero_rate_card_hash",
+        "zero_commitment_code_hash",
+        "zero_reviewer_addr",
         "missing_limits_param",
     ],
 )
