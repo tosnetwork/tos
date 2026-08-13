@@ -6,6 +6,6 @@
 $# 1 <> ' usage if
 
 "auto/native-registry-code.fif" include
-dup hashu ."Native Registry code hash: " x. cr
+dup hashu ."ATOS Native Registry v1 code hash: " x. cr
 2 boc+>B $1 tuck B>file
-."Saved Native Registry code BOC to " type cr
+."Saved ATOS Native Registry v1 code BOC to " type cr

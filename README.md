@@ -360,6 +360,20 @@ Build instructions are in [BUILD.md](BUILD.md). The primary C++ targets are:
 
 Rust operator tooling is under `tosctl/src`.
 
+### ATOS Native Registry v1
+
+The sole ATOS Registry contract source is
+`crypto/smartcont/native-registry-code.fc`. Build and verify the frozen release
+artifact with:
+
+```bash
+scripts/test-atos-native-registry-v1.sh
+```
+
+The release manifest pins the FunC toolchain, TVM code hash, BOC container
+digest, and byte size. The obsolete complex Registry and temporary `v2` source
+names are intentionally not retained.
+
 Common verification commands:
 
 ```bash

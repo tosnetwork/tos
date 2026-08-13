@@ -1,0 +1,7 @@
+#!/usr/bin/fift -s
+"TosUtil.fif" include
+
+{ ."usage: " @' $0 type ." <code.boc>" cr 1 halt } : usage
+$# 1 <> ' usage if
+
+$1 file>B B>boc dup hashu ."tvm-cell-sha256:" x. cr

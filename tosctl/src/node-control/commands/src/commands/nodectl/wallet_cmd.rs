@@ -16,7 +16,7 @@ use anyhow::Context;
 use base64::Engine;
 use chain_block::{
     ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, BuilderData, Cell, Deserializable, IBitstring,
-    MsgAddressInt, StateInit, read_single_root_boc, write_boc,
+    MsgAddressInt, Serializable, StateInit, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use chain_rpc_client::v2::data_models::AccountState;
@@ -827,6 +827,7 @@ impl WalletSendCmd {
         }
 
         let dest_addr = self.to.parse::<MsgAddressInt>().context("Invalid destination address")?;
+        let destination_text = dest_addr.to_string();
 
         let wallet = make_wallet(rpc_client.clone(), wallet_cfg, from_secret, &self.from).await?;
 
@@ -856,6 +857,15 @@ impl WalletSendCmd {
                 Ok(StateInit::construct_from_cell(root)?)
             })
             .transpose()?;
+        let body_hash = format!("tvm-cell-sha256:{:x}", body.repr_hash());
+        let state_init_hash = state_init
+            .as_ref()
+            .map(|value| -> anyhow::Result<String> {
+                let cell = value.write_to_new_cell()?.into_cell()?;
+                Ok(format!("tvm-cell-sha256:{:x}", cell.repr_hash()))
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         if !self.build_only {
             println!(
@@ -891,6 +901,10 @@ impl WalletSendCmd {
                     "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(&msg_boc),
                     "wallet": self.from,
                     "payer": from_wallet_address.to_string(),
+                    "destination": destination_text,
+                    "amount_nanotos": amount_nanotos,
+                    "body_hash": body_hash,
+                    "state_init_hash": state_init_hash,
                 })
             );
             return Ok(());
