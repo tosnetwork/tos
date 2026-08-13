@@ -6,10 +6,16 @@
 #include "block/aipow.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/dict.h"
+#include "vm/excno.hpp"
 #include "block/block-parse.h"
 
 namespace block {
 namespace aipow {
+
+// The settlement layout version this code understands (mirrors the FunC
+// settlement_version). An unknown version fails closed (no mint), so native code
+// never reinterprets a future settlement layout under v1 semantics (D9).
+static constexpr td::uint16 kSettlementVersion = 1;
 
 // A RefInt256 is usable only when it is both non-null AND a valid bigint.
 // td::muldiv (and other ops) do NOT return null on 257-bit overflow: they return
@@ -104,6 +110,7 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   if (data.is_null()) {
     return false;
   }
+  try {
   vm::CellSlice cs = vm::load_cell_slice(data);
   unsigned long long version, next_epoch, epoch_seconds, register_grace, immediate_bps, stream_epochs,
       mat_epoch_seconds;
@@ -139,6 +146,9 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
     return false;
   }
   return cs.empty_ext();  // no ignored remainder (strict, D9)
+  } catch (vm::VmError&) {
+    return false;  // a special/pruned/malformed cell is not a valid ledger
+  }
 }
 
 Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::uint32 epoch) {
@@ -146,6 +156,7 @@ Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::
   if (registrations_root.is_null()) {
     return reg;  // empty dictionary -> not found
   }
+  try {
   vm::Dictionary dict{registrations_root, 32};
   td::BitArray<32> key;
   key.store_ulong(epoch);
@@ -173,34 +184,49 @@ Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::
   reg.registered_at = (td::uint32)registered_at;
   reg.found = true;
   return reg;
+  } catch (vm::VmError&) {
+    return Registration{};  // a malformed dict/record -> not found (never throws)
+  }
 }
 
 bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   if (data.is_null()) {
     return false;
   }
+  try {
   vm::CellSlice cs = vm::load_cell_slice(data);
-  // version:16 committer:MsgAddress reviewer:MsgAddress status:8 epoch:64 ...
-  // The score_root/total_score/organic live in the first ref (^[score_root
-  // methodology total_score organic]); the inline deadlines/bonds after `epoch`
-  // are not needed, and refs are a separate stream from the data bits.
-  unsigned long long version, status, epoch;
+  // version:16 committer:MsgAddress reviewer:MsgAddress status:8 epoch:64
+  // window_deadline:64 review_deadline:64 commit_bond:Grams challenge_bond:Grams
+  // ^[score_root methodology total_score organic] ^[challenger ...] ^[settlement]
+  // The economic tuple is the first ref; the whole outer layout is consumed and
+  // validated (strict, D9) so a noncanonical parent is rejected.
+  unsigned long long version, status, epoch, window_deadline, review_deadline;
   if (!cs.fetch_uint_to(16, version)) {
     return false;
   }
   if (!block::tlb::t_MsgAddress.skip(cs) || !block::tlb::t_MsgAddress.skip(cs)) {
     return false;  // committer, reviewer
   }
-  if (!(cs.fetch_uint_to(8, status) && cs.fetch_uint_to(64, epoch))) {
+  if (!(cs.fetch_uint_to(8, status) && cs.fetch_uint_to(64, epoch) &&
+        cs.fetch_uint_to(64, window_deadline) && cs.fetch_uint_to(64, review_deadline))) {
+    return false;
+  }
+  if (block::tlb::t_Tomis.as_integer_skip(cs).is_null() ||       // commit_bond
+      block::tlb::t_Tomis.as_integer_skip(cs).is_null()) {       // challenge_bond
     return false;
   }
   out.version = (td::uint16)version;
   out.status = (td::uint8)status;
   out.epoch = epoch;
-  if (cs.size_refs() < 1) {
+  // Exactly three refs (economic tuple, challenger, settlement) and no leftover
+  // inline data after the bonds.
+  if (cs.size_refs() != 3) {
     return false;
   }
-  vm::CellSlice tcs = vm::load_cell_slice(cs.prefetch_ref(0));
+  vm::CellSlice tcs = vm::load_cell_slice(cs.fetch_ref());  // economic tuple (ref 0)
+  if (cs.size() != 0 || cs.size_refs() != 2) {
+    return false;  // trailing inline bits, or an unexpected ref count
+  }
   td::Bits256 methodology_hash;
   if (!(tcs.fetch_bits_to(out.score_root) && tcs.fetch_bits_to(methodology_hash) &&
         tcs.fetch_uint256_to(128, out.total_score) &&
@@ -208,6 +234,9 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
     return false;
   }
   return tcs.empty_ext();  // the economic tuple ref is exactly these four fields
+  } catch (vm::VmError&) {
+    return false;
+  }
 }
 
 bool commitment_authorizes(const Registration& reg, const CommitmentState& commitment,
@@ -249,6 +278,11 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   if (!parse_settlement_ledger(settlement.data, ledger)) {
     return EpochSettlement::none();
   }
+  // Fail closed on an unknown settlement layout version (D9): never reinterpret a
+  // future layout under v1 semantics.
+  if (ledger.version != kSettlementVersion) {
+    return EpochSettlement::none();
+  }
 
   SettlementCursor cursor;
   cursor.next_epoch = ledger.next_epoch;
@@ -264,9 +298,21 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
 
   Registration reg = find_registration(ledger.registrations, cursor.next_epoch);
   if (reg.found) {
-    // A registered epoch: resolve and verify the nominating commitment. Only a
-    // genuine (code-hash-pinned) finalized commitment whose committed tuple
-    // matches the registration authorizes the mint.
+    // A registered epoch: resolve and verify the nominating commitment.
+    //
+    // SECURITY LIMITATION (hard mainnet launch gate, tracked in the Phase C plan
+    // D6/D10): the code-hash pin below proves only that the account runs the
+    // audited commitment CODE, not that its finalization was legitimate. A
+    // commitment's `window_deadline` is a deploy parameter, so an attacker can
+    // deploy the genuine code with a past window and a fabricated tuple,
+    // finalize instantly (no real challenge window), and register a forged
+    // economic value. The challenge/bond/reviewer mechanism -- not this code --
+    // is what must make a fabricated tuple uneconomic/impossible. Native mint
+    // MUST NOT be activated on mainnet until the commitment enforces a genuine,
+    // code-measured challenge window (a committed_at + fixed-duration redesign)
+    // and a governance-approved threshold reviewer policy are finalized+audited.
+    // While dark (capAipow off) nothing mints, so this is a launch gate, not a
+    // live exploit.
     ResolvedAccount commitment = resolve(reg.commitment_workchain, reg.commitment_addr);
     bool has_valid = false;
     if (commitment.exists && commitment.code_hash == ctx.commitment_code_hash) {

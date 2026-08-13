@@ -82,9 +82,9 @@ td::Ref<vm::Cell> build_registration_record(td::int32 wc, td::Bits256 commitment
 
 // Build a settlement account data cell (W4.1 layout) with an optional registrations dict.
 td::Ref<vm::Cell> build_settlement(td::uint32 next_epoch, long long minted_total, long long total_cap,
-                                   td::Ref<vm::Cell> registrations_root) {
+                                   td::Ref<vm::Cell> registrations_root, td::uint16 version = 1) {
   vm::CellBuilder cb;
-  cb.store_long_bool(1, 16);            // version
+  cb.store_long_bool(version, 16);      // version
   cb.store_long_bool(next_epoch, 32);
   cb.store_long_bool(65536, 32);        // epoch_seconds
   cb.store_long_bool(3600, 32);         // register_grace
@@ -587,4 +587,42 @@ TEST(Aipow, config_registry_carries_the_commitment_code_hash) {
   CHECK(tlb::unpack_cell(cell, rec));
   CHECK(rec.settlement_addr == mk_bits(0x01));
   CHECK(rec.r1.commitment_code_hash == mk_bits(0xCC));
+}
+
+TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_on_a_future_version) {
+  // A future settlement layout version must not be reinterpreted under v1: the
+  // parser reports it, and the masterchain decision fails closed (D9).
+  auto settlement_addr = mk_bits(0x99);
+  auto v2 = build_settlement(10, 0, 4500000000000000000LL, {}, /*version=*/2);
+  block::aipow::SettlementLedger led;
+  CHECK(block::aipow::parse_settlement_ledger(v2, led));
+  CHECK(led.version == 2);
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = v2;
+    }
+    return a;
+  };
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 2, 1000000000LL, 0);
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.expected_commitment_version = 1;
+  ctx.gen_utime = 4000000000u;  // far past any grace deadline
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
+}
+
+TEST(Aipow, parsers_return_not_found_on_malformed_input_instead_of_throwing) {
+  // A garbage cell as the registrations root must not throw (the dict ops would
+  // otherwise raise a vm exception in consensus code); it returns not-found.
+  auto garbage = dummy_ref();  // an 8-bit cell, not a valid dictionary node
+  auto reg = block::aipow::find_registration(garbage, 27260);
+  CHECK(!reg.found);
+  // A garbage cell is not a valid settlement ledger or commitment either.
+  block::aipow::SettlementLedger led;
+  CHECK(!block::aipow::parse_settlement_ledger(garbage, led));
+  block::aipow::CommitmentState c;
+  CHECK(!block::aipow::parse_commitment_state(garbage, c));
 }
