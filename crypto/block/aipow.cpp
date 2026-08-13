@@ -515,11 +515,13 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   // M1: defensively enforce the settlement's timing invariants in consensus. The
   // SDK's build_data enforces these at deploy, but the settlement is a plain account
   // that could be deployed bypassing the SDK; the native path must not trust a
-  // malformed ledger. A zero epoch_seconds/register_grace or a challenge_window not
-  // strictly below register_grace could strand a valid mint or make an epoch
-  // skippable before its window elapses -> fail closed (no mint from this ledger).
+  // malformed ledger. A zero epoch_seconds/register_grace, a ZERO challenge_window
+  // (which would let a commitment mint with no real, elapsed dispute window at all),
+  // or a challenge_window not strictly below register_grace could strand a valid mint
+  // or forge one -> fail closed (no mint from this ledger). Mirrors the SDK invariant
+  // `0 < challenge_window < register_grace`.
   if (ledger.epoch_seconds == 0 || ledger.register_grace == 0 ||
-      ledger.challenge_window >= ledger.register_grace) {
+      ledger.challenge_window == 0 || ledger.challenge_window >= ledger.register_grace) {
     return EpochSettlement::none();
   }
   // The settlement authenticates registrations against its OWN stored commitment

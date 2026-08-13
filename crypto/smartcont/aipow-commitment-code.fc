@@ -115,6 +115,7 @@ const int err::unknown_op = 2107;
 const int err::zero_evidence = 2108;
 const int err::conflicted_challenger = 2109;
 const int err::review_open = 2110;
+const int err::review_closed = 2111;  ;; reviewer ruled after the review deadline
 
 ;; mode 1: send exactly `amount`, fees paid from the contract balance.
 () send_value(slice destination, int amount, int mode) impure inline {
@@ -329,6 +330,11 @@ const int err::review_open = 2110;
   if (op == op::rule) {
     throw_unless(err::not_reviewer, equal_slice_bits(sender, reviewer));
     throw_unless(err::not_challenged, status == status::challenged);
+    ;; M5: the reviewer must rule strictly BEFORE the review deadline. After it, only
+    ;; the permissionless `timeout` (which rejects, failing safe) may resolve the
+    ;; challenge -- otherwise a late reviewer ruling could finalize a root that should
+    ;; have timed out.
+    throw_unless(err::review_closed, now() < review_deadline);
     int uphold = in_msg~load_uint(8);
     in_msg.end_parse();
     throw_unless(err::invalid_ruling, (uphold == 0) | (uphold == 1));
@@ -340,14 +346,19 @@ const int err::review_open = 2110;
         total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
       send_value(challenger, commit_bond + challenge_bond, 1);
     } else {
-      ;; The challenge is dismissed: the root finalizes and the frivolous
-      ;; challenger's bond compensates the committer.
-      save_state(committer, reviewer, status::final, epoch, window_deadline,
-        review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
-        total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
-      send_value(committer, commit_bond + challenge_bond, 1);
-      ;; No settlement message here: the nomination was sent at announce; the
-      ;; native derivation reads this `final` status live at mint time.
+      ;; H3: the challenge is dismissed as frivolous, but the root does NOT finalize.
+      ;; Finalizing here would close the provenance window early: a throwaway early
+      ;; challenge + immediate dismissal would make the root `final` (hence no longer
+      ;; challengeable) for the rest of a nominal window it never actually stayed open
+      ;; for. Instead the root returns to `committed`, remaining challengeable until its
+      ;; window_deadline; only `finalize` (past the window, unchallenged) makes it
+      ;; final. The frivolous challenger's bond compensates the committer now; the
+      ;; committer's own commit_bond stays locked until finalize. Reset the review
+      ;; fields so the next challenge starts clean.
+      save_state(committer, reviewer, status::committed, epoch, window_deadline,
+        0, commit_bond, 0, score_root, methodology_hash,
+        total_score, organic_settled_value, challenger, 0, version, settlement);
+      send_value(committer, challenge_bond, 1);
     }
     return ();
   }

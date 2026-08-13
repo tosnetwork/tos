@@ -998,6 +998,7 @@ TEST(Aipow, derive_fails_closed_on_a_settlement_that_violates_its_timing_invaria
   };
   CHECK(make(65536, 700000, 700000).is_none());  // challenge_window == register_grace
   CHECK(make(65536, 700000, 800000).is_none());  // challenge_window > register_grace
+  CHECK(make(65536, 700000, 0).is_none());       // zero challenge_window (no real dispute window)
   CHECK(make(65536, 0, 0).is_none());            // zero register_grace
   CHECK(make(0, 700000, 600000).is_none());      // zero epoch_seconds
   // A well-formed one at the same far gen_utime skips (unregistered epoch past grace).

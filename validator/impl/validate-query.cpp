@@ -3147,6 +3147,16 @@ bool ValidateQuery::prepare_aipow_mint() {
                                     << td::dec_string(recorded) << ", but the block mints "
                                     << td::dec_string(aipow_mint_amount_));
     }
+    // The settle must also advance the cursor by EXACTLY one epoch. Tying issuance to
+    // the minted_total delta alone is not enough: a settlement that recorded the
+    // amount but left next_epoch unchanged would let the SAME epoch be minted again in
+    // the next block (draining the cap onto one epoch), and one that jumped the cursor
+    // would skip epochs. (Compare as 64-bit to avoid a uint32 wrap.)
+    if ((td::uint64)epoch_post != (td::uint64)epoch_pre + 1) {
+      return reject_query(PSTRING() << "AIPoW settle minted epoch " << epoch_pre
+                                    << " but advanced the cursor to " << epoch_post
+                                    << " (expected " << (epoch_pre + 1) << ")");
+    }
     return true;
   }
 

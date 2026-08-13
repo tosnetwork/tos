@@ -45,6 +45,7 @@ const ERR_UNKNOWN_OP: i32 = 2107;
 const ERR_ZERO_EVIDENCE: i32 = 2108;
 const ERR_CONFLICTED_CHALLENGER: i32 = 2109;
 const ERR_REVIEW_OPEN: i32 = 2110;
+const ERR_REVIEW_CLOSED: i32 = 2111;
 // Mirrors `review_window` in the contract (7 days).
 const REVIEW_WINDOW: u64 = 604_800;
 
@@ -271,7 +272,7 @@ fn permissionless_announce_registers_the_committed_tuple_with_the_settlement() {
 }
 
 #[test]
-fn announce_registers_early_and_a_dismissed_challenge_still_finalizes() {
+fn announce_registers_early_and_a_dismissed_challenge_returns_to_committed() {
     let mut f = Fixture::new();
     let challenger_addr = f.challenger.address().clone();
     let reviewer_addr = f.reviewer.address().clone();
@@ -287,10 +288,48 @@ fn announce_registers_early_and_a_dismissed_challenge_still_finalizes() {
         COMMIT_BOND + TOS,
     )
     .expect_success();
-    // Dismissing the challenge finalizes the root; the candidate is unchanged.
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_CHALLENGED);
+    // H3: dismissing a frivolous challenge does NOT finalize -- it returns to
+    // committed so the root stays challengeable for the rest of its window (a
+    // dismissed challenge must not close the provenance window early).
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(3, false).unwrap()).expect_success();
-    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
+    let data = f.data();
+    assert_eq!(data.status, AIPOW_COMMITMENT_STATUS_COMMITTED);
+    assert_eq!(data.challenge_bond, 0, "review fields reset on dismissal");
+    assert_eq!(data.review_deadline, 0);
+    // Still challengeable after the dismissal (genuine challengers are not locked out).
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(4, [0xAB; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_CHALLENGED, "re-challengeable");
     assert!(f.settlement_candidate(COMMIT_EPOCH as u32).is_some(), "candidate still present");
+}
+
+#[test]
+fn a_reviewer_ruling_after_the_review_deadline_is_rejected() {
+    // M5: after the review deadline only the permissionless timeout (which rejects,
+    // failing safe) may resolve a challenge; a late reviewer ruling is rejected so it
+    // cannot finalize a root that should have timed out.
+    let mut f = Fixture::new();
+    let challenger_addr = f.challenger.address().clone();
+    let reviewer_addr = f.reviewer.address().clone();
+    f.send_from_with_value(
+        &challenger_addr,
+        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        COMMIT_BOND + TOS,
+    )
+    .expect_success();
+    let review_deadline = f.data().review_deadline;
+    f.bc.set_now((review_deadline + 1) as u32);
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap())
+        .expect_exit_code(ERR_REVIEW_CLOSED);
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_CHALLENGED, "still challenged");
+    // The permissionless timeout now resolves it by rejection.
+    f.send_from(&challenger_addr, AipowCommitmentContract::timeout(3).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
 }
 
 #[test]
@@ -456,7 +495,7 @@ fn upheld_challenge_rejects_the_root_and_pays_the_challenger() {
 }
 
 #[test]
-fn dismissed_challenge_finalizes_and_pays_the_committer() {
+fn dismissed_challenge_returns_to_committed_and_pays_the_committer_the_challenge_bond() {
     let mut f = Fixture::new();
     let challenger_addr = f.challenger.address().clone();
     let reviewer_addr = f.reviewer.address().clone();
@@ -470,13 +509,15 @@ fn dismissed_challenge_finalizes_and_pays_the_committer() {
 
     let before = f.balance(&committer_addr);
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
-    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
-    // Both bonds are the fixed commit bond, so a dismissed challenge pays 2x.
-    let expected = 2 * COMMIT_BOND;
+    // H3: dismissal returns to committed (not final); the committer is compensated
+    // with the frivolous challenger's bond only, and its own commit_bond stays locked
+    // until finalize (so it pays 1x, not 2x).
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
+    let expected = COMMIT_BOND;
     let delta = f.balance(&committer_addr) - before;
     assert!(
         delta > expected - TOS / 100 && delta <= expected,
-        "committer must receive both bonds minus at most the forward fee, got {delta}"
+        "committer must receive the challenger's bond (1x) minus at most the forward fee, got {delta}"
     );
 
     // Ruling before any challenge on a fresh instance is rejected.

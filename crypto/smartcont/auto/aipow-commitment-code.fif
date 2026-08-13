@@ -178,7 +178,7 @@ PROGRAM{
     IFJMP:<{	//  msg_value in_msg full_msg
       3 BLKDROP	//
     }>	//  msg_value in_msg full_msg
-    LDMSGADDR	//  msg_value in_msg _156 _155
+    LDMSGADDR	//  msg_value in_msg _162 _161
     DROP	//  msg_value in_msg sender
     OVER	//  msg_value in_msg sender in_msg
     SEMPTY	//  msg_value in_msg sender _14
@@ -333,15 +333,20 @@ PROGRAM{
       1 EQINT	//  settlement challenge_evidence_hash version in_msg committer reviewer _108=2104 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _110
       s1 s11 XCHG	//  settlement challenge_evidence_hash version in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _108=2104 _110
       THROWANYIFNOT
+      2111 PUSHINT	//  settlement challenge_evidence_hash version in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _112=2111
+      NOW	//  settlement challenge_evidence_hash version in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _112=2111 _113
+      s8 PUSH	//  settlement challenge_evidence_hash version in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _112=2111 _113 review_deadline
+      LESS	//  settlement challenge_evidence_hash version in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _112=2111 _114
+      THROWANYIFNOT
       s0 s12 XCHG	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score in_msg
       8 LDU	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold in_msg
       ENDS
-      2106 PUSHINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106
-      OVER	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106 uphold
-      0 EQINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106 _119
-      s2 PUSH	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106 _119 uphold
-      1 EQINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106 _119 _121
-      OR	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _117=2106 _122
+      2106 PUSHINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106
+      OVER	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106 uphold
+      0 EQINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106 _123
+      s2 PUSH	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106 _123 uphold
+      1 EQINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106 _123 _125
+      OR	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score uphold _121=2106 _126
       THROWANYIFNOT
       IF:<{	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score
         s10 s11 XCHG
@@ -361,54 +366,54 @@ PROGRAM{
         s0 s4 XCHG
         s2 17 s() XCHG
         s1 16 s() XCHG
-        s0 18 s() XCHG	//  challenge_bond challenger commit_bond committer reviewer _124=3 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version settlement
+        s0 18 s() XCHG	//  challenge_bond challenger commit_bond committer reviewer _128=3 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version settlement
         save_state INLINECALLDICT
         ROT	//  challenger commit_bond challenge_bond
-        ADD	//  challenger _126
-        1 PUSHINT	//  challenger _126 _127=1
+        ADD	//  challenger _130
+        1 PUSHINT	//  challenger _130 _131=1
         send_value INLINECALLDICT
       }>ELSE<{	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score
-        2 PUSHINT	//  settlement challenge_evidence_hash version organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score _129=2
-        s11 PUSH
-        s11 s13 XCHG2
-        s12 s0 s6 XC2PU
-        s10 s11 XCHG
-        s9 s10 XCHG
-        s0 s8 XCHG
-        s9 s6 XCPU
-        s0 s8 XCHG
-        s6 s7 XCHG
-        s5 s6 XCHG
-        s4 s5 XCHG
-        s4 s3 s0 XCHG3
-        s2 17 s() XCHG
-        s1 16 s() XCHG
-        s0 18 s() XCHG	//  commit_bond challenge_bond committer committer reviewer _129=2 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version settlement
+        s5 POP
+        s12 POP	//  settlement methodology_hash version organic_settled_value committer reviewer challenger epoch window_deadline total_score commit_bond challenge_bond score_root
+        0 PUSHINT	//  settlement methodology_hash version organic_settled_value committer reviewer challenger epoch window_deadline total_score commit_bond challenge_bond score_root _133=0
+        s0 s0 s0 PUSH3	//  settlement methodology_hash version organic_settled_value committer reviewer challenger epoch window_deadline total_score commit_bond challenge_bond score_root _133=0 _134=0 _135=0 _136=0
+        s12 PUSH
+        s0 s15 XCHG
+        s12 s14 XCHG
+        s4 s13 XCHG
+        s10 s12 XCHG
+        s9 s11 XCHG
+        s3 s10 XCHG
+        s7 s9 XCHG
+        s2 s8 XCHG
+        s5 s7 XCHG
+        s6 16 s() XCHG
+        4 2 REVERSE
+        3 ROLL
+        s0 17 s() XCHG	//  committer challenge_bond committer reviewer _133=0 epoch window_deadline _134=0 commit_bond _135=0 score_root methodology_hash total_score organic_settled_value challenger _136=0 version settlement
         save_state INLINECALLDICT
-        -ROT	//  committer commit_bond challenge_bond
-        ADD	//  committer _131
-        1 PUSHINT	//  committer _131 _132=1
+        1 PUSHINT	//  committer challenge_bond _138=1
         send_value INLINECALLDICT
       }>
     }>	//  settlement sender op in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version
     17 s() POP	//  settlement version op in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash
     s0 s15 XCHG
-    1095784196 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger op _134=1095784196
-    EQUAL	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _135
+    1095784196 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger op _140=1095784196
+    EQUAL	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _141
     IFJMP:<{	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger
-      2104 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _136=2104
-      s0 s11 XCHG	//  settlement version challenge_evidence_hash in_msg committer reviewer _136=2104 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger status
-      1 EQINT	//  settlement version challenge_evidence_hash in_msg committer reviewer _136=2104 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _138
-      s1 s11 XCHG	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _136=2104 _138
+      2104 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _142=2104
+      s0 s11 XCHG	//  settlement version challenge_evidence_hash in_msg committer reviewer _142=2104 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger status
+      1 EQINT	//  settlement version challenge_evidence_hash in_msg committer reviewer _142=2104 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger _144
+      s1 s11 XCHG	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _142=2104 _144
       THROWANYIFNOT
-      2110 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _140=2110
-      NOW	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _140=2110 _141
-      s8 PUSH	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _140=2110 _141 review_deadline
-      GEQ	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _140=2110 _142
+      2110 PUSHINT	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _146=2110
+      NOW	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _146=2110 _147
+      s8 PUSH	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _146=2110 _147 review_deadline
+      GEQ	//  settlement version challenge_evidence_hash in_msg committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value _146=2110 _148
       THROWANYIFNOT
       s0 s12 XCHG	//  settlement version challenge_evidence_hash organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score in_msg
       ENDS
-      3 PUSHINT	//  settlement version challenge_evidence_hash organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score _145=3
+      3 PUSHINT	//  settlement version challenge_evidence_hash organic_settled_value committer reviewer challenger epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score _151=3
       s9 s11 s5 XCPU2
       s6 PUSH
       s3 s15 XCHG
@@ -416,17 +421,17 @@ PROGRAM{
       s0 s3 XCHG
       s2 17 s() XCHG
       s1 18 s() XCHG
-      s0 19 s() XCHG	//  committer challenge_bond commit_bond challenger committer reviewer _145=3 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version settlement
+      s0 19 s() XCHG	//  committer challenge_bond commit_bond challenger committer reviewer _151=3 epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger challenge_evidence_hash version settlement
       save_state INLINECALLDICT
       s3 s3 XCHG2
-      1 PUSHINT	//  challenger challenge_bond committer commit_bond _147=1
+      1 PUSHINT	//  challenger challenge_bond committer commit_bond _153=1
       send_value INLINECALLDICT
-      1 PUSHINT	//  challenger challenge_bond _149=1
+      1 PUSHINT	//  challenger challenge_bond _155=1
       send_value INLINECALLDICT
     }>	//  settlement version challenge_evidence_hash in_msg committer reviewer status epoch window_deadline review_deadline commit_bond challenge_bond score_root methodology_hash total_score organic_settled_value challenger
     15 BLKDROP
     2DROP	//
-    2107 PUSHINT	//  _151=2107
+    2107 PUSHINT	//  _157=2107
     THROWANY
   }>
   get_aipow_commitment_data PROC:<{
