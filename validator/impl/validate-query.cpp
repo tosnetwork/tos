@@ -20,6 +20,7 @@
 #include <ctime>
 
 #include "adnl/utils.hpp"
+#include "block/aipow.h"
 #include "block/block-auto.h"
 #include "block/block-db.h"
 #include "block/block-parse.h"
@@ -2886,6 +2887,11 @@ bool ValidateQuery::unpack_block_data() {
   if (!account_blocks_dict_->validate_all()) {
     return reject_query("ShardAccountBlocks dictionary is invalid");
   }
+  // Phase C: re-derive the AIPoW settle mint and locate its message in InMsgDescr
+  // BEFORE the value-flow check and the InMsg walk, so both see the expected mint.
+  if (!prepare_aipow_mint()) {
+    return false;
+  }
   return unpack_precheck_value_flow(std::move(blk.value_flow));
 }
 
@@ -2931,12 +2937,29 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
                         " has a zero recovered fees value, but there is a recovery InMsg");
   }
-  if (!value_flow_.minted.is_zero() && mint_msg_.is_null()) {
+  // value_flow_.minted aggregates two disjoint mints by currency type: extra
+  // currencies (ConfigParam 2 minter) and the Phase C AIPoW base-gram mint (to the
+  // settlement). Each is carried by its own special message, so tie each part to
+  // its message separately. The extra part is value_flow_.minted with tomis zeroed;
+  // the base part is value_flow_.minted.tomis.
+  block::CurrencyCollection minted_extra = value_flow_.minted;
+  minted_extra.tomis = td::make_refint(0);
+  bool aipow_minted = value_flow_.minted.tomis.not_null() && value_flow_.minted.tomis->sgn() > 0;
+  if (!minted_extra.is_zero() && mint_msg_.is_null()) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a non-zero minted value, but there is no mint InMsg");
+                        " has a non-zero minted extra-currency value, but there is no mint InMsg");
   }
-  if (value_flow_.minted.is_zero() && mint_msg_.not_null()) {
-    return reject_query("ValueFlow of block "s + id_.to_str() + " has a zero minted value, but there is a mint InMsg");
+  if (minted_extra.is_zero() && mint_msg_.not_null()) {
+    return reject_query("ValueFlow of block "s + id_.to_str() +
+                        " has a zero minted extra-currency value, but there is a mint InMsg");
+  }
+  if (aipow_minted && aipow_mint_msg_.is_null()) {
+    return reject_query("ValueFlow of block "s + id_.to_str() +
+                        " has a non-zero minted base-gram value, but there is no AIPoW settle InMsg");
+  }
+  if (!aipow_minted && aipow_mint_msg_.not_null()) {
+    return reject_query("ValueFlow of block "s + id_.to_str() +
+                        " has a zero minted base-gram value, but there is an AIPoW settle InMsg");
   }
   if (is_masterchain()) {
     block::CurrencyCollection to_mint;
@@ -3020,11 +3043,95 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
  *
  * @returns True if the computation is successful, false otherwise.
  */
+/**
+ * Re-derives the AIPoW aggregate epoch mint (Phase C, Model B) and locates the
+ * settle message the block must carry. Dark while capAipow is off. The derivation
+ * mirrors Collator::compute_aipow_epoch_mint exactly -- the SAME shared
+ * build_masterchain_mint_context + derive_masterchain_epoch_mint over the block's
+ * prev-state (ps_) resolver -- so validate-query independently computes the same
+ * (amount, settlement, winner). It then rebuilds the canonical settle message from
+ * the SAME shared builder and looks it up by message hash in InMsgDescr: finding it
+ * proves the block emitted exactly that mint (the hash commits to every byte --
+ * amount, destination, winner id); absence is a reject. The located InMsg is
+ * remembered so is_special_in_msg exempts it from the "import needs an out-message"
+ * rule, and the amount feeds compute_minted_amount so value-flow balances.
+ *
+ * @returns True on success (including the dark/no-mint case), false on reject.
+ */
+bool ValidateQuery::prepare_aipow_mint() {
+  aipow_mint_amount_ = td::RefInt256{};
+  aipow_mint_msg_ = Ref<vm::Cell>{};
+  if (!is_masterchain()) {
+    return true;
+  }
+  block::aipow::MasterchainMintContext ctx;
+  if (!block::aipow::build_masterchain_mint_context(*config_, now_, ctx)) {
+    return true;  // capAipow off or config incomplete -> no mint (fail closed)
+  }
+  block::aipow::AccountResolver resolver =
+      [this](td::int32 workchain, const td::Bits256& account_id) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount out;
+    if (workchain != masterchainId) {
+      return out;  // AIPoW accounts are masterchain-only
+    }
+    auto entry = ps_.account_dict_->lookup_extra(account_id.bits(), 256);
+    if (entry.first.is_null()) {
+      return out;
+    }
+    block::Account acc(workchain, account_id.bits());
+    if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(account_id.bits()))) {
+      return out;
+    }
+    if (acc.status != block::Account::acc_active || acc.code.is_null() || acc.data.is_null()) {
+      return out;
+    }
+    out.exists = true;
+    out.code_hash = acc.code->get_hash().bits();
+    out.data = acc.data;
+    return out;
+  };
+  block::aipow::EpochSettlement decision = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  if (!decision.is_mint()) {
+    return true;
+  }
+  if (decision.amount.is_null() || !decision.amount->is_valid() || td::sgn(decision.amount) <= 0) {
+    return reject_query("AIPoW epoch mint re-derived an invalid amount");
+  }
+  aipow_mint_amount_ = decision.amount;
+  aipow_settlement_addr_ = ctx.settlement_addr;
+  aipow_mint_winner_id_ = decision.winner_id;
+  // Rebuild the canonical settle message and find its InMsg by message hash.
+  Ref<vm::Cell> expected_msg = block::aipow::build_settle_mint_message(
+      aipow_settlement_addr_, aipow_mint_winner_id_, aipow_mint_amount_, start_lt_, now_);
+  if (expected_msg.is_null()) {
+    return reject_query("cannot rebuild the expected AIPoW settle mint message");
+  }
+  Bits256 msg_hash = expected_msg->get_hash().bits();
+  auto in_msg_cs = in_msg_dict_->lookup(msg_hash);
+  if (in_msg_cs.is_null()) {
+    return reject_query(PSTRING() << "the block does not contain the required AIPoW settle mint message (hash "
+                                  << msg_hash.to_hex() << ", amount " << td::dec_string(aipow_mint_amount_) << ")");
+  }
+  // Remember the located InMsg (as a standalone cell) so is_special_in_msg can
+  // exact-match it, exactly as recover/mint are matched.
+  vm::CellBuilder cb;
+  if (!(cb.append_cellslice_bool(*in_msg_cs) && cb.finalize_to(aipow_mint_msg_))) {
+    return reject_query("cannot materialize the located AIPoW settle InMsg");
+  }
+  return true;
+}
+
 bool ValidateQuery::compute_minted_amount(block::CurrencyCollection& to_mint) {
   if (!is_masterchain()) {
     return to_mint.set_zero();
   }
   to_mint.set_zero();
+  // Phase C: the AIPoW base-gram mint is independent of the extra-currency minter
+  // (ConfigParam 2); add it first so it counts even when no ConfigParam-2 minter
+  // is configured. Re-derived + located in prepare_aipow_mint().
+  if (aipow_mint_amount_.not_null()) {
+    to_mint.tomis += aipow_mint_amount_;
+  }
   if (config_->get_config_param(2, 0).is_null()) {
     return true;
   }
@@ -3963,7 +4070,10 @@ bool ValidateQuery::check_imported_message(Ref<vm::Cell> msg_env) {
  */
 bool ValidateQuery::is_special_in_msg(const vm::CellSlice& in_msg) const {
   return (recover_create_msg_.not_null() && vm::load_cell_slice(recover_create_msg_).contents_equal(in_msg)) ||
-         (mint_msg_.not_null() && vm::load_cell_slice(mint_msg_).contents_equal(in_msg));
+         (mint_msg_.not_null() && vm::load_cell_slice(mint_msg_).contents_equal(in_msg)) ||
+         // Phase C: the re-derived + located AIPoW settle mint (base grams from the
+         // masterchain minter to the settlement). Exact-cell-match, as recover/mint.
+         (aipow_mint_msg_.not_null() && vm::load_cell_slice(aipow_mint_msg_).contents_equal(in_msg));
 }
 
 /**

@@ -3401,26 +3401,13 @@ bool Collator::create_aipow_mint_transaction() {
   if (aipow_mint_amount_.is_null()) {
     return true;  // no AIPoW mint this block
   }
-  block::CurrencyCollection amount{aipow_mint_amount_};
   CHECK(aipow_mint_msg_.is_null());
   tos::LogicalTime lt = start_lt;
-  vm::CellBuilder cb;
-  Ref<vm::Cell> msg;
-  // int_msg_info$0, src = -1:00..00 (the masterchain minter the settlement
-  // authenticates), dest = -1:settlement, value = amount, body = winner id inline.
-  if (!(cb.store_long_bool(6, 4)             // int_msg_info$0 ihr_disabled:1 bounce:1 bounced:0
-        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
-        && cb.store_zeroes_bool(256)         //   src = -1:00..00
-        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
-        && cb.store_bits_bool(aipow_settlement_addr_.bits(), 256)  //   dest = -1:settlement
-        && amount.store(cb)                  // value:CurrencyCollection
-        && cb.store_zeroes_bool(4 + 4)       // extra_flags:(VarUInteger 16) fwd_fee:Tomis
-        && cb.store_long_bool(lt, 64)        // created_lt:uint64
-        && cb.store_long_bool(now_, 32)      // created_at:uint32
-        && cb.store_zeroes_bool(1)           // init:(Maybe) = nothing
-        && cb.store_long_bool(0, 1)          // body:(Either X ^X) = left (inline)
-        && cb.store_bits_bool(aipow_mint_winner_id_.bits(), 256)  // body = winner id (settle reads exactly this)
-        && cb.finalize_to(msg))) {
+  // The message bytes come from the shared builder so validate-query can rebuild
+  // them exactly and locate this message by hash in the block's InMsgDescr.
+  Ref<vm::Cell> msg =
+      block::aipow::build_settle_mint_message(aipow_settlement_addr_, aipow_mint_winner_id_, aipow_mint_amount_, lt, now_);
+  if (msg.is_null()) {
     return fatal_error("cannot generate the AIPoW settle mint message");
   }
   CHECK(block::gen::t_Message_Any.validate_ref(msg));

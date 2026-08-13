@@ -4,9 +4,11 @@
     Licensed under the GNU General Public License v3.0.
 */
 #include "block/aipow.h"
+#include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/dict.h"
 #include "vm/excno.hpp"
+#include "block/block.h"
 #include "block/block-parse.h"
 
 namespace block {
@@ -432,6 +434,35 @@ bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_
   out.expected_commitment_version = 1;  // the layout version the native path understands (D9)
   out.gen_utime = gen_utime;
   return true;
+}
+
+td::Ref<vm::Cell> build_settle_mint_message(const td::Bits256& settlement_addr, const td::Bits256& winner_id,
+                                            const td::RefInt256& amount, td::uint64 created_lt,
+                                            td::uint32 created_at) {
+  if (amount.is_null() || !amount->is_valid() || td::sgn(amount) <= 0) {
+    return {};
+  }
+  block::CurrencyCollection value{amount};
+  vm::CellBuilder cb;
+  td::Ref<vm::Cell> msg;
+  // int_msg_info$0, src = -1:00..00 (the masterchain minter the settlement
+  // authenticates), dest = -1:settlement, value = amount, body = winner id inline.
+  if (!(cb.store_long_bool(6, 4)             // int_msg_info$0 ihr_disabled:1 bounce:1 bounced:0
+        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
+        && cb.store_zeroes_bool(256)         //   src = -1:00..00
+        && cb.store_long_bool(0x4ff, 11)     // addr_std$10 anycast:none workchain_id:int8 = -1
+        && cb.store_bits_bool(settlement_addr.bits(), 256)  //   dest = -1:settlement
+        && value.store(cb)                   // value:CurrencyCollection
+        && cb.store_zeroes_bool(4 + 4)       // extra_flags:(VarUInteger 16) fwd_fee:Tomis
+        && cb.store_long_bool((long long)created_lt, 64)   // created_lt:uint64
+        && cb.store_long_bool(created_at, 32)              // created_at:uint32
+        && cb.store_zeroes_bool(1)           // init:(Maybe) = nothing
+        && cb.store_long_bool(0, 1)          // body:(Either X ^X) = left (inline)
+        && cb.store_bits_bool(winner_id.bits(), 256)  // body = winner id (settle reads exactly this)
+        && cb.finalize_to(msg))) {
+    return {};
+  }
+  return msg;
 }
 
 }  // namespace aipow

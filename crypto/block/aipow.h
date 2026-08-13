@@ -255,5 +255,17 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
 bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_utime,
                                     MasterchainMintContext& out);
 
+// Build the canonical AIPoW settle mint message cell: a bounceable base-gram
+// internal message from the masterchain minter -1:00..00 to `settlement_addr`
+// carrying `amount` nanotomis, with the 256-bit `winner_id` as its inline body
+// (exactly what the settlement's settle path reads). This is the SINGLE source of
+// truth for the mint message bytes: the collator emits exactly this, and
+// validate-query rebuilds it to locate the InMsg by hash in the block's InMsgDescr
+// and exact-match it, so the produce and check paths agree byte-for-byte with no
+// block-format field to carry it. Returns a null ref on a build failure.
+td::Ref<vm::Cell> build_settle_mint_message(const td::Bits256& settlement_addr, const td::Bits256& winner_id,
+                                            const td::RefInt256& amount, td::uint64 created_lt,
+                                            td::uint32 created_at);
+
 }  // namespace aipow
 }  // namespace block
