@@ -46,6 +46,7 @@ const ERR_ZERO_EVIDENCE: i32 = 2108;
 const ERR_CONFLICTED_CHALLENGER: i32 = 2109;
 const ERR_REVIEW_OPEN: i32 = 2110;
 const ERR_REVIEW_CLOSED: i32 = 2111;
+const ERR_BOND_NOT_ESCROWED: i32 = 2112;
 // Mirrors `review_window` in the contract (7 days).
 const REVIEW_WINDOW: u64 = 604_800;
 
@@ -221,6 +222,62 @@ fn sandbox_stack_item_to_entry(
         }));
     }
     anyhow::bail!("unsupported sandbox stack item")
+}
+
+#[test]
+fn announce_requires_the_commit_bond_to_be_escrowed() {
+    // The challenge mechanism assumes commit_bond is actually held by the commitment
+    // through the window: finalize, rule and timeout all pay it out. Nothing verified the
+    // deploy funded it, so an underfunded committer could pass the window with no stake at
+    // risk (finalizing by briefly attaching the bond), while challenging such a commitment
+    // would lock the challenger's bond in an insolvent contract. announce is the mandatory
+    // gate before a commitment can register (hence be minted), so it now refuses unless the
+    // bond is funded here, then reserves it.
+    let mut bc = Blockchain::new().unwrap();
+    bc.set_workchain(-1);
+    let committer = bc.treasury("aipow-underfunded-committer", 1_000 * TOS).unwrap();
+    let reviewer = bc.treasury("aipow-underfunded-reviewer", 1_000 * TOS).unwrap();
+    let settlement = deploy_settlement(&mut bc, committer.address());
+    let init = AipowCommitmentInit {
+        committer: committer.address().clone(),
+        reviewer: reviewer.address().clone(),
+        epoch: COMMIT_EPOCH,
+        window_deadline: u64::from(bc.now()) + 3_600,
+        commit_bond: COMMIT_BOND,
+        score_root: SCORE_ROOT,
+        methodology_hash: [0x44; 32],
+        rate_card_hash: [0x66; 32],
+        total_score: TOTAL_SCORE,
+        organic_settled_value: ORGANIC_VALUE,
+        settlement: Some(settlement.clone()),
+    };
+    let commitment = AipowCommitmentContract::calculate_address(-1, &init).unwrap();
+    // Deploy UNDERFUNDED: far below commit_bond, so the bond was never staked.
+    let deploy = MessageBuilder::internal(committer.address(), &commitment, 2 * TOS)
+        .bounce(false)
+        .state_init(AipowCommitmentContract::build_state_init(&init).unwrap())
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).unwrap().expect_success();
+
+    let mut announce = |bc: &mut Blockchain, value: u64| {
+        let msg = MessageBuilder::internal(committer.address(), &commitment, value)
+            .body(AipowCommitmentContract::announce(1).unwrap())
+            .build();
+        bc.send_message(msg).unwrap()
+    };
+    // Balance stays below commit_bond + registration_value: announce is refused.
+    announce(&mut bc, TOS / 2).expect_exit_code(ERR_BOND_NOT_ESCROWED);
+
+    // Funding the instance to cover the bond (here via the announce value itself) lets it
+    // through and escrows the bond, so the balance now covers commit_bond.
+    announce(&mut bc, 5 * TOS).expect_success();
+    let bal = bc
+        .get_account(&commitment)
+        .and_then(|a| a.balance())
+        .and_then(|c| c.coins.as_u64())
+        .unwrap_or(0);
+    assert!(bal >= COMMIT_BOND, "the commit bond is escrowed after a funded announce (balance {bal})");
 }
 
 #[test]
