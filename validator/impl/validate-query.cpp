@@ -3147,15 +3147,22 @@ bool ValidateQuery::prepare_aipow_mint() {
                                     << td::dec_string(recorded) << ", but the block mints "
                                     << td::dec_string(aipow_mint_amount_));
     }
-    // The settle must also advance the cursor by EXACTLY one epoch. Tying issuance to
-    // the minted_total delta alone is not enough: a settlement that recorded the
-    // amount but left next_epoch unchanged would let the SAME epoch be minted again in
-    // the next block (draining the cap onto one epoch), and one that jumped the cursor
-    // would skip epochs. (Compare as 64-bit to avoid a uint32 wrap.)
-    if ((td::uint64)epoch_post != (td::uint64)epoch_pre + 1) {
+    // The settle must also advance the cursor PAST the minted epoch (by at least one).
+    // Tying issuance to the minted_total delta alone is not enough: a settlement that
+    // recorded the amount but left next_epoch unchanged would let the SAME epoch be
+    // minted again in the next block (draining the cap onto one epoch). Requiring a
+    // strict advance forecloses that re-mint. It may advance FURTHER than one: the
+    // settle runs before this block's inbound messages, so a same-block permissionless
+    // `skip` (each gated by real time past that epoch's grace deadline) legitimately
+    // moves the cursor past additional past-due, candidate-less epochs. That is not
+    // over-issuance -- minted_total rose by exactly one derived amount (checked above)
+    // and the minted epoch can never be revisited -- so it must not reject an otherwise
+    // valid mint block. (Compare as 64-bit to avoid a uint32 wrap; both cursors come
+    // from the same monotonic ledger field.)
+    if ((td::uint64)epoch_post < (td::uint64)epoch_pre + 1) {
       return reject_query(PSTRING() << "AIPoW settle minted epoch " << epoch_pre
-                                    << " but advanced the cursor to " << epoch_post
-                                    << " (expected " << (epoch_pre + 1) << ")");
+                                    << " but did not advance the cursor past it (cursor now "
+                                    << epoch_post << ")");
     }
     return true;
   }
