@@ -59,6 +59,7 @@ EXPECTED_POOL = ORGANIC
 TOTAL_SCORE = 1_000_000
 SCORE_ROOT = "5c" * 32
 METHODOLOGY_HASH = "11" * 32  # must match ConfigParam 93 methodology_hash (M2)
+RATE_CARD_HASH = "22" * 32   # must match ConfigParam 93 rate_card_hash (round-3 H1)
 # The governance-approved reviewer registered in ConfigParam 93 (gate 3). The native
 # path mints only if the commitment's reviewer equals this; it never rules on the
 # unchallenged happy path, so a fixed placeholder id suffices for the mint test.
@@ -246,6 +247,7 @@ async def run_checks(faucet) -> None:
         f"--committer={boss}", f"--reviewer={REVIEWER_ADDR}", "--epoch", str(epoch),
         "--window-deadline", str(window_deadline), "--commit-bond", "2",
         "--score-root", SCORE_ROOT, "--methodology-hash", METHODOLOGY_HASH,
+        "--rate-card-hash", RATE_CARD_HASH,
         "--total-score", str(TOTAL_SCORE), "--organic-settled-value", str(ORGANIC),
         f"--settlement={settle_addr}", "--from", "boss", "--yes")
     commitment_addr = norm_addr(deploy["address"])

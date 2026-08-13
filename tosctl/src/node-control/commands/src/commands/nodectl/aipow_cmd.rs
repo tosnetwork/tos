@@ -85,6 +85,8 @@ pub struct AipowDeployCmd {
     score_root: String,
     #[arg(long, help = "32-byte methodology commitment (hex)")]
     methodology_hash: String,
+    #[arg(long, help = "32-byte priced rate-card commitment (hex); must equal ConfigParam 93 rate_card_hash")]
+    rate_card_hash: String,
     #[arg(
         long,
         help = "Epoch total score (pro-rata denominator); bound and bonded so a distributor over this root can be checked against it"
@@ -233,6 +235,7 @@ impl AipowDeployCmd {
                 "methodology-hash",
                 &Some(self.methodology_hash.clone()),
             )?,
+            rate_card_hash: parse_required_hash("rate-card-hash", &Some(self.rate_card_hash.clone()))?,
             total_score: self.total_score,
             organic_settled_value: self.organic_settled_value,
             // A commitment registers its finalized root to this settlement

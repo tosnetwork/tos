@@ -41,6 +41,9 @@ td::Ref<vm::Cell> build_econ_tuple(td::Bits256 score_root, long long total_score
   cb.store_bits_bool(mk_bits(0x44));  // methodology_hash
   cb.store_int256_bool(make_refint(total_score), 128, false);
   cb.store_int256_bool(make_refint(organic), 128, false);
+  vm::CellBuilder rc;
+  rc.store_bits_bool(mk_bits(0x66));  // rate_card_hash (nested ref; cell-size limit)
+  cb.store_ref(rc.finalize());
   return cb.finalize();
 }
 
@@ -576,6 +579,7 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
@@ -637,6 +641,7 @@ TEST(Aipow, derive_masterchain_skips_an_unregistered_epoch_only_past_grace) {
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   // build_settlement uses epoch_seconds=65536, register_grace=700000.
   td::uint64 skippable_at = (10ull + 1) * 65536ull + 700000ull;
   ctx.gen_utime = (td::uint32)(skippable_at - 1);
@@ -692,6 +697,7 @@ TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   ctx.gen_utime = 4000000000u;  // far past any grace deadline
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
 }
@@ -745,6 +751,7 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_mint());
@@ -780,6 +787,7 @@ TEST(Aipow, a_malformed_registration_entry_yields_no_candidate_and_skips_past_gr
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   ctx.gen_utime = 4000000000u;  // far past any grace deadline
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_skip());
 }
@@ -831,6 +839,7 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
@@ -882,6 +891,7 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
     ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
+  ctx.rate_card_hash = mk_bits(0x66);
     ctx.gen_utime = gen_utime;
     return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   };
@@ -941,6 +951,7 @@ TEST(Aipow, derive_requires_the_commitments_reviewer_to_be_the_registry_reviewer
     ctx.commitment_code_hash = commit_code_hash;
     ctx.reviewer_addr = reviewer;
     ctx.methodology_hash = mk_bits(0x44);
+    ctx.rate_card_hash = mk_bits(0x66);
     ctx.expected_commitment_version = 1;
     ctx.gen_utime = 700000;
     return ctx;
@@ -993,6 +1004,7 @@ TEST(Aipow, derive_fails_closed_on_a_settlement_that_violates_its_timing_invaria
     ctx.commitment_code_hash = td::Bits256{commitment_code()->get_hash().bits()};
     ctx.reviewer_addr = mk_bits(0x22);
     ctx.methodology_hash = mk_bits(0x44);
+    ctx.rate_card_hash = mk_bits(0x66);
     ctx.gen_utime = 4000000000u;  // far past any grace, would normally skip
     return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   };
@@ -1033,6 +1045,7 @@ TEST(Aipow, derive_requires_the_committed_methodology_to_match_the_registry) {
     ctx.commitment_code_hash = commit_code_hash;
     ctx.reviewer_addr = mk_bits(0x22);
     ctx.methodology_hash = methodology;
+    ctx.rate_card_hash = mk_bits(0x66);
     ctx.gen_utime = 700000;
     return ctx;
   };
@@ -1080,6 +1093,7 @@ TEST(Aipow, derive_binds_a_candidate_to_its_canonical_deploy_address_C1) {
     ctx.commitment_code_hash = commit_code_hash;
     ctx.reviewer_addr = mk_bits(0x22);
     ctx.methodology_hash = mk_bits(0x44);
+    ctx.rate_card_hash = mk_bits(0x66);
     ctx.expected_commitment_version = 1;
     ctx.gen_utime = 700000;  // past the provenance window, so only C1 gates the mint
     return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);

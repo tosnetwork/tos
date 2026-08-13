@@ -44,7 +44,8 @@
 ;;   commit_bond:tomis
 ;;   challenge_bond:tomis
 ;;   ^[score_root:uint256 methodology_hash:uint256
-;;     total_score:uint128 organic_settled_value:uint128]
+;;     total_score:uint128 organic_settled_value:uint128
+;;     ^[rate_card_hash:uint256]]   (nested: the inline fields fill 768 bits)
 ;;       The committer binds the full economic tuple, not just the root: the
 ;;       pro-rata denominator (total_score) and the epoch's organic settled
 ;;       value are committed and bonded here, so a distributor deployed over a
@@ -130,7 +131,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
 ;; load_state returns the original fields first, then `version` and the
 ;; `settlement` address appended, so the on-chain data getter's original stack
 ;; indices stay stable while the two new fields are exposed at the end.
-(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) load_state() inline {
+(slice, slice, int, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) load_state() inline {
   slice ds = get_data().begin_parse();
   int version = ds~load_uint(16);
   slice committer = ds~load_msg_addr();
@@ -146,6 +147,11 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
   int methodology_hash = root~load_uint(256);
   int total_score = root~load_uint(128);
   int organic_settled_value = root~load_uint(128);
+  ;; rate_card_hash lives in a nested ref: the four inline fields already fill 768
+  ;; bits, and one more 256-bit field would exceed the 1023-bit cell limit.
+  slice rc = root~load_ref().begin_parse();
+  int rate_card_hash = rc~load_uint(256);
+  rc.end_parse();
   root.end_parse();
   slice chal = ds~load_ref().begin_parse();
   slice challenger = chal~load_msg_addr();
@@ -156,13 +162,13 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
   stl.end_parse();
   ds.end_parse();
   return (committer, reviewer, status, epoch, window_deadline, review_deadline,
-    commit_bond, challenge_bond, score_root, methodology_hash, total_score,
+    commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash, total_score,
     organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
 }
 
 () save_state(slice committer, slice reviewer, int status, int epoch, int window_deadline,
              int review_deadline, int commit_bond, int challenge_bond, int score_root,
-             int methodology_hash, int total_score, int organic_settled_value,
+             int methodology_hash, int rate_card_hash, int total_score, int organic_settled_value,
              slice challenger, int challenge_evidence_hash, int version, slice settlement) impure inline {
   set_data(begin_cell()
     .store_uint(version, 16)
@@ -179,6 +185,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
       .store_uint(methodology_hash, 256)
       .store_uint(total_score, 128)
       .store_uint(organic_settled_value, 128)
+      .store_ref(begin_cell().store_uint(rate_card_hash, 256).end_cell())  ;; nested (cell-size)
     .end_cell())
     .store_ref(begin_cell()
       .store_slice(challenger)
@@ -271,7 +278,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
 
   (slice committer, slice reviewer, int status, int epoch, int window_deadline,
    int review_deadline, int commit_bond, int challenge_bond, int score_root,
-   int methodology_hash, int total_score, int organic_settled_value,
+   int methodology_hash, int rate_card_hash, int total_score, int organic_settled_value,
    slice challenger, int challenge_evidence_hash, int version, slice settlement) = load_state();
 
   if (op == op::challenge) {
@@ -290,7 +297,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
     ;; Zero is reserved for "no challenge" and is never a valid commitment.
     throw_unless(err::zero_evidence, new_evidence_hash != 0);
     save_state(committer, reviewer, status::challenged, epoch, window_deadline,
-      now() + review_window, commit_bond, commit_bond, score_root, methodology_hash,
+      now() + review_window, commit_bond, commit_bond, score_root, methodology_hash, rate_card_hash,
       total_score, organic_settled_value, sender, new_evidence_hash, version, settlement);
     int excess = msg_value - commit_bond;
     if (excess > 0) {
@@ -321,7 +328,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
     throw_unless(err::window_open, now() >= window_deadline);
     in_msg.end_parse();
     save_state(committer, reviewer, status::final, epoch, window_deadline,
-      review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
+      review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
       total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
     send_value(committer, commit_bond, 1);
     return ();
@@ -342,7 +349,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
       ;; The challenge stands: the root is rejected and the challenger is
       ;; made whole plus the committer's bond.
       save_state(committer, reviewer, status::rejected, epoch, window_deadline,
-        review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
+        review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
         total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
       send_value(challenger, commit_bond + challenge_bond, 1);
     } else {
@@ -356,7 +363,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
       ;; committer's own commit_bond stays locked until finalize. Reset the review
       ;; fields so the next challenge starts clean.
       save_state(committer, reviewer, status::committed, epoch, window_deadline,
-        0, commit_bond, 0, score_root, methodology_hash,
+        0, commit_bond, 0, score_root, methodology_hash, rate_card_hash,
         total_score, organic_settled_value, challenger, 0, version, settlement);
       send_value(committer, challenge_bond, 1);
     }
@@ -372,7 +379,7 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
     throw_unless(err::review_open, now() >= review_deadline);
     in_msg.end_parse();
     save_state(committer, reviewer, status::rejected, epoch, window_deadline,
-      review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
+      review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
       total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
     send_value(committer, commit_bond, 1);
     send_value(challenger, challenge_bond, 1);
@@ -382,8 +389,8 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
   throw(err::unknown_op);
 }
 
-;; The original 14 fields keep their stack indices; `version` (14) and the
-;; `settlement` address (15) are appended so existing decoders are unaffected.
-(slice, slice, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) get_aipow_commitment_data() method_id {
+;; Exposes the full persistent state. rate_card_hash (index 10) is inserted after
+;; methodology_hash, shifting the later indices by one (the SDK decoder mirrors this).
+(slice, slice, int, int, int, int, int, int, int, int, int, int, int, slice, int, int, slice) get_aipow_commitment_data() method_id {
   return load_state();
 }

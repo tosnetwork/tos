@@ -1776,6 +1776,7 @@ mod tests {
             commit_bond: 5 * tos,
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
+            rate_card_hash: [0x66; 32],
             total_score: 1_000_000,
             organic_settled_value: 42 * u128::from(tos),
             settlement: None,

@@ -157,8 +157,11 @@ struct CommitmentState {
   td::uint64 window_deadline{0};  // unix; challenges accepted strictly before this
   td::int32 reviewer_workchain{0};  // the reviewer's workchain (must be masterchain)
   td::Bits256 reviewer_addr;        // the reviewer's account id (must equal the registry's)
+  td::RefInt256 commit_bond;        // the committer's stake (must be > 0; SDK-enforced,
+                                    // re-checked in consensus against a bypassing deploy)
   td::Bits256 score_root;
   td::Bits256 methodology_hash;     // the scoring methodology (must equal the registry's)
+  td::Bits256 rate_card_hash;       // the priced rate card (must equal the registry's)
   td::RefInt256 total_score;
   td::RefInt256 organic_settled_value;
 };
@@ -261,6 +264,8 @@ struct MasterchainMintContext {
                                             // (threshold multisig) reviewer a commitment must name
   td::Bits256 methodology_hash;             // ConfigParam 93 methodology_hash: the frozen scoring
                                             // methodology a commitment must have committed under
+  td::Bits256 rate_card_hash;               // ConfigParam 93 rate_card_hash: the frozen priced rate
+                                            // card a commitment must have committed under (round-3 H1)
   td::uint16 expected_commitment_version{1};
   td::uint32 gen_utime{0};                  // the block's consensus time
 };

@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABHAAART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXBboEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgP8jmVfAzJsMzM1NTY2gQg0AcAA8vQC0Vkk1wsBwQKSXwWORCOEH7ySXwXg7URwghBBUFMByMsfyz8Vyx8Ty//Lf8t/zMlxcCCAGMjLBVAFzxaCECPDRgD6AhTLaBPLABLLAMzJcfsA4uBWEIIQQVBXArrjAlYQghBBUFcDuuMCBwgJALzIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VQSoSDCAI4VcXCAEMjLBVAEzxZY+gISy2rJAfsAkVviAexXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKw4QvVQcBhCsEJsQigkQaBBXEEYDBQIREAIREcgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVAFxDQJoVxCBCDkRES3HBQEREQHy9IEIOAvAARvy9IEIP/gjKLny9AzTB9GBCDohwAAiwAGx8vTjDwoLAShXEQ+CEEFQVwS64wJfD1uBCDvy8AwA8BCrEJpzUaUQmhCJB1GFByEQZxBWEEUDBAIREQIBERABERLIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRYoHFwgBDIywVQBM8WWPoCEstqyQH7AADsNTxwVHAALA8QzhBNEKwQmxA6EHkQKBBXBhEQBl4iVQIREcgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVHFwgBDIywVQBM8WWPoCEstqyQH7AAH8gQg4C8ABG/L0gQg++CMovvL0DNFzVDm1JhA/LwMCERECARESARETyAHPFsnIUATPFhLL/8kGyMv/Fcv/E8t/y3/JAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzMzMye1UUDNxcIAQyMsFUATPFlj6AhLLaskB+wBxDQAocIAQyMsFUATPFlj6AhLLaskB+wAdqciO";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDwEABMwAART/APSkE/S88sgLAQIBYgIDAfbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/UAdDT/9EB0QXUAdD6QNP/0QLUAdD6QNEB0Q8REA8Q7xDeEM0QvBCrEJoQiRBoEFcQVhBFExRWEoIQQVBXAboEALGhlwHaiaGmH/SB9IGmD6Z/pn+mf/QB9AGoA6Gn/6f/pv+m/6gDoaf/ogOiC6gDofSBp/+iBagDofSBogOiHiIgHiHeIbwhmiF4IVYhNCESINAgriCsIIomKQT2jt45Ols+gQg0CsAAGvL0gQg1+CMoufL0gQg9U+vHBVP7xwWx8vKBCDZT9b7y9AvT/9GBCDwhwwDy9HH4I4IICTqAoBDNGxwQmghRllGHEGcQVhA1ECQDERADVhFVIBER4FcUVhGCEEFQVwW64wJWEYIQQVBXArrjAlYRBQYHCADMyAHPFsnIUATPFhLL/8kFyMv/yQfIy/8Wy/8Ty3/LfxTMyQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEswSzMzJ7VQSoSDCAI4VcXCAEMjLBVAEzxZY+gISy2rJAfsAkVviAMxfAzU1WzMzNTU2NoEINAHAAPL0AtECJNcLAcECkl8FjkQjhB+8kl8F4O1EcIIQQVBTAcjLH8s/FcsfE8v/y3/Lf8zJcXAggBjIywVQBc8WghAjw0YA+gIUy2gTywASywDMyXH7AOIB/lcRVxGBCDQMwAAc8vSBCDf4Iyq+8vQN0XIsDxDOVB0HEL0QrBCbChB5EGgQVxBGAwUEAhERAhESyAHPFsnIUATPFhLL/8kFyMv/yQfIy/8Wy/8Ty3/LfxTMyQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEswSzMzJ7VQJA6iCEEFQVwO6jzRXEYEIORESLscFARESAfL0gQg4DMABHPL0gQg/+CMpufL0DdMH0YEIOiHAACLAAbHy9OMP4FcSERCCEEFQVwS64wJfD18DgQg78vAKCwwALAFxcIAQyMsFUATPFlj6AhLLaskB+wAB3BC8EKtzUbYQqxCaCFGWCBBnIRBnEFYQRQMEAhESAgEREQERE8gBzxbJyFAEzxYSy//JBcjL/8kHyMv/Fsv/E8t/y38UzMkCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMEszMye1UWKBxDQHiNj1wVHAALREQEN8QThC9EKwQOxCKECkQaBBXBhERBl4iAxERA1gREsgBzxbJyFAEzxYSy//JBcjL/8kHyMv/Fsv/E8t/y38UzMkCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMEszMye1UAXENAeiBCDgMwAEc8vSBCD74Iym+8vQN0XNUOsYnAxEQA1YQAwIREgIBERMBERTIAc8WychQBM8WEsv/yQXIy//JB8jL/xbL/xPLf8t/FMzJAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzBLMzMntVFAzcQ4AKHCAEMjLBVAEzxZY+gISy2rJAfsAAFJwgBDIywVQBM8WWPoCEstqyQH7AHFwgBDIywVQBM8WWPoCEstqyQH7AO7+Mpw=";
 
 /// The commitment layout version this SDK writes and the contract understands.
 pub const AIPOW_COMMITMENT_VERSION: u16 = 1;
@@ -47,6 +47,7 @@ pub struct AipowCommitmentInit {
     pub commit_bond: u64,
     pub score_root: [u8; 32],
     pub methodology_hash: [u8; 32],
+    pub rate_card_hash: [u8; 32],
     /// The epoch's total score (pro-rata denominator) the committer binds and
     /// bonds, so a distributor over this finalized root can be checked against
     /// the denominator that was staked on rather than a free operator param.
@@ -78,6 +79,7 @@ pub struct AipowCommitmentData {
     pub challenge_bond: u64,
     pub score_root: [u8; 32],
     pub methodology_hash: [u8; 32],
+    pub rate_card_hash: [u8; 32],
     /// The committed pro-rata denominator (decimal via Display; a u128).
     pub total_score: u128,
     /// The committed epoch organic settled value (a u128).
@@ -128,6 +130,11 @@ impl AipowCommitmentContract {
         root.append_u256(&init.score_root)?.append_u256(&init.methodology_hash)?;
         append_u128(&mut root, init.total_score)?;
         append_u128(&mut root, init.organic_settled_value)?;
+        // rate_card_hash in a nested ref: the four inline fields already fill 768
+        // bits, so a fifth 256-bit field would exceed the 1023-bit cell limit.
+        let mut rate_card = BuilderData::new();
+        rate_card.append_u256(&init.rate_card_hash)?;
+        root.checked_append_reference(rate_card.into_cell()?)?;
         data.checked_append_reference(root.into_cell()?)?;
         let mut challenge = BuilderData::new();
         MsgAddressInt::default().write_to(&mut challenge)?;
@@ -161,8 +168,9 @@ impl AipowCommitmentContract {
     pub fn decode_data(stack: &TvmStackParser) -> anyhow::Result<AipowCommitmentData> {
         let mut committer_slice = stack.slice(0)?;
         let mut reviewer_slice = stack.slice(1)?;
-        let mut challenger_slice = stack.slice(12)?;
-        let settlement_slice = stack.slice(15)?;
+        // rate_card_hash at index 10 shifts challenger/settlement/version/etc. by one.
+        let mut challenger_slice = stack.slice(13)?;
+        let settlement_slice = stack.slice(16)?;
         // The stack->bytes roundtrip byte-pads a short slice, so detect the
         // MsgAddress form by its 2-bit tag: 0=addr_none / 1=addr_extern are not
         // internal (registration disabled) -> None; 2=addr_std / 3=addr_var are.
@@ -183,11 +191,12 @@ impl AipowCommitmentContract {
             challenge_bond: stack.u64(7)?,
             score_root: parse_hash(stack, 8)?,
             methodology_hash: parse_hash(stack, 9)?,
-            total_score: parse_u128(stack, 10)?,
-            organic_settled_value: parse_u128(stack, 11)?,
+            rate_card_hash: parse_hash(stack, 10)?,
+            total_score: parse_u128(stack, 11)?,
+            organic_settled_value: parse_u128(stack, 12)?,
             challenger: MsgAddressInt::construct_from(&mut challenger_slice)?,
-            challenge_evidence_hash: parse_hash(stack, 13)?,
-            version: stack.u64(14)? as u16,
+            challenge_evidence_hash: parse_hash(stack, 14)?,
+            version: stack.u64(15)? as u16,
             settlement,
         })
     }
@@ -284,6 +293,7 @@ mod tests {
             commit_bond: 5_000_000_000,
             score_root: [0x33; 32],
             methodology_hash: [0x44; 32],
+            rate_card_hash: [0x66; 32],
             total_score: 1_000_000,
             organic_settled_value: 42_000_000_000,
             settlement: Some(MsgAddressInt::with_standart(None, -1, [0x55; 32].into()).unwrap()),

@@ -261,8 +261,9 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   }
   out.reviewer_workchain = reviewer_wc;
   out.reviewer_addr = reviewer_addr;
-  if (block::tlb::t_Tomis.as_integer_skip(cs).is_null() ||       // commit_bond
-      block::tlb::t_Tomis.as_integer_skip(cs).is_null()) {       // challenge_bond
+  out.commit_bond = block::tlb::t_Tomis.as_integer_skip(cs);     // commit_bond (captured; M3)
+  if (out.commit_bond.is_null() ||
+      block::tlb::t_Tomis.as_integer_skip(cs).is_null()) {       // challenge_bond (skipped)
     return false;
   }
   out.version = (td::uint16)version;
@@ -283,8 +284,14 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
         tcs.fetch_uint256_to(128, out.organic_settled_value))) {
     return false;
   }
-  if (!tcs.empty_ext()) {
-    return false;  // the economic tuple ref is exactly these four fields
+  // rate_card_hash is in a nested ref (the four inline fields already fill 768 bits,
+  // so a fifth 256-bit field would exceed the 1023-bit cell limit).
+  if (tcs.size() != 0 || tcs.size_refs() != 1) {
+    return false;
+  }
+  vm::CellSlice rcs = vm::load_cell_slice(tcs.fetch_ref());
+  if (!(rcs.fetch_bits_to(out.rate_card_hash) && rcs.empty_ext())) {
+    return false;
   }
   // L1: the two remaining refs (challenger evidence, settlement) must be
   // loadable non-special cells, so a data cell with malformed/missing trailing
@@ -533,6 +540,15 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
     return EpochSettlement::none();
   }
 
+  // Terminal cursor: the on-chain settle and skip both refuse to advance past the
+  // uint32 ceiling (the L2 cursor-wrap guard). The native derivation must agree, or a
+  // valid candidate at the terminal epoch would force a mint the settle rejects (and
+  // skip also throws) -- a produce/check deadlock with no producible block. Treat the
+  // terminal cursor as nothing-due (issuance simply ends there).
+  if (ledger.next_epoch == 0xffffffffu) {
+    return EpochSettlement::none();
+  }
+
   SettlementCursor cursor;
   cursor.next_epoch = ledger.next_epoch;
   cursor.minted_total = ledger.minted_total;
@@ -607,6 +623,20 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
     if (cstate.methodology_hash != ctx.methodology_hash) {
       continue;
     }
+    // Round-3 H1: likewise the commitment must have committed under the governance-
+    // frozen priced rate card (ConfigParam 93). Otherwise a committer could compute an
+    // inflated organic_settled_value under a more generous rate card and mint a
+    // larger-than-intended pool (up to schedule_cap). The rate card is part of the
+    // committed, bonded tuple, so it is challengeable and the native pins it here.
+    if (cstate.rate_card_hash != ctx.rate_card_hash) {
+      continue;
+    }
+    // Round-3 M3: the committer must have staked a positive bond. The SDK enforces
+    // this at deploy, but a commitment deployed bypassing the SDK could set
+    // commit_bond == 0, leaving the challenge/ruling mechanism with no stake to slash.
+    if (cstate.commit_bond.is_null() || td::sgn(cstate.commit_bond) <= 0) {
+      continue;
+    }
     // The challenge window must have ELAPSED on the block's consensus clock before
     // this candidate can mint. A candidate still inside its window is not yet a
     // valid winner (it may yet be challenged); it is skipped, and because the
@@ -654,6 +684,7 @@ bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_
   out.commitment_code_hash = registry.commitment_code_hash;
   out.reviewer_addr = registry.reviewer_addr;
   out.methodology_hash = registry.methodology_hash;
+  out.rate_card_hash = registry.rate_card_hash;
   out.expected_commitment_version = 1;  // the layout version the native path understands (D9)
   out.gen_utime = gen_utime;
   return true;
