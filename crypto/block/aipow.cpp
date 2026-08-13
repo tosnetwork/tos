@@ -274,13 +274,24 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   if (cs.size() != 0 || cs.size_refs() != 2) {
     return false;  // trailing inline bits, or an unexpected ref count
   }
-  td::Bits256 methodology_hash;
-  if (!(tcs.fetch_bits_to(out.score_root) && tcs.fetch_bits_to(methodology_hash) &&
+  if (!(tcs.fetch_bits_to(out.score_root) && tcs.fetch_bits_to(out.methodology_hash) &&
         tcs.fetch_uint256_to(128, out.total_score) &&
         tcs.fetch_uint256_to(128, out.organic_settled_value))) {
     return false;
   }
-  return tcs.empty_ext();  // the economic tuple ref is exactly these four fields
+  if (!tcs.empty_ext()) {
+    return false;  // the economic tuple ref is exactly these four fields
+  }
+  // L1: the two remaining refs (challenger evidence, settlement) must be
+  // loadable non-special cells, so a data cell with malformed/missing trailing
+  // refs is rejected rather than silently authorizing a mint.
+  bool is_special = false;
+  vm::CellSlice chal = vm::load_cell_slice_special(cs.fetch_ref(), is_special);
+  if (is_special || !chal.is_valid()) {
+    return false;
+  }
+  vm::CellSlice stl = vm::load_cell_slice_special(cs.fetch_ref(), is_special);
+  return !is_special && stl.is_valid();
   } catch (vm::VmError&) {
     return false;
   }
@@ -350,6 +361,16 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   if (ledger.version != kSettlementVersion) {
     return EpochSettlement::none();
   }
+  // M1: defensively enforce the settlement's timing invariants in consensus. The
+  // SDK's build_data enforces these at deploy, but the settlement is a plain account
+  // that could be deployed bypassing the SDK; the native path must not trust a
+  // malformed ledger. A zero epoch_seconds/register_grace or a challenge_window not
+  // strictly below register_grace could strand a valid mint or make an epoch
+  // skippable before its window elapses -> fail closed (no mint from this ledger).
+  if (ledger.epoch_seconds == 0 || ledger.register_grace == 0 ||
+      ledger.challenge_window >= ledger.register_grace) {
+    return EpochSettlement::none();
+  }
 
   SettlementCursor cursor;
   cursor.next_epoch = ledger.next_epoch;
@@ -409,6 +430,12 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
     if (cstate.reviewer_workchain != tos::masterchainId || cstate.reviewer_addr != ctx.reviewer_addr) {
       continue;
     }
+    // M2: the commitment must have committed under the governance-frozen scoring
+    // methodology (ConfigParam 93). A genuine commitment scored under a different
+    // methodology (even with the audited code) must not mint.
+    if (cstate.methodology_hash != ctx.methodology_hash) {
+      continue;
+    }
     // The challenge window must have ELAPSED on the block's consensus clock before
     // this candidate can mint. A candidate still inside its window is not yet a
     // valid winner (it may yet be challenged); it is skipped, and because the
@@ -455,6 +482,7 @@ bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_
   out.settlement_addr = registry.settlement_addr;
   out.commitment_code_hash = registry.commitment_code_hash;
   out.reviewer_addr = registry.reviewer_addr;
+  out.methodology_hash = registry.methodology_hash;
   out.expected_commitment_version = 1;  // the layout version the native path understands (D9)
   out.gen_utime = gen_utime;
   return true;

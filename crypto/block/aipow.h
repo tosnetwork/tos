@@ -157,6 +157,7 @@ struct CommitmentState {
   td::int32 reviewer_workchain{0};  // the reviewer's workchain (must be masterchain)
   td::Bits256 reviewer_addr;        // the reviewer's account id (must equal the registry's)
   td::Bits256 score_root;
+  td::Bits256 methodology_hash;     // the scoring methodology (must equal the registry's)
   td::RefInt256 total_score;
   td::RefInt256 organic_settled_value;
 };
@@ -241,6 +242,8 @@ struct MasterchainMintContext {
   td::Bits256 commitment_code_hash;         // the expected AIPoW commitment code cell hash (registry)
   td::Bits256 reviewer_addr;                // ConfigParam 93 reviewer_addr: the governance-approved
                                             // (threshold multisig) reviewer a commitment must name
+  td::Bits256 methodology_hash;             // ConfigParam 93 methodology_hash: the frozen scoring
+                                            // methodology a commitment must have committed under
   td::uint16 expected_commitment_version{1};
   td::uint32 gen_utime{0};                  // the block's consensus time
 };

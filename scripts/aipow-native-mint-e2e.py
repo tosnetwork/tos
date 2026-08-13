@@ -58,7 +58,7 @@ ORGANIC = 1 * NANO         # committed organic value -> pool = min(cap, k*organi
 EXPECTED_POOL = ORGANIC
 TOTAL_SCORE = 1_000_000
 SCORE_ROOT = "5c" * 32
-METHODOLOGY_HASH = "44" * 32
+METHODOLOGY_HASH = "11" * 32  # must match ConfigParam 93 methodology_hash (M2)
 # The governance-approved reviewer registered in ConfigParam 93 (gate 3). The native
 # path mints only if the commitment's reviewer equals this; it never rules on the
 # unchallenged happy path, so a fixed placeholder id suffices for the mint test.
