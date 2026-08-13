@@ -370,7 +370,8 @@ governance-ratified. (They are safe to exercise on a throwaway localnet/testnet
 for development.) The blockers were surfaced by the Phase C consensus reviews and
 are also tracked in the Phase C plan's launch-gate section.
 
-1. **Commitment finalization provenance — RESOLVED.** The native path pins a
+1. **Commitment finalization provenance — PARTIALLY resolved; REOPENED by C1.** The
+   native path pins a
    registered commitment's **code** hash but cannot, from state alone, prove its
    finalization was legitimate; `window_deadline` is a commitment *deploy
    parameter*, so an attacker could once deploy the audited code with a **past**
@@ -389,9 +390,22 @@ are also tracked in the Phase C plan's launch-gate section.
    (`SettlementCursor::challenge_window`, read by the native path; the SDK
    `build_data` enforces `0 < challenge_window < register_grace` so a valid
    candidate always mints before its epoch becomes skippable);
-   `kAipowChallengeWindow` is only the recommended SDK default. **Remaining before
-   activation:** finalize gate 3 (the reviewer policy that makes disputing a
-   fabricated tuple economic).
+   `kAipowChallengeWindow` is only the recommended SDK default. **But a codex review
+   found a deeper hole (C1):** on an account model with `SETCODE`, checking only the
+   *current* code hash + data does not prove the account followed the bonded state
+   machine. A bootstrap contract can `register`, then `SETCODE` to the audited
+   commitment code and overwrite its data with a forged `final` state (matching
+   tuple/reviewer/methodology/window) — no bond was ever locked and no challengeable
+   `committed` state existed; the reviewer/methodology checks do not help (the forged
+   data simply names the approved values). **Fix (before activation):** bind the
+   commitment account's address to a canonical `StateInit` — the native must verify
+   `account_id == hash(StateInit(audited_code, reconstructed initial data))`, so an
+   account deployed with different initial code (hence a different address) is
+   rejected; the audited commitment code has no `SETCODE`, so a canonically-addressed
+   account can only follow the real state machine. Requiring registration's sender to
+   be that canonical address additionally closes the H1 Sybil admission DoS. Also
+   finalize gate 3. Details + the full codex-findings ledger (C1/C2/H1-H4/M1-M3/L1-L2)
+   are in the Phase C design doc.
 2. **First-wins registration griefing — RESOLVED.** `register` was once
    first-wins per epoch, letting an attacker's bogus nomination block the genuine
    commitment and freeze the cursor. Now the settlement keeps a **bounded
@@ -442,11 +456,18 @@ currency type exactly as the collator does) — evidence that gate 4's
 collator/validator-divergence review is grounded, not a formality. The formal
 audits in gate 4 still stand.
 
-Gates 1, 2, and 3 are resolved **in code** (with tests, and exercised by the e2e
-above); gate 3's residue is operational — governance must deploy and register the
-real threshold multisig (folded into gate 5). Until the remaining gates — 4 (audits),
-5 (registry published + ratified: real multisig, cap consistency), 6 (supply-cap
-dry-run) — are closed, native AIPoW minting is **testnet/devnet only** and must remain
+Gate 2 is resolved in code; gate 3's native anchor is done (its residue is
+operational — governance deploys/registers the real threshold multisig, folded into
+gate 5). Gate 1 is only PARTIALLY resolved: a codex review reopened it (**C1**,
+above) and surfaced a second Critical (**C2**: base grams are counted in
+`value_flow_.minted` before the settle transaction, and validation never requires the
+settle to succeed — so a settle that throws/out-of-gas/bounces, or is preempted by an
+in-block `skip`, creates supply the settlement ledger never records, permitting
+re-mint of one epoch and issuance past the cap). Both C1 and C2 are hard mainnet
+blockers with decided fixes in the Phase C design doc's codex-findings ledger
+(address-binding for C1; atomic issuance/settle for C2), alongside H1-H4/M3/L2. The
+native-only robustness batch M1/M2/L1 is fixed in code. Until C1, C2, and gates 3-6
+are closed, native AIPoW minting is **testnet/devnet only** and must remain
 unactivatable on mainnet.
 
 ## Rollout plan
