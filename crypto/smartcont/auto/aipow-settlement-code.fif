@@ -119,33 +119,34 @@ PROGRAM{
     256 STU	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 commitment_ref _13
     256 STU	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _15
     ENDC	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16
-    s1 s1 PUSH2	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0
-    1 PUSHINT	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=1
-    NEWC	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=1 _20
-    16 STU	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _22
-    s0 s12 XCHG2	//  _18=0 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _22 op_addr
-    STSLICER	//  _18=0 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _23
-    s1 s10 XCHG	//  _18=0 _17=0 earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 epoch _23
-    64 STU	//  _18=0 _17=0 earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _25
-    s1 s8 XCHG	//  _18=0 _17=0 _16 total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 earner_workchain _25
-    8 STI	//  _18=0 _17=0 _16 total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _27
-    s1 s6 XCHG	//  _18=0 _17=0 _16 _10=0 pool immediate_bps stream_epochs mat_epoch_seconds total_score _27
-    128 STU	//  _18=0 _17=0 _16 _10=0 pool immediate_bps stream_epochs mat_epoch_seconds _29
-    s0 s4 XCHG2	//  _18=0 _17=0 _16 _10=0 mat_epoch_seconds immediate_bps stream_epochs _29 pool
-    STTOMIS	//  _18=0 _17=0 _16 _10=0 mat_epoch_seconds immediate_bps stream_epochs _30
-    s1 s7 XCHG	//  stream_epochs _17=0 _16 _10=0 mat_epoch_seconds immediate_bps _18=0 _30
-    32 STU	//  stream_epochs _17=0 _16 _10=0 mat_epoch_seconds immediate_bps _32
-    s1 s5 XCHG	//  stream_epochs immediate_bps _16 _10=0 mat_epoch_seconds _17=0 _32
-    128 STU	//  stream_epochs immediate_bps _16 _10=0 mat_epoch_seconds _34
-    s1 s4 XCHG	//  stream_epochs mat_epoch_seconds _16 _10=0 immediate_bps _34
-    16 STU	//  stream_epochs mat_epoch_seconds _16 _10=0 _36
-    s1 s4 XCHG	//  _10=0 mat_epoch_seconds _16 stream_epochs _36
-    16 STU	//  _10=0 mat_epoch_seconds _16 _38
-    s1 s2 XCHG	//  _10=0 _16 mat_epoch_seconds _38
-    32 STU	//  _10=0 _16 _40
-    STREF	//  _10=0 _41
-    1 STU	//  _43
-    ENDC	//  _44
+    s1 s1 s1 PUSH3	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=0
+    1 PUSHINT	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=0 _20=1
+    NEWC	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=0 _20=1 _21
+    16 STU	//  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _19=0 _23
+    s0 s13 XCHG2	//  _19=0 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _23 op_addr
+    STSLICER	//  _19=0 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _18=0 _24
+    s1 s11 XCHG	//  _19=0 _18=0 earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 epoch _24
+    64 STU	//  _19=0 _18=0 earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _17=0 _26
+    s1 s9 XCHG	//  _19=0 _18=0 _17=0 total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 earner_workchain _26
+    8 STI	//  _19=0 _18=0 _17=0 total_score pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _16 _28
+    s1 s7 XCHG	//  _19=0 _18=0 _17=0 _16 pool immediate_bps stream_epochs mat_epoch_seconds _10=0 total_score _28
+    128 STU	//  _19=0 _18=0 _17=0 _16 pool immediate_bps stream_epochs mat_epoch_seconds _10=0 _30
+    s0 s5 XCHG2	//  _19=0 _18=0 _17=0 _16 _10=0 immediate_bps stream_epochs mat_epoch_seconds _30 pool
+    STTOMIS	//  _19=0 _18=0 _17=0 _16 _10=0 immediate_bps stream_epochs mat_epoch_seconds _31
+    s1 s8 XCHG	//  mat_epoch_seconds _18=0 _17=0 _16 _10=0 immediate_bps stream_epochs _19=0 _31
+    32 STU	//  mat_epoch_seconds _18=0 _17=0 _16 _10=0 immediate_bps stream_epochs _33
+    s1 s6 XCHG	//  mat_epoch_seconds stream_epochs _17=0 _16 _10=0 immediate_bps _18=0 _33
+    128 STU	//  mat_epoch_seconds stream_epochs _17=0 _16 _10=0 immediate_bps _35
+    16 STU	//  mat_epoch_seconds stream_epochs _17=0 _16 _10=0 _37
+    s1 s4 XCHG	//  mat_epoch_seconds _10=0 _17=0 _16 stream_epochs _37
+    16 STU	//  mat_epoch_seconds _10=0 _17=0 _16 _39
+    s1 s4 XCHG	//  _16 _10=0 _17=0 mat_epoch_seconds _39
+    32 STU	//  _16 _10=0 _17=0 _41
+    64 STU	//  _16 _10=0 _43
+    s1 s2 XCHG	//  _10=0 _16 _43
+    STREF	//  _10=0 _44
+    1 STU	//  _46
+    ENDC	//  _47
   }>
   build_state_init PROCINLINE:<{
     //  code data

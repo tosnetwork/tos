@@ -1,4 +1,4 @@
-// automatically generated from `smartcont/stdlib.fc` `smartcont/aipow-distributor-code.fc`
+// automatically generated from `stdlib.fc` `aipow-distributor-code.fc`
 PROGRAM{
   DECLPROC leaf_hash
   DECLPROC node_hash
@@ -123,46 +123,49 @@ PROGRAM{
     16 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps ds
     16 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs ds
     32 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds ds
-    LDREF	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _46 ds
-    SWAP	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds ds _46
-    CTOS	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds ds roots
-    256 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds ds score_root roots
-    256 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds ds score_root commitment_ref roots
+    64 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at ds
+    LDREF	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _50 ds
+    SWAP	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at ds _50
+    CTOS	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at ds roots
+    256 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at ds score_root roots
+    256 LDU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at ds score_root commitment_ref roots
     ENDS
-    s0 s2 XCHG	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds commitment_ref score_root ds
-    LDDICT	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds commitment_ref score_root claims ds
+    s0 s2 XCHG	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at commitment_ref score_root ds
+    LDDICT	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at commitment_ref score_root claims ds
     ENDS
-    s1 s2 XCHG	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
+    s1 s2 XCHG	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
   }>
   save_state PROCINLINE:<{
-    //  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
+    //  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
     s0 s2 XCHG
-    NEWC	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims commitment_ref score_root _14
-    256 STU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims commitment_ref _16
-    256 STU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims _18
-    ENDC	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims _19
-    s0 s12 XCHG
-    NEWC	//  _19 op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims version _20
-    16 STU	//  _19 op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds claims _22
-    s0 s11 XCHG2	//  _19 claims epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _22 op_addr
-    STSLICER	//  _19 claims epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _23
-    s1 s9 XCHG	//  _19 claims mat_epoch_seconds earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs epoch _23
-    64 STU	//  _19 claims mat_epoch_seconds earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs _25
-    s1 s7 XCHG	//  _19 claims mat_epoch_seconds stream_epochs total_score pool claimed_count claimed_score immediate_bps earner_workchain _25
-    8 STI	//  _19 claims mat_epoch_seconds stream_epochs total_score pool claimed_count claimed_score immediate_bps _27
-    s1 s5 XCHG	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps pool claimed_count claimed_score total_score _27
-    128 STU	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps pool claimed_count claimed_score _29
-    s0 s3 XCHG2	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps claimed_score claimed_count _29 pool
-    STTOMIS	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps claimed_score claimed_count _30
-    32 STU	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps claimed_score _32
-    128 STU	//  _19 claims mat_epoch_seconds stream_epochs immediate_bps _34
-    16 STU	//  _19 claims mat_epoch_seconds stream_epochs _36
-    16 STU	//  _19 claims mat_epoch_seconds _38
-    32 STU	//  _19 claims _40
-    s1 s2 XCHG	//  claims _19 _40
-    STREF	//  claims _41
-    STDICT	//  _42
-    ENDC	//  _43
+    NEWC	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims commitment_ref score_root _15
+    256 STU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims commitment_ref _17
+    256 STU	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims _19
+    ENDC	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims _20
+    s0 s13 XCHG
+    NEWC	//  _20 op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims version _21
+    16 STU	//  _20 op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at claims _23
+    s0 s12 XCHG2	//  _20 claims epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _23 op_addr
+    STSLICER	//  _20 claims epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _24
+    s1 s10 XCHG	//  _20 claims activated_at earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds epoch _24
+    64 STU	//  _20 claims activated_at earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _26
+    s1 s8 XCHG	//  _20 claims activated_at mat_epoch_seconds total_score pool claimed_count claimed_score immediate_bps stream_epochs earner_workchain _26
+    8 STI	//  _20 claims activated_at mat_epoch_seconds total_score pool claimed_count claimed_score immediate_bps stream_epochs _28
+    s1 s6 XCHG	//  _20 claims activated_at mat_epoch_seconds stream_epochs pool claimed_count claimed_score immediate_bps total_score _28
+    128 STU	//  _20 claims activated_at mat_epoch_seconds stream_epochs pool claimed_count claimed_score immediate_bps _30
+    s0 s4 XCHG2	//  _20 claims activated_at mat_epoch_seconds stream_epochs immediate_bps claimed_count claimed_score _30 pool
+    STTOMIS	//  _20 claims activated_at mat_epoch_seconds stream_epochs immediate_bps claimed_count claimed_score _31
+    s1 s2 XCHG	//  _20 claims activated_at mat_epoch_seconds stream_epochs immediate_bps claimed_score claimed_count _31
+    32 STU	//  _20 claims activated_at mat_epoch_seconds stream_epochs immediate_bps claimed_score _33
+    128 STU	//  _20 claims activated_at mat_epoch_seconds stream_epochs immediate_bps _35
+    16 STU	//  _20 claims activated_at mat_epoch_seconds stream_epochs _37
+    16 STU	//  _20 claims activated_at mat_epoch_seconds _39
+    32 STU	//  _20 claims activated_at _41
+    64 STU	//  _20 claims _43
+    s1 s2 XCHG	//  claims _20 _43
+    STREF	//  claims _44
+    STDICT	//  _45
+    ENDC	//  _46
     c4 POP
   }>
   pack_claim PROCINLINE:<{
@@ -267,155 +270,190 @@ PROGRAM{
     IFJMP:<{	//  msg_value in_msg full_msg
       3 BLKDROP	//
     }>	//  msg_value in_msg full_msg
-    LDMSGADDR	//  msg_value in_msg _179 _178
+    LDMSGADDR	//  msg_value in_msg _210 _209
     DROP	//  msg_value in_msg sender
     OVER	//  msg_value in_msg sender in_msg
     SEMPTY	//  msg_value in_msg sender _14
     IFJMP:<{	//  msg_value in_msg sender
-      3 BLKDROP	//
+      2 1 BLKDROP2	//  sender
+      load_state INLINECALLDICT	//  sender version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+      s15 s13 XCPU	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref sender op_addr
+      SDEQ	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref _31
+      s0 s3 XCHG	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _31 score_root commitment_ref activated_at
+      0 EQINT	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _31 score_root commitment_ref _33
+      s1 s3 XCHG	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds commitment_ref score_root _31 _33
+      AND	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds commitment_ref score_root _34
+      IF:<{	//  claims version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds commitment_ref score_root
+        s12 s13 XCHG
+        s11 s12 XCHG
+        s10 s11 XCHG
+        s9 s10 XCHG
+        s8 s9 XCHG
+        s7 s8 XCHG
+        s6 s7 XCHG
+        s5 s6 XCHG
+        s4 s5 XCHG
+        s3 s4 XCHG
+        s2 s3 XCHG
+        NOW
+        s2 s3 XCHG2	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _35 score_root commitment_ref claims
+        save_state INLINECALLDICT
+      }>ELSE<{
+        14 BLKDROP	//
+      }>
     }>	//  msg_value in_msg sender
     SWAP	//  msg_value sender in_msg
     32 LDU	//  msg_value sender op in_msg
     64 LDU	//  msg_value sender op query_id in_msg
     NIP	//  msg_value sender op in_msg
-    load_state INLINECALLDICT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
-    s15 PUSH
-    1095779329 PUSHINT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims op _40=1095779329
-    EQUAL	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims _41
-    IFJMP:<{	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
-      s15 POP
-      s15 POP	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root
-      2210 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _42=2210
-      s0 16 s() XCHG
-      50000000 PUSHINT	//  _42=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root msg_value _43=50000000
-      GEQ	//  _42=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _44
-      s1 16 s() XCHG	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _42=2210 _44
+    load_state INLINECALLDICT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+    16 s() PUSH
+    1095779329 PUSHINT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims op _63=1095779329
+    EQUAL	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims _64
+    IFJMP:<{	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+      16 s() POP
+      16 s() POP	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root
+      2213 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _65=2213
+      s2 PUSH	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _65=2213 activated_at
+      0 GTINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _65=2213 _67
       THROWANYIFNOT
-      2200 PUSHINT	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _46=2200
-      s7 PUSH	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _46=2200 total_score
-      0 GTINT	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _46=2200 _48
+      2210 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _69=2210
+      s0 17 s() XCHG
+      50000000 PUSHINT	//  _69=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root msg_value _70=50000000
+      GEQ	//  _69=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _71
+      s1 17 s() XCHG	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _69=2210 _71
       THROWANYIFNOT
-      s0 s11 XCHG	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs in_msg
-      256 LDU	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity in_msg
-      128 LDU	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score in_msg
-      LDREF	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof in_msg
+      2200 PUSHINT	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _73=2200
+      s8 PUSH	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _73=2200 total_score
+      0 GTINT	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _73=2200 _75
+      THROWANYIFNOT
+      s0 s12 XCHG	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds in_msg
+      256 LDU	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity in_msg
+      128 LDU	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score in_msg
+      LDREF	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof in_msg
       ENDS
-      2209 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _62=2209
-      s2 PUSH	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _62=2209 score
-      0 GTINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _62=2209 _64
+      2209 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _89=2209
+      s2 PUSH	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _89=2209 score
+      0 GTINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _89=2209 _91
       THROWANYIFNOT
-      2208 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _66=2208
-      s6 s2 PUSH2	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _66=2208 claimed_score score
-      ADD	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _66=2208 _67
-      s10 PUSH	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _66=2208 _67 total_score
-      LEQ	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _66=2208 _68
+      2208 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _93=2208
+      s7 s2 PUSH2	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _93=2208 claimed_score score
+      ADD	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _93=2208 _94
+      s11 PUSH	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _93=2208 _94 total_score
+      LEQ	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _93=2208 _95
       THROWANYIFNOT
-      s2 s14 PUSH2
-      8 PUSHPOW2	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof identity claims _72=256
+      s2 s15 PUSH2
+      8 PUSHPOW2	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof identity claims _99=256
       DICTUGET
-      NULLSWAPIFNOT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof existing found
+      NULLSWAPIFNOT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof existing found
       2201 PUSHINT
-      s2 POP	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _76=2201 found
+      s2 POP	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _103=2201 found
       THROWANYIF
-      s2 s1 PUSH2	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof identity score
-      leaf_hash INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score proof _79
-      SWAP	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score _79 proof
-      fold_proof INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score computed_root
-      2202 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score computed_root _81=2202
+      s2 s1 PUSH2	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof identity score
+      leaf_hash INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score proof _106
+      SWAP	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score _106 proof
+      fold_proof INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score computed_root
+      2202 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score computed_root _108=2202
       SWAP
-      17 s() PUSH	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score _81=2202 computed_root score_root
-      EQUAL	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score _81=2202 _82
+      18 s() PUSH	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score _108=2202 computed_root score_root
+      EQUAL	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score _108=2202 _109
       THROWANYIFNOT
-      s6 s0 s7 PUSH3	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score pool score total_score
-      MULDIV	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount
-      NOW	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount _87
-      0 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount _87 _88=0
+      s7 s0 s8 PUSH3	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score pool score total_score
+      MULDIV	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount
+      NOW	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount _114
+      0 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount _114 _115=0
       s0 s2 PUSH2
       3 -ROLL
       NOW
-      s9 s8 PUSH2
-      20 s() PUSH	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount amount _87 _88=0 _89=0 _90 immediate_bps stream_epochs mat_epoch_seconds
-      compute_matured INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount matured
-      NOW	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount matured _93
-      0 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score amount matured _93 _94=0
+      s10 s9 s8 PUSH3	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount amount _114 _115=0 _116=0 _117 immediate_bps stream_epochs mat_epoch_seconds
+      compute_matured INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount matured
+      NOW	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount matured _120
+      0 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score amount matured _120 _121=0
       s0 s2 PUSH2
-      s4 s5 XCHG	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score matured amount _93 _94=0 _95=0 matured
-      pack_claim INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score matured _96
+      s4 s5 XCHG	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score matured amount _120 _121=0 _122=0 matured
+      pack_claim INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score matured _123
       s3 s1 PUXC
-      s0 16 s() XCHG
-      8 PUSHPOW2	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score _96 identity claims _97=256
-      DICTUSETB	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity score claims
-      s0 s6 XCHG	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claims claimed_score immediate_bps stream_epochs identity score claimed_count
-      INC	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claims claimed_score immediate_bps stream_epochs identity score claimed_count
-      s5 s5 XCHG2	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claims claimed_count immediate_bps stream_epochs identity claimed_score score
-      ADD	//  score_root commitment_ref matured mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claims claimed_count immediate_bps stream_epochs identity claimed_score
-      s8 PUSH
+      s0 17 s() XCHG
+      8 PUSHPOW2	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score _123 identity claims _124=256
+      DICTUSETB	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score claims
+      s0 s7 XCHG	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claims claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score claimed_count
+      INC	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claims claimed_score immediate_bps stream_epochs mat_epoch_seconds identity score claimed_count
+      s6 s6 XCHG2	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claims claimed_count immediate_bps stream_epochs mat_epoch_seconds identity claimed_score score
+      ADD	//  score_root commitment_ref matured activated_at version op_addr epoch earner_workchain total_score pool claims claimed_count immediate_bps stream_epochs mat_epoch_seconds identity claimed_score
+      s9 PUSH
+      s13 s14 XCHG
       s12 s13 XCHG
-      s11 s12 XCHG
-      s0 s10 XCHG
       s0 s11 XCHG
+      s0 s12 XCHG
+      s9 s10 XCHG
       s8 s9 XCHG
-      s7 s8 XCHG
-      s5 s7 XCHG
-      s1 s6 XCHG
+      s6 s8 XCHG
+      s1 s7 XCHG
+      s5 s6 XCHG
       s4 s5 XCHG
       s0 s3 XCHG
       s0 s4 XCHG
-      s2 16 s() XCHG
-      s15 s15 XCHG2	//  identity earner_workchain matured version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
+      s2 17 s() XCHG
+      s0 16 s() XCHG
+      SWAP	//  identity earner_workchain matured version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
       save_state INLINECALLDICT
       s1 s2 XCHG	//  earner_workchain identity matured
       pay_identity INLINECALLDICT
-    }>	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
-    s15 PUSH
-    1095779331 PUSHINT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims op _104=1095779331
-    EQUAL	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims _105
-    IFJMP:<{	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
-      s15 POP
-      s15 POP	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root
-      2210 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _106=2210
-      s0 16 s() XCHG
-      50000000 PUSHINT	//  _106=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root msg_value _107=50000000
-      GEQ	//  _106=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _108
-      s1 16 s() XCHG	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _106=2210 _108
+    }>	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+    16 s() PUSH
+    1095779331 PUSHINT	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims op _131=1095779331
+    EQUAL	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims _132
+    IFJMP:<{	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+      16 s() POP
+      16 s() POP	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root
+      2213 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _133=2213
+      s2 PUSH	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _133=2213 activated_at
+      0 GTINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _133=2213 _135
       THROWANYIFNOT
-      s0 s11 XCHG	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs in_msg
-      256 LDU	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity in_msg
+      2210 PUSHINT	//  msg_value commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _137=2210
+      s0 17 s() XCHG
+      50000000 PUSHINT	//  _137=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root msg_value _138=50000000
+      GEQ	//  _137=2210 commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _139
+      s1 17 s() XCHG	//  score_root commitment_ref claims in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _137=2210 _139
+      THROWANYIFNOT
+      s0 s12 XCHG	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds in_msg
+      256 LDU	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity in_msg
       ENDS
-      s0 s12 PUSH2
-      8 PUSHPOW2	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity identity claims _117=256
+      s0 s13 PUSH2
+      8 PUSHPOW2	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity identity claims _148=256
       DICTUGET
-      NULLSWAPIFNOT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry found
-      2206 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry found _119=2206
-      SWAP	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry _119=2206 found
+      NULLSWAPIFNOT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry found
+      2206 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry found _150=2206
+      SWAP	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry _150=2206 found
       THROWANYIFNOT
-      unpack_claim INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid
+      unpack_claim INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid
       s4 s3 s2 PUSH3
       s4 PUSH
       NOW
-      s12 s11 PUSH2
-      23 s() PUSH	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid amount claimed_at forfeited forfeit_at _128 immediate_bps stream_epochs mat_epoch_seconds
-      compute_matured INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid matured
-      OVER	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid matured paid
-      SUB	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid delta
-      2212 PUSHINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid delta _132=2212
-      OVER	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid delta _132=2212 delta
-      0 GTINT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at paid delta _132=2212 _134
+      s13 s12 s11 PUSH3	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid amount claimed_at forfeited forfeit_at _159 immediate_bps stream_epochs mat_epoch_seconds
+      compute_matured INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid matured
+      OVER	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid matured paid
+      SUB	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid delta
+      2212 PUSHINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid delta _163=2212
+      OVER	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid delta _163=2212 delta
+      0 GTINT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at paid delta _163=2212 _165
       THROWANYIFNOT
-      TUCK	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at delta paid delta
-      ADD	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at forfeited forfeit_at delta _137
+      TUCK	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at delta paid delta
+      ADD	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at forfeited forfeit_at delta _168
       s1 s5 XCHG
       s1 s4 XCHG
-      s3 s3 s0 XCHG3	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity delta amount claimed_at forfeited forfeit_at _137
-      pack_claim INLINECALLDICT	//  score_root commitment_ref claims mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity delta _138
-      s0 s2 s14 XCPUXC
-      8 PUSHPOW2	//  score_root commitment_ref delta mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity _138 identity claims _139=256
-      DICTUSETB	//  score_root commitment_ref delta mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity claims
-      s8 PUSH
+      s3 s3 s0 XCHG3	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity delta amount claimed_at forfeited forfeit_at _168
+      pack_claim INLINECALLDICT	//  score_root commitment_ref claims activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity delta _169
+      s2 s1 PUXC
+      s0 16 s() XCHG
+      8 PUSHPOW2	//  score_root commitment_ref delta activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity _169 identity claims _170=256
+      DICTUSETB	//  score_root commitment_ref delta activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity claims
+      s9 PUSH
+      s13 s14 XCHG
       s12 s13 XCHG
-      s11 s12 XCHG
-      s0 s10 XCHG
       s0 s11 XCHG
+      s0 s12 XCHG
+      s9 s10 XCHG
       s8 s9 XCHG
       s7 s8 XCHG
       s6 s7 XCHG
@@ -423,44 +461,48 @@ PROGRAM{
       s4 s5 XCHG
       s0 s3 XCHG
       s0 s4 XCHG
-      s2 16 s() XCHG
-      s15 s15 XCHG2	//  identity earner_workchain delta version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
+      s2 17 s() XCHG
+      s0 16 s() XCHG
+      SWAP	//  identity earner_workchain delta version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
       save_state INLINECALLDICT
       s1 s2 XCHG	//  earner_workchain identity delta
       pay_identity INLINECALLDICT
-    }>	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
-    17 s() POP	//  claims sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref
-    s0 s14 XCHG
-    1095779330 PUSHINT	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root op _143=1095779330
-    EQUAL	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _144
-    IFJMP:<{	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root
-      2205 PUSHINT	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _145=2205
-      s15 s11 XCPU	//  claims _145=2205 commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root sender op_addr
-      SDEQ	//  claims _145=2205 commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root _146
-      s1 s15 XCHG	//  claims score_root commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds _145=2205 _146
+    }>	//  msg_value sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
+    18 s() POP	//  claims sender op in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref
+    s0 s15 XCHG
+    1095779330 PUSHINT	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root op _174=1095779330
+    EQUAL	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _175
+    IFJMP:<{	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root
+      2205 PUSHINT	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _176=2205
+      s0 16 s() XCHG
+      s12 PUSH	//  claims _176=2205 commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root sender op_addr
+      SDEQ	//  claims _176=2205 commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root _177
+      s1 16 s() XCHG	//  claims score_root commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at _176=2205 _177
       THROWANYIFNOT
-      s0 s11 XCHG	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs in_msg
-      256 LDU	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity in_msg
+      s0 s12 XCHG	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds in_msg
+      256 LDU	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity in_msg
       ENDS
-      s0 s14 PUSH2
-      8 PUSHPOW2	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity identity claims _155=256
+      s0 s15 PUSH2
+      8 PUSHPOW2	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity identity claims _186=256
       DICTUGET
-      NULLSWAPIFNOT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry found
-      2206 PUSHINT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry found _157=2206
-      SWAP	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity entry _157=2206 found
+      NULLSWAPIFNOT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry found
+      2206 PUSHINT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry found _188=2206
+      SWAP	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity entry _188=2206 found
       THROWANYIFNOT
-      unpack_claim INLINECALLDICT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity _219 _220 _221 _222 _223
+      unpack_claim INLINECALLDICT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity _266 _267 _268 _269 _270
       2207 PUSHINT
       s2 POP
-      s0 s2 XCHG	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at paid _165=2207 forfeited
+      s0 s2 XCHG	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at paid _196=2207 forfeited
       THROWANYIF
-      1 PUSHINT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at paid _168=1
+      1 PUSHINT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at paid _199=1
       NOW
-      ROT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity amount claimed_at _168=1 _169 paid
-      pack_claim INLINECALLDICT	//  claims score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs identity _170
-      s0 s1 s15 XCHG3
-      8 PUSHPOW2	//  stream_epochs score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps _170 identity claims _171=256
-      DICTUSETB	//  stream_epochs score_root commitment_ref mat_epoch_seconds version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps claims
+      ROT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity amount claimed_at _199=1 _200 paid
+      pack_claim INLINECALLDICT	//  claims score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds identity _201
+      s0 s2 XCHG
+      s0 16 s() XCHG
+      8 PUSHPOW2	//  mat_epoch_seconds score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs _201 identity claims _202=256
+      DICTUSETB	//  mat_epoch_seconds score_root commitment_ref activated_at version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs claims
+      s10 s14 XCHG
       s9 s13 XCHG
       s8 s12 XCHG
       s7 s11 XCHG
@@ -469,90 +511,89 @@ PROGRAM{
       s4 s8 XCHG
       s3 s7 XCHG
       s6 s5 s0 XCHG3
-      s4 s4 s0 XCHG3
-      s1 s3 XCHG	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref claims
+      s1 s4 s0 XCHG3	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref claims
       save_state INLINECALLDICT
-    }>	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root
+    }>	//  claims sender commitment_ref in_msg version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root
     15 BLKDROP
-    DROP	//
-    2204 PUSHINT	//  _174=2204
+    2DROP	//
+    2204 PUSHINT	//  _205=2204
     THROWANY
   }>
   get_aipow_distributor_data PROC:<{
     //
-    load_state INLINECALLDICT	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref _16
-    DROP	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref
+    load_state INLINECALLDICT	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref _17
+    DROP	//  version op_addr epoch earner_workchain total_score pool claimed_count claimed_score immediate_bps stream_epochs mat_epoch_seconds activated_at score_root commitment_ref
   }>
   get_claim PROC:<{
     //  identity
-    load_state INLINECALLDICT	//  identity _35 _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46 _47 _48
-    13 1 BLKDROP2	//  identity claims
-    8 PUSHPOW2	//  identity claims _18=256
+    load_state INLINECALLDICT	//  identity _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46 _47 _48 _49 _50
+    14 1 BLKDROP2	//  identity claims
+    8 PUSHPOW2	//  identity claims _19=256
     DICTUGET
     NULLSWAPIFNOT	//  entry found
-    0 EQINT	//  entry _21
+    0 EQINT	//  entry _22
     IFJMP:<{	//  entry
       DROP	//
-      0 PUSHINT	//  _22=0
-      s0 s0 s0 PUSH3	//  _22=0 _23=0 _24=0 _25=0
-      s0 s0 PUSH2	//  _22=0 _23=0 _24=0 _25=0 _26=0 _27=0
+      0 PUSHINT	//  _23=0
+      s0 s0 s0 PUSH3	//  _23=0 _24=0 _25=0 _26=0
+      s0 s0 PUSH2	//  _23=0 _24=0 _25=0 _26=0 _27=0 _28=0
     }>	//  entry
     unpack_claim INLINECALLDICT	//  amount claimed_at forfeited forfeit_at paid
-    1 PUSHINT	//  amount claimed_at forfeited forfeit_at paid _34=1
-    5 -ROLL	//  _34=1 amount claimed_at forfeited forfeit_at paid
+    1 PUSHINT	//  amount claimed_at forfeited forfeit_at paid _35=1
+    5 -ROLL	//  _35=1 amount claimed_at forfeited forfeit_at paid
   }>
   get_matured PROC:<{
     //  identity at_time
-    load_state INLINECALLDICT	//  identity at_time _33 _34 _35 _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46
-    s6 POP
-    2DROP
+    load_state INLINECALLDICT	//  identity at_time _34 _35 _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46 _47 _48
+    s7 POP
+    3 BLKDROP
     4 4 BLKDROP2
     s4 POP
     s4 POP
     s4 POP	//  identity at_time immediate_bps stream_epochs mat_epoch_seconds claims
     s1 s5 XCHG
-    8 PUSHPOW2	//  mat_epoch_seconds at_time immediate_bps stream_epochs identity claims _19=256
+    8 PUSHPOW2	//  mat_epoch_seconds at_time immediate_bps stream_epochs identity claims _20=256
     DICTUGET
     NULLSWAPIFNOT	//  mat_epoch_seconds at_time immediate_bps stream_epochs entry found
-    0 EQINT	//  mat_epoch_seconds at_time immediate_bps stream_epochs entry _22
+    0 EQINT	//  mat_epoch_seconds at_time immediate_bps stream_epochs entry _23
     IFJMP:<{	//  mat_epoch_seconds at_time immediate_bps stream_epochs entry
       5 BLKDROP	//
-      0 PUSHINT	//  _23=0
-      DUP	//  _23=0 _24=0
+      0 PUSHINT	//  _24=0
+      DUP	//  _24=0 _25=0
     }>	//  mat_epoch_seconds at_time immediate_bps stream_epochs entry
-    unpack_claim INLINECALLDICT	//  mat_epoch_seconds at_time immediate_bps stream_epochs _49 _50 _51 _52 _53
+    unpack_claim INLINECALLDICT	//  mat_epoch_seconds at_time immediate_bps stream_epochs _51 _52 _53 _54 _55
     DROP	//  mat_epoch_seconds at_time immediate_bps stream_epochs amount claimed_at forfeited forfeit_at
     3 4 BLKSWAP
     1 PUSHINT
-    s0 s8 XCHG	//  _31=1 amount claimed_at forfeited forfeit_at at_time immediate_bps stream_epochs mat_epoch_seconds
-    compute_matured INLINECALLDICT	//  _31=1 _32
+    s0 s8 XCHG	//  _32=1 amount claimed_at forfeited forfeit_at at_time immediate_bps stream_epochs mat_epoch_seconds
+    compute_matured INLINECALLDICT	//  _32=1 _33
   }>
   get_matured_now PROC:<{
     //  identity
-    load_state INLINECALLDICT	//  identity _33 _34 _35 _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46
-    s6 POP
-    2DROP
+    load_state INLINECALLDICT	//  identity _34 _35 _36 _37 _38 _39 _40 _41 _42 _43 _44 _45 _46 _47 _48
+    s7 POP
+    3 BLKDROP
     4 4 BLKDROP2
     s4 POP
     s4 POP
     s4 POP	//  identity immediate_bps stream_epochs mat_epoch_seconds claims
     s1 s4 XCHG
-    8 PUSHPOW2	//  mat_epoch_seconds immediate_bps stream_epochs identity claims _18=256
+    8 PUSHPOW2	//  mat_epoch_seconds immediate_bps stream_epochs identity claims _19=256
     DICTUGET
     NULLSWAPIFNOT	//  mat_epoch_seconds immediate_bps stream_epochs entry found
-    0 EQINT	//  mat_epoch_seconds immediate_bps stream_epochs entry _21
+    0 EQINT	//  mat_epoch_seconds immediate_bps stream_epochs entry _22
     IFJMP:<{	//  mat_epoch_seconds immediate_bps stream_epochs entry
       4 BLKDROP	//
-      0 PUSHINT	//  _22=0
-      DUP	//  _22=0 _23=0
+      0 PUSHINT	//  _23=0
+      DUP	//  _23=0 _24=0
     }>	//  mat_epoch_seconds immediate_bps stream_epochs entry
-    unpack_claim INLINECALLDICT	//  mat_epoch_seconds immediate_bps stream_epochs _49 _50 _51 _52 _53
+    unpack_claim INLINECALLDICT	//  mat_epoch_seconds immediate_bps stream_epochs _51 _52 _53 _54 _55
     DROP	//  mat_epoch_seconds immediate_bps stream_epochs amount claimed_at forfeited forfeit_at
     2 4 BLKSWAP
     1 PUSHINT
     NOW
     3 -ROLL
-    s0 s8 XCHG	//  _30=1 amount claimed_at forfeited forfeit_at _31 immediate_bps stream_epochs mat_epoch_seconds
-    compute_matured INLINECALLDICT	//  _30=1 _32
+    s0 s8 XCHG	//  _31=1 amount claimed_at forfeited forfeit_at _32 immediate_bps stream_epochs mat_epoch_seconds
+    compute_matured INLINECALLDICT	//  _31=1 _33
   }>
 }END>c
