@@ -117,22 +117,24 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   }
   try {
   vm::CellSlice cs = vm::load_cell_slice(data);
-  unsigned long long version, next_epoch, epoch_seconds, register_grace, immediate_bps, stream_epochs,
-      mat_epoch_seconds;
+  unsigned long long version, next_epoch, epoch_seconds, register_grace, challenge_window, immediate_bps,
+      stream_epochs, mat_epoch_seconds;
   long long earner_workchain;
-  // version:16 next_epoch:32 epoch_seconds:32 register_grace:32 earner_workchain:int8
-  // immediate_bps:16 stream_epochs:16 mat_epoch_seconds:32 minted_total:Grams total_cap:Grams
-  // ^distributor_code registrations:HashmapE
+  // version:16 next_epoch:32 epoch_seconds:32 register_grace:32 challenge_window:32
+  // earner_workchain:int8 immediate_bps:16 stream_epochs:16 mat_epoch_seconds:32
+  // minted_total:Grams total_cap:Grams ^distributor_code registrations:HashmapE
   if (!(cs.fetch_uint_to(16, version) && cs.fetch_uint_to(32, next_epoch) &&
         cs.fetch_uint_to(32, epoch_seconds) && cs.fetch_uint_to(32, register_grace) &&
-        cs.fetch_int_to(8, earner_workchain) && cs.fetch_uint_to(16, immediate_bps) &&
-        cs.fetch_uint_to(16, stream_epochs) && cs.fetch_uint_to(32, mat_epoch_seconds))) {
+        cs.fetch_uint_to(32, challenge_window) && cs.fetch_int_to(8, earner_workchain) &&
+        cs.fetch_uint_to(16, immediate_bps) && cs.fetch_uint_to(16, stream_epochs) &&
+        cs.fetch_uint_to(32, mat_epoch_seconds))) {
     return false;
   }
   out.version = (td::uint16)version;
   out.next_epoch = (td::uint32)next_epoch;
   out.epoch_seconds = (td::uint32)epoch_seconds;
   out.register_grace = (td::uint32)register_grace;
+  out.challenge_window = (td::uint32)challenge_window;
   out.earner_workchain = (td::int32)earner_workchain;
   out.immediate_bps = (td::uint16)immediate_bps;
   out.stream_epochs = (td::uint16)stream_epochs;
@@ -276,7 +278,8 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
 }
 
 bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentState& commitment,
-                           td::uint16 expected_commitment_version, td::uint32 epoch) {
+                           td::uint16 expected_commitment_version, td::uint32 epoch,
+                           td::uint32 challenge_window) {
   if (commitment.version != expected_commitment_version) {
     return false;
   }
@@ -298,16 +301,17 @@ bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentStat
     return false;
   }
   // Provenance floor (W4.7): the commitment's challenge window must have been open
-  // for at least kAipowChallengeWindow after the candidate's settlement-recorded
-  // registration. window_deadline is a commitment deploy parameter and untrusted on
-  // its own, but registered_at is the settlement's own clock (the committer cannot
-  // backdate it), so requiring window_deadline >= registered_at + kAipowChallengeWindow
-  // forces the challenge op to have accepted disputes across a real, observable
-  // window -- a commitment that closed its window early (to finalize instantly) is
-  // rejected. The window must ALSO have elapsed relative to gen_utime; that check
-  // is in derive (it needs the block's consensus time).
+  // for at least `challenge_window` (the settlement's deployed value) after the
+  // candidate's settlement-recorded registration. window_deadline is a commitment
+  // deploy parameter and untrusted on its own, but registered_at is the settlement's
+  // own clock (the committer cannot backdate it), so requiring
+  // window_deadline >= registered_at + challenge_window forces the challenge op to
+  // have accepted disputes across a real, observable window -- a commitment that
+  // closed its window early (to finalize instantly) is rejected. The window must
+  // ALSO have elapsed relative to gen_utime; that check is in derive (it needs the
+  // block's consensus time).
   if ((td::uint64)commitment.window_deadline <
-      (td::uint64)candidate.registered_at + kAipowChallengeWindow) {
+      (td::uint64)candidate.registered_at + (td::uint64)challenge_window) {
     return false;
   }
   return true;
@@ -343,6 +347,7 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   cursor.minted_total = ledger.minted_total;
   cursor.epoch_seconds = ledger.epoch_seconds;
   cursor.register_grace = ledger.register_grace;
+  cursor.challenge_window = ledger.challenge_window;
   // Enforce BOTH caps: the config's declared hard limit (ConfigParam 92) AND the
   // settlement's OWN stored total_cap. Using the minimum makes ConfigParam 92 an
   // actual consensus issuance limit (not merely informational) while still never
@@ -383,16 +388,17 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
     }
     CommitmentState cstate;
     if (!parse_commitment_state(commitment.data, cstate) ||
-        !commitment_authorizes(c, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
+        !commitment_authorizes(c, cstate, ctx.expected_commitment_version, cursor.next_epoch,
+                               cursor.challenge_window)) {
       continue;
     }
     // The challenge window must have ELAPSED on the block's consensus clock before
     // this candidate can mint. A candidate still inside its window is not yet a
-    // valid winner (it may yet be challenged); it is skipped, and because
-    // kAipowChallengeWindow < register_grace the epoch is not skippable yet either,
-    // so compute_epoch_mint(false) below returns NoSettlement (wait), never a skip
-    // that would strand a soon-to-be-valid mint.
-    if ((td::uint64)ctx.gen_utime < (td::uint64)c.registered_at + kAipowChallengeWindow) {
+    // valid winner (it may yet be challenged); it is skipped, and because the
+    // settlement's challenge_window < register_grace the epoch is not skippable yet
+    // either, so compute_epoch_mint(false) below returns NoSettlement (wait), never a
+    // skip that would strand a soon-to-be-valid mint.
+    if ((td::uint64)ctx.gen_utime < (td::uint64)c.registered_at + (td::uint64)cursor.challenge_window) {
       continue;
     }
     // The min-address valid candidate that has cleared its challenge window wins.

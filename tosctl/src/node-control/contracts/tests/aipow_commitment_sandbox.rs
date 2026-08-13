@@ -65,6 +65,7 @@ fn deploy_settlement(bc: &mut Blockchain, deployer: &MsgAddressInt) -> MsgAddres
         next_epoch: SETTLEMENT_NEXT_EPOCH,
         epoch_seconds: 65_536,
         register_grace: 3_600,
+        challenge_window: 900,
         earner_workchain: -1,
         maturation: AipowMaturation::methodology_v0(),
         total_cap: 4_500_000_000 * TOS,

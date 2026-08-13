@@ -119,6 +119,7 @@ td::Ref<vm::Cell> build_settlement(td::uint32 next_epoch, long long minted_total
   cb.store_long_bool(next_epoch, 32);
   cb.store_long_bool(65536, 32);        // epoch_seconds
   cb.store_long_bool(3600, 32);         // register_grace
+  cb.store_long_bool(block::aipow::kAipowChallengeWindow, 32);  // challenge_window (the value the tests use)
   cb.store_long_bool(-1, 8);            // earner_workchain (int8)
   cb.store_long_bool(2500, 16);         // immediate_bps
   cb.store_long_bool(8, 16);            // stream_epochs
@@ -388,6 +389,7 @@ TEST(Aipow, parse_settlement_ledger_roundtrips) {
   CHECK(led.next_epoch == 27260);
   CHECK(led.epoch_seconds == 65536);
   CHECK(led.register_grace == 3600);
+  CHECK(led.challenge_window == block::aipow::kAipowChallengeWindow);
   CHECK(led.earner_workchain == -1);
   CHECK(led.immediate_bps == 2500);
   CHECK(led.stream_epochs == 8);
@@ -451,7 +453,7 @@ TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
                   long long org) {
     block::aipow::CommitmentState c;
     CHECK(block::aipow::parse_commitment_state(build_commitment(ver, status, epoch, root, ts, org), c));
-    return block::aipow::commitment_authorizes(cand, c, 1, 27263);
+    return block::aipow::commitment_authorizes(cand, c, 1, 27263, block::aipow::kAipowChallengeWindow);
   };
 
   // Exact match, status final -> authorized.
@@ -478,7 +480,7 @@ TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
         build_commitment(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL,
                          window_deadline),
         c));
-    return block::aipow::commitment_authorizes(cand, c, 1, 27263);
+    return block::aipow::commitment_authorizes(cand, c, 1, 27263, block::aipow::kAipowChallengeWindow);
   };
   CHECK(with_window(1 + block::aipow::kAipowChallengeWindow));       // exactly enough -> authorized
   CHECK(!with_window(1 + block::aipow::kAipowChallengeWindow - 1));  // one second short -> rejected
@@ -501,7 +503,7 @@ TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
   block::aipow::CommitmentState c;
   CHECK(block::aipow::parse_commitment_state(
       build_commitment(1, block::aipow::kCommitmentStatusFinal, led.next_epoch, score, 4000000, organic), c));
-  bool authorized = block::aipow::commitment_authorizes(cands[0], c, 1, led.next_epoch);
+  bool authorized = block::aipow::commitment_authorizes(cands[0], c, 1, led.next_epoch, led.challenge_window);
   CHECK(authorized);
 
   auto cfg = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic / 2 = 500

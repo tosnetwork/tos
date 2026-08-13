@@ -25,6 +25,7 @@ use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 const TOS: u64 = 1_000_000_000;
 const EPOCH_SECONDS: u32 = 65_536;
 const REGISTER_GRACE: u32 = 3600;
+const CHALLENGE_WINDOW: u32 = 900;  // < REGISTER_GRACE (deploy invariant)
 const TOTAL_CAP: u64 = 4_500_000_000 * TOS;
 /// The distributors are deployed on, and pay identities on, this workchain. The
 /// test keeps it on the masterchain the settlement lives on so the settle
@@ -73,6 +74,7 @@ impl Fixture {
             next_epoch,
             epoch_seconds: EPOCH_SECONDS,
             register_grace: REGISTER_GRACE,
+            challenge_window: CHALLENGE_WINDOW,
             earner_workchain: EARNER_WC,
             maturation: AipowMaturation::methodology_v0(),
             total_cap: TOTAL_CAP,
@@ -262,6 +264,7 @@ fn deploys_and_readable() {
     assert_eq!(data.next_epoch, next_epoch);
     assert_eq!(data.epoch_seconds, EPOCH_SECONDS);
     assert_eq!(data.register_grace, REGISTER_GRACE);
+    assert_eq!(data.challenge_window, CHALLENGE_WINDOW);
     assert_eq!(data.minted_total, 0);
     assert_eq!(data.total_cap, TOTAL_CAP);
     assert_eq!(f.candidate_count(next_epoch), 0, "no candidates at deploy");

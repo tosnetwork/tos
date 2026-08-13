@@ -76,10 +76,11 @@ struct EpochSettlement {
 // The settlement ledger cursor (the fields the derivation reads from the
 // settlement account's state; see the W4.1 layout).
 struct SettlementCursor {
-  td::uint32 next_epoch{0};      // the epoch to settle
-  td::RefInt256 minted_total;    // cumulative AIPoW minted so far (nanotomis)
-  td::uint32 epoch_seconds{0};   // epoch length (for the skip deadline)
-  td::uint32 register_grace{0};  // grace after an epoch ends before it may be skipped
+  td::uint32 next_epoch{0};       // the epoch to settle
+  td::RefInt256 minted_total;     // cumulative AIPoW minted so far (nanotomis)
+  td::uint32 epoch_seconds{0};    // epoch length (for the skip deadline)
+  td::uint32 register_grace{0};   // grace after an epoch ends before it may be skipped
+  td::uint32 challenge_window{0}; // the provenance floor (seconds); < register_grace
 };
 
 // The per-epoch pool from the committed organic value, per the arithmetic
@@ -125,6 +126,7 @@ struct SettlementLedger {
   td::uint32 next_epoch{0};
   td::uint32 epoch_seconds{0};
   td::uint32 register_grace{0};
+  td::uint32 challenge_window{0};
   td::int32 earner_workchain{0};
   td::uint16 immediate_bps{0};
   td::uint16 stream_epochs{0};
@@ -160,17 +162,21 @@ struct CommitmentState {
 // The AIPoW commitment `status == final` value (mirrors the FunC status::final).
 constexpr td::uint8 kCommitmentStatusFinal = 2;
 
-// The provenance floor (W4.7): the minimum span (seconds) a candidate's challenge
-// window must have been OPEN and then ELAPSED, measured from the settlement's
-// trusted registration time, before its commitment may mint. This is what makes a
-// real, observable dispute window mandatory: a commitment cannot backdate or
-// shorten it, because its window_deadline is checked against the settlement-recorded
+// The provenance floor (W4.7): the span (seconds) a candidate's challenge window
+// must have been OPEN and then ELAPSED, measured from the settlement's trusted
+// registration time, before its commitment may mint. This is what makes a real,
+// observable dispute window mandatory: a commitment cannot backdate or shorten it,
+// because its window_deadline is checked against the settlement-recorded
 // registered_at (a clock the committer does not control), and the mint waits until
-// the block's gen_utime is past registered_at + this span. A native constant for
-// v0 (audited, fixed); promote to a governed config param before mainnet. MUST be
-// strictly less than the settlement's register_grace, so a valid candidate always
-// mints before its epoch becomes skippable.
-constexpr td::uint32 kAipowChallengeWindow = 7u * 24 * 3600;  // 7 days
+// the block's gen_utime is past registered_at + this span.
+//
+// The ACTUAL value is a settlement deploy parameter (SettlementCursor::challenge_window),
+// which the derivation reads, so governance can tune it per settlement and tests can
+// shrink it. This constant is only the recommended default the SDK deploys with. The
+// deployed value MUST be strictly less than the settlement's register_grace (enforced
+// in the settlement SDK's build_data), so a valid candidate always mints before its
+// epoch becomes skippable.
+constexpr td::uint32 kAipowChallengeWindow = 7u * 24 * 3600;  // 7 days (SDK default)
 
 // Parse the settlement account data cell. Returns false on a short/malformed cell.
 bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out);
@@ -187,12 +193,15 @@ std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& regis
 bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out);
 
 // True iff a resolved commitment authorizes a candidate's mint: the expected
-// layout version, status == final, its epoch equals the settled `epoch`, and
-// every committed field exactly matches the candidate (score_root, total_score,
-// organic). The caller must separately have verified the commitment account's
-// code hash against the registry (that resolution is not pure over cells).
+// layout version, status == final, its epoch equals the settled `epoch`, every
+// committed field exactly matches the candidate (score_root, total_score,
+// organic), AND its window_deadline covers registered_at + challenge_window (the
+// provenance floor -- challenge_window is the settlement's deployed value). The
+// caller must separately have verified the commitment account's code hash against
+// the registry (that resolution is not pure over cells).
 bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentState& commitment,
-                           td::uint16 expected_commitment_version, td::uint32 epoch);
+                           td::uint16 expected_commitment_version, td::uint32 epoch,
+                           td::uint32 challenge_window);
 
 /*
  * The single shared masterchain epoch-mint decision (W4.5 part 2).

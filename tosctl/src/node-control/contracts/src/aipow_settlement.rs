@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECFQEABGYAART/APSkE/S88sgLAQIBYgIDA8rQAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFwf3TIywLKB8v/ydBS0McF4wI+LMcAkl8O4AzTH9M/MSGCEEFQUwG64wI8ghBBUFMCuuMCXw2BCQPy8AQFBgIBIAoLAtw8DNP/0VRp4VR4dihWElYSKAGAIPQPb6HAAJMwcG2W0NMP9AQw4gHAAJVfCXBtIeMOgQkCUAPy9FA+oIEJBFMSvPLyCaRRllA8HQvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAg4HAvwx0x/T/9N/03/RgQj9U02+8vSBCP8iwgDy9A7TAjHSB9P/MFYRJQGAIPQPb6HAAJMwcG2W0NMP9AQw4lMggwf0Dm+hgQj+MvLyECURERT4IwTIygcTy//Lf8t/yx8hwQiYQA6DB/RDDKTjDlAMAcjLD/QAyUC9gCD0FxCLEHoICQCKCtEnpCeoJqCBCQD4I1i+8vQHpBCLChBpEFgQRxA2RQRDEwvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAFp0yMsCE8oHy//J0HBxUwGAEMjLBVAFzxYj+gIUy2gTywASywASzMsAyYBA+wAAQi6DB/SOb6UygQkFU1G5E7AS8vRQD4MH9FswTuCDB/RDDABeEGkQWBBHEDZFQBAjC8jLDxrLHxjLHxbLHxTKBxLLD8sPyx8B+gIB+gLM9ADJ7VQCAW4MDQIBIA8QAaWxDftRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNE4OFs2NiEQiRB5EGlQRRA5QBkoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w4xEoA4AbbA3+1E0NMP0x/TH9Mf0gfTD9MP0x/6APoA1PQE0WyxAQGAIPQPb6HAAJMwcG2W0NMP9AQw4jCAA4lJwgwf0Dm+hwACVXwlwbSHg0gcx0//TfzD4KAkQihYQWhQQOhJwAsjL/8v/yVMRccjLD1AMzxYayz8YygcWy39QBPoCF8sfFct/FMsPFMsPEssfzMsAyXBxVHARyMsAywDLABTME8sAzMsAyXEh+QASAgEgERICA5q4ExQAPbev3aiaGmH6Y/pj+mP6QPph+mH6Y/9AH0AanoCaK3AAibXaPaiaGmH6Y/pj+mP6QPph+mH6Y/9AH0AanoCaLZYrADAEHoHt9DgAEmYODbLaGmH+gIYcQDgAEmtuBBwQYP6PjfSmUAC/v+7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbLFYAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAl1twVHAAUwDggwf0Dm+hwACXMHBUcABTAODSB9P/03/Tf9MfMHFVQIAIe/ztRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFssQEBgCD0D2+hwACTMHBtltDTD/QEMOIBwACTMHAg4IMH9IZvpTKOfQhLA=";
+pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECFQEABH8AART/APSkE/S88sgLAQIBYgIDA87QAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1PQE0XB/dMjLAsoHy//J0FLgxwXjAj8txwCSXw/gDdMf0z8xIYIQQVBTAbrjAj2CEEFQUwK64wJfDoEJA/LwBAUGAgEgCgsC4D0N0//RVGrxVHh2KFYTVhMoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w6BCQJQA/L0UD+ggQkEUxK88vIKpFGmUD0eDMjLDxvLHxnLHxfLHxXLHxPKB8sPyw/LHwH6AgH6Asz0AMntVAIOBwL8MdMf0//Tf9N/0YEI/VNOvvL0gQj/IsIA8vQP0wIx0gfT/zBWEiUBgCD0D2+hwACTMHBtltDTD/QEMOJTIIMH9A5voYEI/jLy8hAlERIU+CMEyMoHE8v/y3/Lf8sfIcEImEAPgwf0Qw2k4w5QDQHIyw/0AMlAzoAg9BcQnBCLCAkAkgvRKKQoqCeggQkA+CNYvvL0CKQQnAsQehBpEFgQRxA2RQRAEwzIyw8byx8Zyx8Xyx8Vyx8TygfLD8sPyx8B+gIB+gLM9ADJ7VQAWnTIywITygfL/8nQcHFTAYAQyMsFUAXPFiP6AhTLaBPLABLLABLMywDJgED7AABEL4MH9I5vpTKBCQVTUbkTsBLy9AEREIMH9FswT/CDB/RDDQBkEHoQaRBYEEcQNkVAEgzIyw8byx8Zyx8Xyx8Vyx8TygfLD8sPyx8B+gIB+gLM9ADJ7VQCAW4MDQIBIA8QAauxDftRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1PQE0Tg4WzY2NiAQiRB5EGkFEElJMwkoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w4xEoA4AcbA3+1E0NMP0x/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbMEBAYAg9A9vocAAkzBwbZbQ0w/0BDDiMIADiUnCDB/QOb6HAAJVfCXBtIeDSBzHT/9N/MPgoCRCKFhBaFBA6EnACyMv/y//JUxFxyMsPUAzPFhrLPxjKBxbLf1AE+gIXyx8Vy38Uyw8Uyw8Syx/MywDJcHFUcBHIywDLAMsAFMwTywDMywDJcSH5ABICASAREgIDmrgTFABBt6/dqJoaYfpj+mP6Y/pj+kD6Yfph+mP/QB9AGp6AmitwAI212j2omhph+mP6Y/pj+mP6QPph+mH6Y/9AH0AanoCaLZgrADAEHoHt9DgAEmYODbLaGmH+gIYcQDgAEmtuBBwQYP6PjfSmUADDv+7UTQ0w/TH9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFswVgBgCD0D2+hwACTMHBtltDTD/QEMOIBwACXW3BUcABTAOCDB/QOb6HAAJcwcFRwAFMA4NIH0//Tf9N/0x8wcVVAgAi7/O1E0NMP0x/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbMEBAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAkzBwIOCDB/SGb6UyhPpxkQ";
 
 pub const AIPOW_SETTLEMENT_REGISTER_OPCODE: u32 = 0x4150_5301;
 pub const AIPOW_SETTLEMENT_SKIP_OPCODE: u32 = 0x4150_5302;
@@ -33,6 +33,11 @@ pub struct AipowSettlementInit {
     pub epoch_seconds: u32,
     /// Seconds after an epoch ends before it may be skipped with zero mint.
     pub register_grace: u32,
+    /// Seconds a candidate's challenge window must be open + elapsed before the
+    /// native derivation mints it. Stored here, read by the native path. MUST be
+    /// < register_grace so a valid candidate mints before its epoch is skippable
+    /// (enforced in build_data).
+    pub challenge_window: u32,
     /// The workchain the per-epoch distributors are deployed on and pay
     /// identities on (e.g. 0 for basechain, where agent wallets live).
     pub earner_workchain: i8,
@@ -53,6 +58,7 @@ pub struct AipowSettlementData {
     pub next_epoch: u32,
     pub epoch_seconds: u32,
     pub register_grace: u32,
+    pub challenge_window: u32,
     pub earner_workchain: i8,
     pub maturation: crate::aipow_distributor::AipowMaturation,
     pub minted_total: u64,
@@ -85,11 +91,26 @@ impl AipowSettlementContract {
         if init.maturation.immediate_bps > 10_000 {
             anyhow::bail!("maturation immediate_bps must not exceed 10000");
         }
+        // Invariant (B3): a valid candidate must clear its challenge window before
+        // its epoch becomes skippable, else a permissionless skip could strand the
+        // mint. The contract cannot validate its own deploy data, so enforce it
+        // here at deploy-time; the native derivation relies on it.
+        if init.challenge_window == 0 {
+            anyhow::bail!("challenge_window must be positive");
+        }
+        if init.challenge_window >= init.register_grace {
+            anyhow::bail!(
+                "challenge_window ({}) must be < register_grace ({}) so a valid candidate mints before its epoch is skippable",
+                init.challenge_window,
+                init.register_grace
+            );
+        }
         let mut data = BuilderData::new();
         data.append_u16(AIPOW_SETTLEMENT_VERSION)?;
         data.append_u32(init.next_epoch)?;
         data.append_u32(init.epoch_seconds)?;
         data.append_u32(init.register_grace)?;
+        data.append_u32(init.challenge_window)?;
         data.append_i8(init.earner_workchain)?;
         data.append_u16(init.maturation.immediate_bps)?;
         data.append_u16(init.maturation.stream_epochs)?;
@@ -117,14 +138,15 @@ impl AipowSettlementContract {
             next_epoch: stack.u64(1)? as u32,
             epoch_seconds: stack.u64(2)? as u32,
             register_grace: stack.u64(3)? as u32,
-            earner_workchain: stack.i64(4)? as i8,
+            challenge_window: stack.u64(4)? as u32,
+            earner_workchain: stack.i64(5)? as i8,
             maturation: crate::aipow_distributor::AipowMaturation {
-                immediate_bps: stack.u64(5)? as u16,
-                stream_epochs: stack.u64(6)? as u16,
-                epoch_seconds: stack.u64(7)? as u32,
+                immediate_bps: stack.u64(6)? as u16,
+                stream_epochs: stack.u64(7)? as u16,
+                epoch_seconds: stack.u64(8)? as u32,
             },
-            minted_total: stack.u64(8)?,
-            total_cap: stack.u64(9)?,
+            minted_total: stack.u64(9)?,
+            total_cap: stack.u64(10)?,
         })
     }
 
@@ -253,6 +275,7 @@ mod tests {
             next_epoch: 27_260,
             epoch_seconds: 65_536,
             register_grace: 3600,
+            challenge_window: 900,
             earner_workchain: 0,
             maturation: crate::aipow_distributor::AipowMaturation::methodology_v0(),
             total_cap: 4_500_000_000_000_000_000,

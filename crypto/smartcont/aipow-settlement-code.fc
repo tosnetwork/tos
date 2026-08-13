@@ -37,6 +37,12 @@
 ;;   epoch_seconds:uint32          (epoch length, for the skip deadline)
 ;;   register_grace:uint32         (seconds after an epoch ends before it may be
 ;;                                  skipped with zero mint)
+;;   challenge_window:uint32       (seconds a candidate's challenge window must be
+;;                                  open + elapsed before the native path mints it;
+;;                                  stored here, read by the native derivation, not
+;;                                  used by this contract. MUST be < register_grace
+;;                                  so a valid candidate mints before its epoch is
+;;                                  skippable — a governance/deploy-time invariant.)
 ;;   earner_workchain:int8         (workchain the distributor is deployed on and
 ;;                                  pays identities on)
 ;;   immediate_bps:uint16          (distributor maturation snapshot, frozen here)
@@ -83,12 +89,13 @@ const int distributor_version = 1;
 ;; the cost of registration spam. The set retains the smallest-address candidates.
 const int MAX_CANDIDATES = 8;
 
-(int, int, int, int, int, int, int, int, int, int, cell, cell) load_state() inline {
+(int, int, int, int, int, int, int, int, int, int, int, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
   int version = ds~load_uint(16);
   int next_epoch = ds~load_uint(32);
   int epoch_seconds = ds~load_uint(32);
   int register_grace = ds~load_uint(32);
+  int challenge_window = ds~load_uint(32);
   int earner_workchain = ds~load_int(8);
   int immediate_bps = ds~load_uint(16);
   int stream_epochs = ds~load_uint(16);
@@ -98,11 +105,11 @@ const int MAX_CANDIDATES = 8;
   cell distributor_code = ds~load_ref();
   cell registrations = ds~load_dict();
   ds.end_parse();
-  return (version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
-    stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
+  return (version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
+    immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
 }
 
-() save_state(int version, int next_epoch, int epoch_seconds, int register_grace,
+() save_state(int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
              int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
              int minted_total, int total_cap, cell distributor_code, cell registrations) impure inline {
   set_data(begin_cell()
@@ -110,6 +117,7 @@ const int MAX_CANDIDATES = 8;
     .store_uint(next_epoch, 32)
     .store_uint(epoch_seconds, 32)
     .store_uint(register_grace, 32)
+    .store_uint(challenge_window, 32)
     .store_int(earner_workchain, 8)
     .store_uint(immediate_bps, 16)
     .store_uint(stream_epochs, 16)
@@ -252,9 +260,9 @@ cell build_state_init(cell code, cell data) inline {
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
 
-  (int version, int next_epoch, int epoch_seconds, int register_grace, int earner_workchain,
-   int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total, int total_cap,
-   cell distributor_code, cell registrations) = load_state();
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
+   int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total,
+   int total_cap, cell distributor_code, cell registrations) = load_state();
 
   ;; The epoch mint arrives from the masterchain minter (-1:00..00) carrying the
   ;; native-selected winner's account id. Authenticate the sender first; any
@@ -275,7 +283,7 @@ cell build_state_init(cell code, cell data) inline {
     throw_unless(err::settle_no_registration, found);
     int new_minted = minted_total + msg_value;
     throw_if(err::cap_exceeded, new_minted > total_cap);
-    save_state(version, next_epoch + 1, epoch_seconds, register_grace, earner_workchain,
+    save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, new_minted, total_cap, distributor_code,
       registrations);
     forward_to_distributor(earner_workchain, dist_hash, state_init);
@@ -322,8 +330,8 @@ cell build_state_init(cell code, cell data) inline {
       candidates~udict_set_builder(256, id, record);
     }
     registrations~udict_set_ref(32, epoch, store_candidates(count, candidates));
-    save_state(version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
-      stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
+    save_state(version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
+      immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
     return ();
   }
 
@@ -337,7 +345,7 @@ cell build_state_init(cell code, cell data) inline {
     in_msg.end_parse();
     int skippable_at = (next_epoch + 1) * epoch_seconds + register_grace;
     throw_unless(err::skip_too_early, now() >= skippable_at);
-    save_state(version, next_epoch + 1, epoch_seconds, register_grace, earner_workchain,
+    save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
       registrations);
     return ();
@@ -346,21 +354,21 @@ cell build_state_init(cell code, cell data) inline {
   throw(err::unknown_op);
 }
 
-;; (version, next_epoch, epoch_seconds, register_grace, earner_workchain,
+;; (version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
 ;;  immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap)
-(int, int, int, int, int, int, int, int, int, int) get_aipow_settlement_data() method_id {
-  (int version, int next_epoch, int epoch_seconds, int register_grace, int earner_workchain,
-   int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total, int total_cap,
-   cell distributor_code, cell registrations) = load_state();
+(int, int, int, int, int, int, int, int, int, int, int) get_aipow_settlement_data() method_id {
+  (int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
+   int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total,
+   int total_cap, cell distributor_code, cell registrations) = load_state();
   distributor_code~impure_touch();
   registrations~impure_touch();
-  return (version, next_epoch, epoch_seconds, register_grace, earner_workchain, immediate_bps,
-    stream_epochs, mat_epoch_seconds, minted_total, total_cap);
+  return (version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
+    immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap);
 }
 
 ;; The number of candidates recorded for `epoch`.
 int get_candidate_count(int epoch) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   candidates~impure_touch();
   return count;
@@ -369,7 +377,7 @@ int get_candidate_count(int epoch) method_id {
 ;; (found, min_id): the smallest candidate account id for `epoch`, or (0, 0) if
 ;; none. The native path iterates candidates in address order from here.
 (int, int) get_min_candidate(int epoch) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0);
@@ -383,7 +391,7 @@ int get_candidate_count(int epoch) method_id {
 ;; greater than `after_id`, or (0, 0) if none. Lets the native path enumerate the
 ;; bounded candidate set in ascending address order.
 (int, int) get_next_candidate(int epoch, int after_id) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0);
@@ -396,7 +404,7 @@ int get_candidate_count(int epoch) method_id {
 ;; (found, workchain, score_root, total_score, organic_settled_value,
 ;;  registered_at) for the `id` candidate of `epoch`.
 (int, int, int, int, int, int) get_candidate(int epoch, int id) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0, 0, 0, 0, 0);
@@ -418,7 +426,7 @@ int get_candidate_count(int epoch) method_id {
 ;; is the exact derivation the settle path uses; a real deployment of the audited
 ;; distributor SDK with the same inputs has this address.
 (int, int, int) get_distributor_address(int epoch, int winner_id, int pool) method_id {
-  (_, _, _, _, int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
+  (_, _, _, _, _, int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
    _, _, cell distributor_code, cell registrations) = load_state();
   (int found, cell state_init, int dist_hash) = resolve_distributor(epoch, winner_id, pool,
     earner_workchain, immediate_bps, stream_epochs, mat_epoch_seconds, distributor_code, registrations);
