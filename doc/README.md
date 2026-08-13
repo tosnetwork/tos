@@ -13,6 +13,16 @@ Implementation rule: AI actor work should add native contracts, message schemas,
 SDK/RPC helpers, tests, and operator workflows. It should not add unrelated
 execution engines or bypass the native TVM actor model.
 
+Whitepapers:
+
+- [tos.tex](tos.tex) - TOS Network whitepaper: architecture, economics, security model,
+  governance, and roadmap, explicit about what is implemented versus planned
+- [agi.tex](agi.tex) - AGI Futures and the On-Chain Agent Economy: a long-range,
+  explicitly speculative scenario for AGI development, paired with a literal,
+  implementation-grounded description of how autonomous agents earn money on TOS
+  today through Agent Account, Capability Registry, Task Escrow, Service Actor,
+  Proof Attestation, and Dispute
+
 Start with:
 
 - [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
