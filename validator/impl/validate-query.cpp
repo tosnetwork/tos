@@ -3118,6 +3118,61 @@ bool ValidateQuery::prepare_aipow_mint() {
   if (!(cb.append_cellslice_bool(*in_msg_cs) && cb.finalize_to(aipow_mint_msg_))) {
     return reject_query("cannot materialize the located AIPoW settle InMsg");
   }
+  // Phase C atomicity guard: the settle message being present in the block only
+  // proves it was delivered, not that the settlement RECORDED the mint. If the
+  // settle transaction throws / runs out of gas / bounces (e.g. a same-block skip
+  // advanced the cursor past this epoch, or the pool cannot cover gas), the
+  // settlement's minted_total does NOT advance, yet value_flow_.minted already
+  // created the base grams -- uncounted supply that bypasses the on-chain cap and
+  // can be re-minted. Require the settlement's minted_total to have advanced by
+  // exactly the derived amount this block, tying issuance to the settlement's own
+  // ledger. Fail closed: if either state cannot be read, reject.
+  td::RefInt256 minted_pre, minted_post;
+  if (!read_settlement_minted_total(ps_, aipow_settlement_addr_, minted_pre)) {
+    return reject_query("cannot read the AIPoW settlement minted_total from the previous state");
+  }
+  if (!read_settlement_minted_total(ns_, aipow_settlement_addr_, minted_post)) {
+    return reject_query("cannot read the AIPoW settlement minted_total from the new state");
+  }
+  // NB: compare values with td::cmp -- RefInt256 operator!= compares Ref identity,
+  // not the numeric value, so distinct objects holding equal amounts would differ.
+  td::RefInt256 recorded = minted_post - minted_pre;
+  if (recorded.is_null() || !recorded->is_valid() || td::cmp(recorded, aipow_mint_amount_) != 0) {
+    return reject_query(PSTRING() << "AIPoW settle did not record the mint: settlement minted_total advanced by "
+                                  << (recorded.not_null() ? td::dec_string(recorded) : std::string("<invalid>"))
+                                  << ", but the block mints " << td::dec_string(aipow_mint_amount_));
+  }
+  return true;
+}
+
+// Reads the AIPoW settlement account's cumulative minted_total from a given shard
+// state (previous or new). Fail-closed: any missing/inactive account, unpack
+// failure, or ledger-parse failure returns false so the caller rejects the block.
+bool ValidateQuery::read_settlement_minted_total(block::ShardState& state, const tos::Bits256& addr,
+                                                 td::RefInt256& out) {
+  out = td::RefInt256{};
+  if (state.account_dict_ == nullptr) {
+    return false;
+  }
+  auto entry = state.account_dict_->lookup_extra(addr.bits(), 256);
+  if (entry.first.is_null()) {
+    return false;
+  }
+  block::Account acc(masterchainId, addr.bits());
+  if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(addr.bits()))) {
+    return false;
+  }
+  if (acc.status != block::Account::acc_active || acc.data.is_null()) {
+    return false;
+  }
+  block::aipow::SettlementLedger ledger;
+  if (!block::aipow::parse_settlement_ledger(acc.data, ledger)) {
+    return false;
+  }
+  if (ledger.minted_total.is_null() || !ledger.minted_total->is_valid()) {
+    return false;
+  }
+  out = ledger.minted_total;
   return true;
 }
 
