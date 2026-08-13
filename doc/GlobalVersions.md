@@ -359,6 +359,58 @@ unchanged.
 - Activation follows the same all-validators-first sequence as the versions
   below.
 
+### Mainnet activation gates (do NOT set `capAipow` until all are met)
+
+`capAipow` is inert while unset, so the AIPoW stack ships **dark** with no live
+exploit surface. But once the bit is set on a network with value at stake, the
+native mint path becomes a token-issuance authority, and several open items make
+issuance **forgeable or haltable**. These are hard gates: on mainnet, activation
+must be provably blocked until every item below is closed, audited, and
+governance-ratified. (They are safe to exercise on a throwaway localnet/testnet
+for development.) The blockers were surfaced by the Phase C consensus reviews and
+are also tracked in the Phase C plan's launch-gate section.
+
+1. **Commitment finalization provenance (forged-mint blocker).** The native path
+   pins a registered commitment's **code** hash but cannot, from state alone,
+   prove its finalization was legitimate. `window_deadline` is a commitment
+   *deploy parameter*, so an attacker can deploy the audited commitment code with
+   a **past** window and a fabricated `(score_root, total_score, organic)` tuple,
+   call `finalize` instantly (no real challenge window ever opened), register, and
+   mint a forged pool (up to `schedule_cap`/epoch, `total_cap` cumulatively, paid
+   to an attacker-chosen score root). **Before activation:** the commitment must
+   enforce a **code-measured** challenge window (a `committed_at` recorded by the
+   contract plus a fixed minimum duration, so the window cannot be a
+   deploy-chosen past value). See the `derive_masterchain_epoch_mint` code-hash
+   check in `crypto/block/aipow.cpp` and the commitment FunC header.
+2. **First-wins registration griefing (liveness blocker).** `register` is
+   first-wins per epoch: an attacker who self-nominates a bogus commitment
+   address first blocks the genuine one (`already_registered`), and the epoch can
+   then neither mint (the bogus commitment fails authorization) nor skip
+   (`skip_registered` refuses a registered epoch) — the cursor freezes and all
+   issuance halts. **Before activation:** the settlement must keep a bounded
+   candidate set per epoch and let the native path select the min-address valid
+   finalized commitment (see the settlement FunC header).
+3. **Threshold reviewer policy.** Once `status == final` authorizes native
+   issuance, whoever can set final/rejected controls minting. A single reviewer
+   is acceptable only on devnet/testnet; mainnet requires a governance-approved
+   **threshold** reviewer set and registry policy, finalized and audited.
+4. **Audits.** A dedicated audit + red-team of the **settlement contract**
+   (custody, replay, double-pay, beneficiary-auth bypass) and the **consensus
+   mint math** (per-epoch once-only, cap bypass, collator/validator divergence,
+   unregistered-address mint), plus the mint-math determinism audit.
+5. **Registry published and ratified.** `AipowRegistry` (ConfigParam 93) —
+   settlement address, the audited **commitment code hash**, audited distributor
+   code hashes, methodology and rate-card hashes — must be published and
+   governance-ratified, and the configured settlement account's stored
+   `total_cap` verified to equal ConfigParam 92 (`AipowLimits.total_cap`) at
+   activation. The AIPoW ConfigParams (90–93) ship **absent** at genesis; a
+   partial or inconsistent set is a hard config error once `capAipow` is set.
+6. **Supply-cap dry-run.** A dry-run over a simulated ~7-year schedule shows
+   cumulative emission ≤ the 4.5B cap under adversarial demand.
+
+Until items 1–3 are closed, native AIPoW minting is **testnet/devnet only** and
+must remain unactivatable on mainnet.
+
 ## Rollout plan
 
 Enabling version 14/15 on a live TOS network is a consensus-level change and must not be done by
