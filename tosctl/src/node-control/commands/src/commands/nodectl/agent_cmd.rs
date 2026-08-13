@@ -88,6 +88,8 @@ pub enum AgentAction {
     Aipow(AipowCmd),
     /// AIPoW reward distributor operations
     AipowDist(AipowDistCmd),
+    /// AIPoW settlement account operations
+    AipowSettlement(super::aipow_settlement_cmd::AipowSettlementCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
     Attestation(ProofAttestationCmd),
 }
@@ -1004,6 +1006,7 @@ impl AgentCmd {
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
             AgentAction::Aipow(cmd) => cmd.run(&self.config).await,
             AgentAction::AipowDist(cmd) => cmd.run(&self.config).await,
+            AgentAction::AipowSettlement(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
         }
     }
