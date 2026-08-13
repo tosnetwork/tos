@@ -491,10 +491,14 @@ commitments mint and non-canonical ones do not). The native-only robustness batc
 M1/M2/L1 is fixed in code, as is the settlement-contract robustness batch H4/H3/L2
 (bounded registration horizon + pruning of settled/skipped epoch buckets; exact-pool
 forward to the distributor; uint32 cursor-wrap guard — all sandbox-tested and
-e2e-verified). What remains before mainnet activation: C2's *liveness* half (the
-fail-closed supply guard is done; the collator should additionally avoid emitting a
-mint the settle cannot record), the H1 Sybil-admission DoS, M3, and gates 3-6. Until
-those are closed, native AIPoW minting is **testnet/devnet only** and must remain
+e2e-verified). C2's *liveness* half is also resolved: the collator drops a mint that
+a same-block skip preempted (re-reading only the live cursor, so winner selection
+stays consistent) and validate-query accepts that as a legitimate no-mint (cursor
+advanced, minted_total unchanged) while still rejecting a causeless withhold, so the
+skip-race no longer stalls the chain; the only remaining fail-closed stall is the
+operational underfunded-settlement case (a gate-5 funding concern). What remains
+before mainnet activation: the H1 Sybil-admission DoS, M3, and gates 3-6. Until those
+are closed, native AIPoW minting is **testnet/devnet only** and must remain
 unactivatable on mainnet.
 
 ## Rollout plan
