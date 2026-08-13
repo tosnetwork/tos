@@ -370,7 +370,7 @@ governance-ratified. (They are safe to exercise on a throwaway localnet/testnet
 for development.) The blockers were surfaced by the Phase C consensus reviews and
 are also tracked in the Phase C plan's launch-gate section.
 
-1. **Commitment finalization provenance — PARTIALLY resolved; REOPENED by C1.** The
+1. **Commitment finalization provenance — RESOLVED (window floor + C1 address binding).** The
    native path pins a
    registered commitment's **code** hash but cannot, from state alone, prove its
    finalization was legitimate; `window_deadline` is a commitment *deploy
@@ -397,15 +397,22 @@ are also tracked in the Phase C plan's launch-gate section.
    commitment code and overwrite its data with a forged `final` state (matching
    tuple/reviewer/methodology/window) — no bond was ever locked and no challengeable
    `committed` state existed; the reviewer/methodology checks do not help (the forged
-   data simply names the approved values). **Fix (before activation):** bind the
-   commitment account's address to a canonical `StateInit` — the native must verify
-   `account_id == hash(StateInit(audited_code, reconstructed initial data))`, so an
-   account deployed with different initial code (hence a different address) is
-   rejected; the audited commitment code has no `SETCODE`, so a canonically-addressed
-   account can only follow the real state machine. Requiring registration's sender to
-   be that canonical address additionally closes the H1 Sybil admission DoS. Also
-   finalize gate 3. Details + the full codex-findings ledger (C1/C2/H1-H4/M1-M3/L1-L2)
-   are in the Phase C design doc.
+   data simply names the approved values). **Fixed:** the native derivation now binds
+   the commitment account's address to a canonical `StateInit` — it verifies
+   `account_id == hash(StateInit(audited_code, reconstructed initial data))`, where the
+   audited code is the account's own current code (already proven equal to the registry
+   hash) and the initial data is the current data with the four mutable fields reset to
+   their deploy defaults. An account deployed with different (SETCODE-capable) initial
+   code has a different, deploy-fixed address and is rejected; the audited commitment
+   code has no `SETCODE`, so a canonically-addressed account can only follow the real
+   bonded state machine. No registry/config change was needed (the code cell comes from
+   the account itself). See `commitment_canonical_address` +
+   `derive_masterchain_epoch_mint` in `crypto/block/aipow.cpp`, a dedicated C1 cell-test
+   regression, and the full-node e2e (which proves the reconstruction matches the
+   commitment SDK's deploy `build_data` byte for byte). The H1 Sybil admission DoS (a
+   related follow-up: require registration's sender to be a canonically-addressed
+   commitment) remains open but is not a supply-safety hole. Details + the full
+   codex-findings ledger (C1/C2/H1-H4/M1-M3/L1-L2) are in the Phase C design doc.
 2. **First-wins registration griefing — RESOLVED.** `register` was once
    first-wins per epoch, letting an attacker's bogus nomination block the genuine
    commitment and freeze the cursor. Now the settlement keeps a **bounded
@@ -476,16 +483,19 @@ fires, `minted_total == pool`, cursor advances). What remains for C2 is the
 it (derive from post-dispatch state + fund the settle), so the fail-closed guard does
 not merely stall a bad-config/attacked epoch; that is a follow-up, not a safety hole.
 
-**C1 remains a hard mainnet blocker.** Its decided fix (bind the account id to the
-canonical StateInit of the audited code) requires the audited commitment code cell's
-repr-hash **and depth** in the registry plus byte-exact initial-data reconstruction in
-native — a further ConfigParam-93 expansion, scoped in the design doc's codex-findings
-ledger. The native-only robustness batch M1/M2/L1 is fixed in code, as is the
-settlement-contract robustness batch H4/H3/L2 (bounded registration horizon +
-pruning of settled/skipped epoch buckets; exact-pool forward to the distributor;
-uint32 cursor-wrap guard — all sandbox-tested and e2e-verified). Until C1, C2's
-liveness half, and gates 3-6 are closed, native AIPoW minting is **testnet/devnet
-only** and must remain unactivatable on mainnet.
+**C1 is now resolved in code + e2e** (canonical-address binding in
+`derive_masterchain_epoch_mint`; the account's own current code — proven equal to the
+registry hash — supplies the audited code cell, so no registry/ConfigParam-93 change
+was needed; a dedicated cell regression plus the full-node e2e confirm genuine
+commitments mint and non-canonical ones do not). The native-only robustness batch
+M1/M2/L1 is fixed in code, as is the settlement-contract robustness batch H4/H3/L2
+(bounded registration horizon + pruning of settled/skipped epoch buckets; exact-pool
+forward to the distributor; uint32 cursor-wrap guard — all sandbox-tested and
+e2e-verified). What remains before mainnet activation: C2's *liveness* half (the
+fail-closed supply guard is done; the collator should additionally avoid emitting a
+mint the settle cannot record), the H1 Sybil-admission DoS, M3, and gates 3-6. Until
+those are closed, native AIPoW minting is **testnet/devnet only** and must remain
+unactivatable on mainnet.
 
 ## Rollout plan
 
