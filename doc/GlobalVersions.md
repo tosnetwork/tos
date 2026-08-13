@@ -480,9 +480,12 @@ not merely stall a bad-config/attacked epoch; that is a follow-up, not a safety 
 canonical StateInit of the audited code) requires the audited commitment code cell's
 repr-hash **and depth** in the registry plus byte-exact initial-data reconstruction in
 native — a further ConfigParam-93 expansion, scoped in the design doc's codex-findings
-ledger (alongside H1-H4/M3/L2). The native-only robustness batch M1/M2/L1 is fixed in
-code. Until C1, C2's liveness half, and gates 3-6 are closed, native AIPoW minting is
-**testnet/devnet only** and must remain unactivatable on mainnet.
+ledger. The native-only robustness batch M1/M2/L1 is fixed in code, as is the
+settlement-contract robustness batch H4/H3/L2 (bounded registration horizon +
+pruning of settled/skipped epoch buckets; exact-pool forward to the distributor;
+uint32 cursor-wrap guard — all sandbox-tested and e2e-verified). Until C1, C2's
+liveness half, and gates 3-6 are closed, native AIPoW minting is **testnet/devnet
+only** and must remain unactivatable on mainnet.
 
 ## Rollout plan
 
