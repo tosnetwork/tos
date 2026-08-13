@@ -3419,28 +3419,46 @@ bool Collator::suppress_aipow_mint_if_preempted() {
   if (aipow_mint_amount_.is_null()) {
     return true;  // no mint derived
   }
+  // The live settlement MUST be readable to decide between the two legitimate outcomes
+  // (emit the settle, or drop the mint because a same-block skip already advanced the
+  // cursor). validate-query rejects any block whose settlement ledger is unreadable in
+  // the new state, so an unreadable/malformed/regressed settlement here is NOT a valid
+  // preemption -- silently suppressing would just produce a block every validator
+  // rejects (a produce/check divergence). Treat it as a collation error instead: fail
+  // closed and let collation retry rather than emit a doomed block.
   auto acc_res = make_account(aipow_settlement_addr_.bits(), false);
-  bool preempted = false;
   if (acc_res.is_error()) {
-    preempted = true;  // settlement unreadable now -> do not emit a doomed settle
-  } else {
-    block::Account* acc = acc_res.move_as_ok();
-    block::aipow::SettlementLedger led;
-    if (acc == nullptr || acc->status != block::Account::acc_active || acc->data.is_null() ||
-        !block::aipow::parse_settlement_ledger(acc->data, led)) {
-      preempted = true;
-    } else if (led.next_epoch != aipow_mint_epoch_) {
-      // The cursor moved (a skip past grace) -- the settle would not record this
-      // epoch's mint.
-      preempted = true;
-    }
+    LOG(ERROR) << "AIPoW: cannot read the settlement account to finalize the epoch mint for epoch "
+               << aipow_mint_epoch_;
+    return false;
   }
-  if (preempted) {
+  block::Account* acc = acc_res.move_as_ok();
+  block::aipow::SettlementLedger led;
+  if (acc == nullptr || acc->status != block::Account::acc_active || acc->data.is_null() ||
+      !block::aipow::parse_settlement_ledger(acc->data, led)) {
+    LOG(ERROR) << "AIPoW: the settlement account is inactive or unparseable; cannot finalize the epoch mint for epoch "
+               << aipow_mint_epoch_;
+    return false;
+  }
+  if (led.next_epoch < aipow_mint_epoch_) {
+    // The cursor moved BACKWARD from the derived epoch -- impossible for a monotonic
+    // ledger. Fail closed rather than mint or suppress on a corrupt cursor.
+    LOG(ERROR) << "AIPoW: settlement cursor " << led.next_epoch << " regressed below the derived mint epoch "
+               << aipow_mint_epoch_;
+    return false;
+  }
+  if (led.next_epoch > aipow_mint_epoch_) {
+    // Legitimate preemption: a same-block skip (past grace) advanced the cursor past this
+    // epoch before the settle, so the settle would not record this epoch's mint. Drop the
+    // mint; validate-query's SUPPRESSED case accepts a strict cursor advance with no mint.
     LOG(INFO) << "AIPoW epoch mint for epoch " << aipow_mint_epoch_
-              << " suppressed: the settlement cursor was advanced in-block before the settle";
+              << " suppressed: the settlement cursor was advanced in-block (to " << led.next_epoch
+              << ") before the settle";
     value_flow_.minted.tomis -= aipow_mint_amount_;
     aipow_mint_amount_ = td::RefInt256{};
   }
+  // led.next_epoch == aipow_mint_epoch_: the mint is still due; keep it and let
+  // create_special_transactions emit the settle.
   return true;
 }
 
