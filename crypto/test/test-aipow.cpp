@@ -550,6 +550,7 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
@@ -602,6 +603,7 @@ TEST(Aipow, derive_masterchain_skips_an_unregistered_epoch_only_past_grace) {
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = mk_bits(0xCC);
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   // build_settlement uses epoch_seconds=65536, register_grace=3600.
   td::uint64 skippable_at = (10ull + 1) * 65536ull + 3600ull;
   ctx.gen_utime = (td::uint32)(skippable_at - 1);
@@ -621,7 +623,8 @@ TEST(Aipow, config_registry_carries_the_commitment_code_hash) {
   cb.store_bits_bool(mk_bits(0x02));  // methodology_hash
   cb.store_bits_bool(mk_bits(0x03));  // rate_card_hash
   vm::CellBuilder ref;
-  ref.store_bits_bool(mk_bits(0xCC));  // ^[ commitment_code_hash ]
+  ref.store_bits_bool(mk_bits(0xCC));  // ^[ commitment_code_hash
+  ref.store_bits_bool(mk_bits(0xDD));  //    reviewer_addr ]
   cb.store_ref(ref.finalize());
   cb.store_long_bool(0, 1);  // distributor_code_hashes: empty HashmapE
   auto cell = cb.finalize();
@@ -630,6 +633,7 @@ TEST(Aipow, config_registry_carries_the_commitment_code_hash) {
   CHECK(tlb::unpack_cell(cell, rec));
   CHECK(rec.settlement_addr == mk_bits(0x01));
   CHECK(rec.r1.commitment_code_hash == mk_bits(0xCC));
+  CHECK(rec.r1.reviewer_addr == mk_bits(0xDD));
 }
 
 TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_on_a_future_version) {
@@ -653,6 +657,7 @@ TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = mk_bits(0xCC);
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   ctx.gen_utime = 4000000000u;  // far past any grace deadline
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
 }
@@ -702,6 +707,7 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   CHECK(r.is_mint());
@@ -735,6 +741,7 @@ TEST(Aipow, a_malformed_registration_entry_yields_no_candidate_and_skips_past_gr
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = mk_bits(0xCC);
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   ctx.gen_utime = 4000000000u;  // far past any grace deadline
   CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_skip());
 }
@@ -781,6 +788,7 @@ TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smal
   ctx.settlement_addr = settlement_addr;
   ctx.commitment_code_hash = commit_code_hash;
   ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
   ctx.gen_utime = 700000;  // past registered_at(1) + kAipowChallengeWindow(604800)
 
   auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
@@ -827,6 +835,7 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
     ctx.settlement_addr = settlement_addr;
     ctx.commitment_code_hash = commit_code_hash;
     ctx.expected_commitment_version = 1;
+  ctx.reviewer_addr = mk_bits(0x22);
     ctx.gen_utime = gen_utime;
     return block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
   };
@@ -846,4 +855,49 @@ TEST(Aipow, derive_enforces_the_challenge_window_provenance_floor) {
   // registered_at + the window: the commitment could not have held a full dispute
   // window, so it is rejected (NoSettlement, not a forged mint).
   CHECK(make_ctx(good_window - 1, (td::uint32)(good_window + 1000)).is_none());
+}
+
+TEST(Aipow, derive_requires_the_commitments_reviewer_to_be_the_registry_reviewer) {
+  // Gate 3: a genuine, final commitment mints only if its reviewer is the
+  // governance-approved reviewer named in the registry (ConfigParam 93). A
+  // committer that names a reviewer it controls (to dismiss challenges) must not be
+  // able to mint, even with an otherwise-valid commitment.
+  auto score = mk_bits(0x5C);
+  auto commitment_addr = mk_bits(0xC0);
+  auto settlement_addr = mk_bits(0x99);
+  auto commit_code_hash = mk_bits(0xCC);
+  long long organic = 1000;
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
+  // build_commitment fixes the reviewer at mk_bits(0x22) on the masterchain.
+  auto commitment_data =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+    } else if (wc == -1 && addr == commitment_addr) {
+      a.exists = true;
+      a.data = commitment_data;
+      a.code_hash = commit_code_hash;
+    }
+    return a;
+  };
+  auto ctx_for = [&](td::Bits256 reviewer) {
+    block::aipow::MasterchainMintContext ctx;
+    ctx.config = make_cfg(1, 2, 1000000000LL, 0);
+    ctx.settlement_addr = settlement_addr;
+    ctx.commitment_code_hash = commit_code_hash;
+    ctx.reviewer_addr = reviewer;
+    ctx.expected_commitment_version = 1;
+    ctx.gen_utime = 700000;
+    return ctx;
+  };
+
+  // The registry reviewer matches the commitment's reviewer -> mint.
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx_for(mk_bits(0x22)), resolver).is_mint());
+  // A different registry reviewer -> the commitment is not authorized; since the
+  // epoch is not skippable yet (gen_utime before grace) the cursor holds.
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx_for(mk_bits(0x77)), resolver).is_none());
 }

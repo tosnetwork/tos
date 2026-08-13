@@ -241,13 +241,22 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   if (!cs.fetch_uint_to(16, version)) {
     return false;
   }
-  if (!block::tlb::t_MsgAddress.skip(cs) || !block::tlb::t_MsgAddress.skip(cs)) {
-    return false;  // committer, reviewer
+  if (!block::tlb::t_MsgAddress.skip(cs)) {
+    return false;  // committer
+  }
+  // reviewer: capture its std (workchain, account id) for the registry check (gate
+  // 3). A non-standard reviewer address fails closed (unauthorizable).
+  tos::WorkchainId reviewer_wc;
+  tos::StdSmcAddress reviewer_addr;
+  if (!block::tlb::t_MsgAddressInt.extract_std_address(cs, reviewer_wc, reviewer_addr)) {
+    return false;
   }
   if (!(cs.fetch_uint_to(8, status) && cs.fetch_uint_to(64, epoch) &&
         cs.fetch_uint_to(64, window_deadline) && cs.fetch_uint_to(64, review_deadline))) {
     return false;
   }
+  out.reviewer_workchain = reviewer_wc;
+  out.reviewer_addr = reviewer_addr;
   if (block::tlb::t_Tomis.as_integer_skip(cs).is_null() ||       // commit_bond
       block::tlb::t_Tomis.as_integer_skip(cs).is_null()) {       // challenge_bond
     return false;
@@ -392,6 +401,14 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
                                cursor.challenge_window)) {
       continue;
     }
+    // Gate 3: the commitment's reviewer must be the governance-approved (threshold
+    // multisig) reviewer named in the registry (ConfigParam 93). Otherwise a
+    // committer could name a reviewer it controls, dismiss any challenge, and force
+    // `final` -- forging a mint despite the provenance window. The reviewer must be
+    // the masterchain account id the registry pins.
+    if (cstate.reviewer_workchain != tos::masterchainId || cstate.reviewer_addr != ctx.reviewer_addr) {
+      continue;
+    }
     // The challenge window must have ELAPSED on the block's consensus clock before
     // this candidate can mint. A candidate still inside its window is not yet a
     // valid winner (it may yet be challenged); it is skipped, and because the
@@ -437,6 +454,7 @@ bool build_masterchain_mint_context(const block::Config& config, td::uint32 gen_
   auto registry = reg.move_as_ok();
   out.settlement_addr = registry.settlement_addr;
   out.commitment_code_hash = registry.commitment_code_hash;
+  out.reviewer_addr = registry.reviewer_addr;
   out.expected_commitment_version = 1;  // the layout version the native path understands (D9)
   out.gen_utime = gen_utime;
   return true;

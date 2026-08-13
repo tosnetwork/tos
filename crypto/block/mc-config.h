@@ -441,6 +441,10 @@ struct AipowRegistry {  // ConfigParam 93
   td::Bits256 rate_card_hash;     // frozen priced rate-card hash
   td::Bits256 commitment_code_hash;  // the audited AIPoW commitment code cell hash; the native
                                      // settle path pins a registered commitment's code to this
+  td::Bits256 reviewer_addr;   // the governance-approved reviewer (a masterchain M-of-N multisig
+                               // account id). The native path authorizes a commitment only if its
+                               // own `reviewer` equals this, so a committer cannot pick a reviewer
+                               // it controls to dismiss a challenge and force `final`.
   td::Ref<vm::CellSlice> distributor_code_hashes;  // HashmapE 256 True: audited distributor code hashes
 };
 

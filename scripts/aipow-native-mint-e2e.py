@@ -59,6 +59,11 @@ EXPECTED_POOL = ORGANIC
 TOTAL_SCORE = 1_000_000
 SCORE_ROOT = "5c" * 32
 METHODOLOGY_HASH = "44" * 32
+# The governance-approved reviewer registered in ConfigParam 93 (gate 3). The native
+# path mints only if the commitment's reviewer equals this; it never rules on the
+# unchallenged happy path, so a fixed placeholder id suffices for the mint test.
+REVIEWER_HEX = "44" * 32
+REVIEWER_ADDR = f"-1:{REVIEWER_HEX}"
 
 failures: list[str] = []
 
@@ -238,7 +243,7 @@ async def run_checks(faucet) -> None:
     window_deadline = int(time.time()) + CHALLENGE_WINDOW + WINDOW_MARGIN
     deploy = await tosctl_json(
         "agent", "aipow", "deploy", "--name", "e2e-commit",
-        f"--committer={boss}", f"--reviewer={boss}", "--epoch", str(epoch),
+        f"--committer={boss}", f"--reviewer={REVIEWER_ADDR}", "--epoch", str(epoch),
         "--window-deadline", str(window_deadline), "--commit-bond", "2",
         "--score-root", SCORE_ROOT, "--methodology-hash", METHODOLOGY_HASH,
         "--total-score", str(TOTAL_SCORE), "--organic-settled-value", str(ORGANIC),
@@ -332,6 +337,7 @@ async def main() -> int:
         network.config.enable_aipow = True
         network.config.aipow_settlement_addr = settle_id
         network.config.aipow_commitment_code_hash = commitment_code_hash
+        network.config.aipow_reviewer_addr = int(REVIEWER_HEX, 16)
         dht = network.create_dht_node()
         node = network.create_full_node()
         node.make_initial_validator()

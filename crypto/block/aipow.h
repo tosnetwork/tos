@@ -154,6 +154,8 @@ struct CommitmentState {
   td::uint8 status{0};  // 0 committed, 1 challenged, 2 final, 3 rejected
   td::uint64 epoch{0};
   td::uint64 window_deadline{0};  // unix; challenges accepted strictly before this
+  td::int32 reviewer_workchain{0};  // the reviewer's workchain (must be masterchain)
+  td::Bits256 reviewer_addr;        // the reviewer's account id (must equal the registry's)
   td::Bits256 score_root;
   td::RefInt256 total_score;
   td::RefInt256 organic_settled_value;
@@ -237,6 +239,8 @@ struct MasterchainMintContext {
   AipowLimits limits;                       // ConfigParam 92: the declared hard supply cap
   td::Bits256 settlement_addr;              // ConfigParam 93 settlement_addr (masterchain)
   td::Bits256 commitment_code_hash;         // the expected AIPoW commitment code cell hash (registry)
+  td::Bits256 reviewer_addr;                // ConfigParam 93 reviewer_addr: the governance-approved
+                                            // (threshold multisig) reviewer a commitment must name
   td::uint16 expected_commitment_version{1};
   td::uint32 gen_utime{0};                  // the block's consensus time
 };
