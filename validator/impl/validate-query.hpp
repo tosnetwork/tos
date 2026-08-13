@@ -385,7 +385,8 @@ class ValidateQuery : public td::actor::Actor {
   bool unpack_block_data();
   bool unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root);
   bool prepare_aipow_mint();
-  bool read_settlement_minted_total(block::ShardState& state, const tos::Bits256& addr, td::RefInt256& out);
+  bool read_settlement_ledger_fields(block::ShardState& state, const tos::Bits256& addr, td::uint32& next_epoch,
+                                     td::RefInt256& minted_total);
   bool compute_minted_amount(block::CurrencyCollection& to_mint);
   bool precheck_one_account_update(td::ConstBitPtr acc_id, Ref<vm::CellSlice> old_value, Ref<vm::CellSlice> new_value);
   bool precheck_account_updates();

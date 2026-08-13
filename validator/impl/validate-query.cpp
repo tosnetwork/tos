@@ -3098,60 +3098,87 @@ bool ValidateQuery::prepare_aipow_mint() {
   if (decision.amount.is_null() || !decision.amount->is_valid() || td::sgn(decision.amount) <= 0) {
     return reject_query("AIPoW epoch mint re-derived an invalid amount");
   }
-  aipow_mint_amount_ = decision.amount;
   aipow_settlement_addr_ = ctx.settlement_addr;
   aipow_mint_winner_id_ = decision.winner_id;
-  // Rebuild the canonical settle message and find its InMsg by message hash.
+  // Read the settlement's cursor + minted_total from the previous and new state.
+  // Fail closed if either is unreadable.
+  td::uint32 epoch_pre = 0, epoch_post = 0;
+  td::RefInt256 minted_pre, minted_post;
+  if (!read_settlement_ledger_fields(ps_, aipow_settlement_addr_, epoch_pre, minted_pre)) {
+    return reject_query("cannot read the AIPoW settlement ledger from the previous state");
+  }
+  if (!read_settlement_ledger_fields(ns_, aipow_settlement_addr_, epoch_post, minted_post)) {
+    return reject_query("cannot read the AIPoW settlement ledger from the new state");
+  }
+  // The derivation settled the previous-state cursor epoch; the two reads must agree.
+  if (epoch_pre != decision.epoch) {
+    return reject_query(PSTRING() << "AIPoW derived epoch " << decision.epoch
+                                  << " does not match the previous-state settlement cursor " << epoch_pre);
+  }
+  // NB: RefInt256 arithmetic + td::cmp for value comparison -- operator!= compares
+  // Ref identity, not the numeric value.
+  td::RefInt256 recorded = minted_post - minted_pre;
+  if (recorded.is_null() || !recorded->is_valid()) {
+    return reject_query("cannot compute the AIPoW settlement minted_total delta");
+  }
+  // Rebuild the canonical settle message; whether the block contains it selects
+  // between the two legitimate outcomes of a due mint.
   Ref<vm::Cell> expected_msg = block::aipow::build_settle_mint_message(
-      aipow_settlement_addr_, aipow_mint_winner_id_, aipow_mint_amount_, start_lt_, now_);
+      aipow_settlement_addr_, decision.winner_id, decision.amount, start_lt_, now_);
   if (expected_msg.is_null()) {
     return reject_query("cannot rebuild the expected AIPoW settle mint message");
   }
   Bits256 msg_hash = expected_msg->get_hash().bits();
   auto in_msg_cs = in_msg_dict_->lookup(msg_hash);
-  if (in_msg_cs.is_null()) {
-    return reject_query(PSTRING() << "the block does not contain the required AIPoW settle mint message (hash "
-                                  << msg_hash.to_hex() << ", amount " << td::dec_string(aipow_mint_amount_) << ")");
+
+  if (in_msg_cs.not_null()) {
+    // MINT: the collator emitted the settle. Phase C atomicity guard -- the message
+    // being present only proves delivery, not that the settle RECORDED the mint. A
+    // settle that throws/out-of-gas/bounces advances nothing, yet value_flow already
+    // created the base grams (uncounted, cap-bypassing, re-mintable supply). Require
+    // the settlement's minted_total to have advanced by exactly the derived amount.
+    aipow_mint_amount_ = decision.amount;  // value-flow check now requires minted == amount
+    vm::CellBuilder cb;
+    if (!(cb.append_cellslice_bool(*in_msg_cs) && cb.finalize_to(aipow_mint_msg_))) {
+      return reject_query("cannot materialize the located AIPoW settle InMsg");
+    }
+    if (td::cmp(recorded, aipow_mint_amount_) != 0) {
+      return reject_query(PSTRING() << "AIPoW settle did not record the mint: settlement minted_total advanced by "
+                                    << td::dec_string(recorded) << ", but the block mints "
+                                    << td::dec_string(aipow_mint_amount_));
+    }
+    return true;
   }
-  // Remember the located InMsg (as a standalone cell) so is_special_in_msg can
-  // exact-match it, exactly as recover/mint are matched.
-  vm::CellBuilder cb;
-  if (!(cb.append_cellslice_bool(*in_msg_cs) && cb.finalize_to(aipow_mint_msg_))) {
-    return reject_query("cannot materialize the located AIPoW settle InMsg");
+
+  // SUPPRESSED (C2 liveness): no settle message. A mint was due from the previous
+  // state, but a same-block `skip` advanced the cursor past this epoch before the
+  // settle could run, so the collator legitimately dropped the mint instead of
+  // emitting a doomed settle that would then be rejected (stalling the chain). This
+  // is allowed ONLY if the cursor actually advanced past the epoch with NO change to
+  // minted_total; a cursor that did not move would be a causeless withhold of a due,
+  // mintable reward, so reject it (before the grace deadline no skip can advance the
+  // cursor, so the mint is forced -- the reward cannot be censored). aipow_mint_amount_
+  // stays null, so the value-flow check requires a zero base-gram mint and no InMsg.
+  if (epoch_post <= decision.epoch) {
+    return reject_query(PSTRING() << "AIPoW mint for epoch " << decision.epoch
+                                  << " is due but the block neither mints it nor advances the cursor past it (cursor now "
+                                  << epoch_post << ")");
   }
-  // Phase C atomicity guard: the settle message being present in the block only
-  // proves it was delivered, not that the settlement RECORDED the mint. If the
-  // settle transaction throws / runs out of gas / bounces (e.g. a same-block skip
-  // advanced the cursor past this epoch, or the pool cannot cover gas), the
-  // settlement's minted_total does NOT advance, yet value_flow_.minted already
-  // created the base grams -- uncounted supply that bypasses the on-chain cap and
-  // can be re-minted. Require the settlement's minted_total to have advanced by
-  // exactly the derived amount this block, tying issuance to the settlement's own
-  // ledger. Fail closed: if either state cannot be read, reject.
-  td::RefInt256 minted_pre, minted_post;
-  if (!read_settlement_minted_total(ps_, aipow_settlement_addr_, minted_pre)) {
-    return reject_query("cannot read the AIPoW settlement minted_total from the previous state");
-  }
-  if (!read_settlement_minted_total(ns_, aipow_settlement_addr_, minted_post)) {
-    return reject_query("cannot read the AIPoW settlement minted_total from the new state");
-  }
-  // NB: compare values with td::cmp -- RefInt256 operator!= compares Ref identity,
-  // not the numeric value, so distinct objects holding equal amounts would differ.
-  td::RefInt256 recorded = minted_post - minted_pre;
-  if (recorded.is_null() || !recorded->is_valid() || td::cmp(recorded, aipow_mint_amount_) != 0) {
-    return reject_query(PSTRING() << "AIPoW settle did not record the mint: settlement minted_total advanced by "
-                                  << (recorded.not_null() ? td::dec_string(recorded) : std::string("<invalid>"))
-                                  << ", but the block mints " << td::dec_string(aipow_mint_amount_));
+  if (td::sgn(recorded) != 0) {
+    return reject_query(PSTRING() << "AIPoW mint for epoch " << decision.epoch
+                                  << " was suppressed, but the settlement minted_total changed by "
+                                  << td::dec_string(recorded));
   }
   return true;
 }
 
-// Reads the AIPoW settlement account's cumulative minted_total from a given shard
-// state (previous or new). Fail-closed: any missing/inactive account, unpack
-// failure, or ledger-parse failure returns false so the caller rejects the block.
-bool ValidateQuery::read_settlement_minted_total(block::ShardState& state, const tos::Bits256& addr,
-                                                 td::RefInt256& out) {
-  out = td::RefInt256{};
+// Reads the AIPoW settlement account's cursor epoch + cumulative minted_total from
+// a given shard state (previous or new). Fail-closed: any missing/inactive account,
+// unpack failure, or ledger-parse failure returns false so the caller rejects.
+bool ValidateQuery::read_settlement_ledger_fields(block::ShardState& state, const tos::Bits256& addr,
+                                                  td::uint32& next_epoch, td::RefInt256& minted_total) {
+  next_epoch = 0;
+  minted_total = td::RefInt256{};
   if (state.account_dict_ == nullptr) {
     return false;
   }
@@ -3173,7 +3200,8 @@ bool ValidateQuery::read_settlement_minted_total(block::ShardState& state, const
   if (ledger.minted_total.is_null() || !ledger.minted_total->is_valid()) {
     return false;
   }
-  out = ledger.minted_total;
+  next_epoch = ledger.next_epoch;
+  minted_total = ledger.minted_total;
   return true;
 }
 

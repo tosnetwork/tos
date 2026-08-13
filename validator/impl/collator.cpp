@@ -2462,6 +2462,12 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!create_ticktock_transactions(2)) {
     co_return td::Status::Error("cannot generate tick transactions");
   }
+  // Phase C: drop a derived AIPoW mint whose epoch a same-block skip already
+  // settled past, so create_special_transactions emits no doomed settle (must run
+  // after the dispatch queue + ticktock, before the special settle transaction).
+  if (is_masterchain() && !suppress_aipow_mint_if_preempted()) {
+    co_return td::Status::Error("cannot finalize the AIPoW epoch mint");
+  }
   if (is_masterchain() && !create_special_transactions()) {
     co_return td::Status::Error("cannot generate special transactions");
   }
@@ -3383,8 +3389,57 @@ bool Collator::compute_aipow_epoch_mint() {
     aipow_mint_amount_ = decision.amount;
     aipow_settlement_addr_ = ctx.settlement_addr;
     aipow_mint_winner_id_ = decision.winner_id;
+    aipow_mint_epoch_ = decision.epoch;
     LOG(INFO) << "AIPoW epoch mint: " << td::dec_string(aipow_mint_amount_) << " nanotomis to settlement "
               << aipow_settlement_addr_.to_hex() << " for epoch " << decision.epoch;
+  }
+  return true;
+}
+
+/**
+ * C2 liveness: suppress a derived AIPoW mint if a same-block `skip` already
+ * advanced the settlement cursor past its epoch.
+ *
+ * The mint is derived from the pre-block state (so the winner selection matches
+ * validate-query, which must derive from the same state). But a `skip` message in
+ * the dispatch queue is processed BEFORE the special settle transaction, and past
+ * the grace deadline it advances the cursor -- so the settle would then throw
+ * (the winner is no longer a candidate for the advanced epoch), record nothing,
+ * and the C2 atomicity guard in validate-query would reject the block, stalling
+ * the chain. Called after process_dispatch_queue (+ ticktock), this re-reads the
+ * LIVE settlement cursor; if it moved past the mint's epoch the mint is dropped
+ * (the value-flow credit is undone and no settle message is emitted), so the block
+ * carries a legitimate no-mint instead of a doomed one. Only the cursor is
+ * re-read -- never the candidate set -- so the winner cannot change here.
+ *
+ * @returns True on success, false on a fatal error.
+ */
+bool Collator::suppress_aipow_mint_if_preempted() {
+  CHECK(is_masterchain());
+  if (aipow_mint_amount_.is_null()) {
+    return true;  // no mint derived
+  }
+  auto acc_res = make_account(aipow_settlement_addr_.bits(), false);
+  bool preempted = false;
+  if (acc_res.is_error()) {
+    preempted = true;  // settlement unreadable now -> do not emit a doomed settle
+  } else {
+    block::Account* acc = acc_res.move_as_ok();
+    block::aipow::SettlementLedger led;
+    if (acc == nullptr || acc->status != block::Account::acc_active || acc->data.is_null() ||
+        !block::aipow::parse_settlement_ledger(acc->data, led)) {
+      preempted = true;
+    } else if (led.next_epoch != aipow_mint_epoch_) {
+      // The cursor moved (a skip past grace) -- the settle would not record this
+      // epoch's mint.
+      preempted = true;
+    }
+  }
+  if (preempted) {
+    LOG(INFO) << "AIPoW epoch mint for epoch " << aipow_mint_epoch_
+              << " suppressed: the settlement cursor was advanced in-block before the settle";
+    value_flow_.minted.tomis -= aipow_mint_amount_;
+    aipow_mint_amount_ = td::RefInt256{};
   }
   return true;
 }

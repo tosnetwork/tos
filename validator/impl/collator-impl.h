@@ -209,6 +209,7 @@ class Collator final : public td::actor::Actor {
   td::RefInt256 aipow_mint_amount_;
   tos::Bits256 aipow_settlement_addr_;
   tos::Bits256 aipow_mint_winner_id_;
+  td::uint32 aipow_mint_epoch_{0};  // the settlement cursor epoch the mint targets
   Ref<vm::Cell> new_block;
   block::ValueFlow value_flow_{block::ValueFlow::SetZero()};
   std::unique_ptr<vm::AugmentedDictionary> fees_import_dict_;
@@ -326,6 +327,7 @@ class Collator final : public td::actor::Actor {
   bool create_special_transaction(block::CurrencyCollection amount, Ref<vm::Cell> dest_addr_cell,
                                   Ref<vm::Cell>& in_msg);
   bool compute_aipow_epoch_mint();
+  bool suppress_aipow_mint_if_preempted();
   bool create_aipow_mint_transaction();
   bool create_ticktock_transactions(int mask);
   bool create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, tos::LogicalTime req_start_lt, int mask);
