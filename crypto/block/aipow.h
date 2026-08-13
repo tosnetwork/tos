@@ -186,8 +186,12 @@ struct ResolvedAccount {
 };
 
 // Resolves an account by (workchain, account id) from the masterchain state.
-// Provided by the collator/validator; MUST be deterministic (reads consensus
-// state only), or the whole derivation forks.
+// Provided by the collator/validator. CONTRACT: it MUST be deterministic (reads
+// consensus state only) and MUST NOT throw over well-formed consensus state --
+// derive is total/deterministic only under this contract. A deterministic
+// resolver failure is a deterministic reject on every node (not a fork), and is
+// the resolver's to signal (e.g. via an empty ResolvedAccount), not derive's to
+// swallow -- masking a genuine state-access error would hide a real bug.
 using AccountResolver = std::function<ResolvedAccount(td::int32 workchain, const td::Bits256& account_id)>;
 
 // Immutable inputs to the decision, from the block's config.
