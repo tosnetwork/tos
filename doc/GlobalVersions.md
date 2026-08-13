@@ -401,10 +401,20 @@ are also tracked in the Phase C plan's launch-gate section.
    neither exclude the genuine commitment nor freeze the cursor. The
    address-grindable min-address tie-break is safe only because gate 1 now forces
    every candidate through a real, elapsed challenge window before selection.
-3. **Threshold reviewer policy.** Once `status == final` authorizes native
-   issuance, whoever can set final/rejected controls minting. A single reviewer
-   is acceptable only on devnet/testnet; mainnet requires a governance-approved
-   **threshold** reviewer set and registry policy, finalized and audited.
+3. **Threshold reviewer policy — code RESOLVED; governance deployment remains.**
+   Once `status == final` authorizes native issuance, whoever can force `final`
+   controls minting, and a committer could name a reviewer it controls to dismiss
+   any challenge. The native path now **anchors** the reviewer: `AipowRegistry`
+   (ConfigParam 93) carries a governance-approved `reviewer_addr`, and
+   `derive_masterchain_epoch_mint` authorizes a commitment only if its own reviewer
+   equals that masterchain account id (`check_aipow_config` requires it set, so
+   `capAipow` cannot activate without it). The commitment's `rule` op already
+   requires `sender == reviewer`, so registering a real **M-of-N multisig** as
+   `reviewer_addr` makes M-of-N agreement necessary to rule — the multisig enforces
+   the threshold, the native enforces provenance. **Remaining before activation:**
+   governance must deploy the actual threshold multisig and register its address
+   (this is part of gate 5's registry ratification); a single-key reviewer stays
+   devnet/testnet only.
 4. **Audits.** A dedicated audit + red-team of the **settlement contract**
    (custody, replay, double-pay, beneficiary-auth bypass) and the **consensus
    mint math** (per-epoch once-only, cap bypass, collator/validator divergence,
@@ -432,10 +442,12 @@ currency type exactly as the collator does) — evidence that gate 4's
 collator/validator-divergence review is grounded, not a formality. The formal
 audits in gate 4 still stand.
 
-Gates 1 and 2 are resolved (in code + tests, and exercised by the e2e above). Until
-the remaining gates — 3 (threshold reviewer), 4 (audits), 5 (registry published +
-ratified, cap consistency), 6 (supply-cap dry-run) — are closed, native AIPoW minting
-is **testnet/devnet only** and must remain unactivatable on mainnet.
+Gates 1, 2, and 3 are resolved **in code** (with tests, and exercised by the e2e
+above); gate 3's residue is operational — governance must deploy and register the
+real threshold multisig (folded into gate 5). Until the remaining gates — 4 (audits),
+5 (registry published + ratified: real multisig, cap consistency), 6 (supply-cap
+dry-run) — are closed, native AIPoW minting is **testnet/devnet only** and must remain
+unactivatable on mainnet.
 
 ## Rollout plan
 
