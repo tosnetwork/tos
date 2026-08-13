@@ -382,14 +382,15 @@ are also tracked in the Phase C plan's launch-gate section.
    contract plus a fixed minimum duration, so the window cannot be a
    deploy-chosen past value). See the `derive_masterchain_epoch_mint` code-hash
    check in `crypto/block/aipow.cpp` and the commitment FunC header.
-2. **First-wins registration griefing (liveness blocker).** `register` is
-   first-wins per epoch: an attacker who self-nominates a bogus commitment
-   address first blocks the genuine one (`already_registered`), and the epoch can
-   then neither mint (the bogus commitment fails authorization) nor skip
-   (`skip_registered` refuses a registered epoch) — the cursor freezes and all
-   issuance halts. **Before activation:** the settlement must keep a bounded
-   candidate set per epoch and let the native path select the min-address valid
-   finalized commitment (see the settlement FunC header).
+2. **First-wins registration griefing — RESOLVED.** `register` was once
+   first-wins per epoch, letting an attacker's bogus nomination block the genuine
+   commitment and freeze the cursor. Now the settlement keeps a **bounded
+   candidate set** per epoch (retaining the smallest addresses), `skip` advances
+   past the grace deadline regardless of candidates, and the native path selects
+   the **min-address valid** finalized commitment — so a bogus nomination can
+   neither exclude the genuine commitment nor freeze the cursor. (Its full
+   resistance still depends on gate 1: a bogus *valid* candidate is only cheap
+   because of the provenance flaw.) No longer an activation blocker on its own.
 3. **Threshold reviewer policy.** Once `status == final` authorizes native
    issuance, whoever can set final/rejected controls minting. A single reviewer
    is acceptable only on devnet/testnet; mainnet requires a governance-approved
