@@ -92,6 +92,8 @@ const int err::cursor_exhausted = 2311;     ;; the uint32 epoch cursor cannot ad
 const int err::unauthorized_registration = 2312; ;; sender is not a canonical commitment
 const int err::insufficient_bond = 2313;    ;; register carries less than the minimum bond
 const int err::too_late_to_register = 2314; ;; the challenge window cannot elapse before skip
+const int err::zero_score_root = 2315;      ;; a zero score root is reserved / unclaimable
+const int err::wrong_workchain = 2316;      ;; nominator is not on the masterchain
 
 ;; The settlement version this code understands.
 const int settlement_version = 1;
@@ -374,7 +376,16 @@ cell build_state_init(cell code, cell data) inline {
     throw_unless(err::too_late_to_register,
       now() + challenge_window <= (epoch + 1) * epoch_seconds + register_grace);
     throw_unless(err::zero_total_score, total_score > 0);
+    ;; A zero score_root is reserved as "no commitment" and the SDK forbids it; a
+    ;; distributor deployed over a zero root has no valid membership proof, so its pool
+    ;; would strand while the cap is consumed. Keep it out of the candidate set.
+    throw_unless(err::zero_score_root, score_root != 0);
     (int wc, int id) = addr_parts(sender);
+    ;; The native derivation resolves commitments on the masterchain only, so a
+    ;; non-masterchain nominator can never win -- but keyed by its account id it could
+    ;; still evict a genuine masterchain candidate from the bounded set. Reject it here
+    ;; to match the native resolvers (candidates are masterchain-only).
+    throw_unless(err::wrong_workchain, wc == -1);
     ;; H1 (Sybil admission): the candidate set is keyed by -- and evicted by -- the
     ;; sender's address, so without authentication junk accounts with smaller
     ;; addresses can evict a genuine commitment from the bounded set and starve its

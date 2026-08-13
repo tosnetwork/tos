@@ -45,6 +45,8 @@ const ERR_CURSOR_EXHAUSTED: i32 = 2311;
 const ERR_UNAUTHORIZED_REGISTRATION: i32 = 2312;
 const ERR_INSUFFICIENT_BOND: i32 = 2313;
 const ERR_TOO_LATE_TO_REGISTER: i32 = 2314;
+const ERR_ZERO_SCORE_ROOT: i32 = 2315;
+const ERR_WRONG_WORKCHAIN: i32 = 2316;
 
 /// Mirrors the contract's REGISTER_HORIZON: the furthest future epoch, relative
 /// to the cursor, a registration may target.
@@ -397,6 +399,32 @@ fn register_rejects_a_nomination_too_late_for_its_challenge_window() {
 }
 
 #[test]
+fn register_rejects_a_zero_score_root() {
+    // Round-4: a zero score root is reserved (unclaimable pool), kept out of the set.
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch;
+    let n = nominator(1);
+    f.register(&n, 1, epoch, [0u8; 32], 1_000_000, 1, TOS).expect_exit_code(ERR_ZERO_SCORE_ROOT);
+    assert_eq!(f.candidate_count(epoch), 0);
+}
+
+#[test]
+fn register_rejects_a_non_masterchain_nominator() {
+    // Round-4: candidates are masterchain-only (both native resolvers reject wc != -1),
+    // so a canonically-addressed but wc-0 commitment cannot occupy a candidate slot.
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch;
+    let (_, data) = nominator(1);
+    // Same canonical account id, but on workchain 0 instead of -1.
+    let si = StateInit::with_code_and_data(commitment_code(), data.clone());
+    let hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
+    let wc0 = MsgAddressInt::with_params(0, hash).unwrap();
+    let body = AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 1, data).unwrap();
+    f.send_from_value(&wc0, body, TOS).expect_exit_code(ERR_WRONG_WORKCHAIN);
+    assert_eq!(f.candidate_count(epoch), 0);
+}
+
+#[test]
 fn register_rejects_a_non_canonical_sender() {
     // H1: a plain account (not deployed with the audited commitment code, so its
     // address is not hash(StateInit(commitment_code, data))) cannot occupy a
@@ -459,7 +487,8 @@ fn the_candidate_set_is_bounded_and_keeps_the_smallest_addresses() {
         ids.push(account_id(&c.0));
         // A larger candidate set costs more gas per insert on masterchain, so
         // fund these registrations generously.
-        let r = f.register(&c, i, epoch, [i as u8; 32], 1_000, 1, 2 * TOS);
+        // score_root must be non-zero (round-4 zero-root rejection); vary by i+1.
+        let r = f.register(&c, i, epoch, [(i + 1) as u8; 32], 1_000, 1, 2 * TOS);
         if i < 8 {
             r.expect_success();
         }

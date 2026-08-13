@@ -196,37 +196,48 @@ std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& regis
       return out;  // no candidates for this epoch
     }
     // The epoch cell is [ count:uint16 candidates:HashmapE(256 -> record) ].
+    // Mirrors the settlement's MAX_CANDIDATES; a bucket declaring more is malformed.
+    constexpr unsigned long long kMaxCandidates = 8;
     vm::CellSlice ecs = vm::load_cell_slice(epoch_cell);
     unsigned long long count;
     td::Ref<vm::Cell> cand_root;
     if (!ecs.fetch_uint_to(16, count) || !ecs.fetch_maybe_ref(cand_root) || !ecs.empty_ext() ||
-        cand_root.is_null()) {
-      return out;  // malformed or empty candidate set
+        cand_root.is_null() || count == 0 || count > kMaxCandidates) {
+      return {};  // malformed, empty, or over the protocol maximum -> fail closed
     }
-    // Enumerate the candidates dict in ascending account-id order, bounded
-    // (MAX_CANDIDATES is 8 on-chain; the guard caps the walk generously).
+    // Enumerate in ascending account-id order. ANY malformed record, a missing value,
+    // an enumeration that runs longer or shorter than the declared count, or a dict
+    // traversal exception invalidates the WHOLE bucket (fail closed, D9) -- never
+    // return a partial prefix that could authorize a mint from a malformed bucket.
+    std::vector<EpochCandidate> parsed;
     vm::Dictionary candidates{cand_root, 256};
     td::BitArray<256> key;
     bool ok = candidates.get_minmax_key(key.bits(), 256, /*fetch_max=*/false).not_null();
-    for (int guard = 0; ok && guard < 64; guard++) {
-      auto val = candidates.lookup(key);
-      if (val.not_null()) {
-        EpochCandidate c;
-        c.account_id = key;
-        vm::CellSlice rec = *val;
-        if (parse_candidate_record(rec, c)) {
-          out.push_back(std::move(c));
-        }
-        // A malformed record is skipped (it can never authorize a mint anyway).
+    while (ok) {
+      if (parsed.size() >= count) {
+        return {};  // more entries than the declared count
       }
+      auto val = candidates.lookup(key);
+      if (val.is_null()) {
+        return {};
+      }
+      EpochCandidate c;
+      c.account_id = key;
+      vm::CellSlice rec = *val;
+      if (!parse_candidate_record(rec, c)) {
+        return {};  // a malformed record invalidates the bucket
+      }
+      parsed.push_back(std::move(c));
       td::BitArray<256> next = key;
       ok = candidates.lookup_nearest_key(next.bits(), 256, /*fetch_next=*/true).not_null();
       key = next;
     }
-    return out;
+    if (parsed.size() != count) {
+      return {};  // fewer entries than declared
+    }
+    return parsed;
   } catch (vm::VmError&) {
-    // A malformed dict/record must never throw; return whatever parsed cleanly.
-    return out;
+    return {};  // a malformed dict/record must fail closed, not return a partial result
   }
 }
 
@@ -321,6 +332,12 @@ bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentStat
     return false;
   }
   if (commitment.score_root != candidate.score_root) {
+    return false;
+  }
+  // Round-4: a zero score root is reserved (SDK-forbidden). A distributor deployed
+  // over a zero root has no valid membership proof, so minting for it would strand
+  // the pool while consuming the cap; reject it (defends a bypassing deploy).
+  if (commitment.score_root.is_zero()) {
     return false;
   }
   if (!is_usable(commitment.total_score) || !is_usable(candidate.total_score) ||

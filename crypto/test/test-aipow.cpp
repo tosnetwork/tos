@@ -132,6 +132,22 @@ td::Ref<vm::Cell> build_registrations(td::uint32 epoch, const std::vector<Cand>&
   return regs.get_root_cell();
 }
 
+// Like build_registrations but stores an arbitrary declared `count` (for exercising
+// the native parser's fail-closed count checks).
+td::Ref<vm::Cell> build_registrations_count(td::uint32 epoch, const std::vector<Cand>& cands,
+                                            long long count) {
+  vm::Dictionary candidates{256};
+  for (const auto& c : cands) {
+    candidates.set(c.id, vm::load_cell_slice_ref(build_candidate_record(c)));
+  }
+  vm::CellBuilder ecell;
+  ecell.store_long_bool(count, 16);
+  ecell.store_maybe_ref(candidates.get_root_cell());
+  vm::Dictionary regs{32};
+  regs.set_ref(td::BitArray<32>{(long long)epoch}, ecell.finalize());
+  return regs.get_root_cell();
+}
+
 // Build a settlement account data cell (W4.1 layout) with an optional registrations dict.
 td::Ref<vm::Cell> build_settlement(td::uint32 next_epoch, long long minted_total, long long total_cap,
                                    td::Ref<vm::Cell> registrations_root, td::uint16 version = 1) {
@@ -451,6 +467,24 @@ TEST(Aipow, list_epoch_candidates_enumerates_in_ascending_address_order) {
   CHECK(block::aipow::list_epoch_candidates(td::Ref<vm::Cell>{}, 27263).empty());
 }
 
+TEST(Aipow, list_epoch_candidates_fails_closed_on_a_bucket_whose_count_is_wrong) {
+  // Round-4: the whole bucket is invalidated (empty, not a partial prefix) if the
+  // declared count does not match the entries, is zero, or exceeds MAX_CANDIDATES.
+  auto s = mk_bits(0x5C);
+  std::vector<Cand> two = {Cand{mk_bits(0x30), -1, s, 1000, 5, 7},
+                           Cand{mk_bits(0xC0), -1, s, 1000, 5, 7}};
+  // Sanity: the correct count enumerates both.
+  CHECK(block::aipow::list_epoch_candidates(build_registrations_count(10, two, 2), 10).size() == 2u);
+  // count larger than the entries -> fail closed.
+  CHECK(block::aipow::list_epoch_candidates(build_registrations_count(10, two, 3), 10).empty());
+  // count smaller than the entries -> fail closed.
+  CHECK(block::aipow::list_epoch_candidates(build_registrations_count(10, two, 1), 10).empty());
+  // count over the protocol maximum (8) -> fail closed.
+  CHECK(block::aipow::list_epoch_candidates(build_registrations_count(10, two, 9), 10).empty());
+  // zero count -> fail closed.
+  CHECK(block::aipow::list_epoch_candidates(build_registrations_count(10, two, 0), 10).empty());
+}
+
 TEST(Aipow, parse_commitment_state_roundtrips) {
   auto score = mk_bits(0x5C);
   auto data = build_commitment(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000000LL);
@@ -494,6 +528,18 @@ TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, mk_bits(0x77), 4000000, 9000000000LL));
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000001, 9000000000LL));
   CHECK(!good(1, block::aipow::kCommitmentStatusFinal, 27263, score, 4000000, 9000000001LL));
+
+  // Round-4: a zero score root is rejected even when the candidate and commitment
+  // agree on it (a zero root has no valid distributor membership proof -> an
+  // unclaimable, cap-wasting mint).
+  {
+    block::aipow::EpochCandidate zc = cand;
+    zc.score_root = mk_bits(0);
+    block::aipow::CommitmentState c;
+    CHECK(block::aipow::parse_commitment_state(
+        build_commitment(1, block::aipow::kCommitmentStatusFinal, 27263, mk_bits(0), 4000000, 9000000000LL), c));
+    CHECK(!block::aipow::commitment_authorizes(zc, c, 1, 27263, block::aipow::kAipowChallengeWindow));
+  }
 
   // Provenance floor: window_deadline must cover registered_at(1) + the challenge
   // window. A commitment whose window closed a second too early is unauthorized
