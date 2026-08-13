@@ -5,6 +5,7 @@
 */
 #pragma once
 #include <functional>
+#include <vector>
 #include "common/refint.h"
 #include "common/bitstring.h"
 #include "vm/cells.h"
@@ -37,7 +38,9 @@ enum class EpochSettlementKind { NoSettlement, Skip, Mint };
 struct EpochSettlement {
   EpochSettlementKind kind{EpochSettlementKind::NoSettlement};
   td::uint32 epoch{0};
-  td::RefInt256 amount;  // non-null only when kind == Mint
+  td::RefInt256 amount;          // non-null only when kind == Mint
+  td::Bits256 winner_id;         // Mint: the selected winning commitment's account id
+  td::int32 winner_workchain{0}; // Mint: the winning commitment's workchain
 
   bool is_none() const {
     return kind == EpochSettlementKind::NoSettlement;
@@ -53,10 +56,20 @@ struct EpochSettlement {
     return {};
   }
   static EpochSettlement skip(td::uint32 epoch) {
-    return {EpochSettlementKind::Skip, epoch, {}};
+    EpochSettlement s;
+    s.kind = EpochSettlementKind::Skip;
+    s.epoch = epoch;
+    return s;
   }
-  static EpochSettlement mint(td::uint32 epoch, td::RefInt256 amount) {
-    return {EpochSettlementKind::Mint, epoch, std::move(amount)};
+  static EpochSettlement mint(td::uint32 epoch, td::RefInt256 amount, const td::Bits256& winner_id,
+                              td::int32 winner_workchain) {
+    EpochSettlement s;
+    s.kind = EpochSettlementKind::Mint;
+    s.epoch = epoch;
+    s.amount = std::move(amount);
+    s.winner_id = winner_id;
+    s.winner_workchain = winner_workchain;
+    return s;
   }
 };
 
@@ -122,11 +135,11 @@ struct SettlementLedger {
   td::Ref<vm::Cell> registrations;  // dict root cell (null when empty)
 };
 
-// A per-epoch registration recorded by the settlement (W4.1 pack_registration).
-struct Registration {
-  bool found{false};
-  td::int32 commitment_workchain{0};
-  td::Bits256 commitment_addr;  // the nominating commitment's account id
+// One candidate nomination recorded by the settlement for an epoch (the account
+// id is the candidate key; the tuple is what the commitment committed).
+struct EpochCandidate {
+  td::Bits256 account_id;   // the nominating commitment's account id (dict key)
+  td::int32 workchain{0};
   td::Bits256 score_root;
   td::RefInt256 total_score;
   td::RefInt256 organic_settled_value;
@@ -149,21 +162,23 @@ constexpr td::uint8 kCommitmentStatusFinal = 2;
 // Parse the settlement account data cell. Returns false on a short/malformed cell.
 bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out);
 
-// Look up the registration for `epoch` in the settlement's registrations dict
-// (udict 32 -> ^record). Returns a record with found=false if absent, or on a
-// malformed dict/record.
-Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::uint32 epoch);
+// Enumerate the bounded candidate set recorded for `epoch`, in ASCENDING
+// account-id (address) order -- the order the native path evaluates candidates
+// to select the min-address valid one. Returns empty for an absent epoch or on a
+// malformed dict/record (never throws). The set is bounded by MAX_CANDIDATES in
+// the contract, so this is O(1).
+std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& registrations_root,
+                                                  td::uint32 epoch);
 
 // Parse the commitment account data cell. Returns false on a short/malformed cell.
 bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out);
 
-// True iff a resolved commitment authorizes the epoch's mint: the expected
-// layout version, status == final, its epoch equals the settled `epoch` (the
-// registration dict key), and every committed field exactly matches the recorded
-// registration (score_root, total_score, organic). The caller must separately
-// have verified the commitment account's code hash against the registry (that
-// resolution is not pure over cells).
-bool commitment_authorizes(const Registration& reg, const CommitmentState& commitment,
+// True iff a resolved commitment authorizes a candidate's mint: the expected
+// layout version, status == final, its epoch equals the settled `epoch`, and
+// every committed field exactly matches the candidate (score_root, total_score,
+// organic). The caller must separately have verified the commitment account's
+// code hash against the registry (that resolution is not pure over cells).
+bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentState& commitment,
                            td::uint16 expected_commitment_version, td::uint32 epoch);
 
 /*

@@ -3,6 +3,7 @@
 
     Licensed under the GNU General Public License v3.0.
 */
+#include <vector>
 #include "block/aipow.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -67,17 +68,42 @@ td::Ref<vm::Cell> build_commitment(td::uint16 version, td::uint8 status, td::uin
   return cb.finalize();
 }
 
-// Build one registration record (W4.1 pack_registration).
-td::Ref<vm::Cell> build_registration_record(td::int32 wc, td::Bits256 commitment_addr,
-                                            td::Bits256 score_root, long long total_score,
-                                            long long organic, td::uint32 registered_at) {
+// A single candidate for build_registrations: (account_id, workchain, score_root,
+// total_score, organic, registered_at).
+struct Cand {
+  td::Bits256 id;
+  td::int32 wc;
+  td::Bits256 score_root;
+  long long total_score;
+  long long organic;
+  td::uint32 registered_at;
+};
+
+// Build the record body (inline dict value): workchain:int8 score_root:256
+// total_score:128 organic:128 registered_at:32.
+td::Ref<vm::Cell> build_candidate_record(const Cand& c) {
   vm::CellBuilder cb;
-  block::tlb::t_MsgAddressInt.store_std_address(cb, wc, commitment_addr);
-  cb.store_bits_bool(score_root);
-  cb.store_int256_bool(make_refint(total_score), 128, false);
-  cb.store_int256_bool(make_refint(organic), 128, false);
-  cb.store_long_bool(registered_at, 32);
+  cb.store_long_bool(c.wc, 8);
+  cb.store_bits_bool(c.score_root);
+  cb.store_int256_bool(make_refint(c.total_score), 128, false);
+  cb.store_int256_bool(make_refint(c.organic), 128, false);
+  cb.store_long_bool(c.registered_at, 32);
   return cb.finalize();
+}
+
+// Build a registrations root (udict 32 -> ^[count:16 candidates:HashmapE 256]),
+// with the given candidates recorded for `epoch`.
+td::Ref<vm::Cell> build_registrations(td::uint32 epoch, const std::vector<Cand>& cands) {
+  vm::Dictionary candidates{256};
+  for (const auto& c : cands) {
+    candidates.set(c.id, vm::load_cell_slice_ref(build_candidate_record(c)));
+  }
+  vm::CellBuilder ecell;
+  ecell.store_long_bool((long long)cands.size(), 16);
+  ecell.store_maybe_ref(candidates.get_root_cell());
+  vm::Dictionary regs{32};
+  regs.set_ref(td::BitArray<32>{(long long)epoch}, ecell.finalize());
+  return regs.get_root_cell();
 }
 
 // Build a settlement account data cell (W4.1 layout) with an optional registrations dict.
@@ -370,27 +396,27 @@ TEST(Aipow, parse_settlement_ledger_roundtrips) {
   CHECK(!block::aipow::parse_settlement_ledger(dummy_ref(), bad));
 }
 
-TEST(Aipow, find_registration_looks_up_by_epoch) {
-  auto root_addr = mk_bits(0xC0);
+TEST(Aipow, list_epoch_candidates_enumerates_in_ascending_address_order) {
   auto score = mk_bits(0x5C);
-  vm::Dictionary dict{32};
-  auto rec = build_registration_record(-1, root_addr, score, 4000000, 9000000000LL, 12345);
-  td::BitArray<32> key;
-  key.store_ulong(27263);
-  CHECK(dict.set_ref(key, rec));
+  // Two candidates for epoch 27263, inserted out of address order.
+  auto root = build_registrations(
+      27263, {Cand{mk_bits(0xC0), -1, score, 4000000, 9000000000LL, 12345},
+              Cand{mk_bits(0x30), 0, mk_bits(0x77), 2000000, 5, 7}});
+  auto cands = block::aipow::list_epoch_candidates(root, 27263);
+  CHECK(cands.size() == 2u);
+  // Ascending account-id order: 0x30 before 0xC0.
+  CHECK(cands[0].account_id == mk_bits(0x30));
+  CHECK(cands[0].workchain == 0);
+  CHECK(cands[1].account_id == mk_bits(0xC0));
+  CHECK(cands[1].workchain == -1);
+  CHECK(cands[1].score_root == score);
+  CHECK(td::cmp(cands[1].total_score, 4000000) == 0);
+  CHECK(td::cmp(cands[1].organic_settled_value, 9000000000LL) == 0);
+  CHECK(cands[1].registered_at == 12345);
 
-  auto reg = block::aipow::find_registration(dict.get_root_cell(), 27263);
-  CHECK(reg.found);
-  CHECK(reg.commitment_workchain == -1);
-  CHECK(reg.commitment_addr == root_addr);
-  CHECK(reg.score_root == score);
-  CHECK(td::cmp(reg.total_score, 4000000) == 0);
-  CHECK(td::cmp(reg.organic_settled_value, 9000000000LL) == 0);
-  CHECK(reg.registered_at == 12345);
-
-  // A different epoch is not found; an empty dict is not found.
-  CHECK(!block::aipow::find_registration(dict.get_root_cell(), 27264).found);
-  CHECK(!block::aipow::find_registration(td::Ref<vm::Cell>{}, 27263).found);
+  // A different epoch and an empty dict yield no candidates.
+  CHECK(block::aipow::list_epoch_candidates(root, 27264).empty());
+  CHECK(block::aipow::list_epoch_candidates(td::Ref<vm::Cell>{}, 27263).empty());
 }
 
 TEST(Aipow, parse_commitment_state_roundtrips) {
@@ -408,20 +434,19 @@ TEST(Aipow, parse_commitment_state_roundtrips) {
 
 TEST(Aipow, commitment_authorizes_only_a_matching_final_commitment) {
   auto score = mk_bits(0x5C);
-  auto addr = mk_bits(0xC0);
-  auto rec = build_registration_record(-1, addr, score, 4000000, 9000000000LL, 1);
-  vm::Dictionary dict{32};
-  td::BitArray<32> key;
-  key.store_ulong(27263);
-  dict.set_ref(key, rec);
-  auto reg = block::aipow::find_registration(dict.get_root_cell(), 27263);
-  CHECK(reg.found);
+  block::aipow::EpochCandidate cand;
+  cand.account_id = mk_bits(0xC0);
+  cand.workchain = -1;
+  cand.score_root = score;
+  cand.total_score = make_refint(4000000);
+  cand.organic_settled_value = make_refint(9000000000LL);
+  cand.registered_at = 1;
 
   auto good = [&](td::uint16 ver, td::uint8 status, td::uint64 epoch, td::Bits256 root, long long ts,
                   long long org) {
     block::aipow::CommitmentState c;
     CHECK(block::aipow::parse_commitment_state(build_commitment(ver, status, epoch, root, ts, org), c));
-    return block::aipow::commitment_authorizes(reg, c, 1, 27263);
+    return block::aipow::commitment_authorizes(cand, c, 1, 27263);
   };
 
   // Exact match, status final -> authorized.
@@ -445,20 +470,17 @@ TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
   auto score = mk_bits(0x5C);
   auto addr = mk_bits(0xC0);
   long long organic = 1000;
-  vm::Dictionary dict{32};
-  td::BitArray<32> key;
-  key.store_ulong(27260);
-  dict.set_ref(key, build_registration_record(-1, addr, score, 4000000, organic, 1));
-  auto settlement = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto root = build_registrations(27260, {Cand{addr, -1, score, 4000000, organic, 1}});
+  auto settlement = build_settlement(27260, 0, 4500000000000000000LL, root);
 
   block::aipow::SettlementLedger led;
   CHECK(block::aipow::parse_settlement_ledger(settlement, led));
-  auto reg = block::aipow::find_registration(led.registrations, led.next_epoch);
-  CHECK(reg.found);
+  auto cands = block::aipow::list_epoch_candidates(led.registrations, led.next_epoch);
+  CHECK(cands.size() == 1u);
   block::aipow::CommitmentState c;
   CHECK(block::aipow::parse_commitment_state(
       build_commitment(1, block::aipow::kCommitmentStatusFinal, led.next_epoch, score, 4000000, organic), c));
-  bool authorized = block::aipow::commitment_authorizes(reg, c, 1, led.next_epoch);
+  bool authorized = block::aipow::commitment_authorizes(cands[0], c, 1, led.next_epoch);
   CHECK(authorized);
 
   auto cfg = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic / 2 = 500
@@ -468,7 +490,7 @@ TEST(Aipow, end_to_end_registered_final_commitment_mints_the_pool) {
   cursor.epoch_seconds = led.epoch_seconds;
   cursor.register_grace = led.register_grace;
   auto r = block::aipow::compute_epoch_mint(cfg, make_limits(4500000000000000000LL), cursor, authorized,
-                                            reg.organic_settled_value, 0);
+                                            cands[0].organic_settled_value, 0);
   CHECK(r.is_mint());
   CHECK(r.epoch == 27260);
   CHECK(td::cmp(r.amount, 500) == 0);
@@ -481,11 +503,8 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   auto commit_code_hash = mk_bits(0xCC);
   long long organic = 1000;
 
-  vm::Dictionary dict{32};
-  td::BitArray<32> key;
-  key.store_ulong(27260);
-  dict.set_ref(key, build_registration_record(-1, commitment_addr, score, 4000000, organic, 1));
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto commitment_data =
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
 
@@ -515,14 +534,15 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   CHECK(r.epoch == 27260);
   CHECK(td::cmp(r.amount, 500) == 0);
 
-  // A wrong commitment code hash rejects it; because the epoch is registered it
-  // is NOT skippable either (matches the on-chain skip_registered guard), so the
-  // result is NoSettlement even far past the grace deadline.
+  // A wrong commitment code hash makes the only candidate invalid. With no valid
+  // candidate the epoch is now Skip-eligible past its grace deadline (skip no
+  // longer refuses a registered epoch -- the griefing fix), so far past grace the
+  // result is Skip.
   {
     auto bad = ctx;
     bad.commitment_code_hash = mk_bits(0xBAD);
     bad.gen_utime = 4000000000u;
-    CHECK(block::aipow::derive_masterchain_epoch_mint(bad, resolver).is_none());
+    CHECK(block::aipow::derive_masterchain_epoch_mint(bad, resolver).is_skip());
   }
   // A non-final commitment is likewise unauthorized.
   {
@@ -616,12 +636,9 @@ TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_
 
 TEST(Aipow, parsers_fail_closed_on_malformed_input_instead_of_throwing) {
   // A garbage cell as the registrations root must not throw (the dict ops would
-  // otherwise raise a vm exception in consensus code). It is treated
-  // conservatively as present-but-unauthorized (found=true, never Skip-eligible),
-  // so a corrupt dict cannot advance the cursor via a Skip the contract rejects.
+  // otherwise raise a vm exception in consensus code); it yields no candidates.
   auto garbage = dummy_ref();  // an 8-bit cell, not a valid dictionary node
-  auto reg = block::aipow::find_registration(garbage, 27260);
-  CHECK(reg.found);  // conservative: not mistaken for an absent epoch
+  CHECK(block::aipow::list_epoch_candidates(garbage, 27260).empty());
   // A garbage cell is not a valid settlement ledger or commitment (returns
   // false, no throw).
   block::aipow::SettlementLedger led;
@@ -640,11 +657,8 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   auto commit_code_hash = mk_bits(0xCC);
   long long organic = 1000;  // pool = organic / 1 = 1000 (k = 1/1)
 
-  vm::Dictionary dict{32};
-  td::BitArray<32> key;
-  key.store_ulong(27260);
-  dict.set_ref(key, build_registration_record(-1, commitment_addr, score, 4000000, organic, 1));
-  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, dict.get_root_cell());
+  auto root = build_registrations(27260, {Cand{commitment_addr, -1, score, 4000000, organic, 1}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
   auto commitment_data =
       build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
   auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
@@ -670,17 +684,16 @@ TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {
   CHECK(td::cmp(r.amount, 400) == 0);  // clamped to the config cap, not 1000
 }
 
-TEST(Aipow, a_present_but_malformed_registration_is_no_settlement_not_a_skip) {
-  // A dictionary entry EXISTS for the cursor epoch but its record is garbage.
-  // find_registration must report found (so the epoch is not Skip-eligible: the
-  // on-chain skip_registered guard would reject a skip), and derive must return
-  // NoSettlement even far past the grace deadline.
+TEST(Aipow, a_malformed_registration_entry_yields_no_candidate_and_skips_past_grace) {
+  // A registrations entry EXISTS for the cursor epoch but its cell is garbage
+  // (not [count, candidates]). list_epoch_candidates must not throw and yields no
+  // candidates, so derive skips the epoch past the grace deadline (the candidate
+  // model + the no-freeze skip mean a corrupt entry can never freeze the cursor).
   vm::Dictionary dict{32};
   td::BitArray<32> key;
   key.store_ulong(10);
-  dict.set_ref(key, dummy_ref());  // an 8-bit garbage record, not pack_registration
-  auto reg = block::aipow::find_registration(dict.get_root_cell(), 10);
-  CHECK(reg.found);  // present in the dict, though unparseable
+  dict.set_ref(key, dummy_ref());  // an 8-bit garbage entry, not [count, candidates]
+  CHECK(block::aipow::list_epoch_candidates(dict.get_root_cell(), 10).empty());
 
   auto settlement_addr = mk_bits(0x99);
   auto settlement_data = build_settlement(10, 0, 4500000000000000000LL, dict.get_root_cell());
@@ -699,5 +712,57 @@ TEST(Aipow, a_present_but_malformed_registration_is_no_settlement_not_a_skip) {
   ctx.commitment_code_hash = mk_bits(0xCC);
   ctx.expected_commitment_version = 1;
   ctx.gen_utime = 4000000000u;  // far past any grace deadline
-  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_none());
+  CHECK(block::aipow::derive_masterchain_epoch_mint(ctx, resolver).is_skip());
+}
+
+TEST(Aipow, derive_selects_the_min_address_valid_candidate_skipping_a_bogus_smaller_one) {
+  // Two candidates for the cursor epoch: a SMALLER-address bogus one (wrong code
+  // hash) and a LARGER-address genuine one. The bogus candidate cannot exclude
+  // the genuine one; derive skips the invalid smaller candidate and mints for the
+  // min-address VALID candidate, naming it as the winner.
+  auto score = mk_bits(0x5C);
+  auto settlement_addr = mk_bits(0x99);
+  auto commit_code_hash = mk_bits(0xCC);
+  long long organic = 1000;
+
+  auto bogus_id = mk_bits(0x10);    // smaller address, bogus
+  auto genuine_id = mk_bits(0x40);  // larger address, genuine
+  auto root = build_registrations(
+      27260, {Cand{bogus_id, -1, mk_bits(0xBB), 4000000, organic, 1},
+              Cand{genuine_id, -1, score, 4000000, organic, 2}});
+  auto settlement_data = build_settlement(27260, 0, 4500000000000000000LL, root);
+  auto genuine_commitment =
+      build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, score, 4000000, organic);
+
+  auto resolver = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+    block::aipow::ResolvedAccount a;
+    if (wc == -1 && addr == settlement_addr) {
+      a.exists = true;
+      a.data = settlement_data;
+    } else if (wc == -1 && addr == bogus_id) {
+      // The bogus candidate resolves to an account with the WRONG code hash.
+      a.exists = true;
+      a.data = build_commitment(1, block::aipow::kCommitmentStatusFinal, 27260, mk_bits(0xBB), 4000000, organic);
+      a.code_hash = mk_bits(0xBAD);
+    } else if (wc == -1 && addr == genuine_id) {
+      a.exists = true;
+      a.data = genuine_commitment;
+      a.code_hash = commit_code_hash;
+    }
+    return a;
+  };
+  block::aipow::MasterchainMintContext ctx;
+  ctx.config = make_cfg(1, 2, 1000000000LL, 0);  // pool = organic / 2 = 500
+  ctx.limits = make_limits(4500000000000000000LL);
+  ctx.settlement_addr = settlement_addr;
+  ctx.commitment_code_hash = commit_code_hash;
+  ctx.expected_commitment_version = 1;
+  ctx.gen_utime = 0;
+
+  auto r = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
+  CHECK(r.is_mint());
+  CHECK(r.epoch == 27260);
+  CHECK(td::cmp(r.amount, 500) == 0);
+  CHECK(r.winner_id == genuine_id);       // the genuine (larger-address) candidate wins
+  CHECK(r.winner_workchain == -1);
 }

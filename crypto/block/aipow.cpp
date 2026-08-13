@@ -87,7 +87,10 @@ EpochSettlement compute_epoch_mint(const AipowConfig& cfg, const AipowLimits& li
     if (pool > remaining) {
       pool = remaining;  // the final, partial epoch pool
     }
-    return EpochSettlement::mint(epoch, std::move(pool));
+    // The amount arithmetic does not know the winner; derive_masterchain_epoch_mint
+    // fills in winner_id/winner_workchain after selecting the min-address valid
+    // candidate.
+    return EpochSettlement::mint(epoch, std::move(pool), td::Bits256::zero(), 0);
   }
 
   // No valid commitment for the cursor epoch: once the epoch's grace deadline has
@@ -151,50 +154,71 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   }
 }
 
-Registration find_registration(const td::Ref<vm::Cell>& registrations_root, td::uint32 epoch) {
-  Registration reg;
+// Parse a single candidate record body (workchain:int8 score_root:256
+// total_score:128 organic:128 registered_at:32). Returns false if malformed.
+static bool parse_candidate_record(vm::CellSlice& rec, EpochCandidate& out) {
+  long long workchain;
+  unsigned long long registered_at;
+  if (!(rec.fetch_int_to(8, workchain) && rec.fetch_bits_to(out.score_root) &&
+        rec.fetch_uint256_to(128, out.total_score) &&
+        rec.fetch_uint256_to(128, out.organic_settled_value) &&
+        rec.fetch_uint_to(32, registered_at))) {
+    return false;
+  }
+  if (!rec.empty_ext()) {
+    return false;  // trailing garbage
+  }
+  out.workchain = (td::int32)workchain;
+  out.registered_at = (td::uint32)registered_at;
+  return true;
+}
+
+std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& registrations_root,
+                                                  td::uint32 epoch) {
+  std::vector<EpochCandidate> out;
   if (registrations_root.is_null()) {
-    return reg;  // empty dictionary -> not found
+    return out;  // no registrations
   }
   try {
-  vm::Dictionary dict{registrations_root, 32};
-  td::BitArray<32> key;
-  key.store_ulong(epoch);
-  auto rec_ref = dict.lookup_ref(key);
-  if (rec_ref.is_null()) {
-    return reg;  // truly absent from the dictionary -> not found (Skip-eligible)
-  }
-  // The epoch IS present in the dictionary. found is set true here, BEFORE the
-  // record is parsed, so a present-but-malformed record is NOT treated as
-  // unregistered: derive must return NoSettlement (a registered epoch is never
-  // skippable on-chain -- skip_registered), never Skip. A malformed record then
-  // fails authorization (its garbage address/tuple never authorizes a mint).
-  reg.found = true;
-  vm::CellSlice rcs = vm::load_cell_slice(rec_ref);
-  // commitment_addr:MsgAddress score_root:256 total_score:128 organic:128 registered_at:32
-  tos::WorkchainId workchain;
-  tos::StdSmcAddress addr;
-  if (!block::tlb::t_MsgAddressInt.extract_std_address(rcs, workchain, addr, false)) {
-    return reg;  // present but a non-standard commitment address -> unauthorized
-  }
-  reg.commitment_workchain = workchain;
-  reg.commitment_addr = addr;
-  unsigned long long registered_at;
-  if (!(rcs.fetch_bits_to(reg.score_root) && rcs.fetch_uint256_to(128, reg.total_score) &&
-        rcs.fetch_uint256_to(128, reg.organic_settled_value) && rcs.fetch_uint_to(32, registered_at))) {
-    return reg;  // present but malformed -> unauthorized (found stays true)
-  }
-  if (!rcs.empty_ext()) {
-    return reg;  // present but trailing garbage -> unauthorized (found stays true)
-  }
-  reg.registered_at = (td::uint32)registered_at;
-  return reg;
+    vm::Dictionary registrations{registrations_root, 32};
+    td::BitArray<32> ekey;
+    ekey.store_ulong(epoch);
+    auto epoch_cell = registrations.lookup_ref(ekey);
+    if (epoch_cell.is_null()) {
+      return out;  // no candidates for this epoch
+    }
+    // The epoch cell is [ count:uint16 candidates:HashmapE(256 -> record) ].
+    vm::CellSlice ecs = vm::load_cell_slice(epoch_cell);
+    unsigned long long count;
+    td::Ref<vm::Cell> cand_root;
+    if (!ecs.fetch_uint_to(16, count) || !ecs.fetch_maybe_ref(cand_root) || !ecs.empty_ext() ||
+        cand_root.is_null()) {
+      return out;  // malformed or empty candidate set
+    }
+    // Enumerate the candidates dict in ascending account-id order, bounded
+    // (MAX_CANDIDATES is 8 on-chain; the guard caps the walk generously).
+    vm::Dictionary candidates{cand_root, 256};
+    td::BitArray<256> key;
+    bool ok = candidates.get_minmax_key(key.bits(), 256, /*fetch_max=*/false).not_null();
+    for (int guard = 0; ok && guard < 64; guard++) {
+      auto val = candidates.lookup(key);
+      if (val.not_null()) {
+        EpochCandidate c;
+        c.account_id = key;
+        vm::CellSlice rec = *val;
+        if (parse_candidate_record(rec, c)) {
+          out.push_back(std::move(c));
+        }
+        // A malformed record is skipped (it can never authorize a mint anyway).
+      }
+      td::BitArray<256> next = key;
+      ok = candidates.lookup_nearest_key(next.bits(), 256, /*fetch_next=*/true).not_null();
+      key = next;
+    }
+    return out;
   } catch (vm::VmError&) {
-    // A malformed dict/record must never throw, and must never be mistaken for an
-    // absent (Skip-eligible) epoch -- treat it conservatively as present but
-    // unauthorized (found=true, garbage fields), so derive returns NoSettlement.
-    reg.found = true;
-    return reg;
+    // A malformed dict/record must never throw; return whatever parsed cleanly.
+    return out;
   }
 }
 
@@ -248,11 +272,8 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   }
 }
 
-bool commitment_authorizes(const Registration& reg, const CommitmentState& commitment,
+bool commitment_authorizes(const EpochCandidate& candidate, const CommitmentState& commitment,
                            td::uint16 expected_commitment_version, td::uint32 epoch) {
-  if (!reg.found) {
-    return false;
-  }
   if (commitment.version != expected_commitment_version) {
     return false;
   }
@@ -262,15 +283,15 @@ bool commitment_authorizes(const Registration& reg, const CommitmentState& commi
   if (commitment.epoch != (td::uint64)epoch) {
     return false;
   }
-  if (commitment.score_root != reg.score_root) {
+  if (commitment.score_root != candidate.score_root) {
     return false;
   }
-  if (!is_usable(commitment.total_score) || !is_usable(reg.total_score) ||
-      td::cmp(commitment.total_score, reg.total_score) != 0) {
+  if (!is_usable(commitment.total_score) || !is_usable(candidate.total_score) ||
+      td::cmp(commitment.total_score, candidate.total_score) != 0) {
     return false;
   }
-  if (!is_usable(commitment.organic_settled_value) || !is_usable(reg.organic_settled_value) ||
-      td::cmp(commitment.organic_settled_value, reg.organic_settled_value) != 0) {
+  if (!is_usable(commitment.organic_settled_value) || !is_usable(candidate.organic_settled_value) ||
+      td::cmp(commitment.organic_settled_value, candidate.organic_settled_value) != 0) {
     return false;
   }
   return true;
@@ -318,43 +339,44 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
     ledger_limits.total_cap = ctx.limits.total_cap;
   }
 
-  Registration reg = find_registration(ledger.registrations, cursor.next_epoch);
-  if (reg.found) {
-    // A registered epoch: resolve and verify the nominating commitment.
-    //
-    // SECURITY LIMITATION (hard mainnet launch gate, tracked in the Phase C plan
-    // D6/D10): the code-hash pin below proves only that the account runs the
-    // audited commitment CODE, not that its finalization was legitimate. A
-    // commitment's `window_deadline` is a deploy parameter, so an attacker can
-    // deploy the genuine code with a past window and a fabricated tuple,
-    // finalize instantly (no real challenge window), and register a forged
-    // economic value. The challenge/bond/reviewer mechanism -- not this code --
-    // is what must make a fabricated tuple uneconomic/impossible. Native mint
-    // MUST NOT be activated on mainnet until the commitment enforces a genuine,
-    // code-measured challenge window (a committed_at + fixed-duration redesign)
-    // and a governance-approved threshold reviewer policy are finalized+audited.
-    // While dark (capAipow off) nothing mints, so this is a launch gate, not a
-    // live exploit.
-    ResolvedAccount commitment = resolve(reg.commitment_workchain, reg.commitment_addr);
-    bool has_valid = false;
+  // Candidate selection (fixes the first-wins griefing): enumerate the bounded
+  // candidate set for the cursor epoch in ASCENDING address order, resolve and
+  // verify each, and pick the MIN-ADDRESS VALID finalized commitment. A bogus
+  // nomination cannot exclude the genuine one (both are candidates) nor freeze
+  // the epoch (an all-bogus set falls through to the skip path below).
+  //
+  // SECURITY LIMITATION (hard mainnet launch gate, tracked in the Phase C plan
+  // D6/D10): the code-hash pin below proves only that a candidate account runs
+  // the audited commitment CODE, not that its finalization was legitimate. A
+  // commitment's `window_deadline` is a deploy parameter, so an attacker can
+  // deploy the genuine code with a past window and a fabricated tuple, finalize
+  // instantly (no real challenge window), and register a forged economic value.
+  // The challenge/bond/reviewer mechanism -- not this code -- is what must make a
+  // fabricated tuple uneconomic. Native mint MUST NOT be activated on mainnet
+  // until the commitment enforces a code-measured challenge window and a
+  // threshold reviewer policy are finalized+audited. Dark (capAipow off) => inert.
+  std::vector<EpochCandidate> candidates = list_epoch_candidates(ledger.registrations, cursor.next_epoch);
+  for (const EpochCandidate& c : candidates) {  // ascending address order (min first)
+    ResolvedAccount commitment = resolve(c.workchain, c.account_id);
     if (commitment.exists && commitment.code_hash == ctx.commitment_code_hash) {
       CommitmentState cstate;
       if (parse_commitment_state(commitment.data, cstate) &&
-          commitment_authorizes(reg, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
-        has_valid = true;
+          commitment_authorizes(c, cstate, ctx.expected_commitment_version, cursor.next_epoch)) {
+        // The min-address valid candidate wins.
+        EpochSettlement r = compute_epoch_mint(ctx.config, ledger_limits, cursor, true,
+                                               c.organic_settled_value, ctx.gen_utime);
+        if (r.is_mint()) {
+          r.winner_id = c.account_id;
+          r.winner_workchain = c.workchain;
+        }
+        return r;
       }
     }
-    if (has_valid) {
-      return compute_epoch_mint(ctx.config, ledger_limits, cursor, true, reg.organic_settled_value,
-                                ctx.gen_utime);
-    }
-    // Registered but the commitment is invalid/unresolvable: no mint, and the
-    // on-chain skip refuses a registered epoch (skip_registered), so the cursor
-    // cannot advance this block.
-    return EpochSettlement::none();
   }
 
-  // Unregistered epoch: skip past the grace deadline, else nothing due.
+  // No valid candidate (an unregistered epoch, or one with only bogus
+  // candidates): the cursor advances via a skip past the grace deadline (the
+  // on-chain skip no longer refuses a registered epoch), else nothing is due.
   return compute_epoch_mint(ctx.config, ledger_limits, cursor, false, td::RefInt256{}, ctx.gen_utime);
 }
 
