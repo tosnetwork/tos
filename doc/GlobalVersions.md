@@ -383,12 +383,15 @@ are also tracked in the Phase C plan's launch-gate section.
    registered_at + challenge_window` (the window was demonstrably open) **and**
    `gen_utime >= registered_at + challenge_window` (it has elapsed). A fabricated
    commitment must therefore sit through a real, observable dispute window and can
-   no longer be finalized instantly. See `derive_masterchain_epoch_mint` /
-   `kAipowChallengeWindow` in `crypto/block/aipow.cpp` and the commitment FunC
-   `announce` handler. **Remaining before activation:** promote
-   `kAipowChallengeWindow` to a governed config param and enforce
-   `challenge_window < register_grace` (else a valid candidate's epoch could
-   become skippable before its window elapses); and finalize gate 3.
+   no longer be finalized instantly. See `derive_masterchain_epoch_mint` in
+   `crypto/block/aipow.cpp` and the commitment FunC `announce` handler. The
+   challenge window is now a **governed settlement deploy parameter**
+   (`SettlementCursor::challenge_window`, read by the native path; the SDK
+   `build_data` enforces `0 < challenge_window < register_grace` so a valid
+   candidate always mints before its epoch becomes skippable);
+   `kAipowChallengeWindow` is only the recommended SDK default. **Remaining before
+   activation:** finalize gate 3 (the reviewer policy that makes disputing a
+   fabricated tuple economic).
 2. **First-wins registration griefing — RESOLVED.** `register` was once
    first-wins per epoch, letting an attacker's bogus nomination block the genuine
    commitment and freeze the cursor. Now the settlement keeps a **bounded
@@ -416,8 +419,23 @@ are also tracked in the Phase C plan's launch-gate section.
 6. **Supply-cap dry-run.** A dry-run over a simulated ~7-year schedule shows
    cumulative emission ≤ the 4.5B cap under adversarial demand.
 
-Until items 1–3 are closed, native AIPoW minting is **testnet/devnet only** and
-must remain unactivatable on mainnet.
+**End-to-end verified (not a gate, a milestone).** The native mint produce/check
+paths and the settle round-trip are exercised on a full-node localnet with
+`capAipow` active and ConfigParams 90–93 injected at genesis
+(`scripts/aipow-native-mint-e2e.py`): a commitment is announced → finalized past
+its (seconds-long, test-tuned) challenge window → the masterchain collator
+originates the epoch mint → validate-query independently re-derives and accepts it
+→ the settlement's settle advances the cursor, records the mint, and funds a
+distributor; a later block mints 0 and the cap holds. This run caught and fixed a
+real produce/check divergence (validate-query must split `value_flow_.minted` by
+currency type exactly as the collator does) — evidence that gate 4's
+collator/validator-divergence review is grounded, not a formality. The formal
+audits in gate 4 still stand.
+
+Gates 1 and 2 are resolved (in code + tests, and exercised by the e2e above). Until
+the remaining gates — 3 (threshold reviewer), 4 (audits), 5 (registry published +
+ratified, cap consistency), 6 (supply-cap dry-run) — are closed, native AIPoW minting
+is **testnet/devnet only** and must remain unactivatable on mainnet.
 
 ## Rollout plan
 
