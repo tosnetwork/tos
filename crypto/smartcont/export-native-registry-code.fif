@@ -1,0 +1,11 @@
+#!/usr/bin/fift -s
+"TosUtil.fif" include
+"Asm.fif" include
+
+{ ."usage: " @' $0 type ." <output-code.boc>" cr 1 halt } : usage
+$# 1 <> ' usage if
+
+"auto/native-registry-code.fif" include
+dup hashu ."Native Registry code hash: " x. cr
+2 boc+>B $1 tuck B>file
+."Saved Native Registry code BOC to " type cr

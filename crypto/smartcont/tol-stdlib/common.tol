@@ -688,6 +688,13 @@ fun builder.hash(self): uint256
 fun slice.bitsHash(self): uint256
     asm "SHA256U"
 
+/// Computes SHA-256 over the concatenated byte contents of a canonical snake
+/// cell. Every cell must be byte-aligned and have at most one continuation
+/// reference. The result is independent of snake chunk boundaries.
+@pure
+fun cell.snakeSha256(self): uint256
+    asm "SHA256C"
+
 /// Checks whether two cells are equal by comparing their hashes.
 /// Used internally by the compiler for operators `==` and `!=` on cells.
 @pure

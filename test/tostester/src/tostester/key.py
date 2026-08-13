@@ -36,6 +36,10 @@ class Key:
 
     def write_pk_key_file(self, path: Path) -> Path:
         _ = path.write_bytes(PK_ED25519_PREFIX + self.private_key.key)
+        # Test localnets exercise the same fail-closed keyring boundary as a
+        # production node. Do not let the caller's umask leave validator keys
+        # readable by the group or other users.
+        path.chmod(0o600)
         return path
 
     def add_to_keyring(self, keyring: Path) -> Path:

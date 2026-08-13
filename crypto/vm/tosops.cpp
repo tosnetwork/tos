@@ -679,6 +679,41 @@ int exec_compute_sha256(VmState* st) {
   return 0;
 }
 
+// SHA256C hashes the byte strings stored in a canonical snake-cell chain.
+// Each cell must be byte-aligned and contain at most one reference, which is
+// the continuation. Unlike a representation hash, the result is independent
+// of chunk boundaries. Gas is charged per cell and per byte.
+int exec_compute_sha256_snake(VmState* st) {
+  VM_LOG(st) << "execute SHA256C";
+  Stack& stack = st->get_stack();
+  Ref<Cell> cell = stack.pop_cell();
+  Hasher hasher{Hasher::SHA256};
+  size_t total_bits = 0;
+  unsigned cells = 0;
+  while (cell.not_null()) {
+    if (++cells > 512) {
+      throw VmError{Excno::cell_und, "SHA256C snake exceeds depth limit"};
+    }
+    CellSlice cs = load_cell_slice(cell);
+    if ((cs.size() & 7) || cs.size_refs() > 1) {
+      throw VmError{Excno::cell_und, "SHA256C expects a byte-aligned canonical snake"};
+    }
+    total_bits += cs.size();
+    if (total_bits > (2u << 20) * 8u) {
+      throw VmError{Excno::cell_und, "SHA256C snake exceeds byte limit"};
+    }
+    hasher.append(cs.data_bits(), cs.size());
+    st->consume_gas(VmState::hash_ext_entry_gas_price + cs.size() / 8 / hasher.bytes_per_gas_unit());
+    cell = cs.size_refs() == 1 ? cs.prefetch_ref() : Ref<Cell>{};
+  }
+  td::BufferSlice hash = hasher.finish();
+  td::RefInt256 result{true};
+  CHECK(hash.size() == 32);
+  CHECK(result.write().import_bytes(reinterpret_cast<unsigned char*>(hash.data()), hash.size(), false));
+  stack.push_int(std::move(result));
+  return 0;
+}
+
 int exec_hash_ext(VmState* st, unsigned args) {
   bool rev = (args >> 8) & 1;
   bool append = (args >> 9) & 1;
@@ -1439,6 +1474,7 @@ void register_tos_crypto_ops(OpcodeTable& cp0) {
   cp0.insert(OpcodeInstr::mksimple(0xf900, 16, "HASHCU", std::bind(exec_compute_hash, _1, 0)))
       .insert(OpcodeInstr::mksimple(0xf901, 16, "HASHSU", std::bind(exec_compute_hash, _1, 1)))
       .insert(OpcodeInstr::mksimple(0xf902, 16, "SHA256U", exec_compute_sha256))
+      .insert(OpcodeInstr::mksimple(0xf903, 16, "SHA256C", exec_compute_sha256_snake)->require_version(14))
       .insert(OpcodeInstr::mkfixed(0xf904 >> 2, 14, 10, dump_hash_ext, exec_hash_ext)->require_version(4))
       .insert(OpcodeInstr::mksimple(0xf910, 16, "CHKSIGNU", std::bind(exec_ed25519_check_signature, _1, false)))
       .insert(OpcodeInstr::mksimple(0xf911, 16, "CHKSIGNS", std::bind(exec_ed25519_check_signature, _1, true)))

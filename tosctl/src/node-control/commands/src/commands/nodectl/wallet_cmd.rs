@@ -8,11 +8,18 @@
  */
 use super::output_format::OutputFormat;
 use super::utils::{
-    load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, wallet_address, wallet_info,
-    check_chain_rpc_connection, warn_chain_rpc_unavailable, get_wallet_config,
-    wait_for_seqno_change, wait_for_deploy, SEND_TIMEOUT, DEPLOY_TIMEOUT,
+    DEPLOY_TIMEOUT, SEND_TIMEOUT, check_chain_rpc_connection, get_wallet_config,
+    load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, wait_for_deploy,
+    wait_for_seqno_change, wallet_address, wallet_info, warn_chain_rpc_unavailable,
 };
 use anyhow::Context;
+use base64::Engine;
+use chain_block::{
+    ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, BuilderData, Cell, Deserializable, IBitstring,
+    MsgAddressInt, StateInit, read_single_root_boc, write_boc,
+};
+use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
+use chain_rpc_client::v2::data_models::AccountState;
 use colored::Colorize;
 use common::{
     app_config::WalletConfig,
@@ -26,9 +33,6 @@ use secrets_vault::{
     vault::SecretVault,
 };
 use std::{borrow::Cow, io::Write, path::Path, sync::Arc};
-use chain_block::{ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, BuilderData, Cell, IBitstring, MsgAddressInt, write_boc};
-use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-use chain_rpc_client::v2::data_models::AccountState;
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage wallets")]
@@ -145,11 +149,7 @@ pub struct WalletRmCmd {
 pub struct WalletSetVersionCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
-    #[arg(
-        short = 'v',
-        long = "version",
-        help = "New wallet version (V1R3, V3R2, V4R2, V5R1)"
-    )]
+    #[arg(short = 'v', long = "version", help = "New wallet version (V1R3, V3R2, V4R2, V5R1)")]
     version: String,
 }
 
@@ -185,8 +185,20 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Optional message/comment")]
     message: Option<String>,
 
+    #[arg(long, conflicts_with = "message", help = "Exact message body BOC as standard base64")]
+    body_boc: Option<String>,
+
+    #[arg(long, help = "Optional StateInit cell BOC as standard base64")]
+    state_init_boc: Option<String>,
+
     #[arg(long, help = "Confirm the transfer non-interactively")]
     yes: bool,
+
+    #[arg(
+        long,
+        help = "Build and sign the exact external message, emit versioned JSON, and do not broadcast"
+    )]
+    build_only: bool,
     #[arg(long, requires = "config_format")]
     config_fd: Option<i32>,
     #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
@@ -241,10 +253,8 @@ impl WalletCreateCmd {
         vault.flush().await?;
 
         // Parse version
-        let version: common::wallet_version::WalletVersion = self
-            .version
-            .parse()
-            .map_err(|_| {
+        let version: common::wallet_version::WalletVersion =
+            self.version.parse().map_err(|_| {
                 anyhow::anyhow!(
                     "Invalid wallet version '{}'. Use V1R3, V3R2, V4R2, or V5R1",
                     self.version
@@ -253,29 +263,20 @@ impl WalletCreateCmd {
 
         // Add wallet to config
         let wallet_config = common::app_config::WalletConfig {
-            key: common::app_config::KeyConfig::VaultKey {
-                name: secret_name.clone(),
-            },
+            key: common::app_config::KeyConfig::VaultKey { name: secret_name.clone() },
             version,
             subwallet_id: self.subwallet_id,
             workchain: self.workchain,
         };
-        config
-            .wallets
-            .insert(self.name.clone(), wallet_config.clone());
+        config.wallets.insert(self.name.clone(), wallet_config.clone());
         super::utils::save_config(&config, path)?;
 
         // Calculate and display address
         let secret = vault.get(&secret_id).await?;
         if let secrets_vault::types::secret::Secret::KeyPair { keypair } = &secret {
             if let Some(pub_key) = keypair.public_key().await? {
-                let address =
-                    super::utils::calculate_wallet_address(&wallet_config, &pub_key)?;
-                println!(
-                    "\n{} Wallet '{}' created\n",
-                    "OK".green().bold(),
-                    self.name
-                );
+                let address = super::utils::calculate_wallet_address(&wallet_config, &pub_key)?;
+                println!("\n{} Wallet '{}' created\n", "OK".green().bold(), self.name);
                 println!("  Address:  {}", address);
                 println!("  Version:  {}", self.version);
                 println!("  Key:      {} (in vault)", secret_name);
@@ -357,27 +358,14 @@ impl WalletActivateCmd {
             println!("Deploying wallet '{}' ({})...", name, address);
 
             let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, name).await?;
-            let msg = wallet
-                .deploy_message(Self::MIN_BALANCE / 10, Cell::default())
-                .await?;
+            let msg = wallet.deploy_message(Self::MIN_BALANCE / 10, Cell::default()).await?;
             let boc = write_boc(&msg)?;
             rpc_client.send_boc(&boc).await?;
 
-            wait_for_deploy(
-                rpc_client.clone(),
-                &address,
-                &cancellation_ctx,
-                true,
-                DEPLOY_TIMEOUT,
-            )
-            .await?;
+            wait_for_deploy(rpc_client.clone(), &address, &cancellation_ctx, true, DEPLOY_TIMEOUT)
+                .await?;
 
-            println!(
-                "{} Wallet '{}' ({}) activated",
-                "OK".green().bold(),
-                name,
-                address
-            );
+            println!("{} Wallet '{}' ({}) activated", "OK".green().bold(), name, address);
         }
 
         Ok(())
@@ -405,7 +393,9 @@ impl WalletLsCmd {
             _ => anyhow::bail!("--config-fd and --config-format must be used together"),
         };
 
-        if !self.offline && let Err(e) = check_chain_rpc_connection(&rpc_client).await {
+        if !self.offline
+            && let Err(e) = check_chain_rpc_connection(&rpc_client).await
+        {
             if matches!(self.format, OutputFormat::Table) {
                 warn_chain_rpc_unavailable(&e, "State and balances will not be available");
             }
@@ -451,16 +441,18 @@ async fn print_wallets_json(
                         .unwrap_or_else(|_| address.to_string());
                     if offline {
                         (Some(address_str), None, None, None, None)
-                    } else { match rpc_client.get_wallet_information(&address).await {
-                        Ok(info) => (
-                            Some(address_str),
-                            Some(info.account_state.to_string()),
-                            Some(display_tos(info.balance)),
-                            info.wallet_type.map(|t| t.to_string()),
-                            info.seqno,
-                        ),
-                        Err(_) => (Some(address_str), None, None, None, None),
-                    } }
+                    } else {
+                        match rpc_client.get_wallet_information(&address).await {
+                            Ok(info) => (
+                                Some(address_str),
+                                Some(info.account_state.to_string()),
+                                Some(display_tos(info.balance)),
+                                info.wallet_type.map(|t| t.to_string()),
+                                info.seqno,
+                            ),
+                            Err(_) => (Some(address_str), None, None, None, None),
+                        }
+                    }
                 }
                 Err(_) => (None, None, None, None, None),
             };
@@ -483,12 +475,7 @@ async fn print_wallets_table(
     rpc_client: Arc<ClientJsonRpc>,
     offline: bool,
 ) {
-    println!(
-        "\n{} {} ({})\n",
-        "OK".green().bold(),
-        "Wallets:".green(),
-        wallets.len()
-    );
+    println!("\n{} {} ({})\n", "OK".green().bold(), "Wallets:".green(), wallets.len());
     println!(
         "  {:<20} {:<50} {:>15} {:<10} {:<10} {:>6}",
         "Name".cyan().bold(),
@@ -510,33 +497,41 @@ async fn print_wallets_table(
                         .unwrap_or_else(|_| addr.to_string());
 
                     if offline {
-                        (address_str.white(), red_dash.clone(), red_dash.clone(), red_dash.clone(), red_dash.clone())
-                    } else { match rpc_client.get_wallet_information(&addr).await {
-                        Ok(info) => (
-                            address_str.white(),
-                            Cow::Owned(info.account_state.to_string().white()),
-                            Cow::Owned(display_tos(info.balance).white()),
-                            Cow::Owned(
-                                info.wallet_type
-                                    .map(|t| t.to_string())
-                                    .unwrap_or_else(|| "-".to_string())
-                                    .white(),
-                            ),
-                            Cow::Owned(
-                                info.seqno
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|| "-".to_string())
-                                    .white(),
-                            ),
-                        ),
-                        Err(_) => (
+                        (
                             address_str.white(),
                             red_dash.clone(),
                             red_dash.clone(),
                             red_dash.clone(),
                             red_dash.clone(),
-                        ),
-                    } }
+                        )
+                    } else {
+                        match rpc_client.get_wallet_information(&addr).await {
+                            Ok(info) => (
+                                address_str.white(),
+                                Cow::Owned(info.account_state.to_string().white()),
+                                Cow::Owned(display_tos(info.balance).white()),
+                                Cow::Owned(
+                                    info.wallet_type
+                                        .map(|t| t.to_string())
+                                        .unwrap_or_else(|| "-".to_string())
+                                        .white(),
+                                ),
+                                Cow::Owned(
+                                    info.seqno
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "-".to_string())
+                                        .white(),
+                                ),
+                            ),
+                            Err(_) => (
+                                address_str.white(),
+                                red_dash.clone(),
+                                red_dash.clone(),
+                                red_dash.clone(),
+                                red_dash.clone(),
+                            ),
+                        }
+                    }
                 }
                 Err(e) => {
                     let error_message = if e
@@ -575,11 +570,9 @@ impl WalletImportCmd {
         }
 
         // Decode and import private key into vault
-        let private_key_bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &self.private_key,
-        )
-        .context("Invalid base64 private key")?;
+        let private_key_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &self.private_key)
+                .context("Invalid base64 private key")?;
 
         let secret_name = format!("wallet-{}", self.name);
         let secret_id = secret_name.as_str().into();
@@ -594,16 +587,12 @@ impl WalletImportCmd {
             AutoCryptoFactory {}.new_crypto()?,
         )
         .await?;
-        vault
-            .put(&secret, secrets_vault::types::store_mode::StoreMode::CreateOrReplace)
-            .await?;
+        vault.put(&secret, secrets_vault::types::store_mode::StoreMode::CreateOrReplace).await?;
         vault.flush().await?;
 
         // Parse version
-        let version: common::wallet_version::WalletVersion = self
-            .version
-            .parse()
-            .map_err(|_| {
+        let version: common::wallet_version::WalletVersion =
+            self.version.parse().map_err(|_| {
                 anyhow::anyhow!(
                     "Invalid wallet version '{}'. Use V1R3, V3R2, V4R2, or V5R1",
                     self.version
@@ -612,29 +601,20 @@ impl WalletImportCmd {
 
         // Add wallet to config
         let wallet_config = common::app_config::WalletConfig {
-            key: common::app_config::KeyConfig::VaultKey {
-                name: secret_name.clone(),
-            },
+            key: common::app_config::KeyConfig::VaultKey { name: secret_name.clone() },
             version,
             subwallet_id: self.subwallet_id,
             workchain: self.workchain,
         };
-        config
-            .wallets
-            .insert(self.name.clone(), wallet_config.clone());
+        config.wallets.insert(self.name.clone(), wallet_config.clone());
         super::utils::save_config(&config, path)?;
 
         // Calculate and display address
         let imported_secret = vault.get(&secret_id).await?;
         if let secrets_vault::types::secret::Secret::KeyPair { keypair } = &imported_secret {
             if let Some(pub_key) = keypair.public_key().await? {
-                let address =
-                    super::utils::calculate_wallet_address(&wallet_config, &pub_key)?;
-                println!(
-                    "\n{} Wallet '{}' imported\n",
-                    "OK".green().bold(),
-                    self.name
-                );
+                let address = super::utils::calculate_wallet_address(&wallet_config, &pub_key)?;
+                println!("\n{} Wallet '{}' imported\n", "OK".green().bold(), self.name);
                 println!("  Address:  {}", address);
                 println!("  Version:  {}", self.version);
                 println!("  Key:      {} (in vault)", secret_name);
@@ -648,12 +628,7 @@ impl WalletImportCmd {
 impl WalletExportCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         if !self.yes {
-            println!(
-                "{}",
-                "WARNING: Exporting a private key is a security risk!"
-                    .red()
-                    .bold()
-            );
+            println!("{}", "WARNING: Exporting a private key is a security risk!".red().bold());
             println!("The key will be displayed in plaintext. Make sure no one is watching.");
             if !confirm("Continue?")? {
                 println!("{}", "Cancelled".yellow());
@@ -683,29 +658,16 @@ impl WalletExportCmd {
         let address = super::utils::calculate_wallet_address(wallet_cfg, &pub_key)?;
 
         println!();
-        println!(
-            "{} Export for wallet '{}'",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("{} Export for wallet '{}'", "OK".green().bold(), self.name);
         println!("{}", "\u{2500}".repeat(50).dimmed());
-        println!(
-            "  Address:     {}",
-            address
-        );
+        println!("  Address:     {}", address);
         println!(
             "  Public key:  {}",
-            base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &pub_key,
-            )
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &pub_key,)
         );
         println!(
             "  Private key: {}",
-            base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                pvt_key.as_ref(),
-            )
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, pvt_key.as_ref(),)
         );
         println!();
         Ok(())
@@ -746,11 +708,7 @@ impl WalletRmCmd {
 
         config.wallets.remove(&self.name);
         super::utils::save_config(&config, path)?;
-        println!(
-            "\n{} Wallet '{}' removed\n",
-            "OK".green().bold(),
-            self.name
-        );
+        println!("\n{} Wallet '{}' removed\n", "OK".green().bold(), self.name);
         Ok(())
     }
 }
@@ -800,8 +758,7 @@ impl WalletSetVersionCmd {
         wallet_cfg_mut.version = new_version;
 
         // Compute new address
-        let new_address =
-            super::utils::calculate_wallet_address(wallet_cfg_mut, &pub_key)?;
+        let new_address = super::utils::calculate_wallet_address(wallet_cfg_mut, &pub_key)?;
 
         super::utils::save_config(&config, path)?;
 
@@ -860,8 +817,7 @@ impl WalletSendCmd {
         };
         let amount_tos = amount_nanotos as f64 / 1_000_000_000.0;
 
-        if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
-            .contains(&amount_nanotos)
+        if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS)).contains(&amount_nanotos)
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
@@ -882,44 +838,63 @@ impl WalletSendCmd {
             anyhow::bail!("wallet '{}' is uninitialized", self.from);
         }
 
-        let body = if let Some(msg) = &self.message {
-            build_comment_cell(msg)?
-        } else {
-            Cell::default()
+        let body = match (&self.message, &self.body_boc) {
+            (Some(msg), None) => build_comment_cell(msg)?,
+            (None, Some(encoded)) => {
+                read_single_root_boc(base64::engine::general_purpose::STANDARD.decode(encoded)?)?
+            }
+            (None, None) => Cell::default(),
+            _ => anyhow::bail!("--message and --body-boc are mutually exclusive"),
         };
+        let state_init = self
+            .state_init_boc
+            .as_ref()
+            .map(|encoded| -> anyhow::Result<StateInit> {
+                let root = read_single_root_boc(
+                    base64::engine::general_purpose::STANDARD.decode(encoded)?,
+                )?;
+                Ok(StateInit::construct_from_cell(root)?)
+            })
+            .transpose()?;
 
-        println!(
-            "\n{}\n  From:    {} ({})\n  To:      {}\n  Amount:  {:.9} TOS{}\n",
-            "Transfer summary:".cyan().bold(),
-            self.from,
-            from_wallet_address,
-            dest_addr,
-            amount_tos,
-            if let Some(msg) = &self.message {
-                format!("\n  Comment: {}", msg)
-            } else {
-                String::new()
-            },
-        );
+        if !self.build_only {
+            println!(
+                "\n{}\n  From:    {} ({})\n  To:      {}\n  Amount:  {:.9} TOS{}\n",
+                "Transfer summary:".cyan().bold(),
+                self.from,
+                from_wallet_address,
+                dest_addr,
+                amount_tos,
+                if let Some(msg) = &self.message {
+                    format!("\n  Comment: {}", msg)
+                } else {
+                    String::new()
+                },
+            );
 
-        if !self.yes && !confirm("Confirm transfer?")? {
-            println!("{}", "Transfer cancelled".yellow());
-            return Ok(());
+            if !self.yes && !confirm("Confirm transfer?")? {
+                println!("{}", "Transfer cancelled".yellow());
+                return Ok(());
+            }
         }
 
         let msg = wallet
-            .build_message(
-                dest_addr,
-                amount_nanotos,
-                body,
-                false,
-                None,
-                None,
-                None,
-            )
+            .build_message(dest_addr, amount_nanotos, body, false, None, None, state_init)
             .await?;
 
         let msg_boc = write_boc(&msg)?;
+        if self.build_only {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "version": "tosctl.wallet-prepared-send.v1",
+                    "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(&msg_boc),
+                    "wallet": self.from,
+                    "payer": from_wallet_address.to_string(),
+                })
+            );
+            return Ok(());
+        }
         rpc_client.send_boc(&msg_boc).await?;
 
         wait_for_seqno_change(
@@ -945,33 +920,143 @@ mod wallet_send_cli_tests {
     fn parses_exact_nanotos_and_yes() {
         let command = WalletSendCmd::augment_args(Command::new("send"));
         let matches = command
-            .try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount-nanotos", "7", "--yes"])
+            .try_get_matches_from([
+                "send",
+                "--from",
+                "anchor",
+                "--to",
+                "0:abc",
+                "--amount-nanotos",
+                "7",
+                "--yes",
+            ])
             .expect("exact send flags must parse");
         let parsed = WalletSendCmd::from_arg_matches(&matches).expect("parsed send args");
         assert_eq!(parsed.amount_nanotos, Some(7));
         assert_eq!(parsed.amount, None);
         assert!(parsed.yes);
+        assert!(!parsed.build_only);
+    }
+
+    #[test]
+    fn parses_build_only_contract_send() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        let matches = command
+            .try_get_matches_from([
+                "send",
+                "--from",
+                "anchor",
+                "--to",
+                "0:abc",
+                "--amount-nanotos",
+                "7",
+                "--body-boc",
+                "te6ccgEBAQEAAgAAAA==",
+                "--state-init-boc",
+                "te6ccgEBAQEAAgAAAA==",
+                "--build-only",
+            ])
+            .expect("build-only contract send flags must parse");
+        let parsed = WalletSendCmd::from_arg_matches(&matches).expect("parsed send args");
+        assert!(parsed.build_only);
+        assert!(!parsed.yes);
     }
 
     #[test]
     fn rejects_both_amount_forms() {
         let command = WalletSendCmd::augment_args(Command::new("send"));
-        assert!(command.try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount", "1", "--amount-nanotos", "1"]).is_err());
+        assert!(
+            command
+                .try_get_matches_from([
+                    "send",
+                    "--from",
+                    "anchor",
+                    "--to",
+                    "0:abc",
+                    "--amount",
+                    "1",
+                    "--amount-nanotos",
+                    "1"
+                ])
+                .is_err()
+        );
     }
 
     #[test]
     fn parses_inherited_json_config_fd() {
         let command = WalletSendCmd::augment_args(Command::new("send"));
-        let matches = command.try_get_matches_from(["send", "--from", "anchor", "--to", "0:abc", "--amount-nanotos", "1", "--config-fd", "3", "--config-format", "json"]).unwrap();
+        let matches = command
+            .try_get_matches_from([
+                "send",
+                "--from",
+                "anchor",
+                "--to",
+                "0:abc",
+                "--amount-nanotos",
+                "1",
+                "--config-fd",
+                "3",
+                "--config-format",
+                "json",
+            ])
+            .unwrap();
         let parsed = WalletSendCmd::from_arg_matches(&matches).unwrap();
         assert_eq!(parsed.config_fd, Some(3));
         assert_eq!(parsed.config_format.as_deref(), Some("json"));
     }
 
     #[test]
+    fn parses_exact_contract_cell_send() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        let matches = command
+            .try_get_matches_from([
+                "send",
+                "--from",
+                "payer",
+                "--to",
+                "0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "--amount-nanotos",
+                "300000000",
+                "--body-boc",
+                "te6ccgEBAQEAAgAAAA==",
+                "--state-init-boc",
+                "te6ccgEBAQEAAgAAAA==",
+                "--yes",
+            ])
+            .unwrap();
+        let parsed = WalletSendCmd::from_arg_matches(&matches).unwrap();
+        assert!(parsed.body_boc.is_some());
+        assert!(parsed.state_init_boc.is_some());
+        assert!(parsed.yes);
+    }
+
+    #[test]
+    fn rejects_comment_with_contract_body() {
+        let command = WalletSendCmd::augment_args(Command::new("send"));
+        assert!(
+            command
+                .try_get_matches_from([
+                    "send",
+                    "--from",
+                    "payer",
+                    "--to",
+                    "0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "--amount-nanotos",
+                    "1",
+                    "--message",
+                    "x",
+                    "--body-boc",
+                    "AA==",
+                ])
+                .is_err()
+        );
+    }
+
+    #[test]
     fn parses_offline_wallet_listing() {
         let command = WalletLsCmd::augment_args(Command::new("ls"));
-        let matches = command.try_get_matches_from(["ls", "--format", "json", "--offline"]).unwrap();
+        let matches =
+            command.try_get_matches_from(["ls", "--format", "json", "--offline"]).unwrap();
         let parsed = WalletLsCmd::from_arg_matches(&matches).unwrap();
         assert!(parsed.offline);
     }

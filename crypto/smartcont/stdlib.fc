@@ -152,6 +152,9 @@ int slice_hash(slice s) asm "HASHSU";
 ;;; throws a cell underflow exception. The hash value is returned as a 256-bit unsigned integer `x`.
 int string_hash(slice s) asm "SHA256U";
 
+;;; Computes SHA-256 over a byte-aligned canonical snake-cell chain.
+int snake_string_hash(cell c) asm "SHA256C";
+
 {-
   # Signature checks
 -}

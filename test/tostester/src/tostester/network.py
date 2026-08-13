@@ -100,6 +100,7 @@ class Network:
 
             self._keyring: Path = self._directory / "keyring"
             self._keyring.mkdir(parents=True)
+            self._keyring.chmod(0o700)
 
             self._static_nodes: list["DHTNode"] = []
 

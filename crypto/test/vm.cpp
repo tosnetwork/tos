@@ -22,6 +22,7 @@
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/base64.h"
+#include "td/utils/crypto.h"
 #include "td/utils/tests.h"
 #include "vm/cp0.h"
 #include "vm/dict.h"
@@ -91,6 +92,51 @@ void test_run_vm_raw(td::Slice code64) {
 
 TEST(VM, simple) {
   test_run_vm("ABCBABABABA");
+}
+
+TEST(VM, sha256_canonical_snake) {
+  vm::init_vm().ensure();
+  std::string first(120, 'a');
+  std::string second(120, 'b');
+  auto tail = vm::CellBuilder().store_bytes(second).finalize();
+  auto snake = vm::CellBuilder().store_bytes(first).store_ref(tail).finalize();
+  unsigned char opcode[] = {0xf9, 0x03};
+  auto code = to_cell(opcode, 16);
+  vm::Stack stack;
+  stack.push_cell(snake);
+  vm::GasLimits gas_limit(100000, 100000);
+  auto result = vm::run_vm_code(vm::load_cell_slice_ref(code), stack, 0, nullptr, {}, nullptr, &gas_limit,
+                                {}, {}, nullptr, 14);
+  ASSERT_EQ(result, 0);
+  auto actual = stack.pop_int_finite();
+  auto bytes = first + second;
+  auto hash = td::sha256(bytes);
+  td::BigInt256 expected;
+  ASSERT_TRUE(expected.import_bytes(reinterpret_cast<const unsigned char *>(hash.data()), hash.size(), false));
+  ASSERT_EQ(actual->cmp_un(expected), 0);
+}
+
+TEST(VM, sha256_canonical_snake_rejects_aliases_and_old_versions) {
+  vm::init_vm().ensure();
+  unsigned char opcode[] = {0xf9, 0x03};
+  auto code = to_cell(opcode, 16);
+  auto run = [&](td::Ref<vm::Cell> input, int global_version) {
+    vm::Stack stack;
+    stack.push_cell(std::move(input));
+    vm::GasLimits gas_limit(100000, 100000);
+    return vm::run_vm_code(vm::load_cell_slice_ref(code), stack, 0, nullptr, {}, nullptr, &gas_limit,
+                           {}, {}, nullptr, global_version);
+  };
+
+  auto valid = vm::CellBuilder().store_long(0x41, 8).finalize();
+  ASSERT_TRUE(run(valid, 13) != 0);  // SHA256C is activated only at protocol version 14.
+
+  auto non_byte_aligned = vm::CellBuilder().store_long(1, 1).finalize();
+  ASSERT_TRUE(run(non_byte_aligned, 14) != 0);
+
+  auto tail = vm::CellBuilder().store_long(0x42, 8).finalize();
+  auto two_references = vm::CellBuilder().store_ref(tail).store_ref(tail).finalize();
+  ASSERT_TRUE(run(two_references, 14) != 0);
 }
 
 TEST(VM, memory_leak_old) {

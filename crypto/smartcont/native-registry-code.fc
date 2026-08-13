@@ -1,0 +1,1006 @@
+;; Canonical Native Agent and Capability Registry (Phase 5B).
+;; The relayer pays gas but has no authority. Every transition is authorized
+;; by purpose-bounded Ed25519 signatures over the exact TVM action and its
+;; portable Phase 5A commitment.
+
+const int op::submit = 0x4e520001;
+const int op::approve = 0x4e520002;
+const int op::complete = 0x4e520003;
+const int magic::data = 0x4e524432;      ;; NRD2
+const int magic::action = 0x4e525631;    ;; NRV1
+const int magic::state = 0x4e535631;     ;; NSV1
+const int magic::signature = 0x4e534731; ;; NSG1
+
+const int kind::register_agent = 1;
+const int kind::update_policy = 2;
+const int kind::delegate_agent = 3;
+const int kind::initiate_recovery = 4;
+const int kind::recover_agent = 5;
+const int kind::revoke_agent = 6;
+const int kind::register_capability = 7;
+const int kind::update_capability = 8;
+const int kind::transfer_capability = 9;
+const int kind::revoke_capability = 10;
+
+const int purpose::agent_control = 1;
+const int purpose::delegation = 2;
+const int purpose::recovery = 4;
+const int purpose::capability_control = 8;
+const int purpose::known_mask = 2047;
+const int approval_forward_value = 100000000; ;; 0.1 TOS, fees paid by anchor
+
+const int err::bad_message = 2100;
+const int err::wrong_network = 2101;
+const int err::wrong_contract = 2102;
+const int err::bad_action = 2103;
+const int err::bad_predecessor = 2104;
+const int err::bad_sequence = 2105;
+const int err::tombstoned = 2106;
+const int err::bad_policy = 2107;
+const int err::bad_signature = 2108;
+const int err::threshold = 2109;
+const int err::bad_transition = 2110;
+const int err::immutable_version = 2111;
+const int err::timelock = 2112;
+const int err::duplicate_signature = 2113;
+
+;; Every Native object has one deterministic account. This keeps account state
+;; bounded and makes deletion of any gateway/indexer irrelevant.
+;; data = magic:uint32 schema:uint16 object_kind:uint8 object_id:uint256 ^config
+;;        has_state:Bool [^state] has_pending:Bool [approval_mask:uint2 ^action]
+;;        has_completion:Bool [^completion]
+;; Completed Action Anchor state wraps:
+;;        completion_unix_seconds:uint64 completion_lt:uint64
+;;        ^submission ^completion
+;; config = genesis_root:uint256 genesis_file:uint256 network_id_hash:uint256
+;;          ^[workchain:int32 code_hash:uint256 ^network_id ^code]
+(int, int, cell, cell, int, cell, int, cell, int) load_object() inline {
+  slice ds = get_data().begin_parse();
+  throw_unless(err::bad_message, ds~load_uint(32) == magic::data);
+  throw_unless(err::bad_message, ds~load_uint(16) == 1);
+  int object_kind = ds~load_uint(8);
+  int object_id = ds~load_uint(256);
+  cell config = ds~load_ref();
+  int has_state = ds~load_uint(1);
+  cell state = has_state ? ds~load_ref() : null();
+  int has_pending = ds~load_uint(1);
+  cell pending = has_pending ? ds~load_ref() : null();
+  int has_completion = ds~load_uint(1);
+  cell completion = has_completion ? ds~load_ref() : null();
+  ds.end_parse();
+  return (object_kind, object_id, config, state, has_state, pending, has_pending,
+    completion, has_completion);
+}
+
+() save_object(int object_kind, int object_id, cell config, cell state, int has_state,
+    cell pending, int has_pending, cell completion, int has_completion) impure inline {
+  builder out = begin_cell().store_uint(magic::data, 32).store_uint(1, 16)
+    .store_uint(object_kind, 8).store_uint(object_id, 256).store_ref(config)
+    .store_uint(has_state, 1);
+  if (has_state) { out = out.store_ref(state); }
+  out = out.store_uint(has_pending, 1);
+  if (has_pending) { out = out.store_ref(pending); }
+  out = out.store_uint(has_completion, 1);
+  if (has_completion) { out = out.store_ref(completion); }
+  set_data(out.end_cell());
+}
+
+cell initial_data(int object_kind, int object_id, cell config) inline {
+  return begin_cell().store_uint(magic::data, 32).store_uint(1, 16)
+    .store_uint(object_kind, 8).store_uint(object_id, 256).store_ref(config)
+    .store_uint(0, 1).store_uint(0, 1).store_uint(0, 1).end_cell();
+}
+
+cell build_state_init(cell code, cell data) inline {
+  return begin_cell().store_uint(0, 1).store_uint(0, 1)
+    .store_uint(1, 1).store_ref(code).store_uint(1, 1).store_ref(data)
+    .store_uint(0, 1).end_cell();
+}
+
+(int, int, cell) config_runtime(cell config) inline {
+  slice cfg = config.begin_parse();
+  cfg~skip_bits(256 + 256 + 256);
+  slice runtime = cfg~load_ref().begin_parse();
+  int workchain = runtime~load_int(32);
+  int code_hash = runtime~load_uint(256);
+  runtime~load_ref();
+  cell code = runtime~load_ref();
+  throw_unless(err::wrong_contract, cell_hash(code) == code_hash);
+  return (workchain, code_hash, code);
+}
+
+(int, cell) object_state_init(int object_kind, int object_id, cell config) inline {
+  (int workchain, int code_hash, cell code) = config_runtime(config);
+  cell init = build_state_init(code, begin_cell().store_uint(magic::data, 32)
+    .store_uint(1, 16).store_uint(object_kind, 8).store_uint(object_id, 256)
+    .store_ref(config).store_uint(0, 1).store_uint(0, 1).store_uint(0, 1).end_cell());
+  return (workchain, init);
+}
+
+(int, int) object_address(int object_kind, int object_id, cell config) inline {
+  (int workchain, cell init) = object_state_init(object_kind, object_id, config);
+  return (workchain, cell_hash(init));
+}
+
+slice std_address(int workchain, int account) inline {
+  return begin_cell().store_uint(4, 3).store_int(workchain, 8)
+    .store_uint(account, 256).end_cell().begin_parse();
+}
+
+int required_purpose(int kind) inline {
+  if ((kind == kind::register_agent) | (kind == kind::update_policy) | (kind == kind::revoke_agent)) {
+    return purpose::agent_control;
+  }
+  if (kind == kind::delegate_agent) { return purpose::delegation; }
+  if ((kind == kind::initiate_recovery) | (kind == kind::recover_agent)) { return purpose::recovery; }
+  if ((kind >= kind::register_capability) & (kind <= kind::revoke_capability)) { return purpose::capability_control; }
+  throw(err::bad_action);
+  return 0;
+}
+
+;; Returns the current typed policy cell from an Agent state.
+cell state_policy(cell state) inline {
+  slice st = state.begin_parse();
+  throw_unless(err::bad_transition, st~load_uint(32) == magic::state);
+  throw_unless(err::bad_transition, st~load_uint(16) == 1);
+  throw_unless(err::bad_transition, st~load_uint(8) == 1);
+  st~load_uint(1); st~load_uint(64); st~load_uint(64);
+  st~load_uint(256); st~load_uint(256);
+  st~load_ref();
+  slice authority = st~load_ref().begin_parse();
+  authority~load_uint(256); authority~load_uint(256);
+  authority~load_ref(); authority~load_ref();
+  return authority~load_ref();
+}
+
+int state_owner(cell state) inline {
+  slice st = state.begin_parse();
+  st~load_uint(32); st~load_uint(16); st~load_uint(8); st~load_uint(1);
+  st~load_uint(64); st~load_uint(64); st~load_uint(256); st~load_uint(256);
+  slice identity = st~load_ref().begin_parse();
+  identity~load_uint(256); identity~load_uint(256);
+  return identity~load_uint(256);
+}
+
+int same_cell(cell left, cell right) inline {
+  if (cell_null?(left)) { return cell_null?(right); }
+  if (cell_null?(right)) { return 0; }
+  return cell_hash(left) == cell_hash(right);
+}
+
+(int, int, cell, cell, cell) state_collections(cell state) inline {
+  slice st = state.begin_parse();
+  st~skip_bits(32 + 16 + 8 + 1 + 64 + 64 + 256 + 256);
+  st~load_ref(); st~load_ref();
+  slice collections = st~load_ref().begin_parse();
+  int delegation_count = collections~load_uint(16);
+  int version_count = collections~load_uint(16);
+  cell delegations = collections~load_dict();
+  cell versions = collections~load_dict();
+  cell pending = collections~load_ref();
+  return (delegation_count, version_count, delegations, versions, pending);
+}
+
+() require_empty_pending(cell pending) inline {
+  slice p = pending.begin_parse();
+  throw_unless(err::bad_transition, p~load_uint(1) == 0);
+  p.end_parse();
+}
+
+() validate_collections(int kind, cell current, cell next_state, int action_digest,
+    int payload_digest, cell capability_version, cell payload, cell transition_policy) inline_ref {
+  (int new_delegation_count, int new_version_count, cell new_delegations,
+    cell new_versions, cell new_pending) = state_collections(next_state);
+  if (kind == kind::register_agent) {
+    throw_unless(err::bad_transition, (new_delegation_count == 0) & (new_version_count == 0) &
+      cell_null?(new_delegations) & cell_null?(new_versions));
+    require_empty_pending(new_pending);
+    return ();
+  }
+  if (kind == kind::register_capability) {
+    throw_unless(err::bad_transition, (new_delegation_count == 0) & (new_version_count == 1) & cell_null?(new_delegations));
+    int version_hash = capability_version.snake_string_hash();
+    var (entry, found) = new_versions.udict_get?(256, version_hash);
+    throw_unless(err::bad_transition, found);
+    throw_unless(err::bad_transition, entry~load_uint(256) == payload_digest);
+    throw_unless(err::bad_transition, entry~load_uint(1) == 0);
+    require_empty_pending(new_pending);
+    return ();
+  }
+
+  (int old_delegation_count, int old_version_count, cell old_delegations,
+    cell old_versions, cell old_pending) = state_collections(current);
+  if (kind == kind::delegate_agent) {
+    throw_unless(err::bad_transition, (old_delegation_count < 128) & (new_delegation_count == old_delegation_count + 1));
+    var (_, existed) = old_delegations.udict_get?(256, action_digest);
+    throw_unless(err::bad_transition, ~ existed);
+    old_delegations~udict_set_builder(256, action_digest, begin_cell().store_uint(1, 1));
+    throw_unless(err::bad_transition, same_cell(old_delegations, new_delegations));
+    throw_unless(err::bad_transition, (new_version_count == 0) & cell_null?(new_versions));
+    require_empty_pending(new_pending);
+    return ();
+  }
+  if (kind == kind::initiate_recovery) {
+    throw_unless(err::bad_transition, (new_delegation_count == old_delegation_count) &
+      same_cell(old_delegations, new_delegations) & (new_version_count == 0) & cell_null?(new_versions));
+    slice pending = new_pending.begin_parse();
+    throw_unless(err::bad_transition, pending~load_uint(1));
+    throw_unless(err::bad_transition, pending~load_uint(256) == action_digest);
+    slice initiate = transition_policy.begin_parse();
+    initiate~load_uint(32); initiate~load_uint(32); initiate~load_uint(64); initiate~load_uint(8);
+    int expected_policy_digest = initiate~load_uint(256);
+    throw_unless(err::bad_transition, pending~load_uint(256) == expected_policy_digest);
+    int execute_after = pending~load_uint(64);
+    slice initiate_payload = payload.begin_parse();
+    throw_unless(err::bad_transition, initiate_payload~load_uint(8) == kind::initiate_recovery);
+    throw_unless(err::bad_transition, initiate_payload~load_uint(256) == expected_policy_digest);
+    throw_unless(err::bad_transition, initiate_payload~load_uint(64) == execute_after);
+    pending~load_ref();
+    throw_unless(err::bad_transition, cell_hash(pending~load_ref()) == cell_hash(transition_policy));
+    slice old_policy = state_policy(current).begin_parse();
+    old_policy~load_uint(32); old_policy~load_uint(32);
+    int recovery_timelock = old_policy~load_uint(64);
+    int chain_time = now();
+    ;; The offline signer cannot know the future inclusion timestamp. It
+    ;; commits a not-before time; consensus proves it is at least the old
+    ;; canonical policy delay after this initiation's actual chain time.
+    throw_unless(err::timelock, (execute_after >= chain_time) &
+      (execute_after - chain_time >= recovery_timelock));
+    return ();
+  }
+  if ((kind == kind::update_policy) | (kind == kind::recover_agent) | (kind == kind::revoke_agent)) {
+    throw_unless(err::bad_transition, (new_delegation_count == 0) & cell_null?(new_delegations) &
+      (new_version_count == 0) & cell_null?(new_versions));
+    require_empty_pending(new_pending);
+    return ();
+  }
+  if (kind == kind::update_capability) {
+    throw_unless(err::immutable_version, old_version_count < 256);
+    int version_hash = capability_version.snake_string_hash();
+    var (_, existed) = old_versions.udict_get?(256, version_hash);
+    throw_unless(err::immutable_version, ~ existed);
+    old_versions~udict_set_builder(256, version_hash, begin_cell().store_uint(payload_digest, 256).store_uint(0, 1));
+    throw_unless(err::bad_transition, (new_version_count == old_version_count + 1) & same_cell(old_versions, new_versions));
+    require_empty_pending(new_pending);
+    return ();
+  }
+  if (kind == kind::transfer_capability) {
+    throw_unless(err::bad_transition, (new_version_count == old_version_count) & same_cell(old_versions, new_versions));
+    require_empty_pending(new_pending);
+    return ();
+  }
+  if (kind == kind::revoke_capability) {
+    if (capability_version.begin_parse().slice_empty?()) {
+      throw_unless(err::bad_transition, (new_version_count == old_version_count) & same_cell(old_versions, new_versions));
+    } else {
+      int version_hash = capability_version.snake_string_hash();
+      var (entry, existed) = old_versions.udict_get?(256, version_hash);
+      throw_unless(err::immutable_version, existed);
+      int version_payload = entry~load_uint(256);
+      throw_unless(err::immutable_version, entry~load_uint(1) == 0);
+      old_versions~udict_set_builder(256, version_hash, begin_cell().store_uint(version_payload, 256).store_uint(1, 1));
+      throw_unless(err::bad_transition, (new_version_count == old_version_count) & same_cell(old_versions, new_versions));
+    }
+    require_empty_pending(new_pending);
+    return ();
+  }
+  throw(err::bad_transition);
+}
+
+;; Validate a typed policy and return its normal/recovery thresholds.
+(int, int) validate_policy(cell policy, int expected_digest) inline_ref {
+  slice ps = policy.begin_parse();
+  int threshold = ps~load_uint(32);
+  int recovery_threshold = ps~load_uint(32);
+  ps~load_uint(64);
+  int count = ps~load_uint(8);
+  int portable_digest = ps~load_uint(256);
+  throw_unless(err::bad_policy, (threshold > 0) & (recovery_threshold > 0) & (count > 0) & (count <= 64));
+  throw_unless(err::bad_policy, portable_digest == expected_digest);
+  cell cursor = ps~load_ref();
+  cell key_seen = null();
+  cell pub_seen = null();
+  int total = 0;
+  int recovery_total = 0;
+  int i = 0;
+  while (i < count) {
+    slice cs = cursor.begin_parse();
+    int key_hash = cs~load_uint(256);
+    int public_key = cs~load_uint(256);
+    int weight = cs~load_uint(32);
+    int purposes = cs~load_uint(16);
+    int recovery = cs~load_uint(1);
+    cs~load_ref(); ;; exact key ID bytes, checked by resolver against key_hash
+    var (_, duplicate_key) = key_seen.udict_get?(256, key_hash);
+    var (_, duplicate_pub) = pub_seen.udict_get?(256, public_key);
+    throw_unless(err::bad_policy, (~ duplicate_key) & (~ duplicate_pub) & (key_hash != 0) &
+      (public_key != 0) & (weight > 0) & ((purposes & (~ purpose::known_mask)) == 0));
+    key_seen~udict_set_builder(256, key_hash, begin_cell().store_uint(1, 1));
+    pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));
+    total += weight;
+    if (recovery) {
+      throw_unless(err::bad_policy, purposes & purpose::recovery);
+      recovery_total += weight;
+    }
+    i += 1;
+    if (i < count) {
+      throw_unless(err::bad_policy, cs.slice_refs() == 1);
+      cursor = cs~load_ref();
+    } else {
+      throw_unless(err::bad_policy, cs.slice_refs() == 0);
+    }
+  }
+  throw_unless(err::bad_policy, (threshold <= total) & (recovery_threshold <= recovery_total));
+  return (threshold, recovery_threshold);
+}
+
+;; Locate one controller in the canonical linked policy.
+(int, int, int, int) find_controller(cell policy, int wanted) inline_ref {
+  slice ps = policy.begin_parse();
+  ps~load_uint(32); ps~load_uint(32); ps~load_uint(64);
+  int count = ps~load_uint(8); ps~load_uint(256);
+  cell cursor = ps~load_ref();
+  int i = 0;
+  while (i < count) {
+    slice cs = cursor.begin_parse();
+    int key_hash = cs~load_uint(256);
+    int public_key = cs~load_uint(256);
+    int weight = cs~load_uint(32);
+    int purposes = cs~load_uint(16);
+    int recovery = cs~load_uint(1);
+    cs~load_ref();
+    if (key_hash == wanted) { return (public_key, weight, purposes, recovery); }
+    i += 1;
+    if (i < count) { cursor = cs~load_ref(); }
+  }
+  return (0, 0, 0, 0);
+}
+
+() validate_signature_commitment(cell commitment, int key_hash, cell action,
+    int action_digest, int previous_hash, int next_hash, int state_digest,
+    int code_hash, int target_wc, int target_account, int anchor_wc,
+    int anchor_account) inline_ref {
+  slice c = commitment.begin_parse();
+  throw_unless(err::bad_signature, c~load_uint(32) == magic::signature);
+  throw_unless(err::bad_signature, c~load_uint(16) == 1);
+  throw_unless(err::bad_signature, c~load_uint(256) == key_hash);
+  int signed_wc = c~load_int(32);
+  int signed_account = c~load_uint(256);
+  throw_unless(err::wrong_contract, (signed_wc == target_wc) & (signed_account == target_account));
+  slice first = c~load_ref().begin_parse();
+  throw_unless(err::wrong_contract, first~load_uint(256) == code_hash);
+  throw_unless(err::bad_signature, first~load_uint(256) == action_digest);
+  first.end_parse();
+  slice second = c~load_ref().begin_parse();
+  throw_unless(err::bad_signature, second~load_uint(256) == cell_hash(action));
+  throw_unless(err::bad_signature, second~load_uint(256) == previous_hash);
+  throw_unless(err::bad_signature, second~load_uint(256) == next_hash);
+  second.end_parse();
+  slice third = c~load_ref().begin_parse();
+  throw_unless(err::bad_signature, third~load_uint(256) == state_digest);
+  throw_unless(err::wrong_contract, (third~load_int(32) == anchor_wc) &
+    (third~load_uint(256) == anchor_account));
+  third.end_parse(); c.end_parse();
+}
+
+() verify_signatures(cell policy, cell signatures, int required, int recovery_mode,
+    cell action, int action_digest, int previous_hash, int next_hash,
+    int state_digest, int code_hash, int target_wc, int target_account,
+    int anchor_wc, int anchor_account) inline_ref {
+  (int normal_threshold, int recovery_threshold) = validate_policy(policy,
+    policy.begin_parse().skip_bits(32 + 32 + 64 + 8).preload_uint(256));
+  int threshold = recovery_mode ? recovery_threshold : normal_threshold;
+  slice root = signatures.begin_parse();
+  int count = root~load_uint(8);
+  throw_unless(err::threshold, (count > 0) & (count <= 64));
+  cell cursor = root~load_ref();
+  cell seen = null();
+  int weight_total = 0;
+  int i = 0;
+  while (i < count) {
+    slice ss = cursor.begin_parse();
+    int key_hash = ss~load_uint(256);
+    slice signature = ss~load_bits(512);
+    cell commitment = ss~load_ref();
+    var (_, duplicate) = seen.udict_get?(256, key_hash);
+    throw_unless(err::duplicate_signature, ~ duplicate);
+    seen~udict_set_builder(256, key_hash, begin_cell().store_uint(1, 1));
+    (int public_key, int weight, int purposes, int is_recovery) = find_controller(policy, key_hash);
+    throw_unless(err::bad_signature, (public_key != 0) & (purposes & required));
+    if (recovery_mode) { throw_unless(err::bad_signature, is_recovery); }
+    validate_signature_commitment(commitment, key_hash, action, action_digest,
+      previous_hash, next_hash, state_digest, code_hash, target_wc, target_account,
+      anchor_wc, anchor_account);
+    throw_unless(err::bad_signature, check_signature(cell_hash(commitment), signature, public_key));
+    weight_total += weight;
+    i += 1;
+    if (i < count) { cursor = ss~load_ref(); } else { throw_unless(err::bad_signature, ss.slice_refs() == 0); }
+  }
+  throw_unless(err::threshold, weight_total >= threshold);
+}
+
+() send_capability_approval(int target_wc, int target_account, int query_id,
+    int role, int capability_id, cell action, cell authority_state,
+    cell config, int bootstrap) impure inline_ref {
+  slice destination = std_address(target_wc, target_account);
+  builder message = begin_cell().store_uint(0x10, 6).store_slice(destination)
+    .store_tomis(0).store_uint(0, 1 + 4 + 4 + 64 + 32);
+  if (bootstrap) {
+    (int state_wc, cell state_init) = object_state_init(2, capability_id, config);
+    throw_unless(err::wrong_contract, state_wc == target_wc);
+    message = message.store_uint(1, 1).store_uint(1, 1).store_ref(state_init);
+  } else {
+    message = message.store_uint(0, 1);
+  }
+  message = message.store_uint(1, 1).store_ref(begin_cell()
+    .store_uint(op::approve, 32).store_uint(query_id, 64).store_uint(role, 2)
+    .store_ref(action).store_ref(authority_state).end_cell());
+  send_raw_message(message.end_cell(), 64);
+}
+
+() send_agent_submission(int agent_id, int query_id, cell action, cell signatures,
+    cell new_owner_signatures, cell config, int deploy) impure inline_ref {
+  (int target_wc, int target_account) = object_address(1, agent_id, config);
+  slice destination = std_address(target_wc, target_account);
+  builder message = begin_cell().store_uint(0x10, 6).store_slice(destination)
+    .store_tomis(approval_forward_value).store_uint(0, 1 + 4 + 4 + 64 + 32);
+  if (deploy) {
+    (int state_wc, cell state_init) = object_state_init(1, agent_id, config);
+    throw_unless(err::wrong_contract, state_wc == target_wc);
+    message = message.store_uint(1, 1).store_uint(1, 1).store_ref(state_init);
+  } else {
+    message = message.store_uint(0, 1);
+  }
+  message = message.store_uint(1, 1).store_ref(begin_cell()
+    .store_uint(op::submit, 32).store_uint(query_id, 64).store_ref(action)
+    .store_ref(signatures).store_ref(new_owner_signatures).end_cell());
+  send_raw_message(message.end_cell(), 1);
+}
+
+() send_action_complete(int action_digest, int state_hash, int portable_state_digest,
+    cell authority_state, cell new_owner_state, cell config) impure inline_ref {
+  (int target_wc, int target_account) = object_address(3, action_digest, config);
+  cell body = begin_cell().store_uint(op::complete, 32).store_uint(action_digest >> 192, 64)
+    .store_uint(action_digest, 256).store_uint(state_hash, 256)
+    .store_uint(portable_state_digest, 256).store_ref(authority_state)
+    .store_ref(new_owner_state).end_cell();
+  send_raw_message(begin_cell().store_uint(0x10, 6)
+    .store_slice(std_address(target_wc, target_account)).store_tomis(0)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1).store_uint(1, 1).store_ref(body).end_cell(), 64);
+}
+
+() resend_action_complete(cell completion, cell config) impure inline_ref {
+  slice saved = completion.begin_parse();
+  int action_digest = saved~load_uint(256);
+  int state_hash = saved~load_uint(256);
+  int portable_state_digest = saved~load_uint(256);
+  cell authority_state = saved~load_ref();
+  cell new_owner_state = saved~load_ref();
+  saved.end_parse();
+  send_action_complete(action_digest, state_hash, portable_state_digest,
+    authority_state, new_owner_state, config);
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
+  var envelope = in_msg_full.begin_parse();
+  int flags = envelope~load_uint(4);
+  if (flags & 1) { return (); }
+  slice sender = envelope~load_msg_addr();
+  if (in_msg.slice_empty?()) { return (); }
+  int op = in_msg~load_uint(32);
+  throw_unless(err::bad_message, (op == op::submit) | (op == op::approve) | (op == op::complete));
+  int query_id = in_msg~load_uint(64); ;; deterministic query ID
+
+  (int object_kind, int stored_object_id, cell config, cell current, int found,
+    cell pending, int has_pending, cell last_completion, int has_completion) = load_object();
+  throw_unless(err::bad_message, (object_kind >= 1) & (object_kind <= 3));
+  (int own_wc, int own_account) = my_address().parse_std_addr();
+  (int derived_wc, int derived_account) = object_address(object_kind, stored_object_id, config);
+  throw_unless(err::wrong_contract, (own_wc == derived_wc) & (own_account == derived_account));
+
+  if (op == op::complete) {
+    throw_unless(err::bad_message, (object_kind == 3) & found & has_pending);
+    int completed_action_digest = in_msg~load_uint(256);
+    int completed_state_hash = in_msg~load_uint(256);
+    int completed_portable_state = in_msg~load_uint(256);
+    cell completed_authority_state = in_msg~load_ref();
+    cell completed_new_owner_state = in_msg~load_ref();
+    in_msg.end_parse();
+    throw_unless(err::bad_action, completed_action_digest == stored_object_id);
+    slice stored_envelope = current.begin_parse();
+    cell stored_action = stored_envelope~load_ref();
+    slice completed_action = stored_action.begin_parse();
+    completed_action~skip_bits(32 + 16);
+    int completed_kind = completed_action~load_uint(8);
+    int completed_flags = completed_action~load_uint(8);
+    completed_action~skip_bits(64 + 64 + 256 + 256);
+    int signed_next_hash = completed_action~load_uint(256);
+    cell completed_identity = completed_action~load_ref();
+    slice completed_commitments = completed_action~load_ref().begin_parse();
+    completed_commitments~skip_bits(256 + 256);
+    int signed_portable_state = completed_commitments~load_uint(256);
+    slice completed_ids = completed_identity.begin_parse();
+    int completed_agent_id = completed_ids~load_uint(256);
+    int completed_capability_id = completed_ids~load_uint(256);
+    int completed_object_id = (completed_flags & 1) ? completed_capability_id : completed_agent_id;
+    (int completed_sender_wc, int completed_sender_account) = object_address((completed_flags & 1) ? 2 : 1, completed_object_id, config);
+    (int actual_sender_wc, int actual_sender_account) = sender.parse_std_addr();
+    throw_unless(err::bad_policy, (actual_sender_wc == completed_sender_wc) & (actual_sender_account == completed_sender_account));
+    throw_unless(err::bad_transition, (signed_next_hash == completed_state_hash) &
+      (signed_portable_state == completed_portable_state));
+    cell completion = begin_cell().store_uint(completed_state_hash, 256)
+      .store_uint(completed_portable_state, 256).store_ref(completed_authority_state)
+      .store_ref(completed_new_owner_state).end_cell();
+    ;; The completion transaction is immutable evidence for this Action.  Keep
+    ;; consensus time and logical time in the Anchor so a resolver can locate
+    ;; the exact historical transaction after arbitrary later replay traffic.
+    ;; Using the account's latest transaction would make recovery timelocks and
+    ;; portable observations drift whenever the Anchor receives another message.
+    save_object(object_kind, stored_object_id, config,
+      begin_cell().store_uint(now(), 64).store_uint(cur_lt(), 64)
+        .store_ref(current).store_ref(completion).end_cell(), 1,
+      null(), 0, null(), 0);
+    return ();
+  }
+
+  int approval_role = 0;
+  if (op == op::approve) { approval_role = in_msg~load_uint(2); }
+  cell action = in_msg~load_ref();
+  cell approval_authority_state = op == op::approve ? in_msg~load_ref() : null();
+  cell signatures = op == op::submit ? in_msg~load_ref() : begin_cell().store_uint(0, 8).end_cell();
+  cell new_owner_signatures = op == op::submit ? in_msg~load_ref() : begin_cell().store_uint(0, 8).end_cell();
+  in_msg.end_parse();
+
+  slice cfg = config.begin_parse();
+  int expected_root = cfg~load_uint(256);
+  int expected_file = cfg~load_uint(256);
+  int expected_network = cfg~load_uint(256);
+  slice configured_code = cfg~load_ref().begin_parse();
+  int configured_workchain = configured_code~load_int(32);
+  int expected_code_hash = configured_code~load_uint(256);
+  cell configured_network_id = configured_code~load_ref();
+  configured_code~load_ref();
+
+  slice a = action.begin_parse();
+  throw_unless(err::bad_action, a~load_uint(32) == magic::action);
+  throw_unless(err::bad_action, a~load_uint(16) == 1);
+  int kind = a~load_uint(8);
+  int action_flags = a~load_uint(8);
+  int generation = a~load_uint(64);
+  int sequence = a~load_uint(64);
+  int action_digest = a~load_uint(256);
+  int previous_hash = a~load_uint(256);
+  int next_hash = a~load_uint(256);
+  cell identity_cell = a~load_ref();
+  cell commitments_cell = a~load_ref();
+  cell controls_cell = a~load_ref();
+  cell portable_action = a~load_ref();
+  a.end_parse();
+  throw_unless(err::bad_action, portable_action.snake_string_hash() == action_digest);
+
+  slice identity = identity_cell.begin_parse();
+  int agent_id = identity~load_uint(256);
+  int capability_id = identity~load_uint(256);
+  cell capability_version = identity~load_ref();
+  slice network = identity~load_ref().begin_parse();
+  throw_unless(err::wrong_network, network~load_uint(256) == expected_root);
+  throw_unless(err::wrong_network, network~load_uint(256) == expected_file);
+  int contract_wc = network~load_int(32);
+  int contract_account = network~load_uint(256);
+  cell network_id = network~load_ref();
+  slice action_code = network~load_ref().begin_parse();
+  int action_code_hash = action_code~load_uint(256);
+  throw_unless(err::wrong_network, network_id.snake_string_hash() == expected_network);
+  throw_unless(err::wrong_network, cell_hash(network_id) == cell_hash(configured_network_id));
+  throw_unless(err::wrong_contract, (contract_wc == configured_workchain) & (action_code_hash == expected_code_hash));
+
+  slice commitments = commitments_cell.begin_parse();
+  int policy_digest = commitments~load_uint(256);
+  int payload_digest = commitments~load_uint(256);
+  int portable_state_digest = commitments~load_uint(256);
+  commitments~load_ref(); ;; action nonce, already in portable digest
+
+  slice controls = controls_cell.begin_parse();
+  cell payload = controls~load_ref();
+  cell supplied_policy = controls~load_ref();
+  cell transition_policy = controls~load_ref();
+  slice state_pair = controls~load_ref().begin_parse();
+  int has_signed_previous = state_pair~load_uint(1);
+  cell signed_previous = has_signed_previous ? state_pair~load_ref() : null();
+  cell next_state = state_pair~load_ref();
+  state_pair.end_parse();
+  throw_unless(err::bad_transition, cell_hash(next_state) == next_hash);
+  throw_unless(err::bad_transition, next_state.begin_parse().preload_uint(32) == magic::state);
+
+  int capability_action = action_flags & 1;
+  ;; FunC comparisons yield -1 for true, while the encoded bit is 1. Compare
+  ;; booleans rather than their integer representation.
+  throw_unless(err::bad_action, (capability_action != 0) == (kind >= kind::register_capability));
+  int object_id = capability_action ? capability_id : agent_id;
+  throw_unless(err::bad_action, (agent_id != 0) & (object_id != 0));
+  (int target_wc, int target_account) = object_address(capability_action ? 2 : 1, object_id, config);
+  (int action_anchor_wc, int action_anchor_account) = object_address(3, action_digest, config);
+  throw_unless(err::wrong_contract, (contract_wc == target_wc) & (contract_account == target_account));
+  int bootstrap = (kind == kind::register_agent) | (kind == kind::register_capability);
+
+  ;; One immutable Action Anchor per portable Action ID is the canonical
+  ;; no-reference recovery index. Its first transaction persists the exact
+  ;; signed envelope before any downstream mutation is emitted.
+  if (object_kind == 3) {
+    throw_unless(err::bad_message, (op == op::submit) & (stored_object_id == action_digest));
+    cell submission = begin_cell().store_ref(action).store_ref(signatures)
+      .store_ref(new_owner_signatures).end_cell();
+    if (found) {
+      if (has_pending) {
+        throw_unless(err::bad_action, cell_hash(current) == cell_hash(submission));
+      } else {
+        slice completed_submission = current.begin_parse();
+        throw_unless(err::bad_action, cell_hash(completed_submission~load_ref()) == cell_hash(submission));
+        return ();
+      }
+    } else {
+      save_object(object_kind, stored_object_id, config, submission, 1,
+        begin_cell().store_uint(0, 1).end_cell(), 1, null(), 0);
+    }
+    send_agent_submission(agent_id, query_id, action, signatures,
+      new_owner_signatures, config, kind == kind::register_agent);
+    if (kind == kind::transfer_capability) {
+      slice anchor_transfer = payload.begin_parse();
+      anchor_transfer~skip_bits(8 + 256);
+      int anchor_new_owner = anchor_transfer~load_uint(256);
+      throw_unless(err::bad_transition, anchor_new_owner != agent_id);
+      send_agent_submission(anchor_new_owner, query_id, action, signatures,
+        new_owner_signatures, config, 0);
+    }
+    return ();
+  }
+
+  if (kind == kind::register_agent) {
+    slice registration = payload.begin_parse();
+    throw_unless(err::bad_transition, registration~load_uint(8) == kind::register_agent);
+    registration~load_uint(256); registration~load_uint(256); registration~load_ref();
+    throw_unless(err::bad_action, registration~load_ref().snake_string_hash() == agent_id);
+  }
+  if (kind == kind::register_capability) {
+    slice registration = payload.begin_parse();
+    throw_unless(err::bad_transition, registration~load_uint(8) == kind::register_capability);
+    registration~load_uint(256);
+    throw_unless(err::bad_transition, registration~load_uint(256) == agent_id);
+    throw_unless(err::bad_action, registration~load_ref().snake_string_hash() == capability_id);
+  }
+
+  if ((object_kind == 1) & (op == op::submit)) {
+    (int anchor_wc, int anchor_account) = object_address(3, action_digest, config);
+    (int submitter_wc, int submitter_account) = sender.parse_std_addr();
+    throw_unless(err::bad_policy, (submitter_wc == anchor_wc) & (submitter_account == anchor_account));
+  }
+
+  ;; Capability authority is evaluated by the live deterministic Agent
+  ;; contract, never by a policy copied into the Capability contract. The
+  ;; Agent emits an action-bound internal approval; transfer needs one from
+  ;; each owner contract.
+  if ((object_kind == 1) & capability_action) {
+    throw_unless(err::bad_message, op == op::submit);
+    throw_unless(err::bad_policy, found & (stored_object_id != 0));
+    slice live = current.begin_parse();
+    live~skip_bits(32 + 16 + 8);
+    throw_unless(err::tombstoned, live~load_uint(1) == 0);
+    int role = 0;
+    cell role_policy = supplied_policy;
+    cell role_signatures = signatures;
+    int role_policy_digest = policy_digest;
+    if (stored_object_id == agent_id) {
+      role = 1;
+    }
+    if (kind == kind::transfer_capability) {
+      slice transfer_role = payload.begin_parse();
+      transfer_role~load_uint(8);
+      int old_owner_role = transfer_role~load_uint(256);
+      int new_owner_role = transfer_role~load_uint(256);
+      int new_owner_policy_digest = transfer_role~load_uint(256);
+      if (stored_object_id == new_owner_role) {
+        role = 2;
+        role_policy = transition_policy;
+        role_signatures = new_owner_signatures;
+        role_policy_digest = new_owner_policy_digest;
+      }
+      throw_unless(err::bad_transition, (agent_id == old_owner_role) & (old_owner_role != new_owner_role));
+    }
+    throw_unless(err::bad_policy, role != 0);
+    cell live_policy = state_policy(current);
+    throw_unless(err::bad_policy, cell_hash(live_policy) == cell_hash(role_policy));
+    validate_policy(live_policy, role_policy_digest);
+    verify_signatures(live_policy, role_signatures, purpose::capability_control, 0,
+      action, action_digest, previous_hash, next_hash, portable_state_digest,
+      expected_code_hash, target_wc, target_account, action_anchor_wc, action_anchor_account);
+    send_capability_approval(target_wc, target_account, query_id, role,
+      capability_id, action, current, config, kind == kind::register_capability);
+    return ();
+  }
+
+  throw_unless(err::bad_action, capability_action ? (object_kind == 2) : (object_kind == 1));
+  throw_unless(err::bad_message, capability_action ? (op == op::approve) : (op == op::submit));
+  throw_unless(err::bad_action, stored_object_id == object_id);
+  if (found) {
+    slice replay_state = current.begin_parse();
+    replay_state~skip_bits(32 + 16 + 8 + 1 + 64 + 64);
+    if (replay_state~load_uint(256) == action_digest) {
+      throw_unless(err::bad_transition, has_completion);
+      slice saved_completion = last_completion.begin_parse();
+      throw_unless(err::bad_transition, saved_completion~load_uint(256) == action_digest);
+      resend_action_complete(last_completion, config);
+      return ();
+    }
+  }
+  throw_unless(err::bad_predecessor, bootstrap ? (found == 0) : (found != 0));
+  if (bootstrap) {
+    throw_unless(err::bad_sequence, (generation == 1) & (sequence == 1) &
+      (previous_hash == 0) & (has_signed_previous == 0));
+  } else {
+    throw_unless(err::bad_predecessor, has_signed_previous &
+      (cell_hash(current) == previous_hash) & (cell_hash(signed_previous) == previous_hash));
+    slice old = current.begin_parse();
+    throw_unless(err::bad_transition, old~load_uint(32) == magic::state);
+    old~load_uint(16); old~load_uint(8);
+    throw_unless(err::tombstoned, old~load_uint(1) == 0);
+    int old_generation = old~load_uint(64);
+    int old_sequence = old~load_uint(64);
+    if ((kind == kind::recover_agent) | (kind == kind::transfer_capability)) {
+      throw_unless(err::bad_sequence, (generation == old_generation + 1) & (sequence == 1));
+    } else {
+      throw_unless(err::bad_sequence, (generation == old_generation) & (sequence == old_sequence + 1));
+    }
+  }
+
+  ;; Resolve authority only from canonical contract state.
+  cell authority_policy = supplied_policy;
+  if (kind == kind::register_agent) {
+    throw_unless(err::bad_policy, cell_hash(transition_policy) == cell_hash(supplied_policy));
+  } elseif (capability_action == 0) {
+    authority_policy = state_policy(current);
+    throw_unless(err::bad_policy, cell_hash(authority_policy) == cell_hash(supplied_policy));
+  }
+  if (capability_action == 0) {
+    validate_policy(authority_policy, policy_digest);
+    int recovery_mode = (kind == kind::initiate_recovery) | (kind == kind::recover_agent);
+    verify_signatures(authority_policy, signatures, required_purpose(kind), recovery_mode,
+      action, action_digest, previous_hash, next_hash, portable_state_digest,
+      expected_code_hash, target_wc, target_account, action_anchor_wc, action_anchor_account);
+  }
+
+  if (kind == kind::transfer_capability) {
+    slice transfer = payload.begin_parse();
+    throw_unless(err::bad_transition, transfer~load_uint(8) == kind::transfer_capability);
+    int old_owner = transfer~load_uint(256);
+    int new_owner = transfer~load_uint(256);
+    int new_policy_digest = transfer~load_uint(256);
+    throw_unless(err::bad_transition, old_owner == agent_id);
+    throw_unless(err::bad_transition, old_owner != new_owner);
+    validate_policy(transition_policy, new_policy_digest);
+  } elseif (capability_action == 0) {
+    throw_unless(err::bad_signature, new_owner_signatures.begin_parse().preload_uint(8) == 0);
+  }
+
+  int approval_mask = 0;
+  cell approved_authority_state = begin_cell().end_cell();
+  cell approved_new_owner_state = begin_cell().end_cell();
+  if (capability_action) {
+    int owner_id = bootstrap ? agent_id : state_owner(current);
+    throw_unless(err::bad_policy, owner_id == agent_id);
+    int expected_sender_id = owner_id;
+    if (approval_role == 2) {
+      throw_unless(err::bad_transition, kind == kind::transfer_capability);
+      slice transfer_sender = payload.begin_parse();
+      transfer_sender~skip_bits(8 + 256);
+      expected_sender_id = transfer_sender~load_uint(256);
+    } else {
+      throw_unless(err::bad_transition, approval_role == 1);
+    }
+    (int sender_wc, int sender_account) = sender.parse_std_addr();
+    (int expected_sender_wc, int expected_sender_account) = object_address(1, expected_sender_id, config);
+    throw_unless(err::bad_policy, (sender_wc == expected_sender_wc) & (sender_account == expected_sender_account));
+    throw_unless(err::bad_policy,
+      cell_hash(state_policy(approval_authority_state)) == cell_hash(approval_role == 2 ? transition_policy : supplied_policy));
+    approval_mask = approval_role;
+    if (approval_role == 1) { approved_authority_state = approval_authority_state; }
+    if (approval_role == 2) { approved_new_owner_state = approval_authority_state; }
+    if (has_pending) {
+      slice prior_approval = pending.begin_parse();
+      int prior_mask = prior_approval~load_uint(2);
+      cell prior_action = prior_approval~load_ref();
+      throw_unless(err::bad_predecessor, cell_hash(prior_action) == cell_hash(action));
+      cell prior_authority = prior_approval~load_ref();
+      cell prior_new_owner = prior_approval~load_ref();
+      if ((approval_mask & 1) == 0) { approved_authority_state = prior_authority; }
+      if ((approval_mask & 2) == 0) { approved_new_owner_state = prior_new_owner; }
+      approval_mask = prior_mask | approval_role;
+    }
+    if (kind != kind::transfer_capability) {
+      throw_unless(err::bad_transition, approval_mask == 1);
+    }
+  }
+
+  ;; Validate generic next-state commitments. Detailed immutable collections
+  ;; are checked below before the supplied canonical state is stored.
+  slice next = next_state.begin_parse();
+  next~load_uint(32); throw_unless(err::bad_transition, next~load_uint(16) == 1);
+  int next_object_kind = next~load_uint(8);
+  int next_tombstone = next~load_uint(1);
+  throw_unless(err::bad_transition, next_object_kind == (capability_action ? 2 : 1));
+  throw_unless(err::bad_transition, next~load_uint(64) == generation);
+  throw_unless(err::bad_transition, next~load_uint(64) == sequence);
+  throw_unless(err::bad_transition, next~load_uint(256) == action_digest);
+  int next_predecessor_digest = next~load_uint(256);
+  if (bootstrap) {
+    throw_unless(err::bad_transition, next_predecessor_digest == 0);
+  } else {
+    slice old_for_digest = current.begin_parse();
+    old_for_digest~skip_bits(32 + 16 + 8 + 1 + 64 + 64 + 256 + 256);
+    old_for_digest~load_ref(); old_for_digest~load_ref(); old_for_digest~load_ref();
+    cell old_portable = old_for_digest~load_ref();
+    throw_unless(err::bad_transition, next_predecessor_digest == old_portable.snake_string_hash());
+  }
+  cell next_identity = next~load_ref();
+  cell next_authority = next~load_ref();
+  cell next_collections = next~load_ref();
+  cell next_portable = next~load_ref();
+  throw_unless(err::bad_transition, next_portable.snake_string_hash() == portable_state_digest);
+
+  slice ni = next_identity.begin_parse();
+  int next_agent = ni~load_uint(256);
+  int next_capability = ni~load_uint(256);
+  int next_owner = ni~load_uint(256);
+  slice bootstrap_owner = ni~load_ref().begin_parse();
+  int next_bootstrap_owner = bootstrap_owner~load_uint(256);
+  throw_unless(err::bad_transition, capability_action ? ((next_agent == 0) & (next_capability == capability_id)) : ((next_agent == agent_id) & (next_capability == 0)));
+  if (kind == kind::transfer_capability) {
+    slice transfer_again = payload.begin_parse(); transfer_again~load_uint(8); transfer_again~load_uint(256);
+    throw_unless(err::bad_transition, next_owner == transfer_again~load_uint(256));
+  } elseif (capability_action) {
+    throw_unless(err::bad_transition, next_owner == agent_id);
+  }
+
+  slice next_auth = next_authority.begin_parse();
+  int next_policy_digest = next_auth~load_uint(256);
+  int next_bootstrap_policy_digest = next_auth~load_uint(256);
+  cell next_agent_nonce = next_auth~load_ref();
+  cell next_capability_nonce = next_auth~load_ref();
+  if (kind == kind::register_agent) {
+    slice registration = payload.begin_parse(); registration~load_uint(8);
+    registration~load_uint(256); int initial_digest = registration~load_uint(256);
+    registration~load_ref(); registration~load_ref(); cell nonce_string = registration~load_ref();
+    throw_unless(err::bad_transition, (next_policy_digest == initial_digest) &
+      (next_bootstrap_policy_digest == initial_digest) &
+      (cell_hash(next_agent_nonce) == cell_hash(nonce_string)) &
+      next_capability_nonce.begin_parse().slice_empty?());
+    throw_unless(err::bad_transition, cell_hash(next_auth~load_ref()) == cell_hash(supplied_policy));
+  } elseif (kind == kind::register_capability) {
+    slice registration = payload.begin_parse(); registration~load_uint(8);
+    registration~load_uint(256); registration~load_uint(256); registration~load_ref();
+    cell nonce_string = registration~load_ref();
+    throw_unless(err::bad_transition, (next_policy_digest == 0) & (next_bootstrap_policy_digest == 0) &
+      next_agent_nonce.begin_parse().slice_empty?() &
+      (cell_hash(next_capability_nonce) == cell_hash(nonce_string)) &
+      (next_owner == agent_id) & (next_bootstrap_owner == agent_id));
+  } else {
+    slice old_state_identity = current.begin_parse();
+    old_state_identity~skip_bits(32 + 16 + 8 + 1 + 64 + 64 + 256 + 256);
+    cell old_identity = old_state_identity~load_ref();
+    cell old_authority = old_state_identity~load_ref();
+    slice oi = old_identity.begin_parse();
+    oi~load_uint(256); oi~load_uint(256); int old_owner = oi~load_uint(256);
+    slice old_bootstrap_owner_slice = oi~load_ref().begin_parse();
+    int old_bootstrap_owner = old_bootstrap_owner_slice~load_uint(256);
+    slice old_auth = old_authority.begin_parse();
+    int old_policy_digest = old_auth~load_uint(256);
+    int old_bootstrap_policy_digest = old_auth~load_uint(256);
+    cell old_agent_nonce = old_auth~load_ref();
+    cell old_capability_nonce = old_auth~load_ref();
+    throw_unless(err::bad_transition, (next_bootstrap_policy_digest == old_bootstrap_policy_digest) &
+      (cell_hash(next_agent_nonce) == cell_hash(old_agent_nonce)) &
+      (cell_hash(next_capability_nonce) == cell_hash(old_capability_nonce)) &
+      (next_bootstrap_owner == old_bootstrap_owner));
+    if (kind == kind::update_policy) {
+      slice update = payload.begin_parse(); update~load_uint(8);
+      int updated_digest = update~load_uint(256);
+      throw_unless(err::bad_transition, (next_policy_digest == updated_digest) &
+        (cell_hash(next_auth~load_ref()) == cell_hash(transition_policy)));
+    } elseif (kind == kind::recover_agent) {
+      throw_unless(err::bad_transition, next_policy_digest != old_policy_digest);
+      ;; The exact pending policy is compared in the recovery block below.
+      next_auth~load_ref();
+    } elseif (capability_action == 0) {
+      throw_unless(err::bad_transition, (next_policy_digest == old_policy_digest) &
+        (cell_hash(next_auth~load_ref()) == cell_hash(old_auth~load_ref())));
+    } else {
+      throw_unless(err::bad_transition, (next_policy_digest == 0) &
+        (next_bootstrap_policy_digest == 0));
+      if (kind == kind::transfer_capability) {
+        throw_unless(err::bad_transition, next_owner != old_owner);
+      } else {
+        throw_unless(err::bad_transition, next_owner == old_owner);
+      }
+    }
+  }
+
+  ;; Policy/tombstone/recovery invariants that change future authority.
+  if (kind == kind::register_agent) {
+    throw_unless(err::bad_transition, cell_hash(state_policy(next_state)) == cell_hash(supplied_policy));
+  } elseif (kind == kind::update_policy) {
+    throw_unless(err::bad_transition, cell_hash(state_policy(next_state)) == cell_hash(transition_policy));
+  } elseif (kind == kind::recover_agent) {
+    slice old_state = current.begin_parse(); old_state~skip_bits(32 + 16 + 8 + 1 + 64 + 64 + 256 + 256);
+    old_state~load_ref(); old_state~load_ref();
+    slice old_collections = old_state~load_ref().begin_parse();
+    old_collections~load_uint(16); old_collections~load_uint(16); old_collections~load_dict(); old_collections~load_dict();
+    slice pending = old_collections~load_ref().begin_parse();
+    throw_unless(err::bad_transition, pending~load_uint(1));
+    int initiation_digest = pending~load_uint(256);
+    int recovery_policy_digest = pending~load_uint(256);
+    int execute_after = pending~load_uint(64);
+    pending~load_ref(); cell recovery_policy = pending~load_ref();
+    slice recover_payload = payload.begin_parse(); recover_payload~load_uint(8);
+    throw_unless(err::bad_transition, recover_payload~load_uint(256) == recovery_policy_digest);
+    throw_unless(err::bad_transition, recover_payload~load_uint(256) == initiation_digest);
+    throw_unless(err::timelock, (recover_payload~load_uint(64) == execute_after) & (now() >= execute_after));
+    throw_unless(err::bad_transition, next_policy_digest == recovery_policy_digest);
+    throw_unless(err::bad_transition, cell_hash(state_policy(next_state)) == cell_hash(recovery_policy));
+  } elseif (capability_action == 0) {
+    throw_unless(err::bad_transition, cell_hash(state_policy(next_state)) == cell_hash(state_policy(current)));
+  }
+  if ((kind == kind::revoke_agent) | ((kind == kind::revoke_capability) & (capability_version.begin_parse().slice_empty?()))) {
+    throw_unless(err::bad_transition, next_tombstone);
+  } else {
+    throw_unless(err::bad_transition, next_tombstone == 0);
+  }
+
+  if ((kind == kind::revoke_agent) | (kind == kind::revoke_capability)) {
+    slice revoke_payload = payload.begin_parse(); revoke_payload~load_uint(8);
+    int scope = revoke_payload~load_uint(8);
+    if (kind == kind::revoke_agent) {
+      throw_unless(err::bad_transition, scope == 1);
+    } elseif (capability_version.begin_parse().slice_empty?()) {
+      throw_unless(err::bad_transition, scope == 2);
+    } else {
+      throw_unless(err::bad_transition, scope == 3);
+    }
+  }
+
+  validate_collections(kind, current, next_state, action_digest, payload_digest,
+    capability_version, payload, transition_policy);
+
+  if (capability_action & (kind == kind::transfer_capability) & (approval_mask != 3)) {
+    save_object(object_kind, stored_object_id, config, current, found,
+      begin_cell().store_uint(approval_mask, 2).store_ref(action)
+        .store_ref(approved_authority_state).store_ref(approved_new_owner_state).end_cell(), 1,
+      last_completion, has_completion);
+    return ();
+  }
+  cell final_authority_state = capability_action ? approved_authority_state : next_state;
+  cell completion_record = begin_cell().store_uint(action_digest, 256)
+    .store_uint(next_hash, 256).store_uint(portable_state_digest, 256)
+    .store_ref(final_authority_state).store_ref(approved_new_owner_state).end_cell();
+  save_object(object_kind, stored_object_id, config, next_state, 1, null(), 0,
+    completion_record, 1);
+  send_action_complete(action_digest, next_hash, portable_state_digest,
+    final_authority_state, approved_new_owner_state, config);
+}
+
+(cell, int) get_native_registry_state() method_id {
+  (int object_kind, int object_id, cell config, cell state, int found,
+    cell pending, int has_pending, cell completion, int has_completion) = load_object();
+  return (state, found);
+}
+
+(int, int, int, int, int, int, int) get_native_registry_config() method_id {
+  (int object_kind, int object_id, cell config, cell state, int found,
+    cell pending, int has_pending, cell completion, int has_completion) = load_object();
+  slice cfg = config.begin_parse();
+  int root_hash = cfg~load_uint(256);
+  int file_hash = cfg~load_uint(256);
+  int network_hash = cfg~load_uint(256);
+  slice code_hash_cell = cfg~load_ref().begin_parse();
+  code_hash_cell~load_int(32);
+  return (object_kind, object_id, root_hash, file_hash, network_hash,
+    code_hash_cell~load_uint(256), has_pending);
+}

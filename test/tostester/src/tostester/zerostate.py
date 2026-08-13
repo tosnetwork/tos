@@ -30,7 +30,7 @@ class SimplexConsensusConfig:
 class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
-    global_version: int = 13
+    global_version: int = 14
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -233,7 +233,7 @@ Masterchain swap
  * Configuration Parameters
  *
  */
-// version capabilities (aligned with production: version=13, capabilities=494)
+// version capabilities (Native Registry SHA256C requires version 14)
 {global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or {aipow_capability} or config.version!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
