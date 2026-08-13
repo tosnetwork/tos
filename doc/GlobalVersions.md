@@ -459,16 +459,30 @@ audits in gate 4 still stand.
 Gate 2 is resolved in code; gate 3's native anchor is done (its residue is
 operational — governance deploys/registers the real threshold multisig, folded into
 gate 5). Gate 1 is only PARTIALLY resolved: a codex review reopened it (**C1**,
-above) and surfaced a second Critical (**C2**: base grams are counted in
-`value_flow_.minted` before the settle transaction, and validation never requires the
+above) and surfaced a second Critical (**C2**: base grams were counted in
+`value_flow_.minted` before the settle transaction, and validation never required the
 settle to succeed — so a settle that throws/out-of-gas/bounces, or is preempted by an
 in-block `skip`, creates supply the settlement ledger never records, permitting
-re-mint of one epoch and issuance past the cap). Both C1 and C2 are hard mainnet
-blockers with decided fixes in the Phase C design doc's codex-findings ledger
-(address-binding for C1; atomic issuance/settle for C2), alongside H1-H4/M3/L2. The
-native-only robustness batch M1/M2/L1 is fixed in code. Until C1, C2, and gates 3-6
-are closed, native AIPoW minting is **testnet/devnet only** and must remain
-unactivatable on mainnet.
+re-mint of one epoch and issuance past the cap).
+
+**C2's safety half is now resolved in code + e2e.** validate-query ties base-gram
+issuance to the settlement's own ledger: it requires the settlement account's
+`minted_total` to advance, between the previous and new state, by exactly the
+re-derived mint amount, and rejects (fail closed) otherwise — so a settle that fails
+to record the mint halts issuance instead of leaking uncounted, cap-bypassing,
+re-mintable supply. The full-node native-mint e2e passes with the guard active (mint
+fires, `minted_total == pool`, cursor advances). What remains for C2 is the
+*liveness* half — the collator should not emit the mint unless the settle will record
+it (derive from post-dispatch state + fund the settle), so the fail-closed guard does
+not merely stall a bad-config/attacked epoch; that is a follow-up, not a safety hole.
+
+**C1 remains a hard mainnet blocker.** Its decided fix (bind the account id to the
+canonical StateInit of the audited code) requires the audited commitment code cell's
+repr-hash **and depth** in the registry plus byte-exact initial-data reconstruction in
+native — a further ConfigParam-93 expansion, scoped in the design doc's codex-findings
+ledger (alongside H1-H4/M3/L2). The native-only robustness batch M1/M2/L1 is fixed in
+code. Until C1, C2's liveness half, and gates 3-6 are closed, native AIPoW minting is
+**testnet/devnet only** and must remain unactivatable on mainnet.
 
 ## Rollout plan
 
