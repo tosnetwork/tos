@@ -370,27 +370,34 @@ governance-ratified. (They are safe to exercise on a throwaway localnet/testnet
 for development.) The blockers were surfaced by the Phase C consensus reviews and
 are also tracked in the Phase C plan's launch-gate section.
 
-1. **Commitment finalization provenance (forged-mint blocker).** The native path
-   pins a registered commitment's **code** hash but cannot, from state alone,
-   prove its finalization was legitimate. `window_deadline` is a commitment
-   *deploy parameter*, so an attacker can deploy the audited commitment code with
-   a **past** window and a fabricated `(score_root, total_score, organic)` tuple,
-   call `finalize` instantly (no real challenge window ever opened), register, and
-   mint a forged pool (up to `schedule_cap`/epoch, `total_cap` cumulatively, paid
-   to an attacker-chosen score root). **Before activation:** the commitment must
-   enforce a **code-measured** challenge window (a `committed_at` recorded by the
-   contract plus a fixed minimum duration, so the window cannot be a
-   deploy-chosen past value). See the `derive_masterchain_epoch_mint` code-hash
-   check in `crypto/block/aipow.cpp` and the commitment FunC header.
+1. **Commitment finalization provenance — RESOLVED.** The native path pins a
+   registered commitment's **code** hash but cannot, from state alone, prove its
+   finalization was legitimate; `window_deadline` is a commitment *deploy
+   parameter*, so an attacker could once deploy the audited code with a **past**
+   window and a fabricated `(score_root, total_score, organic)` tuple, call
+   `finalize` instantly, and mint a forged pool. Fixed by anchoring the challenge
+   window to the settlement's own clock, which the committer cannot backdate: the
+   commitment now registers at **commit (`announce`)**, not finalize, so the
+   settlement records `registered_at` early while the challenge op is open; and
+   the native path authorizes a candidate only when its `window_deadline >=
+   registered_at + challenge_window` (the window was demonstrably open) **and**
+   `gen_utime >= registered_at + challenge_window` (it has elapsed). A fabricated
+   commitment must therefore sit through a real, observable dispute window and can
+   no longer be finalized instantly. See `derive_masterchain_epoch_mint` /
+   `kAipowChallengeWindow` in `crypto/block/aipow.cpp` and the commitment FunC
+   `announce` handler. **Remaining before activation:** promote
+   `kAipowChallengeWindow` to a governed config param and enforce
+   `challenge_window < register_grace` (else a valid candidate's epoch could
+   become skippable before its window elapses); and finalize gate 3.
 2. **First-wins registration griefing — RESOLVED.** `register` was once
    first-wins per epoch, letting an attacker's bogus nomination block the genuine
    commitment and freeze the cursor. Now the settlement keeps a **bounded
    candidate set** per epoch (retaining the smallest addresses), `skip` advances
    past the grace deadline regardless of candidates, and the native path selects
    the **min-address valid** finalized commitment — so a bogus nomination can
-   neither exclude the genuine commitment nor freeze the cursor. (Its full
-   resistance still depends on gate 1: a bogus *valid* candidate is only cheap
-   because of the provenance flaw.) No longer an activation blocker on its own.
+   neither exclude the genuine commitment nor freeze the cursor. The
+   address-grindable min-address tie-break is safe only because gate 1 now forces
+   every candidate through a real, elapsed challenge window before selection.
 3. **Threshold reviewer policy.** Once `status == final` authorizes native
    issuance, whoever can set final/rejected controls minting. A single reviewer
    is acceptable only on devnet/testnet; mainnet requires a governance-approved
