@@ -579,6 +579,27 @@ miniature).
      `commitment_code_hash` **==** the code the deployed commitments actually run
      (else C1 address binding rejects them).
 
+   The following are **not** consensus-enforced (a second review flagged them as
+   governance-trust boundaries; they are left as hard invariants here rather than
+   coded checks). Governance MUST uphold them or issuance can be forged or the cap
+   bypassed:
+   - **`settlement_addr` is immutable after activation** (round-2 C1). The supply cap
+     is tracked only in the settlement's `minted_total`; there is no chain-global
+     counter. Rotating the settlement to a fresh account resets the cap to zero.
+     Never change `settlement_addr` without an explicit ledger migration that carries
+     the old cumulative `minted_total`.
+   - **The account at `settlement_addr` runs the audited settlement code** (round-2
+     C2a). The registry pins the commitment code but not the settlement code; the
+     native trusts the configured address. Verify the deployed settlement's code hash
+     is the audited one (it is, by address binding, iff `settlement_addr` was computed
+     from the audited settlement `StateInit`) — a non-audited settlement could mint the
+     same epoch repeatedly or reset its ledger.
+   - **ConfigParam 91 maturation == the settlement's stored maturation, and the
+     settlement's `distributor_code` is an audited one** matching ConfigParam 93's
+     `distributor_code_hashes` (round-2 M6; the native does not cross-check these). A
+     mismatch lets a distributor over-pay early claimants and drain the pool, or (with
+     a zero maturation field) strand it.
+
 6. **Supply-cap dry-run (gate 6).** Simulate the ~7-year emission schedule under
    adversarial demand and confirm cumulative emission ≤ the cap (the native clamps
    each pool to the remaining cap and terminates at exhaustion; the dry-run confirms
