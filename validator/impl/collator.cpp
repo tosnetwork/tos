@@ -3311,8 +3311,16 @@ bool Collator::create_special_transaction(block::CurrencyCollection amount, Ref<
  */
 bool Collator::create_special_transactions() {
   CHECK(is_masterchain());
+  // value_flow_.minted aggregates two disjoint mints by currency type: extra
+  // currencies (ConfigParam 7 vs global balance) go to the ConfigParam-2 minter,
+  // and the Phase C AIPoW base-gram mint goes to the settlement via its own
+  // message. Split them so each special message carries exactly its own value:
+  // the ConfigParam-2 message gets the extra part with tomis zeroed (unchanged
+  // from before AIPoW, since the extra-currency mint never mints base grams).
+  block::CurrencyCollection minter_minted = value_flow_.minted;
+  minter_minted.tomis = td::make_refint(0);
   return create_special_transaction(value_flow_.recovered, config_->get_config_param(3, 1), recover_create_msg_) &&
-         create_special_transaction(value_flow_.minted, config_->get_config_param(2, 0), mint_msg_) &&
+         create_special_transaction(minter_minted, config_->get_config_param(2, 0), mint_msg_) &&
          create_aipow_mint_transaction();
 }
 
