@@ -43,6 +43,8 @@ const ERR_UNKNOWN_OP: i32 = 2307;
 const ERR_EPOCH_TOO_FAR: i32 = 2310;
 const ERR_CURSOR_EXHAUSTED: i32 = 2311;
 const ERR_UNAUTHORIZED_REGISTRATION: i32 = 2312;
+const ERR_INSUFFICIENT_BOND: i32 = 2313;
+const ERR_TOO_LATE_TO_REGISTER: i32 = 2314;
 
 /// Mirrors the contract's REGISTER_HORIZON: the furthest future epoch, relative
 /// to the cursor, a registration may target.
@@ -126,7 +128,7 @@ impl Fixture {
     }
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> tos_sandbox::SendResult {
-        self.send_from_value(from, body, TOS / 10)
+        self.send_from_value(from, body, TOS)
     }
 
     fn send_from_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> tos_sandbox::SendResult {
@@ -328,8 +330,8 @@ fn register_records_multiple_candidates_and_dedups_per_commitment() {
 
     // Two different commitments nominate the SAME epoch -- both are candidates
     // (no first-wins). A bogus nomination cannot exclude a genuine one.
-    f.register(&a, 1, epoch, [0xAB; 32], 1_000_000, 42 * TOS as u128, TOS / 10).expect_success();
-    f.register(&b, 2, epoch, [0xCD; 32], 2_000_000, 7, TOS / 10).expect_success();
+    f.register(&a, 1, epoch, [0xAB; 32], 1_000_000, 42 * TOS as u128, TOS).expect_success();
+    f.register(&b, 2, epoch, [0xCD; 32], 2_000_000, 7, TOS).expect_success();
     assert_eq!(f.candidate_count(epoch), 2);
 
     let ca = f.candidate(epoch, account_id(&a.0)).expect("a is a candidate");
@@ -340,7 +342,7 @@ fn register_records_multiple_candidates_and_dedups_per_commitment() {
     assert_eq!(cb.score_root, [0xCD; 32]);
 
     // A single commitment (same address) may nominate an epoch at most once.
-    f.register(&a, 3, epoch, [0xEE; 32], 5, 5, TOS / 10).expect_exit_code(ERR_ALREADY_REGISTERED);
+    f.register(&a, 3, epoch, [0xEE; 32], 5, 5, TOS).expect_exit_code(ERR_ALREADY_REGISTERED);
     assert_eq!(f.candidate_count(epoch), 2);
     // The first nomination is untouched.
     assert_eq!(f.candidate(epoch, account_id(&a.0)).unwrap().score_root, [0xAB; 32]);
@@ -354,9 +356,44 @@ fn register_rejects_settled_epoch_and_zero_total_score() {
 
     // epoch_settled and zero_total_score are checked before the H1 auth, so a
     // canonical nominator still trips them.
-    f.register(&n, 1, next_epoch - 1, [0xAB; 32], 1_000_000, 1, TOS / 10).expect_exit_code(ERR_EPOCH_SETTLED);
-    f.register(&n, 2, next_epoch, [0xAB; 32], 0, 1, TOS / 10).expect_exit_code(ERR_ZERO_TOTAL_SCORE);
+    f.register(&n, 1, next_epoch - 1, [0xAB; 32], 1_000_000, 1, TOS).expect_exit_code(ERR_EPOCH_SETTLED);
+    f.register(&n, 2, next_epoch, [0xAB; 32], 0, 1, TOS).expect_exit_code(ERR_ZERO_TOTAL_SCORE);
     assert_eq!(f.candidate_count(next_epoch), 0);
+}
+
+#[test]
+fn register_rejects_a_bond_below_the_minimum() {
+    // H1 economic close: a nomination must lock at least MIN_REGISTRATION_BOND
+    // (0.5 TOS), so grinding many junk candidates to evict a genuine one costs at
+    // least that per slot per epoch.
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch;
+    let n = nominator(1);
+    f.register(&n, 1, epoch, [0xAB; 32], 1_000_000, 1, 4 * TOS / 10)
+        .expect_exit_code(ERR_INSUFFICIENT_BOND); // 0.4 TOS < 0.5
+    assert_eq!(f.candidate_count(epoch), 0, "no candidate admitted below the bond");
+    f.register(&n, 2, epoch, [0xAB; 32], 1_000_000, 1, TOS).expect_success();
+    assert_eq!(f.candidate_count(epoch), 1);
+}
+
+#[test]
+fn register_rejects_a_nomination_too_late_for_its_challenge_window() {
+    // H2: a nomination whose challenge window would not elapse before the epoch
+    // becomes skippable is rejected, so a genuine but late candidate can never be
+    // stranded by a skip that fires while it is still inside its provenance window.
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch;
+    let n = nominator(1);
+    let skippable_at = (epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;
+    // At the cutoff the window just fits (boundary is inclusive: now + window == deadline).
+    f.bc.set_now((skippable_at - CHALLENGE_WINDOW as u64) as u32);
+    f.register(&n, 1, epoch, [0xAB; 32], 1_000_000, 1, TOS).expect_success();
+    assert_eq!(f.candidate_count(epoch), 1);
+    // One second later the window would end after the skip deadline -> too late.
+    let late = nominator(2);
+    f.bc.set_now((skippable_at - CHALLENGE_WINDOW as u64 + 1) as u32);
+    f.register(&late, 1, epoch, [0xAB; 32], 1_000_000, 1, TOS).expect_exit_code(ERR_TOO_LATE_TO_REGISTER);
+    assert_eq!(f.candidate_count(epoch), 1, "the late nomination is not admitted");
 }
 
 #[test]
@@ -369,7 +406,8 @@ fn register_rejects_a_non_canonical_sender() {
     let epoch = f.next_epoch;
     let impostor = f.committer.address().clone();  // a wallet, not a canonical commitment
     let body = AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 1, commitment_code()).unwrap();
-    f.send_from(&impostor, body).expect_exit_code(ERR_UNAUTHORIZED_REGISTRATION);
+    // Carry a sufficient bond so the auth check (not the bond check) is what rejects.
+    f.send_from_value(&impostor, body, TOS).expect_exit_code(ERR_UNAUTHORIZED_REGISTRATION);
     assert_eq!(f.candidate_count(epoch), 0, "no candidate admitted");
 }
 
@@ -397,7 +435,7 @@ fn skip_advances_a_registered_epoch_past_grace_so_a_bogus_nomination_cannot_free
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
     let attacker = nominator(1);
-    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS / 10).expect_success();
+    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
     let skippable_at = (next_epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;
     f.bc.set_now(skippable_at as u32);
@@ -490,7 +528,7 @@ fn derived_distributor_address_matches_a_real_deployment() {
     // An unregistered candidate has no derivable distributor.
     assert_eq!(f.derived_distributor(epoch, winner, pool), None, "no derivation before registration");
 
-    f.register(&n, 1, epoch, score_root, total_score, 9 * TOS as u128, TOS / 10).expect_success();
+    f.register(&n, 1, epoch, score_root, total_score, 9 * TOS as u128, TOS).expect_success();
 
     let derived = f.derived_distributor(epoch, winner, pool).expect("derivable after registration");
     let init = expected_distributor_init(&settlement, winner, epoch, total_score, pool, score_root);
@@ -521,7 +559,7 @@ fn settle_deploys_and_funds_the_winners_distributor_and_advances_the_ledger() {
     let score_root = [0xA7; 32];
     let pool = 7 * TOS;
 
-    f.register(&n, 1, next_epoch, score_root, total_score, 5 * TOS as u128, TOS / 10).expect_success();
+    f.register(&n, 1, next_epoch, score_root, total_score, 5 * TOS as u128, TOS).expect_success();
     let derived = f.derived_distributor(next_epoch, winner, pool).expect("derivable");
     assert_eq!(f.balance_of(&derived), 0, "distributor not yet deployed");
 
@@ -553,7 +591,7 @@ fn a_settle_message_from_a_non_minter_does_not_settle() {
     let n = nominator(1);
     let winner = account_id(&n.0);
 
-    f.register(&n, 1, next_epoch, [0xAB; 32], 1_000_000, 1, TOS / 10).expect_success();
+    f.register(&n, 1, next_epoch, [0xAB; 32], 1_000_000, 1, TOS).expect_success();
     // A winner-id body from a non-minter is a no-op (it parses as an unknown op,
     // not a settle -- only the authenticated minter settles).
     let impostor = f.committer.address().clone();
@@ -604,7 +642,7 @@ fn settle_prunes_the_settled_epochs_candidate_bucket() {
     let winner = account_id(&n.0);
     let pool = 7 * TOS;
 
-    f.register(&n, 1, next_epoch, [0xA7; 32], 3_000_000, 5 * TOS as u128, TOS / 10).expect_success();
+    f.register(&n, 1, next_epoch, [0xA7; 32], 3_000_000, 5 * TOS as u128, TOS).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
 
     f.mint(winner, pool).expect_success();
@@ -621,7 +659,7 @@ fn skip_prunes_the_skipped_epochs_candidate_bucket() {
     let next_epoch = f.next_epoch;
     let attacker = nominator(1);
     // A bogus nomination for the cursor epoch.
-    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS / 10).expect_success();
+    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
 
     let skippable_at = (next_epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;

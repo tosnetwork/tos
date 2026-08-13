@@ -68,7 +68,8 @@
 ;;                     total_score:uint128 organic_settled_value:uint128
 ;;                     ^nominator_data = InternalMsgBody;
 ;;       (nominator_data is the sender's deploy data cell, used to authenticate that
-;;        sender == hash(StateInit(commitment_code, nominator_data)).)
+;;        sender == hash(StateInit(commitment_code, nominator_data)). The message must
+;;        also carry >= MIN_REGISTRATION_BOND grams (the H1 economic-close bond).)
 ;;   skip#41505302 query_id:uint64 = InternalMsgBody;
 ;;   (settle) winner_id:uint256, from the minter -1:00..00.
 
@@ -89,6 +90,8 @@ const int err::candidate_set_full = 2309;   ;; the epoch's candidate set is full
 const int err::epoch_too_far = 2310;        ;; register targets an epoch beyond the horizon
 const int err::cursor_exhausted = 2311;     ;; the uint32 epoch cursor cannot advance further
 const int err::unauthorized_registration = 2312; ;; sender is not a canonical commitment
+const int err::insufficient_bond = 2313;    ;; register carries less than the minimum bond
+const int err::too_late_to_register = 2314; ;; the challenge window cannot elapse before skip
 
 ;; The settlement version this code understands.
 const int settlement_version = 1;
@@ -107,6 +110,14 @@ const int MAX_CANDIDATES = 8;
 const int REGISTER_HORIZON = 1024;
 ;; The epoch cursor is a uint32 field; it cannot advance past this value.
 const int MAX_EPOCH = 0xffffffff;
+;; Minimum value a `register` must carry (H1 economic close). A nominator locks
+;; this bond per candidate slot, so grinding out MAX_CANDIDATES small canonical
+;; addresses to evict a genuine commitment costs at least MAX_CANDIDATES x this per
+;; epoch. Non-refundable -- it accumulates in this account, funding its own gas +
+;; the per-settle forward reserve. A code constant: the audited settlement is
+;; governance-deployed, so this is a governed protocol value (raise it, with the
+;; commitment's registration value and deploy funding, for a stronger deterrent).
+const int MIN_REGISTRATION_BOND = 500000000;  ;; 0.5 TOS
 
 (int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -346,11 +357,22 @@ cell build_state_init(cell code, cell data) inline {
     ;; carried so this account can bind the nomination to a canonical commitment.
     cell nominator_data = in_msg~load_ref();
     in_msg.end_parse();
+    ;; H1 economic close: a nomination must lock the minimum bond, so filling the
+    ;; bounded candidate set with ground-out small addresses is costly per epoch.
+    throw_unless(err::insufficient_bond, msg_value >= MIN_REGISTRATION_BOND);
     throw_unless(err::epoch_settled, epoch >= next_epoch);
     ;; Bound the future horizon so registration spam for far-future epochs cannot
     ;; grow the registrations state without bound (settled/skipped buckets prune as
     ;; the cursor advances, so live buckets stay <= REGISTER_HORIZON).
     throw_unless(err::epoch_too_far, epoch < next_epoch + REGISTER_HORIZON);
+    ;; H2: the candidate's challenge window must be able to elapse before this epoch
+    ;; becomes skippable, else a permissionless skip past grace could advance the
+    ;; cursor while the candidate is still inside its (provenance) window and strand a
+    ;; genuine but late nomination. Reject a registration too late to finish its
+    ;; window in time; the window then always closes before the epoch is skippable, so
+    ;; skip never preempts an in-window candidate (skip logic stays unchanged).
+    throw_unless(err::too_late_to_register,
+      now() + challenge_window <= (epoch + 1) * epoch_seconds + register_grace);
     throw_unless(err::zero_total_score, total_score > 0);
     (int wc, int id) = addr_parts(sender);
     ;; H1 (Sybil admission): the candidate set is keyed by -- and evicted by -- the

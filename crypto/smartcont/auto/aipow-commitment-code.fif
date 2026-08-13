@@ -153,7 +153,7 @@ PROGRAM{
       6 STU	//  settlement body _30=1 _31=0 _32=0 _36
       s0 s5 XCHG2	//  _32=0 body _30=1 _31=0 _36 settlement
       STSLICER	//  _32=0 body _30=1 _31=0 _37
-      200000000 PUSHINT	//  _32=0 body _30=1 _31=0 _37 _38=200000000
+      600000000 PUSHINT	//  _32=0 body _30=1 _31=0 _37 _38=600000000
       STTOMIS	//  _32=0 body _30=1 _31=0 _39
       s1 s4 XCHG	//  _31=0 body _30=1 _32=0 _39
       105 STU	//  _31=0 body _30=1 _49

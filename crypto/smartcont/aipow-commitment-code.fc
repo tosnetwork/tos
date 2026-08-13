@@ -88,10 +88,11 @@ const int settlement_op::register = 0x41505301;
 ;; The commitment layout version this code understands (D9).
 const int commitment_version = 1;
 
-;; Value attached to the announce registration so the settlement funds its own
-;; gas/storage for recording the nomination. v0 draft constant.
-const int registration_value = 200000000;  ;; 0.2 TOS (funds the settlement's
-                                            ;; candidate-set register gas on masterchain)
+;; Value attached to the announce registration. Must be >= the settlement's
+;; MIN_REGISTRATION_BOND (the H1 economic-close bond) with a small margin for the
+;; register gas; the settlement rejects a nomination carrying less. Kept below the
+;; deploy funding margin so a finalize can still return the commit_bond.
+const int registration_value = 600000000;  ;; 0.6 TOS (>= settlement MIN_REGISTRATION_BOND 0.5)
 
 const int status::committed = 0;
 const int status::challenged = 1;
