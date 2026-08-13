@@ -6833,8 +6833,18 @@ bool ValidateQuery::check_special_message(Ref<vm::Cell> in_msg_root, const block
  * @returns True if special messages are valid, false otherwise.
  */
 bool ValidateQuery::check_special_messages() {
+  // value_flow_.minted aggregates two disjoint mints by currency type (mirroring
+  // Collator::create_special_transactions): the ConfigParam-2 minter message carries
+  // only extra currencies (tomis zeroed), and the Phase C AIPoW base-gram mint is
+  // carried by its own message -- located + content-verified in prepare_aipow_mint,
+  // exempted from the out-message rule in is_special_in_msg, and its amount checked
+  // via compute_minted_amount + the minted<->message invariant. So the ConfigParam-2
+  // message is checked against the extra part only; passing the full minted here
+  // would (wrongly) require a ConfigParam-2 message to carry the AIPoW base grams.
+  block::CurrencyCollection minted_extra = value_flow_.minted;
+  minted_extra.tomis = td::make_refint(0);
   return check_special_message(recover_create_msg_, value_flow_.recovered, config_->get_config_param(3, 1)) &&
-         check_special_message(mint_msg_, value_flow_.minted, config_->get_config_param(2, 0));
+         check_special_message(mint_msg_, minted_extra, config_->get_config_param(2, 0));
 }
 
 /**
