@@ -79,6 +79,8 @@ const int err::unknown_op = 2307;
 const int err::cap_exceeded = 2308;         ;; minting this pool would breach the supply cap
 const int err::candidate_set_full = 2309;   ;; the epoch's candidate set is full and this
                                             ;; address is not smaller than the current max
+const int err::epoch_too_far = 2310;        ;; register targets an epoch beyond the horizon
+const int err::cursor_exhausted = 2311;     ;; the uint32 epoch cursor cannot advance further
 
 ;; The settlement version this code understands.
 const int settlement_version = 1;
@@ -88,6 +90,15 @@ const int distributor_version = 1;
 ;; Bounded candidate set per epoch: keeps the native selection O(1) and bounds
 ;; the cost of registration spam. The set retains the smallest-address candidates.
 const int MAX_CANDIDATES = 8;
+;; The furthest future epoch (relative to the cursor) a registration may target.
+;; With settled/skipped buckets pruned as the cursor advances, this bounds the
+;; live registrations state to at most REGISTER_HORIZON epoch buckets ahead of the
+;; cursor, so registration spam for far-future epochs cannot grow it without bound.
+;; Generous vs the cursor's real-time tracking (skip is permissionless) so a
+;; legitimately lagging cursor never rejects a current-epoch nomination.
+const int REGISTER_HORIZON = 1024;
+;; The epoch cursor is a uint32 field; it cannot advance past this value.
+const int MAX_EPOCH = 0xffffffff;
 
 (int, int, int, int, int, int, int, int, int, int, int, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -231,11 +242,19 @@ cell build_state_init(cell code, cell data) inline {
   return (1, state_init, cell_hash(state_init));
 }
 
-;; Forward `pool` (carried from the inbound mint value) to the derived
-;; distributor on the earner workchain, deploying it with `state_init`. mode 64
-;; carries the remaining inbound value; non-bounceable (a deploy of deterministic
-;; code+data cannot fail, and a reward must not bounce).
-() forward_to_distributor(int earner_workchain, int dist_hash, cell state_init) impure inline {
+;; Forward the epoch `pool` to the derived distributor on the earner workchain,
+;; deploying it with `state_init`. Sends EXACTLY `pool` (the amount the distributor
+;; records for its reward math) with the forward fees paid from this account's
+;; balance (mode 1). Carrying the remaining inbound value instead (mode 64) would
+;; deliver `pool` minus fees while the distributor still records `pool`, so the tail
+;; claims could not be paid; sending the exact pool keeps the distributor's balance
+;; equal to what it distributes. Non-bounceable (a deploy of deterministic code+data
+;; cannot fail, and a reward must not bounce). The account must therefore hold a
+;; reserve covering gas + forward fees per settle (a governance funding requirement);
+;; an underfunded forward fails the action phase, reverting the settle so
+;; minted_total does not advance -- the native atomicity guard then fails closed
+;; rather than over-issuing.
+() forward_to_distributor(int pool, int earner_workchain, int dist_hash, cell state_init) impure inline {
   slice dest = begin_cell()
     .store_uint(4, 3)              ;; addr_std$10, anycast:nothing
     .store_int(earner_workchain, 8)
@@ -244,14 +263,14 @@ cell build_state_init(cell code, cell data) inline {
   cell msg = begin_cell()
     .store_uint(0x10, 6)           ;; non-bounceable internal message
     .store_slice(dest)
-    .store_tomis(0)                ;; grams: mode 64 carries the inbound value
+    .store_tomis(pool)             ;; grams: exactly the recorded pool
     .store_uint(0, 1 + 4 + 4 + 64 + 32) ;; other + ihr_fee + fwd_fee + created_lt + created_at
     .store_uint(1, 1)              ;; init present
     .store_uint(1, 1)              ;; init as ^StateInit (Either right)
     .store_ref(state_init)
     .store_uint(0, 1)              ;; body inline (empty)
   .end_cell();
-  send_raw_message(msg, 64);
+  send_raw_message(msg, 1);        ;; mode 1: pay the forward fees from the balance
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg) impure {
@@ -281,12 +300,16 @@ cell build_state_init(cell code, cell data) inline {
     ;; If the named winner is not a candidate the (bounceable) mint returns and
     ;; the cursor is not advanced.
     throw_unless(err::settle_no_registration, found);
+    throw_if(err::cursor_exhausted, next_epoch >= MAX_EPOCH);
     int new_minted = minted_total + msg_value;
     throw_if(err::cap_exceeded, new_minted > total_cap);
+    ;; Prune the settled epoch's candidate bucket: the cursor never returns to it,
+    ;; so retaining it only grows the state.
+    registrations~udict_delete?(32, next_epoch);
     save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, new_minted, total_cap, distributor_code,
       registrations);
-    forward_to_distributor(earner_workchain, dist_hash, state_init);
+    forward_to_distributor(msg_value, earner_workchain, dist_hash, state_init);
     return ();
   }
 
@@ -309,6 +332,10 @@ cell build_state_init(cell code, cell data) inline {
     int organic_settled_value = in_msg~load_uint(128);
     in_msg.end_parse();
     throw_unless(err::epoch_settled, epoch >= next_epoch);
+    ;; Bound the future horizon so registration spam for far-future epochs cannot
+    ;; grow the registrations state without bound (settled/skipped buckets prune as
+    ;; the cursor advances, so live buckets stay <= REGISTER_HORIZON).
+    throw_unless(err::epoch_too_far, epoch < next_epoch + REGISTER_HORIZON);
     throw_unless(err::zero_total_score, total_score > 0);
     (int wc, int id) = addr_parts(sender);
     (int count, cell candidates) = load_candidates(registrations, epoch);
@@ -343,8 +370,12 @@ cell build_state_init(cell code, cell data) inline {
     ;; set therefore cannot freeze the cursor. Only the epoch at the cursor may be
     ;; skipped, keeping the cursor strictly ordered.
     in_msg.end_parse();
+    throw_if(err::cursor_exhausted, next_epoch >= MAX_EPOCH);
     int skippable_at = (next_epoch + 1) * epoch_seconds + register_grace;
     throw_unless(err::skip_too_early, now() >= skippable_at);
+    ;; Prune the skipped epoch's candidate bucket (bogus nominations for an epoch
+    ;; the cursor is leaving behind); the cursor never returns to it.
+    registrations~udict_delete?(32, next_epoch);
     save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
       registrations);

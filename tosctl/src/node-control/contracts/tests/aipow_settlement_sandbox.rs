@@ -40,6 +40,12 @@ const ERR_SKIP_TOO_EARLY: i32 = 2304;
 const ERR_SKIP_REGISTERED: i32 = 2305;
 const ERR_SETTLE_NO_REGISTRATION: i32 = 2306;
 const ERR_UNKNOWN_OP: i32 = 2307;
+const ERR_EPOCH_TOO_FAR: i32 = 2310;
+const ERR_CURSOR_EXHAUSTED: i32 = 2311;
+
+/// Mirrors the contract's REGISTER_HORIZON: the furthest future epoch, relative
+/// to the cursor, a registration may target.
+const REGISTER_HORIZON: u32 = 1024;
 
 /// The audited distributor code the settlement derives addresses against and
 /// deploys. Using the real code (not a stub) is what makes the derived address
@@ -63,13 +69,19 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        // Anchor the cursor at the current wall-clock epoch so the skip deadline
+        // sits ahead of the sandbox clock (time must move forward, not back).
+        Self::with_next_epoch(None)
+    }
+
+    /// Deploy with an explicit cursor epoch (used to reach the uint32 ceiling for
+    /// the cursor-exhaustion guard); `None` anchors it at the wall-clock epoch.
+    fn with_next_epoch(next_epoch: Option<u32>) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let deployer = bc.treasury("aipow-settlement-deployer", 1_000 * TOS).expect("deployer");
         let committer = bc.treasury("aipow-settlement-committer", 1_000 * TOS).expect("committer");
-        // Anchor the cursor at the current wall-clock epoch so the skip deadline
-        // sits ahead of the sandbox clock (time must move forward, not back).
-        let next_epoch = bc.now() / EPOCH_SECONDS;
+        let next_epoch = next_epoch.unwrap_or_else(|| bc.now() / EPOCH_SECONDS);
         let init = AipowSettlementInit {
             next_epoch,
             epoch_seconds: EPOCH_SECONDS,
@@ -515,4 +527,91 @@ fn a_mint_naming_an_unrecorded_winner_is_rejected() {
     f.mint([0x11; 32], 7 * TOS).expect_exit_code(ERR_SETTLE_NO_REGISTRATION);
     assert_eq!(f.data().next_epoch, next_epoch, "cursor unchanged");
     assert_eq!(f.data().minted_total, 0);
+}
+
+// --- H4: bounded future horizon + pruning settled/skipped buckets ---
+
+#[test]
+fn register_rejects_epochs_beyond_the_horizon() {
+    // Registration for a far-future epoch is capped so it cannot create unbounded
+    // registrations state. The last epoch inside the horizon is accepted; the
+    // first one at/after it is rejected.
+    let mut f = Fixture::new();
+    let next_epoch = f.next_epoch;
+    let a = f.committer.address().clone();
+    let b = f.bc.treasury("horizon-b", 1_000 * TOS).unwrap().address().clone();
+
+    let last_in = next_epoch + REGISTER_HORIZON - 1;
+    f.send_from_value(&a, AipowSettlementContract::register(1, last_in, [0xAB; 32], 1, 1).unwrap(), 2 * TOS)
+        .expect_success();
+    assert_eq!(f.candidate_count(last_in), 1);
+
+    let too_far = next_epoch + REGISTER_HORIZON;
+    f.send_from_value(&b, AipowSettlementContract::register(2, too_far, [0xCD; 32], 1, 1).unwrap(), 2 * TOS)
+        .expect_exit_code(ERR_EPOCH_TOO_FAR);
+    assert_eq!(f.candidate_count(too_far), 0);
+}
+
+#[test]
+fn settle_prunes_the_settled_epochs_candidate_bucket() {
+    let mut f = Fixture::new();
+    let next_epoch = f.next_epoch;
+    let committer = f.committer.address().clone();
+    let winner = account_id(&committer);
+    let pool = 7 * TOS;
+
+    f.send_from(&committer, AipowSettlementContract::register(1, next_epoch, [0xA7; 32], 3_000_000, 5 * TOS as u128).unwrap())
+        .expect_success();
+    assert_eq!(f.candidate_count(next_epoch), 1);
+
+    f.mint(winner, pool).expect_success();
+    assert_eq!(f.data().next_epoch, next_epoch + 1, "cursor advanced");
+    // The settled epoch's candidate bucket is pruned: the cursor never returns to
+    // it, so retaining it would only grow the state.
+    assert_eq!(f.candidate_count(next_epoch), 0, "settled epoch bucket pruned");
+    assert_eq!(f.min_candidate(next_epoch), None);
+}
+
+#[test]
+fn skip_prunes_the_skipped_epochs_candidate_bucket() {
+    let mut f = Fixture::new();
+    let next_epoch = f.next_epoch;
+    let attacker = f.committer.address().clone();
+    // A bogus nomination for the cursor epoch.
+    f.send_from(&attacker, AipowSettlementContract::register(1, next_epoch, [0xBA; 32], 1_000_000, 1).unwrap())
+        .expect_success();
+    assert_eq!(f.candidate_count(next_epoch), 1);
+
+    let skippable_at = (next_epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;
+    f.bc.set_now(skippable_at as u32);
+    f.send_from(&attacker, AipowSettlementContract::skip(2).unwrap()).expect_success();
+    assert_eq!(f.data().next_epoch, next_epoch + 1);
+    // The skipped epoch's (bogus) bucket is pruned too.
+    assert_eq!(f.candidate_count(next_epoch), 0, "skipped epoch bucket pruned");
+}
+
+// --- L2: the uint32 cursor cannot wrap ---
+
+#[test]
+fn cursor_exhausted_halts_settle_and_skip_at_the_max_epoch() {
+    // At the uint32 ceiling `next_epoch + 1` would overflow the 32-bit cursor
+    // field; both settle and skip fail closed with a clear terminal error rather
+    // than raising a raw range-check exception (or wrapping to epoch 0).
+    let mut f = Fixture::with_next_epoch(Some(u32::MAX));
+    let committer = f.committer.address().clone();
+    let winner = account_id(&committer);
+
+    // skip halts immediately (the guard precedes the deadline computation, which
+    // would otherwise overflow into an unreachable time).
+    f.send_from(&committer, AipowSettlementContract::skip(1).unwrap())
+        .expect_exit_code(ERR_CURSOR_EXHAUSTED);
+    assert_eq!(f.data().next_epoch, u32::MAX, "cursor unchanged");
+
+    // A registered candidate at the ceiling epoch resolves, but the settle still
+    // refuses to advance past the ceiling.
+    f.send_from_value(&committer, AipowSettlementContract::register(2, u32::MAX, [0xA7; 32], 3_000_000, 5 * TOS as u128).unwrap(), 2 * TOS)
+        .expect_success();
+    f.mint(winner, 7 * TOS).expect_exit_code(ERR_CURSOR_EXHAUSTED);
+    assert_eq!(f.data().next_epoch, u32::MAX, "cursor still unchanged");
+    assert_eq!(f.data().minted_total, 0, "nothing minted");
 }
