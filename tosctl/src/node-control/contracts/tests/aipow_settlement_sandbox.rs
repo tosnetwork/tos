@@ -15,7 +15,7 @@
 //! the minter -1:00..00) deploys+funds that distributor and advances the ledger,
 //! while a non-minter value message and a mint for an unregistered epoch do not.
 
-use chain_block::{Cell, MsgAddressInt};
+use chain_block::{BuilderData, Cell, MsgAddressInt, Serializable, StateInit};
 use contracts::{
     AipowDistributorContract, AipowDistributorInit, AipowMaturation, AipowSettlementContract,
     AipowSettlementInit,
@@ -42,6 +42,7 @@ const ERR_SETTLE_NO_REGISTRATION: i32 = 2306;
 const ERR_UNKNOWN_OP: i32 = 2307;
 const ERR_EPOCH_TOO_FAR: i32 = 2310;
 const ERR_CURSOR_EXHAUSTED: i32 = 2311;
+const ERR_UNAUTHORIZED_REGISTRATION: i32 = 2312;
 
 /// Mirrors the contract's REGISTER_HORIZON: the furthest future epoch, relative
 /// to the cursor, a registration may target.
@@ -52,6 +53,27 @@ const REGISTER_HORIZON: u32 = 1024;
 /// equal a genuine distributor deployment.
 fn distributor_code() -> Cell {
     AipowDistributorContract::code().unwrap()
+}
+
+/// The "audited" commitment code the settlement stores and authenticates
+/// nominators against (H1). The settlement never runs or parses it -- it only
+/// checks sender == hash(StateInit(commitment_code, data)) -- so any fixed cell
+/// serves here.
+fn commitment_code() -> Cell {
+    BuilderData::with_raw(vec![0xC0, 0xDE], 16).unwrap().into_cell().unwrap()
+}
+
+/// An authorised nominator: (address, data) whose address is the canonical
+/// commitment address hash(StateInit(commitment_code, data)). Distinct `seed`s give
+/// distinct data, hence distinct addresses; the settlement accepts a register from
+/// `address` carrying `data`. (Sending from the same seed twice models one
+/// commitment re-nominating.)
+fn nominator(seed: u64) -> (MsgAddressInt, Cell) {
+    let data = BuilderData::with_raw(seed.to_be_bytes().to_vec(), 64).unwrap().into_cell().unwrap();
+    let si = StateInit::with_code_and_data(commitment_code(), data.clone());
+    let hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
+    let address = MsgAddressInt::with_params(-1, hash).unwrap();
+    (address, data)
 }
 
 /// The masterchain minter address (-1:00..00) whose empty-body value message is
@@ -91,6 +113,7 @@ impl Fixture {
             maturation: AipowMaturation::methodology_v0(),
             total_cap: TOTAL_CAP,
             distributor_code: distributor_code(),
+            commitment_code: commitment_code(),
         };
         let settlement = AipowSettlementContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(deployer.address(), &settlement, 2 * TOS)
@@ -109,6 +132,19 @@ impl Fixture {
     fn send_from_value(&mut self, from: &MsgAddressInt, body: Cell, value: u64) -> tos_sandbox::SendResult {
         let msg = MessageBuilder::internal(from, &self.settlement, value).body(body).build();
         self.bc.send_message(msg).expect("send")
+    }
+
+    /// Send an authenticated register from nominator `nom` = (canonical address,
+    /// data): the body carries `nom.data`, so the settlement's H1 check
+    /// (sender == hash(StateInit(commitment_code, data))) passes.
+    #[allow(clippy::too_many_arguments)]
+    fn register(&mut self, nom: &(MsgAddressInt, Cell), query_id: u64, epoch: u32, score_root: [u8; 32],
+                total_score: u128, organic: u128, value: u64) -> tos_sandbox::SendResult {
+        let body =
+            AipowSettlementContract::register(query_id, epoch, score_root, total_score, organic, nom.1.clone())
+                .unwrap();
+        let msg = MessageBuilder::internal(&nom.0, &self.settlement, value).body(body).build();
+        self.bc.send_message(msg).expect("register")
     }
 
     fn parse_stack(stack: &[tos_vm::stack::StackItem]) -> common::tvm_stack_parser::TvmStackParser {
@@ -287,43 +323,54 @@ fn deploys_and_readable() {
 fn register_records_multiple_candidates_and_dedups_per_commitment() {
     let mut f = Fixture::new();
     let epoch = f.next_epoch + 5;
-    let a = f.committer.address().clone();
-    let b = f.bc.treasury("committer-b", 1_000 * TOS).unwrap().address().clone();
+    let a = nominator(1);
+    let b = nominator(2);
 
     // Two different commitments nominate the SAME epoch -- both are candidates
     // (no first-wins). A bogus nomination cannot exclude a genuine one.
-    f.send_from(&a, AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 42 * TOS as u128).unwrap())
-        .expect_success();
-    f.send_from(&b, AipowSettlementContract::register(2, epoch, [0xCD; 32], 2_000_000, 7).unwrap())
-        .expect_success();
+    f.register(&a, 1, epoch, [0xAB; 32], 1_000_000, 42 * TOS as u128, TOS / 10).expect_success();
+    f.register(&b, 2, epoch, [0xCD; 32], 2_000_000, 7, TOS / 10).expect_success();
     assert_eq!(f.candidate_count(epoch), 2);
 
-    let ca = f.candidate(epoch, account_id(&a)).expect("a is a candidate");
+    let ca = f.candidate(epoch, account_id(&a.0)).expect("a is a candidate");
     assert_eq!(ca.score_root, [0xAB; 32]);
     assert_eq!(ca.total_score, 1_000_000);
     assert_eq!(ca.organic_settled_value, 42 * TOS as u128);
-    let cb = f.candidate(epoch, account_id(&b)).expect("b is a candidate");
+    let cb = f.candidate(epoch, account_id(&b.0)).expect("b is a candidate");
     assert_eq!(cb.score_root, [0xCD; 32]);
 
-    // A single commitment may nominate an epoch at most once.
-    f.send_from(&a, AipowSettlementContract::register(3, epoch, [0xEE; 32], 5, 5).unwrap())
-        .expect_exit_code(ERR_ALREADY_REGISTERED);
+    // A single commitment (same address) may nominate an epoch at most once.
+    f.register(&a, 3, epoch, [0xEE; 32], 5, 5, TOS / 10).expect_exit_code(ERR_ALREADY_REGISTERED);
     assert_eq!(f.candidate_count(epoch), 2);
     // The first nomination is untouched.
-    assert_eq!(f.candidate(epoch, account_id(&a)).unwrap().score_root, [0xAB; 32]);
+    assert_eq!(f.candidate(epoch, account_id(&a.0)).unwrap().score_root, [0xAB; 32]);
 }
 
 #[test]
 fn register_rejects_settled_epoch_and_zero_total_score() {
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let committer = f.committer.address().clone();
+    let n = nominator(1);
 
-    f.send_from(&committer, AipowSettlementContract::register(1, next_epoch - 1, [0xAB; 32], 1_000_000, 1).unwrap())
-        .expect_exit_code(ERR_EPOCH_SETTLED);
-    f.send_from(&committer, AipowSettlementContract::register(2, next_epoch, [0xAB; 32], 0, 1).unwrap())
-        .expect_exit_code(ERR_ZERO_TOTAL_SCORE);
+    // epoch_settled and zero_total_score are checked before the H1 auth, so a
+    // canonical nominator still trips them.
+    f.register(&n, 1, next_epoch - 1, [0xAB; 32], 1_000_000, 1, TOS / 10).expect_exit_code(ERR_EPOCH_SETTLED);
+    f.register(&n, 2, next_epoch, [0xAB; 32], 0, 1, TOS / 10).expect_exit_code(ERR_ZERO_TOTAL_SCORE);
     assert_eq!(f.candidate_count(next_epoch), 0);
+}
+
+#[test]
+fn register_rejects_a_non_canonical_sender() {
+    // H1: a plain account (not deployed with the audited commitment code, so its
+    // address is not hash(StateInit(commitment_code, data))) cannot occupy a
+    // candidate slot, even presenting some data cell -- junk wallets can no longer
+    // evict a genuine nomination.
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch;
+    let impostor = f.committer.address().clone();  // a wallet, not a canonical commitment
+    let body = AipowSettlementContract::register(1, epoch, [0xAB; 32], 1_000_000, 1, commitment_code()).unwrap();
+    f.send_from(&impostor, body).expect_exit_code(ERR_UNAUTHORIZED_REGISTRATION);
+    assert_eq!(f.candidate_count(epoch), 0, "no candidate admitted");
 }
 
 #[test]
@@ -349,13 +396,14 @@ fn skip_advances_a_registered_epoch_past_grace_so_a_bogus_nomination_cannot_free
     // nomination cannot freeze the cursor (skip_registered retired).
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let attacker = f.committer.address().clone();
-    f.send_from(&attacker, AipowSettlementContract::register(1, next_epoch, [0xBA; 32], 1_000_000, 1).unwrap())
-        .expect_success();
+    let attacker = nominator(1);
+    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS / 10).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
     let skippable_at = (next_epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;
     f.bc.set_now(skippable_at as u32);
-    f.send_from(&attacker, AipowSettlementContract::skip(2).unwrap()).expect_success();
+    // skip is permissionless (no auth), so any address may poke it.
+    let poker = f.committer.address().clone();
+    f.send_from(&poker, AipowSettlementContract::skip(2).unwrap()).expect_success();
     assert_eq!(f.data().next_epoch, next_epoch + 1, "registered epoch still advances");
 }
 
@@ -368,12 +416,12 @@ fn the_candidate_set_is_bounded_and_keeps_the_smallest_addresses() {
     // address is smaller, else rejected as full -- either way the final set is
     // the eight smallest addresses.
     let mut ids: Vec<[u8; 32]> = Vec::new();
-    for i in 0..9 {
-        let c = f.bc.treasury(&format!("cand-{i}"), 1_000 * TOS).unwrap().address().clone();
-        ids.push(account_id(&c));
+    for i in 0..9u64 {
+        let c = nominator(100 + i);  // distinct canonical commitments
+        ids.push(account_id(&c.0));
         // A larger candidate set costs more gas per insert on masterchain, so
         // fund these registrations generously.
-        let r = f.send_from_value(&c, AipowSettlementContract::register(i as u64, epoch, [i as u8; 32], 1_000, 1).unwrap(), 2 * TOS);
+        let r = f.register(&c, i, epoch, [i as u8; 32], 1_000, 1, 2 * TOS);
         if i < 8 {
             r.expect_success();
         }
@@ -431,10 +479,10 @@ fn expected_distributor_init(
 #[test]
 fn derived_distributor_address_matches_a_real_deployment() {
     let mut f = Fixture::new();
-    let committer = f.committer.address().clone();
+    let n = nominator(1);
     let settlement = f.settlement.clone();
     let epoch = f.next_epoch + 3;
-    let winner = account_id(&committer);
+    let winner = account_id(&n.0);
     let total_score: u128 = 4_000_000;
     let score_root = [0x5C; 32];
     let pool = 7 * TOS;
@@ -442,8 +490,7 @@ fn derived_distributor_address_matches_a_real_deployment() {
     // An unregistered candidate has no derivable distributor.
     assert_eq!(f.derived_distributor(epoch, winner, pool), None, "no derivation before registration");
 
-    f.send_from(&committer, AipowSettlementContract::register(1, epoch, score_root, total_score, 9 * TOS as u128).unwrap())
-        .expect_success();
+    f.register(&n, 1, epoch, score_root, total_score, 9 * TOS as u128, TOS / 10).expect_success();
 
     let derived = f.derived_distributor(epoch, winner, pool).expect("derivable after registration");
     let init = expected_distributor_init(&settlement, winner, epoch, total_score, pool, score_root);
@@ -467,15 +514,14 @@ fn derived_distributor_address_matches_a_real_deployment() {
 fn settle_deploys_and_funds_the_winners_distributor_and_advances_the_ledger() {
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let committer = f.committer.address().clone();
+    let n = nominator(1);
     let settlement = f.settlement.clone();
-    let winner = account_id(&committer);
+    let winner = account_id(&n.0);
     let total_score: u128 = 3_000_000;
     let score_root = [0xA7; 32];
     let pool = 7 * TOS;
 
-    f.send_from(&committer, AipowSettlementContract::register(1, next_epoch, score_root, total_score, 5 * TOS as u128).unwrap())
-        .expect_success();
+    f.register(&n, 1, next_epoch, score_root, total_score, 5 * TOS as u128, TOS / 10).expect_success();
     let derived = f.derived_distributor(next_epoch, winner, pool).expect("derivable");
     assert_eq!(f.balance_of(&derived), 0, "distributor not yet deployed");
 
@@ -504,14 +550,14 @@ fn settle_deploys_and_funds_the_winners_distributor_and_advances_the_ledger() {
 fn a_settle_message_from_a_non_minter_does_not_settle() {
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let committer = f.committer.address().clone();
-    let winner = account_id(&committer);
+    let n = nominator(1);
+    let winner = account_id(&n.0);
 
-    f.send_from(&committer, AipowSettlementContract::register(1, next_epoch, [0xAB; 32], 1_000_000, 1).unwrap())
-        .expect_success();
+    f.register(&n, 1, next_epoch, [0xAB; 32], 1_000_000, 1, TOS / 10).expect_success();
     // A winner-id body from a non-minter is a no-op (it parses as an unknown op,
     // not a settle -- only the authenticated minter settles).
-    let r = f.settle_from(&committer, winner, 7 * TOS);
+    let impostor = f.committer.address().clone();
+    let r = f.settle_from(&impostor, winner, 7 * TOS);
     // The non-minter's message is not a settle; the cursor is unchanged.
     let _ = r;
     assert_eq!(f.data().next_epoch, next_epoch, "cursor unchanged");
@@ -538,17 +584,15 @@ fn register_rejects_epochs_beyond_the_horizon() {
     // first one at/after it is rejected.
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let a = f.committer.address().clone();
-    let b = f.bc.treasury("horizon-b", 1_000 * TOS).unwrap().address().clone();
+    let a = nominator(1);
+    let b = nominator(2);
 
     let last_in = next_epoch + REGISTER_HORIZON - 1;
-    f.send_from_value(&a, AipowSettlementContract::register(1, last_in, [0xAB; 32], 1, 1).unwrap(), 2 * TOS)
-        .expect_success();
+    f.register(&a, 1, last_in, [0xAB; 32], 1, 1, 2 * TOS).expect_success();
     assert_eq!(f.candidate_count(last_in), 1);
 
     let too_far = next_epoch + REGISTER_HORIZON;
-    f.send_from_value(&b, AipowSettlementContract::register(2, too_far, [0xCD; 32], 1, 1).unwrap(), 2 * TOS)
-        .expect_exit_code(ERR_EPOCH_TOO_FAR);
+    f.register(&b, 2, too_far, [0xCD; 32], 1, 1, 2 * TOS).expect_exit_code(ERR_EPOCH_TOO_FAR);
     assert_eq!(f.candidate_count(too_far), 0);
 }
 
@@ -556,12 +600,11 @@ fn register_rejects_epochs_beyond_the_horizon() {
 fn settle_prunes_the_settled_epochs_candidate_bucket() {
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let committer = f.committer.address().clone();
-    let winner = account_id(&committer);
+    let n = nominator(1);
+    let winner = account_id(&n.0);
     let pool = 7 * TOS;
 
-    f.send_from(&committer, AipowSettlementContract::register(1, next_epoch, [0xA7; 32], 3_000_000, 5 * TOS as u128).unwrap())
-        .expect_success();
+    f.register(&n, 1, next_epoch, [0xA7; 32], 3_000_000, 5 * TOS as u128, TOS / 10).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
 
     f.mint(winner, pool).expect_success();
@@ -576,15 +619,15 @@ fn settle_prunes_the_settled_epochs_candidate_bucket() {
 fn skip_prunes_the_skipped_epochs_candidate_bucket() {
     let mut f = Fixture::new();
     let next_epoch = f.next_epoch;
-    let attacker = f.committer.address().clone();
+    let attacker = nominator(1);
     // A bogus nomination for the cursor epoch.
-    f.send_from(&attacker, AipowSettlementContract::register(1, next_epoch, [0xBA; 32], 1_000_000, 1).unwrap())
-        .expect_success();
+    f.register(&attacker, 1, next_epoch, [0xBA; 32], 1_000_000, 1, TOS / 10).expect_success();
     assert_eq!(f.candidate_count(next_epoch), 1);
 
     let skippable_at = (next_epoch + 1) as u64 * EPOCH_SECONDS as u64 + REGISTER_GRACE as u64;
     f.bc.set_now(skippable_at as u32);
-    f.send_from(&attacker, AipowSettlementContract::skip(2).unwrap()).expect_success();
+    let poker = f.committer.address().clone();
+    f.send_from(&poker, AipowSettlementContract::skip(2).unwrap()).expect_success();
     assert_eq!(f.data().next_epoch, next_epoch + 1);
     // The skipped epoch's (bogus) bucket is pruned too.
     assert_eq!(f.candidate_count(next_epoch), 0, "skipped epoch bucket pruned");
@@ -598,19 +641,19 @@ fn cursor_exhausted_halts_settle_and_skip_at_the_max_epoch() {
     // field; both settle and skip fail closed with a clear terminal error rather
     // than raising a raw range-check exception (or wrapping to epoch 0).
     let mut f = Fixture::with_next_epoch(Some(u32::MAX));
-    let committer = f.committer.address().clone();
-    let winner = account_id(&committer);
+    let n = nominator(1);
+    let winner = account_id(&n.0);
 
     // skip halts immediately (the guard precedes the deadline computation, which
     // would otherwise overflow into an unreachable time).
-    f.send_from(&committer, AipowSettlementContract::skip(1).unwrap())
+    let poker = f.committer.address().clone();
+    f.send_from(&poker, AipowSettlementContract::skip(1).unwrap())
         .expect_exit_code(ERR_CURSOR_EXHAUSTED);
     assert_eq!(f.data().next_epoch, u32::MAX, "cursor unchanged");
 
     // A registered candidate at the ceiling epoch resolves, but the settle still
     // refuses to advance past the ceiling.
-    f.send_from_value(&committer, AipowSettlementContract::register(2, u32::MAX, [0xA7; 32], 3_000_000, 5 * TOS as u128).unwrap(), 2 * TOS)
-        .expect_success();
+    f.register(&n, 2, u32::MAX, [0xA7; 32], 3_000_000, 5 * TOS as u128, 2 * TOS).expect_success();
     f.mint(winner, 7 * TOS).expect_exit_code(ERR_CURSOR_EXHAUSTED);
     assert_eq!(f.data().next_epoch, u32::MAX, "cursor still unchanged");
     assert_eq!(f.data().minted_total, 0, "nothing minted");

@@ -3,14 +3,13 @@
  *
  * Licensed under the GNU General Public License v3.0.
  */
-use chain_block::Deserializable;
 use chain_block::{
     base64_decode, read_single_root_boc, BuilderData, Cell, Coins, IBitstring, MsgAddressInt,
     Serializable, StateInit,
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECFQEABLEAART/APSkE/S88sgLAQIBYgIDA87QAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1PQE0XB/dMjLAsoHy//J0FLgxwXjAj8txwCSXw/gDdMf0z8xIYIQQVBTAbrjAj2CEEFQUwK64wJfDoEJA/LwBAUGAgEgCgsCyD0N0//RVGrxVHh2KFYTVhMoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w6BCQJQA/L0gQkHLIQfvvLyUT+ggQkEUxO88vJSvoAg9FswC6QQvAoJCFFwBwYFBBA+Tv0OBwLyMdMf0//Tf9N/0YEI/VNOvvL0gQkGLoMJoFJQufL0gQj/IsIA8vQP0wIx0gfT/zBWEiUBgCD0D2+hwACTMHBtltDTD/QEMOJTIIMH9A5voYEI/jLy8hAlERIU+CMEyMoHE8v/y3/Lf8sfIcEImEAPgwf0Qw2k4w5QDQgJALAL0YEJBymEH77y8iikKKgnoIEJAPgjWL7y9FKNgCD0WzAIpBCcCxB6EGkQWBBHEDZFBAIMyMsPG8sfGcsfF8sfFcsfE8oHyw/LD8sfAfoCAfoCzPQAye1UAKAMyMsPG8sfGcsfF8sfFcsfE8oHyw/LD8sfAfoCAfoCzPQAye1UdMjLAhPKB8v/ydBwcVMBgBDIywVQBc8WUAb6AhPLaBTLAMsAzMsAyXH7AABEL4MH9I5vpTKBCQVTUbkTsBLy9AEREIMH9FswT/CDB/RDDQCGAcjLD/QAyUDOgCD0FxCcEIsQehBpEFgQRxA2RUASDMjLDxvLHxnLHxfLHxXLHxPKB8sPyw/LHwH6AgH6Asz0AMntVAIBbgwNAgEgDxABq7EN+1E0NMP0x/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRODhbNjY2IBCJEHkQaQUQSUkzCSgBgCD0D2+hwACTMHBtltDTD/QEMOIBwACVXwlwbSHjDjESgDgBxsDf7UTQ0w/TH9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFswQEBgCD0D2+hwACTMHBtltDTD/QEMOIwgAOJScIMH9A5vocAAlV8JcG0h4NIHMdP/038w+CgJEIoWEFoUEDoScALIy//L/8lTEXHIyw9QDM8WGss/GMoHFst/UAT6AhfLHxXLfxTLDxTLDxLLH8zLAMlwcVRwEcjLAMsAywAUzBPLAMzLAMlxIfkAEgIBIBESAgOauBMUAEG3r92omhph+mP6Y/pj+mP6QPph+mH6Y/9AH0AanoCaK3AAjbXaPaiaGmH6Y/pj+mP6Y/pA+mH6Yfpj/0AfQBqegJotmCsAMAQege30OAASZg4NstoaYf6AhhxAOAASa24EHBBg/o+N9KZQAMO/7tRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1PQE0WzBWAGAIPQPb6HAAJMwcG2W0NMP9AQw4gHAAJdbcFRwAFMA4IMH9A5vocAAlzBwVHAAUwDg0gfT/9N/03/THzBxVUCACLv87UTQ0w/TH9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFswQEBgCD0D2+hwACTMHBtltDTD/QEMOIBwACTMHAg4IMH9IZvpTKNcF29w=";
+pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECFQEABP4AART/APSkE/S88sgLAQIBYgIDA9TQAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1NT0BNFwf3TIywLKB8v/ydBS8McF4wJXEC7HAJNfDzDgDtMf0z8xIYIQQVBTAbrjAj6CEEFQUwK64wJfD4EJA/LwBAUGAgEgCgsC2D4O0//RUrBWEFR5h1OWVhQoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w6BCQJQA/L0gQkHLYQfvvLyBFYQoIEJBFMUvPLyUs+AIPRbMAykEM0LCglRgAgHBgUQTxA/EC8BERABDg4HAfwx0x/T/9N/03/U0YEI/SVWEb7y9IEJBlYQgwmgUmC58vSBCP8jwgDy9BER0wIx0gfT/zBWE4EJCBEUcHFUcBHIywDLAMsAFMwTywDMywDJ+QAhugEREwHy9FYTJQGAIPQPb6HAAJMwcG2W0NMP9AQw4lYTIYMH9A5voYEI/jIIALgM0YEJByqEH77y8imkKagooIEJAPgjWL7y9FKegCD0WzAJpBCtDBCLEHoQaRBYEEcQNkUEAw3Iyw8cyx8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzMz0AMntVACkDcjLDxzLHxrLHxjLHxbLHxTKBxLLD8sPyx8B+gIB+gLMzPQAye1UdMjLAhPKB8v/ydBwcVMBgBDIywVQBc8WUAb6AhPLaBTLAMsAzMsAyXH7AAHa8vJDFVBC+CMEyMoHE8v/y3/Lf8sfIcEImwIBERABgwf0Qw6kjiQigwf0jm+lMoEJBVYTIrkTsBLy9FADgwf0WzABERABgwf0Qw7iUA4ByMsP9ADJQN+AIPQXEK0QnBCLEHoQaRBYEEcQNkVAEwkATg3Iyw8cyx8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzMz0AMntVAIBbgwNAgEgDxABr7EN+1E0NMP0x/TH9Mf0x/SB9MP0w/TH/oA+gDU1PQE0TE4OFs2NjYgEIkQeRBpBRBJSTMJKAGAIPQPb6HAAJMwcG2W0NMP9AQw4gHAAJVfCXBtIeMOMRKAOAHOwN/tRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1NT0BNFs0QEBgCD0D2+hwACTMHBtltDTD/QEMOIwgAOJScIMH9A5vocAAlV8JcG0h4NIHMdP/038w+CgJEIoWEFoUEDoScALIy//L/8lTEXHIyw9QDM8WGss/GMoHFst/UAT6AhfLHxXLfxTLDxTLDxLLH8zLAMlwcVRwEcjLAMsAywAUzBPLAMzLAMlxIfkAEgIBIBESAgOauBMUAEW3r92omhph+mP6Y/pj+mP6QPph+mH6Y/9AH0Aamp6AmivgcACPtdo9qJoaYfpj+mP6Y/pj+kD6Yfph+mP/QB9AGpqegJotmisAMAQege30OAASZg4NstoaYf6AhhxAOAASa24EHBBg/o+N9KZQAMW/7tRNDTD9Mf0x/TH9Mf0gfTD9MP0x/6APoA1NT0BNFs0VgBgCD0D2+hwACTMHBtltDTD/QEMOIBwACXW3BUcABTAOCDB/QOb6HAAJcwcFRwAFMA4NIH0//Tf9N/0x8wcVVAgAjb/O1E0NMP0x/TH9Mf0x/SB9MP0w/TH/oA+gDU1PQE0WzRAQGAIPQPb6HAAJMwcG2W0NMP9AQw4gHAAJMwcCDggwf0hm+lMoEFVUOw==";
 
 pub const AIPOW_SETTLEMENT_REGISTER_OPCODE: u32 = 0x4150_5301;
 pub const AIPOW_SETTLEMENT_SKIP_OPCODE: u32 = 0x4150_5302;
@@ -48,6 +47,12 @@ pub struct AipowSettlementInit {
     /// The audited distributor code used to derive canonical distributor
     /// addresses in the settle path.
     pub distributor_code: Cell,
+    /// The audited commitment code. Used to authenticate a nominator at register:
+    /// the sender must be a canonical commitment == hash(StateInit(commitment_code,
+    /// data)) (the H1 Sybil-admission defence). Governance MUST set this to the same
+    /// code the registry's commitment_code_hash pins, or the native cross-check
+    /// fails closed.
+    pub commitment_code: Cell,
 }
 
 pub struct AipowSettlementContract;
@@ -118,6 +123,7 @@ impl AipowSettlementContract {
         append_tomis(&mut data, 0)?; // minted_total starts at zero
         append_tomis(&mut data, init.total_cap)?;
         data.checked_append_reference(init.distributor_code.clone())?;
+        data.checked_append_reference(init.commitment_code.clone())?;
         data.append_bit_zero()?; // empty registrations dictionary
         Ok(data.into_cell()?)
     }
@@ -208,13 +214,16 @@ impl AipowSettlementContract {
     }
 
     /// A commitment nominates itself as a candidate for `epoch`, carrying its
-    /// committed tuple. Sent with `sender == the commitment`.
+    /// committed tuple AND its own deploy data cell. Sent with `sender == the
+    /// commitment`; the settlement authenticates it as a canonical commitment via
+    /// `sender == hash(StateInit(commitment_code, nominator_data))` (H1).
     pub fn register(
         query_id: u64,
         epoch: u32,
         score_root: [u8; 32],
         total_score: u128,
         organic_settled_value: u128,
+        nominator_data: Cell,
     ) -> anyhow::Result<chain_block::Cell> {
         let mut body = BuilderData::new();
         body.append_u32(AIPOW_SETTLEMENT_REGISTER_OPCODE)?;
@@ -223,6 +232,7 @@ impl AipowSettlementContract {
         body.append_u256(&score_root)?;
         append_u128(&mut body, total_score)?;
         append_u128(&mut body, organic_settled_value)?;
+        body.checked_append_reference(nominator_data)?;
         Ok(body.into_cell()?)
     }
 
@@ -280,6 +290,7 @@ mod tests {
             maturation: crate::aipow_distributor::AipowMaturation::methodology_v0(),
             total_cap: 4_500_000_000_000_000_000,
             distributor_code: dummy_distributor_code(),
+            commitment_code: dummy_distributor_code(),
         }
     }
 
@@ -310,7 +321,8 @@ mod tests {
 
     #[test]
     fn encodes_register_and_skip_messages() {
-        let body = AipowSettlementContract::register(1, 42, [0xAB; 32], 1000, 2000).unwrap();
+        let body =
+            AipowSettlementContract::register(1, 42, [0xAB; 32], 1000, 2000, dummy_distributor_code()).unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), AIPOW_SETTLEMENT_REGISTER_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 1);
@@ -319,6 +331,7 @@ mod tests {
         assert_eq!(slice.get_next_bytes(16).unwrap(), 1000u128.to_be_bytes().to_vec());
         assert_eq!(slice.get_next_bytes(16).unwrap(), 2000u128.to_be_bytes().to_vec());
         assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(slice.remaining_references(), 1); // ^nominator_data
 
         let body = AipowSettlementContract::skip(9).unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();

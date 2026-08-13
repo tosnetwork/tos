@@ -72,7 +72,9 @@
 ;;   announce#41505705 query_id:uint64 = InternalMsgBody;
 ;; Outgoing on announcement:
 ;;   register#41505301 query_id:uint64 epoch:uint32 score_root:uint256
-;;       total_score:uint128 organic_settled_value:uint128  -> settlement.
+;;       total_score:uint128 organic_settled_value:uint128 ^data  -> settlement.
+;;       (^data is this commitment's deploy data; the settlement authenticates
+;;        sender == hash(StateInit(commitment_code, data)).)
 
 const int op::challenge = 0x41505701;
 const int op::finalize = 0x41505702;
@@ -226,6 +228,12 @@ const int err::review_open = 2110;
   if (epoch > 0xFFFFFFFF) {
     return ();
   }
+  ;; Carry this commitment's own persistent data cell. Announce runs while still
+  ;; `committed`, so get_data() is exactly the deploy data, and the settlement
+  ;; authenticates the nomination by checking sender ==
+  ;; hash(StateInit(commitment_code, this data)) -- proving the sender is a canonical
+  ;; commitment (H1 Sybil-admission defence). A non-commitment sender cannot produce
+  ;; a data cell that makes this hold with the audited code.
   cell body = begin_cell()
     .store_uint(settlement_op::register, 32)
     .store_uint(0, 64)                ;; query_id (the settlement ignores it)
@@ -233,6 +241,7 @@ const int err::review_open = 2110;
     .store_uint(score_root, 256)
     .store_uint(total_score, 128)
     .store_uint(organic_settled_value, 128)
+    .store_ref(get_data())            ;; ^nominator_data (the deploy data)
   .end_cell();
   ;; mode 1: pay fees separately, errors NOT ignored (see the semantics note
   ;; above) -- an unfundable registration aborts the finalize atomically and is

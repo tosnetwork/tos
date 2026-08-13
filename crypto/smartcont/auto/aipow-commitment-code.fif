@@ -1,4 +1,4 @@
-// automatically generated from `smartcont/stdlib.fc` `smartcont/aipow-commitment-code.fc`
+// automatically generated from `crypto/smartcont/stdlib.fc` `crypto/smartcont/aipow-commitment-code.fc`
 PROGRAM{
   DECLPROC send_value
   DECLPROC load_state
@@ -131,37 +131,39 @@ PROGRAM{
       IFJMP:<{	//  settlement epoch score_root total_score organic_settled_value
         5 BLKDROP	//
       }>	//  settlement epoch score_root total_score organic_settled_value
-      0 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12=0
-      1095783169 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12=0 _13=1095783169
-      NEWC	//  settlement epoch score_root total_score organic_settled_value _12=0 _13=1095783169 _14
-      32 STU	//  settlement epoch score_root total_score organic_settled_value _12=0 _16
-      64 STU	//  settlement epoch score_root total_score organic_settled_value _18
-      s1 s4 XCHG	//  settlement organic_settled_value score_root total_score epoch _18
-      32 STU	//  settlement organic_settled_value score_root total_score _20
-      s1 s2 XCHG	//  settlement organic_settled_value total_score score_root _20
-      256 STU	//  settlement organic_settled_value total_score _22
-      128 STU	//  settlement organic_settled_value _24
-      128 STU	//  settlement _26
+      c4 PUSH	//  settlement epoch score_root total_score organic_settled_value _12
+      0 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12 _13=0
+      1095783169 PUSHINT	//  settlement epoch score_root total_score organic_settled_value _12 _13=0 _14=1095783169
+      NEWC	//  settlement epoch score_root total_score organic_settled_value _12 _13=0 _14=1095783169 _15
+      32 STU	//  settlement epoch score_root total_score organic_settled_value _12 _13=0 _17
+      64 STU	//  settlement epoch score_root total_score organic_settled_value _12 _19
+      s1 s5 XCHG	//  settlement _12 score_root total_score organic_settled_value epoch _19
+      32 STU	//  settlement _12 score_root total_score organic_settled_value _21
+      s1 s3 XCHG	//  settlement _12 organic_settled_value total_score score_root _21
+      256 STU	//  settlement _12 organic_settled_value total_score _23
+      128 STU	//  settlement _12 organic_settled_value _25
+      128 STU	//  settlement _12 _27
+      STREF	//  settlement _28
       ENDC	//  settlement body
-      1 PUSHINT	//  settlement body _28=1
-      0 PUSHINT	//  settlement body _28=1 _29=0
-      DUP	//  settlement body _28=1 _29=0 _30=0
-      24 PUSHINT	//  settlement body _28=1 _29=0 _30=0 _31=24
-      NEWC	//  settlement body _28=1 _29=0 _30=0 _31=24 _32
-      6 STU	//  settlement body _28=1 _29=0 _30=0 _34
-      s0 s5 XCHG2	//  _30=0 body _28=1 _29=0 _34 settlement
-      STSLICER	//  _30=0 body _28=1 _29=0 _35
-      200000000 PUSHINT	//  _30=0 body _28=1 _29=0 _35 _36=200000000
-      STTOMIS	//  _30=0 body _28=1 _29=0 _37
-      s1 s4 XCHG	//  _29=0 body _28=1 _30=0 _37
-      105 STU	//  _29=0 body _28=1 _47
-      s1 s3 XCHG	//  _28=1 body _29=0 _47
-      1 STU	//  _28=1 body _49
-      s1 s2 XCHG	//  body _28=1 _49
-      1 STU	//  body _51
-      STREF	//  _52
-      ENDC	//  _53
-      1 PUSHINT	//  _53 _54=1
+      1 PUSHINT	//  settlement body _30=1
+      0 PUSHINT	//  settlement body _30=1 _31=0
+      DUP	//  settlement body _30=1 _31=0 _32=0
+      24 PUSHINT	//  settlement body _30=1 _31=0 _32=0 _33=24
+      NEWC	//  settlement body _30=1 _31=0 _32=0 _33=24 _34
+      6 STU	//  settlement body _30=1 _31=0 _32=0 _36
+      s0 s5 XCHG2	//  _32=0 body _30=1 _31=0 _36 settlement
+      STSLICER	//  _32=0 body _30=1 _31=0 _37
+      200000000 PUSHINT	//  _32=0 body _30=1 _31=0 _37 _38=200000000
+      STTOMIS	//  _32=0 body _30=1 _31=0 _39
+      s1 s4 XCHG	//  _31=0 body _30=1 _32=0 _39
+      105 STU	//  _31=0 body _30=1 _49
+      s1 s3 XCHG	//  _30=1 body _31=0 _49
+      1 STU	//  _30=1 body _51
+      s1 s2 XCHG	//  body _30=1 _51
+      1 STU	//  body _53
+      STREF	//  _54
+      ENDC	//  _55
+      1 PUSHINT	//  _55 _56=1
       SENDRAWMSG
     }>
   }>

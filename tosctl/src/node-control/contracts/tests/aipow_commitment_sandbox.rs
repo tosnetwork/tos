@@ -70,6 +70,9 @@ fn deploy_settlement(bc: &mut Blockchain, deployer: &MsgAddressInt) -> MsgAddres
         maturation: AipowMaturation::methodology_v0(),
         total_cap: 4_500_000_000 * TOS,
         distributor_code: AipowDistributorContract::code().unwrap(),
+        // The commitment code the announcing commitments in this suite run, so the
+        // settlement can authenticate their register (H1).
+        commitment_code: AipowCommitmentContract::code().unwrap(),
     };
     let addr = AipowSettlementContract::calculate_address(-1, &init).unwrap();
     let deploy = MessageBuilder::internal(deployer, &addr, 2 * TOS)

@@ -134,7 +134,8 @@ struct SettlementLedger {
   td::RefInt256 minted_total;
   td::RefInt256 total_cap;
   td::Ref<vm::Cell> distributor_code;
-  td::Ref<vm::Cell> registrations;  // dict root cell (null when empty)
+  td::Ref<vm::Cell> commitment_code;  // audited commitment code (H1 register auth)
+  td::Ref<vm::Cell> registrations;    // dict root cell (null when empty)
 };
 
 // One candidate nomination recorded by the settlement for an epoch (the account

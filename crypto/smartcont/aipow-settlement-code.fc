@@ -16,20 +16,21 @@
 ;;
 ;; Registration model (candidate set — fixes the first-wins griefing, plan
 ;; D6/§8). A commitment nominates itself for an epoch by sending `register` with
-;; sender == the committed commitment address, carrying its committed tuple. The
-;; settlement CANNOT itself verify the sender is a genuine finalized commitment
-;; (a contract cannot read another account's code/state), so instead of trusting
-;; the first nomination it keeps a BOUNDED SET of candidate nominations per epoch,
+;; sender == the committed commitment address, carrying its committed tuple AND its
+;; own deploy data cell. The settlement cannot read another account's code/state,
+;; but it AUTHENTICATES the nominator (H1): it holds the audited commitment code
+;; (governance-set) and requires the sender's address to equal
+;; hash(StateInit(commitment_code, presented_data)) -- i.e. the sender must be an
+;; account genuinely deployed with the audited commitment code. Only real
+;; commitments can register, so junk accounts with smaller addresses can no longer
+;; evict a genuine nomination from the bounded set. It keeps a BOUNDED SET per epoch
 ;; keyed by the nominating account id, retaining the MAX_CANDIDATES smallest
-;; addresses. The native settlement path (collator + validate-query) resolves the
-;; candidates, re-verifies each against its real previous-state (code hash,
-;; status == final, tuple), and selects the min-address VALID finalized
-;; commitment; it then mints, naming that winner in the mint message. So a bogus
-;; nomination can neither EXCLUDE the genuine commitment (both are candidates) nor
-;; FREEZE the epoch (skip advances past the grace deadline regardless of
-;; candidates), removing the griefing DoS. (Full griefing resistance also needs
-;; the commitment to enforce a code-measured challenge window — the separate D6
-;; provenance launch gate — so a bogus VALID candidate is expensive.)
+;; addresses. The native settlement path (collator + validate-query) still resolves
+;; each candidate against its real previous-state (code hash, canonical address,
+;; status == final, tuple) and selects the min-address VALID finalized commitment,
+;; naming that winner in the mint message. So a bogus nomination can neither ENTER
+;; the set (authentication), EXCLUDE the genuine one, nor FREEZE the epoch (skip
+;; advances past the grace deadline regardless of candidates).
 ;;
 ;; Persistent data layout:
 ;;   version:uint16                (D9 layout tag)
@@ -53,6 +54,10 @@
 ;;   ^distributor_code             (governance-set at deploy; the audited
 ;;                                  distributor code used to derive canonical
 ;;                                  distributor addresses in the settle path)
+;;   ^commitment_code              (governance-set at deploy; the audited commitment
+;;                                  code, used to authenticate a nominator's address
+;;                                  at register: sender must be a canonical
+;;                                  commitment == hash(StateInit(commitment_code, data)))
 ;;   ^registrations  (udict: epoch uint32 -> ^[ count:uint16
 ;;                    candidates:(udict 256 -> [ workchain:int8 score_root:uint256
 ;;                      total_score:uint128 organic_settled_value:uint128
@@ -61,7 +66,9 @@
 ;; Internal messages:
 ;;   register#41505301 query_id:uint64 epoch:uint32 score_root:uint256
 ;;                     total_score:uint128 organic_settled_value:uint128
-;;       = InternalMsgBody;
+;;                     ^nominator_data = InternalMsgBody;
+;;       (nominator_data is the sender's deploy data cell, used to authenticate that
+;;        sender == hash(StateInit(commitment_code, nominator_data)).)
 ;;   skip#41505302 query_id:uint64 = InternalMsgBody;
 ;;   (settle) winner_id:uint256, from the minter -1:00..00.
 
@@ -81,6 +88,7 @@ const int err::candidate_set_full = 2309;   ;; the epoch's candidate set is full
                                             ;; address is not smaller than the current max
 const int err::epoch_too_far = 2310;        ;; register targets an epoch beyond the horizon
 const int err::cursor_exhausted = 2311;     ;; the uint32 epoch cursor cannot advance further
+const int err::unauthorized_registration = 2312; ;; sender is not a canonical commitment
 
 ;; The settlement version this code understands.
 const int settlement_version = 1;
@@ -100,7 +108,7 @@ const int REGISTER_HORIZON = 1024;
 ;; The epoch cursor is a uint32 field; it cannot advance past this value.
 const int MAX_EPOCH = 0xffffffff;
 
-(int, int, int, int, int, int, int, int, int, int, int, cell, cell) load_state() inline {
+(int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
   int version = ds~load_uint(16);
   int next_epoch = ds~load_uint(32);
@@ -114,15 +122,18 @@ const int MAX_EPOCH = 0xffffffff;
   int minted_total = ds~load_tomis();
   int total_cap = ds~load_tomis();
   cell distributor_code = ds~load_ref();
+  cell commitment_code = ds~load_ref();
   cell registrations = ds~load_dict();
   ds.end_parse();
   return (version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
-    immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
+    immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
+    commitment_code, registrations);
 }
 
 () save_state(int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
              int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
-             int minted_total, int total_cap, cell distributor_code, cell registrations) impure inline {
+             int minted_total, int total_cap, cell distributor_code, cell commitment_code,
+             cell registrations) impure inline {
   set_data(begin_cell()
     .store_uint(version, 16)
     .store_uint(next_epoch, 32)
@@ -136,6 +147,7 @@ const int MAX_EPOCH = 0xffffffff;
     .store_tomis(minted_total)
     .store_tomis(total_cap)
     .store_ref(distributor_code)
+    .store_ref(commitment_code)
     .store_dict(registrations)
   .end_cell());
 }
@@ -281,7 +293,7 @@ cell build_state_init(cell code, cell data) inline {
 
   (int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
    int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total,
-   int total_cap, cell distributor_code, cell registrations) = load_state();
+   int total_cap, cell distributor_code, cell commitment_code, cell registrations) = load_state();
 
   ;; The epoch mint arrives from the masterchain minter (-1:00..00) carrying the
   ;; native-selected winner's account id. Authenticate the sender first; any
@@ -308,7 +320,7 @@ cell build_state_init(cell code, cell data) inline {
     registrations~udict_delete?(32, next_epoch);
     save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, new_minted, total_cap, distributor_code,
-      registrations);
+      commitment_code, registrations);
     forward_to_distributor(msg_value, earner_workchain, dist_hash, state_init);
     return ();
   }
@@ -330,6 +342,9 @@ cell build_state_init(cell code, cell data) inline {
     int score_root = in_msg~load_uint(256);
     int total_score = in_msg~load_uint(128);
     int organic_settled_value = in_msg~load_uint(128);
+    ;; The nominator's own persistent data cell (its deploy data at announce time),
+    ;; carried so this account can bind the nomination to a canonical commitment.
+    cell nominator_data = in_msg~load_ref();
     in_msg.end_parse();
     throw_unless(err::epoch_settled, epoch >= next_epoch);
     ;; Bound the future horizon so registration spam for far-future epochs cannot
@@ -338,6 +353,15 @@ cell build_state_init(cell code, cell data) inline {
     throw_unless(err::epoch_too_far, epoch < next_epoch + REGISTER_HORIZON);
     throw_unless(err::zero_total_score, total_score > 0);
     (int wc, int id) = addr_parts(sender);
+    ;; H1 (Sybil admission): the candidate set is keyed by -- and evicted by -- the
+    ;; sender's address, so without authentication junk accounts with smaller
+    ;; addresses can evict a genuine commitment from the bounded set and starve its
+    ;; reward. Require the sender to be a CANONICAL commitment: its address must equal
+    ;; the hash of the StateInit of the audited commitment code (governance-set here)
+    ;; plus the data it presents. Only an account actually deployed with the audited
+    ;; commitment code can satisfy this, so junk wallets can never occupy a slot.
+    throw_unless(err::unauthorized_registration,
+      cell_hash(build_state_init(commitment_code, nominator_data)) == id);
     (int count, cell candidates) = load_candidates(registrations, epoch);
     ;; A given commitment may nominate an epoch at most once.
     (slice existing, int self_found) = candidates.udict_get?(256, id);
@@ -358,7 +382,8 @@ cell build_state_init(cell code, cell data) inline {
     }
     registrations~udict_set_ref(32, epoch, store_candidates(count, candidates));
     save_state(version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
-      immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code, registrations);
+      immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
+      commitment_code, registrations);
     return ();
   }
 
@@ -378,7 +403,7 @@ cell build_state_init(cell code, cell data) inline {
     registrations~udict_delete?(32, next_epoch);
     save_state(version, next_epoch + 1, epoch_seconds, register_grace, challenge_window, earner_workchain,
       immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap, distributor_code,
-      registrations);
+      commitment_code, registrations);
     return ();
   }
 
@@ -390,8 +415,9 @@ cell build_state_init(cell code, cell data) inline {
 (int, int, int, int, int, int, int, int, int, int, int) get_aipow_settlement_data() method_id {
   (int version, int next_epoch, int epoch_seconds, int register_grace, int challenge_window,
    int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds, int minted_total,
-   int total_cap, cell distributor_code, cell registrations) = load_state();
+   int total_cap, cell distributor_code, cell commitment_code, cell registrations) = load_state();
   distributor_code~impure_touch();
+  commitment_code~impure_touch();
   registrations~impure_touch();
   return (version, next_epoch, epoch_seconds, register_grace, challenge_window, earner_workchain,
     immediate_bps, stream_epochs, mat_epoch_seconds, minted_total, total_cap);
@@ -399,7 +425,7 @@ cell build_state_init(cell code, cell data) inline {
 
 ;; The number of candidates recorded for `epoch`.
 int get_candidate_count(int epoch) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   candidates~impure_touch();
   return count;
@@ -408,7 +434,7 @@ int get_candidate_count(int epoch) method_id {
 ;; (found, min_id): the smallest candidate account id for `epoch`, or (0, 0) if
 ;; none. The native path iterates candidates in address order from here.
 (int, int) get_min_candidate(int epoch) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0);
@@ -422,7 +448,7 @@ int get_candidate_count(int epoch) method_id {
 ;; greater than `after_id`, or (0, 0) if none. Lets the native path enumerate the
 ;; bounded candidate set in ascending address order.
 (int, int) get_next_candidate(int epoch, int after_id) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0);
@@ -435,7 +461,7 @@ int get_candidate_count(int epoch) method_id {
 ;; (found, workchain, score_root, total_score, organic_settled_value,
 ;;  registered_at) for the `id` candidate of `epoch`.
 (int, int, int, int, int, int) get_candidate(int epoch, int id) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell registrations) = load_state();
   (int count, cell candidates) = load_candidates(registrations, epoch);
   if (count == 0) {
     return (0, 0, 0, 0, 0, 0);
@@ -458,7 +484,7 @@ int get_candidate_count(int epoch) method_id {
 ;; distributor SDK with the same inputs has this address.
 (int, int, int) get_distributor_address(int epoch, int winner_id, int pool) method_id {
   (_, _, _, _, _, int earner_workchain, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
-   _, _, cell distributor_code, cell registrations) = load_state();
+   _, _, cell distributor_code, _, cell registrations) = load_state();
   (int found, cell state_init, int dist_hash) = resolve_distributor(epoch, winner_id, pool,
     earner_workchain, immediate_bps, stream_epochs, mat_epoch_seconds, distributor_code, registrations);
   state_init~impure_touch();

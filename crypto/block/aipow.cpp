@@ -122,7 +122,8 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   long long earner_workchain;
   // version:16 next_epoch:32 epoch_seconds:32 register_grace:32 challenge_window:32
   // earner_workchain:int8 immediate_bps:16 stream_epochs:16 mat_epoch_seconds:32
-  // minted_total:Grams total_cap:Grams ^distributor_code registrations:HashmapE
+  // minted_total:Grams total_cap:Grams ^distributor_code ^commitment_code
+  // registrations:HashmapE
   if (!(cs.fetch_uint_to(16, version) && cs.fetch_uint_to(32, next_epoch) &&
         cs.fetch_uint_to(32, epoch_seconds) && cs.fetch_uint_to(32, register_grace) &&
         cs.fetch_uint_to(32, challenge_window) && cs.fetch_int_to(8, earner_workchain) &&
@@ -144,9 +145,12 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   if (out.minted_total.is_null() || out.total_cap.is_null()) {
     return false;
   }
-  // distributor_code is an unconditional ^Cell; registrations is a HashmapE (a
-  // Maybe ^Cell) whose root ref is null when the dictionary is empty.
+  // distributor_code + commitment_code are unconditional ^Cell; registrations is a
+  // HashmapE (a Maybe ^Cell) whose root ref is null when the dictionary is empty.
   if (!cs.fetch_ref_to(out.distributor_code)) {
+    return false;
+  }
+  if (!cs.fetch_ref_to(out.commitment_code)) {
     return false;
   }
   if (!cs.fetch_maybe_ref(out.registrations)) {
@@ -516,6 +520,14 @@ EpochSettlement derive_masterchain_epoch_mint(const MasterchainMintContext& ctx,
   // skippable before its window elapses -> fail closed (no mint from this ledger).
   if (ledger.epoch_seconds == 0 || ledger.register_grace == 0 ||
       ledger.challenge_window >= ledger.register_grace) {
+    return EpochSettlement::none();
+  }
+  // The settlement authenticates registrations against its OWN stored commitment
+  // code (H1). If that code does not match the registry's audited commitment hash,
+  // the contract admits a different code's accounts as candidates than the native
+  // path mints for -- a governance misconfiguration. Fail closed so the two agree.
+  if (ledger.commitment_code.is_null() ||
+      td::Bits256{ledger.commitment_code->get_hash().bits()} != ctx.commitment_code_hash) {
     return EpochSettlement::none();
   }
 

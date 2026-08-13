@@ -147,6 +147,8 @@ td::Ref<vm::Cell> build_settlement(td::uint32 next_epoch, long long minted_total
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(minted_total));
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(total_cap));
   cb.store_ref(dummy_ref());            // ^distributor_code
+  cb.store_ref(commitment_code());      // ^commitment_code (H1 register auth; the
+                                        // derive cross-check pins it to the registry hash)
   cb.store_maybe_ref(registrations_root);  // registrations HashmapE
   return cb.finalize();
 }
@@ -581,15 +583,22 @@ TEST(Aipow, derive_masterchain_end_to_end_mints_for_a_registered_final_commitmen
   CHECK(r.epoch == 27260);
   CHECK(td::cmp(r.amount, 500) == 0);
 
-  // A wrong commitment code hash makes the only candidate invalid. With no valid
+  // A candidate resolving to a non-audited code hash is invalid. With no valid
   // candidate the epoch is now Skip-eligible past its grace deadline (skip no
   // longer refuses a registered epoch -- the griefing fix), so far past grace the
-  // result is Skip.
+  // result is Skip. (The registry hash still matches the settlement's stored code,
+  // so the H1 cross-check passes; it is the CANDIDATE's code that is wrong.)
   {
-    auto bad = ctx;
-    bad.commitment_code_hash = mk_bits(0xBAD);
-    bad.gen_utime = 4000000000u;
-    CHECK(block::aipow::derive_masterchain_epoch_mint(bad, resolver).is_skip());
+    auto res_badcode = [&](td::int32 wc, const td::Bits256& addr) -> block::aipow::ResolvedAccount {
+      auto a = resolver(wc, addr);
+      if (wc == -1 && addr == commitment_addr) {
+        a.code_hash = mk_bits(0xBAD);
+      }
+      return a;
+    };
+    auto far = ctx;
+    far.gen_utime = 4000000000u;
+    CHECK(block::aipow::derive_masterchain_epoch_mint(far, res_badcode).is_skip());
   }
   // A non-final commitment is likewise unauthorized.
   {
@@ -624,7 +633,7 @@ TEST(Aipow, derive_masterchain_skips_an_unregistered_epoch_only_past_grace) {
   block::aipow::MasterchainMintContext ctx;
   ctx.config = make_cfg(1, 2, 1000000000LL, 0);
   ctx.settlement_addr = settlement_addr;
-  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.commitment_code_hash = td::Bits256{commitment_code()->get_hash().bits()};
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
@@ -679,7 +688,7 @@ TEST(Aipow, parse_settlement_ledger_reports_the_version_and_derive_fails_closed_
   block::aipow::MasterchainMintContext ctx;
   ctx.config = make_cfg(1, 2, 1000000000LL, 0);
   ctx.settlement_addr = settlement_addr;
-  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.commitment_code_hash = td::Bits256{commitment_code()->get_hash().bits()};
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
@@ -767,7 +776,7 @@ TEST(Aipow, a_malformed_registration_entry_yields_no_candidate_and_skips_past_gr
   ctx.config = make_cfg(1, 2, 1000000000LL, 0);
   ctx.limits = make_limits(4500000000000000000LL);
   ctx.settlement_addr = settlement_addr;
-  ctx.commitment_code_hash = mk_bits(0xCC);
+  ctx.commitment_code_hash = td::Bits256{commitment_code()->get_hash().bits()};
   ctx.expected_commitment_version = 1;
   ctx.reviewer_addr = mk_bits(0x22);
   ctx.methodology_hash = mk_bits(0x44);
@@ -962,6 +971,7 @@ td::Ref<vm::Cell> build_settlement_timed(td::uint32 next_epoch, td::uint32 epoch
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(0));
   block::tlb::t_Tomis.store_integer_value(cb, *make_refint(4500000000000000000LL));
   cb.store_ref(dummy_ref());
+  cb.store_ref(commitment_code());  // ^commitment_code (H1)
   cb.store_maybe_ref(registrations_root);
   return cb.finalize();
 }
@@ -980,7 +990,7 @@ TEST(Aipow, derive_fails_closed_on_a_settlement_that_violates_its_timing_invaria
     block::aipow::MasterchainMintContext ctx;
     ctx.config = make_cfg(1, 2, 1000000000LL, 0);
     ctx.settlement_addr = settlement_addr;
-    ctx.commitment_code_hash = mk_bits(0xCC);
+    ctx.commitment_code_hash = td::Bits256{commitment_code()->get_hash().bits()};
     ctx.reviewer_addr = mk_bits(0x22);
     ctx.methodology_hash = mk_bits(0x44);
     ctx.gen_utime = 4000000000u;  // far past any grace, would normally skip

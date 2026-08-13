@@ -98,6 +98,9 @@ impl AipowSettlementParamsCmd {
                 .context("total_cap_tos overflows nanotos")?,
             // The audited distributor code the settle path deploys per epoch.
             distributor_code: AipowDistributorContract::code()?,
+            // The audited commitment code, to authenticate nominators at register.
+            // MUST match the registry's commitment_code_hash (governance invariant).
+            commitment_code: AipowCommitmentContract::code()?,
         })
     }
 
