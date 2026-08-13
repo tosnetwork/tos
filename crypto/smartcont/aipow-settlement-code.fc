@@ -405,6 +405,16 @@ cell build_state_init(cell code, cell data) inline {
       candidates~udict_set_builder(256, id, record);
       count += 1;
     } else {
+      ;; Full. The cursor epoch (epoch == next_epoch) may be minted in THIS block from
+      ;; pre-block state: the collator derives the winner from the pre-block candidate
+      ;; set and the mandatory settle names it. Evicting that pre-state winner mid-block
+      ;; (before the settle runs) would leave settle unable to resolve the named winner
+      ;; (settle_no_registration), so the mint is emitted but never recorded and the
+      ;; block is rejected (produce/check divergence). Freeze the cursor epoch's bucket
+      ;; against eviction -- a nomination arriving this late cannot finalize in time to
+      ;; win the current mint anyway. Future-epoch buckets still evict normally; any
+      ;; eviction there lands in pre-block state and both sides derive it identically.
+      throw_if(err::candidate_set_full, epoch == next_epoch);
       ;; Full: retain the smallest-address candidates. Admit this nomination only
       ;; if its address is smaller than the current maximum, evicting the maximum.
       (int max_id, slice max_val, int has_max) = candidates.udict_get_max?(256);

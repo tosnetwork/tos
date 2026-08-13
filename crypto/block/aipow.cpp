@@ -159,6 +159,8 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   return cs.empty_ext();  // no ignored remainder (strict, D9)
   } catch (vm::VmError&) {
     return false;  // a special/pruned/malformed cell is not a valid ledger
+  } catch (vm::VmVirtError&) {
+    return false;  // access to a pruned/virtualized branch must fail closed, not escape
   }
 }
 
@@ -238,6 +240,8 @@ std::vector<EpochCandidate> list_epoch_candidates(const td::Ref<vm::Cell>& regis
     return parsed;
   } catch (vm::VmError&) {
     return {};  // a malformed dict/record must fail closed, not return a partial result
+  } catch (vm::VmVirtError&) {
+    return {};  // a pruned/virtualized branch must fail closed identically, not escape
   }
 }
 
@@ -316,6 +320,8 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   return !is_special && stl.is_valid();
   } catch (vm::VmError&) {
     return false;
+  } catch (vm::VmVirtError&) {
+    return false;  // a pruned/virtualized branch must fail closed, not escape
   }
 }
 
@@ -473,6 +479,8 @@ td::Ref<vm::Cell> reconstruct_commitment_init_data(const td::Ref<vm::Cell>& data
     return cb.finalize_to(out) ? out : td::Ref<vm::Cell>{};
   } catch (vm::VmError&) {
     return {};
+  } catch (vm::VmVirtError&) {
+    return {};  // a pruned/virtualized branch must fail closed, not escape
   }
 }
 

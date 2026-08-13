@@ -9,6 +9,7 @@
 #include "block/block-parse.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
+#include "vm/cells/MerkleProof.h"
 #include "vm/dict.h"
 #include "td/utils/tests.h"
 
@@ -759,6 +760,35 @@ TEST(Aipow, parsers_fail_closed_on_malformed_input_instead_of_throwing) {
   CHECK(!block::aipow::parse_settlement_ledger(garbage, led));
   block::aipow::CommitmentState c;
   CHECK(!block::aipow::parse_commitment_state(garbage, c));
+}
+
+TEST(Aipow, parsers_fail_closed_on_a_pruned_virtualized_branch) {
+  // A validator may re-derive over a virtualized state in which a branch has been
+  // pruned. Accessing such a branch raises vm::VmVirtError, which is a distinct type
+  // -- NOT a subclass of vm::VmError. The AIPoW parsers must catch it and fail closed
+  // exactly like the collator (which holds the full cell), otherwise a validator would
+  // throw/abort while the producer completes derivation: a produce/check divergence.
+  auto ledger = build_settlement(27260, 1000, 4500000000000000000LL, {});
+  // Hide the ledger behind a parent ref, then prove the parent while pruning the child.
+  vm::CellBuilder pb;
+  CHECK(pb.store_ref_bool(ledger));
+  auto parent = pb.finalize();
+  auto is_prunned = [&](const td::Ref<vm::Cell>& cell) {
+    return cell->get_hash() == ledger->get_hash();
+  };
+  auto proof = vm::MerkleProof::generate(parent, is_prunned).move_as_ok();
+  auto virt = vm::MerkleProof::virtualize(proof).move_as_ok();
+  // The parent materializes, but its child is now a pruned branch at a virt level;
+  // loading THROUGH that child raises vm::VmVirtError.
+  auto pcs = vm::load_cell_slice(virt);
+  auto pruned_child = pcs.fetch_ref();
+  CHECK(pruned_child.not_null());
+
+  block::aipow::SettlementLedger led;
+  CHECK(!block::aipow::parse_settlement_ledger(pruned_child, led));  // fail closed, no throw
+  block::aipow::CommitmentState c;
+  CHECK(!block::aipow::parse_commitment_state(pruned_child, c));
+  CHECK(block::aipow::list_epoch_candidates(pruned_child, 27260).empty());
 }
 
 TEST(Aipow, config_cap_binds_even_below_the_settlements_stored_cap) {

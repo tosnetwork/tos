@@ -40,6 +40,7 @@ const ERR_SKIP_TOO_EARLY: i32 = 2304;
 const ERR_SKIP_REGISTERED: i32 = 2305;
 const ERR_SETTLE_NO_REGISTRATION: i32 = 2306;
 const ERR_UNKNOWN_OP: i32 = 2307;
+const ERR_CANDIDATE_SET_FULL: i32 = 2309;
 const ERR_EPOCH_TOO_FAR: i32 = 2310;
 const ERR_CURSOR_EXHAUSTED: i32 = 2311;
 const ERR_UNAUTHORIZED_REGISTRATION: i32 = 2312;
@@ -502,6 +503,55 @@ fn the_candidate_set_is_bounded_and_keeps_the_smallest_addresses() {
         assert!(f.candidate(epoch, *id).is_some(), "the 8 smallest addresses are kept");
     }
     assert_eq!(f.min_candidate(epoch), Some(ids[0]), "min candidate is the smallest address");
+}
+
+#[test]
+fn the_cursor_epochs_candidate_bucket_is_frozen_against_eviction() {
+    // A full candidate bucket for the CURSOR epoch (epoch == next_epoch) must not
+    // evict its current maximum mid-block. The collator derives the epoch's mint from
+    // the pre-block candidate set and the mandatory settle names that winner; a
+    // same-block registration that evicted it would strand the settle
+    // (settle_no_registration) and force an invalid block (produce/check divergence).
+    // For the cursor epoch a full set therefore rejects any new nomination -- even a
+    // smaller address that would normally evict the maximum -- leaving the bucket
+    // untouched. (Future-epoch buckets still evict; that lands in pre-block state and
+    // both collator and validator derive it identically.)
+    let mut f = Fixture::new();
+    let epoch = f.next_epoch; // the cursor epoch: eligible to be minted in the block
+    let mut ids: Vec<[u8; 32]> = Vec::new();
+    for i in 0..8u64 {
+        let c = nominator(200 + i);
+        ids.push(account_id(&c.0));
+        f.register(&c, i, epoch, [(i + 1) as u8; 32], 1_000, 1, 2 * TOS).expect_success();
+    }
+    assert_eq!(f.candidate_count(epoch), 8);
+    ids.sort();
+    let max_before = ids[7];
+
+    // A ninth canonical commitment whose address is SMALLER than the current maximum
+    // would evict that maximum for a FUTURE epoch. For the cursor epoch it is rejected
+    // as full instead, and the pre-state winner is preserved.
+    let smaller = (300..400u64)
+        .map(nominator)
+        .find(|c| account_id(&c.0) < max_before)
+        .expect("a smaller-address canonical commitment exists among the seeds");
+    f.register(&smaller, 99, epoch, [0x7F; 32], 1_000, 1, 2 * TOS)
+        .expect_exit_code(ERR_CANDIDATE_SET_FULL);
+
+    // The bucket is completely unchanged: same eight members, the maximum still present,
+    // the late nomination excluded.
+    assert_eq!(f.candidate_count(epoch), 8);
+    assert!(
+        f.candidate(epoch, max_before).is_some(),
+        "the pre-state winner (max address) is NOT evicted for the cursor epoch"
+    );
+    assert!(
+        f.candidate(epoch, account_id(&smaller.0)).is_none(),
+        "the late same-epoch nomination did not enter the bucket"
+    );
+    for id in &ids {
+        assert!(f.candidate(epoch, *id).is_some(), "every original cursor-epoch candidate is retained");
+    }
 }
 
 #[test]
