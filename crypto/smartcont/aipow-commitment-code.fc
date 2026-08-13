@@ -69,7 +69,8 @@
 ;;   finalize#41505702 query_id:uint64 = InternalMsgBody;
 ;;   rule#41505703 query_id:uint64 uphold:uint8 = InternalMsgBody;
 ;;   timeout#41505704 query_id:uint64 = InternalMsgBody;
-;; Outgoing on finalization:
+;;   announce#41505705 query_id:uint64 = InternalMsgBody;
+;; Outgoing on announcement:
 ;;   register#41505301 query_id:uint64 epoch:uint32 score_root:uint256
 ;;       total_score:uint128 organic_settled_value:uint128  -> settlement.
 
@@ -77,15 +78,16 @@ const int op::challenge = 0x41505701;
 const int op::finalize = 0x41505702;
 const int op::rule = 0x41505703;
 const int op::timeout = 0x41505704;
+const int op::announce = 0x41505705;
 
-;; The settlement account's register opcode this commitment emits on finalize.
+;; The settlement account's register opcode this commitment emits on announce.
 const int settlement_op::register = 0x41505301;
 
 ;; The commitment layout version this code understands (D9).
 const int commitment_version = 1;
 
-;; Value attached to the finalization registration so the settlement funds its
-;; own gas/storage for recording the nomination. v0 draft constant.
+;; Value attached to the announce registration so the settlement funds its own
+;; gas/storage for recording the nomination. v0 draft constant.
 const int registration_value = 200000000;  ;; 0.2 TOS (funds the settlement's
                                             ;; candidate-set register gas on masterchain)
 
@@ -189,25 +191,30 @@ const int err::review_open = 2110;
 ;; comfortable inline budget). Bounceable so a rejected registration (e.g. an
 ;; epoch behind the settlement cursor) returns the fee.
 ;;
+;; This is sent at ANNOUNCE (commit time), not finalization: the settlement
+;; records the nomination's registered_at with its own clock at announce, and the
+;; native derivation runs the challenge-window provenance floor from that trusted
+;; time (window_deadline >= registered_at + challenge_window, and the window must
+;; elapse before the mint). Registering at finalize would make registered_at the
+;; late, post-window time, defeating the anchor -- so the commitment nominates
+;; itself early, while still `committed`, and the native reads its live `final`
+;; status independently at mint time.
+;;
 ;; Registration semantics, deliberately chosen:
 ;;   * When the settlement is NOT a routable internal address (addr_none$00 /
 ;;     addr_extern$01 -- addr_none is the documented opt-out) or the epoch does
 ;;     not fit the settlement's uint32 register field, registration is
 ;;     structurally impossible and can never succeed on retry, so it is SKIPPED
-;;     (a no-op) -- finalization proceeds and the bond is returned. This is what
-;;     keeps a commitment deployed (bypassing the SDK) with a malformed
-;;     settlement or an out-of-range epoch from aborting every finalize and
-;;     stranding the bond forever.
+;;     (a no-op) -- announce proceeds as a harmless no-op. This is what keeps a
+;;     commitment deployed (bypassing the SDK) with a malformed settlement or an
+;;     out-of-range epoch from aborting every announce.
 ;;   * Otherwise (a valid settlement + in-range epoch) registration is MANDATORY
-;;     and ATOMIC with finalization: the send uses mode 1 (NOT +2), so if it
-;;     cannot be funded the whole finalize action phase aborts and NOTHING is
-;;     committed -- neither the `final` status nor the bond return. Because
-;;     finalize/rule are permissionless and the pre-abort status is preserved,
-;;     anyone simply retries with more attached value. This guarantees the
-;;     invariant "a finalized commitment with a valid settlement is registered"
-;;     -- best-effort (+2) is intentionally NOT used, because `final` is terminal
-;;     and a silently-skipped registration could never be retried, permanently
-;;     hiding valid work from the settlement.
+;;     and ATOMIC with announce: the send uses mode 1 (NOT +2), so if it cannot
+;;     be funded the whole announce action phase aborts and NOTHING is committed.
+;;     Because announce is permissionless and the pre-abort status is preserved,
+;;     anyone simply retries with more attached value. Best-effort (+2) is
+;;     intentionally NOT used: a silently-skipped registration would leave valid
+;;     work invisible to the settlement with no signal to retry.
 () send_registration(slice settlement, int epoch, int score_root, int total_score,
                      int organic_settled_value) impure inline {
   ;; MsgAddress tag: 0=addr_none, 1=addr_extern, 2=addr_std, 3=addr_var. Only
@@ -281,9 +288,24 @@ const int err::review_open = 2110;
     return ();
   }
 
+  if (op == op::announce) {
+    ;; Permissionless: nominate this commitment to the settlement while it is
+    ;; still `committed`, so the settlement records registered_at with its own
+    ;; clock EARLY -- the native challenge-window provenance floor runs from that
+    ;; trusted time (a late, post-finalize registration would defeat it). The
+    ;; settlement dedups per commitment, so a repeat announce simply bounces; the
+    ;; committer normally announces once, right after deploy.
+    throw_unless(err::not_committed, status == status::committed);
+    in_msg.end_parse();
+    send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
+    return ();
+  }
+
   if (op == op::finalize) {
     ;; Permissionless: after an unchallenged window, anyone may finalize;
-    ;; the bond always returns to the committer, whoever sends this.
+    ;; the bond always returns to the committer, whoever sends this. Finalize is
+    ;; local (no settlement message): the nomination was already sent at announce,
+    ;; and the native derivation reads this `final` status live at mint time.
     throw_unless(err::not_committed, status == status::committed);
     throw_unless(err::window_open, now() >= window_deadline);
     in_msg.end_parse();
@@ -291,8 +313,6 @@ const int err::review_open = 2110;
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
       total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
     send_value(committer, commit_bond, 1);
-    ;; Advertise the finalized root to the settlement (D6).
-    send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
     return ();
   }
 
@@ -316,8 +336,8 @@ const int err::review_open = 2110;
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash,
         total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
       send_value(committer, commit_bond + challenge_bond, 1);
-      ;; A dismissed challenge finalizes the root: advertise it (D6).
-      send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
+      ;; No settlement message here: the nomination was sent at announce; the
+      ;; native derivation reads this `final` status live at mint time.
     }
     return ();
   }

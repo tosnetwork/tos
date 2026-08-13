@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABLMAART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXAroEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgL8jvtXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKwkQi1QnByAQfRA2UVMQXlQTDgNWEU8TAREUARETVhXIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRQJXHgBwgAvMgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVBKhIMIAjhVxcIAQyMsFUATPFlj6AhLLaskB+wCRW+IAxnCAEMjLBVAEzxZY+gISy2rJAfsAQwAk1wsBwQKSXwWOQSOEH7ySXwXgcIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCEAvrwgD6AhTLaBPLABLLAMzJcfsA4gOWVhCCEEFQVwO6jytXEIEIORERLccFARERAfL0gQg4C8ABG/L0DNMH0YEIOiHAACLAAbHy9OMP4FcRD4IQQVBXBLrjAl8PW4EIO/LwCQoLAPAQqxCac1GlEJoQiQdRhQchEGcQVhBFAwQCERECAREQARESyAHPFsnIUATPFhLL/8kGyMv/Fcv/E8t/y3/JAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzMzMye1UWKBxcIAQyMsFUATPFlj6AhLLaskB+wAB+nIrCBB7VBYJUFYiEF1UQVQjED8iVhIDAhEQAgERFQERFFYWyAHPFsnIUATPFhLL/8kGyMv/Fcv/E8t/y3/JAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzMzMye1UUFKgEnFwgBDIywVQBM8WWPoCEstqyQH7AFAzDAH8gQg4C8ABG/L0gQg++CMovvL0DNFzVDm1JhA/LwMCERECARESARETyAHPFsnIUATPFhLL/8kGyMv/Fcv/E8t/y3/JAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzMzMye1UUDNxcIAQyMsFUATPFlj6AhLLaskB+wBxDQCaJNcLAcECkl8FjkEjhB+8kl8F4HCCEEFQUwHIyx/LPxTLHxLL/8t/y3/JcXAggBjIywVQBc8WghAL68IA+gIUy2gTywASywDMyXH7AOIAKHCAEMjLBVAEzxZY+gISy2rJAfsAmPiBNg==";
+pub const AIPOW_COMMITMENT_CODE_B64: &str = "te6cckECDgEABGUAART/APSkE/S88sgLAQIBYgIDAvbQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QPpA0wfTP9M/0z/6APoA1AHQ0//T/9N/03/RBNQB0PpA0//RAtQB0PpA0QHREO8Q3hDNELwQqxCaEIkQeBBXEEYTFVYRghBBUFcBuuMCVxNWEIIQQVBXBboEBQCXoZcB2omhph/0gfSBpg+mf6Z/pn/0AfQBqAOhp/+n/6b/pv+iCagDofSBp/+iBagDofSBogOiId4hvCGaIXghViE0IRIg8CCuIIwmKwG0ODlbPYEINAnAABny9IEINfgjJ7ny9IEIPVPaxwVT6scFsfLygQg2U+S+8vQK0//RgQg8IcMA8vRx+COCCAk6gKAQvBobEIkHUYVRdhBWEDUQJBA/VhBVIBEQBgP8jmJfAzJsMzM1NTY2gQg0AcAA8vQC0Vkk1wsBwQKSXwWOQSOEH7ySXwXgcIIQQVBTAcjLH8s/FMsfEsv/y3/Lf8lxcCCAGMjLBVAFzxaCEAvrwgD6AhTLaBPLABLLAMzJcfsA4uBWEIIQQVBXArrjAlYQghBBUFcDuuMCVxEPBwgJALzIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VQSoSDCAI4VcXCAEMjLBVAEzxZY+gISy2rJAfsAkVviAexXEFcQgQg0C8AAG/L0gQg3+CMpvvL0DNFyKw4QvVQcBhCsEJsQigkQaBBXEEYDBQIREAIREcgBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVAFxDQJWVxCBCDkRES3HBQEREQHy9IEIOAvAARvy9AzTB9GBCDohwAAiwAGx8vTjDwoLASKCEEFQVwS64wJfD1uBCDvy8AwA8BCrEJpzUaUQmhCJB1GFByEQZxBWEEUDBAIREQIBERABERLIAc8WychQBM8WEsv/yQbIy/8Vy/8Ty3/Lf8kCyMsPUAvPFlAJzxYXywcVyz8Tyz/LPwH6AgH6AhLMzMzJ7VRYoHFwgBDIywVQBM8WWPoCEstqyQH7AADucitQvVQcBhCrEJoIUZYIEGcQVhBFRDACERECAREQARESyAHPFsnIUATPFhLL/8kGyMv/Fcv/E8t/y3/JAsjLD1ALzxZQCc8WF8sHFcs/E8s/yz8B+gIB+gISzMzMye1UWaBxcIAQyMsFUATPFlj6AhLLaskB+wAB/IEIOAvAARvy9IEIPvgjKL7y9AzRc1Q5tSYQPy8DAhERAgEREgERE8gBzxbJyFAEzxYSy//JBsjL/xXL/xPLf8t/yQLIyw9QC88WUAnPFhfLBxXLPxPLP8s/AfoCAfoCEszMzMntVFAzcXCAEMjLBVAEzxZY+gISy2rJAfsAcQ0AKHCAEMjLBVAEzxZY+gISy2rJAfsAxFs9fw==";
 
 /// The commitment layout version this SDK writes and the contract understands.
 pub const AIPOW_COMMITMENT_VERSION: u16 = 1;
@@ -19,6 +19,7 @@ pub const APW_CHALLENGE_OPCODE: u32 = 0x4150_5701;
 pub const APW_FINALIZE_OPCODE: u32 = 0x4150_5702;
 pub const APW_RULE_OPCODE: u32 = 0x4150_5703;
 pub const APW_TIMEOUT_OPCODE: u32 = 0x4150_5704;
+pub const APW_ANNOUNCE_OPCODE: u32 = 0x4150_5705;
 
 pub const AIPOW_COMMITMENT_STATUS_COMMITTED: u8 = 0;
 pub const AIPOW_COMMITMENT_STATUS_CHALLENGED: u8 = 1;
@@ -204,8 +205,17 @@ impl AipowCommitmentContract {
         })
     }
 
+    /// Anyone may announce a still-committed commitment to its settlement,
+    /// which records the nomination's registered_at with its own clock EARLY --
+    /// the native challenge-window provenance floor runs from that trusted time.
+    /// Normally sent once, right after deploy; the settlement dedups repeats.
+    pub fn announce(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message(APW_ANNOUNCE_OPCODE, query_id, |_| Ok(()))
+    }
+
     /// Anyone may finalize an unchallenged commitment once the window has
-    /// passed; the bond always returns to the committer.
+    /// passed; the bond always returns to the committer. Finalize is local (the
+    /// nomination was already sent at announce).
     pub fn finalize(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message(APW_FINALIZE_OPCODE, query_id, |_| Ok(()))
     }
@@ -347,6 +357,12 @@ mod tests {
         let mut slice = SliceData::load_cell(body).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), APW_TIMEOUT_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 4);
+        assert_eq!(slice.remaining_bits(), 0);
+
+        let body = AipowCommitmentContract::announce(5).unwrap();
+        let mut slice = SliceData::load_cell(body).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), APW_ANNOUNCE_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 5);
         assert_eq!(slice.remaining_bits(), 0);
     }
 }

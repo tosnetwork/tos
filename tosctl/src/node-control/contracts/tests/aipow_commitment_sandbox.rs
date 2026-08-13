@@ -31,7 +31,7 @@ const COMMIT_EPOCH: u64 = 27_260;
 const TOTAL_SCORE: u128 = 1_000_000;
 const ORGANIC_VALUE: u128 = 42 * TOS as u128;
 const SCORE_ROOT: [u8; 32] = [0x33; 32];
-/// The settlement's cursor: at or below the commitment epoch so its finalize
+/// The settlement's cursor: at or below the commitment epoch so its announce
 /// registration is accepted (register requires epoch >= cursor).
 const SETTLEMENT_NEXT_EPOCH: u32 = COMMIT_EPOCH as u32;
 const ERR_NOT_COMMITTED: i32 = 2100;
@@ -58,8 +58,8 @@ struct Fixture {
     window_deadline: u64,
 }
 
-/// Deploy a real AIPoW settlement (the finalize registration target) so the
-/// full finalize -> register -> settlement chain runs against a live account.
+/// Deploy a real AIPoW settlement (the announce registration target) so the
+/// full announce -> register -> settlement chain runs against a live account.
 fn deploy_settlement(bc: &mut Blockchain, deployer: &MsgAddressInt) -> MsgAddressInt {
     let init = AipowSettlementInit {
         next_epoch: SETTLEMENT_NEXT_EPOCH,
@@ -156,7 +156,7 @@ impl Fixture {
 
     fn send_from(&mut self, from: &MsgAddressInt, body: Cell) -> tos_sandbox::SendResult {
         // Half a TOS covers masterchain gas comfortably, including the extra work
-        // when finalize/dismiss also emit the settlement registration.
+        // when announce emits the settlement registration.
         self.send_from_with_value(from, body, TOS / 2)
     }
 
@@ -241,43 +241,61 @@ fn deploys_committed_and_readable() {
 }
 
 #[test]
-fn permissionless_finalize_registers_the_committed_tuple_with_the_settlement() {
+fn permissionless_announce_registers_the_committed_tuple_with_the_settlement() {
     let mut f = Fixture::new();
     let outsider = f.challenger.address().clone();
-    f.bc.set_now((f.window_deadline + 1) as u32);
-    f.send_from(&outsider, AipowCommitmentContract::finalize(1).unwrap()).expect_success();
-    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
+    // Announce is sent while still committed (early), so the settlement records
+    // registered_at with its own clock -- the anchor the native window runs from.
+    f.send_from(&outsider, AipowCommitmentContract::announce(1).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_COMMITTED);
 
-    // The finalize emitted an authenticated register to the settlement: the
+    // The announce emitted an authenticated register to the settlement: the
     // settlement recorded the commitment address as the nomination source and
     // the committed economic tuple.
-    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on finalize");
+    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on announce");
     assert_eq!(reg.score_root, SCORE_ROOT);
     assert_eq!(reg.total_score, TOTAL_SCORE);
     assert_eq!(reg.organic_settled_value, ORGANIC_VALUE);
+
+    // Finalize is now local: it flips the status to final and does NOT emit a
+    // second registration (the nomination already exists from the announce).
+    f.bc.set_now((f.window_deadline + 1) as u32);
+    f.send_from(&outsider, AipowCommitmentContract::finalize(2).unwrap()).expect_success();
+    assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
+    let reg2 = f.settlement_candidate(COMMIT_EPOCH as u32).expect("still registered after finalize");
+    assert_eq!(reg2.total_score, TOTAL_SCORE);
 }
 
 #[test]
-fn a_dismissed_challenge_finalizes_and_registers() {
+fn announce_registers_early_and_a_dismissed_challenge_still_finalizes() {
     let mut f = Fixture::new();
     let challenger_addr = f.challenger.address().clone();
     let reviewer_addr = f.reviewer.address().clone();
+    // The nomination is recorded at announce, while committed and before any
+    // dispute -- the candidate exists throughout the challenge lifecycle.
+    f.send_from(&challenger_addr, AipowCommitmentContract::announce(1).unwrap()).expect_success();
+    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on announce");
+    assert_eq!(reg.total_score, TOTAL_SCORE);
+
     f.send_from_with_value(
         &challenger_addr,
-        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
+        AipowCommitmentContract::challenge(2, [0xEE; 32]).unwrap(),
         COMMIT_BOND + TOS,
     )
     .expect_success();
-    // Dismissing the challenge finalizes the root, which registers it.
-    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
+    // Dismissing the challenge finalizes the root; the candidate is unchanged.
+    f.send_from(&reviewer_addr, AipowCommitmentContract::rule(3, false).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
-    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on dismiss");
-    assert_eq!(reg.total_score, TOTAL_SCORE);
+    assert!(f.settlement_candidate(COMMIT_EPOCH as u32).is_some(), "candidate still present");
 }
 
 #[test]
-fn a_rejected_root_never_registers() {
-    // Upheld challenge (root rejected): no registration.
+fn a_root_rejected_before_announcing_can_never_register() {
+    // A commitment that is rejected before it announces can never nominate
+    // itself: announce requires status == committed. (An already-announced root
+    // that is later rejected still leaves its candidate in the settlement, but
+    // the native derivation filters it out by its live `rejected` status -- that
+    // filtering is covered in the C++ derive tests.)
     let mut f = Fixture::new();
     let challenger_addr = f.challenger.address().clone();
     let reviewer_addr = f.reviewer.address().clone();
@@ -289,22 +307,10 @@ fn a_rejected_root_never_registers() {
     .expect_success();
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, true).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
+    // Announcing a rejected root is rejected (not_committed), so it never registers.
+    f.send_from(&challenger_addr, AipowCommitmentContract::announce(3).unwrap())
+        .expect_exit_code(ERR_NOT_COMMITTED);
     assert_eq!(f.settlement_candidate(COMMIT_EPOCH as u32), None, "rejected root not advertised");
-
-    // Review timeout (also rejected): no registration.
-    let mut g = Fixture::new();
-    let g_challenger = g.challenger.address().clone();
-    g.send_from_with_value(
-        &g_challenger,
-        AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap(),
-        COMMIT_BOND + TOS,
-    )
-    .expect_success();
-    let review_deadline = g.data().review_deadline;
-    g.bc.set_now((review_deadline + 1) as u32);
-    g.send_from(&g_challenger, AipowCommitmentContract::timeout(2).unwrap()).expect_success();
-    assert_eq!(g.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
-    assert_eq!(g.settlement_candidate(COMMIT_EPOCH as u32), None, "timed-out root not advertised");
 }
 
 #[test]
@@ -608,9 +614,9 @@ fn unknown_ops_trailing_garbage_and_bounces_are_handled() {
 
 #[test]
 fn finalize_with_no_settlement_still_finalizes_and_returns_the_bond() {
-    // A commitment deployed with addr_none settlement (registration disabled)
-    // must still finalize and return the bond -- the best-effort registration is
-    // skipped on-chain, never aborting bond settlement.
+    // A commitment deployed with addr_none settlement (registration disabled):
+    // announce is a harmless no-op (the structurally-impossible registration is
+    // skipped on-chain) and finalize still finalizes and returns the bond.
     let mut bc = Blockchain::new().expect("blockchain");
     bc.set_workchain(-1);
     let committer = bc.treasury("aipow-committer-ns", 1_000 * TOS).expect("committer");
@@ -635,6 +641,12 @@ fn finalize_with_no_settlement_still_finalizes_and_returns_the_bond() {
         .body(Cell::default())
         .build();
     bc.send_message(deploy).expect("deploy").expect_success();
+
+    // Announce with registration disabled: a harmless no-op, still committed.
+    let announce = MessageBuilder::internal(reviewer.address(), &commitment, TOS / 2)
+        .body(AipowCommitmentContract::announce(9).unwrap())
+        .build();
+    bc.send_message(announce).expect("announce").expect_success();
 
     let read_status = |bc: &Blockchain| -> u8 {
         let stack =
