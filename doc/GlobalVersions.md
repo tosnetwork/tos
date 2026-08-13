@@ -514,9 +514,17 @@ deadline is anchored to the epoch boundary + grace, so a late nomination could b
 skipped while still inside its window; registration now rejects a nomination whose
 challenge window cannot elapse before the epoch is skippable
 (`now()+challenge_window ≤ (epoch+1)·epoch_seconds+register_grace`), so skip never
-preempts an in-window candidate. What remains before mainnet activation: M3 and gates
-3-6. Until those are closed, native AIPoW minting is **testnet/devnet only** and must
-remain unactivatable on mainnet.
+preempts an in-window candidate. **M3 was assessed and is not a bug:** the settle is a
+mandatory special transaction whose bounded gas is intentionally not counted toward the
+block limit (like recover/mint) — special transactions run after the main tx loop, so
+counting their gas would risk a full block being unable to fit a mandatory settle; the
+compute phase is still normally gas-limited (the settlement is not a config-special
+account) so its gas is bounded, and the collator and validate-query use identical logic
+(no divergence). With the whole codex-findings ledger closed or assessed, what remains
+before mainnet activation is only **gates 3-6** — governance/operational actions (deploy
+the real threshold multisig, cap-consistency check, supply-cap dry-run), not code. Until
+those are closed, native AIPoW minting is **testnet/devnet only** and must remain
+unactivatable on mainnet.
 
 ## Rollout plan
 
