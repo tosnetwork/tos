@@ -496,10 +496,20 @@ a same-block skip preempted (re-reading only the live cursor, so winner selectio
 stays consistent) and validate-query accepts that as a legitimate no-mint (cursor
 advanced, minted_total unchanged) while still rejecting a causeless withhold, so the
 skip-race no longer stalls the chain; the only remaining fail-closed stall is the
-operational underfunded-settlement case (a gate-5 funding concern). What remains
-before mainnet activation: the H1 Sybil-admission DoS, M3, and gates 3-6. Until those
-are closed, native AIPoW minting is **testnet/devnet only** and must remain
-unactivatable on mainnet.
+operational underfunded-settlement case (a gate-5 funding concern).
+
+**H1 (Sybil admission) is mitigated in code + e2e.** Registration is now
+authenticated: the settlement stores the audited commitment code and admits a
+candidate only if `sender == hash(StateInit(commitment_code, presented_data))`, so
+plain wallets can no longer occupy candidate slots and evict a genuine commitment;
+the native derivation cross-checks the settlement's stored code against the registry
+hash. This is not a full economic close — an attacker can still deploy the audited
+commitment code with throwaway data to grind small canonical addresses (paying deploy
+gas + announce + the per-registration value), so a minimum registration bond remains a
+follow-up for full economic deterrence. What remains before mainnet activation: H2
+(the skip-vs-window anchor), M3, the H1 bond follow-up, and gates 3-6. Until those are
+closed, native AIPoW minting is **testnet/devnet only** and must remain unactivatable
+on mainnet.
 
 ## Rollout plan
 
