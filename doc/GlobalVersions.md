@@ -504,12 +504,19 @@ candidate only if `sender == hash(StateInit(commitment_code, presented_data))`, 
 plain wallets can no longer occupy candidate slots and evict a genuine commitment;
 the native derivation cross-checks the settlement's stored code against the registry
 hash. This is not a full economic close — an attacker can still deploy the audited
-commitment code with throwaway data to grind small canonical addresses (paying deploy
-gas + announce + the per-registration value), so a minimum registration bond remains a
-follow-up for full economic deterrence. What remains before mainnet activation: H2
-(the skip-vs-window anchor), M3, the H1 bond follow-up, and gates 3-6. Until those are
-closed, native AIPoW minting is **testnet/devnet only** and must remain unactivatable
-on mainnet.
+commitment code with throwaway data to grind small canonical addresses, so a minimum
+registration bond is the economic deterrent — **now added (H1 economic close):** the
+settlement requires every register to lock `MIN_REGISTRATION_BOND` (0.5 TOS,
+non-refundable, funding its own gas + forward reserve), so grinding the 8 smallest
+addresses costs at least 8× the bond per epoch. **H2 (late-candidate skip race) is
+also fixed:** the provenance window is anchored to announce time while the skip
+deadline is anchored to the epoch boundary + grace, so a late nomination could be
+skipped while still inside its window; registration now rejects a nomination whose
+challenge window cannot elapse before the epoch is skippable
+(`now()+challenge_window ≤ (epoch+1)·epoch_seconds+register_grace`), so skip never
+preempts an in-window candidate. What remains before mainnet activation: M3 and gates
+3-6. Until those are closed, native AIPoW minting is **testnet/devnet only** and must
+remain unactivatable on mainnet.
 
 ## Rollout plan
 
