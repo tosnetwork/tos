@@ -2,15 +2,20 @@
 PROGRAM{
   DECLPROC load_state
   DECLPROC save_state
-  DECLPROC pack_registration
-  DECLPROC addr_account_id
+  DECLPROC pack_candidate
+  DECLPROC addr_parts
+  DECLPROC load_candidates
+  DECLPROC store_candidates
   DECLPROC build_distributor_data
   DECLPROC build_state_init
   DECLPROC resolve_distributor
   DECLPROC forward_to_distributor
   DECLPROC recv_internal
   105854 DECLMETHOD get_aipow_settlement_data
-  127878 DECLMETHOD get_registration
+  94431 DECLMETHOD get_candidate_count
+  125948 DECLMETHOD get_min_candidate
+  110289 DECLMETHOD get_next_candidate
+  125822 DECLMETHOD get_candidate
   91191 DECLMETHOD get_distributor_address
   load_state PROCINLINE:<{
     //
@@ -56,26 +61,50 @@ PROGRAM{
     ENDC	//  _33
     c4 POP
   }>
-  pack_registration PROCINLINE:<{
-    //  commitment_addr score_root total_score organic_settled_value registered_at
-    NEWC	//  commitment_addr score_root total_score organic_settled_value registered_at _5
-    s0 s5 XCHG2	//  registered_at score_root total_score organic_settled_value _5 commitment_addr
-    STSLICER	//  registered_at score_root total_score organic_settled_value _6
-    s1 s3 XCHG	//  registered_at organic_settled_value total_score score_root _6
-    256 STU	//  registered_at organic_settled_value total_score _8
-    128 STU	//  registered_at organic_settled_value _10
-    128 STU	//  registered_at _12
-    32 STU	//  _14
-    ENDC	//  _15
+  pack_candidate PROCINLINE:<{
+    //  workchain score_root total_score organic_settled_value registered_at
+    s0 s4 XCHG
+    NEWC	//  registered_at score_root total_score organic_settled_value workchain _5
+    8 STI	//  registered_at score_root total_score organic_settled_value _7
+    s1 s3 XCHG	//  registered_at organic_settled_value total_score score_root _7
+    256 STU	//  registered_at organic_settled_value total_score _9
+    128 STU	//  registered_at organic_settled_value _11
+    128 STU	//  registered_at _13
+    32 STU	//  _15
   }>
-  addr_account_id PROCINLINE:<{
+  addr_parts PROCINLINE:<{
     //  addr
-    3 LDU	//  _11 _10
+    3 LDU	//  _13 _12
     NIP	//  addr
-    8 LDI	//  _13 _12
-    NIP	//  addr
-    256 LDU	//  _15 _14
-    DROP	//  _7
+    8 LDI	//  wc addr
+    256 LDU	//  wc _17 _16
+    DROP	//  wc id
+  }>
+  load_candidates PROCINLINE:<{
+    //  registrations epoch
+    SWAP
+    32 PUSHINT	//  epoch registrations _4=32
+    DICTUGETREF
+    NULLSWAPIFNOT	//  rec_cell found
+    0 EQINT	//  rec_cell _7
+    IF:<{	//  rec_cell
+      DROP	//
+      0 PUSHINT	//  _8=0
+      PUSHNULL	//  _8=0 _9
+    }>ELSE<{	//  rec_cell
+      CTOS	//  cs
+      16 LDU	//  count cs
+      LDDICT	//  count _24 _23
+      DROP	//  count candidates
+    }>
+  }>
+  store_candidates PROCINLINE:<{
+    //  count candidates
+    SWAP
+    NEWC	//  candidates count _2
+    16 STU	//  candidates _4
+    STDICT	//  _5
+    ENDC	//  _6
   }>
   build_distributor_data PROCINLINE:<{
     //  op_addr epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref
@@ -131,39 +160,47 @@ PROGRAM{
     ENDC	//  _20
   }>
   resolve_distributor PROCINLINE:<{
-    //  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
-    s7 s(-1) PUXC
-    32 PUSHINT	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code epoch registrations _10=32
-    DICTUGETREF
-    NULLSWAPIFNOT	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec_cell found
-    0 EQINT	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec_cell _13
-    IF:<{	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec_cell
-      8 BLKDROP	//
+    //  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
+    s8 PUSH	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations epoch
+    load_candidates INLINECALLDICT	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code count candidates
+    SWAP	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code candidates count
+    0 EQINT	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code candidates _13
+    IF:<{	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code candidates
+      9 BLKDROP	//
       0 PUSHINT	//  _14=0
       PUSHNULL	//  _14=0 _15
       OVER	//  _14=0 _15 _16=0
-    }>ELSE<{	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec_cell
-      CTOS	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec
-      LDMSGADDR	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code commitment_addr rec
-      256 LDU	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code commitment_addr score_root rec
-      128 LDU	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code commitment_addr score_root _46 _45
-      DROP	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code commitment_addr score_root total_score
-      s0 s2 XCHG	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code total_score score_root commitment_addr
-      addr_account_id INLINECALLDICT	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code total_score score_root commitment_ref
-      MYADDR	//  epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code total_score score_root commitment_ref _33
+    }>ELSE<{	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code candidates
+      s7 s(-1) PUXC
+      8 PUSHPOW2	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code winner_id candidates _19=256
+      DICTUGET
+      NULLSWAPIFNOT	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec found
+      0 EQINT	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec _22
+      IFJMP:<{	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec
+        9 BLKDROP	//
+        0 PUSHINT	//  _23=0
+        PUSHNULL	//  _23=0 _24
+        OVER	//  _23=0 _24 _25=0
+      }>	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec
+      8 LDI	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code _49 _48
+      NIP	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code rec
+      256 LDU	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code score_root rec
+      128 LDU	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code score_root _53 _52
+      DROP	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code score_root total_score
+      MYADDR	//  epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code score_root total_score _38
       s0 s9 XCHG
       s8 s10 XCHG
-      s7 s10 XCHG
-      s3 s6 XCHG
-      s0 s5 XCHG
-      s4 s10 XCHG
-      -ROT	//  distributor_code _33 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds score_root commitment_ref
+      s1 s6 XCHG
+      s5 s10 XCHG
+      s1 s4 XCHG
+      s3 s10 XCHG
+      s1 s2 XCHG	//  distributor_code _38 epoch earner_workchain total_score pool immediate_bps stream_epochs mat_epoch_seconds score_root winner_id
       build_distributor_data INLINECALLDICT	//  distributor_code data
       build_state_init INLINECALLDICT	//  state_init
-      1 PUSHINT	//  state_init _37=1
-      OVER	//  state_init _37=1 state_init
-      HASHCU	//  state_init _37=1 _38
-      s1 s2 XCHG	//  _37=1 state_init _38
+      1 PUSHINT	//  state_init _42=1
+      OVER	//  state_init _42=1 state_init
+      HASHCU	//  state_init _42=1 _43
+      s1 s2 XCHG	//  _42=1 state_init _43
     }>
   }>
   forward_to_distributor PROCINLINE:<{
@@ -210,59 +247,62 @@ PROGRAM{
     IFJMP:<{	//  msg_value in_msg full_msg
       3 BLKDROP	//
     }>	//  msg_value in_msg full_msg
-    LDMSGADDR	//  msg_value in_msg _137 _136
+    LDMSGADDR	//  msg_value in_msg _164 _163
     DROP	//  msg_value in_msg sender
     load_state INLINECALLDICT	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
-    s13 PUSH	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations in_msg
-    SEMPTY	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _27
+    0 PUSHINT	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0
+    -1 PUSHINT	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0 _29=-1
+    4 PUSHINT	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0 _29=-1 _30=4
+    NEWC	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0 _29=-1 _30=4 _31
+    3 STU	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0 _29=-1 _33
+    8 STI	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _28=0 _35
+    256 STU	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _37
+    ENDC	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _38
+    CTOS	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations minter
+    s13 s(-1) PUXC	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations sender minter
+    SDEQ	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations _40
     IFJMP:<{	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
-      s13 POP	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code
-      0 PUSHINT	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0
-      -1 PUSHINT	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0 _30=-1
-      4 PUSHINT	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0 _30=-1 _31=4
-      NEWC	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0 _30=-1 _31=4 _32
-      3 STU	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0 _30=-1 _34
-      8 STI	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _29=0 _36
-      256 STU	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _38
-      ENDC	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _39
-      CTOS	//  msg_value registrations sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code minter
-      s1 s12 XCHG	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap sender minter
-      SDEQ	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap _41
-      NOT	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap _42
-      IFJMP:<{	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap
-        13 BLKDROP	//
-      }>	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap
-      s8 s12 s5 PUSH3
-      s7 s6 s5 PUSH3
-      16 s() PUSH
-      18 s() PUSH	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap next_epoch msg_value earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
-      resolve_distributor INLINECALLDICT	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap found state_init dist_hash
-      2306 PUSHINT	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap found state_init dist_hash _47=2306
-      s0 s3 XCHG2	//  msg_value registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap dist_hash state_init _47=2306 found
+      s12 POP	//  msg_value in_msg registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code
+      s0 s12 XCHG	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap in_msg
+      256 LDU	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap winner_id in_msg
+      ENDS
+      s9 s13 s(-1) PU2XC
+      s8 s7 s6 PUSH3
+      s8 PUSH
+      18 s() PUSH
+      18 s() PUSH	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap next_epoch winner_id msg_value earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
+      resolve_distributor INLINECALLDICT	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap found state_init dist_hash
+      2306 PUSHINT	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap found state_init dist_hash _50=2306
+      s0 s3 XCHG2	//  msg_value distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap dist_hash state_init _50=2306 found
       THROWANYIFNOT
-      s3 s14 XCHG2	//  state_init registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap minted_total msg_value
-      ADD	//  state_init registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted
-      2308 PUSHINT	//  state_init registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _51=2308
-      s1 s2 PUSH2	//  state_init registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _51=2308 new_minted total_cap
-      GREATER	//  state_init registrations distributor_code version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _51=2308 _52
+      s3 s14 XCHG2	//  state_init distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap minted_total msg_value
+      ADD	//  state_init distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted
+      2308 PUSHINT	//  state_init distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _54=2308
+      s1 s2 PUSH2	//  state_init distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _54=2308 new_minted total_cap
+      GREATER	//  state_init distributor_code registrations version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap new_minted _54=2308 _55
       THROWANYIF
-      s0 s9 XCHG	//  state_init registrations distributor_code version new_minted epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap next_epoch
-      INC	//  state_init registrations distributor_code version new_minted epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap _55
+      s0 s9 XCHG	//  state_init distributor_code registrations version new_minted epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap next_epoch
+      INC	//  state_init distributor_code registrations version new_minted epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds dist_hash total_cap _58
       s9 s6 XCPU
-      s3 s13 XCHG2
-      s1 s12 XCHG	//  state_init earner_workchain dist_hash version _55 epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds new_minted total_cap distributor_code registrations
+      s3 s12 XCHG2
+      s1 s13 XCHG	//  state_init dist_hash earner_workchain version _58 epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds new_minted total_cap distributor_code registrations
       save_state INLINECALLDICT
-      ROT	//  earner_workchain dist_hash state_init
+      s0 s2 XCHG	//  earner_workchain dist_hash state_init
       forward_to_distributor INLINECALLDICT
     }>	//  msg_value in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
     s14 POP	//  registrations in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code
+    s12 PUSH	//  registrations in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code in_msg
+    SEMPTY	//  registrations in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code _61
+    IFJMP:<{	//  registrations in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code
+      14 BLKDROP	//
+    }>	//  registrations in_msg sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code
     s0 s12 XCHG	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap in_msg
     32 LDU	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg
     64 LDU	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op query_id in_msg
     NIP	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg
     OVER
-    1095783169 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg op _68=1095783169
-    EQUAL	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg _69
+    1095783169 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg op _72=1095783169
+    EQUAL	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg _73
     IFJMP:<{	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg
       NIP	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap in_msg
       32 LDU	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch in_msg
@@ -270,27 +310,65 @@ PROGRAM{
       128 LDU	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score in_msg
       128 LDU	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value in_msg
       ENDS
-      2301 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _87=2301
-      s4 s13 PUSH2	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _87=2301 epoch next_epoch
-      GEQ	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _87=2301 _88
+      2301 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _91=2301
+      s4 s13 PUSH2	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _91=2301 epoch next_epoch
+      GEQ	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _91=2301 _92
       THROWANYIFNOT
-      2303 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _90=2303
-      s2 PUSH	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _90=2303 total_score
-      0 GTINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _90=2303 _92
+      2303 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _94=2303
+      s2 PUSH	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _94=2303 total_score
+      0 GTINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _94=2303 _96
       THROWANYIFNOT
-      s3 PUSH
+      s0 s14 XCHG	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score sender
+      addr_parts INLINECALLDICT	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id
       17 s() PUSH
-      32 PUSHINT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value epoch registrations _96=32
-      DICTUGETREF
-      NULLSWAPIFNOT	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value existing found
+      s5 PUSH	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id registrations epoch
+      load_candidates INLINECALLDICT	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id count candidates
+      s2 s0 PUSH2
+      8 PUSHPOW2	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id count candidates id candidates _106=256
+      DICTUGET
+      NULLSWAPIFNOT	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id count candidates existing self_found
       2302 PUSHINT
-      s2 POP	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score organic_settled_value _100=2302 found
+      s2 POP	//  registrations distributor_code organic_settled_value version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch score_root total_score wc id count candidates _110=2302 self_found
       THROWANYIF
-      s3 s14 XCHG
-      NOW	//  registrations distributor_code epoch version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap sender score_root total_score organic_settled_value _103
-      pack_registration INLINECALLDICT	//  registrations distributor_code epoch version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap record
+      s2 s5 XCHG
+      s0 17 s() XCHG
+      s1 s4 XCHG
+      NOW	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count wc score_root total_score organic_settled_value _113
+      pack_candidate INLINECALLDICT	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record
+      OVER	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record count
+      8 LESSINT	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record _116
+      IF:<{	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record
+        s0 s0 s14 XCHG3
+        8 PUSHPOW2	//  registrations distributor_code count version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch record id candidates _118=256
+        DICTUSETB	//  registrations distributor_code count version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch candidates
+        s0 s12 XCHG	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch count
+        INC	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch count
+      }>ELSE<{	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record
+        s14 PUSH
+        8 PUSHPOW2	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record candidates _125=256
+        DICTUMAX
+        NULLSWAPIFNOT2	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record max_val max_id has_max
+        s2 POP	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record has_max max_id
+        2309 PUSHINT	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record has_max max_id _129=2309
+        s5 s1 PUSH2	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record has_max max_id _129=2309 id max_id
+        LESS	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record has_max max_id _129=2309 _130
+        s1 s3 XCHG	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record _129=2309 max_id has_max _130
+        AND	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record _129=2309 max_id _131
+        s1 s2 XCHG	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count record max_id _129=2309 _131
+        THROWANYIFNOT
+        s0 s15 XCHG2
+        8 PUSHPOW2	//  registrations distributor_code record version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count max_id candidates _134=256
+        DICTUDEL	//  registrations distributor_code record version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count _203 _204
+        DROP	//  registrations distributor_code record version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch id count candidates
+        s14 s14 s0 XCHG3
+        8 PUSHPOW2	//  registrations distributor_code count version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch record id candidates _137=256
+        DICTUSETB	//  registrations distributor_code count version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch candidates
+        s0 s12 XCHG	//  registrations distributor_code candidates version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap epoch count
+      }>
+      s0 s12 XCHG2	//  registrations distributor_code epoch version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap count candidates
+      store_candidates INLINECALLDICT	//  registrations distributor_code epoch version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap _140
       s0 s11 s13 XCHG3
-      32 PUSHINT	//  minted_total distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds record epoch registrations _106=32
+      32 PUSHINT	//  minted_total distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds _140 epoch registrations _141=32
       DICTUSETREF	//  minted_total distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds registrations
       s8 s11 XCHG
       s7 s10 XCHG
@@ -303,31 +381,24 @@ PROGRAM{
       save_state INLINECALLDICT
     }>	//  registrations distributor_code sender version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op in_msg
     s12 POP	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op
-    1095783170 PUSHINT	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op _109=1095783170
-    EQUAL	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap _110
+    1095783170 PUSHINT	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap op _144=1095783170
+    EQUAL	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap _145
     IFJMP:<{	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap
       s0 s10 XCHG	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total in_msg
       ENDS
-      s7 s11 PUSH2
-      32 PUSHINT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total next_epoch registrations _114=32
-      DICTUGETREF
-      NULLSWAPIFNOT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total existing found
-      2305 PUSHINT
-      s2 POP	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _118=2305 found
-      THROWANYIF
       s7 PUSH	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total next_epoch
-      INC	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _122
-      s7 PUSH	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _122 epoch_seconds
-      MUL	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _123
-      s6 PUSH	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _123 register_grace
+      INC	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _149
+      s7 PUSH	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _149 epoch_seconds
+      MUL	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _150
+      s6 PUSH	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _150 register_grace
       ADD	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total skippable_at
-      2304 PUSHINT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total skippable_at _125=2304
+      2304 PUSHINT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total skippable_at _152=2304
       NOW
-      ROT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _125=2304 _126 skippable_at
-      GEQ	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _125=2304 _127
+      ROT	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _152=2304 _153 skippable_at
+      GEQ	//  registrations distributor_code total_cap version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total _152=2304 _154
       THROWANYIFNOT
       s0 s7 XCHG	//  registrations distributor_code total_cap version minted_total epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds next_epoch
-      INC	//  registrations distributor_code total_cap version minted_total epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds _130
+      INC	//  registrations distributor_code total_cap version minted_total epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds _157
       s8 s11 XCHG
       s0 s10 XCHG
       s6 s9 XCHG
@@ -335,11 +406,11 @@ PROGRAM{
       s4 s7 XCHG
       s3 s6 XCHG
       s5 s0 s4 XCHG3
-      s3 s1 s3 XCHG3	//  version _130 epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
+      s3 s1 s3 XCHG3	//  version _157 epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
       save_state INLINECALLDICT
     }>	//  registrations distributor_code in_msg version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap
     13 BLKDROP	//
-    2307 PUSHINT	//  _132=2307
+    2307 PUSHINT	//  _159=2307
     THROWANY
   }>
   get_aipow_settlement_data PROC:<{
@@ -347,47 +418,98 @@ PROGRAM{
     load_state INLINECALLDICT	//  version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap distributor_code registrations
     2DROP	//  version next_epoch epoch_seconds register_grace earner_workchain immediate_bps stream_epochs mat_epoch_seconds minted_total total_cap
   }>
-  get_registration PROC:<{
+  get_candidate_count PROC:<{
     //  epoch
-    load_state INLINECALLDICT	//  epoch _50 _51 _52 _53 _54 _55 _56 _57 _58 _59 _60 _61
+    load_state INLINECALLDICT	//  epoch _19 _20 _21 _22 _23 _24 _25 _26 _27 _28 _29 _30
     11 1 BLKDROP2	//  epoch registrations
-    32 PUSHINT	//  epoch registrations _16=32
-    DICTUGETREF
-    NULLSWAPIFNOT	//  rec_cell found
-    0 EQINT	//  rec_cell _19
-    IFJMP:<{	//  rec_cell
+    SWAP	//  registrations epoch
+    load_candidates INLINECALLDICT	//  count _18
+    DROP	//  count
+  }>
+  get_min_candidate PROC:<{
+    //  epoch
+    load_state INLINECALLDICT	//  epoch _28 _29 _30 _31 _32 _33 _34 _35 _36 _37 _38 _39
+    11 1 BLKDROP2	//  epoch registrations
+    SWAP	//  registrations epoch
+    load_candidates INLINECALLDICT	//  count candidates
+    SWAP	//  candidates count
+    0 EQINT	//  candidates _18
+    IFJMP:<{	//  candidates
       DROP	//
+      0 PUSHINT	//  _19=0
+      DUP	//  _19=0 _20=0
+    }>	//  candidates
+    8 PUSHPOW2	//  candidates _24=256
+    DICTUMIN
+    NULLSWAPIFNOT2	//  val min_id found
+    s2 POP	//  found min_id
+  }>
+  get_next_candidate PROC:<{
+    //  epoch after_id
+    load_state INLINECALLDICT	//  epoch after_id _29 _30 _31 _32 _33 _34 _35 _36 _37 _38 _39 _40
+    11 1 BLKDROP2	//  epoch after_id registrations
+    ROT	//  after_id registrations epoch
+    load_candidates INLINECALLDICT	//  after_id count candidates
+    SWAP	//  after_id candidates count
+    0 EQINT	//  after_id candidates _19
+    IFJMP:<{	//  after_id candidates
+      2DROP	//
       0 PUSHINT	//  _20=0
-      NEWC	//  _20=0 _21
-      ENDC	//  _20=0 _22
-      CTOS	//  _20=0 _23
-      s1 s1 s1 PUSH3	//  _20=0 _23 _24=0 _25=0 _26=0
-      DUP	//  _20=0 _23 _24=0 _25=0 _26=0 _27=0
-    }>	//  rec_cell
-    CTOS	//  rec
-    LDMSGADDR	//  commitment_addr rec
-    256 LDU	//  commitment_addr score_root rec
-    128 LDU	//  commitment_addr score_root total_score rec
-    128 LDU	//  commitment_addr score_root total_score organic_settled_value rec
-    32 LDU	//  commitment_addr score_root total_score organic_settled_value _73 _72
-    DROP	//  commitment_addr score_root total_score organic_settled_value registered_at
-    1 PUSHINT	//  commitment_addr score_root total_score organic_settled_value registered_at _49=1
-    5 -ROLL	//  _49=1 commitment_addr score_root total_score organic_settled_value registered_at
+      DUP	//  _20=0 _21=0
+    }>	//  after_id candidates
+    8 PUSHPOW2	//  after_id candidates _25=256
+    DICTUGETNEXT
+    NULLSWAPIFNOT2	//  val next_id found
+    s2 POP	//  found next_id
+  }>
+  get_candidate PROC:<{
+    //  epoch id
+    load_state INLINECALLDICT	//  epoch id _59 _60 _61 _62 _63 _64 _65 _66 _67 _68 _69 _70
+    11 1 BLKDROP2	//  epoch id registrations
+    ROT	//  id registrations epoch
+    load_candidates INLINECALLDICT	//  id count candidates
+    SWAP	//  id candidates count
+    0 EQINT	//  id candidates _19
+    IFJMP:<{	//  id candidates
+      2DROP	//
+      0 PUSHINT	//  _20=0
+      s0 s0 s0 PUSH3	//  _20=0 _21=0 _22=0 _23=0
+      s0 s0 PUSH2	//  _20=0 _21=0 _22=0 _23=0 _24=0 _25=0
+    }>	//  id candidates
+    8 PUSHPOW2	//  id candidates _28=256
+    DICTUGET
+    NULLSWAPIFNOT	//  rec found
+    0 EQINT	//  rec _31
+    IFJMP:<{	//  rec
+      DROP	//
+      0 PUSHINT	//  _32=0
+      s0 s0 s0 PUSH3	//  _32=0 _33=0 _34=0 _35=0
+      s0 s0 PUSH2	//  _32=0 _33=0 _34=0 _35=0 _36=0 _37=0
+    }>	//  rec
+    8 LDI	//  workchain rec
+    256 LDU	//  workchain score_root rec
+    128 LDU	//  workchain score_root total_score rec
+    128 LDU	//  workchain score_root total_score organic_settled_value rec
+    32 LDU	//  workchain score_root total_score organic_settled_value _84 _83
+    DROP	//  workchain score_root total_score organic_settled_value registered_at
+    1 PUSHINT	//  workchain score_root total_score organic_settled_value registered_at _58=1
+    5 -ROLL	//  _58=1 workchain score_root total_score organic_settled_value registered_at
   }>
   get_distributor_address PROC:<{
-    //  epoch pool
-    load_state INLINECALLDICT	//  epoch pool _21 _22 _23 _24 _25 _26 _27 _28 _29 _30 _31 _32
+    //  epoch winner_id pool
+    load_state INLINECALLDICT	//  epoch winner_id pool _22 _23 _24 _25 _26 _27 _28 _29 _30 _31 _32 _33
     s8 POP
     s8 POP
     2DROP
     s6 POP
-    s6 POP	//  epoch pool stream_epochs mat_epoch_seconds distributor_code registrations earner_workchain immediate_bps
+    s6 POP	//  epoch winner_id pool stream_epochs mat_epoch_seconds distributor_code registrations earner_workchain immediate_bps
     OVER
-    s7 s8 XCHG
-    s6 s8 XCHG
+    s8 s9 XCHG
+    s7 s9 XCHG
+    s6 s9 XCHG
     s4 s5 XCHG2
-    s3 s8 XCHG
-    s0 s1 s8 XCHG3	//  earner_workchain epoch pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
+    s3 s9 XCHG
+    s0 s1 s9 XCHG3	//  earner_workchain epoch winner_id pool earner_workchain immediate_bps stream_epochs mat_epoch_seconds distributor_code registrations
     resolve_distributor INLINECALLDICT	//  earner_workchain found state_init dist_hash
     NIP	//  earner_workchain found dist_hash
     s1 s2 XCHG	//  found earner_workchain dist_hash

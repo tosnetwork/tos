@@ -114,14 +114,22 @@ impl Fixture {
         Self { bc, committer, reviewer, challenger, commitment, settlement, window_deadline }
     }
 
-    /// The registration the settlement recorded for `epoch`, if the commitment
-    /// finalized and advertised it.
-    fn settlement_registration(&self, epoch: u32) -> Option<contracts::AipowRegistration> {
-        let arg = vec![tos_vm::stack::StackItem::int(epoch as i64)];
+    /// The candidate the settlement recorded FOR THIS COMMITMENT at `epoch`, if
+    /// the commitment finalized and advertised it (the commitment's own account
+    /// id is the candidate key).
+    fn settlement_candidate(&self, epoch: u32) -> Option<contracts::AipowCandidate> {
+        let id: [u8; 32] =
+            self.commitment.address().get_bytestring(0).try_into().expect("32-byte account id");
+        let arg = vec![
+            tos_vm::stack::StackItem::int(epoch as i64),
+            tos_vm::stack::StackItem::int(
+                tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be(id),
+            ),
+        ];
         let stack = self
             .bc
-            .run_get_method(&self.settlement, "get_registration", arg)
-            .expect("get_registration")
+            .run_get_method(&self.settlement, "get_candidate", arg)
+            .expect("get_candidate")
             .expect_success()
             .stack
             .clone();
@@ -130,10 +138,10 @@ impl Fixture {
             .map(sandbox_stack_item_to_entry)
             .collect::<anyhow::Result<Vec<_>>>()
             .expect("stack conversion");
-        AipowSettlementContract::decode_registration(&common::tvm_stack_parser::TvmStackParser::new(
+        AipowSettlementContract::decode_candidate(&common::tvm_stack_parser::TvmStackParser::new(
             entries,
         ))
-        .expect("decode_registration")
+        .expect("decode_candidate")
     }
 
     fn send_from_with_value(
@@ -229,7 +237,7 @@ fn deploys_committed_and_readable() {
     assert_eq!(data.version, contracts::AIPOW_COMMITMENT_VERSION);
     assert_eq!(data.settlement, Some(f.settlement.clone()));
     // Nothing is advertised to the settlement while merely committed.
-    assert_eq!(f.settlement_registration(COMMIT_EPOCH as u32), None);
+    assert_eq!(f.settlement_candidate(COMMIT_EPOCH as u32), None);
 }
 
 #[test]
@@ -243,8 +251,7 @@ fn permissionless_finalize_registers_the_committed_tuple_with_the_settlement() {
     // The finalize emitted an authenticated register to the settlement: the
     // settlement recorded the commitment address as the nomination source and
     // the committed economic tuple.
-    let reg = f.settlement_registration(COMMIT_EPOCH as u32).expect("registered on finalize");
-    assert_eq!(reg.commitment_addr, f.commitment);
+    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on finalize");
     assert_eq!(reg.score_root, SCORE_ROOT);
     assert_eq!(reg.total_score, TOTAL_SCORE);
     assert_eq!(reg.organic_settled_value, ORGANIC_VALUE);
@@ -264,8 +271,7 @@ fn a_dismissed_challenge_finalizes_and_registers() {
     // Dismissing the challenge finalizes the root, which registers it.
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, false).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_FINAL);
-    let reg = f.settlement_registration(COMMIT_EPOCH as u32).expect("registered on dismiss");
-    assert_eq!(reg.commitment_addr, f.commitment);
+    let reg = f.settlement_candidate(COMMIT_EPOCH as u32).expect("registered on dismiss");
     assert_eq!(reg.total_score, TOTAL_SCORE);
 }
 
@@ -283,7 +289,7 @@ fn a_rejected_root_never_registers() {
     .expect_success();
     f.send_from(&reviewer_addr, AipowCommitmentContract::rule(2, true).unwrap()).expect_success();
     assert_eq!(f.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
-    assert_eq!(f.settlement_registration(COMMIT_EPOCH as u32), None, "rejected root not advertised");
+    assert_eq!(f.settlement_candidate(COMMIT_EPOCH as u32), None, "rejected root not advertised");
 
     // Review timeout (also rejected): no registration.
     let mut g = Fixture::new();
@@ -298,7 +304,7 @@ fn a_rejected_root_never_registers() {
     g.bc.set_now((review_deadline + 1) as u32);
     g.send_from(&g_challenger, AipowCommitmentContract::timeout(2).unwrap()).expect_success();
     assert_eq!(g.data().status, AIPOW_COMMITMENT_STATUS_REJECTED);
-    assert_eq!(g.settlement_registration(COMMIT_EPOCH as u32), None, "timed-out root not advertised");
+    assert_eq!(g.settlement_candidate(COMMIT_EPOCH as u32), None, "timed-out root not advertised");
 }
 
 #[test]

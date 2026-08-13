@@ -79,7 +79,7 @@ pub use aipow_distributor::{
     AIPOW_MIN_CLAIM_VALUE,
 };
 pub use aipow_settlement::{
-    AipowRegistration, AipowSettlementContract, AipowSettlementData, AipowSettlementInit,
+    AipowCandidate, AipowSettlementContract, AipowSettlementData, AipowSettlementInit,
     AIPOW_SETTLEMENT_REGISTER_OPCODE, AIPOW_SETTLEMENT_SKIP_OPCODE, AIPOW_SETTLEMENT_VERSION,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};

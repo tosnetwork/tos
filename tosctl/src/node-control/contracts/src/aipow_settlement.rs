@@ -10,7 +10,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECDgEAA2IAART/APSkE/S88sgLAQIBYgIDA+LQAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNEtxwCOnz1wf3TIywLKB8v/ydAcxwWzkl8N4FR4xVR3ZVYQVhLgPgzTH9M/MSGCEEFQUwG64wI8ghBBUFMCuuMCXw2BCQPy8AQFBgIBIAgJAvxScIAg9A9vocAAjmvQ+kDT/9N/MALTAjHSBzHT/zD4KAkQihB6EDYFEEpZcALIy//L/8lTEXHIyw9QDM8WGss/GMoHFst/UAT6AhfLHxXLfxTLDxTLDxLLH8zLAMlwcVRwEcjLAMsAywAUzBPLAMzLAMlxIfkAEuMNgQkCUAMLBwDqMdMf0//Tf9N/0YEI/VNNvvL0gQj/IsIA8vQjVhGAIPQPb6GBCP4y8vIQPvgjyFAFzxYTy//Lf8t/yx/JQL2AIPQXEIsQehBpEFgQRxA2RUAQIwvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAKYK0VN7gCD0D2+hgQkBMvLyJ6QnqCaggQkA+CNYvvL0B6QQiwoQaRBYEEcQNkUEQxMLyMsPGssfGMsfFssfFMoHEssPyw/LHwH6AgH6Asz0AMntVADK8vRQPqCBCQRTErzy8gmkUZZQPRwLyMsPGssfGMsfFssfFMoHEssPyw/LHwH6AgH6Asz0AMntVFh0yMsCE8oHy//J0HBxUwGAEMjLBVAFzxYj+gIUy2gTywASywASzMsAyYBA+wABW78hv2omhph+mP6Y/pj+kD6Yfph+mP/QB9AGp6AmicHC2bGxCIPAg0KCKIHCAMQKAgEgDA0B9lJwgCD0D2+hwACOa9D6QNP/038wAtMCMdIHMdP/MPgoCRCKEHoQNgUQSllwAsjL/8v/yVMRccjLD1AMzxYayz8YygcWy39QBPoCF8sfFct/FMsPFMsPEssfzMsAyXBxVHARyMsAywDLABTME8sAzMsAyXEh+QAS4w0xEgsACl8IcG0hAD251+7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRW4AIO7OG7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbLGAIPQPb6HAAJkwcMjJ0FRxESDg0PpA0//Tf9N/0x8wcVVAgKwWN1";
+pub const AIPOW_SETTLEMENT_CODE_B64: &str = "te6cckECFQEABGYAART/APSkE/S88sgLAQIBYgIDA8rQAdDTAwFxsJJfA+D6QDDtRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFwf3TIywLKB8v/ydBS0McF4wI+LMcAkl8O4AzTH9M/MSGCEEFQUwG64wI8ghBBUFMCuuMCXw2BCQPy8AQFBgIBIAoLAtw8DNP/0VRp4VR4dihWElYSKAGAIPQPb6HAAJMwcG2W0NMP9AQw4gHAAJVfCXBtIeMOgQkCUAPy9FA+oIEJBFMSvPLyCaRRllA8HQvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAg4HAvwx0x/T/9N/03/RgQj9U02+8vSBCP8iwgDy9A7TAjHSB9P/MFYRJQGAIPQPb6HAAJMwcG2W0NMP9AQw4lMggwf0Dm+hgQj+MvLyECURERT4IwTIygcTy//Lf8t/yx8hwQiYQA6DB/RDDKTjDlAMAcjLD/QAyUC9gCD0FxCLEHoICQCKCtEnpCeoJqCBCQD4I1i+8vQHpBCLChBpEFgQRxA2RQRDEwvIyw8ayx8Yyx8Wyx8UygcSyw/LD8sfAfoCAfoCzPQAye1UAFp0yMsCE8oHy//J0HBxUwGAEMjLBVAFzxYj+gIUy2gTywASywASzMsAyYBA+wAAQi6DB/SOb6UygQkFU1G5E7AS8vRQD4MH9FswTuCDB/RDDABeEGkQWBBHEDZFQBAjC8jLDxrLHxjLHxbLHxTKBxLLD8sPyx8B+gIB+gLM9ADJ7VQCAW4MDQIBIA8QAaWxDftRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNE4OFs2NiEQiRB5EGlQRRA5QBkoAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAlV8JcG0h4w4xEoA4AbbA3+1E0NMP0x/TH9Mf0gfTD9MP0x/6APoA1PQE0WyxAQGAIPQPb6HAAJMwcG2W0NMP9AQw4jCAA4lJwgwf0Dm+hwACVXwlwbSHg0gcx0//TfzD4KAkQihYQWhQQOhJwAsjL/8v/yVMRccjLD1AMzxYayz8YygcWy39QBPoCF8sfFct/FMsPFMsPEssfzMsAyXBxVHARyMsAywDLABTME8sAzMsAyXEh+QASAgEgERICA5q4ExQAPbev3aiaGmH6Y/pj+mP6QPph+mH6Y/9AH0AanoCaK3AAibXaPaiaGmH6Y/pj+mP6QPph+mH6Y/9AH0AanoCaLZYrADAEHoHt9DgAEmYODbLaGmH+gIYcQDgAEmtuBBwQYP6PjfSmUAC/v+7UTQ0w/TH9Mf0x/SB9MP0w/TH/oA+gDU9ATRbLFYAYAg9A9vocAAkzBwbZbQ0w/0BDDiAcAAl1twVHAAUwDggwf0Dm+hwACXMHBUcABTAODSB9P/03/Tf9MfMHFVQIAIe/ztRNDTD9Mf0x/TH9IH0w/TD9Mf+gD6ANT0BNFssQEBgCD0D2+hwACTMHBtltDTD/QEMOIBwACTMHAg4IMH9IZvpTKOfQhLA=";
 
 pub const AIPOW_SETTLEMENT_REGISTER_OPCODE: u32 = 0x4150_5301;
 pub const AIPOW_SETTLEMENT_SKIP_OPCODE: u32 = 0x4150_5302;
@@ -59,10 +59,11 @@ pub struct AipowSettlementData {
     pub total_cap: u64,
 }
 
-/// A recorded epoch → commitment nomination.
+/// One recorded per-epoch candidate nomination (keyed in-contract by the
+/// nominating commitment's 256-bit account id, which is not repeated here).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AipowRegistration {
-    pub commitment_addr: MsgAddressInt,
+pub struct AipowCandidate {
+    pub workchain: i8,
     pub score_root: [u8; 32],
     pub total_score: u128,
     pub organic_settled_value: u128,
@@ -127,10 +128,10 @@ impl AipowSettlementContract {
         })
     }
 
-    /// Decode `get_distributor_address(epoch, pool)`:
+    /// Decode `get_distributor_address(epoch, winner_id, pool)`:
     /// `(found, workchain, address_hash)`. Returns the canonical distributor
-    /// address the settle path would deploy, or `None` if `epoch` is not
-    /// registered.
+    /// address the settle path would deploy for the `winner_id` candidate, or
+    /// `None` if that candidate is not recorded for `epoch`.
     pub fn decode_distributor_address(
         stack: &TvmStackParser,
     ) -> anyhow::Result<Option<MsgAddressInt>> {
@@ -143,16 +144,15 @@ impl AipowSettlementContract {
         Ok(Some(MsgAddressInt::with_standart(None, workchain, hash.into())?))
     }
 
-    /// Decode `get_registration`:
-    /// `(found, commitment_addr, score_root, total_score, organic_settled_value, registered_at)`.
-    pub fn decode_registration(stack: &TvmStackParser) -> anyhow::Result<Option<AipowRegistration>> {
+    /// Decode `get_candidate(epoch, id)`:
+    /// `(found, workchain, score_root, total_score, organic_settled_value, registered_at)`.
+    pub fn decode_candidate(stack: &TvmStackParser) -> anyhow::Result<Option<AipowCandidate>> {
         let found = stack.u64(0)? != 0;
         if !found {
             return Ok(None);
         }
-        let mut addr_slice = stack.slice(1)?;
-        Ok(Some(AipowRegistration {
-            commitment_addr: MsgAddressInt::construct_from(&mut addr_slice)?,
+        Ok(Some(AipowCandidate {
+            workchain: stack.i64(1)? as i8,
             score_root: parse_hash(stack, 2)?,
             total_score: parse_u128(stack, 3)?,
             organic_settled_value: parse_u128(stack, 4)?,
@@ -160,8 +160,33 @@ impl AipowSettlementContract {
         }))
     }
 
-    /// A commitment nominates itself as the authoritative source for `epoch`,
-    /// carrying its committed tuple. Sent with `sender == the commitment`.
+    /// Decode `get_candidate_count(epoch)`.
+    pub fn decode_candidate_count(stack: &TvmStackParser) -> anyhow::Result<u16> {
+        Ok(stack.u64(0)? as u16)
+    }
+
+    /// Decode `get_min_candidate(epoch)` / `get_next_candidate(epoch, after)`:
+    /// `(found, account_id)` — the candidate's 256-bit account id, or `None`.
+    pub fn decode_candidate_id(stack: &TvmStackParser) -> anyhow::Result<Option<[u8; 32]>> {
+        // The `found` flag is the dict lookup result, which FunC returns as -1
+        // for true; read it as a signed value.
+        let found = stack.i64(0)? != 0;
+        if !found {
+            return Ok(None);
+        }
+        Ok(Some(parse_hash(stack, 1)?))
+    }
+
+    /// The settle-trigger body the masterchain minter sends: the native-selected
+    /// winning candidate's 256-bit account id.
+    pub fn settle_body(winner_id: [u8; 32]) -> anyhow::Result<chain_block::Cell> {
+        let mut body = BuilderData::new();
+        body.append_u256(&winner_id)?;
+        Ok(body.into_cell()?)
+    }
+
+    /// A commitment nominates itself as a candidate for `epoch`, carrying its
+    /// committed tuple. Sent with `sender == the commitment`.
     pub fn register(
         query_id: u64,
         epoch: u32,
