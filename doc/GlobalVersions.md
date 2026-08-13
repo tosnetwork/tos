@@ -599,6 +599,21 @@ miniature).
      `distributor_code_hashes` (round-2 M6; the native does not cross-check these). A
      mismatch lets a distributor over-pay early claimants and drain the pool, or (with
      a zero maturation field) strand it.
+   - **Keep the epoch mint current; a prolonged mint outage exposes a catch-up skip
+     race** (round-9). The design assumes the collator mints each epoch's valid
+     candidate promptly, before that epoch passes its permissionless-`skip` deadline,
+     so a `skip` only ever crosses an epoch with no valid candidate. If minting stalls
+     for more than roughly an epoch plus the register grace, an epoch with a genuine
+     finalized commitment can become skippable while still unminted, and a queued
+     `skip` can then advance the cursor past it (censoring that reward). validate-query
+     is hardened fail-closed: it rejects a mint block whose same-block `skip`s cross any
+     epoch that had registered candidates in the previous state (so the censorship is
+     never *accepted*), but the reward for a genuinely stalled-past-deadline epoch can
+     still be lost, and in that rare state honest collators must avoid producing such a
+     block (defer the `skip` to a no-mint block). The complete fix — making the cursor
+     advance for candidate-less/bogus epochs native-driven rather than a permissionless
+     `skip` op — is future work. Operationally: monitor mint liveness and never let the
+     settlement cursor fall more than one epoch behind wall-clock.
 
 6. **Supply-cap dry-run (gate 6).** Simulate the ~7-year emission schedule under
    adversarial demand and confirm cumulative emission ≤ the cap (the native clamps
