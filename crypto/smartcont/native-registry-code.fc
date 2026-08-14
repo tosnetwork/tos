@@ -640,12 +640,14 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
       verify_policy_possession(recovery_policy, counterparty_signatures, action_hash);
       throw_unless(err::timelock, execute_after >= now() + timelock);
       recovery = begin_cell().store_uint(1, 1).store_uint(action_hash, 256)
-        .store_uint(execute_after, 64).store_ref(recovery_policy).end_cell();
+        .store_uint(old_policy_hash, 256).store_uint(execute_after, 64)
+        .store_ref(recovery_policy).end_cell();
     } elseif (kind == kind::complete_recovery) {
       int initiation = p~load_uint(256); p.end_parse();
       slice recovery_state = recovery.begin_parse();
       throw_unless(err::bad_transition, recovery_state~load_uint(1));
       throw_unless(err::bad_transition, recovery_state~load_uint(256) == initiation);
+      throw_unless(err::bad_transition, recovery_state~load_uint(256) == cell_hash(policy));
       throw_unless(err::timelock, now() >= recovery_state~load_uint(64));
       next_policy = recovery_state~load_ref(); recovery_state.end_parse();
       validate_policy(next_policy); recovery = empty_recovery(); delegations = empty_delegations();

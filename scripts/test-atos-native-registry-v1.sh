@@ -19,9 +19,9 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert manifest["schema"] == "tos.contract.release.v1"
 assert manifest["protocol"] == "atos_native_v1"
-assert manifest["code_hash"] == "tvm-cell-sha256:c4af55e476c296c8a1dc7985e82db42218475b9e3864b7c733351bab526ab23d"
-assert manifest["boc_sha256"] == "sha256:09f08082798e4637eee982812c41001e8062805298790f8d1d596e4dbc40bb27"
-assert manifest["boc_bytes"] == 2685
+assert manifest["code_hash"] == "tvm-cell-sha256:943c6cb3ddfeb470cfb76a343a29471ffbced9af25a467fde834926c1a8d525d"
+assert manifest["boc_sha256"] == "sha256:0c37475f52811905b9e5b2878d29ad117eb8551de3f593e4817fc64905e38844"
+assert manifest["boc_bytes"] == 2707
 PY
 
 printf 'ATOS Native Registry v1 reproducible build: PASS\n'
