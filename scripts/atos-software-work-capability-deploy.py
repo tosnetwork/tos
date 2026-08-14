@@ -71,7 +71,7 @@ def main():
 
     initial_version = b"software-work-v1"
     initial_manifest_digest = bytes.fromhex("a08cd75a4166bc1df44b645a4a4ca687004d05428a3764ce95d3d152be858e38")
-    version = b"1.1.0"
+    capability_version = b"1.2.0"
     capability_nonce = hashlib.sha256(b"atos-gate-d-software-work-capability-v1").digest()
     capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce,
         provider_id, initial_version, initial_manifest_digest)
@@ -82,12 +82,14 @@ def main():
         view = gate.state_view(gate.account_data(config_path, capability_address.to_str()))
     except Exception:
         raise RuntimeError("the original software-work Capability is absent")
-    if view["generation"] != 1 or view["sequence"] not in (1, 2) or view["tombstone"] or view["owner_id"] != "agent_" + provider_id.hex():
+    if view["generation"] != 1 or view["sequence"] not in (1, 2, 3) or view["tombstone"] or view["owner_id"] != "agent_" + provider_id.hex():
         raise RuntimeError("existing Capability does not match the expected lineage")
     if view["sequence"] == 1:
         current = gate.native_state(gate.account_data(config_path, capability_address.to_str()))
-        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(version).digest())
-                   .store_bytes(manifest_digest).store_ref(gate.Builder().store_bytes(version).end_cell()).end_cell())
+        legacy_version = b"1.1.0"
+        legacy_manifest_digest = bytes.fromhex("c3155c8b56939dcaa3884e49035fc32b723fe64891ef8b7f1a50ac56468845c2")
+        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(legacy_version).digest())
+                   .store_bytes(legacy_manifest_digest).store_ref(gate.Builder().store_bytes(legacy_version).end_cell()).end_cell())
         action = gate.action(gate.ADD_CAPABILITY_VERSION, 2, 1, 2, capability_id,
             current.hash, 0x83, signed_domain, details)
         query = int.from_bytes(action.hash[:8], "big")
@@ -96,7 +98,19 @@ def main():
                 gate.signature_set(provider_key, action), gate.signature_set(None, action)))
         view = gate.wait_state(config_path, capability_address.to_str(), 1, 2)
         deployed_now = True
-    if view["sequence"] != 2:
+    if view["sequence"] == 2:
+        current = gate.native_state(gate.account_data(config_path, capability_address.to_str()))
+        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(capability_version).digest())
+                   .store_bytes(manifest_digest).store_ref(gate.Builder().store_bytes(capability_version).end_cell()).end_cell())
+        action = gate.action(gate.ADD_CAPABILITY_VERSION, 2, 1, 3, capability_id,
+            current.hash, 0x84, signed_domain, details)
+        query = int.from_bytes(action.hash[:8], "big")
+        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 5 * gate.NANO,
+            gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action,
+                gate.signature_set(provider_key, action), gate.signature_set(None, action)))
+        view = gate.wait_state(config_path, capability_address.to_str(), 1, 3)
+        deployed_now = True
+    if view["sequence"] != 3:
         raise RuntimeError("software-work Capability version was not finalized")
 
     endpoints = [f"http://127.0.0.1:{port}/jsonRPC" for port in (8011, 8012, 8013)]
@@ -123,7 +137,8 @@ def main():
         "schema": "atos.native.software-work-capability-deployment.v1",
         "deployed_now": deployed_now,
         "network": {"network_id": args.network_id, "genesis_root_hash": "sha256:" + root.hex(), "genesis_file_hash": "sha256:" + file_hash.hex()},
-        "manifest": {"protocol": vector["manifest"]["protocol"], "version": version.decode(), "digest": vector["expected"]["digest"], "canonical_cbor_base64": vector["expected"]["canonical_cbor_base64"]},
+        "capability_version": capability_version.decode(),
+        "manifest": {"protocol": vector["manifest"]["protocol"], "version": vector["manifest"]["version"], "digest": vector["expected"]["digest"], "canonical_cbor_base64": vector["expected"]["canonical_cbor_base64"]},
         "provider_agent_id": "agent_" + provider_id.hex(),
         "provider_agent_address": provider_address.to_str(),
         "capability_id": "cap_" + capability_id.hex(),
