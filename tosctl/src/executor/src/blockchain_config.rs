@@ -10,10 +10,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    fail, AccountId, BurningConfig, Coins, ConfigParam18, ConfigParam8, ConfigParamEnum,
-    ConfigParams, FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities, GlobalVersion,
-    Mask, MsgAddressInt, MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo, StoragePrices,
-    UInt256, SUPPORTED_VERSION,
+    fail, AccountId, BurningConfig, Coins, ConfigParam12, ConfigParam18, ConfigParam8,
+    ConfigParamEnum, ConfigParams, FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities,
+    GlobalVersion, Mask, MsgAddressInt, MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo,
+    StoragePrices, UInt256, WorkchainDescr, SUPPORTED_VERSION,
 };
 use num::BigInt;
 
@@ -339,6 +339,17 @@ impl BlockchainConfig {
 
     pub fn raw_config(&self) -> &ConfigParams {
         &self.raw_config
+    }
+
+    /// Add the standard 256-bit base workchain descriptor to the raw config.
+    /// This is primarily useful for deterministic executor and sandbox tests
+    /// that route outbound messages between workchain-0 contracts.
+    pub fn enable_base_workchain(&mut self) -> Result<()> {
+        let mut workchains = ConfigParam12::default();
+        let descriptor =
+            WorkchainDescr { active: true, accept_msgs: true, ..WorkchainDescr::default() };
+        workchains.insert(0, &descriptor)?;
+        self.raw_config.set_config(ConfigParamEnum::ConfigParam12(workchains))
     }
 
     pub fn has_capability(&self, capability: GlobalCapabilities) -> bool {

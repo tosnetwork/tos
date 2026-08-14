@@ -111,6 +111,26 @@ impl Blockchain {
         })
     }
 
+    /// Create a version-pinned sandbox whose configuration admits standard
+    /// 256-bit addresses in base workchain 0. This is required for tests that
+    /// exercise outbound messages between basechain contracts.
+    pub fn with_global_version_and_base_workchain(global_version: u32) -> SandboxResult<Self> {
+        let mut config = BlockchainConfig::default_with_global_version(global_version)
+            .map_err(|e| SandboxError::ConfigError(e.to_string()))?;
+        config.enable_base_workchain().map_err(|e| SandboxError::ConfigError(e.to_string()))?;
+        let mc_state_cell = Self::build_mc_state_cell(config.raw_config())?;
+        Ok(Self {
+            accounts: HashMap::new(),
+            config,
+            mc_state_cell,
+            next_lt: DEFAULT_BLOCK_LT,
+            block_unixtime: DEFAULT_BLOCK_UNIXTIME,
+            max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
+            workchain: 0,
+            transaction_log: Vec::new(),
+        })
+    }
+
     /// Create a new [`Blockchain`] with a custom [`ConfigParams`].
     pub fn with_config(config: ConfigParams) -> SandboxResult<Self> {
         let bc_config = BlockchainConfig::with_config(config).map_err(|e| {

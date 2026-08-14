@@ -561,6 +561,24 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_native_registry_code)
+  set(ATOS_STABLECOIN_ESCROW_CPP "${SMARTCONT_AUTO_DIR}/atos-stablecoin-escrow-v1.cpp")
+  add_custom_command(
+    COMMENT "Verify and embed the frozen ATOS stablecoin escrow v1 BOC"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-atos-stablecoin-escrow-v1.sh
+      ${ATOS_STABLECOIN_ESCROW_CPP} atos-stablecoin-escrow-v1
+    MAIN_DEPENDENCY smartcont/atos-stablecoin-escrow-v1.fc
+    DEPENDS func fift smartcont/stdlib.fc
+      smartcont/atos-stablecoin-escrow-v1.boc.base64
+      smartcont/atos-stablecoin-escrow-v1.release.json
+      ${CMAKE_SOURCE_DIR}/scripts/build-atos-stablecoin-escrow-v1.sh
+      ${CMAKE_SOURCE_DIR}/scripts/test-atos-stablecoin-escrow-v1.sh
+      ${CMAKE_SOURCE_DIR}/scripts/embed-atos-stablecoin-escrow-v1.sh
+    OUTPUT ${ATOS_STABLECOIN_ESCROW_CPP}
+  )
+  add_custom_target(gen_fif_smartcont_auto_atos_stablecoin_escrow_v1
+    DEPENDS ${ATOS_STABLECOIN_ESCROW_CPP})
+  add_dependencies(gen_fif gen_fif_smartcont_auto_atos_stablecoin_escrow_v1)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
