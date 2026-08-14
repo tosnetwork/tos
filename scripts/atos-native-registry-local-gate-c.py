@@ -3,8 +3,8 @@
 
 This is node-backed Gate C rehearsal evidence, not public-testnet acceptance.
 It sends every action through the genesis wallet and verifies committed account
-data through each configured liteserver. Private controller seeds are fixed
-test-only values and are never written to the evidence file.
+data through each configured liteserver. Controller keys come from a tosctl
+test-only identity fixture and are never written to the evidence file.
 """
 
 import argparse
@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
+from atos_test_identities import load_test_identity  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -414,6 +415,10 @@ def main() -> int:
     parser.add_argument("--global-config", default="/data/tos-global.json")
     parser.add_argument("--state-dir", default="/data/testnet/state")
     parser.add_argument("--network-id", default="tos-local-gate-c-20260814")
+    parser.add_argument(
+        "--test-identities",
+        default=str(REPO.parent / "atos-spec/test-vectors/atos-test-identities-v1.json"),
+    )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
 
@@ -442,10 +447,11 @@ def main() -> int:
     address_file = read_private(state_dir / "main-wallet.addr")
     payer = Address((int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32]))
 
-    key_a0 = nacl.signing.SigningKey(bytes([0x31]) * 32)
-    key_a1 = nacl.signing.SigningKey(bytes([0x41]) * 32)
-    key_recovery = nacl.signing.SigningKey(bytes([0x51]) * 32)
-    key_b = nacl.signing.SigningKey(bytes([0x61]) * 32)
+    identities = Path(args.test_identities)
+    key_a0 = load_test_identity(identities, "agent-a-controller-0")
+    key_a1 = load_test_identity(identities, "agent-a-controller-1")
+    key_recovery = load_test_identity(identities, "agent-recovery")
+    key_b = load_test_identity(identities, "provider-controller")
     policy_a0, policy_a1, policy_recovery, policy_b = map(
         policy, (key_a0, key_a1, key_recovery, key_b)
     )

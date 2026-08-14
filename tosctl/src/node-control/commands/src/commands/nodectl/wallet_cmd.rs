@@ -16,7 +16,8 @@ use anyhow::Context;
 use base64::Engine;
 use chain_block::{
     ADDR_FORMAT_BOUNCE, ADDR_FORMAT_URL_SAFE, BuilderData, Cell, Deserializable, IBitstring,
-    MsgAddressInt, Serializable, StateInit, read_single_root_boc, write_boc,
+    MsgAddressInt, Serializable, StateInit, ed25519_create_private_key, ed25519_verify,
+    read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use chain_rpc_client::v2::data_models::AccountState;
@@ -32,7 +33,17 @@ use secrets_vault::{
     errors::error::VaultError,
     vault::SecretVault,
 };
-use std::{borrow::Cow, io::Write, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use zeroize::Zeroize;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage wallets")]
@@ -61,6 +72,16 @@ pub enum WalletAction {
     Ls(WalletLsCmd),
     /// Import keypair
     Import(WalletImportCmd),
+    /// Generate a recoverable TOS mnemonic and its TVM identity
+    MnemonicGenerate(WalletMnemonicGenerateCmd),
+    /// Recover a TVM wallet from a TOS mnemonic
+    MnemonicImport(WalletMnemonicImportCmd),
+    /// Sign exact bytes with a configured wallet key
+    Sign(WalletSignCmd),
+    /// Verify an Ed25519 signature over exact bytes
+    Verify(WalletVerifyCmd),
+    /// Generate real test-only mnemonics, keys, addresses, and proof signatures
+    TestFixture(WalletTestFixtureCmd),
     /// Export wallet (use with caution)
     Export(WalletExportCmd),
     /// Remove wallet
@@ -123,6 +144,101 @@ pub struct WalletImportCmd {
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Generate a TOS mnemonic without modifying the wallet vault")]
+pub struct WalletMnemonicGenerateCmd {
+    #[arg(long, default_value = "24", help = "Mnemonic word count (12 or 24)")]
+    words: usize,
+    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    version: String,
+    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    workchain: i32,
+    #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
+    subwallet_id: u32,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Recover a TVM wallet from a TOS mnemonic")]
+pub struct WalletMnemonicImportCmd {
+    #[arg(short = 'n', long = "name")]
+    name: String,
+    #[arg(
+        long,
+        conflicts_with = "mnemonic_file",
+        required_unless_present = "mnemonic_file",
+        help = "12- or 24-word TOS mnemonic phrase (prefer --mnemonic-file to avoid shell history)"
+    )]
+    mnemonic: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "mnemonic",
+        required_unless_present = "mnemonic",
+        help = "Read the mnemonic from a mode-0600 file"
+    )]
+    mnemonic_file: Option<PathBuf>,
+    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    version: String,
+    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    workchain: i32,
+    #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
+    subwallet_id: u32,
+}
+
+#[derive(clap::Args, Clone)]
+pub struct ExactMessageArgs {
+    #[arg(long, conflicts_with_all = ["message_hex", "message_file"])]
+    message: Option<String>,
+    #[arg(long, conflicts_with_all = ["message", "message_file"])]
+    message_hex: Option<String>,
+    #[arg(long, conflicts_with_all = ["message", "message_hex"])]
+    message_file: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Sign exact bytes with a configured Ed25519 wallet key")]
+pub struct WalletSignCmd {
+    #[arg(short = 'n', long = "name")]
+    name: String,
+    #[command(flatten)]
+    input: ExactMessageArgs,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Verify an Ed25519 signature over exact bytes")]
+pub struct WalletVerifyCmd {
+    #[arg(long, help = "32-byte Ed25519 public key in hex")]
+    public_key: String,
+    #[arg(long, help = "64-byte Ed25519 signature in hex")]
+    signature: String,
+    #[command(flatten)]
+    input: ExactMessageArgs,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Generate a mode-0600 test-only identity fixture")]
+pub struct WalletTestFixtureCmd {
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "buyer,provider-controller,execution-signer,refund-authority,relay-fee-payer"
+    )]
+    roles: Vec<String>,
+    #[arg(long, default_value = "24", help = "Mnemonic word count (12 or 24)")]
+    words: usize,
+    #[arg(short = 'v', long = "version", default_value = "V3R2")]
+    version: String,
+    #[arg(short = 'w', long = "workchain", default_value = "0")]
+    workchain: i32,
+    #[arg(short = 'i', long = "subwallet-id", default_value = "0")]
+    subwallet_id: u32,
+    #[arg(long, help = "Replace an existing regular output file")]
+    force: bool,
+    #[arg(long, help = "Acknowledge that the output contains plaintext test secrets")]
+    unsafe_test_secrets: bool,
 }
 
 #[derive(clap::Args, Clone)]
@@ -212,6 +328,11 @@ impl WalletCmd {
             WalletAction::Activate(cmd) => cmd.run(&self.config).await,
             WalletAction::Ls(cmd) => cmd.run(&self.config).await,
             WalletAction::Import(cmd) => cmd.run(&self.config).await,
+            WalletAction::MnemonicGenerate(cmd) => cmd.run().await,
+            WalletAction::MnemonicImport(cmd) => cmd.run(&self.config).await,
+            WalletAction::Sign(cmd) => cmd.run(&self.config).await,
+            WalletAction::Verify(cmd) => cmd.run().await,
+            WalletAction::TestFixture(cmd) => cmd.run().await,
             WalletAction::Export(cmd) => cmd.run(&self.config).await,
             WalletAction::Rm(cmd) => cmd.run(&self.config).await,
             WalletAction::SetVersion(cmd) => cmd.run(&self.config).await,
@@ -621,6 +742,274 @@ impl WalletImportCmd {
             }
         }
         println!();
+        Ok(())
+    }
+}
+
+fn parse_wallet_identity(
+    version: &str,
+    workchain: i32,
+    subwallet_id: u32,
+) -> anyhow::Result<WalletConfig> {
+    let version = version.parse().map_err(|_| {
+        anyhow::anyhow!("Invalid wallet version '{version}'. Use V1R3, V3R2, V4R2, or V5R1")
+    })?;
+    Ok(WalletConfig {
+        key: common::app_config::KeyConfig::PublicKey { type_id: 0, pub_key: Vec::new() },
+        version,
+        subwallet_id,
+        workchain,
+    })
+}
+
+fn friendly_address(wallet: &WalletConfig, public_key: &[u8]) -> anyhow::Result<String> {
+    let address = super::utils::calculate_wallet_address(wallet, public_key)?;
+    address
+        .to_string_custom(ADDR_FORMAT_BOUNCE | ADDR_FORMAT_URL_SAFE)
+        .context("format TVM wallet address")
+}
+
+impl WalletMnemonicGenerateCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let words = super::tos_mnemonic::generate(self.words)?;
+        let phrase = words.join(" ");
+        let mut seed = super::tos_mnemonic::private_seed(&phrase, "")?;
+        let key = ed25519_create_private_key(&seed)?;
+        let public_key = key.verifying_key();
+        let wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
+        let output = serde_json::json!({
+            "schema": "tosctl-mnemonic-v1",
+            "warning": "SECRET: store this mnemonic offline; never use it across algorithms or environments",
+            "mnemonic": phrase,
+            "public_key_hex": hex::encode(public_key),
+            "address": friendly_address(&wallet, &public_key)?,
+            "wallet_version": self.version,
+            "workchain": self.workchain,
+            "subwallet_id": self.subwallet_id,
+        });
+        seed.zeroize();
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        Ok(())
+    }
+}
+
+impl WalletMnemonicImportCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let mut phrase = match (&self.mnemonic, &self.mnemonic_file) {
+            (Some(phrase), None) => phrase.clone(),
+            (None, Some(path)) => std::fs::read_to_string(path)
+                .with_context(|| format!("read mnemonic file {}", path.display()))?,
+            _ => anyhow::bail!("Provide exactly one of --mnemonic or --mnemonic-file"),
+        };
+        let mut seed = super::tos_mnemonic::private_seed(phrase.trim(), "")?;
+        phrase.zeroize();
+        let path = Path::new(config_path);
+        let (mut config, vault) = super::utils::load_config_vault(path).await?;
+        if config.wallets.contains_key(&self.name) {
+            seed.zeroize();
+            anyhow::bail!("Wallet '{}' already exists in config", self.name);
+        }
+
+        let secret_name = format!("wallet-{}", self.name);
+        let secret_id = secret_name.as_str().into();
+        let metadata = secrets_vault::types::metadata::Metadata::new(
+            Some(&secret_id),
+            secrets_vault::types::algorithm::Algorithm::Ed25519,
+            false,
+        );
+        let secret = secrets_vault::types::secret::Secret::from_raw_data(
+            &seed,
+            metadata,
+            AutoCryptoFactory {}.new_crypto()?,
+        )
+        .await?;
+        seed.zeroize();
+        vault.put(&secret, secrets_vault::types::store_mode::StoreMode::CreateOrReplace).await?;
+        vault.flush().await?;
+
+        let mut wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
+        wallet.key = common::app_config::KeyConfig::VaultKey { name: secret_name.clone() };
+        config.wallets.insert(self.name.clone(), wallet.clone());
+        super::utils::save_config(&config, path)?;
+
+        let public_key = secret
+            .as_keypair()?
+            .public_key()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Public key not available"))?;
+        println!(
+            "{} Wallet '{}' recovered at {}",
+            "OK".green().bold(),
+            self.name,
+            friendly_address(&wallet, &public_key)?
+        );
+        Ok(())
+    }
+}
+
+fn exact_message(input: &ExactMessageArgs) -> anyhow::Result<Vec<u8>> {
+    match (&input.message, &input.message_hex, &input.message_file) {
+        (Some(value), None, None) => Ok(value.as_bytes().to_vec()),
+        (None, Some(value), None) => hex::decode(value).context("decode --message-hex"),
+        (None, None, Some(path)) => {
+            std::fs::read(path).with_context(|| format!("read message file {}", path.display()))
+        }
+        (None, None, None) => {
+            anyhow::bail!("Provide exactly one of --message, --message-hex, or --message-file")
+        }
+        _ => anyhow::bail!("Message inputs are mutually exclusive"),
+    }
+}
+
+impl WalletSignCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let message = exact_message(&self.input)?;
+        let (config, vault) = super::utils::load_config_vault(Path::new(config_path)).await?;
+        let wallet = config
+            .wallets
+            .get(&self.name)
+            .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found in config", self.name))?;
+        let secret = wallet.key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let public_key = keypair
+            .public_key()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Public key not available"))?;
+        let signature = keypair.sign(&message).await?;
+        let output = serde_json::json!({
+            "schema": "tosctl-ed25519-signature-v1",
+            "algorithm": "Ed25519",
+            "wallet": self.name,
+            "address": friendly_address(wallet, &public_key)?,
+            "public_key_hex": hex::encode(public_key),
+            "message_hex": hex::encode(&message),
+            "signature_hex": hex::encode(signature),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        Ok(())
+    }
+}
+
+impl WalletVerifyCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let message = exact_message(&self.input)?;
+        let public_key = hex::decode(&self.public_key).context("decode --public-key")?;
+        let signature = hex::decode(&self.signature).context("decode --signature")?;
+        ed25519_verify(&public_key, &message, &signature)
+            .context("signature verification failed")?;
+        println!("{} Signature is valid", "OK".green().bold());
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct TestIdentity {
+    role: String,
+    mnemonic: String,
+    private_seed_hex: String,
+    public_key_hex: String,
+    address: String,
+    proof_message_hex: String,
+    proof_signature_hex: String,
+}
+
+#[derive(serde::Serialize)]
+struct TestIdentityFixture {
+    schema: &'static str,
+    test_only: bool,
+    warning: &'static str,
+    algorithm: &'static str,
+    derivation: &'static str,
+    wallet_version: String,
+    workchain: i32,
+    subwallet_id: u32,
+    identities: Vec<TestIdentity>,
+}
+
+impl WalletTestFixtureCmd {
+    pub async fn run(&self) -> anyhow::Result<()> {
+        if !self.unsafe_test_secrets {
+            anyhow::bail!("Refusing to write plaintext secrets without --unsafe-test-secrets");
+        }
+        if self.roles.is_empty() {
+            anyhow::bail!("At least one role is required");
+        }
+        let mut unique = std::collections::HashSet::new();
+        for role in &self.roles {
+            if role.is_empty()
+                || !role.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            {
+                anyhow::bail!("Invalid role '{role}'; use ASCII letters, numbers, '-' or '_'");
+            }
+            if !unique.insert(role) {
+                anyhow::bail!("Duplicate role '{role}'");
+            }
+        }
+        if self.output.exists() && !self.force {
+            anyhow::bail!("{} already exists; use --force to replace it", self.output.display());
+        }
+        if let Ok(metadata) = std::fs::symlink_metadata(&self.output)
+            && !metadata.file_type().is_file()
+        {
+            anyhow::bail!(
+                "Refusing to replace symlink or non-regular path {}",
+                self.output.display()
+            );
+        }
+
+        let wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
+        let mut identities = Vec::with_capacity(self.roles.len());
+        for role in &self.roles {
+            let words = super::tos_mnemonic::generate(self.words)?;
+            let mnemonic = words.join(" ");
+            let mut seed = super::tos_mnemonic::private_seed(&mnemonic, "")?;
+            let key = ed25519_create_private_key(&seed)?;
+            let public_key = key.verifying_key();
+            let proof_message = format!("ATOS_TEST_IDENTITY_V1:{role}").into_bytes();
+            let proof_signature = key.sign(&proof_message);
+            identities.push(TestIdentity {
+                role: role.clone(),
+                mnemonic,
+                private_seed_hex: hex::encode(seed),
+                public_key_hex: hex::encode(public_key),
+                address: friendly_address(&wallet, &public_key)?,
+                proof_message_hex: hex::encode(proof_message),
+                proof_signature_hex: hex::encode(proof_signature),
+            });
+            seed.zeroize();
+        }
+        let fixture = TestIdentityFixture {
+            schema: "atos-test-identities-v1",
+            test_only: true,
+            warning: "PLAINTEXT TEST SECRETS: never fund or use these identities outside disposable test networks",
+            algorithm: "Ed25519",
+            derivation: "TOS mnemonic PBKDF2-HMAC-SHA512 (TOS default seed)",
+            wallet_version: self.version.clone(),
+            workchain: self.workchain,
+            subwallet_id: self.subwallet_id,
+            identities,
+        };
+        let encoded = serde_json::to_vec_pretty(&fixture)?;
+
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(self.force).create_new(!self.force);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options
+            .open(&self.output)
+            .with_context(|| format!("create {}", self.output.display()))?;
+        file.write_all(&encoded)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&self.output, std::fs::Permissions::from_mode(0o600))?;
+
+        println!(
+            "{} Wrote {} test identities to {} (mode 0600)",
+            "OK".green().bold(),
+            self.roles.len(),
+            self.output.display()
+        );
         Ok(())
     }
 }

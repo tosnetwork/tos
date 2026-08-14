@@ -232,6 +232,11 @@ wallet create            Create a new wallet
 wallet activate          Activate a wallet on-chain
 wallet ls                List wallets with balances
 wallet import            Import an existing keypair
+wallet mnemonic-generate Generate a recoverable TOS mnemonic and TVM address
+wallet mnemonic-import   Recover a wallet from a TOS mnemonic
+wallet sign              Sign exact bytes with a configured Ed25519 wallet
+wallet verify            Verify an Ed25519 signature over exact bytes
+wallet test-fixture      Write real test-only identities to a mode-0600 JSON file
 wallet export            Export a wallet key (expert only)
 wallet rm                Remove a wallet
 wallet set-version       Migrate wallet contract version
@@ -356,8 +361,20 @@ tosctl service -c tosctl-config.json
 
 ```bash
 # Create and list
-tosctl wallet create
+tosctl wallet create --name wallet0
 tosctl wallet ls
+
+# Generate a recoverable TVM identity, then recover it into the vault
+tosctl wallet mnemonic-generate --words 24 --version V3R2 --workchain 0 --subwallet-id 0
+tosctl wallet mnemonic-import --name wallet1 --mnemonic-file mnemonic.txt --workchain 0 --subwallet-id 0
+
+# Generate actual signed test identities instead of placeholder key material
+tosctl wallet test-fixture --output atos-test-identities.json \
+  --unsafe-test-secrets
+
+# Sign or verify exact protocol bytes (text, hex, and file inputs are exclusive)
+tosctl wallet sign --name wallet0 --message-hex deadbeef
+tosctl wallet verify --public-key <64-hex> --signature <128-hex> --message-hex deadbeef
 
 # Send TOS
 tosctl config wallet send --from wallet0 --to "-1:abc123..." --amount 10.0

@@ -37,6 +37,7 @@ pub(crate) mod proof_attestation_cmd;
 pub(crate) mod service_actor_cmd;
 pub(crate) mod service_api_cmd;
 pub(crate) mod service_cmd;
+mod tos_mnemonic;
 pub(crate) mod tx_cmd;
 mod utils;
 pub(crate) mod vote_cmd;
