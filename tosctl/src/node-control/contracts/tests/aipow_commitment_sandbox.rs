@@ -27,6 +27,10 @@ use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
 const COMMIT_BOND: u64 = 5 * TOS;
+/// Mirrors the contract's MIN_TON_STORAGE: the floor the commitment always keeps back
+/// so it can pay storage rent and never freeze (a frozen FINAL commitment is unreadable
+/// to the native mint and its reward would be lost).
+const MIN_TON_STORAGE: u64 = 50_000_000; // 0.05 TOS
 const COMMIT_EPOCH: u64 = 27_260;
 const TOTAL_SCORE: u128 = 1_000_000;
 const ORGANIC_VALUE: u128 = 42 * TOS as u128;
@@ -438,6 +442,14 @@ fn finalize_after_window_returns_the_bond() {
     assert!(
         delta > COMMIT_BOND - TOS / 100 && delta <= COMMIT_BOND,
         "committer must get the bond back minus at most the forward fee, got {delta}"
+    );
+    // Returning the full bond must NOT run the commitment out of storage rent: it keeps
+    // its floor and stays active, so the native mint can still read its `final` status
+    // when the cursor reaches its epoch. (raw_reserve(MIN_TON_STORAGE, 2) before the send.)
+    let kept = f.balance(&f.commitment);
+    assert!(
+        kept >= MIN_TON_STORAGE,
+        "a finalized commitment must retain its storage floor and stay active, got {kept}"
     );
 
     // Terminal: further finalize or challenge attempts are rejected.

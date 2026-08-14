@@ -93,6 +93,14 @@ const int max_proof_depth = 60;
 ;; draining the contract. v0 draft constant; phase C moves it to governance.
 const int min_claim_value = 50000000;  ;; 0.05 TOS
 
+;; A floor of TON this instance always keeps back so it can pay its own storage rent and
+;; never freeze. A frozen distributor is dead: the pool it still holds and every not-yet
+;; matured claim would be permanently stranded. Reserved (mode 2, "at most", never fails)
+;; before each payout, so a pay that would breach the floor reverts instead of bricking
+;; the instance. (The pool itself is far larger than this floor, so real payouts are
+;; unaffected; this only forecloses draining the account below its rent.)
+const int min_ton_storage = 50000000;  ;; 0.05 TOS
+
 int leaf_hash(int identity, int score) inline {
   return string_hash(begin_cell()
     .store_uint(0, 8)
@@ -339,6 +347,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
       claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
+    raw_reserve(min_ton_storage, 2);  ;; never spend the storage floor paying a claim
     pay_identity(earner_workchain, identity, matured);
     return ();
   }
@@ -363,6 +372,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
       claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
+    raw_reserve(min_ton_storage, 2);  ;; never spend the storage floor paying a stream delta
     pay_identity(earner_workchain, identity, delta);
     return ();
   }

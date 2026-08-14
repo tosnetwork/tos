@@ -94,6 +94,14 @@ const int commitment_version = 1;
 ;; register gas; the settlement rejects a nomination carrying less. Kept below the
 ;; deploy funding margin so a finalize can still return the commit_bond.
 const int registration_value = 600000000;  ;; 0.6 TOS (>= settlement MIN_REGISTRATION_BOND 0.5)
+;; A floor of TON this account always keeps back so it can pay its own storage rent and
+;; can NEVER freeze. This is load-bearing, not hygiene: the native mint path reads this
+;; commitment's live account (status/tuple) at settle time, and a frozen (inactive)
+;; account is treated as non-existent -- so a FINAL commitment that ran itself out of
+;; rent while paying a bond back would silently lose its epoch's reward. Reserved (mode 2,
+;; "reserve at most", never fails) before every value-out, so a payout that would breach
+;; the floor reverts the whole message instead of stranding the account.
+const int MIN_TON_STORAGE = 50000000;  ;; 0.05 TOS
 
 const int status::committed = 0;
 const int status::challenged = 1;
@@ -342,6 +350,9 @@ const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond
     save_state(committer, reviewer, status::final, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
       total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
+    ;; Keep the storage floor so this now-FINAL commitment stays active for the native
+    ;; mint to read it; if the bond return would breach the floor, revert (retry funded).
+    raw_reserve(MIN_TON_STORAGE, 2);
     send_value(committer, commit_bond, 1);
     return ();
   }
@@ -363,6 +374,7 @@ const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond
       save_state(committer, reviewer, status::rejected, epoch, window_deadline,
         review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
         total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
+      raw_reserve(MIN_TON_STORAGE, 2);  ;; never spend the storage floor on a payout
       send_value(challenger, commit_bond + challenge_bond, 1);
     } else {
       ;; H3: the challenge is dismissed as frivolous, but the root does NOT finalize.
@@ -377,6 +389,8 @@ const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond
       save_state(committer, reviewer, status::committed, epoch, window_deadline,
         0, commit_bond, 0, score_root, methodology_hash, rate_card_hash,
         total_score, organic_settled_value, challenger, 0, version, settlement);
+      ;; Back to `committed` (still challengeable/mintable) -- keep the floor so it stays live.
+      raw_reserve(MIN_TON_STORAGE, 2);
       send_value(committer, challenge_bond, 1);
     }
     return ();
@@ -393,6 +407,7 @@ const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond
     save_state(committer, reviewer, status::rejected, epoch, window_deadline,
       review_deadline, commit_bond, challenge_bond, score_root, methodology_hash, rate_card_hash,
       total_score, organic_settled_value, challenger, challenge_evidence_hash, version, settlement);
+    raw_reserve(MIN_TON_STORAGE, 2);  ;; one reserve guards both refunds below
     send_value(committer, commit_bond, 1);
     send_value(challenger, challenge_bond, 1);
     return ();
