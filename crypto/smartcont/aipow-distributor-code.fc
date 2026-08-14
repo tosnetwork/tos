@@ -88,9 +88,14 @@ const int distributor_version = 1;
 ;; keeps gas bounded against a hostile deep proof chain.
 const int max_proof_depth = 60;
 
-;; A claim/payout must carry at least this much value so a permissionless poke
-;; funds its own gas and a share of the dict's ongoing storage rent rather than
-;; draining the contract. v0 draft constant; phase C moves it to governance.
+;; Minimum value a `claim`/`payout` must carry. This floor is NOT a gas check -- TON
+;; already charges an underfunded message's compute from its own value. It exists because
+;; a `claim` GROWS STATE: it inserts a per-identity record into the claims dict, which
+;; this instance carries (and pays storage rent on) for the life of the distributor. The
+;; floor makes each claimant pay for the permanent storage its own claim creates, so no
+;; single claimant can grow the dict on the whole cohort's dime and drain the instance's
+;; rent reserve. (`payout` only mutates an existing record, but shares the floor for
+;; simplicity.) v0 draft constant; phase C moves it to governance.
 const int min_claim_value = 50000000;  ;; 0.05 TOS
 
 ;; A floor of TON this instance always keeps back so it can pay its own storage rent and

@@ -112,13 +112,19 @@ const int MAX_CANDIDATES = 8;
 const int REGISTER_HORIZON = 1024;
 ;; The epoch cursor is a uint32 field; it cannot advance past this value.
 const int MAX_EPOCH = 0xffffffff;
-;; Minimum value a `register` must carry (H1 economic close). A nominator locks
-;; this bond per candidate slot, so grinding out MAX_CANDIDATES small canonical
-;; addresses to evict a genuine commitment costs at least MAX_CANDIDATES x this per
-;; epoch. Non-refundable -- it accumulates in this account, funding its own gas +
-;; the per-settle forward reserve. A code constant: the audited settlement is
-;; governance-deployed, so this is a governed protocol value (raise it, with the
-;; commitment's registration value and deploy funding, for a stronger deterrent).
+;; Minimum value a `register` must carry (H1 economic close). This floor is NOT a gas
+;; check -- TON already charges an underfunded message's compute from its own value (it
+;; runs out of gas on its own). It exists because a `register` GROWS STATE: it inserts a
+;; candidate entry into this epoch's bucket in the registrations dict, which this account
+;; then carries (and pays storage rent on) until the epoch settles or is skipped. The
+;; bond makes the nominator pay for the state its nomination creates instead of leaving
+;; the settlement to subsidise it, and -- since the set is bounded and keyed by address
+;; -- makes grinding out MAX_CANDIDATES small canonical addresses to evict a genuine
+;; commitment cost at least MAX_CANDIDATES x this per epoch. Non-refundable: it accumulates
+;; in this account, funding its own gas + the per-settle forward reserve + that storage.
+;; A code constant: the audited settlement is governance-deployed, so this is a governed
+;; protocol value (raise it, with the commitment's registration value and deploy funding,
+;; for a stronger deterrent).
 const int MIN_REGISTRATION_BOND = 500000000;  ;; 0.5 TOS
 
 ;; A floor of TON this account always keeps back so it can pay its own storage rent and
