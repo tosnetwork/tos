@@ -41,6 +41,20 @@ fn sha256c_is_chunk_independent_at_version_14() {
 }
 
 #[test]
+fn sha256c_matches_cpp_consensus_differential_vector() {
+    // Keep this vector identical to crypto/test/vm.cpp's
+    // VM.sha256_canonical_snake case. Both VMs must hash the same two-cell
+    // canonical snake to standard SHA-256 before version 14 is activated.
+    let first = vec![b'a'; 120];
+    let second = vec![b'b'; 120];
+    let mut bytes = first.clone();
+    bytes.extend_from_slice(&second);
+    test_case_with_refs("PUSHREF SHA256C", vec![snake(&[&first, &second])])
+        .with_block_version(14)
+        .expect_stack(&expected_hash(&bytes));
+}
+
+#[test]
 fn sha256c_is_rejected_before_version_14() {
     test_case_with_refs("PUSHREF SHA256C", vec![snake(&[b"hello world"])])
         .with_block_version(13)
