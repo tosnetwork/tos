@@ -98,13 +98,28 @@ const int max_proof_depth = 60;
 ;; simplicity.) v0 draft constant; phase C moves it to governance.
 const int min_claim_value = 50000000;  ;; 0.05 TOS
 
-;; A floor of TON this instance always keeps back so it can pay its own storage rent and
-;; never freeze. A frozen distributor is dead: the pool it still holds and every not-yet
-;; matured claim would be permanently stranded. Reserved (mode 2, "at most", never fails)
-;; before each payout, so a pay that would breach the floor reverts instead of bricking
-;; the instance. (The pool itself is far larger than this floor, so real payouts are
-;; unaffected; this only forecloses draining the account below its rent.)
-const int min_ton_storage = 50000000;  ;; 0.05 TOS
+;; Storage rent this instance keeps back before each payout so it can NEVER freeze. A
+;; frozen distributor is dead: the pool it still holds and every not-yet-matured claim
+;; would be permanently stranded. The reserve is PRICED from the live storage config via
+;; the TVM storage-fee primitive (not a magic constant) for the instance's earner
+;; workchain, so it tracks config changes and the workchain it actually pays rent on.
+;; STORAGE_RESERVE_SECONDS is a bounded, governance-tunable runway; STORAGE_RESERVE_FLOOR
+;; backstops it (covers a zero/low-price config). The reserve is max(priced, floor), taken
+;; (mode 2, "at most", never fails) before each payout, so a pay that would breach it
+;; reverts instead of bricking the instance. The pool is far larger than the reserve, so
+;; real payouts are unaffected; the claims dict growth is funded separately by
+;; min_claim_value, so the bits/cells here cover code + base data only.
+const int STORAGE_RESERVE_SECONDS = 604800;      ;; 7-day runway (governance-tunable)
+const int STORAGE_RESERVE_BITS = 16000;
+const int STORAGE_RESERVE_CELLS = 32;
+const int STORAGE_RESERVE_FLOOR = 50000000;      ;; 0.05 TOS backstop
+
+;; The TON to keep back so this instance can pay its own storage rent on `workchain` (its
+;; earner workchain) for STORAGE_RESERVE_SECONDS. Priced from the live config; floored.
+int storage_reserve(int workchain) inline {
+  int fee = get_storage_fee(workchain, STORAGE_RESERVE_SECONDS, STORAGE_RESERVE_BITS, STORAGE_RESERVE_CELLS);
+  return (fee > STORAGE_RESERVE_FLOOR) ? fee : STORAGE_RESERVE_FLOOR;
+}
 
 int leaf_hash(int identity, int score) inline {
   return string_hash(begin_cell()
@@ -352,7 +367,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
       claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
-    raw_reserve(min_ton_storage, 2);  ;; never spend the storage floor paying a claim
+    raw_reserve(storage_reserve(earner_workchain), 2);  ;; never spend the storage floor paying a claim
     pay_identity(earner_workchain, identity, matured);
     return ();
   }
@@ -377,7 +392,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
       claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
-    raw_reserve(min_ton_storage, 2);  ;; never spend the storage floor paying a stream delta
+    raw_reserve(storage_reserve(earner_workchain), 2);  ;; never spend the storage floor paying a stream delta
     pay_identity(earner_workchain, identity, delta);
     return ();
   }

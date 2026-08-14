@@ -127,15 +127,28 @@ const int MAX_EPOCH = 0xffffffff;
 ;; for a stronger deterrent).
 const int MIN_REGISTRATION_BOND = 500000000;  ;; 0.5 TOS
 
-;; A floor of TON this account always keeps back so it can pay its own storage rent and
-;; never freeze. This is the consensus-facing invariant made defensive at the contract
-;; layer: the native mint path reads this account's live ledger every masterchain block,
-;; and a frozen (inactive/unreadable) settlement forces the mint to fail closed. The
-;; per-settle pool forward pays fees from balance, so reserve this floor first (mode 2,
-;; "at most", never fails) so forwarding a pool can never drain the account into freezing.
-;; Larger than the per-actor floors: this is masterchain state that grows with the live
-;; registrations dict. Register bonds accumulate here to keep it above this floor.
-const int MIN_TON_STORAGE = 100000000;  ;; 0.1 TOS
+;; Storage rent this account keeps back so it can NEVER freeze. This is the consensus-facing
+;; invariant made defensive at the contract layer: the native mint reads this account's live
+;; ledger every masterchain block, and a frozen (inactive/unreadable) settlement forces the
+;; mint to fail closed. The per-settle pool forward pays fees from balance, so the reserve is
+;; taken first (mode 2, "at most", never fails) so forwarding a pool can never drain the
+;; account into freezing. The reserve is PRICED from the live storage config via the TVM
+;; storage-fee primitive (not a magic constant), so it tracks config changes. Masterchain
+;; storage is ~1000x basechain, so a multi-year runway is impractical: STORAGE_RESERVE_SECONDS
+;; is a bounded, governance-tunable runway, STORAGE_RESERVE_FLOOR backstops it, and the
+;; reserve is max(priced, floor). Bits/cells are large: this account's data embeds the audited
+;; distributor + commitment codes; the registrations dict growth is funded by register bonds.
+const int STORAGE_RESERVE_SECONDS = 604800;      ;; 7-day runway (governance-tunable)
+const int STORAGE_RESERVE_BITS = 48000;
+const int STORAGE_RESERVE_CELLS = 96;
+const int STORAGE_RESERVE_FLOOR = 100000000;     ;; 0.1 TOS backstop
+
+;; The TON to keep back so this masterchain account can pay its own storage rent for
+;; STORAGE_RESERVE_SECONDS and never freeze. Priced from the live config; floored.
+int storage_reserve() inline {
+  int fee = get_storage_fee(-1, STORAGE_RESERVE_SECONDS, STORAGE_RESERVE_BITS, STORAGE_RESERVE_CELLS);
+  return (fee > STORAGE_RESERVE_FLOOR) ? fee : STORAGE_RESERVE_FLOOR;
+}
 
 (int, int, int, int, int, int, int, int, int, int, int, cell, cell, cell) load_state() inline {
   slice ds = get_data().begin_parse();
@@ -356,7 +369,7 @@ cell build_state_init(cell code, cell data) inline {
     ;; the floor and forward the pool, the forward's action fails and the whole settle
     ;; reverts (minted_total does not advance) -- the native atomicity guard then fails
     ;; closed, exactly as for any underfunded forward.
-    raw_reserve(MIN_TON_STORAGE, 2);
+    raw_reserve(storage_reserve(), 2);
     forward_to_distributor(msg_value, earner_workchain, dist_hash, state_init);
     return ();
   }

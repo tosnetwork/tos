@@ -27,10 +27,12 @@ use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
 const TOS: u64 = 1_000_000_000;
 const COMMIT_BOND: u64 = 5 * TOS;
-/// Mirrors the contract's MIN_TON_STORAGE: the floor the commitment always keeps back
-/// so it can pay storage rent and never freeze (a frozen FINAL commitment is unreadable
-/// to the native mint and its reward would be lost).
-const MIN_TON_STORAGE: u64 = 50_000_000; // 0.05 TOS
+/// Mirrors the contract's STORAGE_RESERVE_FLOOR: the hard backstop the commitment always
+/// keeps back so it can pay storage rent and never freeze (a frozen FINAL commitment is
+/// unreadable to the native mint and its reward would be lost). The contract now reserves
+/// `max(get_storage_fee(-1, 7d, ...), FLOOR)`, so the retained amount is at least this
+/// floor and usually the (larger) priced 7-day masterchain runway.
+const STORAGE_RESERVE_FLOOR: u64 = 50_000_000; // 0.05 TOS
 const COMMIT_EPOCH: u64 = 27_260;
 const TOTAL_SCORE: u128 = 1_000_000;
 const ORGANIC_VALUE: u128 = 42 * TOS as u128;
@@ -444,12 +446,13 @@ fn finalize_after_window_returns_the_bond() {
         "committer must get the bond back minus at most the forward fee, got {delta}"
     );
     // Returning the full bond must NOT run the commitment out of storage rent: it keeps
-    // its floor and stays active, so the native mint can still read its `final` status
-    // when the cursor reaches its epoch. (raw_reserve(MIN_TON_STORAGE, 2) before the send.)
+    // its priced reserve and stays active, so the native mint can still read its `final`
+    // status when the cursor reaches its epoch. (raw_reserve(storage_reserve(), 2) before
+    // the send, where storage_reserve() = max(get_storage_fee(-1, 7d, ...), FLOOR).)
     let kept = f.balance(&f.commitment);
     assert!(
-        kept >= MIN_TON_STORAGE,
-        "a finalized commitment must retain its storage floor and stay active, got {kept}"
+        kept >= STORAGE_RESERVE_FLOOR,
+        "a finalized commitment must retain its storage reserve and stay active, got {kept}"
     );
 
     // Terminal: further finalize or challenge attempts are rejected.
