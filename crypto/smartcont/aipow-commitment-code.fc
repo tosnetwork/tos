@@ -117,6 +117,7 @@ const int err::zero_evidence = 2108;
 const int err::conflicted_challenger = 2109;
 const int err::review_open = 2110;
 const int err::review_closed = 2111;  ;; reviewer ruled after the review deadline
+const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond funded here
 
 ;; mode 1: send exactly `amount`, fees paid from the contract balance.
 () send_value(slice destination, int amount, int mode) impure inline {
@@ -315,6 +316,17 @@ const int err::review_closed = 2111;  ;; reviewer ruled after the review deadlin
     ;; committer normally announces once, right after deploy.
     throw_unless(err::not_committed, status == status::committed);
     in_msg.end_parse();
+    ;; Escrow the committer's bond. The whole challenge mechanism assumes commit_bond is
+    ;; actually held here through the window -- finalize, rule and timeout all pay it out --
+    ;; yet nothing verified the deploy funded it. announce is the mandatory gate before a
+    ;; commitment can be nominated (hence minted), so require the bond funded now and reserve
+    ;; it: the registration send below cannot dip into it, and because no other message spends
+    ;; the balance while committed/challenged, it stays escrowed for every resolution path.
+    ;; An unbonded commitment therefore can neither register nor be minted, and a challenged
+    ;; one is always solvent enough to pay both bonds out (so challenging is never a trap).
+    throw_unless(err::bond_not_escrowed,
+      get_balance().pair_first() >= commit_bond + registration_value);
+    raw_reserve(commit_bond, 0);
     send_registration(settlement, epoch, score_root, total_score, organic_settled_value);
     return ();
   }

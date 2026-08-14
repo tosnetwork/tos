@@ -79,6 +79,7 @@ const int err::zero_score = 2209;
 const int err::insufficient_value = 2210;
 const int err::malformed_proof = 2211;
 const int err::nothing_to_pay = 2212;
+const int err::not_activated = 2213;
 
 ;; The distributor layout version this code understands.
 const int distributor_version = 1;
@@ -145,7 +146,7 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
   .end_cell(), 1);
 }
 
-(int, slice, int, int, int, int, int, int, int, int, int, int, int, cell) load_state() inline {
+(int, slice, int, int, int, int, int, int, int, int, int, int, int, int, cell) load_state() inline {
   slice ds = get_data().begin_parse();
   int version = ds~load_uint(16);
   slice op_addr = ds~load_msg_addr();
@@ -158,6 +159,10 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
   int immediate_bps = ds~load_uint(16);
   int stream_epochs = ds~load_uint(16);
   int mat_epoch_seconds = ds~load_uint(32);
+  ;; The wall-clock time the operator (settlement) funded this instance, 0 until
+  ;; then. Every maturation clock is anchored at or after this, and claims are
+  ;; refused before it, so a permissionless pre-deploy cannot start vesting early.
+  int activated_at = ds~load_uint(64);
   slice roots = ds~load_ref().begin_parse();
   int score_root = roots~load_uint(256);
   int commitment_ref = roots~load_uint(256);
@@ -165,13 +170,14 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
   cell claims = ds~load_dict();
   ds.end_parse();
   return (version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
-    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
     commitment_ref, claims);
 }
 
 () save_state(int version, slice op_addr, int epoch, int earner_workchain, int total_score,
              int pool, int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
-             int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) impure inline {
+             int mat_epoch_seconds, int activated_at, int score_root, int commitment_ref,
+             cell claims) impure inline {
   set_data(begin_cell()
     .store_uint(version, 16)
     .store_slice(op_addr)
@@ -184,6 +190,7 @@ int compute_matured(int amount, int claimed_at, int forfeited, int forfeit_at, i
     .store_uint(immediate_bps, 16)
     .store_uint(stream_epochs, 16)
     .store_uint(mat_epoch_seconds, 32)
+    .store_uint(activated_at, 64)
     .store_ref(begin_cell()
       .store_uint(score_root, 256)
       .store_uint(commitment_ref, 256)
@@ -259,9 +266,23 @@ int fold_proof(int leaf, cell proof) inline_ref {
   if (flags & 1) { return (); }  ;; ignore bounced messages
   slice sender = full_msg~load_msg_addr();
   if (in_msg.slice_empty?()) {
-    ;; Empty body: accepted as a no-op. This covers the deploy message and the
-    ;; settlement's pool-forwarding message (plain value with no body); the
-    ;; forwarded value simply funds this instance's payout balance.
+    ;; Empty body: a plain value transfer. The settlement's pool-forwarding message
+    ;; comes from the operator and ACTIVATES this instance -- it stamps the funding
+    ;; time that anchors every maturation clock and unlocks claims. Activation is
+    ;; once (the first operator funding); later operator top-ups and any empty
+    ;; message from anyone else (a pre-deploy, a stray transfer) are no-ops. Without
+    ;; this, an earner could pre-deploy this instance at its deterministic address
+    ;; and claim before issuance, starting its own vesting clock early and maturing
+    ;; out of the operator's forfeiture window before the pool is even minted.
+    (int version, slice op_addr, int epoch, int earner_workchain, int total_score, int pool,
+     int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
+     int mat_epoch_seconds, int activated_at, int score_root, int commitment_ref,
+     cell claims) = load_state();
+    if (equal_slice_bits(sender, op_addr) & (activated_at == 0)) {
+      save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
+        claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, now(), score_root,
+        commitment_ref, claims);
+    }
     return ();
   }
   int op = in_msg~load_uint(32);
@@ -270,9 +291,13 @@ int fold_proof(int leaf, cell proof) inline_ref {
 
   (int version, slice op_addr, int epoch, int earner_workchain, int total_score, int pool,
    int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
-   int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) = load_state();
+   int mat_epoch_seconds, int activated_at, int score_root, int commitment_ref,
+   cell claims) = load_state();
 
   if (op == op::claim) {
+    ;; No claim before the operator has funded the pool: else a pre-deployed instance
+    ;; could record a claim (and start its maturation clock) ahead of issuance.
+    throw_unless(err::not_activated, activated_at > 0);
     ;; A permissionless claim must fund its own gas and storage rent so it
     ;; cannot drain the contract on behalf of the whole cohort.
     throw_unless(err::insufficient_value, msg_value >= min_claim_value);
@@ -312,7 +337,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     claimed_count += 1;
     claimed_score += score;
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
-      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
     pay_identity(earner_workchain, identity, matured);
     return ();
@@ -320,7 +345,9 @@ int fold_proof(int leaf, cell proof) inline_ref {
 
   if (op == op::payout) {
     ;; Permissionless: pay the newly-matured delta of an already-claimed
-    ;; identity to that identity's address. Must fund its own gas.
+    ;; identity to that identity's address. Must fund its own gas. A claim can only
+    ;; exist after activation, so this is implicitly post-activation; assert it too.
+    throw_unless(err::not_activated, activated_at > 0);
     throw_unless(err::insufficient_value, msg_value >= min_claim_value);
     int identity = in_msg~load_uint(256);
     in_msg.end_parse();
@@ -334,7 +361,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     claims~udict_set_builder(256, identity,
       pack_claim(amount, claimed_at, forfeited, forfeit_at, paid + delta));
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
-      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
     pay_identity(earner_workchain, identity, delta);
     return ();
@@ -355,7 +382,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
     claims~udict_set_builder(256, identity,
       pack_claim(amount, claimed_at, 1, now(), paid));
     save_state(version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
-      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root,
+      claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
       commitment_ref, claims);
     return ();
   }
@@ -363,18 +390,20 @@ int fold_proof(int leaf, cell proof) inline_ref {
   throw(err::unknown_op);
 }
 
-(int, slice, int, int, int, int, int, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
+(int, slice, int, int, int, int, int, int, int, int, int, int, int, int) get_aipow_distributor_data() method_id {
   (int version, slice op_addr, int epoch, int earner_workchain, int total_score, int pool,
    int claimed_count, int claimed_score, int immediate_bps, int stream_epochs,
-   int mat_epoch_seconds, int score_root, int commitment_ref, cell claims) = load_state();
+   int mat_epoch_seconds, int activated_at, int score_root, int commitment_ref,
+   cell claims) = load_state();
   claims~impure_touch();
   return (version, op_addr, epoch, earner_workchain, total_score, pool, claimed_count,
-    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, score_root, commitment_ref);
+    claimed_score, immediate_bps, stream_epochs, mat_epoch_seconds, activated_at, score_root,
+    commitment_ref);
 }
 
 ;; (found, amount, claimed_at, forfeited, forfeit_at, paid) for `identity`.
 (int, int, int, int, int, int) get_claim(int identity) method_id {
-  (_, _, _, _, _, _, _, _, _, _, _, _, _, cell claims) = load_state();
+  (_, _, _, _, _, _, _, _, _, _, _, _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0, 0, 0, 0, 0);
@@ -388,7 +417,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
 ;; consumer must use `get_matured_now`, never a caller-controlled time.
 (int, int) get_matured(int identity, int at_time) method_id {
   (_, _, _, _, _, _, _, _, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
-   _, _, cell claims) = load_state();
+   _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);
@@ -402,7 +431,7 @@ int fold_proof(int leaf, cell proof) inline_ref {
 ;; and cannot be influenced by the caller.
 (int, int) get_matured_now(int identity) method_id {
   (_, _, _, _, _, _, _, _, int immediate_bps, int stream_epochs, int mat_epoch_seconds,
-   _, _, cell claims) = load_state();
+   _, _, _, cell claims) = load_state();
   (slice entry, int found) = claims.udict_get?(256, identity);
   if (found == 0) {
     return (0, 0);

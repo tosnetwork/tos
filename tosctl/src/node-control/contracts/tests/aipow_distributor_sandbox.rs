@@ -47,6 +47,7 @@ const ERR_ZERO_SCORE: i32 = 2209;
 const ERR_INSUFFICIENT_VALUE: i32 = 2210;
 const ERR_MALFORMED_PROOF: i32 = 2211;
 const ERR_NOTHING_TO_PAY: i32 = 2212;
+const ERR_NOT_ACTIVATED: i32 = 2213;
 
 struct Fixture {
     bc: Blockchain,
@@ -599,6 +600,93 @@ fn a_claim_matures_on_chain_matching_the_sdk_curve() {
     f.bc.set_now((claimed_at + 4 * epoch_secs) as u32);
     assert_eq!(f.matured_now(entry.identity), f.matured(entry.identity, f.now()));
     assert_eq!(f.matured_now(entry.identity), Some(amount / 4 + (amount - amount / 4) * 4 / 8));
+}
+
+#[test]
+fn a_predeployed_instance_cannot_claim_before_the_operator_funds_it() {
+    // The distributor address + StateInit are publicly derivable from the candidate
+    // record, so anyone (a legitimate earner) could deploy the instance early and
+    // prefund it. Without activation-gating it could then `claim` before issuance,
+    // stamping claimed_at ahead of the mint and maturing its stream out of the
+    // operator's forfeiture window. Activation closes that: only the operator's
+    // funding message stamps the clock, and no claim is admitted before it.
+    let only = vec![ScoreEntry { identity: [0x77; 32], score: 500_000 }];
+    let root = score_root(&only).unwrap();
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let operator = bc.treasury("aipow-dist-op-gate", 1_000 * TOS).expect("operator");
+    let attacker = bc.treasury("aipow-dist-attacker", 1_000 * TOS).expect("attacker");
+    let init = AipowDistributorInit {
+        operator: operator.address().clone(),
+        epoch: 27_260,
+        earner_workchain: EARNER_WC,
+        total_score: 500_000,
+        pool: POOL,
+        maturation: AipowMaturation::methodology_v0(),
+        score_root: root,
+        commitment_ref: [0x99; 32],
+    };
+    let distributor = AipowDistributorContract::calculate_address(-1, &init).unwrap();
+
+    // The earner pre-deploys the canonical instance itself and PREFUNDS it (enough
+    // to cover the immediate tranche), all before the pool is minted.
+    let predeploy = MessageBuilder::internal(attacker.address(), &distributor, DEPLOY_VALUE)
+        .bounce(false)
+        .state_init(AipowDistributorContract::build_state_init(&init).unwrap())
+        .body(Cell::default())
+        .build();
+    bc.send_message(predeploy).expect("predeploy").expect_success();
+
+    let send = |bc: &mut Blockchain, from: &MsgAddressInt, value: u64, body: Cell| {
+        let msg = MessageBuilder::internal(from, &distributor, value).body(body).build();
+        bc.send_message(msg).expect("send")
+    };
+    let read_data = |bc: &Blockchain| -> contracts::AipowDistributorData {
+        let stack = bc
+            .run_get_method(&distributor, "get_aipow_distributor_data", vec![])
+            .unwrap()
+            .expect_success()
+            .stack
+            .clone();
+        AipowDistributorContract::decode_data(&Fixture::parse_stack(&stack)).unwrap()
+    };
+
+    // Not activated by the pre-deploy (it came from a non-operator).
+    assert_eq!(read_data(&bc).activated_at, 0, "a non-operator pre-deploy must not activate");
+
+    // The early claim is refused.
+    let proof: Vec<ProofStep> = inclusion_proof(&only, &[0x77; 32]).unwrap();
+    let claim_body = AipowDistributorContract::claim(0, [0x77; 32], 500_000, &proof).unwrap();
+    send(&mut bc, attacker.address(), TOS, claim_body.clone()).expect_exit_code(ERR_NOT_ACTIVATED);
+
+    // A stray empty message from a non-operator still does not activate.
+    send(&mut bc, attacker.address(), TOS, Cell::default()).expect_success();
+    assert_eq!(read_data(&bc).activated_at, 0, "a non-operator empty message must not activate");
+    send(&mut bc, attacker.address(), TOS, claim_body.clone()).expect_exit_code(ERR_NOT_ACTIVATED);
+
+    // The pool is minted later: the settlement (operator) funds the instance, which
+    // activates it and stamps the clock at THIS (issuance) time -- a modest jump
+    // forward from the pre-deploy so the anchoring is observable (a large jump would
+    // just drain the instance on storage rent, a sandbox artifact unrelated to the fix).
+    let issuance = bc.now() + 50_000;
+    bc.set_now(issuance);
+    send(&mut bc, operator.address(), POOL, Cell::default()).expect_success();
+    let activated = read_data(&bc).activated_at;
+    assert_eq!(activated, u64::from(issuance), "operator funding stamps the activation clock");
+
+    // Now the claim is admitted, and its maturation clock starts at issuance (the
+    // funding time), never at the earlier pre-deploy time.
+    send(&mut bc, attacker.address(), TOS, claim_body).expect_success();
+    let arg = vec![tos_vm::stack::StackItem::int(
+        tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be([0x77; 32]),
+    )];
+    let stack = bc.run_get_method(&distributor, "get_claim", arg).unwrap().expect_success().stack.clone();
+    let claim = AipowDistributorContract::decode_claim(&Fixture::parse_stack(&stack)).unwrap().unwrap();
+    assert_eq!(claim.claimed_at, u64::from(issuance), "vesting is anchored at issuance, not pre-deploy");
+
+    // A second operator funding does not reset the activation clock.
+    send(&mut bc, operator.address(), POOL, Cell::default()).expect_success();
+    assert_eq!(read_data(&bc).activated_at, u64::from(issuance), "activation is once-only");
 }
 
 #[test]

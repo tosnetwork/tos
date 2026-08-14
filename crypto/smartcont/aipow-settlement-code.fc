@@ -221,6 +221,7 @@ cell build_distributor_data(slice op_addr, int epoch, int earner_workchain, int 
     .store_uint(immediate_bps, 16)
     .store_uint(stream_epochs, 16)
     .store_uint(mat_epoch_seconds, 32)
+    .store_uint(0, 64)              ;; activated_at: 0 until the settlement funds it
     .store_ref(begin_cell()
       .store_uint(score_root, 256)
       .store_uint(commitment_ref, 256)

@@ -3147,15 +3147,44 @@ bool ValidateQuery::prepare_aipow_mint() {
                                     << td::dec_string(recorded) << ", but the block mints "
                                     << td::dec_string(aipow_mint_amount_));
     }
-    // The settle must also advance the cursor by EXACTLY one epoch. Tying issuance to
-    // the minted_total delta alone is not enough: a settlement that recorded the
-    // amount but left next_epoch unchanged would let the SAME epoch be minted again in
-    // the next block (draining the cap onto one epoch), and one that jumped the cursor
-    // would skip epochs. (Compare as 64-bit to avoid a uint32 wrap.)
-    if ((td::uint64)epoch_post != (td::uint64)epoch_pre + 1) {
+    // The settle must also advance the cursor PAST the minted epoch (by at least one).
+    // Tying issuance to the minted_total delta alone is not enough: a settlement that
+    // recorded the amount but left next_epoch unchanged would let the SAME epoch be
+    // minted again in the next block (draining the cap onto one epoch). Requiring a
+    // strict advance forecloses that re-mint. It may advance FURTHER than one: the
+    // settle runs before this block's inbound messages, so a same-block permissionless
+    // `skip` (each gated by real time past that epoch's grace deadline) legitimately
+    // moves the cursor past additional past-due, candidate-less epochs. That is not
+    // over-issuance -- minted_total rose by exactly one derived amount (checked above)
+    // and the minted epoch can never be revisited -- so it must not reject an otherwise
+    // valid mint block. (Compare as 64-bit to avoid a uint32 wrap; both cursors come
+    // from the same monotonic ledger field.)
+    if ((td::uint64)epoch_post < (td::uint64)epoch_pre + 1) {
       return reject_query(PSTRING() << "AIPoW settle minted epoch " << epoch_pre
-                                    << " but advanced the cursor to " << epoch_post
-                                    << " (expected " << (epoch_pre + 1) << ")");
+                                    << " but did not advance the cursor past it (cursor now "
+                                    << epoch_post << ")");
+    }
+    // A same-block `skip` runs after the settle, so the cursor may advance BEYOND
+    // epoch_pre+1 -- but only across epochs that were genuinely non-mintable. An epoch
+    // with ANY registered candidate in the previous state might have been a due mint;
+    // accepting its skip would let a queued `skip` censor that reward (advance the cursor
+    // past a valid finalized commitment that never got minted). Require every epoch
+    // skipped beyond the minted one to have had an EMPTY pre-state candidate bucket. A
+    // bogus-only bucket is conservatively rejected here too (it must be skipped in a
+    // no-mint block, never crossed in the same block as a mint), which is fail-safe.
+    if ((td::uint64)epoch_post > (td::uint64)epoch_pre + 1) {
+      td::Ref<vm::Cell> pre_regs;
+      if (!read_settlement_registrations(ps_, aipow_settlement_addr_, pre_regs)) {
+        return reject_query("cannot read the AIPoW settlement registrations from the previous state");
+      }
+      for (td::uint64 e = (td::uint64)epoch_pre + 1; e < (td::uint64)epoch_post; e++) {
+        if (!block::aipow::list_epoch_candidates(pre_regs, (td::uint32)e).empty()) {
+          return reject_query(PSTRING() << "AIPoW mint for epoch " << epoch_pre
+                                        << " advanced the cursor to " << epoch_post
+                                        << " but a same-block skip crossed epoch " << e
+                                        << ", which had registered candidates (a possibly censored mint)");
+        }
+      }
     }
     return true;
   }
@@ -3212,6 +3241,35 @@ bool ValidateQuery::read_settlement_ledger_fields(block::ShardState& state, cons
   }
   next_epoch = ledger.next_epoch;
   minted_total = ledger.minted_total;
+  return true;
+}
+
+// Reads the AIPoW settlement's candidate registrations dict from a shard state, for the
+// skipped-epoch censorship check. Fail-closed: any missing/inactive account, unpack, or
+// ledger-parse failure returns false so the caller rejects. An empty dict is a valid,
+// successful read (registrations left null).
+bool ValidateQuery::read_settlement_registrations(block::ShardState& state, const tos::Bits256& addr,
+                                                  td::Ref<vm::Cell>& registrations) {
+  registrations = td::Ref<vm::Cell>{};
+  if (state.account_dict_ == nullptr) {
+    return false;
+  }
+  auto entry = state.account_dict_->lookup_extra(addr.bits(), 256);
+  if (entry.first.is_null()) {
+    return false;
+  }
+  block::Account acc(masterchainId, addr.bits());
+  if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(addr.bits()))) {
+    return false;
+  }
+  if (acc.status != block::Account::acc_active || acc.data.is_null()) {
+    return false;
+  }
+  block::aipow::SettlementLedger ledger;
+  if (!block::aipow::parse_settlement_ledger(acc.data, ledger)) {
+    return false;
+  }
+  registrations = ledger.registrations;
   return true;
 }
 

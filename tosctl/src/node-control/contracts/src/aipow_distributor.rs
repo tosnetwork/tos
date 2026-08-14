@@ -12,7 +12,7 @@ use common::tvm_stack_parser::TvmStackParser;
 
 use crate::aipow_merkle::ProofStep;
 
-pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "te6cckECFAEABSMAART/APSkE/S88sgLAQIBYgIDA9TQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ0w/6QNM/0gfTf/oA0x/Tf9MP0w/TH9QB0NP/0//RAvQE0RIvghBBUEQBuuMCL4IQQVBEA7rjAlcRDoIQQVBEArrjAl8PMIEInPLwBAUGAgEgDQ4C3j8/gQiiERCCCvrwgL4BERAB8vSBCJgnwgDy9AvT/9N/1NGBCKEiwgDy9IEIoFNioCq78vRTLoMH9A5voYEImTLy8lMhcMjLBxLL/8t/ydD5AgHbPIEImgFWEbry9FR2B6mE+CNwUwJVIPgjU5hWFAcIAfY/P4EIohEQggr68IC+AREQAfL0C9P/0VMMgwf0Dm+hgQieAfL0+gDTP9MA0z/6ADBUdDIk+CNTy1YXBZhduZIyEpEz4pEz4lJQgScQqYRTFLuSbFGOFAShWKkEUwG8kjAg3lEyoUAzqYSg4iGhgQikIcIA8vRmoBUUQzAKAbSBCJ1R+8cFH/L0C9P/0VMOgwf0Dm+hgQieAfL0+gDTP9MA0z/6ADCBCJ8yAvLycfgjWMhQBfoCE8s/ywDLPwH6AkAfgwf0QxCdEIwQexBqEFkQSBA3RlBEQBMMAOhwIJMgwACOaSLQINdJIddKIcAAm2whgQijMsAA8vRxjk+BCKMCgQEBuiHBArAS8vSBCJskwjvy8gHT/9MAAZ4GccjLBxLL/8v/ydD5Ap9QZnHIywcSy//L/8nQ+QLiAcABljMD1DABpJQxcTRZ4lUC4uhfAwHYBZhduZIyEpEz4pEz4lJQgScQqYRTFLuSbFGOFAShWKkEUwG8kjAg3lEyoUAzqYSg4vgjcFMCEEXIUAX6AhPLP8sAyz8B+gJSMhEQgwf0QwakUFWgKBDNELwKCxCJEHgQVxYQRQMEAhEQAlD/CQCoAsjL/8v/yQzIyw9QC88WGcs/F8oHFct/UAP6Assfy3/LD8sPyx8SzPQAye1UEiDBAZJfA44ddMjLAhPKB8v/ydBwgBDIywVYzxZY+gLLaslx+wDiAbrIUAX6AhPLP8sAyz8B+gJUIC+DB/RDKBDNELwKCxCJEHgQZxBWEEUDBAIREAJQ/wLIy//L/8kMyMsPUAvPFhnLPxfKBxXLf1AD+gLLH8t/yw/LD8sfEsz0AMntVBILAEwgwQGSXwOOHXTIywITygfL/8nQcIAQyMsFWM8WWPoCy2rJcfsA4gBaAsjL/8v/yQzIyw9QC88WGcs/F8oHFct/UAP6Assfy3/LD8sPyx8SzPQAye1UAgFIDxAAU70pD2omhph/0gaZ/pA+m//QBpj+m/6Yfph+mP6gDoaf/p/+iBegJoiRhAGltgG9qJoaYf9IGmf6QPpv/0AaY/pv+mH6Yfpj+oA6Gn/6f/ogXoCaIkbLbYiGhoaCkGD+gc30OAASi+COBBwfQBpn+mAaZ/9ABgYKom4/BGqkARATAgEgERIBnbMau1E0NMP+kDTP9IH03/6ANMf03/TD9MP0x/UAdDT/9P/0QL0BNESNltsRDQ0NBWDB/QOb6HAAJRfBXAg4PoA0z/TANM/+gAwMFUjcQiATAJOzbTtRNDTD/pA0z/SB9N/+gDTH9N/0w/TD9Mf1AHQ0//T/9EC9ATREmzRgwf0Dm+hwACXMHBUcABTAOD6ANM/0wDTP/oAMHFVQIABiBZhduZIyEpEz4pEz4lJQgScQqYRTFLuSbFGOFAShWKkEUwG8kjAg3lEyoUAzqYSg4hq+OjE=";
+pub const AIPOW_DISTRIBUTOR_CODE_B64: &str = "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";
 
 pub const AIPOW_DISTRIBUTOR_CLAIM_OPCODE: u32 = 0x4150_4401;
 pub const AIPOW_DISTRIBUTOR_FORFEIT_OPCODE: u32 = 0x4150_4402;
@@ -127,6 +127,9 @@ pub struct AipowDistributorData {
     pub claimed_score: u128,
     /// The maturation curve this instance froze at deploy.
     pub maturation: AipowMaturation,
+    /// Wall-clock time the operator (settlement) funded the pool; 0 until then.
+    /// Claims are refused before it, so vesting cannot start ahead of issuance.
+    pub activated_at: u64,
     pub score_root: [u8; 32],
     pub commitment_ref: [u8; 32],
 }
@@ -161,6 +164,7 @@ impl AipowDistributorContract {
         data.append_u16(init.maturation.immediate_bps)?;
         data.append_u16(init.maturation.stream_epochs)?;
         data.append_u32(init.maturation.epoch_seconds)?;
+        data.append_u64(0)?; // activated_at: 0 until the settlement funds the pool
         let mut roots = BuilderData::new();
         roots.append_u256(&init.score_root)?.append_u256(&init.commitment_ref)?;
         data.checked_append_reference(roots.into_cell()?)?;
@@ -198,8 +202,9 @@ impl AipowDistributorContract {
                 stream_epochs: stack.u64(9)? as u16,
                 epoch_seconds: stack.u64(10)? as u32,
             },
-            score_root: parse_hash(stack, 11)?,
-            commitment_ref: parse_hash(stack, 12)?,
+            activated_at: stack.u64(11)?,
+            score_root: parse_hash(stack, 12)?,
+            commitment_ref: parse_hash(stack, 13)?,
         })
     }
 
