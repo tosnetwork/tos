@@ -86,7 +86,7 @@ const int err::duplicate_signature = 2213;
   return (workchain, code_hash, code);
 }
 
-() verify_self(int object_kind, int object_id, cell config) inline {
+() verify_self(int object_kind, int object_id, cell config) impure inline {
   (int workchain, int code_hash, cell code) = config_runtime(config);
   cell data = begin_cell().store_uint(magic::data, 32).store_uint(1, 16)
     .store_uint(object_kind, 8).store_uint(object_id, 256).store_ref(config)
@@ -118,7 +118,7 @@ slice std_address(int workchain, int account) inline {
 ;; and encoded as a minimal byte-aligned snake. Every non-final cell is full;
 ;; this rejects alternate cell trees with the same SHA256C result and bounds
 ;; both storage growth and hash traversal gas.
-() validate_protocol_text(cell text) inline_ref {
+() validate_protocol_text(cell text) impure inline_ref {
   int total_bits = 0;
   int more = 1;
   cell cursor = text;
@@ -146,7 +146,7 @@ slice std_address(int workchain, int account) inline {
   throw_unless(err::bad_action, total_bits > 0);
 }
 
-() require_agent_sender(slice sender, int agent_id, cell config) inline_ref {
+() require_agent_sender(slice sender, int agent_id, cell config) impure inline_ref {
   (int expected_wc, cell init) = object_state_init(1, agent_id, config);
   (int sender_wc, int sender_account) = sender.parse_std_addr();
   throw_unless(err::bad_signature, (sender_wc == expected_wc) &
@@ -202,7 +202,7 @@ int required_purpose(int kind) inline {
 ;;          recovery_timelock:uint64 count:uint8 ^controllers
 ;; controller = key_hash:uint256 public_key:uint256 weight:uint32
 ;;              purposes:uint16 recovery:Bool [^next]
-(int, int, int) validate_policy(cell policy) inline_ref {
+(int, int, int) validate_policy(cell policy) impure inline_ref {
   slice ps = policy.begin_parse();
   throw_unless(err::bad_policy, ps~load_uint(32) == magic::policy);
   throw_unless(err::bad_policy, ps~load_uint(16) == 1);
@@ -215,7 +215,9 @@ int required_purpose(int kind) inline {
   cell cursor = ps~load_ref();
   ps.end_parse();
   cell pub_seen = null();
-  int total = 0;
+  int agent_total = 0;
+  int delegation_total = 0;
+  int capability_total = 0;
   int recovery_total = 0;
   int previous_key = -1;
   int i = 0;
@@ -230,10 +232,16 @@ int required_purpose(int kind) inline {
     throw_unless(err::bad_policy, (key_hash > previous_key) & (key_hash == public_key) & (public_key != 0) &
       (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) & ((purposes & (~ purpose::known_mask)) == 0) &
       (~ duplicate_pub));
-    if (recovery) { throw_unless(err::bad_policy, purposes & purpose::recovery); }
+    throw_unless(err::bad_policy,
+      (purposes & (purpose::agent_control | purpose::delegation | purpose::capability_control)) ==
+      (purpose::agent_control | purpose::delegation | purpose::capability_control));
+    throw_unless(err::bad_policy,
+      (recovery != 0) == ((purposes & purpose::recovery) != 0));
     pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));
-    total += weight;
-    if (recovery) { recovery_total += weight; }
+    agent_total += weight * (purposes & purpose::agent_control);
+    delegation_total += weight * ((purposes & purpose::delegation) >> 1);
+    capability_total += weight * ((purposes & purpose::capability_control) >> 3);
+    recovery_total += weight * recovery;
     previous_key = key_hash;
     i += 1;
     if (i < count) {
@@ -244,7 +252,10 @@ int required_purpose(int kind) inline {
     }
     cs.end_parse();
   }
-  throw_unless(err::bad_policy, (threshold <= total) & (recovery_threshold <= recovery_total));
+  throw_unless(err::bad_policy, threshold <= agent_total);
+  throw_unless(err::bad_policy, threshold <= delegation_total);
+  throw_unless(err::bad_policy, threshold <= capability_total);
+  throw_unless(err::bad_policy, recovery_threshold <= recovery_total);
   return (threshold, recovery_threshold, timelock);
 }
 
@@ -269,7 +280,7 @@ int required_purpose(int kind) inline {
 }
 
 () verify_signatures(cell policy, cell signatures, int required, int recovery_mode,
-    int action_hash) inline_ref {
+    int action_hash) impure inline_ref {
   (int threshold, int recovery_threshold, int timelock) = validate_policy(policy);
   int wanted = recovery_mode ? recovery_threshold : threshold;
   slice root = signatures.begin_parse();
@@ -304,7 +315,7 @@ int required_purpose(int kind) inline {
 }
 
 ;; Policy installation requires proof of possession for every declared key.
-() verify_policy_possession(cell policy, cell signatures, int action_hash) inline_ref {
+() verify_policy_possession(cell policy, cell signatures, int action_hash) impure inline_ref {
   validate_policy(policy);
   slice ps = policy.begin_parse();
   ps~skip_bits(32 + 16 + 32 + 32 + 64);
@@ -338,7 +349,7 @@ int required_purpose(int kind) inline {
   }
 }
 
-() require_empty_signatures(cell signatures) inline {
+() require_empty_signatures(cell signatures) impure inline {
   slice s = signatures.begin_parse();
   throw_unless(err::bad_signature, s~load_uint(8) == 0);
   s.end_parse();

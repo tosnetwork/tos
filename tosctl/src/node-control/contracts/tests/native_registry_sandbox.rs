@@ -32,6 +32,7 @@ const DELEGATE_AGENT: u8 = 3;
 const INITIATE_RECOVERY: u8 = 4;
 const COMPLETE_RECOVERY: u8 = 5;
 const ERR_BAD_TRANSITION: i32 = 2210;
+const ERR_BAD_POLICY: i32 = 2207;
 
 fn code() -> Cell {
     let encoded: String =
@@ -75,6 +76,48 @@ fn policy(key: &SigningKey) -> Cell {
         .append_u8(1)
         .unwrap()
         .checked_append_reference(controller.into_cell().unwrap())
+        .unwrap();
+    root.into_cell().unwrap()
+}
+
+fn purpose_partitioned_unreachable_policy() -> Cell {
+    let first = SigningKey::from_bytes(&[0x81; 32]).verifying_key().to_bytes();
+    let second = SigningKey::from_bytes(&[0x82; 32]).verifying_key().to_bytes();
+    let mut controllers = vec![(first, 0x05_u16, true), (second, 0x0a_u16, false)];
+    controllers.sort_by_key(|entry| entry.0);
+    let mut next: Option<Cell> = None;
+    for (public_key, purposes, recovery) in controllers.into_iter().rev() {
+        let mut controller = BuilderData::new();
+        controller
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u32(1)
+            .unwrap()
+            .append_u16(purposes)
+            .unwrap()
+            .append_bit_bool(recovery)
+            .unwrap();
+        if let Some(cell) = next {
+            controller.checked_append_reference(cell).unwrap();
+        }
+        next = Some(controller.into_cell().unwrap());
+    }
+    let mut root = BuilderData::new();
+    root.append_u32(MAGIC_POLICY)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_u32(2)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u64(10)
+        .unwrap()
+        .append_u8(2)
+        .unwrap()
+        .checked_append_reference(next.unwrap())
         .unwrap();
     root.into_cell().unwrap()
 }
@@ -407,4 +450,18 @@ fn policy_replacement_invalidates_pending_recovery() {
     .expect_exit_code(ERR_BAD_TRANSITION);
 
     assert_eq!(f.state_position(), (1, 3));
+}
+
+#[test]
+fn policy_update_rejects_threshold_pooled_across_disjoint_purposes() {
+    let mut f = Fixture::new();
+    let before = f.state().hash(0);
+    let bad_policy = purpose_partitioned_unreachable_policy();
+    let mut payload = BuilderData::new();
+    payload.checked_append_reference(bad_policy).unwrap();
+    let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 9, payload.into_cell().unwrap());
+    f.send(submit_body(update.clone(), signature_set(&f.old_key, &update), empty_signatures()))
+        .expect_aborted()
+        .expect_exit_code(ERR_BAD_POLICY);
+    assert_eq!(f.state().hash(0), before, "rejected policy update changed state");
 }

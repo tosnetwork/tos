@@ -5,9 +5,9 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
 FIFT_BIN=${FIFT_BIN:-"$REPO_ROOT/build/crypto/fift"}
 OUTPUT=${1:-"$REPO_ROOT/crypto/smartcont/artifacts/atos-native-registry-v1.boc"}
-EXPECTED_CODE_HASH=943c6cb3ddfeb470cfb76a343a29471ffbced9af25a467fde834926c1a8d525d
-EXPECTED_BOC_SHA256=0c37475f52811905b9e5b2878d29ad117eb8551de3f593e4817fc64905e38844
-EXPECTED_BOC_BYTES=2707
+EXPECTED_CODE_HASH=189c292404fe59293001c70ec568d8d38cd938d8bef92c7867e3268000808d1f
+EXPECTED_BOC_SHA256=a89aee64c9cfe924809fa4bd939c804842c86075d519bc81870b016d0d7fa56f
+EXPECTED_BOC_BYTES=3774
 
 for binary in "$FUNC_BIN" "$FIFT_BIN"; do
   if [[ ! -x "$binary" ]]; then
@@ -29,6 +29,7 @@ FIFTPATH="$REPO_ROOT/crypto/fift/lib" "$FIFT_BIN" \
 HASH_OUTPUT=$(FIFTPATH="$REPO_ROOT/crypto/fift/lib" "$FIFT_BIN" -s \
   "$REPO_ROOT/crypto/smartcont/hash-code-boc.fif" "$OUTPUT")
 ACTUAL_CODE_HASH=$(printf '%s\n' "$HASH_OUTPUT" | sed -n 's/^tvm-cell-sha256:\([0-9a-f]*\).*/\1/p')
+ACTUAL_CODE_HASH=$(printf '%064s' "$ACTUAL_CODE_HASH" | tr ' ' 0)
 ACTUAL_BOC_SHA256=$(sha256sum "$OUTPUT" | awk '{print $1}')
 ACTUAL_BOC_BYTES=$(wc -c < "$OUTPUT" | tr -d ' ')
 

@@ -531,7 +531,23 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
   GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
-  GenFif(DEST smartcont/auto/native-registry-code SOURCE smartcont/native-registry-code.fc NAME native-registry)
+  set(NATIVE_REGISTRY_CPP "${SMARTCONT_AUTO_DIR}/native-registry-code.cpp")
+  add_custom_command(
+    COMMENT "Verify and embed the frozen ATOS Native Registry BOC"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-atos-native-registry-v1.sh
+      ${NATIVE_REGISTRY_CPP} native-registry
+    MAIN_DEPENDENCY smartcont/native-registry-code.fc
+    DEPENDS func fift smartcont/stdlib.fc
+      smartcont/atos-native-registry-v1.boc.base64
+      smartcont/atos-native-registry-v1.release.json
+      ${CMAKE_SOURCE_DIR}/scripts/build-atos-native-registry-v1.sh
+      ${CMAKE_SOURCE_DIR}/scripts/test-atos-native-registry-v1.sh
+      ${CMAKE_SOURCE_DIR}/scripts/embed-atos-native-registry-v1.sh
+    OUTPUT ${NATIVE_REGISTRY_CPP}
+  )
+  add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
+  add_dependencies(gen_fif gen_fif_smartcont_auto_native_registry_code)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
