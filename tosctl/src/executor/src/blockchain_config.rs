@@ -193,7 +193,29 @@ impl BlockchainConfig {
     }
 
     fn get_defult_raw_config() -> ConfigParams {
-        ConfigParams { config_addr: [0x55; 32].into(), ..ConfigParams::default() }
+        let mut config = ConfigParams { config_addr: [0x55; 32].into(), ..ConfigParams::default() };
+        // The TVM v6 fee primitives (GETSTORAGEFEE / GETGASFEE / GETFORWARDFEE, exposed in
+        // stdlib.fc as get_storage_fee / get_compute_fee / get_forward_fee) read their
+        // prices from ConfigParams register c7[14]. Without these entries that read yields
+        // an empty slice and the opcode THROWS, so any contract calling those helpers
+        // aborts under this default sandbox config. Populate the fee-price params with the
+        // same values this module already uses for the storage/gas/forward phases, so the
+        // opcodes resolve to real, non-zero fees. (Kept minimal on purpose -- no workchain
+        // descriptors etc. -- so existing sandbox behaviour is otherwise unchanged.)
+        let mut storage = ConfigParam18::default();
+        let _ = storage.insert(&StoragePrices {
+            utime_since: 0,
+            bit_price_ps: 1,
+            cell_price_ps: 500,
+            mc_bit_price_ps: 1000,
+            mc_cell_price_ps: 500000,
+        });
+        let _ = config.set_config(ConfigParamEnum::ConfigParam18(storage));
+        let _ = config.set_config(ConfigParamEnum::ConfigParam20(GasLimitsPrices::default_mc()));
+        let _ = config.set_config(ConfigParamEnum::ConfigParam21(GasLimitsPrices::default_wc()));
+        let _ = config.set_config(ConfigParamEnum::ConfigParam24(MsgForwardPrices::default_mc()));
+        let _ = config.set_config(ConfigParamEnum::ConfigParam25(MsgForwardPrices::default_wc()));
+        config
     }
 
     /// Create `BlockchainConfig` struct with `ConfigParams` taken from blockchain
