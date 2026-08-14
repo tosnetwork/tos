@@ -26,6 +26,8 @@ const MAGIC_ROUTE: u32 = 0x4e45_5031;
 const MAGIC_QUOTE: u32 = 0x4e41_5131;
 const MAGIC_RECEIPT: u32 = 0x4e57_5231;
 const MAGIC_INTENT: u32 = 0x4e53_4931;
+const MAGIC_TRANSPORT: u32 = 0x4e54_4231;
+const MAGIC_DISPUTE: u32 = 0x4e44_5031;
 const OP_RELEASE: u32 = 0x4e45_0001;
 const OP_REFUND: u32 = 0x4e45_0002;
 const OP_TRANSFER_NOTIFICATION: u32 = 0x7362_d09c;
@@ -160,13 +162,42 @@ impl Fixture {
             .unwrap();
         let mut version_name = BuilderData::new();
         version_name.append_raw(b"1.0.0", 40).unwrap();
+        let endpoint = b"http://127.0.0.1:8080";
+        let mut endpoint_cell = BuilderData::new();
+        endpoint_cell.append_raw(endpoint, endpoint.len() * 8).unwrap();
+        let mut transport = BuilderData::new();
+        transport
+            .append_u32(MAGIC_TRANSPORT)
+            .unwrap()
+            .append_u16(1)
+            .unwrap()
+            .append_u8(0)
+            .unwrap()
+            .append_u32(16 << 20)
+            .unwrap()
+            .checked_append_reference(endpoint_cell.into_cell().unwrap())
+            .unwrap();
+        let transport = transport.into_cell().unwrap();
+        let mut dispute = BuilderData::new();
+        dispute
+            .append_u32(MAGIC_DISPUTE)
+            .unwrap()
+            .append_u16(1)
+            .unwrap()
+            .append_u8(0)
+            .unwrap()
+            .append_u8(1)
+            .unwrap()
+            .append_u8(1)
+            .unwrap();
+        let dispute = dispute.into_cell().unwrap();
         let mut version = BuilderData::new();
         version
             .append_u256(&hash(b"1.0.0"))
             .unwrap()
             .append_u256(&[0x44; 32])
             .unwrap()
-            .append_u256(&[0x55; 32])
+            .append_raw(transport.hash(0).as_slice(), 256)
             .unwrap()
             .append_u64(funding_deadline)
             .unwrap()
@@ -199,7 +230,7 @@ impl Fixture {
         economic
             .append_raw(terms.hash(0).as_slice(), 256)
             .unwrap()
-            .append_u256(&[0x99; 32])
+            .append_raw(dispute.hash(0).as_slice(), 256)
             .unwrap()
             .checked_append_reference(asset.into_cell().unwrap())
             .unwrap()
@@ -247,6 +278,10 @@ impl Fixture {
             .append_u64(0)
             .unwrap()
             .checked_append_reference(route)
+            .unwrap()
+            .checked_append_reference(transport)
+            .unwrap()
+            .checked_append_reference(dispute)
             .unwrap();
         let mut data = BuilderData::new();
         data.append_u32(MAGIC_DATA)

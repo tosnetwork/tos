@@ -18,6 +18,8 @@ const int magic::route = 0x4e455031;         ;; NEP1
 const int magic::quote = 0x4e415131;         ;; NAQ1
 const int magic::receipt = 0x4e575231;       ;; NWR1
 const int magic::intent = 0x4e534931;        ;; NSI1
+const int magic::transport = 0x4e544231;     ;; NTB1
+const int magic::dispute = 0x4e445031;       ;; NDP1
 
 const int status::awaiting_funding = 0;
 const int status::funded = 1;
@@ -108,7 +110,7 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   return (amount, bytes, first);
 }
 
-(int, int, int, int, int) parse_quote(cell quote, int expected_hash) inline_ref {
+(int, int, int, int, int, int, int) parse_quote(cell quote, int expected_hash) inline_ref {
   throw_unless(err::bad_state, cell_hash(quote) == expected_hash);
   slice q = quote.begin_parse();
   throw_unless(err::bad_state, q~load_uint(32) == magic::quote);
@@ -126,7 +128,8 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   ids.end_parse();
   throw_unless(err::bad_state, provider_agent != 0);
   slice version_data = version.begin_parse();
-  version_data~skip_bits(256 + 256 + 256);
+  version_data~skip_bits(256 + 256);
+  int transport_hash = version_data~load_uint(256);
   int quote_expiry = version_data~load_uint(64);
   version_data~load_ref();
   version_data.end_parse();
@@ -134,7 +137,7 @@ int parse_authorization(cell authorization, int expected_hash) inline {
 
   slice es = economic.begin_parse();
   int escrow_terms_hash = es~load_uint(256);
-  es~load_uint(256);
+  int dispute_hash = es~load_uint(256);
   cell asset = es~load_ref();
   cell amount_text = es~load_ref();
   es.end_parse();
@@ -154,10 +157,11 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   int authorization_hash = auth~load_uint(256);
   auth.end_parse();
   throw_unless(err::bad_state, authorization_hash != 0);
-  return (amount, provider_agent, escrow_terms_hash, authorization_hash, quote_expiry);
+  return (amount, provider_agent, escrow_terms_hash, authorization_hash,
+    transport_hash, dispute_hash, quote_expiry);
 }
 
-(int, int, int, int, cell) parse_runtime(cell runtime) inline {
+(int, int, int, int, cell, cell, cell) parse_runtime(cell runtime) inline {
   slice r = runtime.begin_parse();
   throw_unless(err::bad_state, r~load_uint(32) == magic::runtime);
   throw_unless(err::bad_state, r~load_uint(16) == 1);
@@ -166,15 +170,49 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   int receipt_hash = r~load_uint(256);
   int pending_query = r~load_uint(64);
   cell route = r~load_ref();
+  cell transport = r~load_ref();
+  cell dispute = r~load_ref();
   r.end_parse();
-  return (funded, settled, receipt_hash, pending_query, route);
+  return (funded, settled, receipt_hash, pending_query, route, transport, dispute);
 }
 
 cell make_runtime(int funded, int settled, int receipt_hash, int pending_query,
-    cell route) inline {
+    cell route, cell transport, cell dispute) inline {
   return begin_cell().store_uint(magic::runtime, 32).store_uint(1, 16)
     .store_uint(funded, 128).store_uint(settled, 128).store_uint(receipt_hash, 256)
-    .store_uint(pending_query, 64).store_ref(route).end_cell();
+    .store_uint(pending_query, 64).store_ref(route).store_ref(transport)
+    .store_ref(dispute).end_cell();
+}
+
+() validate_transport(cell transport, int expected_hash) inline_ref {
+  throw_unless(err::bad_state, cell_hash(transport) == expected_hash);
+  slice t = transport.begin_parse();
+  throw_unless(err::bad_state, t~load_uint(32) == magic::transport);
+  throw_unless(err::bad_state, t~load_uint(16) == 1);
+  int security_mode = t~load_uint(8);
+  int max_request_bytes = t~load_uint(32);
+  cell endpoint = t~load_ref();
+  t.end_parse();
+  slice e = endpoint.begin_parse();
+  throw_unless(err::bad_state, (security_mode <= 1) & (max_request_bytes > 0) &
+    (max_request_bytes <= 16777216) & (e.slice_refs() == 0) &
+    ((e.slice_bits() % 8) == 0) & (e.slice_bits() > 0) & (e.slice_bits() <= 960));
+  repeat (e.slice_bits() / 8) {
+    int ch = e~load_uint(8);
+    throw_unless(err::bad_state, (ch >= 0x21) & (ch <= 0x7e));
+  }
+  e.end_parse();
+}
+
+() validate_dispute(cell dispute, int expected_hash) inline_ref {
+  throw_unless(err::bad_state, cell_hash(dispute) == expected_hash);
+  slice d = dispute.begin_parse();
+  throw_unless(err::bad_state, d~load_uint(32) == magic::dispute);
+  throw_unless(err::bad_state, d~load_uint(16) == 1);
+  throw_unless(err::bad_state, d~load_uint(8) == 0);
+  throw_unless(err::bad_state, d~load_uint(8) == 1);
+  throw_unless(err::bad_state, d~load_uint(8) == 1);
+  d.end_parse();
 }
 
 (slice, cell) parse_route(cell route, int quote_master, int quote_wallet_hash) inline_ref {
@@ -267,11 +305,14 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     parse_terms(terms, terms_hash);
   int public_key = parse_authorization(authorization, auth_hash);
   (int quote_amount, int provider_agent, int quote_terms_hash, int quote_auth_hash,
-    int quote_expiry) =
+    int quote_transport_hash, int quote_dispute_hash, int quote_expiry) =
     parse_quote(quote, quote_hash);
   throw_unless(err::bad_state, (quote_terms_hash == terms_hash) & (quote_auth_hash == auth_hash));
-  (int funded, int settled, int receipt_hash, int pending_query, cell route) =
+  (int funded, int settled, int receipt_hash, int pending_query, cell route,
+    cell transport, cell dispute) =
     parse_runtime(runtime);
+  validate_transport(transport, quote_transport_hash);
+  validate_dispute(dispute, quote_dispute_hash);
 
   slice quote_asset = quote.begin_parse();
   quote_asset~skip_bits(48); quote_asset~load_ref(); quote_asset~load_ref();
@@ -293,7 +334,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     throw_unless(err::bad_confirmation, ((status == status::release_pending) |
       (status == status::refund_pending)) & (bounced_query == pending_query));
     save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
-      authorization, make_runtime(funded, 0, 0, 0, route));
+      authorization, make_runtime(funded, 0, 0, 0, route, transport, dispute));
     return ();
   }
 
@@ -308,7 +349,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     throw_unless(err::deadline, (now() <= funding_deadline) & (now() <= quote_expiry));
     throw_unless(err::wrong_amount, amount == quote_amount);
     save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
-      authorization, make_runtime(amount, 0, 0, 0, route));
+      authorization, make_runtime(amount, 0, 0, 0, route, transport, dispute));
     return ();
   }
 
@@ -326,7 +367,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     cell intent = settlement_intent(query_id, charged, quote_hash, new_receipt_hash);
     throw_unless(err::bad_signature, check_signature(cell_hash(intent), signature, public_key));
     save_escrow(status::release_pending, quote_hash, terms_hash, auth_hash, quote,
-      terms, authorization, make_runtime(funded, charged, new_receipt_hash, query_id, route));
+      terms, authorization, make_runtime(funded, charged, new_receipt_hash, query_id,
+        route, transport, dispute));
     send_stablecoin(own_wallet, provider, charged, query_id);
     return ();
   }
@@ -338,7 +380,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     body.end_parse();
     throw_unless(err::bad_message, query_id != 0);
     save_escrow(status::refund_pending, quote_hash, terms_hash, auth_hash, quote,
-      terms, authorization, make_runtime(funded, 0, 0, query_id, route));
+      terms, authorization, make_runtime(funded, 0, 0, query_id, route, transport, dispute));
     send_stablecoin(own_wallet, buyer, funded, query_id);
     return ();
   }
@@ -355,7 +397,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
 (int, int, int, int, int) get_escrow_state() method_id {
   (int status, int quote_hash, int terms_hash, int auth_hash, cell quote,
     cell terms, cell authorization, cell runtime) = load_escrow();
-  (int funded, int settled, int receipt_hash, int pending_query, cell route) =
+  (int funded, int settled, int receipt_hash, int pending_query, cell route,
+    cell transport, cell dispute) =
     parse_runtime(runtime);
   return (status, funded, settled, receipt_hash, pending_query);
 }
@@ -369,7 +412,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
 slice get_escrow_wallet() method_id {
   (int status, int quote_hash, int terms_hash, int auth_hash, cell quote,
     cell terms, cell authorization, cell runtime) = load_escrow();
-  (int funded, int settled, int receipt_hash, int pending_query, cell route) =
+  (int funded, int settled, int receipt_hash, int pending_query, cell route,
+    cell transport, cell dispute) =
     parse_runtime(runtime);
   slice quote_data = quote.begin_parse();
   quote_data~skip_bits(48); quote_data~load_ref(); quote_data~load_ref();

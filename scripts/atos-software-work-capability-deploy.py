@@ -63,35 +63,41 @@ def main():
     address_file = gate.read_private(Path(args.state_dir) / "main-wallet.addr")
     payer = gate.Address((int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32]))
     provider_key = load_test_identity(Path(args.test_identities), "provider-controller")
-    provider_policy = gate.policy(provider_key)
-    provider_nonce = bytes([0x72]) * 32
-    provider_id = gate.agent_identity(root, file_hash, args.network_id, provider_nonce, provider_policy)
-    provider_init = gate.state_init(code, config, 1, provider_id)
-    provider_address = gate.address_of(0, provider_init)
+    provider_id = bytes.fromhex("5ad89bcf2d25bd5e7a53e36e976851fd1b937d70c2f0db80a18f7cbafcca1be4")
+    provider_address = gate.Address("EQCrLBpT4SQxrXvpVNcdVRjlkZGunO72m5L3q7ZiHcOncKrZ")
     provider_state = gate.state_view(gate.account_data(config_path, provider_address.to_str()))
-    if provider_state["tombstone"]:
-        raise RuntimeError("provider Agent is tombstoned")
+    if provider_state["tombstone"] or provider_state["generation"] != 1 or provider_state["sequence"] != 2:
+        raise RuntimeError("provider Agent is not on the migrated test-identity policy")
 
-    version = b"software-work-v1"
+    initial_version = b"software-work-v1"
+    initial_manifest_digest = bytes.fromhex("a08cd75a4166bc1df44b645a4a4ca687004d05428a3764ce95d3d152be858e38")
+    version = b"1.1.0"
     capability_nonce = hashlib.sha256(b"atos-gate-d-software-work-capability-v1").digest()
-    capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce, provider_id, version, manifest_digest)
+    capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce,
+        provider_id, initial_version, initial_manifest_digest)
     capability_init = gate.state_init(code, config, 2, capability_id)
     capability_address = gate.address_of(0, capability_init)
-    details = (gate.Builder().store_bytes(hashlib.sha256(version).digest()).store_bytes(manifest_digest)
-               .store_ref(gate.Builder().store_bytes(version).end_cell()).end_cell())
-    payload = gate.Builder().store_bytes(capability_nonce).store_bytes(provider_id).store_ref(details).end_cell()
-    action = gate.action(gate.REGISTER_CAPABILITY, 2, 1, 1, capability_id, bytes(32), 0x7D, signed_domain, payload)
-    query = int.from_bytes(action.hash[:8], "big")
     deployed_now = False
     try:
         view = gate.state_view(gate.account_data(config_path, capability_address.to_str()))
     except Exception:
-        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 20 * gate.NANO,
-            gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action, gate.signature_set(provider_key, action), gate.signature_set(None, action)))
-        view = gate.wait_state(config_path, capability_address.to_str(), 1, 1)
+        raise RuntimeError("the original software-work Capability is absent")
+    if view["generation"] != 1 or view["sequence"] not in (1, 2) or view["tombstone"] or view["owner_id"] != "agent_" + provider_id.hex():
+        raise RuntimeError("existing Capability does not match the expected lineage")
+    if view["sequence"] == 1:
+        current = gate.native_state(gate.account_data(config_path, capability_address.to_str()))
+        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(version).digest())
+                   .store_bytes(manifest_digest).store_ref(gate.Builder().store_bytes(version).end_cell()).end_cell())
+        action = gate.action(gate.ADD_CAPABILITY_VERSION, 2, 1, 2, capability_id,
+            current.hash, 0x83, signed_domain, details)
+        query = int.from_bytes(action.hash[:8], "big")
+        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 5 * gate.NANO,
+            gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action,
+                gate.signature_set(provider_key, action), gate.signature_set(None, action)))
+        view = gate.wait_state(config_path, capability_address.to_str(), 1, 2)
         deployed_now = True
-    if view["generation"] != 1 or view["sequence"] != 1 or view["tombstone"] or view["owner_id"] != "agent_" + provider_id.hex():
-        raise RuntimeError("existing Capability does not match the frozen binding")
+    if view["sequence"] != 2:
+        raise RuntimeError("software-work Capability version was not finalized")
 
     endpoints = [f"http://127.0.0.1:{port}/jsonRPC" for port in (8011, 8012, 8013)]
     heads = [rpc(endpoint, "getMasterchainInfo") for endpoint in endpoints]
@@ -128,7 +134,7 @@ def main():
         "checkpoint": gate.master_checkpoint(config_path),
         "endpoint_verification": endpoint_evidence,
         "quorum": 2,
-        "verdict": "PASS_SOFTWARE_WORK_CAPABILITY_BINDING"
+        "verdict": "PASS_SOFTWARE_WORK_CAPABILITY_VERSION_BINDING"
     }
     Path(args.evidence).write_text(json.dumps(evidence, indent=2) + "\n")
     print(json.dumps(evidence, indent=2))

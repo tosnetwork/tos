@@ -26,9 +26,9 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert manifest["schema"] == "tos.contract.release.v1"
 assert manifest["protocol"] == "atos_native_stablecoin_escrow_v1"
-assert manifest["code_hash"] == "tvm-cell-sha256:c16bdd617d0f60aa071bcdc985af4ffa7b53d93aba983901961418302d58b3eb"
-assert manifest["boc_sha256"] == "sha256:5ceb9728ccfdb8691c2c84c01e0141fe44d314b8de913d48d3e95957c9ec2ec5"
-assert manifest["boc_bytes"] == 1971
+assert manifest["code_hash"] == "tvm-cell-sha256:c9df2f743534978ad5b521aab8c09c081ff56769769c00ee9e68eac7c681a685"
+assert manifest["boc_sha256"] == "sha256:fdbb52a25b9e43f50cd27e03bbd2020245e2d8b31b76b5ff203454bfbc645048"
+assert manifest["boc_bytes"] == 2020
 PY
 
 printf 'ATOS stablecoin escrow v1 reproducible build: PASS\n'
