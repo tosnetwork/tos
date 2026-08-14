@@ -941,6 +941,7 @@ impl Handlers {
                 .set(0x00, execute_hashcu)
                 .set(0x01, execute_hashsu)
                 .set(0x02, execute_sha256u)
+                .set(0x03, execute_sha256c)
                 .add_subset(
                     0x04,
                     Handlers::new()

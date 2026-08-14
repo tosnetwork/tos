@@ -850,6 +850,7 @@ impl Handlers {
                 .set(0x00, Loader::hashcu)
                 .set(0x01, Loader::hashsu)
                 .set(0x02, Loader::sha256u)
+                .set(0x03, Loader::sha256c)
                 .set(0x10, Loader::chksignu)
                 .set(0x11, Loader::chksigns)
                 .set(0x16, Loader::hashbu)

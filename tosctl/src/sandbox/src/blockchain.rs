@@ -92,6 +92,25 @@ impl Blockchain {
         })
     }
 
+    /// Create a sandbox using the default fee/configuration profile at an
+    /// explicit TVM global version. This is intended for pre-activation
+    /// conformance tests of version-gated opcodes and transaction semantics.
+    pub fn with_global_version(global_version: u32) -> SandboxResult<Self> {
+        let config = BlockchainConfig::default_with_global_version(global_version)
+            .map_err(|e| SandboxError::ConfigError(e.to_string()))?;
+        let mc_state_cell = Self::build_mc_state_cell(config.raw_config())?;
+        Ok(Self {
+            accounts: HashMap::new(),
+            config,
+            mc_state_cell,
+            next_lt: DEFAULT_BLOCK_LT,
+            block_unixtime: DEFAULT_BLOCK_UNIXTIME,
+            max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
+            workchain: 0,
+            transaction_log: Vec::new(),
+        })
+    }
+
     /// Create a new [`Blockchain`] with a custom [`ConfigParams`].
     pub fn with_config(config: ConfigParams) -> SandboxResult<Self> {
         let bc_config = BlockchainConfig::with_config(config).map_err(|e| {

@@ -279,6 +279,9 @@ binaries that support it). The node binary supports it; see the near-term rollou
 end of this file for the activation plan.
 
 ### TVM changes
+- `SHA256C` (`cell - hash`) hashes the byte strings in a canonical,
+  byte-aligned snake-cell chain independently of chunk boundaries. The chain
+  is limited to one continuation reference per cell, 512 cells, and 2 MiB.
 - `SENDMSG` no longer uses user-provided `fwd_fee` / `ihr_fee` as a lower bound for the returned
   fee estimate of an internal message. This aligns the compute-phase estimate with action-phase
   behavior, which has been ignoring those fields since version 8. Previously a large `fwd_fee`

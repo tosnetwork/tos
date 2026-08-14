@@ -88,6 +88,44 @@ pub(super) fn execute_sha256u(engine: &mut Engine) -> Status {
     }
 }
 
+/// SHA256C (c - x) hashes the byte strings stored in a canonical snake-cell
+/// chain. The opcode is TOS-specific and is available from global version 14.
+/// Every cell must be byte-aligned and contain at most one continuation ref.
+pub(super) fn execute_sha256c(engine: &mut Engine) -> Status {
+    engine.load_instruction(Instruction::new("SHA256C"))?;
+    if engine.block_version() < 14 {
+        fail!(ExceptionCode::InvalidOpcode)
+    }
+    fetch_stack(engine, 1)?;
+    let mut cell = engine.cmd.var(0).as_cell()?.clone();
+    let mut bytes = Vec::new();
+    let mut cells = 0usize;
+
+    loop {
+        cells += 1;
+        if cells > 512 {
+            fail!(ExceptionCode::CellUnderflow, "SHA256C snake exceeds depth limit")
+        }
+        let slice = chain_block::SliceData::load_cell(cell)?;
+        if !slice.remaining_bits().is_multiple_of(8) || slice.remaining_references() > 1 {
+            fail!(ExceptionCode::CellUnderflow, "SHA256C expects a byte-aligned canonical snake")
+        }
+        let part = slice.get_bytestring(0);
+        if bytes.len() + part.len() > (2usize << 20) {
+            fail!(ExceptionCode::CellUnderflow, "SHA256C snake exceeds byte limit")
+        }
+        engine.try_use_gas((1 + part.len() / Hasher::Sha256.gas_ratio()) as i64)?;
+        bytes.extend_from_slice(&part);
+        if slice.remaining_references() == 0 {
+            break;
+        }
+        cell = slice.reference(0)?;
+    }
+
+    engine.cc.stack.push(StackItem::integer(hash_to_uint(sha256_digest(bytes))));
+    Ok(())
+}
+
 fn check_signature(engine: &mut Engine, name: &'static str, hash: bool) -> Status {
     engine.load_instruction(Instruction::new(name))?;
     fetch_stack(engine, 3)?;

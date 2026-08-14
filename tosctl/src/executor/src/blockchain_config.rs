@@ -10,10 +10,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    fail, AccountId, BurningConfig, Coins, ConfigParam18, ConfigParamEnum, ConfigParams,
-    FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities, Mask, MsgAddressInt,
-    MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo, StoragePrices, UInt256,
-    SUPPORTED_VERSION,
+    fail, AccountId, BurningConfig, Coins, ConfigParam18, ConfigParam8, ConfigParamEnum,
+    ConfigParams, FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities, GlobalVersion,
+    Mask, MsgAddressInt, MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo, StoragePrices,
+    UInt256, SUPPORTED_VERSION,
 };
 use num::BigInt;
 
@@ -179,6 +179,23 @@ impl Default for BlockchainConfig {
 }
 
 impl BlockchainConfig {
+    /// Build the default emulator configuration at an explicit global version.
+    ///
+    /// This keeps the normal default pinned to [`SUPPORTED_VERSION`] while
+    /// allowing pre-activation conformance tests to exercise version-gated VM
+    /// behavior with an internally consistent ConfigParam 8.
+    pub fn default_with_global_version(global_version: u32) -> Result<Self> {
+        let mut config = Self::default();
+        config.global_version = global_version;
+        config.raw_config.set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 {
+            global_version: GlobalVersion {
+                version: global_version,
+                capabilities: config.capabilities,
+            },
+        }))?;
+        Ok(config)
+    }
+
     fn get_default_special_contracts() -> FundamentalSmcAddresses {
         let mut map = FundamentalSmcAddresses::default();
         map.add_key(&UInt256::with_array([0x33u8; 32])).unwrap();
