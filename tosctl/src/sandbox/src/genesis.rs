@@ -72,8 +72,41 @@ pub fn generate_zerostate_total_balance(
         SandboxError::ConfigError("Cannot find crypto/smartcont. Set TOS_ROOT.".into())
     })?;
 
+    // Compiled contract code (`auto/*.fif`) is generated into the build tree,
+    // not the source tree; CreateState.fif and gen-zerostate.fif include it by
+    // the bare `auto/...` name, so the build tree's smartcont dir must be on
+    // the include path too. Prefer the dir next to the create-state binary
+    // (honors CREATE_STATE_PATH overrides), fall back to TOS_ROOT/build.
+    let generated_smartcont = create_state_bin
+        .parent()
+        .map(|d| d.join("smartcont"))
+        .filter(|d| d.join("auto").is_dir())
+        .or_else(|| {
+            tos_root
+                .as_ref()
+                .map(|r| r.join("build/crypto/smartcont"))
+                .filter(|d| d.join("auto").is_dir())
+        })
+        .ok_or_else(|| {
+            SandboxError::ConfigError(
+                "Cannot find generated contract code (build/crypto/smartcont/auto). \
+                 Build the C++ tree first, or set CREATE_STATE_PATH to a binary inside it."
+                    .into(),
+            )
+        })?;
+
     let tmp =
         tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
+
+    // gen-zerostate templates read a genesis validator key manifest
+    // (`validator-keys.pub`, four concatenated 32-byte public keys) from the
+    // working directory. Supply a deterministic manifest of four distinct
+    // keys: the key bytes only shape the validator set, not the total
+    // balance being measured here, and determinism keeps the run reproducible.
+    let manifest: Vec<u8> = (1u8..=4).flat_map(|i| [i; 32]).collect();
+    std::fs::write(tmp.path().join("validator-keys.pub"), manifest)
+        .map_err(|e| SandboxError::Serialization(format!("write validator manifest: {e}")))?;
+
     let fif_path = fif_path
         .as_ref()
         .canonicalize()
@@ -85,6 +118,8 @@ pub fn generate_zerostate_total_balance(
         .arg(&fift_lib)
         .arg("-I")
         .arg(&smartcont)
+        .arg("-I")
+        .arg(&generated_smartcont)
         .arg("-s")
         .arg(&fif_path)
         .output()
@@ -119,25 +154,27 @@ pub fn generate_zerostate_total_balance(
 mod tests {
     use super::*;
 
-    /// Regression test for the canonical mainnet genesis template: the total
-    /// supply must be exactly 5,000,000,000 TOS (see doc/Currency.md,
-    /// doc/Zerostate.md). A prior version of this template accidentally
-    /// minted an extra 1,000 TOS split between the elector and config
-    /// contracts, on top of the 5 B pre-mined to the main wallet.
+    /// Regression test for the canonical mainnet genesis template: under the
+    /// validator-led bootstrap economics, genesis mints exactly 101,000 TOS —
+    /// a bounded 100,000-TOS validator-bootstrap main wallet plus 500 TOS
+    /// each for the elector and config contracts (see doc/Currency.md,
+    /// doc/Zerostate.md). No premine, treasury, or team allocation exists;
+    /// the long-run 5 B TOS figure is a creation target reached through
+    /// block rewards and AIPoW minting, not a genesis balance.
     #[test]
-    fn mainnet_genesis_total_supply_is_exactly_five_billion_tos() {
+    fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
         let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
         let balance = generate_zerostate_total_balance(&fif_path).expect("zerostate generation");
 
         const NANOTOS_PER_TOS: u128 = 1_000_000_000;
-        const EXPECTED_TOTAL_SUPPLY_TOS: u128 = 5_000_000_000;
+        const EXPECTED_TOTAL_SUPPLY_TOS: u128 = 101_000;
 
         let total_nanotos = balance.coins.as_u128();
         assert_eq!(
             total_nanotos,
             EXPECTED_TOTAL_SUPPLY_TOS * NANOTOS_PER_TOS,
-            "genesis total supply must be exactly 5,000,000,000 TOS, got {} nanotos ({} TOS)",
+            "genesis total supply must be exactly 101,000 TOS, got {} nanotos ({} TOS)",
             total_nanotos,
             total_nanotos / NANOTOS_PER_TOS
         );
