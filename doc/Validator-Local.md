@@ -126,6 +126,12 @@ The native workchain (wc=0) is reached through the per-node liteserver:
 |-------|-------------------------|-----------------------------|
 | wc=0  | Liteserver (lite-client)| 2003 / 2006 / 2009 / 2012   |
 
+Each running validator also exposes its embedded JSON-RPC server on loopback:
+`8011`, `8012`, `8013`, and `8014` for nodes 1 through 4 respectively. The
+server is intentionally loopback-only; an operator that publishes it must add
+an authenticated HTTPS reverse proxy rather than exposing the embedded HTTP
+listener directly.
+
 ## systemd Services
 
 | Service | Unit File | Description |
@@ -538,7 +544,9 @@ For production, the following changes are needed:
 7. **Backup**: Regular backup of `/data/tosN/keyring/` (keys are irreplaceable)
 8. **Firewall**: Open only UDP validator ports and TCP liteserver ports
 9. **Key rotation**: Rotate validator keys periodically via validator console
-10. **JSON-RPC**: If running the embedded JSON-RPC HTTP server, use ports 8011-8013 (one per validator) to avoid collisions with the validator port range
+10. **JSON-RPC**: The generated units bind each embedded server to loopback on
+    ports 8011-8014. Publish it only through an authenticated HTTPS reverse
+    proxy.
 
 ## Related Docs
 

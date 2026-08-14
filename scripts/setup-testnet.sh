@@ -211,7 +211,8 @@ async def setup():
         port_info = {"dht_port": dht._addr.port, "nodes": [
             {"idx": i+1, "validator_port": n._addr.port,
              "liteserver_port": n._liteserver_addr.port,
-             "console_port": n._engine_console_addr.port}
+             "console_port": n._engine_console_addr.port,
+             "json_rpc_port": 8011 + i}
             for i, n in enumerate(running_nodes)
         ]}
         (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
@@ -274,6 +275,7 @@ VALIDATOR_IDS=$(echo "$PORTS" | python3 -c "import json,sys; print(' '.join(str(
 VALIDATOR_SERVICES=""
 for i in $VALIDATOR_IDS; do
     NODE_DIR="$DATA/tos$i"
+    JSON_RPC_PORT=$(echo "$PORTS" | python3 -c "import json,sys; data=json.load(sys.stdin); print(next(n['json_rpc_port'] for n in data['nodes'] if n['idx'] == $i))")
 
     cat > "/etc/systemd/system/tos-validator@${i}.service" <<SVCEOF
 [Unit]
@@ -295,6 +297,7 @@ ExecStart=$INSTALL_BIN/tos-validator-engine \\
   --initial-sync-delay 5 \\
   --session-logs $NODE_DIR/session-logs \\
   --quic-flood-control -1 \\
+  --json-rpc-address 127.0.0.1:$JSON_RPC_PORT \\
   -l $NODE_DIR/log \\
   -t 4
 Restart=on-failure
