@@ -233,9 +233,6 @@ int required_purpose(int kind) inline {
       (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) & ((purposes & (~ purpose::known_mask)) == 0) &
       (~ duplicate_pub));
     throw_unless(err::bad_policy,
-      (purposes & (purpose::agent_control | purpose::delegation | purpose::capability_control)) ==
-      (purpose::agent_control | purpose::delegation | purpose::capability_control));
-    throw_unless(err::bad_policy,
       (recovery != 0) == ((purposes & purpose::recovery) != 0));
     pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));
     agent_total += weight * (purposes & purpose::agent_control);

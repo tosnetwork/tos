@@ -123,12 +123,79 @@ fn purpose_partitioned_unreachable_policy() -> Cell {
 }
 
 fn signature_set(key: &SigningKey, action: &Cell) -> Cell {
-    let public_key = key.verifying_key().to_bytes();
-    let signature = key.sign(action.hash(0).as_slice()).to_bytes();
-    let mut entry = BuilderData::new();
-    entry.append_u256(&public_key).unwrap().append_raw(&signature, 512).unwrap();
+    signature_set_many(&[key], action)
+}
+
+fn purpose_isolated_policy() -> (Cell, Vec<SigningKey>) {
+    let keys = vec![
+        SigningKey::from_bytes(&[0x91; 32]),
+        SigningKey::from_bytes(&[0x92; 32]),
+        SigningKey::from_bytes(&[0x93; 32]),
+    ];
+    let mut controllers = vec![
+        (keys[0].verifying_key().to_bytes(), 0x05_u16, true),
+        (keys[1].verifying_key().to_bytes(), 0x02_u16, false),
+        (keys[2].verifying_key().to_bytes(), 0x08_u16, false),
+    ];
+    controllers.sort_by_key(|entry| entry.0);
+    let mut next: Option<Cell> = None;
+    for (public_key, purposes, recovery) in controllers.into_iter().rev() {
+        let mut controller = BuilderData::new();
+        controller
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u256(&public_key)
+            .unwrap()
+            .append_u32(1)
+            .unwrap()
+            .append_u16(purposes)
+            .unwrap()
+            .append_bit_bool(recovery)
+            .unwrap();
+        if let Some(cell) = next {
+            controller.checked_append_reference(cell).unwrap();
+        }
+        next = Some(controller.into_cell().unwrap());
+    }
     let mut root = BuilderData::new();
-    root.append_u8(1).unwrap().checked_append_reference(entry.into_cell().unwrap()).unwrap();
+    root.append_u32(MAGIC_POLICY)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u32(1)
+        .unwrap()
+        .append_u64(10)
+        .unwrap()
+        .append_u8(3)
+        .unwrap()
+        .checked_append_reference(next.unwrap())
+        .unwrap();
+    (root.into_cell().unwrap(), keys)
+}
+
+fn signature_set_many(keys: &[&SigningKey], action: &Cell) -> Cell {
+    let mut signatures: Vec<_> = keys
+        .iter()
+        .map(|key| {
+            let public_key = key.verifying_key().to_bytes();
+            let signature = key.sign(action.hash(0).as_slice()).to_bytes();
+            (public_key, signature)
+        })
+        .collect();
+    signatures.sort_by_key(|entry| entry.0);
+    let mut next: Option<Cell> = None;
+    for (public_key, signature) in signatures.into_iter().rev() {
+        let mut entry = BuilderData::new();
+        entry.append_u256(&public_key).unwrap().append_raw(&signature, 512).unwrap();
+        if let Some(cell) = next {
+            entry.checked_append_reference(cell).unwrap();
+        }
+        next = Some(entry.into_cell().unwrap());
+    }
+    let mut root = BuilderData::new();
+    root.append_u8(keys.len() as u8).unwrap().checked_append_reference(next.unwrap()).unwrap();
     root.into_cell().unwrap()
 }
 
@@ -464,4 +531,21 @@ fn policy_update_rejects_threshold_pooled_across_disjoint_purposes() {
         .expect_aborted()
         .expect_exit_code(ERR_BAD_POLICY);
     assert_eq!(f.state().hash(0), before, "rejected policy update changed state");
+}
+
+#[test]
+fn policy_update_accepts_reachable_purpose_isolation() {
+    let mut f = Fixture::new();
+    let (isolated_policy, keys) = purpose_isolated_policy();
+    let mut payload = BuilderData::new();
+    payload.checked_append_reference(isolated_policy).unwrap();
+    let update = f.build_action(UPDATE_AGENT_POLICY, 1, 2, 10, payload.into_cell().unwrap());
+    let possession_keys: Vec<_> = keys.iter().collect();
+    f.send(submit_body(
+        update.clone(),
+        signature_set(&f.old_key, &update),
+        signature_set_many(&possession_keys, &update),
+    ))
+    .expect_success();
+    assert_eq!(f.state_position(), (1, 2));
 }
