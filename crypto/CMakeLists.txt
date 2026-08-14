@@ -479,6 +479,19 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_dependencies(tos_block tlb_generate_block)
 
   add_custom_target(gen_fif ALL)
+
+  set(STDLIB_V6_FEES_TEST_FIF "${SMARTCONT_AUTO_DIR}/stdlib-v6-fees-test.fif")
+  add_custom_command(
+    COMMENT "Compile FunC stdlib TVM v6 fee primitive coverage"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND $<TARGET_FILE:func> -PS -o ${STDLIB_V6_FEES_TEST_FIF}
+      smartcont/stdlib.fc smartcont/tests/stdlib-v6-fees-test.fc
+    DEPENDS func smartcont/stdlib.fc smartcont/tests/stdlib-v6-fees-test.fc
+    OUTPUT ${STDLIB_V6_FEES_TEST_FIF}
+  )
+  add_custom_target(test_func_stdlib_v6_fees DEPENDS ${STDLIB_V6_FEES_TEST_FIF})
+  add_dependencies(gen_fif test_func_stdlib_v6_fees)
+
   function(GenFif)
     set(options )
     set(oneValueArgs DEST NAME)

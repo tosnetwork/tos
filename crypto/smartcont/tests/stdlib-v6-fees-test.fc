@@ -1,0 +1,32 @@
+;; Compile-only coverage for the TVM v6 fee primitives exposed by stdlib.fc.
+
+int test_get_compute_fee(int workchain, int gas_used) method_id(1101) {
+  return get_compute_fee(workchain, gas_used);
+}
+
+int test_get_storage_fee(int workchain, int seconds, int bits, int cells) method_id(1102) {
+  return get_storage_fee(workchain, seconds, bits, cells);
+}
+
+int test_get_forward_fee(int workchain, int bits, int cells) method_id(1103) {
+  return get_forward_fee(workchain, bits, cells);
+}
+
+int test_get_precompiled_gas_consumption() method_id(1104) {
+  return get_precompiled_gas_consumption();
+}
+
+int test_get_simple_compute_fee(int workchain, int gas_used) method_id(1105) {
+  return get_simple_compute_fee(workchain, gas_used);
+}
+
+int test_get_simple_forward_fee(int workchain, int bits, int cells) method_id(1106) {
+  return get_simple_forward_fee(workchain, bits, cells);
+}
+
+int test_get_original_fwd_fee(int workchain, int fwd_fee) method_id(1107) {
+  return get_original_fwd_fee(workchain, fwd_fee);
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+}

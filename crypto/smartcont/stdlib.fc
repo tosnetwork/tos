@@ -268,6 +268,34 @@ cont bless(slice s) impure asm "BLESS";
 ;;; and sets `gl` accordingly in the same way as [set_gas_limit].
 () buy_gas(int amount) impure asm "BUYGAS";
 
+{-
+  # TVM v6 fee primitives
+
+  These primitives read the active fee configuration from ConfigParam 18,
+  ConfigParam 20/21, and ConfigParam 24/25. They require global version 6 or later.
+-}
+
+;;; Calculates the compute fee for [gas_used] gas units in [workchain].
+int get_compute_fee(int workchain, int gas_used) asm(gas_used workchain) "GETGASFEE";
+
+;;; Calculates the storage fee for [cells] cells and [bits] bits kept for [seconds] in [workchain].
+int get_storage_fee(int workchain, int seconds, int bits, int cells) asm(cells bits seconds workchain) "GETSTORAGEFEE";
+
+;;; Calculates the forwarding fee for a message containing [cells] cells and [bits] bits in [workchain].
+int get_forward_fee(int workchain, int bits, int cells) asm(cells bits workchain) "GETFORWARDFEE";
+
+;;; Returns the gas consumption assigned to the current precompiled contract.
+int get_precompiled_gas_consumption() asm "GETPRECOMPILEDGAS";
+
+;;; Calculates the compute fee without the flat gas price component.
+int get_simple_compute_fee(int workchain, int gas_used) asm(gas_used workchain) "GETGASFEESIMPLE";
+
+;;; Calculates the forwarding fee without the lump price component.
+int get_simple_forward_fee(int workchain, int bits, int cells) asm(cells bits workchain) "GETFORWARDFEESIMPLE";
+
+;;; Reconstructs the original forwarding fee from an incoming message's remaining [fwd_fee].
+int get_original_fwd_fee(int workchain, int fwd_fee) asm(fwd_fee workchain) "GETORIGINALFWDFEE";
+
 ;;; Computes the minimum of two integers [x] and [y].
 int min(int x, int y) asm "MIN";
 
