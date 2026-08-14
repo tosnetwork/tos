@@ -79,7 +79,74 @@ semantics in [GlobalVersions.md](GlobalVersions.md).
 
 ## Validator and Network Parameters
 
-The remaining masterchain parameters follow the native TOS schema in [block.tlb](../crypto/block/block.tlb) and are consumed by the validator, collator, election, gas, storage, and networking code paths.
+The remaining masterchain parameters follow the native TOS schema in [block.tlb](../crypto/block/block.tlb) and are consumed by the validator, collator, election, gas, storage, and networking code paths. They are the standard base-protocol parameters; the canonical cell shapes live in the TL-B schema and are the authority for the fields below.
+
+**Addresses and minting**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 0 | `config_addr:bits256` | configuration contract address |
+| 1 | `elector_addr:bits256` | elector contract address |
+| 2 | `minter_addr:bits256` | minter address (falls back to ConfigParam 0 if absent) |
+| 3 | `fee_collector_addr:bits256` | fee-collector address (falls back to ConfigParam 1 if absent) |
+| 4 | `dns_root_addr:bits256` | root native DNS resolver |
+| 5 | `BurningConfig` | fee-burning configuration |
+
+**Governance and config change**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 9 | `mandatory_params:(Hashmap 32 True)` | params that must always be present |
+| 10 | `critical_params:(Hashmap 32 True)` | params whose change needs a critical vote |
+| 11 | `ConfigVotingSetup` | config-change proposal/voting setup |
+| 13 | `ComplaintPricing` | validator-complaint deposit and pricing |
+
+**Validator election and stake**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 15 | `validators_elected_for / elections_start_before / elections_end_before / stake_held_for` | election timing windows |
+| 16 | `max_validators / max_main_validators / min_validators` | validator-count bounds |
+| 17 | `min_stake / max_stake / min_total_stake / max_stake_factor` | stake bounds |
+| 32 / 33 | `ValidatorSet` | previous validator set / previous temp validator set |
+| 34 / 35 | `ValidatorSet` | current validator set / current temp validator set |
+| 36 / 37 | `ValidatorSet` | next validator set / next temp validator set |
+| 39 | `(HashmapE 256 ValidatorSignedTempKey)` | validator temporary signing keys |
+| 40 | `MisbehaviourPunishmentConfig` | slashing / misbehaviour punishment |
+
+**Gas, fees, storage, and block limits**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 18 | `(Hashmap 32 StoragePrices)` | per-workchain storage prices (masterchain vs basechain cell/bit rent) |
+| 19 | `global_id:int32` | network global id |
+| 20 / 21 | `GasLimitsPrices` | gas limits and prices (masterchain / basechain) |
+| 22 / 23 | `BlockLimits` | block limits (masterchain / basechain) |
+| 24 / 25 | `MsgForwardPrices` | message-forwarding prices (masterchain / basechain) |
+
+**Consensus and networking**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 28 | `CatchainConfig` | catchain (block-consensus) parameters |
+| 29 | `ConsensusConfig` | consensus parameters |
+| 30 | `NewConsensusConfigAll` | extended/aggregated consensus configuration |
+| 31 | `fundamental_smc_addr:(HashmapE 256 True)` | fundamental smart-contract addresses |
+
+**Execution safety limits**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 43 | `SizeLimitsConfig` | account/message/state size limits |
+| 44 | `SuspendedAddressList` | suspended (blocked) addresses |
+| 45 | `PrecompiledContractsConfig` | precompiled-contract registry |
+
+**Optional external-chain bridges (inherited base schema, not used by the native TOS build)**
+
+| Param | Type | Purpose |
+|---|---|---|
+| 71 / 72 / 73 | `OracleBridgeParams` | oracle-bridge descriptors for external chains |
+| 79 / 81 / 82 | `JettonBridgeParams` | token-bridge descriptors for external chains |
 
 When adding or changing a parameter:
 
