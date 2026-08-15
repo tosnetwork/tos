@@ -242,7 +242,15 @@ wallet rm                Remove a wallet
 wallet set-version       Migrate wallet contract version
 wallet send              Send TOS to an address
 wallet send --via-proxy  Send through a proxy contract
+wallet broadcast-prepared Broadcast the exact BOC emitted by send --build-only
 ```
+
+Automation that needs a crash-safe broadcast boundary can first use
+`wallet send --build-only` to construct and sign an external message, validate
+the returned versioned JSON, then submit those exact bytes with
+`wallet broadcast-prepared --message-boc <BASE64> --yes`. The broadcast command
+does not rebuild or sign the transaction. Treat a transport error after calling
+it as ambiguous and reconcile against finalized chain state before any retry.
 
 ### `tosctl pool` -- Staking pool management
 

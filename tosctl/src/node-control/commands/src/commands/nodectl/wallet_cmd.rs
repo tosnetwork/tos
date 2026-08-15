@@ -90,6 +90,8 @@ pub enum WalletAction {
     SetVersion(WalletSetVersionCmd),
     /// Generic transfer
     Send(WalletSendCmd),
+    /// Broadcast an exact external message emitted by `wallet send --build-only`
+    BroadcastPrepared(WalletBroadcastPreparedCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -321,6 +323,15 @@ pub struct WalletSendCmd {
     config_format: Option<String>,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(about = "Broadcast an exact prepared external message without rebuilding or signing it")]
+pub struct WalletBroadcastPreparedCmd {
+    #[arg(long, help = "Exact external message BOC emitted by wallet send --build-only")]
+    message_boc: String,
+    #[arg(long, help = "Acknowledge broadcasting the exact supplied message")]
+    yes: bool,
+}
+
 impl WalletCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
@@ -337,6 +348,7 @@ impl WalletCmd {
             WalletAction::Rm(cmd) => cmd.run(&self.config).await,
             WalletAction::SetVersion(cmd) => cmd.run(&self.config).await,
             WalletAction::Send(cmd) => cmd.run(&self.config).await,
+            WalletAction::BroadcastPrepared(cmd) => cmd.run(&self.config).await,
         }
     }
 
@@ -351,6 +363,37 @@ impl WalletCmd {
             offline: false,
         };
         cmd.run(&config_path).await
+    }
+}
+
+impl WalletBroadcastPreparedCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        if !self.yes {
+            anyhow::bail!("--yes is required to broadcast a prepared message");
+        }
+        let encoded = self.message_boc.as_bytes();
+        if encoded.is_empty() || encoded.len() > 128 * 1024 {
+            anyhow::bail!("Prepared message BOC has an invalid size");
+        }
+        let message_boc = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .context("Invalid prepared message BOC base64")?;
+        if message_boc.is_empty() || message_boc.len() > 64 * 1024 {
+            anyhow::bail!("Prepared message BOC has an invalid size");
+        }
+        let message = read_single_root_boc(message_boc.clone())?;
+        let message_hash = format!("tvm-cell-sha256:{:x}", message.repr_hash());
+        let (_, _, rpc_client) = load_config_vault_rpc_client(Path::new(config_path)).await?;
+        rpc_client.send_boc(&message_boc).await?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "version": "tosctl.wallet-prepared-broadcast.v1",
+                "message_hash": message_hash,
+                "status": "submitted",
+            })
+        );
+        Ok(())
     }
 }
 
@@ -1316,7 +1359,7 @@ impl WalletSendCmd {
 
 #[cfg(test)]
 mod wallet_send_cli_tests {
-    use super::{WalletLsCmd, WalletSendCmd};
+    use super::{WalletBroadcastPreparedCmd, WalletLsCmd, WalletSendCmd};
     use clap::{Args, Command, FromArgMatches};
 
     #[test]
@@ -1363,6 +1406,23 @@ mod wallet_send_cli_tests {
         let parsed = WalletSendCmd::from_arg_matches(&matches).expect("parsed send args");
         assert!(parsed.build_only);
         assert!(!parsed.yes);
+    }
+
+    #[test]
+    fn parses_exact_prepared_broadcast() {
+        let command = WalletBroadcastPreparedCmd::augment_args(Command::new("broadcast-prepared"));
+        let matches = command
+            .try_get_matches_from([
+                "broadcast-prepared",
+                "--message-boc",
+                "te6ccgEBAQEAAgAAAA==",
+                "--yes",
+            ])
+            .expect("prepared broadcast flags must parse");
+        let parsed = WalletBroadcastPreparedCmd::from_arg_matches(&matches)
+            .expect("parsed prepared broadcast args");
+        assert_eq!(parsed.message_boc, "te6ccgEBAQEAAgAAAA==");
+        assert!(parsed.yes);
     }
 
     #[test]
