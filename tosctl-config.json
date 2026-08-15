@@ -1,6 +1,32 @@
 {
   "nodes": {},
-  "wallets": {},
+  "wallets": {
+    "provider-ctrl": {
+      "key": {
+        "name": "wallet-provider-ctrl"
+      },
+      "version": "V3R2",
+      "subwallet_id": 42,
+      "workchain": 0
+    },
+    "relayer": {
+      "key": {
+        "name": "wallet-relayer"
+      },
+      "version": "V3R2",
+      "subwallet_id": 42,
+      "workchain": 0
+    },
+    "buyer": {
+      "key": {
+        "name": "wallet-buyer"
+      },
+      "version": "V3R2",
+      "subwallet_id": 42,
+      "workchain": 0
+    }
+  },
+  "agent_wallets": {},
   "pools": {},
   "bindings": {},
   "chain_rpc": {
