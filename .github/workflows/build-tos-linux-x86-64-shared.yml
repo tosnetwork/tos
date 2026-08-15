@@ -64,8 +64,10 @@ jobs:
 
     - name: Verify the build does not modify the source tree
       run: |
-        test ! -e crypto/smartcont/auto
-        git diff --exit-code
+        test ! -e "$GITHUB_WORKSPACE/crypto/smartcont/auto"
+        git -C "$GITHUB_WORKSPACE" \
+          -c safe.directory="$GITHUB_WORKSPACE" \
+          diff --exit-code
 
     - name: Run unit tests
       run: |
