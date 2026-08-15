@@ -8,7 +8,7 @@
 - Terminal architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Main plan:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - Discovery profile:
   [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 
@@ -66,7 +66,7 @@ starting point.
 | Reaching a node's HTTP service without a public TCP origin | TOS Sites / `rldp-http-proxy` (see [TosSites.md](TosSites.md)) | Already ported from TON |
 | Per-call or subscription billing in TOS, tied to an on-chain-auditable service | AI Actor Model `Service Actor` (see [ai-actors.md](ai-actors.md)) | Design exists; billing/subscription messages for this use case are new work |
 | Registering `name.tos` itself | A domain-registry contract minting ownership as an NFT (TON's `.ton` model) | **Not present in this repository.** TON's DNS Collection/auction contract is a separate ecosystem application built on top of TON, not part of the core protocol this repo cloned. This is new application-level contract work, described below. |
-| Terminal and resource identity | Edge Core plus signed terminal/resource manifest | **To build in `tos-protocol`.** This is not a validator identity. |
+| Terminal and resource identity | Edge Core plus signed terminal/resource manifest | **To build in `tos-service-protocol`.** This is not a validator identity. |
 | Hardware/runtime detection and measured compatibility | AI terminal probes and benchmark profiles | **To build in `tos-ai`.** Self-report is not attestation. |
 | Managed model execution | Model manager, runtime adapters, and bounded scheduler | **To build in `tos-ai`.** Existing runtimes are reused rather than reimplemented. |
 | Home-network reachability | Public ADNL path or owner-selected relay/reverse tunnel | TOS transport exists; a complete ordinary-user relay product remains new work. |
@@ -250,7 +250,7 @@ endpoint, current quote, admission decision, and payment destination.
 ## Related Docs
 
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
-- [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - [TOS Network Compatibility with ARD](tos-ard-compatibility.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)

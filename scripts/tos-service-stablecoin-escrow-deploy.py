@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO / "test/tostester/src"))
 import nacl.signing  # noqa: E402
 from pytosiq_core import Address, Builder, Cell, StateInit  # noqa: E402
 
-MODULE_PATH = REPO / "scripts/atos-native-registry-local-gate-c.py"
+MODULE_PATH = REPO / "scripts/tos-service-native-registry-local-gate-c.py"
 module_spec = importlib.util.spec_from_file_location("native_gate_c", MODULE_PATH)
 gate = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(gate)
@@ -55,7 +55,7 @@ def main():
     config_path = Path(args.global_config)
     zero = json.loads(config_path.read_text())["validator"]["zero_state"]
     vector = json.loads(Path(args.state_init_vector).read_text())
-    if vector.get("schema") != "atos.native.escrow-state-init.v1":
+    if vector.get("schema") != "tos.service.escrow-state-init.v1":
         raise RuntimeError("invalid escrow StateInit vector")
     state_init_cell = Cell.one_from_boc(base64.b64decode(vector["escrow_state_init_boc_base64"], validate=True))
     state_init = StateInit.deserialize(state_init_cell.begin_parse())
@@ -97,7 +97,7 @@ def main():
     if len(votes) != 1 or next(iter(votes))[0] != code.hash.hex() or next(iter(votes))[1] != data.hash.hex():
         raise RuntimeError("three endpoints did not agree on the escrow account")
 
-    evidence = {"schema": "atos.native.escrow-deployment.v1", "deployed_now": deployed_now,
+    evidence = {"schema": "tos.service.escrow-deployment.v1", "deployed_now": deployed_now,
         "network": {"network_id": args.network_id,
             "genesis_root_hash": "sha256:" + base64.b64decode(zero["root_hash"]).hex(),
             "genesis_file_hash": "sha256:" + base64.b64decode(zero["file_hash"]).hex()},

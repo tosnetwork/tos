@@ -69,7 +69,7 @@ The proposed
 owner-side product that turns those foundations into a bounded economic loop:
 it discovers work, matches approved skills, evaluates profit and risk,
 coordinates execution, and observes settlement. The product relationship is
-intentional: `tos-protocol` establishes the trusted market, `tos-ai` supplies
+intentional: `tos-service-protocol` establishes the trusted market, `tos-ai` supplies
 production capacity, and OpenFox lets that capacity participate autonomously
 in the market and earn revenue. This is a target boundary, not a statement
 that the public market or OpenFox is already implemented.
@@ -111,7 +111,7 @@ when the repositories are created.
 
 The central boundary rule is:
 
-> `tos` provides reusable blockchain infrastructure; `tos-protocol` defines
+> `tos` provides reusable blockchain infrastructure; `tos-service-protocol` defines
 > interoperable service foundations and ARD compatibility; vertical
 > repositories implement specific resource profiles and products; OpenFox is
 > an autonomous client product that operates them under owner policy.
@@ -119,7 +119,7 @@ The central boundary rule is:
 | Repository | Owns | Does not own |
 |---|---|---|
 | `tos` (this repository) | consensus and validators, VM and generic smart-contract tooling, chain data and stable query APIs, wallet/crypto primitives, DNS resolution, ADNL/DHT/RLDP, and TOS Sites transport | application manifests, model/storage/commerce execution, derived discovery, or vertical product releases |
-| `tos-protocol` | base descriptor and manifest schemas, ARD compatibility profile, ARD Registry/crawler/federation, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, application content catalogs, or vertical business policy |
+| `tos-service-protocol` | base descriptor and manifest schemas, ARD compatibility profile, ARD Registry/crawler/federation, profile mechanism, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar application, chain adapter, common SDKs, Edge Core libraries, generic terminal/resource schema, conformance vectors, and compatibility matrix | consensus rules, validator internals, model runtimes, storage engines, application content catalogs, or vertical business policy |
 | `tos-ai` | General and physical AI Edge Computing Terminal distributions, inference and physical-world task profiles, local open-weight models, resource probes and benchmarks, model/runtime adapters, bounded and real-time scheduling, signed updates, fleet management, AI clients, model provenance, packaging, and AI-specific conformance tests | bare GPU rental, consumer-supplied execution, generic domain ownership, or unrelated storage/commerce workflows |
 | `openfox` (proposed) | off-chain agent loop, owner mandate, approved skills, task discovery and matching, conservative cost/profit/risk evaluation, deterministic policy gates, protocol and execution clients, bounded durable decision state, and accounting/audit | consensus, protocol schemas, settlement authority, owner-key custody, model runtimes, terminal admission, or unrestricted task-supplied tools and code |
 | `tos-storage` | object APIs, storage leases, content catalogs, storage metering, replication, and availability evidence | TOS consensus or AI model execution |
@@ -151,7 +151,7 @@ flowchart TB
         ActorABI["Existing Agent / Service / Escrow contracts"]
     end
 
-    subgraph Base["tos-protocol — generic service foundation"]
+    subgraph Base["tos-service-protocol — generic service foundation"]
         Spec["Base protocol<br/>schemas + test vectors"]
         Domain[".tos application contracts<br/>bindings + deployment"]
         Adapter["Versioned TOS chain adapter"]
@@ -206,7 +206,7 @@ flowchart TB
 ### Proposed repository layouts
 
 ```text
-tos-protocol/
+tos-service-protocol/
   spec/base/
   spec/profile-registry/
   contracts/tos-domain/
@@ -264,7 +264,7 @@ tos-commerce/
 ```
 
 This plan may remain under `tos/doc/` as the initial architecture and
-transition record. Once `tos-protocol` exists, the normative base specification
+transition record. Once `tos-service-protocol` exists, the normative base specification
 and implementation plan should move there; this repository should retain a
 short pointer to the new source of truth. Vertical normative profiles remain
 with their owning product repositories and depend on released base protocol
@@ -276,7 +276,7 @@ versions.
 |---|---|
 | **Available** | Implemented in TOS core and suitable as an external dependency |
 | **Partial** | A TOS primitive exists, but base protocol or profile integration is missing |
-| **To build** | Implement in `tos-protocol` or the owning vertical repository unless a row identifies a TOS core gap |
+| **To build** | Implement in `tos-service-protocol` or the owning vertical repository unless a row identifies a TOS core gap |
 | **Later** | Outside the minimum viable vertical slice |
 
 ## Architecture Coverage Map
@@ -304,7 +304,7 @@ flowchart TB
         Chain["TOS blockchain and finality<br/>AVAILABLE"]
     end
 
-    subgraph Protocol["tos-protocol: Base Service Plane"]
+    subgraph Protocol["tos-service-protocol: Base Service Plane"]
         Descriptor["Signed service descriptor<br/>TO BUILD"]
         Manifest["Canonical base manifest<br/>TO BUILD"]
         Profiles["Versioned profile extensions<br/>TO BUILD"]
@@ -438,7 +438,7 @@ which components are common and which belong in vertical profiles.
 | Evidence and attestation | Partial | Proof Attestation and domain-separated response commitments | Standardize receipt/evidence envelopes, verifier references, issuer trust, and off-chain proof adapters |
 | HTTP/RLDP access | Available | [TosSites.md](TosSites.md), `rldp-http-proxy` | Add generic service/profile well-known paths, authenticated sessions, event/stream bindings, and profile-specific limits |
 | NAT traversal and relays | To build | ADNL tunneling foundations exist, but not a complete owner-operated relay product | Add owner-selected relays/reverse tunnels without transferring site authority |
-| Service discovery | Partial | Chain-wide service/capability index plus a bounded ARD Registry and cached federation crawler now exist in `tos-protocol`; federation enforces exact HTTPS origins, redirect/body/depth/source quotas, cycles, TTL and atomic replacement | Add authoritative upstream List/filter conformance, health/pricing/reputation indexes and deployment policy; revalidate authority before every transaction |
+| Service discovery | Partial | Chain-wide service/capability index plus a bounded ARD Registry and cached federation crawler now exist in `tos-service-protocol`; federation enforces exact HTTPS origins, redirect/body/depth/source quotas, cycles, TTL and atomic replacement | Add authoritative upstream List/filter conformance, health/pricing/reputation indexes and deployment policy; revalidate authority before every transaction |
 | Service Browser | To build | Wallet/connect/client SDK foundations | Build a CLI/desktop/extension base user agent with inference, storage, and commerce modules for consent, budgets, receipts, and composition |
 | Observability | Partial | Validator and service metrics/logging patterns | Add privacy-preserving edge health, bounded metrics, tracing, usage audit, and redaction |
 
@@ -544,7 +544,7 @@ Semantic discovery remains a separate, non-authoritative derived service.
 
 ### Stable integration boundary
 
-`tos-protocol` and all vertical repositories should integrate with TOS through
+`tos-service-protocol` and all vertical repositories should integrate with TOS through
 released, versioned surfaces:
 
 - JSON-RPC and lite-server APIs
@@ -554,7 +554,7 @@ released, versioned surfaces:
 - chain/network identifiers and configuration addresses
 - signed releases of any reusable client libraries
 
-`tos-protocol` should maintain a compatibility manifest that pins the supported
+`tos-service-protocol` should maintain a compatibility manifest that pins the supported
 TOS release range, network configuration, ABI versions, contract code hashes,
 and required feature flags. Each vertical repository pins a released base
 protocol version. CI should run conformance and E2E tests against every
@@ -571,7 +571,7 @@ conforming vertical implementation, not the definition of the base protocol.
 ### Required specification artifacts
 
 ```text
-tos-protocol/spec/
+tos-service-protocol/spec/
   ard/
     compatibility-profile.md
     media-types.md
@@ -798,7 +798,7 @@ Before declaring version 1.0:
 ## On-Chain Work
 
 The contracts in this section are application-layer code. Generic domain and
-service contracts are owned by `tos-protocol`; profile-specific contracts are
+service contracts are owned by `tos-service-protocol`; profile-specific contracts are
 owned by their vertical repositories. They are compiled with the TOS contract
 toolchain and deployed to the TOS chain, but they do not need to be built into
 the node repository. Network configuration changes, such as assigning the
@@ -836,7 +836,7 @@ Implement the design already outlined in
 
 #### Tooling and deployment
 
-- `tos-protocol` CLI commands for domain registration, renewal, transfer, record
+- `tos-service-protocol` CLI commands for domain registration, renewal, transfer, record
   updates, and resolution
 - Rust SDK and TypeScript SDK bindings
 - root collection deployment
@@ -903,7 +903,7 @@ protocol enforcement foundation. One physical terminal may later host
 isolated storage or commerce profiles, but those profiles retain independent
 schemas, credentials, queues, and durable state.
 
-`tos-edge-core` belongs in `tos-protocol` and should be an independent library
+`tos-edge-core` belongs in `tos-service-protocol` and should be an independent library
 and service foundation, preferably implemented in Rust. Vertical repositories
 may embed the released library or run separate processes such as
 `tos-edge-ai`, `tos-edge-storage`, or `tos-commerce-edge`.
@@ -1073,7 +1073,7 @@ and evidence envelopes but define different profile actions and durable state.
 
 Base clients, SDKs, the
 [TOS ARD compatibility profile](tos-ard-compatibility.md), and the standalone
-TOS ARD Registry belong to `tos-protocol`. Vertical clients and
+TOS ARD Registry belong to `tos-service-protocol`. Vertical clients and
 profile-specific derived fields belong to their profile repositories. They
 consume TOS data and transport services but have release lifecycles independent
 from the validator.
@@ -1109,7 +1109,7 @@ types. Browser environments will initially need one of:
 
 ### Discovery service
 
-Implement an ARD Registry in `tos-protocol`; do not define a competing
+Implement an ARD Registry in `tos-service-protocol`; do not define a competing
 general-purpose TOS catalog/search protocol. The service must support the
 pinned ARD HTTP REST baseline and may build profile-specific derived indexes
 seeded through standard catalogs and existing chain query APIs:
@@ -1419,7 +1419,7 @@ duplicate the base DNS, authentication, quote, and receipt harness.
 ## Recommended Delivery Phases
 
 Unless explicitly marked as a TOS core prerequisite, all phases below are
-delivered from `tos-protocol` or a vertical repository. TOS nodes are test and
+delivered from `tos-service-protocol` or a vertical repository. TOS nodes are test and
 production dependencies, not the release container for application services.
 
 ```mermaid
@@ -1465,7 +1465,7 @@ interoperability, operations, privacy, fulfillment, and security hardening.
 
 ## Recommended Repository and Pull Request Sequence
 
-The initial PR sequence is in `tos-protocol`:
+The initial PR sequence is in `tos-service-protocol`:
 
 1. **Repository bootstrap and TOS compatibility contract**
    - workspace layout, licenses, CI, supported TOS release matrix, pinned
@@ -1555,7 +1555,7 @@ TOS core PRs are exceptional and follow a separate sequence:
 3. add core-level tests without importing application-profile concepts into
    validator code
 4. release or identify the TOS version containing that interface
-5. update the `tos-protocol` compatibility matrix and chain adapter
+5. update the `tos-service-protocol` compatibility matrix and chain adapter
 
 No PR should mix TOS core changes with application contracts or edge services.
 The MVP is expected to require no consensus-rule change.

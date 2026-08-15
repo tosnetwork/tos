@@ -1,4 +1,4 @@
-;; Simplified ATOS Native Registry.
+;; Simplified TOS Native Service Registry.
 ;;
 ;; One deterministic account stores one Agent or Capability. The account is
 ;; the sole state authority: no per-action Anchor, no portable next-state, no

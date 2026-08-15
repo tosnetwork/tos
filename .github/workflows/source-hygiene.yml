@@ -30,7 +30,7 @@ jobs:
       - name: Build FunC and Fift
         run: cmake --build build --target func fift -j2
       - name: Reproduce the frozen Native Registry release
-        run: scripts/test-atos-native-registry-v1.sh
+        run: scripts/test-tos-service-native-registry-v1.sh
       - name: Verify generated intermediates stay in the build tree
         run: |
           cmake --build build --target gen_fif -j2

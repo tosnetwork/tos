@@ -19,7 +19,7 @@ An off-chain process that observes chain state and submits messages on behalf of
 The proposed TOS autonomous earning agent. OpenFox discovers candidate paid
 work, matches it to owner-approved skills, evaluates cost and risk under hard
 policy, executes through approved capacity such as `tos-ai`, and observes
-result settlement through `tos-protocol`. It is an off-chain Agent Runner, not
+result settlement through `tos-service-protocol`. It is an off-chain Agent Runner, not
 an owner-equivalent authority or a new consensus actor.
 
 ## Task Actor

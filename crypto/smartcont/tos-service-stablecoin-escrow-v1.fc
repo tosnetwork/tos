@@ -1,4 +1,4 @@
-;; ATOS Native fixed-price stablecoin escrow v1.
+;; TOS Service Protocol fixed-price stablecoin escrow v1.
 ;;
 ;; One finalized escrow account is the canonical Accepted Quote, custody and
 ;; settlement authority. It supports exactly one stablecoin transfer per

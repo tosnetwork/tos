@@ -259,7 +259,7 @@ TOS Network is designed as several independently released layers:
 | Layer | Responsibility |
 |---|---|
 | `tos` — this repository | Blockchain consensus, native TVM execution, generic contracts and query APIs, wallet/crypto primitives, DNS, ADNL/DHT/RLDP, and TOS Sites |
-| `tos-protocol` — planned separate repository | Base service descriptors, terminal/resource schema, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar, chain adapter, Edge Core, SDKs, discovery schema, and conformance |
+| `tos-service-protocol` — planned separate repository | Base service descriptors, terminal/resource schema, authentication, quotes, payment authorization, receipts, evidence, `.tos` registrar, chain adapter, Edge Core, SDKs, discovery schema, and conformance |
 | `tos-ai` — planned separate repository | General and physical AI terminal products, model/runtime adapters, resource probes, bounded and real-time scheduling, signed updates, fleet management, AI clients, and AI conformance |
 | `tos-storage` — planned separate repository | Object services, storage leases, catalogs, metering, replication, and availability evidence |
 | `tos-commerce` — planned separate repository | Offers, orders, inventory, physical/digital fulfillment, human services, refunds, and commerce discovery |
@@ -339,7 +339,7 @@ workflows.
 
 ## Architecture Documents
 
-- [TOS Protocol Implementation Plan](doc/the-tos-protocol-implementation-plan.md)
+- [TOS Protocol Implementation Plan](doc/the-tos-service-protocol-implementation-plan.md)
 - [AI Edge Computing Terminal Architecture](doc/ai-edge-computing-terminal-architecture.md)
 - [Site-Bound Physical AI Edge Terminal](doc/physical-ai-edge-terminal-use-case.md)
 - [Managed AI Services on Local GPU Hardware](doc/local-gpu-sharing-use-case.md)
@@ -360,14 +360,14 @@ Build instructions are in [BUILD.md](BUILD.md). The primary C++ targets are:
 
 Rust operator tooling is under `tosctl/src`.
 
-### ATOS Native Registry v1
+### TOS Native Service Registry v1
 
-The sole ATOS Registry contract source is
+The sole TOS Service Protocol Registry contract source is
 `crypto/smartcont/native-registry-code.fc`. Build and verify the frozen release
 artifact with:
 
 ```bash
-scripts/test-atos-native-registry-v1.sh
+scripts/test-tos-service-native-registry-v1.sh
 ```
 
 The release manifest pins the FunC toolchain, TVM code hash, BOC container

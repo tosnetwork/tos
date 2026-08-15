@@ -6,7 +6,7 @@
 - Status: proposed, non-normative
 - Date: 2026-07-31
 - Related architecture:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - Shared host architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Discovery profile:
@@ -88,7 +88,7 @@ implementation plan:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, JSON-RPC/lite APIs, wallet and crypto primitives, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-service-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
 | `tos-storage` repository | storage protocol schema, storage manifest profile, Storage Adapter, `tos-edge-storage`, ARD catalog generation, storage-specific ranking and public-content catalogs, clients, deployment tooling, and end-to-end tests |
 | Provider host | local object data, bounded storage backend, `tos-edge-storage`, runtime keys, and optionally a TOS Sites/RLDP ingress process |
 | TOS blockchain | identity references, DNS records, capability declarations, manifest commitments, payment, and settlement |
@@ -745,8 +745,8 @@ The recommended positioning is therefore:
 | Service Actor and escrow foundations | Available/partial | TOS core contracts; storage integration in `tos-storage` |
 | Capability Registry | Available/partial | TOS core contract; storage vocabulary and integration in `tos-storage` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
-| Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
-| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; storage enrichment in `tos-storage` |
+| Public `.tos` registration product | To build | `tos-service-protocol` application contracts, tooling, and deployment |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-service-protocol`; storage enrichment in `tos-storage` |
 | Storage manifest profile | To build | `tos-storage/spec/` |
 | Storage Adapter and object API | To build | `tos-storage` |
 | Storage-enabled `tos-edge-storage` | To build | `tos-storage`, consuming released Edge Core |

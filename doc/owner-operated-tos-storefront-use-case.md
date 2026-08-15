@@ -6,7 +6,7 @@
 - Status: proposed, non-normative
 - Date: 2026-07-31
 - Related architecture:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - Shared host architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Discovery profile:
@@ -90,7 +90,7 @@ Commerce remains outside the TOS core repository:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS, wallet and crypto, JSON-RPC/lite APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-service-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
 | `tos-commerce` repository | store and offer schemas, commerce edge service, seller CLI/UI, buyer SDKs, ARD catalog generation, commerce ranking and catalog search, order workflows, fulfillment adapters, deployments, and end-to-end tests |
 | Seller's device | catalog, inventory, digital assets, private order data, fulfillment state, runtime key, and commerce edge service |
 | TOS blockchain | DNS references, service commitments, payment, escrow, settlement, dispute references, and optional attestations |
@@ -904,7 +904,7 @@ cannot determine every real-world fact or subjective quality judgment.
 | Proof Attestation | Available/partial | TOS core contract; optional seller, delivery, and product profiles |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual store distribution |
 | Public `.tos` registration product | To build | application contracts, tooling, and deployment |
-| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; commerce enrichment in `tos-commerce` |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-service-protocol`; commerce enrichment in `tos-commerce` |
 | Store, offer, quote, order, and receipt schemas | To build | `tos-commerce/spec/` |
 | Commerce edge and seller UI | To build | `tos-commerce` |
 | Buyer SDK, wallet flow, and commerce client | To build | `tos-commerce` |

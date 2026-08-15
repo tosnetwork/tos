@@ -1,10 +1,10 @@
 {
   "schema": "tos.contract.release.v1",
-  "protocol": "atos_native_v1",
-  "contract": "atos-native-registry-v1",
+  "protocol": "tos_service_v1",
+  "contract": "tos-service-native-registry-v1",
   "source": "crypto/smartcont/native-registry-code.fc",
   "stdlib": "crypto/smartcont/stdlib.fc",
-  "build_script": "scripts/build-atos-native-registry-v1.sh",
+  "build_script": "scripts/build-tos-service-native-registry-v1.sh",
   "compiler": {
     "name": "FunC",
     "semantic_version": "v0.4.6",
@@ -14,5 +14,5 @@
   "code_hash": "tvm-cell-sha256:600f2fda83462bc86a1c32af930c35a4fc8f80f1d2966f5593ceba217a91ffa0",
   "boc_sha256": "sha256:e9845e6d7acda368f1d5ba8e7d32aa0f21022d36816ca33ec31e1b21348a6fcc",
   "boc_bytes": 3763,
-  "artifact_base64": "crypto/smartcont/atos-native-registry-v1.boc.base64"
+  "artifact_base64": "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
 }

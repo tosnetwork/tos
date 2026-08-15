@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy and exercise the ATOS Native Registry on a running local TOS chain.
+"""Deploy and exercise the TOS Native Service Registry on a running local TOS chain.
 
 This is node-backed Gate C rehearsal evidence, not public-testnet acceptance.
 It sends every action through the genesis wallet and verifies committed account
@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
-from atos_test_identities import load_test_identity  # noqa: E402
+from tos_service_test_identities import load_test_identity  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -417,7 +417,7 @@ def main() -> int:
     parser.add_argument("--network-id", default="tos-local-gate-c-20260814")
     parser.add_argument(
         "--test-identities",
-        default=str(REPO.parent / "atos-spec/test-vectors/atos-test-identities-v1.json"),
+        default=str(REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"),
     )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
@@ -432,7 +432,7 @@ def main() -> int:
 
     code_bytes = base64.b64decode(
         b"".join(
-            (REPO / "crypto/smartcont/atos-native-registry-v1.boc.base64").read_bytes().split()
+            (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64").read_bytes().split()
         ),
         validate=True,
     )
@@ -463,7 +463,7 @@ def main() -> int:
     addr_a, addr_b = address_of(workchain, init_a), address_of(workchain, init_b)
 
     evidence = {
-        "schema": "atos.native.gate-c.local-rehearsal.v1",
+        "schema": "tos.service.gate-c.local-rehearsal.v1",
         "qualifies_as_public_testnet_gate_c": False,
         "reason": "single-host validators and liteservers are not independently operated public infrastructure",
         "network": {
@@ -483,8 +483,8 @@ def main() -> int:
         },
         "source_commits": {
             "tos": git_head(REPO),
-            "tos_protocol": git_head(REPO.parent / "tos-protocol"),
-            "atos_spec": git_head(REPO.parent / "atos-spec"),
+            "tos_protocol": git_head(REPO.parent / "tos-service-protocol"),
+            "tos_service_spec": git_head(REPO.parent / "tos-service-spec"),
         },
         "payer": payer.to_str(),
         "steps": [],

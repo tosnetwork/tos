@@ -8,7 +8,7 @@
 - Related architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Main plan:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 
 ## Purpose
 
@@ -117,7 +117,7 @@ As a fleet operator, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` | Consensus, VM, generic contracts/query APIs, wallet/crypto, DNS, ADNL/DHT/RLDP, and TOS Sites |
-| `tos-protocol` | Edge Core, ARD compatibility profile and Registry, base terminal/resource schema, authentication, quote/payment/receipt envelopes, delegation, SDKs, and conformance |
+| `tos-service-protocol` | Edge Core, ARD compatibility profile and Registry, base terminal/resource schema, authentication, quote/payment/receipt envelopes, delegation, SDKs, and conformance |
 | `tos-ai` | Physical-terminal ARD catalog mapping, profile, Jetson/ARM packaging, sensor/actuator policy schema, real-time admission, signed update controller, fleet management, AI adapters, client, and conformance |
 | Terminal | Drivers, local models, sensor adapters, safety policy, bounded journals, runtime key, and local operator state |
 | Site safety controller | Independent hard or soft safety interlocks and final actuator authority |
@@ -636,8 +636,8 @@ The common test requirements are also recorded in the
 |---|---|---|
 | TOS identity, wallet, contracts, and payment | Available/partial | TOS core; terminal integration remains |
 | DNS, ADNL, DHT, RLDP, and TOS Sites | Available | TOS core |
-| ARD catalog mapping and TOS ARD Registry | Reference available | `tos-protocol`, including bounded cached federation; Physical AI entry policy remains in `tos-ai` |
-| Edge Core and terminal/resource schema | To build | `tos-protocol` |
+| ARD catalog mapping and TOS ARD Registry | Reference available | `tos-service-protocol`, including bounded cached federation; Physical AI entry policy remains in `tos-ai` |
+| Edge Core and terminal/resource schema | To build | `tos-service-protocol` |
 | Physical-terminal profile and packaging | To build | `tos-ai` |
 | Jetson/ARM runtime and resource probes | To build | `tos-ai` |
 | Real-time local admission and priority policy | Reference available | `tos-ai`; hard-real-time safety remains outside Go and requires site evidence |
@@ -686,7 +686,7 @@ The first production physical-terminal profile is complete only when:
 
 - [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
-- [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - [Locally Hosted Open-Weight Model Sharing](local-open-weight-model-sharing-use-case.md)
 - [AI Actor Threat Model](ai-actor-threat-model.md)

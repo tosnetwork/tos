@@ -21,7 +21,7 @@ The precise product promise is:
 
 The three product responsibilities are deliberately separate:
 
-> **`tos-protocol` establishes the trusted market, `tos-ai` supplies production
+> **`tos-service-protocol` establishes the trusted market, `tos-ai` supplies production
 > capacity, and OpenFox lets that capacity participate autonomously in the
 > market and earn revenue.**
 
@@ -31,7 +31,7 @@ already deployed.
 
 ## Why OpenFox Exists
 
-`tos-protocol` can define identity, discovery, authorization, tasks, quotes,
+`tos-service-protocol` can define identity, discovery, authorization, tasks, quotes,
 payments, receipts, evidence, and settlement. `tos-ai` can turn
 owner-controlled hardware and approved models into bounded AI execution
 capacity. Neither component should independently decide how an owner's money,
@@ -48,7 +48,7 @@ it is not owner-equivalent authority.
 ```mermaid
 flowchart LR
     Owner["Owner mandate<br/>skills, budgets, risk, approvals"] --> Fox["OpenFox<br/>discover, evaluate, plan,<br/>execute, settle, learn"]
-    Fox <--> Protocol["tos-protocol<br/>identity, trusted discovery,<br/>tasks, quote, payment, receipt"]
+    Fox <--> Protocol["tos-service-protocol<br/>identity, trusted discovery,<br/>tasks, quote, payment, receipt"]
     Fox --> AI["tos-ai<br/>bounded inference and<br/>production capacity"]
     AI --> Protocol
     Protocol <--> Chain["TOS contracts and chain state<br/>Agent Account, Task Escrow,<br/>Service Actor, settlement"]
@@ -59,7 +59,7 @@ Another useful analogy is:
 
 | Product | Economic role |
 |---|---|
-| `tos-protocol` | The market rules, trust rails, and transaction language |
+| `tos-service-protocol` | The market rules, trust rails, and transaction language |
 | `tos-ai` | The owner-operated AI factory |
 | OpenFox | The autonomous operator that finds orders and runs the business |
 
@@ -147,14 +147,14 @@ A production OpenFox implementation should keep narrow components:
 | Planner | Propose a bounded execution plan using approved skills and tools |
 | Economics engine | Compute conservative cost, margin, exposure, and stop conditions |
 | Policy gate | Make the authoritative accept, spend, tool, and approval decision |
-| Protocol client | Use released `tos-protocol` schemas, SDKs, and conformance rules |
+| Protocol client | Use released `tos-service-protocol` schemas, SDKs, and conformance rules |
 | Execution client | Reserve and invoke `tos-ai` without bypassing local admission |
 | Signer client | Request narrowly scoped signatures from an external policy-enforced signer |
 | Durable task store | Persist bounded state, exact request commitments, and idempotency keys |
 | Audit and accounting | Record redacted decisions, costs, receipts, disputes, and realized revenue |
 
 The first implementation should be written as a separate Go product rather
-than embedded in `tos`, `tos-protocol`, or `tos-ai`.
+than embedded in `tos`, `tos-service-protocol`, or `tos-ai`.
 
 ## Authority and Key Separation
 
@@ -218,7 +218,7 @@ constraints, privacy, or an explicit stop condition.
 
 ## Protocol Capabilities Required by OpenFox
 
-OpenFox should consume these capabilities from `tos-protocol` rather than
+OpenFox should consume these capabilities from `tos-service-protocol` rather than
 inventing private wire formats:
 
 - authenticated, provenance-preserving discovery of open Task Escrows and
@@ -234,7 +234,7 @@ inventing private wire formats:
 - capability and reputation signals whose trust tier and provenance remain
   explicit and non-authoritative
 
-Missing protocol functionality must be proposed in `tos-protocol`. OpenFox
+Missing protocol functionality must be proposed in `tos-service-protocol`. OpenFox
 must not copy protocol types locally or infer payment authority from a Registry
 result.
 
@@ -284,7 +284,7 @@ host access or trust model.
 - [AI Actor Glossary](ai-actor-glossary.md)
 - [AI Agent Workflow Example](ai-agent-workflow-example.md)
 - [AI Actor Threat Model](ai-actor-threat-model.md)
-- [TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - [TOS AI Edge Computing Terminal Architecture](ai-edge-computing-terminal-architecture.md)
 - [Agent Wallet MVP](agent-wallet-mvp.md)
 - [TOS ARD Compatibility](tos-ard-compatibility.md)

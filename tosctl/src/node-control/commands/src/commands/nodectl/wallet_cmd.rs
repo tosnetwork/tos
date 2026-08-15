@@ -250,7 +250,7 @@ pub struct WalletTestFixtureCmd {
 pub struct WalletTestFixtureImportCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
-    #[arg(long, help = "Mode-0600 atos-test-identities-v1 JSON file")]
+    #[arg(long, help = "Mode-0600 tos-service-test-identities-v1 JSON file")]
     input: PathBuf,
     #[arg(long, help = "Exact role to import")]
     role: String,
@@ -1026,7 +1026,7 @@ impl WalletTestFixtureCmd {
             let mut seed = super::tos_mnemonic::private_seed(&mnemonic, "")?;
             let key = ed25519_create_private_key(&seed)?;
             let public_key = key.verifying_key();
-            let proof_message = format!("ATOS_TEST_IDENTITY_V1:{role}").into_bytes();
+            let proof_message = format!("TOS_SERVICE_TEST_IDENTITY_V1:{role}").into_bytes();
             let proof_signature = key.sign(&proof_message);
             identities.push(TestIdentity {
                 role: role.clone(),
@@ -1040,7 +1040,7 @@ impl WalletTestFixtureCmd {
             seed.zeroize();
         }
         let fixture = TestIdentityFixture {
-            schema: "atos-test-identities-v1",
+            schema: "tos-service-test-identities-v1",
             test_only: true,
             warning: "PLAINTEXT TEST SECRETS: never fund or use these identities outside disposable test networks",
             algorithm: "Ed25519",
@@ -1120,9 +1120,9 @@ impl WalletTestFixtureImportCmd {
         let mut raw = std::fs::read(&self.input)
             .with_context(|| format!("read test fixture {}", self.input.display()))?;
         let fixture: TestIdentityFixtureInput = serde_json::from_slice(&raw)
-            .context("decode strict atos-test-identities-v1 fixture")?;
+            .context("decode strict tos-service-test-identities-v1 fixture")?;
         raw.zeroize();
-        if fixture.schema != "atos-test-identities-v1"
+        if fixture.schema != "tos-service-test-identities-v1"
             || !fixture.test_only
             || fixture.algorithm != "Ed25519"
             || fixture.derivation != "TOS mnemonic PBKDF2-HMAC-SHA512 (TOS default seed)"
@@ -1154,7 +1154,7 @@ impl WalletTestFixtureImportCmd {
             seed.zeroize();
             anyhow::bail!("Test fixture public key does not match its mnemonic");
         }
-        let expected_proof = format!("ATOS_TEST_IDENTITY_V1:{}", self.role).into_bytes();
+        let expected_proof = format!("TOS_SERVICE_TEST_IDENTITY_V1:{}", self.role).into_bytes();
         let proof_message =
             hex::decode(&identity.proof_message_hex).context("decode fixture proof message")?;
         let proof_signature =

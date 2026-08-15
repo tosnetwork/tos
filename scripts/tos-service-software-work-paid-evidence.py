@@ -14,7 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(REPO / "scripts"), str(REPO / "test/tostester/src")]
 spec = importlib.util.spec_from_file_location(
-    "usdt", REPO / "scripts/atos-test-usdt-deploy.py"
+    "usdt", REPO / "scripts/tos-service-test-usdt-deploy.py"
 )
 usdt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(usdt)
@@ -200,14 +200,14 @@ def verify_receipt(
     report_path = verify_object(artifact_root, outcome["report"], ".json")
     if (
         outcome["artifact"].get("MediaType")
-        != "application/vnd.atos.software-artifact.v1+tar"
+        != "application/vnd.tos.service.software-artifact.v1+tar"
         or outcome["report"].get("MediaType")
-        != "application/vnd.atos.test-report.v1+json"
+        != "application/vnd.tos.service.test-report.v1+json"
     ):
         raise RuntimeError("execution outcome uses a non-canonical object media type")
     report = json.loads((artifact_root / report_path).read_text())
     if (
-        report.get("schema") != "atos.software-work-report.v1"
+        report.get("schema") != "tos.service.software-work-report.v1"
         or report.get("execution_id") != outcome["execution_id"]
         or report.get("result_digest") != outcome["result_digest"]
         or report.get("exit_code") != 0
@@ -388,7 +388,7 @@ def main():
         raise RuntimeError("paid settlement did not match Receipt and Quote")
 
     evidence = {
-        "schema": "atos.native.paid-software-work.v1",
+        "schema": "tos.service.paid-software-work.v1",
         "capability_version": quote["capability_version"],
         "capability_id": quote["capability_id"],
         "manifest_digest": quote["manifest_digest"],

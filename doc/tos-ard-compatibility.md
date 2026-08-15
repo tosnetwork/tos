@@ -6,7 +6,7 @@
 - Date: July 31, 2026
 - External specification: Agentic Resource Discovery (ARD) v0.9 Draft
 - ARD status at assessment time: proposal, not a frozen final standard
-- Applies to: `tos-protocol`, TOS ARD Registry, AI Edge Computing
+- Applies to: `tos-service-protocol`, TOS ARD Registry, AI Edge Computing
   Terminals, AI Sites, storage and commerce profiles, SDKs, and gateways
 
 ## Decision
@@ -351,7 +351,7 @@ registry must be an explicit allowlisted action.
 
 | Component | Owner |
 |---|---|
-| ARD compatibility profile, schema mapping, Registry, crawler, federation, and conformance | `tos-protocol` |
+| ARD compatibility profile, schema mapping, Registry, crawler, federation, and conformance | `tos-service-protocol` |
 | ARD catalog generation and TOS descriptor publishing | Edge Core plus profile repository |
 | AI and physical-terminal capability mapping | `tos-ai` |
 | Storage capability mapping | `tos-storage` |

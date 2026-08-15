@@ -4,14 +4,14 @@ Status: active cross-repository roadmap
 Last reviewed: 2026-08-02
 
 This document is the canonical program-level view of delivery across the TOS
-blockchain, `tos-protocol`, and `tos-ai`. It records implementation status,
+blockchain, `tos-service-protocol`, and `tos-ai`. It records implementation status,
 not product vision. Detailed requirements remain in
-[The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+[The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 and the linked architecture documents.
 
 Repository-level execution plans are maintained in:
 
-- [`tos-protocol/ROADMAP.md`](https://github.com/tosnetwork/tos-protocol/blob/main/ROADMAP.md)
+- [`tos-service-protocol/ROADMAP.md`](https://github.com/tosnetwork/tos-service-protocol/blob/main/ROADMAP.md)
 - [`tos-ai/ROADMAP.md`](https://github.com/tosnetwork/tos-ai/blob/main/ROADMAP.md)
 
 ## Status rules
@@ -87,7 +87,7 @@ advertise.
 - Opt-in `network=none` containerd execution with bounded CPU mode and an
   operator-fixed, exclusive-lease NVIDIA CDI path; reusable isolated-backend
   conformance tests prevent callers from selecting device identities.
-- `tos-ai` pinned to an immutable `tos-protocol` revision, with both repositories
+- `tos-ai` pinned to an immutable `tos-service-protocol` revision, with both repositories
   passing independent race tests and CI.
 
 ### Deployable non-streaming AI Edge integration
@@ -176,7 +176,7 @@ memory, public networking, ARD publication, and release governance. Deferred
 offline physical-control and fleet claims are not part of non-streaming v0.1.
 
 The canonical mutable status ledger is
-[`tos-protocol/docs/non-streaming-v0.1-production-gates.md`](https://github.com/tosnetwork/tos-protocol/blob/main/docs/non-streaming-v0.1-production-gates.md).
+[`tos-service-protocol/docs/non-streaming-v0.1-production-gates.md`](https://github.com/tosnetwork/tos-service-protocol/blob/main/docs/non-streaming-v0.1-production-gates.md).
 The repository ROADMAPs and this program roadmap summarize scope only; dated
 test reports remain historical evidence and do not maintain independent gate
 status.

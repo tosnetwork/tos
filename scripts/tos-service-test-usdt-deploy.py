@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
-from atos_test_identities import load_test_identity  # noqa: E402
+from tos_service_test_identities import load_test_identity  # noqa: E402
 from contract import WalletV1Blueprint  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
@@ -268,7 +268,7 @@ def main() -> int:
     parser.add_argument("--target-supply", type=int, default=DEFAULT_SUPPLY)
     parser.add_argument(
         "--test-identities",
-        default=str(REPO.parent / "atos-spec/test-vectors/atos-test-identities-v1.json"),
+        default=str(REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"),
     )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
@@ -455,7 +455,7 @@ def main() -> int:
         raise RuntimeError("testnet endpoints disagree on test USDT state")
 
     evidence = {
-        "schema": "atos.native.test-stablecoin-deployment.v1",
+        "schema": "tos.service.test-stablecoin-deployment.v1",
         "status": "active-test-only",
         "deployed_now": deployed_now,
         "buyer_wallet_deployed_now": buyer_deployed_now,
@@ -466,7 +466,7 @@ def main() -> int:
             "genesis_file_hash": canonical_hash(chain_heads[0]["init"]["file_hash"]),
         },
         "asset": {
-            "name": "ATOS Test USDT",
+            "name": "TOS Service Protocol Test USDT",
             "symbol": "tUSDT",
             "decimals": 6,
             "master_contract": master.to_str(),

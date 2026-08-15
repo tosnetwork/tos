@@ -18,7 +18,7 @@ TOS treats accounts, smart contracts, AI agents, tools, services, and tasks as a
 The AI actor model separates market trust, production capacity, and autonomous
 economic decision-making:
 
-> **`tos-protocol` establishes the trusted market, `tos-ai` supplies production
+> **`tos-service-protocol` establishes the trusted market, `tos-ai` supplies production
 > capacity, and OpenFox lets that capacity participate autonomously in the
 > market and earn revenue.**
 

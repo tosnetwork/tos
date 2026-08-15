@@ -11,13 +11,13 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SPEC = REPO.parent / "atos-spec"
+SPEC = REPO.parent / "tos-service-spec"
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
-from atos_test_identities import load_test_identity  # noqa: E402
+from tos_service_test_identities import load_test_identity  # noqa: E402
 
-MODULE_PATH = REPO / "scripts/atos-native-registry-local-gate-c.py"
+MODULE_PATH = REPO / "scripts/tos-service-native-registry-local-gate-c.py"
 module_spec = importlib.util.spec_from_file_location("native_gate_c", MODULE_PATH)
 gate = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(gate)
@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--network-id", default="tos-local-gate-c-20260814")
     parser.add_argument(
         "--test-identities",
-        default=str(SPEC / "test-vectors/atos-test-identities-v1.json"),
+        default=str(SPEC / "test-vectors/tos-service-test-identities-v1.json"),
     )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
@@ -53,7 +53,7 @@ def main():
     manifest_digest = bytes.fromhex(vector["expected"]["digest"].removeprefix("sha256:"))
 
     code = gate.Cell.one_from_boc(base64.b64decode(b"".join(
-        (REPO / "crypto/smartcont/atos-native-registry-v1.boc.base64").read_bytes().split())))
+        (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64").read_bytes().split())))
     if code.hash.hex() != gate.CODE_HASH:
         raise RuntimeError("frozen Native Registry code hash mismatch")
     config = gate.registry_config(root, file_hash, args.network_id, 0, code)
@@ -72,7 +72,7 @@ def main():
     initial_version = b"software-work-v1"
     initial_manifest_digest = bytes.fromhex("a08cd75a4166bc1df44b645a4a4ca687004d05428a3764ce95d3d152be858e38")
     capability_version = b"1.2.0"
-    capability_nonce = hashlib.sha256(b"atos-gate-d-software-work-capability-v1").digest()
+    capability_nonce = hashlib.sha256(b"tos-service-gate-d-software-work-capability-v1").digest()
     capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce,
         provider_id, initial_version, initial_manifest_digest)
     capability_init = gate.state_init(code, config, 2, capability_id)
@@ -134,7 +134,7 @@ def main():
         raise RuntimeError("three endpoints did not produce one Capability state vote")
 
     evidence = {
-        "schema": "atos.native.software-work-capability-deployment.v1",
+        "schema": "tos.service.software-work-capability-deployment.v1",
         "deployed_now": deployed_now,
         "network": {"network_id": args.network_id, "genesis_root_hash": "sha256:" + root.hex(), "genesis_file_hash": "sha256:" + file_hash.hex()},
         "capability_version": capability_version.decode(),

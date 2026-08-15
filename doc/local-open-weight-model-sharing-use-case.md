@@ -6,7 +6,7 @@
 - Status: proposed, non-normative
 - Date: 2026-07-31
 - Related architecture:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - Terminal architecture:
   [TOS AI Edge Computing Terminal](ai-edge-computing-terminal-architecture.md)
 - Related compute use case:
@@ -143,7 +143,7 @@ As a model consumer, I want to:
 | Location | Responsibility |
 |---|---|
 | `tos` core repository | consensus, VM, DNS primitives, wallet and crypto, chain query APIs, ADNL/DHT/RLDP, TOS Sites, and generic contract tooling |
-| `tos-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
+| `tos-service-protocol` repository | Edge Core, terminal/resource schema, authentication, quote/payment/receipt envelopes, ARD compatibility profile and Registry, crawling/federation, and conformance |
 | `tos-ai` repository | AI terminal distribution, AI Site and model schemas, resource probes, model manager, runtime adapters, scheduler, ARD catalog generation and model-specific ranking enrichment, SDKs, deployments, and conformance tests |
 | Terminal host | model weights, inference runtime, CPU/GPU/NPU resources, local policy, runtime key, bounded caches, `tos-edge-ai`, and optional TOS Sites/RLDP ingress |
 | TOS blockchain | service identity references, DNS, capability declarations, manifest commitments, payment, escrow, and settlement |
@@ -784,15 +784,15 @@ provider and evidence policy are suitable.
 | Capability Registry | Available/partial | TOS core contract; model vocabulary and integration in `tos-ai` |
 | Task Escrow, Dispute, and Proof Attestation | Available/partial | TOS core contracts; optional advanced profiles in `tos-ai` |
 | Raw ADNL access without `.tos` | Available | TOS networking; manual endpoint distribution |
-| Public `.tos` registration product | To build | `tos-protocol` application contracts, tooling, and deployment |
-| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-protocol`; model enrichment in `tos-ai` |
-| Terminal/resource schema and Edge Core | To build | `tos-protocol` |
+| Public `.tos` registration product | To build | `tos-service-protocol` application contracts, tooling, and deployment |
+| ARD catalog publisher and Registry | To build | base compatibility, crawl, federation, provenance, and search in `tos-service-protocol`; model enrichment in `tos-ai` |
+| Terminal/resource schema and Edge Core | To build | `tos-service-protocol` |
 | Tier 1 AI terminal distribution | To build | `tos-ai` |
 | Resource probes and benchmark evidence | To build | `tos-ai` |
 | AI Site and model-profile schemas | To build | `tos-ai/spec/` |
 | `tos-edge-ai` | To build | `tos-ai`, consuming released Edge Core |
 | Model manager, task scheduler, and runtime adapters | To build | `tos-ai` |
-| Session, quote, invocation, and streaming protocol | To build | base in `tos-protocol`, inference extension in `tos-ai` |
+| Session, quote, invocation, and streaming protocol | To build | base in `tos-service-protocol`, inference extension in `tos-ai` |
 | Token/media metering and inference receipts | To build | `tos-ai` |
 | Model-aware ARD enrichment and clients | To build | `tos-ai` |
 | License and artifact provenance validation | To build | `tos-ai` |

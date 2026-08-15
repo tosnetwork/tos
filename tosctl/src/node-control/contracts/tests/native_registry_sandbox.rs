@@ -4,7 +4,7 @@
  * Licensed under the GNU General Public License v3.0.
  */
 
-//! Executable lifecycle evidence for the ATOS Native Registry.
+//! Executable lifecycle evidence for the TOS Native Service Registry.
 //!
 //! These tests deliberately build the canonical cells directly. This keeps
 //! the contract test independent of the Go SDK while proving that the TVM
@@ -51,7 +51,7 @@ const ERR_TIMELOCK: i32 = 2212;
 
 fn code() -> Cell {
     let encoded: String =
-        include_str!("../../../../../crypto/smartcont/atos-native-registry-v1.boc.base64")
+        include_str!("../../../../../crypto/smartcont/tos-service-native-registry-v1.boc.base64")
             .split_whitespace()
             .collect();
     read_single_root_boc(base64_decode(&encoded).expect("base64 code"))

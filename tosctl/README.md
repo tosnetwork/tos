@@ -378,7 +378,7 @@ tosctl wallet mnemonic-generate --words 24 --version V3R2 --workchain 0 --subwal
 tosctl wallet mnemonic-import --name wallet1 --mnemonic-file mnemonic.txt --workchain 0 --subwallet-id 0
 
 # Generate actual signed test identities instead of placeholder key material
-tosctl wallet test-fixture --output atos-test-identities.json \
+tosctl wallet test-fixture --output tos-service-test-identities.json \
   --unsafe-test-secrets
 
 # Sign or verify exact protocol bytes (text, hex, and file inputs are exclusive)

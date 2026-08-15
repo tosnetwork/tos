@@ -1,7 +1,7 @@
 # TOS AI Edge Computing Terminal Architecture
 
 > Implementation note (2026-08-02): the local reference now includes bounded
-> cached ARD federation in `tos-protocol`, WorkerStreamService v0.2
+> cached ARD federation in `tos-service-protocol`, WorkerStreamService v0.2
 > terminal-result streaming across the private Worker boundary, and signed
 > bounded fleet-control/offline/canary state machines in `tos-ai`. These close
 > locally executable protocol and MOCK tests. They do not certify a public
@@ -14,7 +14,7 @@
 - Status: proposed, non-normative
 - Date: 2026-07-31
 - Related plan:
-  [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+  [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 
 ## Decision
 
@@ -44,7 +44,7 @@ operator. The proposed
 [OpenFox autonomous earning agent](openfox-autonomous-earning-agent.md) is a
 separate off-chain process that discovers candidate paid work, applies owner
 economic policy, and dispatches approved work to a terminal. In product terms,
-`tos-protocol` establishes the trusted market, `tos-ai` supplies production
+`tos-service-protocol` establishes the trusted market, `tos-ai` supplies production
 capacity, and OpenFox lets that capacity participate autonomously in the
 market and earn revenue.
 
@@ -107,7 +107,7 @@ industrial box into a small public GPU cloud.
 | Term | Meaning |
 |---|---|
 | **Terminal** | The complete owner-operated product instance, including Edge Core, one or more profile adapters, local policy, identity, observability, and hardware |
-| **Edge Core** | The generic protocol enforcement library and daemon foundation owned by `tos-protocol` |
+| **Edge Core** | The generic protocol enforcement library and daemon foundation owned by `tos-service-protocol` |
 | **AI adapter** | A `tos-ai` component that controls an inference runtime, model lifecycle, task admission, and AI-specific metering |
 | **Runtime** | Existing execution software such as vLLM, llama.cpp, Ollama, TensorRT-LLM, ONNX Runtime, OpenVINO, or MLX |
 | **Resource profile** | A measured description of usable CPU, RAM, accelerator, storage, network, thermal, and software capabilities |
@@ -126,19 +126,19 @@ Running a terminal must not grant consensus authority.
 | Location | Responsibility |
 |---|---|
 | `tos` | Consensus, VM, generic contracts and query APIs, wallet/crypto primitives, DNS, ADNL/DHT/RLDP, and TOS Sites |
-| `tos-protocol` | Base service protocol, ARD compatibility profile and Registry, Edge Core, chain adapter, terminal identity and resource schema, authentication, quotes, receipts, SDKs, and conformance |
+| `tos-service-protocol` | Base service protocol, ARD compatibility profile and Registry, Edge Core, chain adapter, terminal identity and resource schema, authentication, quotes, receipts, SDKs, and conformance |
 | `tos-ai` | General and physical AI terminal distributions, ARD catalog generation for AI profiles, AI capability vocabulary, resource probes and benchmarks, model/runtime adapters, task scheduler, signed updates, fleet management, AI client, packaging, and AI conformance |
 | `openfox` (proposed) | Autonomous task discovery, skill matching, planning, conservative cost/profit/risk evaluation, bounded protocol actions, execution coordination, and owner-facing accounting/audit |
 | Other vertical repositories | Storage and commerce adapters that may coexist on the same host but retain separate state machines and releases |
 | Terminal host | Drivers, runtimes, model artifacts, local data, runtime key, policy, caches, logs, and profile processes |
 
-Neither `tos-protocol` nor `tos-ai` belongs inside `validator-engine`. New
+Neither `tos-service-protocol` nor `tos-ai` belongs inside `validator-engine`. New
 accelerator support must not require a consensus upgrade.
 
 The preferred implementation split is:
 
 ```text
-tos-protocol
+tos-service-protocol
   ├── tos-edge-core
   └── tos-ard-registry
 
@@ -155,7 +155,7 @@ openfox
   ├── owner mandate and skill registry
   ├── bounded discovery and task state
   ├── planner, economics engine, and policy gate
-  ├── tos-protocol and tos-ai clients
+  ├── tos-service-protocol and tos-ai clients
   └── delegated signer, accounting, and audit interfaces
 ```
 
@@ -701,7 +701,7 @@ The first terminal release is complete only when:
 
 - [OpenFox Autonomous Earning Agent](openfox-autonomous-earning-agent.md)
 - [TOS Network Compatibility with Agentic Resource Discovery](tos-ard-compatibility.md)
-- [The TOS Protocol Implementation Plan](the-tos-protocol-implementation-plan.md)
+- [The TOS Protocol Implementation Plan](the-tos-service-protocol-implementation-plan.md)
 - [Managed AI Services on Local GPU Hardware](local-gpu-sharing-use-case.md)
 - [Site-Bound Physical AI Edge Terminal](physical-ai-edge-terminal-use-case.md)
 - [Locally Hosted Open-Weight Model Sharing](local-open-weight-model-sharing-use-case.md)

@@ -4,7 +4,7 @@
  * Licensed under the GNU General Public License v3.0.
  */
 
-//! End-to-end TVM evidence for the ATOS fixed-price stablecoin escrow.
+//! End-to-end TVM evidence for the TOS Service Protocol fixed-price stablecoin escrow.
 //! The release/refund legs execute through the same wallet code used by the
 //! local tUSDT deployment instead of substituting native TOS transfers.
 
@@ -56,7 +56,7 @@ fn frozen_code(file_name: &str) -> Cell {
 }
 
 fn escrow_code() -> Cell {
-    frozen_code("atos-stablecoin-escrow-v1.boc.base64")
+    frozen_code("tos-service-stablecoin-escrow-v1.boc.base64")
 }
 
 fn wallet_code() -> Cell {
@@ -125,10 +125,10 @@ impl Fixture {
     fn new() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
         bc.set_workchain(0);
-        let relayer = bc.treasury("atos-escrow-relayer", 1_000 * TOS).unwrap();
-        let buyer = bc.treasury("atos-escrow-buyer", 1_000 * TOS).unwrap();
-        let provider = bc.treasury("atos-escrow-provider", 1_000 * TOS).unwrap();
-        let master = bc.treasury("atos-test-usdt-master", 1_000 * TOS).unwrap();
+        let relayer = bc.treasury("tos-service-escrow-relayer", 1_000 * TOS).unwrap();
+        let buyer = bc.treasury("tos-service-escrow-buyer", 1_000 * TOS).unwrap();
+        let provider = bc.treasury("tos-service-escrow-provider", 1_000 * TOS).unwrap();
+        let master = bc.treasury("tos-service-test-usdt-master", 1_000 * TOS).unwrap();
         let signer = SigningKey::from_bytes(&[0x51; 32]);
         let wallet_code = wallet_code();
         let now = u64::from(bc.now());

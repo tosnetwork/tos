@@ -1,7 +1,7 @@
 {
   "schema": "tos.contract.release.v1",
-  "protocol": "atos_native_stablecoin_escrow_v1",
-  "source": "crypto/smartcont/atos-stablecoin-escrow-v1.fc",
+  "protocol": "tos_service_stablecoin_escrow_v1",
+  "source": "crypto/smartcont/tos-service-stablecoin-escrow-v1.fc",
   "code_hash": "tvm-cell-sha256:c9df2f743534978ad5b521aab8c09c081ff56769769c00ee9e68eac7c681a685",
   "boc_sha256": "sha256:fdbb52a25b9e43f50cd27e03bbd2020245e2d8b31b76b5ff203454bfbc645048",
   "boc_bytes": 2020
