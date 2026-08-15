@@ -237,6 +237,7 @@ wallet mnemonic-import   Recover a wallet from a TOS mnemonic
 wallet sign              Sign exact bytes with a configured Ed25519 wallet
 wallet verify            Verify an Ed25519 signature over exact bytes
 wallet test-fixture      Write real test-only identities to a mode-0600 JSON file
+wallet test-fixture-import Import one fully verified test-fixture role into custody
 wallet export            Export a wallet key (expert only)
 wallet rm                Remove a wallet
 wallet set-version       Migrate wallet contract version

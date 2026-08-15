@@ -43,7 +43,7 @@ use std::{
 use zeroize::Zeroize;
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage wallets")]
@@ -82,6 +82,8 @@ pub enum WalletAction {
     Verify(WalletVerifyCmd),
     /// Generate real test-only mnemonics, keys, addresses, and proof signatures
     TestFixture(WalletTestFixtureCmd),
+    /// Import one verified role from a tosctl test-only identity fixture
+    TestFixtureImport(WalletTestFixtureImportCmd),
     /// Export wallet (use with caution)
     Export(WalletExportCmd),
     /// Remove wallet
@@ -244,6 +246,19 @@ pub struct WalletTestFixtureCmd {
 }
 
 #[derive(clap::Args, Clone)]
+#[command(about = "Import one verified role from a tosctl test-only identity fixture")]
+pub struct WalletTestFixtureImportCmd {
+    #[arg(short = 'n', long = "name", help = "Wallet name")]
+    name: String,
+    #[arg(long, help = "Mode-0600 atos-test-identities-v1 JSON file")]
+    input: PathBuf,
+    #[arg(long, help = "Exact role to import")]
+    role: String,
+    #[arg(long, help = "Acknowledge importing a plaintext test-only secret")]
+    unsafe_test_secrets: bool,
+}
+
+#[derive(clap::Args, Clone)]
 #[command(about = "Export wallet (use with caution — exposes private material)")]
 pub struct WalletExportCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
@@ -344,6 +359,7 @@ impl WalletCmd {
             WalletAction::Sign(cmd) => cmd.run(&self.config).await,
             WalletAction::Verify(cmd) => cmd.run().await,
             WalletAction::TestFixture(cmd) => cmd.run().await,
+            WalletAction::TestFixtureImport(cmd) => cmd.run(&self.config).await,
             WalletAction::Export(cmd) => cmd.run(&self.config).await,
             WalletAction::Rm(cmd) => cmd.run(&self.config).await,
             WalletAction::SetVersion(cmd) => cmd.run(&self.config).await,
@@ -846,48 +862,50 @@ impl WalletMnemonicImportCmd {
         };
         let mut seed = super::tos_mnemonic::private_seed(phrase.trim(), "")?;
         phrase.zeroize();
-        let path = Path::new(config_path);
-        let (mut config, vault) = super::utils::load_config_vault(path).await?;
-        if config.wallets.contains_key(&self.name) {
-            seed.zeroize();
-            anyhow::bail!("Wallet '{}' already exists in config", self.name);
-        }
-
-        let secret_name = format!("wallet-{}", self.name);
-        let secret_id = secret_name.as_str().into();
-        let metadata = secrets_vault::types::metadata::Metadata::new(
-            Some(&secret_id),
-            secrets_vault::types::algorithm::Algorithm::Ed25519,
-            false,
-        );
-        let secret = secrets_vault::types::secret::Secret::from_raw_data(
-            &seed,
-            metadata,
-            AutoCryptoFactory {}.new_crypto()?,
-        )
-        .await?;
-        seed.zeroize();
-        vault.put(&secret, secrets_vault::types::store_mode::StoreMode::CreateOrReplace).await?;
-        vault.flush().await?;
-
         let mut wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
-        wallet.key = common::app_config::KeyConfig::VaultKey { name: secret_name.clone() };
-        config.wallets.insert(self.name.clone(), wallet.clone());
-        super::utils::save_config(&config, path)?;
-
-        let public_key = secret
-            .as_keypair()?
-            .public_key()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Public key not available"))?;
-        println!(
-            "{} Wallet '{}' recovered at {}",
-            "OK".green().bold(),
-            self.name,
-            friendly_address(&wallet, &public_key)?
-        );
+        let address = store_wallet_seed(config_path, &self.name, &mut wallet, &mut seed).await?;
+        println!("{} Wallet '{}' recovered at {}", "OK".green().bold(), self.name, address);
         Ok(())
     }
+}
+
+async fn store_wallet_seed(
+    config_path: &str,
+    name: &str,
+    wallet: &mut WalletConfig,
+    seed: &mut [u8; 32],
+) -> anyhow::Result<String> {
+    let path = Path::new(config_path);
+    let (mut config, vault) = super::utils::load_config_vault(path).await?;
+    if config.wallets.contains_key(name) {
+        seed.zeroize();
+        anyhow::bail!("Wallet '{name}' already exists in config");
+    }
+    let secret_name = format!("wallet-{name}");
+    let secret_id = secret_name.as_str().into();
+    let metadata = secrets_vault::types::metadata::Metadata::new(
+        Some(&secret_id),
+        secrets_vault::types::algorithm::Algorithm::Ed25519,
+        false,
+    );
+    let secret = secrets_vault::types::secret::Secret::from_raw_data(
+        seed,
+        metadata,
+        AutoCryptoFactory {}.new_crypto()?,
+    )
+    .await?;
+    seed.zeroize();
+    vault.put(&secret, secrets_vault::types::store_mode::StoreMode::NewOnly).await?;
+    vault.flush().await?;
+    wallet.key = common::app_config::KeyConfig::VaultKey { name: secret_name };
+    config.wallets.insert(name.to_owned(), wallet.clone());
+    super::utils::save_config(&config, path)?;
+    let public_key = secret
+        .as_keypair()?
+        .public_key()
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Public key not available"))?;
+    friendly_address(wallet, &public_key)
 }
 
 fn exact_message(input: &ExactMessageArgs) -> anyhow::Result<Vec<u8>> {
@@ -1052,6 +1070,117 @@ impl WalletTestFixtureCmd {
             "OK".green().bold(),
             self.roles.len(),
             self.output.display()
+        );
+        Ok(())
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestIdentityInput {
+    role: String,
+    mnemonic: String,
+    private_seed_hex: String,
+    public_key_hex: String,
+    address: String,
+    proof_message_hex: String,
+    proof_signature_hex: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestIdentityFixtureInput {
+    schema: String,
+    test_only: bool,
+    warning: String,
+    algorithm: String,
+    derivation: String,
+    wallet_version: String,
+    workchain: i32,
+    subwallet_id: u32,
+    identities: Vec<TestIdentityInput>,
+}
+
+impl WalletTestFixtureImportCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        if !self.unsafe_test_secrets {
+            anyhow::bail!(
+                "Refusing to import plaintext test secrets without --unsafe-test-secrets"
+            );
+        }
+        let metadata = std::fs::symlink_metadata(&self.input)
+            .with_context(|| format!("inspect test fixture {}", self.input.display()))?;
+        if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > 1 << 20 {
+            anyhow::bail!("Test fixture must be a bounded regular file");
+        }
+        #[cfg(unix)]
+        if metadata.mode() & 0o077 != 0 || metadata.uid() != unsafe { libc::geteuid() } {
+            anyhow::bail!("Test fixture must be owned by the current user with mode 0600");
+        }
+        let mut raw = std::fs::read(&self.input)
+            .with_context(|| format!("read test fixture {}", self.input.display()))?;
+        let fixture: TestIdentityFixtureInput = serde_json::from_slice(&raw)
+            .context("decode strict atos-test-identities-v1 fixture")?;
+        raw.zeroize();
+        if fixture.schema != "atos-test-identities-v1"
+            || !fixture.test_only
+            || fixture.algorithm != "Ed25519"
+            || fixture.derivation != "TOS mnemonic PBKDF2-HMAC-SHA512 (TOS default seed)"
+            || !fixture.warning.contains("PLAINTEXT TEST SECRETS")
+            || fixture.identities.is_empty()
+        {
+            anyhow::bail!("Unsupported or non-test identity fixture");
+        }
+        let mut matches = fixture.identities.into_iter().filter(|value| value.role == self.role);
+        let mut identity =
+            matches.next().ok_or_else(|| anyhow::anyhow!("Role '{}' not found", self.role))?;
+        if matches.next().is_some() {
+            anyhow::bail!("Role '{}' is duplicated", self.role);
+        }
+        let mut seed = super::tos_mnemonic::private_seed(identity.mnemonic.trim(), "")?;
+        identity.mnemonic.zeroize();
+        let mut encoded_seed =
+            hex::decode(&identity.private_seed_hex).context("decode fixture private seed")?;
+        identity.private_seed_hex.zeroize();
+        let seed_matches = encoded_seed.as_slice() == seed.as_slice();
+        encoded_seed.zeroize();
+        if !seed_matches {
+            seed.zeroize();
+            anyhow::bail!("Test fixture seed does not match its mnemonic");
+        }
+        let key = ed25519_create_private_key(&seed)?;
+        let public_key = key.verifying_key();
+        if hex::decode(&identity.public_key_hex).ok().as_deref() != Some(public_key.as_slice()) {
+            seed.zeroize();
+            anyhow::bail!("Test fixture public key does not match its mnemonic");
+        }
+        let expected_proof = format!("ATOS_TEST_IDENTITY_V1:{}", self.role).into_bytes();
+        let proof_message =
+            hex::decode(&identity.proof_message_hex).context("decode fixture proof message")?;
+        let proof_signature =
+            hex::decode(&identity.proof_signature_hex).context("decode fixture proof signature")?;
+        if proof_message != expected_proof
+            || ed25519_verify(&public_key, &proof_message, &proof_signature).is_err()
+        {
+            seed.zeroize();
+            anyhow::bail!("Test fixture proof is invalid");
+        }
+        let mut wallet = parse_wallet_identity(
+            &fixture.wallet_version,
+            fixture.workchain,
+            fixture.subwallet_id,
+        )?;
+        if friendly_address(&wallet, &public_key)? != identity.address {
+            seed.zeroize();
+            anyhow::bail!("Test fixture address does not match its key and wallet parameters");
+        }
+        let address = store_wallet_seed(config_path, &self.name, &mut wallet, &mut seed).await?;
+        println!(
+            "{} Test-only role '{}' imported as wallet '{}' at {}",
+            "OK".green().bold(),
+            self.role,
+            self.name,
+            address
         );
         Ok(())
     }
@@ -1359,7 +1488,9 @@ impl WalletSendCmd {
 
 #[cfg(test)]
 mod wallet_send_cli_tests {
-    use super::{WalletBroadcastPreparedCmd, WalletLsCmd, WalletSendCmd};
+    use super::{
+        WalletBroadcastPreparedCmd, WalletLsCmd, WalletSendCmd, WalletTestFixtureImportCmd,
+    };
     use clap::{Args, Command, FromArgMatches};
 
     #[test]
@@ -1423,6 +1554,28 @@ mod wallet_send_cli_tests {
             .expect("parsed prepared broadcast args");
         assert_eq!(parsed.message_boc, "te6ccgEBAQEAAgAAAA==");
         assert!(parsed.yes);
+    }
+
+    #[test]
+    fn parses_test_fixture_role_import() {
+        let command = WalletTestFixtureImportCmd::augment_args(Command::new("test-fixture-import"));
+        let matches = command
+            .try_get_matches_from([
+                "test-fixture-import",
+                "--name",
+                "buyer",
+                "--input",
+                "/tmp/test-identities.json",
+                "--role",
+                "test-buyer",
+                "--unsafe-test-secrets",
+            ])
+            .expect("test fixture import flags must parse");
+        let parsed = WalletTestFixtureImportCmd::from_arg_matches(&matches)
+            .expect("parsed test fixture import args");
+        assert_eq!(parsed.name, "buyer");
+        assert_eq!(parsed.role, "test-buyer");
+        assert!(parsed.unsafe_test_secrets);
     }
 
     #[test]
