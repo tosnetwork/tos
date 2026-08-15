@@ -14,7 +14,7 @@
 //! contract reserving its own storage rent) could not be tested at all.
 
 use chain_block::{Cell, MsgAddressInt, Serializable, StateInit};
-use tos_sandbox::{compile_func_with_stdlib, Blockchain, GetMethodResult, MessageBuilder};
+use tos_sandbox::{Blockchain, GetMethodResult, MessageBuilder, compile_func_with_stdlib};
 use tos_vm::stack::StackItem;
 
 const TOS: u64 = 1_000_000_000;
@@ -83,7 +83,12 @@ fn v6_fee_primitives_execute_against_the_default_sandbox_config() {
         run(
             &bc,
             "storage_fee",
-            vec![StackItem::int(wc), StackItem::int(3600), StackItem::int(10_000), StackItem::int(30)],
+            vec![
+                StackItem::int(wc),
+                StackItem::int(3600),
+                StackItem::int(10_000),
+                StackItem::int(30),
+            ],
             &format!("get_storage_fee(wc={wc})"),
         );
         run(

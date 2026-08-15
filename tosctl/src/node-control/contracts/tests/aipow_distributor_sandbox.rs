@@ -680,9 +680,15 @@ fn a_predeployed_instance_cannot_claim_before_the_operator_funds_it() {
     let arg = vec![tos_vm::stack::StackItem::int(
         tos_vm::stack::integer::IntegerData::from_unsigned_bytes_be([0x77; 32]),
     )];
-    let stack = bc.run_get_method(&distributor, "get_claim", arg).unwrap().expect_success().stack.clone();
-    let claim = AipowDistributorContract::decode_claim(&Fixture::parse_stack(&stack)).unwrap().unwrap();
-    assert_eq!(claim.claimed_at, u64::from(issuance), "vesting is anchored at issuance, not pre-deploy");
+    let stack =
+        bc.run_get_method(&distributor, "get_claim", arg).unwrap().expect_success().stack.clone();
+    let claim =
+        AipowDistributorContract::decode_claim(&Fixture::parse_stack(&stack)).unwrap().unwrap();
+    assert_eq!(
+        claim.claimed_at,
+        u64::from(issuance),
+        "vesting is anchored at issuance, not pre-deploy"
+    );
 
     // A second operator funding does not reset the activation clock.
     send(&mut bc, operator.address(), POOL, Cell::default()).expect_success();

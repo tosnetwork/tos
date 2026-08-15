@@ -285,7 +285,10 @@ fn announce_requires_the_commit_bond_to_be_escrowed() {
         .and_then(|a| a.balance())
         .and_then(|c| c.coins.as_u64())
         .unwrap_or(0);
-    assert!(bal >= COMMIT_BOND, "the commit bond is escrowed after a funded announce (balance {bal})");
+    assert!(
+        bal >= COMMIT_BOND,
+        "the commit bond is escrowed after a funded announce (balance {bal})"
+    );
 }
 
 #[test]
