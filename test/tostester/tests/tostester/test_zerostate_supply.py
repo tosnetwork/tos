@@ -57,6 +57,21 @@ def _config(state: ShardStateUnsplit, param: int, scheme):
     return scheme.deserialize(state.custom.config.config[param].copy())
 
 
+def _create_state_command(script: Path) -> list[str]:
+    """Run create-state against source scripts and generated contract includes."""
+    return [
+        str(BUILD_DIR / "crypto/create-state"),
+        "-I",
+        str(REPO / "crypto/fift/lib"),
+        "-I",
+        str(BUILD_DIR / "crypto/smartcont"),
+        "-I",
+        str(REPO / "crypto/smartcont"),
+        "-s",
+        str(script),
+    ]
+
+
 def test_genesis_simplex_parameters_use_v2_with_ton_mainnet_pacing():
     simplex = SimplexConsensusConfig()
     actual = (
@@ -243,15 +258,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         b"".join(key.public_key.key for key in keys)
     )
 
-    command = [
-        str(BUILD_DIR / "crypto/create-state"),
-        "-I",
-        str(REPO / "crypto/fift/lib"),
-        "-I",
-        str(REPO / "crypto/smartcont"),
-        "-s",
-        str(REPO / "crypto/smartcont/gen-zerostate.fif"),
-    ]
+    command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
@@ -318,15 +325,7 @@ def test_aipow_native_issuance_is_inert_at_genesis(tmp_path):
     (tmp_path / "validator-keys.pub").write_bytes(
         b"".join(key.public_key.key for key in keys)
     )
-    command = [
-        str(BUILD_DIR / "crypto/create-state"),
-        "-I",
-        str(REPO / "crypto/fift/lib"),
-        "-I",
-        str(REPO / "crypto/smartcont"),
-        "-s",
-        str(REPO / "crypto/smartcont/gen-zerostate.fif"),
-    ]
+    command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
@@ -358,15 +357,7 @@ def test_genesis_refuses_capaipow_without_parameters(tmp_path):
     (tmp_path / "validator-keys.pub").write_bytes(
         b"".join(key.public_key.key for key in keys)
     )
-    command = [
-        str(BUILD_DIR / "crypto/create-state"),
-        "-I",
-        str(REPO / "crypto/fift/lib"),
-        "-I",
-        str(REPO / "crypto/smartcont"),
-        "-s",
-        str(bad_script),
-    ]
+    command = _create_state_command(bad_script)
     failed = subprocess.run(
         command, cwd=tmp_path, check=False, capture_output=True, text=True
     )
@@ -404,15 +395,7 @@ def _run_genesis_with_aipow(tmp_path, params_block, *, enable_capaipow=True):
     (tmp_path / "validator-keys.pub").write_bytes(
         b"".join(key.public_key.key for key in keys)
     )
-    command = [
-        str(BUILD_DIR / "crypto/create-state"),
-        "-I",
-        str(REPO / "crypto/fift/lib"),
-        "-I",
-        str(REPO / "crypto/smartcont"),
-        "-s",
-        str(script),
-    ]
+    command = _create_state_command(script)
     return subprocess.run(command, cwd=tmp_path, check=False, capture_output=True, text=True)
 
 
