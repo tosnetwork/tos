@@ -131,6 +131,22 @@ def transaction(info):
         raise RuntimeError("endpoint omitted the account transaction identity") from error
 
 
+def wallet_at_checkpoint(endpoint: str, address, checkpoint: int):
+    info = usdt.rpc(
+        endpoint, "getAddressInformation", address=address.to_str(), seqno=checkpoint
+    )
+    if info["block_id"]["seqno"] != checkpoint:
+        raise RuntimeError(f"non-finalized account response from {endpoint}")
+    if info.get("state") == "uninitialized":
+        if info.get("balance") != "0" or info.get("data"):
+            raise RuntimeError("absent wallet returned non-zero state")
+        return info, None, {"balance": "0"}
+    if info.get("state") != "active":
+        raise RuntimeError("provider wallet is neither absent nor active")
+    data = usdt.Cell.one_from_boc(base64.b64decode(info["data"]))
+    return info, data, usdt.wallet_view(data)
+
+
 def verify_object(root: Path, descriptor: dict, suffix: str) -> str:
     expected = descriptor["Digest"]
     if not DIGEST_PATTERN.fullmatch(expected):
@@ -249,6 +265,7 @@ def main():
     parser.add_argument("--endpoint", action="append", required=True)
     parser.add_argument("--quorum", type=int, default=2)
     parser.add_argument("--funding-query-id", type=int, required=True)
+    parser.add_argument("--funded-checkpoint", type=int, required=True)
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
     if args.quorum < 2 or len(set(args.endpoint)) < args.quorum:
@@ -266,15 +283,27 @@ def main():
     receipt_commitment, receipt, artifacts = verify_receipt(
         outcome, release, vector, Path(args.artifact_root), escrow
     )
-    if release["query_id"] <= 0 or args.funding_query_id <= 0:
+    if (
+        release["query_id"] <= 0
+        or args.funding_query_id <= 0
+        or args.funded_checkpoint <= 0
+    ):
         raise RuntimeError("query IDs must be non-zero")
 
     checkpoint = min(
         usdt.rpc(endpoint, "getMasterchainInfo")["last"]["seqno"]
         for endpoint in args.endpoint
     )
+    if args.funded_checkpoint >= checkpoint:
+        raise RuntimeError("funded checkpoint must precede the settlement checkpoint")
     observations, votes = [], Counter()
     for endpoint in args.endpoint:
+        funded_escrow_info, _, funded_escrow_data = usdt.endpoint_account(
+            endpoint, escrow, args.funded_checkpoint
+        )
+        funded_provider_info, funded_provider_data, provider_before = wallet_at_checkpoint(
+            endpoint, provider_wallet, args.funded_checkpoint
+        )
         escrow_info, _, escrow_data = usdt.endpoint_account(endpoint, escrow, checkpoint)
         buyer_info, _, buyer_data = usdt.endpoint_account(
             endpoint, buyer_wallet, checkpoint
@@ -283,9 +312,19 @@ def main():
             endpoint, provider_wallet, checkpoint
         )
         state = escrow_view(escrow_data)
+        funded_state = escrow_view(funded_escrow_data)
         buyer = usdt.wallet_view(buyer_data)
         provider = usdt.wallet_view(provider_data)
+        funded_provider_hash = (
+            funded_provider_data.hash.hex() if funded_provider_data is not None else "absent"
+        )
         vote = (
+            funded_escrow_info["block_id"]["root_hash"],
+            funded_escrow_info["block_id"]["file_hash"],
+            funded_escrow_data.hash.hex(),
+            funded_provider_hash,
+            json.dumps(funded_state, sort_keys=True),
+            provider_before["balance"],
             escrow_info["block_id"]["root_hash"],
             escrow_info["block_id"]["file_hash"],
             escrow_data.hash.hex(),
@@ -299,12 +338,26 @@ def main():
         observations.append(
             {
                 "endpoint": endpoint,
+                "funded_checkpoint": args.funded_checkpoint,
+                "funded_block_root_hash": vote[0],
+                "funded_block_file_hash": vote[1],
+                "funded_escrow_data_hash": "tvm-cell-sha256:" + vote[2],
+                "funded_provider_wallet_data_hash": (
+                    "tvm-cell-sha256:" + vote[3] if vote[3] != "absent" else None
+                ),
+                "funded_escrow": funded_state,
+                "provider_balance_before_atomic": provider_before["balance"],
+                "provider_wallet_transaction_before": (
+                    transaction(funded_provider_info)
+                    if funded_provider_data is not None
+                    else None
+                ),
                 "checkpoint": checkpoint,
-                "block_root_hash": vote[0],
-                "block_file_hash": vote[1],
-                "escrow_data_hash": "tvm-cell-sha256:" + vote[2],
-                "buyer_wallet_data_hash": "tvm-cell-sha256:" + vote[3],
-                "provider_wallet_data_hash": "tvm-cell-sha256:" + vote[4],
+                "block_root_hash": vote[6],
+                "block_file_hash": vote[7],
+                "escrow_data_hash": "tvm-cell-sha256:" + vote[8],
+                "buyer_wallet_data_hash": "tvm-cell-sha256:" + vote[9],
+                "provider_wallet_data_hash": "tvm-cell-sha256:" + vote[10],
                 "escrow": state,
                 "buyer_balance_atomic": buyer["balance"],
                 "provider_balance_atomic": provider["balance"],
@@ -315,15 +368,22 @@ def main():
     winning_vote, count = votes.most_common(1)[0]
     if count < args.quorum:
         raise RuntimeError("endpoints did not reach the required finalized-state quorum")
-    winning_state = json.loads(winning_vote[5])
+    funded_state = json.loads(winning_vote[4])
+    winning_state = json.loads(winning_vote[11])
     amount = quote["maximum_atomic_amount"]
     if (
-        winning_state["status"] != 2
+        funded_state["status"] != 1
+        or funded_state["funded_atomic"] != amount
+        or funded_state["settled_atomic"] != "0"
+        or funded_state["receipt_commitment"]
+        != "tvm-cell-sha256:" + "0" * 64
+        or funded_state["pending_query_id"] != 0
+        or winning_state["status"] != 2
         or winning_state["funded_atomic"] != amount
         or winning_state["settled_atomic"] != amount
         or winning_state["receipt_commitment"] != receipt_commitment
         or winning_state["pending_query_id"] != release["query_id"]
-        or winning_vote[7] != amount
+        or int(winning_vote[13]) - int(winning_vote[5]) != int(amount)
     ):
         raise RuntimeError("paid settlement did not match Receipt and Quote")
 
@@ -337,6 +397,7 @@ def main():
         "funding": {
             "query_id": args.funding_query_id,
             "amount_atomic": amount,
+            "finalized_checkpoint": args.funded_checkpoint,
         },
         "execution": outcome,
         "release": release,
