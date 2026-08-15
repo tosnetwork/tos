@@ -134,6 +134,7 @@ add_test(
     NAME test-consensus-simplex2-genesis-config
     COMMAND $<TARGET_FILE:create-state>
             -I ${CMAKE_SOURCE_DIR}/crypto/fift/lib
+            -I ${CMAKE_BINARY_DIR}/crypto/smartcont
             -I ${CMAKE_SOURCE_DIR}/crypto/smartcont
             -s ${CMAKE_CURRENT_SOURCE_DIR}/simplex2-genesis-config.fif
 )

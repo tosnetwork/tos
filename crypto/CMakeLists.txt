@@ -601,6 +601,16 @@ endif()
 add_executable(create-state block/create-state.cpp)
 target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
+  # CreateState.fif preloads these generated contracts.  Keep create-state
+  # independently buildable instead of relying on the default ALL target to
+  # have populated the build-tree smartcont/auto directory first.
+  add_dependencies(create-state
+    gen_fif_smartcont_auto_wallet_code
+    gen_fif_smartcont_auto_restricted_wallet_code
+    gen_fif_smartcont_auto_restricted_wallet2_code
+    gen_fif_smartcont_auto_restricted_wallet3_code)
+endif()
 if (INTERNAL_COMPILE)
   target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
 else()
