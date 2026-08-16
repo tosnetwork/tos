@@ -593,6 +593,10 @@ class FullNode(Network.Node):
             validator=self._get_or_generate_zerostate().as_validator_config(),
         )
 
+    @property
+    def liteserver_config(self):
+        return self._liteserver_config
+
     async def toslib_client(self) -> ToslibClient:
         if self._client:
             return self._client

@@ -150,6 +150,9 @@ async def main(rpc_addr, control_addr, num_validators, workdir, boot_timeout, de
             node.announce_to(dht)
             nodes.append(node)
 
+        lite_client_config = workdir / "lite-client.json"
+        lite_client_config.write_text(nodes[0].liteserver_config.to_json())
+
         rpc_host, rpc_port_text = rpc_addr.rsplit(":", 1)
         rpc_addresses = [f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)]
         node_tasks = [asyncio.create_task(dht.run())]
@@ -170,6 +173,7 @@ async def main(rpc_addr, control_addr, num_validators, workdir, boot_timeout, de
         print(" TOS LOCALNET READY")
         print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
         print(f"   control  : http://{control_addr} (localhost test faucet only)")
+        print(f"   lite     : {lite_client_config}")
         print(f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}")
         print(f"   emulator : http://10.0.2.2:{port}")
         print("=" * 70)

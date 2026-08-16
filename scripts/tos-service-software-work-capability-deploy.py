@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -63,55 +64,41 @@ def main():
     address_file = gate.read_private(Path(args.state_dir) / "main-wallet.addr")
     payer = gate.Address((int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32]))
     provider_key = load_test_identity(Path(args.test_identities), "provider-controller")
-    provider_id = bytes.fromhex("5ad89bcf2d25bd5e7a53e36e976851fd1b937d70c2f0db80a18f7cbafcca1be4")
-    provider_address = gate.Address("EQCrLBpT4SQxrXvpVNcdVRjlkZGunO72m5L3q7ZiHcOncKrZ")
+    provider_nonce = bytes([0x72]) * 32
+    provider_policy = gate.policy(provider_key)
+    provider_id = gate.agent_identity(root, file_hash, args.network_id, provider_nonce, provider_policy)
+    provider_init = gate.state_init(code, config, 1, provider_id)
+    provider_address = gate.address_of(0, provider_init)
     provider_state = gate.state_view(gate.account_data(config_path, provider_address.to_str()))
-    if provider_state["tombstone"] or provider_state["generation"] != 1 or provider_state["sequence"] != 2:
-        raise RuntimeError("provider Agent is not on the migrated test-identity policy")
+    if provider_state["tombstone"] or provider_state["generation"] != 1 or provider_state["sequence"] != 1:
+        raise RuntimeError("active provider Agent from the current local Gate C rehearsal is absent")
 
-    initial_version = b"software-work-v1"
-    initial_manifest_digest = bytes.fromhex("a08cd75a4166bc1df44b645a4a4ca687004d05428a3764ce95d3d152be858e38")
     capability_version = b"1.2.0"
-    capability_nonce = hashlib.sha256(b"tos-service-gate-d-software-work-capability-v1").digest()
+    capability_nonce = hashlib.sha256(b"tos-service-local-software-work-capability-v1").digest()
     capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce,
-        provider_id, initial_version, initial_manifest_digest)
+        provider_id, capability_version, manifest_digest)
     capability_init = gate.state_init(code, config, 2, capability_id)
     capability_address = gate.address_of(0, capability_init)
     deployed_now = False
     try:
         view = gate.state_view(gate.account_data(config_path, capability_address.to_str()))
     except Exception:
-        raise RuntimeError("the original software-work Capability is absent")
-    if view["generation"] != 1 or view["sequence"] not in (1, 2, 3) or view["tombstone"] or view["owner_id"] != "agent_" + provider_id.hex():
-        raise RuntimeError("existing Capability does not match the expected lineage")
-    if view["sequence"] == 1:
-        current = gate.native_state(gate.account_data(config_path, capability_address.to_str()))
-        legacy_version = b"1.1.0"
-        legacy_manifest_digest = bytes.fromhex("c3155c8b56939dcaa3884e49035fc32b723fe64891ef8b7f1a50ac56468845c2")
-        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(legacy_version).digest())
-                   .store_bytes(legacy_manifest_digest).store_ref(gate.Builder().store_bytes(legacy_version).end_cell()).end_cell())
-        action = gate.action(gate.ADD_CAPABILITY_VERSION, 2, 1, 2, capability_id,
-            current.hash, 0x83, signed_domain, details)
-        query = int.from_bytes(action.hash[:8], "big")
-        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 5 * gate.NANO,
+        details = (gate.Builder().store_bytes(hashlib.sha256(capability_version).digest())
+                   .store_bytes(manifest_digest)
+                   .store_ref(gate.Builder().store_bytes(capability_version).end_cell()).end_cell())
+        payload = (gate.Builder().store_bytes(capability_nonce).store_bytes(provider_id)
+                   .store_ref(details).end_cell())
+        query = int(time.time_ns()) & ((1 << 64) - 1)
+        action = gate.action(gate.REGISTER_CAPABILITY, 2, 1, 1, capability_id,
+            bytes(32), 0x83, signed_domain, payload)
+        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 20 * gate.NANO,
             gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action,
                 gate.signature_set(provider_key, action), gate.signature_set(None, action)))
-        view = gate.wait_state(config_path, capability_address.to_str(), 1, 2)
+        view = gate.wait_state(config_path, capability_address.to_str(), 1, 1)
         deployed_now = True
-    if view["sequence"] == 2:
-        current = gate.native_state(gate.account_data(config_path, capability_address.to_str()))
-        details = (gate.Builder().store_bytes(provider_id).store_bytes(hashlib.sha256(capability_version).digest())
-                   .store_bytes(manifest_digest).store_ref(gate.Builder().store_bytes(capability_version).end_cell()).end_cell())
-        action = gate.action(gate.ADD_CAPABILITY_VERSION, 2, 1, 3, capability_id,
-            current.hash, 0x84, signed_domain, details)
-        query = int.from_bytes(action.hash[:8], "big")
-        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 5 * gate.NANO,
-            gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action,
-                gate.signature_set(provider_key, action), gate.signature_set(None, action)))
-        view = gate.wait_state(config_path, capability_address.to_str(), 1, 3)
-        deployed_now = True
-    if view["sequence"] != 3:
-        raise RuntimeError("software-work Capability version was not finalized")
+    if (view["generation"] != 1 or view["sequence"] != 1 or view["tombstone"]
+            or view["owner_id"] != "agent_" + provider_id.hex()):
+        raise RuntimeError("software-work Capability does not match the expected current lineage")
 
     endpoints = [f"http://127.0.0.1:{port}/jsonRPC" for port in (8011, 8012, 8013)]
     heads = [rpc(endpoint, "getMasterchainInfo") for endpoint in endpoints]

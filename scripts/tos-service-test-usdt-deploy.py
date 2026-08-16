@@ -36,6 +36,7 @@ CONTRACT_DIR = REPO / "crypto/smartcont/reference/usdt-jetton-master/contracts"
 FUNC = REPO / "build/crypto/func"
 FIFT = REPO / "build/crypto/fift"
 FIFT_LIB = REPO / "crypto/fift/lib"
+LITE_CLIENT = Path(os.environ.get("TOS_LITE_CLIENT", "/usr/local/bin/tos-lite-client"))
 
 OP_MINT = 0x642B7D07
 OP_INTERNAL_TRANSFER = 0x178D4519
@@ -57,7 +58,7 @@ def read_private(path: Path) -> bytes:
 
 
 def lite(config: Path, *commands: str, timeout: int = 30) -> str:
-    argv = ["/usr/local/bin/tos-lite-client", "-C", str(config), "-v", "0"]
+    argv = [str(LITE_CLIENT), "-C", str(config), "-v", "0"]
     for command in commands:
         argv += ["-c", command]
     argv += ["-c", "quit"]

@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -55,6 +56,7 @@ REVOKE_CAPABILITY = 10
 
 NANO = 1_000_000_000
 CODE_HASH = "600f2fda83462bc86a1c32af930c35a4fc8f80f1d2966f5593ceba217a91ffa0"
+LITE_CLIENT = Path(os.environ.get("TOS_LITE_CLIENT", "/usr/local/bin/tos-lite-client"))
 
 
 def read_private(path: Path) -> bytes:
@@ -67,7 +69,7 @@ def read_private(path: Path) -> bytes:
 
 
 def lite(config: Path, *commands: str, timeout: int = 30) -> str:
-    argv = ["/usr/local/bin/tos-lite-client", "-C", str(config), "-v", "0"]
+    argv = [str(LITE_CLIENT), "-C", str(config), "-v", "0"]
     for command in commands:
         argv += ["-c", command]
     argv += ["-c", "quit"]

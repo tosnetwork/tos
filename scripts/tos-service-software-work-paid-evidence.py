@@ -267,6 +267,11 @@ def main():
     parser.add_argument("--funding-query-id", type=int, required=True)
     parser.add_argument("--funded-checkpoint", type=int, required=True)
     parser.add_argument("--evidence", required=True)
+    parser.add_argument(
+        "--local-rehearsal",
+        action="store_true",
+        help="mark same-host endpoint evidence as a local rehearsal, never as independent acceptance",
+    )
     args = parser.parse_args()
     if args.quorum < 2 or len(set(args.endpoint)) < args.quorum:
         raise RuntimeError("independent verification requires distinct quorum endpoints")
@@ -388,7 +393,11 @@ def main():
         raise RuntimeError("paid settlement did not match Receipt and Quote")
 
     evidence = {
-        "schema": "tos.service.paid-software-work.v1",
+        "schema": (
+            "tos.service.local-paid-software-work-rehearsal.v1"
+            if args.local_rehearsal
+            else "tos.service.paid-software-work.v1"
+        ),
         "capability_version": quote["capability_version"],
         "capability_id": quote["capability_id"],
         "manifest_digest": quote["manifest_digest"],
@@ -407,8 +416,19 @@ def main():
         "quorum": args.quorum,
         "quorum_votes": count,
         "endpoint_verification": observations,
-        "verdict": "PASS_INDEPENDENT_PAID_SOFTWARE_WORK_SETTLEMENT",
+        "verdict": (
+            "PASS_LOCAL_PAID_SOFTWARE_WORK_REHEARSAL_ONLY"
+            if args.local_rehearsal
+            else "PASS_INDEPENDENT_PAID_SOFTWARE_WORK_SETTLEMENT"
+        ),
     }
+    if args.local_rehearsal:
+        evidence["qualifies_as_external_gate"] = False
+        evidence["limitations"] = [
+            "all validators and JSON-RPC endpoints are operated on one host",
+            "the stablecoin is test-only and makes no claim on real-world reserves",
+            "the deterministic work command is orchestrated locally rather than by an independent provider organization",
+        ]
     Path(args.evidence).write_text(json.dumps(evidence, indent=2) + "\n")
     print(json.dumps(evidence, indent=2))
 
