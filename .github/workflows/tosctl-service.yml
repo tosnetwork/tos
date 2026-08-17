@@ -1,6 +1,7 @@
 name: tosctl service
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -43,14 +44,30 @@ jobs:
 
   real-chain-explorer:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    # Most of this job compiles the node on a two-core runner. Thirty-five
+    # minutes never covered a cold build, so every run so far was cancelled
+    # mid-compile -- and a cancelled run reads as one still in progress rather
+    # than as a check that has never produced a result.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libjemalloc-dev
+          sudo apt-get install -y build-essential cmake ninja-build libjemalloc-dev ccache
       - uses: dtolnay/rust-toolchain@stable
+      # ccache rather than caching the build directory. This job compiles the
+      # commit under test, so a key built from the tree changes on every push
+      # and a directory cache would miss exactly when it is needed. ccache is
+      # keyed per translation unit, so a change to a handful of files reuses
+      # the rest.
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: tos-ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            tos-ccache-${{ runner.os }}-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tosctl/src -> target
@@ -63,10 +80,16 @@ jobs:
           uv sync --no-dev
           uv run test/tostester/generate_tl.py
       - name: Build native localnet and JSON-RPC
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+          CCACHE_MAXSIZE: 2G
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ccache --zero-stats
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build --target \
             validator-engine dht-server create-state generate-random-id toslibjson -j2
+          ccache --show-stats
       - name: Build tosctl explorer
         run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
       - name: Real-chain TOSCAN release gate
