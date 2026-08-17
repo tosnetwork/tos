@@ -48,6 +48,9 @@ const RECOVER_FEE: u64 = 200_000_000;
 const NPOOL_COMPUTE_FEE: u64 = 200_000_000;
 /// Gas fee consumed by validator wallet.
 const WALLET_COMPUTE_FEE: u64 = 200_000_000;
+/// Value attached to a pool maintenance message. The pool returns what it does
+/// not spend, so this only has to cover the heaviest of these calls.
+const POOL_MAINTENANCE_VALUE: u64 = 200_000_000;
 /// Reserved minimum balance on the wallet (or pool) for stake calculations.
 const MIN_NANOTOS_FOR_STORAGE: u64 = 1_000_000_000;
 
@@ -396,6 +399,16 @@ impl ElectionRunner {
         // walk through the nodes and try to participate in the elections
         let mut nodes = self.nodes.keys().cloned().collect::<Vec<String>>();
         nodes.sort();
+        // Give every pool the messages it needs before asking it to recover or
+        // stake. Both of those refuse outright when the pool has not been kept
+        // current, so doing this afterwards would just log the same failure
+        // every tick.
+        for node_id in &nodes {
+            if let Err(e) = self.maintain_pool(node_id).await {
+                self.nodes.get_mut(node_id).map(|node| node.last_error = Some(format!("{:#}", e)));
+                tracing::error!("node [{}] pool maintenance error: {:#}", node_id, e);
+            }
+        }
         for node_id in nodes {
             tracing::info!("node [{}] recover stake", node_id);
             let excluded = self.nodes.get(&node_id).map(|node| node.excluded).unwrap_or(true);
@@ -727,6 +740,51 @@ impl ElectionRunner {
 
         tracing::debug!("message body {}", body);
         Ok(body)
+    }
+
+    /// Send whatever a node's pool needs to stay usable this round.
+    ///
+    /// Nothing here belongs to any one participant: keeping a pool's view of
+    /// the validator set current, and draining a withdrawal queue that would
+    /// otherwise block the whole pool from staking, are things the contract
+    /// deliberately lets anyone do. It is done from the validator's wallet
+    /// because that wallet is already here, not because it is privileged.
+    async fn maintain_pool(&mut self, node_id: &str) -> anyhow::Result<()> {
+        let Some(node) = self.nodes.get_mut(node_id) else {
+            return Ok(());
+        };
+        let Some(pool) = node.pool.clone() else {
+            return Ok(());
+        };
+
+        let Some(vset_hash) = node.api.get_current_vset_hash().await? else {
+            tracing::trace!("node [{}] no validator set hash available", node_id);
+            return Ok(());
+        };
+
+        let actions = pool.maintenance(&vset_hash).await?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+
+        let wallet_balance = node.wallet_balance().await?;
+        let required = (POOL_MAINTENANCE_VALUE + WALLET_COMPUTE_FEE) * actions.len() as u64;
+        if wallet_balance < required {
+            anyhow::bail!(
+                "low wallet balance for pool maintenance: required={} TOS, available={} TOS",
+                required as f64 / 1_000_000_000.0,
+                wallet_balance as f64 / 1_000_000_000.0
+            );
+        }
+
+        let pool_addr = pool.address();
+        for action in actions {
+            tracing::info!("node [{}] pool maintenance: {}", node_id, action.reason);
+            let msg =
+                node.wallet.message(pool_addr.clone(), POOL_MAINTENANCE_VALUE, action.body).await?;
+            node.api.send_boc(&write_boc(&msg)?).await?;
+        }
+        Ok(())
     }
 
     async fn build_recover_stake_payload() -> anyhow::Result<Cell> {

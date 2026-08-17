@@ -7,7 +7,22 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::SmartContract;
-use chain_block::{MsgAddressInt, StateInit};
+use chain_block::{Cell, MsgAddressInt, StateInit};
+
+/// A message the elections driver has to send to a pool so the pool can make
+/// progress, together with the reason it is needed.
+///
+/// These are not optimizations. A contract that tracks its own view of the
+/// validator set, or that refuses to stake while a withdrawal is queued, will
+/// simply sit still until something external nudges it, and a pool that sits
+/// still is a pool whose depositors cannot get their principal back.
+#[derive(Debug, Clone)]
+pub struct PoolMaintenance {
+    /// Why the message is required, for operator-facing logs.
+    pub reason: &'static str,
+    /// Message body to send to the pool address.
+    pub body: Cell,
+}
 
 /// Trait for interacting with single-nominator smart contract
 ///
@@ -24,6 +39,19 @@ pub trait NominatorWrapper: SmartContract + Send + Sync {
     /// Return the state_init used for deploying this contract (if available).
     fn state_init(&self) -> Option<StateInit> {
         None
+    }
+
+    /// Messages this contract needs before it can stake or recover, given the
+    /// hash of the currently installed validator set.
+    ///
+    /// The single-nominator contract keeps no election bookkeeping of its own
+    /// and needs none, which is why the default is empty.
+    async fn maintenance(
+        &self,
+        current_validator_set_hash: &[u8; 32],
+    ) -> anyhow::Result<Vec<PoolMaintenance>> {
+        let _ = current_validator_set_hash;
+        Ok(Vec::new())
     }
 }
 

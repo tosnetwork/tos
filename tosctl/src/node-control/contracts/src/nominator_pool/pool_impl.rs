@@ -11,12 +11,22 @@ use crate::contract_codes::NOMINATOR_POOL_CODE;
 use crate::stack_utils::bytes_to_stack_entry;
 use crate::{ContractProvider, SmartContract};
 use anyhow::Context;
+use chain_block::UnixTime;
 use chain_block::{
     BuilderData, Coins, IBitstring, MsgAddressInt, Serializable, StateInit, read_single_root_boc,
 };
 use common::tvm_stack_parser::TvmStackParser;
 use std::sync::Arc;
 use tl_api::tos::tvm::StackEntry;
+
+/// pool.fc stops counting validator set changes at three.
+const MAX_VALIDATOR_SET_CHANGES: i32 = 3;
+/// pool.fc state 0: funds are in the pool rather than with the Elector.
+const POOL_STATE_IDLE: i32 = 0;
+/// Withdraw requests settled per message. The contract walks the queue until
+/// the balance can no longer cover the next payout, so a bounded batch keeps
+/// one message's gas predictable and the remainder is picked up next tick.
+const WITHDRAW_REQUESTS_PER_MESSAGE: u8 = 8;
 
 fn flatten_tvm_list(entry: &StackEntry, result: &mut Vec<StackEntry>) -> anyhow::Result<()> {
     match entry {
@@ -204,6 +214,89 @@ impl SmartContract for NominatorPoolWrapperImpl {
     }
 }
 
+/// The elections daemon drives every pool kind through `NominatorWrapper`.
+///
+/// That sharing is sound rather than merely convenient: the single-nominator
+/// contract and pool.fc accept byte-identical `new_stake` and `recover_stake`
+/// bodies, so the same election payloads reach the Elector either way. What
+/// differs is the preconditions each contract enforces before forwarding, and
+/// those live with the caller.
+#[async_trait::async_trait]
+impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
+    async fn get_roles(&self) -> anyhow::Result<crate::nominator::NominatorRoles> {
+        // pool.fc records a validator address but has no owner: the funds
+        // belong to the nominators, and no single account can withdraw them.
+        // Reporting some address as the owner would misstate who controls the
+        // principal, so callers that need this concept have to ask for pool
+        // data and decide what they actually mean.
+        anyhow::bail!(
+            "a multi-nominator pool has no owner role; read get_pool_data() for the validator"
+        )
+    }
+
+    async fn maintenance(
+        &self,
+        current_validator_set_hash: &[u8; 32],
+    ) -> anyhow::Result<Vec<crate::nominator::PoolMaintenance>> {
+        let data = NominatorPoolWrapper::get_pool_data(self).await?;
+        let mut actions = Vec::new();
+
+        // pool.fc will not release stake until it has counted enough validator
+        // set changes, and it only counts one when someone tells it the set
+        // moved. Miss these and the recover path stays permanently blocked
+        // behind its own guard, with every nominator's principal inside.
+        if data.saved_validator_set_hash != *current_validator_set_hash
+            && data.validator_set_changes_count < MAX_VALIDATOR_SET_CHANGES
+        {
+            actions.push(crate::nominator::PoolMaintenance {
+                reason: "validator set changed; pool has not counted it yet",
+                body: super::messages::update_validator_set(UnixTime::now())?,
+            });
+        }
+
+        // A queued withdrawal blocks the next stake outright, so one nominator
+        // asking to leave takes the whole pool out of the round unless the
+        // queue is drained first. Only worth attempting while the pool is idle:
+        // in any other state the funds are with the Elector and the request
+        // cannot be settled yet.
+        if data.state == POOL_STATE_IDLE && self.has_withdraw_requests().await? {
+            actions.push(crate::nominator::PoolMaintenance {
+                reason: "queued withdrawals would block the next stake",
+                body: super::messages::process_withdraw_requests(
+                    UnixTime::now(),
+                    WITHDRAW_REQUESTS_PER_MESSAGE,
+                )?,
+            });
+        }
+
+        Ok(actions)
+    }
+
+    async fn get_pool_data(&self) -> anyhow::Result<crate::nominator::PoolData> {
+        let data = NominatorPoolWrapper::get_pool_data(self).await?;
+        Ok(crate::nominator::PoolData {
+            state: data.state,
+            nominators_count: data.nominators_count,
+            stake_amount_sent: data.stake_amount_sent,
+            validator_amount: data.validator_amount,
+            pool_config: crate::nominator::PoolConfig {
+                validator_addr: data.validator_address,
+                validator_reward_share: data.validator_reward_share,
+                max_nominators_count: data.max_nominators_count,
+                min_validator_stake: data.min_validator_stake,
+                // The shared shape calls this field a maximum; pool.fc stores
+                // the per-nominator minimum in that slot.
+                max_nominators_stake: data.min_nominator_stake,
+            },
+            stake_at: data.stake_at,
+            saved_validator_set_hash: data.saved_validator_set_hash,
+            validator_set_changes_count: data.validator_set_changes_count,
+            validator_set_change_time: data.validator_set_change_time,
+            stake_held_for: data.stake_held_for,
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl NominatorPoolWrapper for NominatorPoolWrapperImpl {
     async fn get_pool_data(&self) -> anyhow::Result<NominatorPoolData> {
@@ -246,6 +339,7 @@ impl NominatorPoolWrapper for NominatorPoolWrapperImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use tl_api::tos::tvm::{
         List, Number, Tuple, list,
         numberdecimal::NumberDecimal,
@@ -338,5 +432,148 @@ mod tests {
         assert_eq!(parsed.validator_set_changes_count, 2);
         assert_eq!(parsed.validator_set_change_time, 1234);
         assert_eq!(parsed.stake_held_for, 3600);
+    }
+
+    // ===== pool maintenance =====
+
+    /// A saved hash the pool is holding, distinct from any "current" set below.
+    const SAVED_VSET_HASH: [u8; 32] = [0x11; 32];
+
+    struct StubProvider {
+        state: i32,
+        changes_count: i32,
+        saved_hash: [u8; 32],
+        withdraw_requests: bool,
+    }
+
+    impl StubProvider {
+        fn new() -> Self {
+            Self {
+                state: 0,
+                changes_count: 0,
+                saved_hash: SAVED_VSET_HASH,
+                withdraw_requests: false,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ContractProvider for StubProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            match method {
+                "get_pool_data" => Ok(TvmStackParser::new(vec![
+                    number(&self.state.to_string()),
+                    number("1"),
+                    number("0"),
+                    number("2000"),
+                    number("0xabc"),
+                    number("4000"),
+                    number("40"),
+                    number("1000"),
+                    number("100"),
+                    list_entry(vec![]),
+                    list_entry(vec![]),
+                    number("999"),
+                    number(&format!("0x{}", hex::encode(self.saved_hash))),
+                    number(&self.changes_count.to_string()),
+                    number("1234"),
+                    number("3600"),
+                    list_entry(vec![]),
+                ])),
+                "has_withdraw_requests" => {
+                    Ok(TvmStackParser::new(vec![number(if self.withdraw_requests {
+                        "-1"
+                    } else {
+                        "0"
+                    })]))
+                }
+                other => anyhow::bail!("unexpected get-method: {other}"),
+            }
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    fn pool_with(stub: StubProvider) -> NominatorPoolWrapperImpl {
+        NominatorPoolWrapperImpl::new(
+            Arc::new(stub),
+            MsgAddressInt::from_str(&format!("-1:{}", "0".repeat(64))).unwrap(),
+        )
+    }
+
+    async fn maintenance_for(
+        stub: StubProvider,
+        current_hash: [u8; 32],
+    ) -> Vec<crate::nominator::PoolMaintenance> {
+        use crate::nominator::NominatorWrapper;
+        pool_with(stub).maintenance(&current_hash).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn quiet_pool_needs_nothing() {
+        let actions = maintenance_for(StubProvider::new(), SAVED_VSET_HASH).await;
+        assert!(actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unnoticed_validator_set_change_is_reported_to_the_pool() {
+        let actions = maintenance_for(StubProvider::new(), [0x22; 32]).await;
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].reason.contains("validator set"));
+
+        let mut body = chain_block::SliceData::load_cell(actions[0].body.clone()).unwrap();
+        assert_eq!(
+            body.get_next_u32().unwrap(),
+            super::super::messages::opcodes::UPDATE_VALIDATOR_SET
+        );
+    }
+
+    #[tokio::test]
+    async fn the_pool_stops_being_told_once_it_has_counted_enough_changes() {
+        // pool.fc caps the counter, so past the cap another message would be
+        // spent gas that changes nothing.
+        let mut stub = StubProvider::new();
+        stub.changes_count = MAX_VALIDATOR_SET_CHANGES;
+        assert!(maintenance_for(stub, [0x22; 32]).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_queued_withdrawal_is_drained_before_it_can_block_the_next_stake() {
+        let mut stub = StubProvider::new();
+        stub.withdraw_requests = true;
+        let actions = maintenance_for(stub, SAVED_VSET_HASH).await;
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].reason.contains("block the next stake"));
+
+        let mut body = chain_block::SliceData::load_cell(actions[0].body.clone()).unwrap();
+        assert_eq!(
+            body.get_next_u32().unwrap(),
+            super::super::messages::opcodes::PROCESS_WITHDRAW_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn withdrawals_are_left_alone_while_the_stake_sits_with_the_elector() {
+        // The principal is not in the pool to pay out yet, so asking would only
+        // burn gas until the round ends.
+        let mut stub = StubProvider::new();
+        stub.withdraw_requests = true;
+        stub.state = 2;
+        assert!(maintenance_for(stub, SAVED_VSET_HASH).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pool_can_need_both_nudges_at_once() {
+        let mut stub = StubProvider::new();
+        stub.withdraw_requests = true;
+        let actions = maintenance_for(stub, [0x22; 32]).await;
+        assert_eq!(actions.len(), 2);
     }
 }
