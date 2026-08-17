@@ -22,6 +22,10 @@ use std::str::FromStr;
 
 const MAX_PAGE_SIZE: usize = 200;
 const JAVASCRIPT_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+/// ConfigParam 17 stores max_stake_factor in 1/65536 units.
+const STAKE_FACTOR_SCALE: u32 = 1 << 16;
+const STAKE_FACTOR_SHIFT: u32 = 16;
+
 const CONTRACT_KINDS: &[&str] = &[
     "agent_account",
     "task_escrow",
@@ -267,6 +271,32 @@ pub struct ExplorerStakingCycleDto {
     pub vset_hash: String,
 }
 
+/// What the Elector will actually pay a stake on.
+///
+/// Effective stake is capped: the Elector pays each elected validator on
+/// `min(stake, max_stake_factor * smallest_elected_stake)` and refunds the
+/// difference (elector-code.fc, try_elect). A page that shows a pool's size and
+/// a network reward rate side by side implies the two multiply, and past the
+/// cap they do not -- capital above it earns nothing while still carrying the
+/// pool's risk. At a factor of one the cap equals the smallest elected stake,
+/// so every validator carries identical weight no matter how much it gathered,
+/// and aggregating capital buys nothing at all.
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerEffectiveStakeDto {
+    /// ConfigParam 17's max_stake_factor, in the 1/65536 units it is stored in.
+    pub max_stake_factor_raw: Option<u32>,
+    /// The same value as a plain multiplier.
+    pub max_stake_factor: Option<f64>,
+    /// Smallest stake among the validators elected in the most recent completed
+    /// round: the quantity the cap is measured against.
+    pub smallest_elected_stake: Option<String>,
+    /// Absolute ceiling on one participant's effective stake, in nanotos.
+    pub effective_stake_cap: Option<String>,
+    /// Whether a validator staking above the cap is paid for the excess.
+    /// False whenever the factor is at its floor of one.
+    pub surplus_earns: Option<bool>,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct ExplorerStakingOverviewDto {
     pub current_election_available: bool,
@@ -282,6 +312,7 @@ pub struct ExplorerStakingOverviewDto {
     pub active_pools: usize,
     pub nominators: u64,
     pub total_pool_stake: String,
+    pub effective_stake: ExplorerEffectiveStakeDto,
     pub updated_at: u64,
 }
 
@@ -397,6 +428,34 @@ pub async fn staking(
     });
 
     past.sort_by(|left, right| right.election_id.cmp(&left.election_id));
+
+    // The cap the Elector applies is a multiple of the smallest stake it
+    // actually elected, so it can only be stated against a completed round.
+    let smallest_elected_stake =
+        past.first().and_then(|cycle| cycle.frozen_map.values().map(|entry| entry.stake).min());
+    let max_stake_factor_raw = match state.runtime_cfg.chain_provider().get_config_param(17).await {
+        Ok(chain_block::ConfigParamEnum::ConfigParam17(param)) => Some(param.max_stake_factor),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "stake limits are unavailable");
+            None
+        }
+    };
+    let effective_stake = ExplorerEffectiveStakeDto {
+        max_stake_factor_raw,
+        max_stake_factor: max_stake_factor_raw
+            .map(|raw| f64::from(raw) / f64::from(STAKE_FACTOR_SCALE)),
+        smallest_elected_stake: smallest_elected_stake.map(|stake| stake.to_string()),
+        effective_stake_cap: max_stake_factor_raw.zip(smallest_elected_stake).map(
+            |(raw, stake)| {
+                ((u128::from(stake) * u128::from(raw)) >> STAKE_FACTOR_SHIFT).to_string()
+            },
+        ),
+        // At the floor the cap equals the smallest elected stake, so no
+        // validator is paid on more than the least-staked one put up.
+        surplus_earns: max_stake_factor_raw.map(|raw| raw > STAKE_FACTOR_SCALE),
+    };
+
     let seconds_per_year = 31_557_600_f64;
     let cycles = past
         .into_iter()
@@ -465,6 +524,7 @@ pub async fn staking(
             active_pools,
             nominators,
             total_pool_stake: total_pool_stake.to_string(),
+            effective_stake,
             updated_at: common::time_format::now(),
         },
         cycles,

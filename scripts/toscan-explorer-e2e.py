@@ -122,6 +122,9 @@ CAPABILITIES = {
     "staking-projection": (
         "/explorer/staking is asserted against Elector election history"
     ),
+    "effective-stake-cap": (
+        "/explorer/staking reports the stake factor and the cap it implies"
+    ),
     "validator-set-decoding": (
         "getConfigParam returns decoded validator sets alongside the raw cell"
     ),
@@ -304,6 +307,33 @@ def main():
             "Elector rewards and code-verified Nominator Pool are queryable",
             staking_visible,
             timeout=180,
+        )
+
+        # A pool's size next to a network reward rate reads as though the two
+        # multiply. Past the Elector's cap they do not: it pays on
+        # min(stake, factor * smallest elected stake) and refunds the rest, so
+        # capital above the cap earns nothing while still carrying the pool's
+        # risk. The page can only say so if the endpoint tells it, and the
+        # endpoint is only worth trusting if this asserts the numbers.
+        _, staking_body = request_json(f"{explorer_origin}/explorer/staking")
+        effective = staking_body["result"]["effective_stake"]
+        raw_factor = effective["max_stake_factor_raw"]
+        assert raw_factor is not None, "stake limits did not reach the explorer"
+        assert raw_factor >= 1 << 16, "a factor below one would cap every validator below the floor"
+        assert abs(effective["max_stake_factor"] - raw_factor / (1 << 16)) < 1e-9
+        assert effective["surplus_earns"] is (raw_factor > 1 << 16)
+        smallest = effective["smallest_elected_stake"]
+        if smallest is not None:
+            expected_cap = (int(smallest) * raw_factor) >> 16
+            assert int(effective["effective_stake_cap"]) == expected_cap
+            if not effective["surplus_earns"]:
+                assert int(effective["effective_stake_cap"]) == int(smallest), (
+                    "at the floor the cap is the smallest elected stake itself"
+                )
+        print(
+            "PASS: effective-stake cap is reported "
+            f"(factor {effective['max_stake_factor']}, "
+            f"surplus earns: {effective['surplus_earns']})"
         )
 
         rich = None

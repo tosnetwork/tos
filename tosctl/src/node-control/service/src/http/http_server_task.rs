@@ -1045,6 +1045,7 @@ impl utoipa::Modify for BearerAuthAddon {
         explorer_query_api::ExplorerCheckpointDto,
         explorer_query_api::ExplorerStatusDto,
         explorer_query_api::ExplorerStatusResponse,
+        explorer_query_api::ExplorerEffectiveStakeDto,
         explorer_query_api::ExplorerStakingCycleDto,
         explorer_query_api::ExplorerStakingOverviewDto,
         explorer_query_api::ExplorerStakingResponse,
