@@ -16,11 +16,16 @@ use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
 use base64::Engine;
 use chain_block::MsgAddressInt;
+use contracts::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, contract_provider_from};
 use serde_json::Value;
 use std::str::FromStr;
 
 const MAX_PAGE_SIZE: usize = 200;
 const JAVASCRIPT_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+/// ConfigParam 17 stores max_stake_factor in 1/65536 units.
+const STAKE_FACTOR_SCALE: u32 = 1 << 16;
+const STAKE_FACTOR_SHIFT: u32 = 16;
+
 const CONTRACT_KINDS: &[&str] = &[
     "agent_account",
     "task_escrow",
@@ -29,6 +34,7 @@ const CONTRACT_KINDS: &[&str] = &[
     "capability_registry",
     "aipow_commitment",
     "aipow_distributor",
+    "contract.pool.nominator",
 ];
 
 #[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
@@ -252,6 +258,72 @@ pub struct ExplorerStatusResponse {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingCycleDto {
+    pub election_id: u64,
+    pub unfreeze_at: u64,
+    pub duration_seconds: u64,
+    pub total_stake: String,
+    pub rewards: String,
+    pub reward_rate: f64,
+    pub annualized_apr: Option<f64>,
+    pub compounded_apy: Option<f64>,
+    pub validator_count: usize,
+    pub vset_hash: String,
+}
+
+/// What the Elector will actually pay a stake on.
+///
+/// Effective stake is capped: the Elector pays each elected validator on
+/// `min(stake, max_stake_factor * smallest_elected_stake)` and refunds the
+/// difference (elector-code.fc, try_elect). A page that shows a pool's size and
+/// a network reward rate side by side implies the two multiply, and past the
+/// cap they do not -- capital above it earns nothing while still carrying the
+/// pool's risk. At a factor of one the cap equals the smallest elected stake,
+/// so every validator carries identical weight no matter how much it gathered,
+/// and aggregating capital buys nothing at all.
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerEffectiveStakeDto {
+    /// ConfigParam 17's max_stake_factor, in the 1/65536 units it is stored in.
+    pub max_stake_factor_raw: Option<u32>,
+    /// The same value as a plain multiplier.
+    pub max_stake_factor: Option<f64>,
+    /// Smallest stake among the validators elected in the most recent completed
+    /// round: the quantity the cap is measured against.
+    pub smallest_elected_stake: Option<String>,
+    /// Absolute ceiling on one participant's effective stake, in nanotos.
+    pub effective_stake_cap: Option<String>,
+    /// Whether a validator staking above the cap is paid for the excess.
+    /// False whenever the factor is at its floor of one.
+    pub surplus_earns: Option<bool>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingOverviewDto {
+    pub current_election_available: bool,
+    pub reward_history_available: bool,
+    pub active_election_id: u64,
+    pub election_closes_at: u64,
+    pub current_election_stake: String,
+    pub current_participants: usize,
+    pub minimum_stake: String,
+    pub election_failed: bool,
+    pub election_finished: bool,
+    pub pools: usize,
+    pub active_pools: usize,
+    pub nominators: u64,
+    pub total_pool_stake: String,
+    pub effective_stake: ExplorerEffectiveStakeDto,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingResponse {
+    pub ok: bool,
+    pub result: ExplorerStakingOverviewDto,
+    pub cycles: Vec<ExplorerStakingCycleDto>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", content = "result", rename_all = "snake_case")]
 pub enum ExplorerSearchHit {
     Transaction(ExplorerTransactionDto),
@@ -328,6 +400,134 @@ pub async fn status(
                 .map(|value| ExplorerCheckpointDto { shard: value.shard_key, seqno: value.seqno })
                 .collect(),
         },
+    }))
+}
+
+/// Chain-derived staking state. Current election and historical rewards come
+/// from Elector get-methods; pool totals come from code-hash-classified
+/// Nominator Pool contracts in the canonical explorer index.
+#[utoipa::path(get, path = "/explorer/staking", responses(
+    (status = 200, body = ExplorerStakingResponse), (status = 503, body = ApiErrorResponse)
+))]
+pub async fn staking(
+    State(state): State<AppState>,
+) -> Result<axum::Json<ExplorerStakingResponse>, AppError> {
+    let provider = contract_provider_from(state.runtime_cfg.chain_provider());
+    let elector = ElectorWrapperImpl::new(provider);
+    let (current_result, past_result) =
+        tokio::join!(elector.elections_info(), elector.past_elections());
+    let current_election_available = current_result.is_ok();
+    let reward_history_available = past_result.is_ok();
+    let current = current_result.unwrap_or_else(|error| {
+        tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "current Elector election is unavailable");
+        ElectionsInfo::default()
+    });
+    let mut past = past_result.unwrap_or_else(|error| {
+        tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "Elector reward history is unavailable");
+        Vec::new()
+    });
+
+    past.sort_by(|left, right| right.election_id.cmp(&left.election_id));
+
+    // The cap the Elector applies is a multiple of the smallest stake it
+    // actually elected, so it can only be stated against a completed round.
+    let smallest_elected_stake =
+        past.first().and_then(|cycle| cycle.frozen_map.values().map(|entry| entry.stake).min());
+    let max_stake_factor_raw = match state.runtime_cfg.chain_provider().get_config_param(17).await {
+        Ok(chain_block::ConfigParamEnum::ConfigParam17(param)) => Some(param.max_stake_factor),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "stake limits are unavailable");
+            None
+        }
+    };
+    let effective_stake = ExplorerEffectiveStakeDto {
+        max_stake_factor_raw,
+        max_stake_factor: max_stake_factor_raw
+            .map(|raw| f64::from(raw) / f64::from(STAKE_FACTOR_SCALE)),
+        smallest_elected_stake: smallest_elected_stake.map(|stake| stake.to_string()),
+        effective_stake_cap: max_stake_factor_raw.zip(smallest_elected_stake).map(
+            |(raw, stake)| {
+                ((u128::from(stake) * u128::from(raw)) >> STAKE_FACTOR_SHIFT).to_string()
+            },
+        ),
+        // At the floor the cap equals the smallest elected stake, so no
+        // validator is paid on more than the least-staked one put up.
+        surplus_earns: max_stake_factor_raw.map(|raw| raw > STAKE_FACTOR_SCALE),
+    };
+
+    let seconds_per_year = 31_557_600_f64;
+    let cycles = past
+        .into_iter()
+        .take(64)
+        .map(|cycle| {
+            let reward_rate = if cycle.total_stake > 0 {
+                cycle.bonuses as f64 / cycle.total_stake as f64
+            } else {
+                0.0
+            };
+            let periods =
+                if cycle.stake_held > 0 { seconds_per_year / cycle.stake_held as f64 } else { 0.0 };
+            let apr = reward_rate * periods;
+            let apy = if periods > 0.0 { (1.0 + reward_rate).powf(periods) - 1.0 } else { 0.0 };
+            ExplorerStakingCycleDto {
+                election_id: cycle.election_id,
+                unfreeze_at: cycle.unfreeze_at,
+                duration_seconds: cycle.stake_held,
+                total_stake: cycle.total_stake.to_string(),
+                rewards: cycle.bonuses.to_string(),
+                reward_rate,
+                annualized_apr: apr.is_finite().then_some(apr),
+                compounded_apy: apy.is_finite().then_some(apy),
+                validator_count: cycle.frozen_map.len(),
+                vset_hash: hex::encode(cycle.vset_hash),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let (pools, _) = state
+        .indexer_store
+        .list("contract.pool.nominator", &ListFilters::default(), 0, 10_000)
+        .map_err(index_error)?;
+    let mut active_pools = 0usize;
+    let mut nominators = 0u64;
+    let mut total_pool_stake = 0u64;
+    for pool in &pools {
+        if matches!(pool.status.as_deref(), Some("staking" | "staked")) {
+            active_pools += 1;
+        }
+        if let Ok(data) = serde_json::from_str::<Value>(&pool.dto_json) {
+            nominators = nominators
+                .saturating_add(data.get("nominators_count").and_then(Value::as_u64).unwrap_or(0));
+            total_pool_stake = total_pool_stake.saturating_add(
+                data.get("total_balance_at_risk")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    Ok(axum::Json(ExplorerStakingResponse {
+        ok: true,
+        result: ExplorerStakingOverviewDto {
+            current_election_available,
+            reward_history_available,
+            active_election_id: current.election_id,
+            election_closes_at: current.elect_close,
+            current_election_stake: current.total_stake.to_string(),
+            current_participants: current.participants.len(),
+            minimum_stake: current.min_stake.to_string(),
+            election_failed: current.failed,
+            election_finished: current.finished,
+            pools: pools.len(),
+            active_pools,
+            nominators,
+            total_pool_stake: total_pool_stake.to_string(),
+            effective_stake,
+            updated_at: common::time_format::now(),
+        },
+        cycles,
     }))
 }
 

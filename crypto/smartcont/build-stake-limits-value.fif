@@ -1,0 +1,31 @@
+#!/usr/bin/fift -s
+"TosUtil.fif" include
+
+{ ."usage: build-stake-limits-value.fif <min-stake> <max-stake> <min-total-stake> <factor-scaled> [<savefile>]" cr
+  ."  amounts in nanotomi; <factor-scaled> is max_stake_factor in 1/65536 units (65536 = 1.0)" cr
+  1 halt
+} : usage
+
+$# dup 4 < swap 5 > or ' usage if
+
+$1 parse-int =: min-stake
+$2 parse-int =: max-stake
+$3 parse-int =: min-total-stake
+$4 parse-int =: factor-scaled
+def? $5 { @' $5 } { "config-param-17-value.boc" } cond =: savefile
+
+factor-scaled 32 fits not abort"max_stake_factor must fit into 32 bits"
+factor-scaled 65536 < abort"max_stake_factor below 1.0 would cap every validator below the smallest stake"
+min-stake max-stake > abort"min_stake exceeds max_stake"
+
+<b min-stake Tomi, max-stake Tomi, min-total-stake Tomi, factor-scaled 32 u, b>
+dup 17 is-valid-config? not abort"not a valid ConfigParam 17 value"
+
+."ConfigParam 17 value: " dup <s csr. cr
+."  min_stake        = " min-stake . cr
+."  max_stake        = " max-stake . cr
+."  min_total_stake  = " min-total-stake . cr
+."  max_stake_factor = " factor-scaled . ."in 1/65536 units" cr
+
+2 boc+>B savefile +".boc" tuck B>file
+."Saved to " type cr

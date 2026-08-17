@@ -859,6 +859,7 @@ dependencies = [
  "tokio",
  "tos_sandbox",
  "tos_vm",
+ "tracing",
 ]
 
 [[package]]

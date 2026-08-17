@@ -76,7 +76,10 @@ std::string detect_wallet_type(const vm::CellHash& code_hash) {
     {"6B5FD33048D2DB82650B36F47CED9714A1C0B573AA08447E23F96629364DDA2A", "wallet v4 r1"},
     {"288014A04D551904D623C826512FFEB16AD4DF6130195EA537050B35207E5FC3", "wallet v4 r2"},
     {"7AFA0EACBAF9E9EAA19AE93E61354540C9335B52F1ADD44E7A8E2D9089212B3E", "wallet v5 r1"},
-    {"643A1AB8E96CB40B9CD92599EA295A591D6C12730D53CE77A447E1FC1C9A8B41", "nominator pool v1"},
+    // Recognizing an account as a staking pool tells a depositor that the code
+    // holding their principal is the audited contract in this repository, so
+    // this entry has to stay reproducible from crypto/smartcont/nominator-pool.
+    // scripts/check-nominator-pool-code-lock.sh enforces that.
     {"9A3EC14BC098F6B44064C305222CAEA2800F17DDA85EE6A8198A7095EDE10DCF", "nominator pool v1"},
     {"84DAFA449F98A6987789BA232358072BC0F76DC4524002A5D0918B9A75D2D599", "wallet v3 r2"},
     {"FEB5FF6820E2FF0D9483E7E0D62C817D846789FB4AE580C878866D959DABD5C0", "wallet v4 r2"},

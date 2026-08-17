@@ -210,6 +210,7 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
 fn explorer_public_routes() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/explorer/status", axum::routing::get(explorer_query_api::status))
+        .route("/explorer/staking", axum::routing::get(explorer_query_api::staking))
         .route("/explorer/blocks", axum::routing::get(explorer_query_api::list_blocks))
         .route("/explorer/transactions", axum::routing::get(explorer_query_api::list_transactions))
         .route("/explorer/transaction", axum::routing::get(explorer_query_api::get_transaction))
@@ -974,6 +975,7 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::list_aipow_distributors
         ,agent_query_api::get_aipow_distributor
         ,explorer_query_api::status
+        ,explorer_query_api::staking
         ,explorer_query_api::list_blocks
         ,explorer_query_api::list_transactions
         ,explorer_query_api::get_transaction
@@ -1043,6 +1045,10 @@ impl utoipa::Modify for BearerAuthAddon {
         explorer_query_api::ExplorerCheckpointDto,
         explorer_query_api::ExplorerStatusDto,
         explorer_query_api::ExplorerStatusResponse,
+        explorer_query_api::ExplorerEffectiveStakeDto,
+        explorer_query_api::ExplorerStakingCycleDto,
+        explorer_query_api::ExplorerStakingOverviewDto,
+        explorer_query_api::ExplorerStakingResponse,
         explorer_query_api::ExplorerSearchHit,
         explorer_query_api::ExplorerSearchResponse,
         common::snapshot::Snapshot,

@@ -30,6 +30,7 @@ CONTRACT_KINDS = {
     "task_escrow",
     "dispute",
 }
+NOMINATOR_POOL_KIND = "contract.pool.nominator"
 
 
 def request_json(url: str, body=None, timeout=15):
@@ -106,15 +107,71 @@ def generate_explorer_config(tosctl: Path, path: Path, rpc_origin: str, http_bin
     path.write_text(json.dumps(config, indent=2) + "\n")
 
 
+# What a consumer of this script can rely on this revision to do.
+#
+# The explorer is built from a different repository and its release gate runs
+# this script out of whichever TOS revision it happened to check out. Without a
+# declared contract a revision that predates a feature does not report a missing
+# feature -- it reports an unrecognized argument, which reads like a typo in the
+# caller rather than a version mismatch, and a gate that silently stops covering
+# something is worse than one that was never written.
+CAPABILITIES = {
+    "browser-command": (
+        "--browser-command runs an external release gate against the live chain"
+    ),
+    "staking-projection": (
+        "/explorer/staking is asserted against Elector election history"
+    ),
+    "effective-stake-cap": (
+        "/explorer/staking reports the stake factor and the cap it implies"
+    ),
+    "validator-set-decoding": (
+        "getConfigParam returns decoded validator sets alongside the raw cell"
+    ),
+}
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="print what this revision supports, one per line, and exit",
+    )
+    parser.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="CAPABILITY",
+        help="fail immediately unless this revision declares the capability",
+    )
     parser.add_argument("--workdir", default=str(DEFAULT_WORKDIR))
     parser.add_argument("--tosctl", default=str(REPO / "tosctl/src/target/debug/tosctl"))
     parser.add_argument("--rpc-port", type=int, default=19451)
     parser.add_argument("--control-port", type=int, default=19452)
     parser.add_argument("--explorer-port", type=int, default=19453)
     parser.add_argument("--base-port", type=int, default=26900)
+    parser.add_argument(
+        "--browser-command",
+        help="optional shell command that release-gates the browser against the running real chain",
+    )
     args = parser.parse_args()
+
+    if args.capabilities:
+        for name, description in sorted(CAPABILITIES.items()):
+            print(f"{name}\t{description}")
+        return 0
+
+    missing = [name for name in args.require if name not in CAPABILITIES]
+    if missing:
+        parser.exit(
+            2,
+            "this TOS revision does not provide: "
+            + ", ".join(missing)
+            + "\nit declares: "
+            + ", ".join(sorted(CAPABILITIES))
+            + "\ncheck out a TOS revision that has them, or drop the requirement\n",
+        )
 
     workdir = Path(args.workdir).resolve()
     tosctl = Path(args.tosctl).resolve()
@@ -190,7 +247,8 @@ def main():
         )
         seed = json.loads(manifest.read_text())
         assert set(seed["addresses"]) == CONTRACT_KINDS
-        print("PASS: five real Agent Economy contracts deployed")
+        pool_address = seed["staking"]["nominator_pool"]
+        print("PASS: five Agent Economy contracts and a real Nominator Pool deployed")
 
         for path in ("/auth/login", "/v1/elections", "/swagger", "/openapi.json"):
             status, _ = request_json(f"{explorer_origin}{path}")
@@ -208,6 +266,75 @@ def main():
             return True
 
         wait_until("all seeded contracts discovered chain-wide", all_contracts_visible, timeout=180)
+
+        staking_observation = None
+
+        def staking_visible():
+            nonlocal staking_observation
+            encoded = urllib.parse.quote(pool_address, safe=":")
+            pool_status, pool_body = request_json(
+                f"{explorer_origin}/explorer/contracts/{NOMINATOR_POOL_KIND}/{encoded}"
+            )
+            staking_status, staking_body = request_json(
+                f"{explorer_origin}/explorer/staking"
+            )
+            if pool_status != 200 or staking_status != 200:
+                observed = {"pool_status": pool_status, "staking_status": staking_status}
+                if observed != staking_observation:
+                    print(f"  staking gate waiting: {observed}")
+                    staking_observation = observed
+                return False
+            result = staking_body.get("result", {})
+            observed = {
+                "pool_address": pool_body.get("result", {}).get("address"),
+                "pools": result.get("pools"),
+                "nominators": result.get("nominators"),
+                "total_pool_stake": result.get("total_pool_stake"),
+                "cycles": len(staking_body.get("cycles", [])),
+            }
+            if observed != staking_observation:
+                print(f"  staking gate waiting: {observed}")
+                staking_observation = observed
+            return (
+                pool_body.get("result", {}).get("address") == pool_address
+                and result.get("pools") == 1
+                and result.get("nominators") == 1
+                and int(result.get("total_pool_stake", "0")) > 0
+                and isinstance(staking_body.get("cycles"), list)
+            )
+
+        wait_until(
+            "Elector rewards and code-verified Nominator Pool are queryable",
+            staking_visible,
+            timeout=180,
+        )
+
+        # A pool's size next to a network reward rate reads as though the two
+        # multiply. Past the Elector's cap they do not: it pays on
+        # min(stake, factor * smallest elected stake) and refunds the rest, so
+        # capital above the cap earns nothing while still carrying the pool's
+        # risk. The page can only say so if the endpoint tells it, and the
+        # endpoint is only worth trusting if this asserts the numbers.
+        _, staking_body = request_json(f"{explorer_origin}/explorer/staking")
+        effective = staking_body["result"]["effective_stake"]
+        raw_factor = effective["max_stake_factor_raw"]
+        assert raw_factor is not None, "stake limits did not reach the explorer"
+        assert raw_factor >= 1 << 16, "a factor below one would cap every validator below the floor"
+        assert abs(effective["max_stake_factor"] - raw_factor / (1 << 16)) < 1e-9
+        assert effective["surplus_earns"] is (raw_factor > 1 << 16)
+        smallest = effective["smallest_elected_stake"]
+        if smallest is not None:
+            expected_cap = (int(smallest) * raw_factor) >> 16
+            assert int(effective["effective_stake_cap"]) == expected_cap
+            if not effective["surplus_earns"]:
+                assert int(effective["effective_stake_cap"]) == int(smallest), (
+                    "at the floor the cap is the smallest elected stake itself"
+                )
+        print(
+            "PASS: effective-stake cap is reported "
+            f"(factor {effective['max_stake_factor']}, "
+            f"surplus earns: {effective['surplus_earns']})"
+        )
 
         rich = None
 
@@ -249,7 +376,46 @@ def main():
         assert transaction.get("fee") is not None
         assert isinstance(transaction.get("in_msg"), dict)
         assert isinstance(transaction.get("out_msgs"), list)
-        print("PASS: node returns structured transaction message flow")
+        assert transaction.get("transaction_type") in {
+            "ordinary", "storage", "tick", "tock", "split_prepare",
+            "split_install", "merge_prepare", "merge_install",
+        }
+        if transaction.get("transaction_type") in {"ordinary", "tick", "tock"}:
+            assert isinstance(transaction.get("aborted"), bool)
+            assert isinstance(transaction.get("compute"), dict)
+        print("PASS: node returns structured transaction execution and message flow")
+
+        status, config_response = request_json(
+            f"{rpc_origin}/jsonRPC",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "getConfigParam",
+                "params": {"param": 34},
+            },
+        )
+        validator_set = config_response.get("result", {}).get("validator_set", {})
+        assert status == 200
+        assert validator_set.get("total") == len(validator_set.get("validators", []))
+        assert validator_set.get("total", 0) > 0
+        assert all(item.get("public_key") and item.get("weight") for item in validator_set["validators"])
+        print("PASS: current validator membership and weights decode from proved configuration")
+
+        if args.browser_command:
+            browser_env = dict(os.environ)
+            browser_env.update({
+                "TOSCAN_REAL_RPC_ORIGIN": rpc_origin,
+                "TOSCAN_REAL_SOURCE_ORIGIN": explorer_origin,
+                "TOSCAN_REAL_SEED_MANIFEST": str(manifest),
+            })
+            subprocess.run(
+                args.browser_command,
+                cwd=REPO,
+                shell=True,
+                check=True,
+                env=browser_env,
+            )
+            print("PASS: real-chain browser journey")
 
         before = request_json(f"{explorer_origin}/explorer/status")[1]["result"]
         stop(explorer)
@@ -266,7 +432,7 @@ def main():
         after = request_json(f"{explorer_origin}/explorer/status")[1]["result"]
         assert after["blocks"] >= before["blocks"]
         assert after["transactions"] >= before["transactions"]
-        assert after["contracts"] == before["contracts"] == 5
+        assert after["contracts"] == before["contracts"] == 6
         print("PASS: restart preserves block, transaction and contract discovery")
         print("TOSCAN REAL-CHAIN GATE: PASS")
     except Exception:

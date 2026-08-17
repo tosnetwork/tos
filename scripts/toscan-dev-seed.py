@@ -151,16 +151,50 @@ class Seeder:
         print(f"  {name}: {address}")
         return address
 
+    def ensure_nominator_pool(self, owner_name: str, validator_name: str):
+        """Deploy the canonical pool and enter through its real deposit path."""
+        pool_name = "toscan-staking"
+        if pool_name not in self.config_data().get("pools", {}):
+            self.run(
+                "pool", "nominator", "create",
+                "-n", pool_name,
+                "--owner", owner_name,
+                "--validator", validator_name,
+                "--validator-reward-share", "4000",
+                "--max-nominators", "40",
+                "--min-validator-stake", "1",
+                "--min-nominator-stake", "0.1",
+            )
+
+        pool = self.config_data()["pools"][pool_name]
+        address = Address(pool["address"]).to_str(is_user_friendly=False).lower()
+        self.fund(address, 12)
+        if not self.address_active(address):
+            self.run("pool", "nominator", "activate", "-n", pool_name)
+            self.wait_for(lambda: self.address_active(address), "canonical Nominator Pool")
+
+        if not self.rpc_call("getAccountDelegations", address=address):
+            self.run("pool", "nominator", "deposit", "-n", pool_name, "--amount", "2")
+            self.wait_for(
+                lambda: len(self.rpc_call("getAccountDelegations", address=address)) == 1,
+                "real Nominator Pool deposit",
+            )
+        print(f"  TOSCAN Nominator Pool: {address}")
+        return address
+
     def seed(self):
         self.ensure_config()
         chain_id = self.chain_id()
         if self.manifest.exists():
             existing = json.loads(self.manifest.read_text())
             addresses = existing.get("addresses", {})
+            pool_address = existing.get("staking", {}).get("nominator_pool")
             if (
                 existing.get("chain_id") == chain_id
                 and addresses
                 and all(self.address_active(address) for address in addresses.values())
+                and pool_address
+                and self.address_active(pool_address)
             ):
                 print("TOSCAN Agent Economy seed already present:")
                 print(json.dumps(existing, indent=2))
@@ -243,6 +277,7 @@ class Seeder:
                 "--from", "alice-planner", "--amount", "0.2", "-w", "0", "--yes",
             ],
         )
+        nominator_pool = self.ensure_nominator_pool("atlas-owner", "nova-provider")
 
         value = {
             "chain_id": chain_id,
@@ -253,6 +288,9 @@ class Seeder:
                 "service_actor": service,
                 "task_escrow": task,
                 "dispute": dispute,
+            },
+            "staking": {
+                "nominator_pool": nominator_pool,
             },
         }
         self.manifest.parent.mkdir(parents=True, exist_ok=True)

@@ -30,10 +30,11 @@ use std::time::Duration;
 
 use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
+use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, AipowCommitmentContract, AipowDistributorContract,
-    CapabilityRegistryContract, ChainProvider, DisputeContract, ServiceActorContract,
-    TaskEscrowContract,
+    CapabilityRegistryContract, ChainProvider, DisputeContract, NominatorPoolWrapper,
+    NominatorPoolWrapperImpl, ServiceActorContract, TaskEscrowContract, contract_provider_from,
 };
 
 use crate::indexer::store::{
@@ -99,6 +100,8 @@ impl KnownCodeHashes {
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
         by_hash.insert(AipowCommitmentContract::code()?.repr_hash(), "aipow_commitment");
         by_hash.insert(AipowDistributorContract::code()?.repr_hash(), "aipow_distributor");
+        let nominator_pool_code = read_single_root_boc(hex::decode(NOMINATOR_POOL_CODE)?)?;
+        by_hash.insert(nominator_pool_code.repr_hash(), "contract.pool.nominator");
         Ok(Self { by_hash })
     }
 
@@ -436,10 +439,16 @@ async fn visit_address(
 ) -> anyhow::Result<()> {
     let existing_kind = store.kind_of(address)?;
     let kind = match existing_kind {
-        // Already known not to be one of the four contract kinds: nothing
-        // further can ever change that (contract code never changes after
-        // deploy in this actor model), so skip the code-hash lookup.
-        Some(kind) if kind == "unclassified" => return Ok(()),
+        // A funded address can be observed while it is still uninitialized;
+        // Nominator Pools intentionally use that fund-then-activate flow.
+        // Re-check an unclassified address whenever later activity touches it
+        // so StateInit activation can promote it to a known contract kind.
+        Some(kind) if kind == "unclassified" => {
+            let Some(kind) = classify_address(chain_provider, known, address).await? else {
+                return Ok(());
+            };
+            kind
+        }
         Some(kind) => kind,
         None => {
             let Some(kind) = classify_address(chain_provider, known, address).await? else {
@@ -647,6 +656,59 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&AipowDistributorRecordDto::from(&data))?,
             })
         }
+        "contract.pool.nominator" => {
+            let address_value = address.parse::<MsgAddressInt>()?;
+            let wrapper = NominatorPoolWrapperImpl::new(
+                contract_provider_from(chain_provider.clone()),
+                address_value,
+            );
+            let data = wrapper.get_pool_data().await?;
+            let nominators = wrapper.list_nominators().await?;
+            let nominator_stake = nominators
+                .iter()
+                .map(|position| position.amount.saturating_add(position.pending_deposit))
+                .sum::<u64>();
+            let status = match data.state {
+                0 => "idle",
+                1 => "staking",
+                2 => "staked",
+                _ => "unknown",
+            };
+            let dto = NominatorPoolRecordDto {
+                state: data.state,
+                nominators_count: data.nominators_count,
+                stake_amount_sent: data.stake_amount_sent.to_string(),
+                validator_amount: data.validator_amount.to_string(),
+                nominator_stake: nominator_stake.to_string(),
+                total_balance_at_risk: data
+                    .validator_amount
+                    .saturating_add(nominator_stake)
+                    .to_string(),
+                validator_address: format!("0:{}", hex::encode(data.validator_address)),
+                validator_reward_share_bps: data.validator_reward_share,
+                max_nominators_count: data.max_nominators_count,
+                min_validator_stake: data.min_validator_stake.to_string(),
+                min_nominator_stake: data.min_nominator_stake.to_string(),
+                stake_at: data.stake_at,
+                saved_validator_set_hash: hex::encode(data.saved_validator_set_hash),
+                validator_set_changes_count: data.validator_set_changes_count,
+                validator_set_change_time: data.validator_set_change_time,
+                stake_held_for: data.stake_held_for,
+                nominators,
+            };
+            store.upsert(&IndexedRecord {
+                address: address.to_owned(),
+                kind: kind.to_owned(),
+                creator: Some(dto.validator_address.clone()),
+                counterparty: None,
+                status: Some(status.to_owned()),
+                deadline: (data.stake_at > 0 && data.stake_held_for > 0)
+                    .then_some(data.stake_at as u64 + data.stake_held_for),
+                last_seqno: seqno,
+                updated_at: now,
+                dto_json: serde_json::to_string(&dto)?,
+            })
+        }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
     }
 }
@@ -661,6 +723,27 @@ struct AipowDistributorRecordDto {
     claimed_score: String,
     score_root: String,
     commitment_ref: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct NominatorPoolRecordDto {
+    state: i32,
+    nominators_count: u32,
+    stake_amount_sent: String,
+    validator_amount: String,
+    nominator_stake: String,
+    total_balance_at_risk: String,
+    validator_address: String,
+    validator_reward_share_bps: u16,
+    max_nominators_count: u16,
+    min_validator_stake: String,
+    min_nominator_stake: String,
+    stake_at: u32,
+    saved_validator_set_hash: String,
+    validator_set_changes_count: i32,
+    validator_set_change_time: u64,
+    stake_held_for: u64,
+    nominators: Vec<contracts::NominatorPosition>,
 }
 
 impl From<&contracts::AipowDistributorData> for AipowDistributorRecordDto {

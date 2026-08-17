@@ -243,6 +243,12 @@ Masterchain swap
 {min_stake} {max_stake} {min_total_stake} {max_stake_factor} config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
 {election_params} config.election_params!
+// misbehaviour punishment schedule (ConfigParam 40), matching the canonical
+// genesis in crypto/smartcont/gen-zerostate.fif. Contracts that hold pooled
+// stake read this parameter to size the own funds a validator must reserve,
+// so a local network without it exercises a fallback rather than the real
+// guard. Interval tiers scale with the profile's validation round.
+{punishment_params} config.punishment_params!
 // config-addr = -1:5555...5555
 AllOnes 5 * constant config_addr
 config_addr config.config_smc!
@@ -355,6 +361,31 @@ hashu dup =: zerostate_rhash 256 u>B "zerostate.rhash" B>file
 """
 
 
+def _punishment_params(election_params: str) -> str:
+    """ConfigParam 40 arguments scaled to a profile's validation round.
+
+    The base pair is the mildest tier and the multipliers, in 1/256 units,
+    scale it up: severity by x2.5 flat and x4 proportional, medium by x4, long
+    by x16, so the worst tier lands on TM$2500 plus a quarter of the stake.
+    Those values are fixed; the interval thresholds are not, because a
+    threshold at or above the round length guards a tier nothing can reach.
+    Local profiles run rounds measured in minutes, so the tiers move with them.
+    """
+    elected_for = int(election_params.split()[0])
+    unpunishable = max(1, min(elected_for // 64, 1000))
+    medium = max(unpunishable + 1, elected_for // 4)
+    long = max(medium + 1, (elected_for * 3) // 4)
+    if long >= 1 << 16:
+        raise ValueError(
+            f"punishment interval {long} does not fit the uint16 field; "
+            "the profile's validation round is too long to scale from"
+        )
+    return (
+        "TM$62.5 16777216 640 1024 "
+        f"{unpunishable} {long} 4096 4096 {medium} 1024 1024"
+    )
+
+
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
@@ -443,6 +474,8 @@ def create_zerostate(
             "shard_validators_per_group": config.shard_validators,
             "original_vset_valid_for": 3600,
         }
+
+    profile["punishment_params"] = _punishment_params(profile["election_params"])
 
     new_consensus_config = ""
     for consensus_config in (config.mc_consensus, config.shard_consensus):

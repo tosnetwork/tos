@@ -26,6 +26,21 @@ library Config  // ConfigParam builders and validator set helpers
 // elected-for elections-begin-before elections-end-before stakes-frozen
 { 4 0 reverse <b { swap 32 u, } 4 times b> 15 config! } : config.election_params!
 
+// misbehaviour_punishment_config_v1#01 (ConfigParam 40)
+// A punishment is computed from the base pair (default_flat_fine,
+// default_proportional_fine) by applying the severity multiplier and then the
+// interval multiplier, each expressed in 1/256 units. Intervals are uint16, so
+// every threshold must stay below 65536; a threshold at or above the validation
+// round length would make its tier unreachable.
+// default-flat-fine default-proportional-fine
+// severity-flat-mult severity-proportional-mult unpunishable-interval
+// long-interval long-flat-mult long-proportional-mult
+// medium-interval medium-flat-mult medium-proportional-mult --
+{ 11 0 reverse
+  <b x{01} s, swap Tomi, swap 32 u, { swap 16 u, } 9 times b>
+  40 config!
+} : config.punishment_params!
+
 variable validator-dict
 dictnew 0 validator-dict 2!
 variable validators-weight

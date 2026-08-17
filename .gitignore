@@ -39,6 +39,7 @@ test/integration/.proof-attestation-*
 test/integration/.agent-economy-composed-e2e*
 test/integration/.validator-election-stage-a/
 test/integration/.validator-election-stage-b/
+test/integration/.nominator-pool-lifecycle/
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi

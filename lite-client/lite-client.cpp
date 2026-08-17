@@ -4170,29 +4170,35 @@ bool compute_punishment(int interval, bool severe, td::RefInt256& fine, unsigned
   }
 
   fine = block::tlb::t_Tomis.as_integer(rec.default_flat_fine);
-  fine_part = rec.default_proportional_fine;
+
+  // The proportional part is a fraction of 2^32, so a meaningful base value
+  // already occupies most of a 32-bit word. Applying a multiplier before the
+  // 8-bit shift therefore has to happen in 64 bits: a base of 1/256 (2^24)
+  // scaled by a x4 severity multiplier reaches 2^34 mid-expression and would
+  // silently wrap to zero if kept in `unsigned`, turning a proportional fine
+  // into no fine at all.
+  td::uint64 part = rec.default_proportional_fine;
 
   if (severe) {
     fine = fine * rec.severity_flat_mult;
     fine >>= 8;
-    fine_part = fine_part * rec.severity_proportional_mult;
-    fine_part >>= 8;
+    part = part * static_cast<td::uint64>(rec.severity_proportional_mult) >> 8;
   }
 
   if (interval >= rec.long_interval) {
     fine = fine * rec.long_flat_mult;
     fine >>= 8;
-    fine_part = fine_part * rec.long_proportional_mult;
-    fine_part >>= 8;
-    return true;
-  }
-  if (interval >= rec.medium_interval) {
+    part = part * static_cast<td::uint64>(rec.long_proportional_mult) >> 8;
+  } else if (interval >= rec.medium_interval) {
     fine = fine * rec.medium_flat_mult;
     fine >>= 8;
-    fine_part = fine_part * rec.medium_proportional_mult;
-    fine_part >>= 8;
-    return true;
+    part = part * static_cast<td::uint64>(rec.medium_proportional_mult) >> 8;
   }
+
+  // `suggested_fine_part` is a uint32 in the complaint, and the elector caps
+  // the resulting fine at the validator's stake, so saturating here keeps the
+  // suggestion representable without changing which complaints are acceptable.
+  fine_part = static_cast<unsigned>(part > 0xffffffffULL ? 0xffffffffULL : part);
   return true;
 }
 

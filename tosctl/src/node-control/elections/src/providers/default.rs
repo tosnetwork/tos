@@ -10,7 +10,7 @@ use super::traits::ElectionsProvider;
 use crate::providers::traits::{Account, ValidatorConfig, ValidatorEntry};
 use adnl::client::AdnlClientConfig;
 use anyhow::Context;
-use chain_block::{ConfigParam15, ValidatorSet};
+use chain_block::{ConfigParam15, ValidatorSet, read_single_root_boc};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{
@@ -132,6 +132,12 @@ impl ElectionsProvider for DefaultElectionsProvider {
         let bytes = self.client.get_config_param(34).await?;
         parse_config_param_34(&bytes)
     }
+    async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
+        let bytes = self.client.get_config_param(34).await?;
+        let cell = read_single_root_boc(bytes)?;
+        Ok(Some(cell.repr_hash().inner()))
+    }
+
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>> {
         match self.client.get_config_param(36).await {
             Ok(bytes) => Ok(Some(parse_config_param_36(&bytes)?)),

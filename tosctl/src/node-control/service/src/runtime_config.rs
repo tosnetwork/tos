@@ -15,8 +15,8 @@ use common::{
     vault_signer::VaultSigner,
 };
 use contracts::{
-    ChainProvider, DefaultChainProvider, NominatorWrapper, NominatorWrapperImpl, SmartContract,
-    Wallet, WalletContract, contract_provider,
+    ChainProvider, DefaultChainProvider, NominatorPoolWrapperImpl, NominatorWrapper,
+    NominatorWrapperImpl, SmartContract, Wallet, WalletContract, contract_provider,
 };
 use secrets_vault::{
     types::{algorithm::Algorithm, secret_id::SecretId, secret_spec::SecretSpec},
@@ -628,6 +628,54 @@ fn open_nominator_pool(
             };
             Ok(Arc::new(pool))
         }
-        _ => anyhow::bail!("unsupported pool kind"),
+        PoolConfig::NominatorPool {
+            address,
+            validator_reward_share,
+            max_nominators,
+            min_validator_stake,
+            min_nominator_stake,
+            ..
+        } => {
+            let validator_addr_bytes = validator_addr.address().get_bytestring(0);
+            let mut validator_account = [0u8; 32];
+            if validator_addr_bytes.len() != validator_account.len() {
+                anyhow::bail!("validator address must be a 256-bit account id");
+            }
+            validator_account.copy_from_slice(&validator_addr_bytes);
+
+            // A pool's address is the hash of its code and its initial data, so
+            // the configured address is checkable rather than trusted: if the
+            // parameters in the config produce a different address, the operator
+            // is pointing at some other contract and staking through it would put
+            // depositors' funds under code nobody here has agreed to.
+            let derived = NominatorPoolWrapperImpl::calculate_address(
+                -1,
+                &validator_account,
+                *validator_reward_share,
+                *max_nominators,
+                *min_validator_stake,
+                *min_nominator_stake,
+            )?;
+            if let Some(address) = address {
+                let configured = MsgAddressInt::from_str(address)
+                    .context(format!("invalid pool address: {}", address))?;
+                if configured != derived {
+                    anyhow::bail!(
+                        "configured pool address does not match the one its parameters derive: \
+                         configured={}, derived={}",
+                        configured,
+                        derived
+                    );
+                }
+            }
+
+            Ok(Arc::new(NominatorPoolWrapperImpl::new(
+                contract_provider!(rpc_client.clone()),
+                derived,
+            )))
+        }
+        PoolConfig::CorePool { .. } => {
+            anyhow::bail!("core pools are not driven by the elections daemon")
+        }
     }
 }

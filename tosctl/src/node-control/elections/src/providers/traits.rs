@@ -98,4 +98,14 @@ pub trait ElectionsProvider: Send + Sync {
     async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
     async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>>;
+
+    /// Representation hash of the ConfigParam 34 cell.
+    ///
+    /// Contracts that track validator-set changes compare cell hashes rather
+    /// than parsed contents, so a driver that wants to tell a pool the set
+    /// moved has to speak in the same terms. Providers that cannot supply it
+    /// return `None`, which simply means no such nudge is attempted.
+    async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
+        Ok(None)
+    }
 }

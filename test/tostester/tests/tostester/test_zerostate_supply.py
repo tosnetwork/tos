@@ -252,6 +252,117 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
         assert validator.weight == 17
 
 
+def _punishment_config(state) -> dict:
+    """Decode ConfigParam 40, which the vendored TLB library does not model."""
+    cs = state.custom.config.config[40].copy()
+    tag = cs.load_uint(8)
+    assert tag == 0x01, f"unexpected MisbehaviourPunishmentConfig tag {tag:#x}"
+    flat = cs.load_uint(cs.load_uint(4) * 8)
+    decoded = {
+        "default_flat_fine": flat,
+        "default_proportional_fine": cs.load_uint(32),
+        "severity_flat_mult": cs.load_uint(16),
+        "severity_proportional_mult": cs.load_uint(16),
+        "unpunishable_interval": cs.load_uint(16),
+        "long_interval": cs.load_uint(16),
+        "long_flat_mult": cs.load_uint(16),
+        "long_proportional_mult": cs.load_uint(16),
+        "medium_interval": cs.load_uint(16),
+        "medium_flat_mult": cs.load_uint(16),
+        "medium_proportional_mult": cs.load_uint(16),
+    }
+    assert cs.remaining_bits == 0
+    return decoded
+
+
+def _punishment_tier(config: dict, severe: bool, interval: int) -> tuple[int, int]:
+    """Mirror compute_punishment() in lite-client/lite-client.cpp."""
+    flat = config["default_flat_fine"]
+    part = config["default_proportional_fine"]
+    if severe:
+        flat = flat * config["severity_flat_mult"] >> 8
+        part = part * config["severity_proportional_mult"] >> 8
+    if interval >= config["long_interval"]:
+        flat = flat * config["long_flat_mult"] >> 8
+        part = part * config["long_proportional_mult"] >> 8
+    elif interval >= config["medium_interval"]:
+        flat = flat * config["medium_flat_mult"] >> 8
+        part = part * config["medium_proportional_mult"] >> 8
+    return flat, part
+
+
+def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_path):
+    """Without ConfigParam 40 the punishment path falls back to a flat fine with
+    no proportional component, so a validator's required own funds stop scaling
+    with the stake it controls. Pooled-stake contracts read this parameter to
+    size that requirement, so genesis must ship a real schedule."""
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(Key().public_key.key for _ in range(EXPECTED_VALIDATOR_COUNT))
+    )
+    command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
+    subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    punishment = _punishment_config(state)
+
+    assert punishment == {
+        "default_flat_fine": 62_500_000_000,
+        "default_proportional_fine": 1 << 24,
+        "severity_flat_mult": 640,
+        "severity_proportional_mult": 1024,
+        "unpunishable_interval": 1000,
+        "long_interval": 49152,
+        "long_flat_mult": 4096,
+        "long_proportional_mult": 4096,
+        "medium_interval": 16384,
+        "medium_flat_mult": 1024,
+        "medium_proportional_mult": 1024,
+    }
+
+    short, medium, long = 2000, 20000, 60000
+    assert _punishment_tier(punishment, False, short) == (
+        62_500_000_000,
+        1 << 24,
+    )
+    assert _punishment_tier(punishment, False, medium) == (
+        250 * NANOTOS_PER_TOS,
+        1 << 26,
+    )
+    assert _punishment_tier(punishment, False, long) == (
+        1000 * NANOTOS_PER_TOS,
+        1 << 28,
+    )
+    assert _punishment_tier(punishment, True, short) == (
+        156_250_000_000,
+        1 << 26,
+    )
+    assert _punishment_tier(punishment, True, medium) == (
+        625 * NANOTOS_PER_TOS,
+        1 << 28,
+    )
+    assert _punishment_tier(punishment, True, long) == (
+        2500 * NANOTOS_PER_TOS,
+        1 << 30,
+    )
+
+    # Every threshold has to fit a uint16 and stay inside one validation round,
+    # otherwise the tier it guards can never be reached.
+    elected_for = _config(state, 15, ConfigParam15).validators_elected_for
+    for field in ("unpunishable_interval", "medium_interval", "long_interval"):
+        assert 0 < punishment[field] < 1 << 16
+        assert punishment[field] < elected_for
+    assert (
+        punishment["unpunishable_interval"]
+        < punishment["medium_interval"]
+        < punishment["long_interval"]
+    )
+
+    # The worst tier is what a pooled-stake contract must reserve against.
+    worst_flat, worst_part = _punishment_tier(punishment, True, long)
+    required = worst_flat + (100_000 * NANOTOS_PER_TOS) * worst_part // (1 << 32)
+    assert required == 27_500 * NANOTOS_PER_TOS
+
+
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
     (tmp_path / "validator-keys.pub").write_bytes(
