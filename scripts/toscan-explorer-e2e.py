@@ -48,19 +48,34 @@ def request_json(url: str, body=None, timeout=15):
         return error.code, json.loads(raw.decode()) if raw else {}
 
 
+# Waits here are for a chain to produce blocks and an indexer to catch up, and
+# both are as fast as the machine underneath them. When this runs in CI it runs
+# immediately after compiling the node, on a runner whose caches were cold and
+# whose disk has just been saturated for the better part of an hour -- so a
+# budget tuned on an idle developer machine expires on work that has nothing to
+# do with what is being tested. TOSCAN_E2E_TIMEOUT_SCALE widens every wait
+# without moving any of them individually.
+TIMEOUT_SCALE = float(os.environ.get("TOSCAN_E2E_TIMEOUT_SCALE", "1"))
+
+
 def wait_until(label: str, predicate, timeout=180):
-    deadline = time.monotonic() + timeout
+    budget = timeout * TIMEOUT_SCALE
+    deadline = time.monotonic() + budget
+    started = time.monotonic()
     last_error = None
     while time.monotonic() < deadline:
         try:
             value = predicate()
             if value:
-                print(f"PASS: {label}")
+                print(f"PASS: {label} ({time.monotonic() - started:.0f}s)")
                 return value
         except Exception as error:  # endpoint can be absent during startup
             last_error = error
         time.sleep(1)
-    raise TimeoutError(f"{label} timed out: {last_error}")
+    raise TimeoutError(
+        f"{label} timed out after {budget:.0f}s "
+        f"(scale {TIMEOUT_SCALE:g}): {last_error}"
+    )
 
 
 def start(command: list[str], cwd: Path, log_path: Path, env=None):

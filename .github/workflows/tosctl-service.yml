@@ -93,6 +93,13 @@ jobs:
       - name: Build tosctl explorer
         run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
       - name: Real-chain TOSCAN release gate
+        env:
+          # This step starts immediately after compiling the node, on a runner
+          # whose disk has just been saturated for the better part of an hour.
+          # The waits inside are for a chain to produce blocks and an indexer to
+          # catch up; giving them a developer-machine budget charges them for
+          # work that is not theirs.
+          TOSCAN_E2E_TIMEOUT_SCALE: "3"
         run: uv run python scripts/toscan-explorer-e2e.py
       - uses: actions/upload-artifact@v4
         if: failure()
