@@ -1031,7 +1031,17 @@ class PoolLifecycle:
             await self.drain_withdraw_queue()
             await self.check_solvency()
 
-            await self.stake_through_pool(next_election, label="pool-stake-after-drain")
+            # A fresh id rather than the one captured before the queue was
+            # drained: draining takes long enough that the earlier election has
+            # closed, and the Elector refuses a stake for a finished one --
+            # which looks exactly like the pool still being blocked.
+            final_election = await self.retry(
+                self.active_election_id,
+                timeout=900,
+                description="an election the pool can still enter",
+                predicate=lambda value: value > 0,
+            )
+            await self.stake_through_pool(final_election, label="pool-stake-after-drain")
             data = await self.retry(
                 self.pool_data,
                 timeout=180,
@@ -1062,20 +1072,57 @@ class PoolLifecycle:
                 pass
 
     def write_report(self) -> None:
+        # Everything this run is supposed to establish, whether or not it got
+        # there. A release gate reading only the checks that ran cannot tell a
+        # leg that passed from one the run never reached, and an aborted run
+        # would look like a shorter clean one. Absence has to be visible.
+        expected = [
+            "the pool holds what it owes plus its storage reserve",
+            "every depositor is on the pool's ledger",
+            "validator's own funds cover the minimum it must post",
+            "leaving between rounds pays out without waiting",
+            "the pool is a participant in the election",
+            "a mid-round request is recorded rather than paid",
+            "the pool has counted enough validator set changes to recover",
+            "the stake comes back and the pool goes idle",
+            "every nominator's principal is at least what it was",
+            "recovering does not settle a queued withdrawal",
+            "a queued withdrawal keeps the pool out of the next election",
+            "draining the queue pays the leaver and frees the pool",
+            "draining the queue lets the pool back into an election",
+        ]
+        observed = {entry["check"] for entry in self.report.checks}
+        not_exercised = [name for name in expected if name not in observed]
+
         report = {
             "started_at": self.report.started_at,
             "finished_at": utc_now(),
             "pool_address": raw_address(self.pool_address) if self.pool_address else None,
             "pool_code_hash": self.pool_code.hash.hex() if self.pool_code else None,
             "checks": self.report.checks,
+            "not_exercised": not_exercised,
             "events": self.report.events,
             "failures": self.failures,
-            "passed": not self.failures,
+            # Complete only when nothing failed and nothing was skipped, so a
+            # gate can require this single field instead of restating the list.
+            "passed": not self.failures and not not_exercised,
         }
         path = self.run_dir / "report.json"
         path.write_text(json.dumps(report, indent=2, default=str))
         print(f"\nreport: {path}")
-        print("result:", "PASS" if not self.failures else f"FAIL ({len(self.failures)})")
+        if not_exercised:
+            print(f"not exercised ({len(not_exercised)}):")
+            for name in not_exercised:
+                print(f"  - {name}")
+        if report["passed"]:
+            print("result: PASS")
+        else:
+            reasons = []
+            if self.failures:
+                reasons.append(f"{len(self.failures)} failed")
+            if not_exercised:
+                reasons.append(f"{len(not_exercised)} not exercised")
+            print("result: FAIL (" + ", ".join(reasons) + ")")
 
 
 def parse_args() -> argparse.Namespace:

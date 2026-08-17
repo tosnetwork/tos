@@ -107,8 +107,41 @@ def generate_explorer_config(tosctl: Path, path: Path, rpc_origin: str, http_bin
     path.write_text(json.dumps(config, indent=2) + "\n")
 
 
+# What a consumer of this script can rely on this revision to do.
+#
+# The explorer is built from a different repository and its release gate runs
+# this script out of whichever TOS revision it happened to check out. Without a
+# declared contract a revision that predates a feature does not report a missing
+# feature -- it reports an unrecognized argument, which reads like a typo in the
+# caller rather than a version mismatch, and a gate that silently stops covering
+# something is worse than one that was never written.
+CAPABILITIES = {
+    "browser-command": (
+        "--browser-command runs an external release gate against the live chain"
+    ),
+    "staking-projection": (
+        "/explorer/staking is asserted against Elector election history"
+    ),
+    "validator-set-decoding": (
+        "getConfigParam returns decoded validator sets alongside the raw cell"
+    ),
+}
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="print what this revision supports, one per line, and exit",
+    )
+    parser.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="CAPABILITY",
+        help="fail immediately unless this revision declares the capability",
+    )
     parser.add_argument("--workdir", default=str(DEFAULT_WORKDIR))
     parser.add_argument("--tosctl", default=str(REPO / "tosctl/src/target/debug/tosctl"))
     parser.add_argument("--rpc-port", type=int, default=19451)
@@ -120,6 +153,22 @@ def main():
         help="optional shell command that release-gates the browser against the running real chain",
     )
     args = parser.parse_args()
+
+    if args.capabilities:
+        for name, description in sorted(CAPABILITIES.items()):
+            print(f"{name}\t{description}")
+        return 0
+
+    missing = [name for name in args.require if name not in CAPABILITIES]
+    if missing:
+        parser.exit(
+            2,
+            "this TOS revision does not provide: "
+            + ", ".join(missing)
+            + "\nit declares: "
+            + ", ".join(sorted(CAPABILITIES))
+            + "\ncheck out a TOS revision that has them, or drop the requirement\n",
+        )
 
     workdir = Path(args.workdir).resolve()
     tosctl = Path(args.tosctl).resolve()
