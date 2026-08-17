@@ -600,6 +600,28 @@ mod tests {
         pool_with(stub).maintenance(&current_hash).await.unwrap()
     }
 
+    /// A pool's address is the hash of its code and its initial storage, so
+    /// this value pins both. Two things derive it independently -- this crate
+    /// when it deploys or resolves a pool, and the lifecycle end-to-end script
+    /// when it drives one -- and a silent disagreement between them would send
+    /// deposits to an address that holds no pool at all.
+    #[test]
+    fn pool_address_derivation_is_pinned() {
+        let addr = NominatorPoolWrapperImpl::calculate_address(
+            -1,
+            &[0xAB; 32],
+            4000,
+            40,
+            5_000_000_000_000,
+            100_000_000_000,
+        )
+        .unwrap();
+        assert_eq!(
+            addr.to_string(),
+            "-1:f551c09c2533d56aad15ef67cd72d4d2b79ef93f447d49e76eda9b09a8bd4382"
+        );
+    }
+
     #[tokio::test]
     async fn quiet_pool_needs_nothing() {
         let actions = maintenance_for(StubProvider::new(), SAVED_VSET_HASH).await;
