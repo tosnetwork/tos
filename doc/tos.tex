@@ -49,14 +49,19 @@ commitments, evidence and settlement across organizational boundaries.
 The implemented foundation, TOS Core, is an actor-model blockchain with native TVM
 execution, value-bearing asynchronous messages, masterchain-rooted consensus, dynamic
 sharding and ADNL/DHT/RLDP networking. It includes foundations for Agent Accounts, concurrent
-Service Actors, Task Escrow, Dispute, Capability Registry and Proof Attestation. The broader
-service protocol, ARD-compatible discovery products and AI Edge Computing Terminals described
-in this paper are planned product layers and are not presented as already deployed commercial
-infrastructure. TOS adopts Agentic Resource Discovery (ARD) rather than defining an
-incompatible general-purpose agent catalog, and the planned off-chain protocol product can
-run an independently deployable, federated ARD Registry. Models, prompts, sensor streams and
-private customer data remain off-chain; shared authority, commitments and settlement use the
-chain where independently operated parties require a tamper-resistant source of truth.
+Service Actors, Task Escrow, Dispute, Capability Registry and Proof Attestation. It also
+contains a feature-gated Artificial Intelligence Proof of Work (AIPoW) path: settled-work
+indexing, bonded score commitments, public challenges, epoch settlement, Merkle distribution,
+reward maturation and deterministic masterchain mint validation. That path is inactive by
+default and creates no TOS unless governance activates it after the launch gates in this paper.
+The broader service protocol, ARD-compatible discovery products and AI Edge Computing
+Terminals described in this paper are planned product layers and are not presented as already
+deployed commercial infrastructure. TOS adopts Agentic Resource Discovery (ARD) rather than
+defining an incompatible general-purpose agent catalog, and the planned off-chain protocol
+product can run an independently deployable, federated ARD Registry. Models, prompts, sensor
+streams and private customer data remain off-chain; shared authority, commitments and
+settlement use the chain where independently operated parties require a tamper-resistant
+source of truth.
 \end{abstract}
 
 \tableofcontents
@@ -105,7 +110,10 @@ The architecture has five layers:
 Only the first layer is substantially implemented in this repository. The remaining layers
 are a product architecture and delivery plan. This distinction is deliberate: validators do
 not execute application workloads, and a new model, accelerator or service profile must not
-require a consensus upgrade.
+require a consensus upgrade. The AIPoW contract and native-issuance path are implemented
+inside the first layer but remain feature-gated and inactive; the production scoring
+methodology, independent scorer reproduction, external audit and governance activation remain
+launch gates rather than implied production facts.
 
 ARD operates before invocation: it lets agents publish and find resources. TOS remains
 responsible for authentication, live quotes, local admission, bounded execution, metering,
@@ -125,6 +133,39 @@ terminal beside a production line, camera or robot can provide low-latency and p
 preserving execution that a remote cloud cannot provide economically or safely. Local safety
 and deterministic real-time work always take priority, and TOS never replaces an independent
 safety controller.
+
+\subsection{Economic Wedge, Flywheel and Falsifiable Metrics}
+
+The initial wedge is narrower than ``a decentralized market for all AI.'' It is a managed,
+owner-operated terminal that turns a known model or tool into a versioned service with a live
+quote, bounded authorization, signed receipt and settlement. The protocol can then reuse the
+same identity, evidence and payment path for additional services without putting their
+application logic into consensus.
+
+If the wedge works, the intended flywheel is:
+
+\begin{center}
+\texttt{unrelated paid demand -> verified settlement history -> bounded AIPoW subsidy}\
+$\longrightarrow$ \texttt{broader capable supply -> better locality, availability and price}\
+$\longrightarrow$ \texttt{more unrelated paid demand}.
+\end{center}
+
+The defensible asset in this loop is not token issuance by itself. It is the accumulated,
+portable graph of service identities, exact capability revisions, payer-provider settlement,
+evidence, disputes and operating reliability, together with terminal integrations that can
+execute those services safely. Because discovery is open and federated, this advantage must
+come from better transaction completion and trust data rather than from locking providers
+inside a closed catalog.
+
+The loop is falsifiable. Before describing it as a network effect, public reporting should
+show at least: organic settled value and its share of all settled value; unrelated unique and
+repeat payer control domains; paid completion and dispute-overturn rates by capability and
+evidence tier; AIPoW issuance divided by organic settled value; provider retention and
+non-reward service revenue; latency and availability by compute tier; and the top-one,
+top-four, top-ten and Herfindahl concentration of both settled value and AIPoW score after
+common-control aggregation. Subsidized circular volume, address count and declared capacity
+are not substitutes for these measures. Section~\ref{sec:aipow} defines the demand and reward
+quantities used by this reporting.
 
 \subsection{Scale of the Opportunity}
 
@@ -1119,61 +1160,244 @@ after native creation stops. Any later proposal to restart native creation is a 
 requiring prominent public review.
 
 \subsection{Artificial Intelligence Proof of Work: The Community Distribution}
+\label{sec:aipow}
 
 The community-agent allocation of approximately 4.5 billion TOS is created through
-\textbf{Artificial Intelligence Proof of Work (AIPoW)}. AIPoW is a direct extension of the proof-of-work
-issuance model that Bitcoin established: permissionless participation, protocol-automatic
-creation, no issuer, no sale, and no reward for merely holding tokens --- with the hash
-puzzle replaced by verified useful work. Where a Bitcoin miner proves expended computation
-on an arbitrary puzzle, a AIPoW participant proves completed, evidence-graded, on-chain
-settled intelligent work: model inference, storage provision, and verification services
-performed for the network's agent-service layer. One honest difference is always stated
-plainly: Bitcoin's proof of work secures consensus itself, while TOS consensus is secured
-by staked validators; AIPoW secures and provisions the service-capacity layer --- the real
-compute, storage and verification supply without which an agent network is an empty chain.
-Both are network-essential work compensated by protocol issuance; neither is an investment
-contract.
+\textbf{Artificial Intelligence Proof of Work (AIPoW)}. The useful-work category is not new:
+Bittensor pays participants for validator-scored digital commodities,
+Gensyn focuses on execution and verification of machine-learning work, and Render operates a
+distributed GPU-work marketplace.\footnote{Primary project descriptions:
+\url{https://www.bittensor.com/docs},
+\url{https://docs.gensyn.ai/the-gensyn-protocol}, and
+\url{https://know.rendernetwork.com/}.} TOS does not claim that attaching a token to AI
+compute is itself an innovation. Its narrower design claim is that heterogeneous AI, storage,
+verification and physical-edge services can share one outcome ledger, and that bounded native
+issuance can be derived from unrelated, evidence-graded, on-chain settled demand rather than
+from declared capacity or a subjective popularity vote.
 
-AIPoW rewards are scored per epoch from settled work only:
+AIPoW borrows four economic properties from proof-of-work issuance: permissionless earning,
+protocol-automatic creation, no reward for merely holding a token, and no treasury that first
+receives the allocation. It does \emph{not} replace Bitcoin's consensus work. TOS consensus is
+secured by stake-bonded validators; AIPoW provisions the service-capacity layer. This separation
+avoids asking non-deterministic useful work to provide block-timing, fork-choice and inexpensive
+universal-verification properties for which ordinary hash puzzles were designed. Those are
+known hard requirements when useful computation is proposed as consensus work.\footnote{A.
+Merlina, T. Garrett and R. Vitenberg, ``On Replacing Cryptopuzzles with Useful Computation in
+Blockchain Proof-of-Work Protocols,'' 2024: \url{https://arxiv.org/abs/2404.15735}.} The name
+AIPoW is therefore an issuance and service-provision analogy, not a claim that AI work secures
+TOS consensus and not a legal classification of any participant relationship.
 
-\begin{itemize}
-  \item \textbf{Evidence-graded scoring.} Every settled work unit carries an evidence
-        level. Self-declared claims earn exactly zero; real consumer settlements,
-        benchmarked challenges, audited, attested and independently replicated work earn
-        progressively higher multipliers. Raising verifiability is the only way to raise
-        earnings.
-  \item \textbf{Rate-card valuation.} Work is valued by protocol-published rate cards per
-        capability class, capped by the price an arm's-length consumer actually settled ---
-        so self-dealing cannot mint score.
-  \item \textbf{Concentration limits.} Per-control-domain shares of each epoch pool decay
-        beyond a published threshold and are hard-capped, under the same
-        common-control disclosure rules as validator independence.
-\end{itemize}
+\subsubsection{Eligible Work and Evidence-Weighted Score}
 
-Emission is coupled to demand, not to the calendar. Each epoch pool is the smaller of a
-published schedule ceiling and a multiple of trailing organic settled value --- real,
-arm's-length, settled demand, excluding challenge tasks and related-payer settlements.
-An empty network emits only a small published cold-start floor; a growing network releases
-faster; the un-emitted difference is never created and never back-filled. Release speed is
-therefore a measurement of real network growth, not a promise, and extraction without
-contribution is structurally unprofitable. Bounded, randomized challenge tasks let honest
-capacity earn before organic volume exists, capped both as a pool share and as a multiple
-of organic demand. Each epoch reward matures over subsequent epochs, with the unmatured
-portion forfeited on proven fraud; maturation is a payment schedule for completed work,
-never a yield product.
+Let $J_e$ be the set of unique service operations finalized in epoch $e$. For operation $j$,
+let $p_j$ be its actual settled price in \nanotos, $x_j$ its measured work units,
+$r_{c_j}$ the published maximum rate per unit for capability class $c_j$, $m_{\ell_j}$ the
+evidence multiplier in basis points for evidence level $\ell_j$, and $q_j \in [0,10000]$ a
+capability-specific quality and service-level factor. Let $I_j$ equal one only when the
+operation has a unique replay-protected identity, reached final settlement, remained outside
+dispute or forfeiture, used the frozen capability revision and rate card, and satisfies the
+published payer-independence and evidence rules. Its integer score contribution is
 
-Like validator rewards, AIPoW tokens are created by the protocol at distribution time and
-credited directly to the earning account. No treasury wallet ever holds the allocation, no
-company operates a claim portal, and no entity can redirect the distribution. Scoring runs
-in open-source, independently reimplemented off-chain scorers whose epoch score roots are
-committed on-chain and exposed to a bonded public challenge window before any distribution
-occurs.
+\[
+  v_j = I_j\left\lfloor
+    \min\!\left(p_j, r_{c_j}x_j\right)
+    \frac{m_{\ell_j}}{10^4}
+    \frac{q_j}{10^4}
+  \right\rfloor .
+\]
 
-AIPoW is a specified design with published launch gates, including security review of the
-underlying settlement contracts, independent scorer reproduction, adversarial economic
-testing, and counsel review of the then-current United States and European Union
-regulatory texts. None of the community allocation is created before those gates pass, and
-none of this section promises a completion date, a reward rate or any token value.
+Self-declared capacity has $m_{\mathrm{declared}}=0$. A paid receipt may establish that an
+operation was requested and settled, but it does not by itself prove semantic correctness.
+Higher evidence levels require capability-appropriate evidence such as a deterministic
+replay, randomized replicated execution, a benchmark with a hidden challenge seed, a hardware
+attestation bound to the service revision, an audited measurement, or a cryptographic proof.
+An LLM-as-judge score may be one input for an open-ended task but is not sufficient by itself
+for the highest evidence tier. Every multiplier and quality function is a bounded rational
+integer rule in the published methodology; floating-point or scorer-local behavior cannot
+affect an epoch root.
+
+The price cap prevents a provider from turning an unusually high invoice into unlimited
+score, while the settlement cap prevents a rate card from crediting value no customer paid.
+It does not, by itself, prove that payer and earner are independent. Organic settled value is
+therefore a separate quantity:
+
+\[
+  O_e = \sum_{j\in J_e} I^{\mathrm{organic}}_j
+        \min\!\left(p_j,r_{c_j}x_j\right),
+\]
+
+where $I^{\mathrm{organic}}_j=1$ only for a settled operation whose payer and earner are in
+different disclosed and inferred control domains, which is not a protocol-funded challenge,
+and which passes the frozen anti-wash-trading policy. Challenge work may earn a score under a
+separate allowance, but it never increases $O_e$.
+
+\subsubsection{Control-Domain Aggregation and Concentration}
+
+Addresses are aggregated before scoring. For control domain $a$, define raw epoch score
+
+\[
+  S_{a,e}=\sum_{j\in J_e:\,a(j)=a} v_j .
+\]
+
+The published methodology then applies a concave tail and an absolute score cap:
+
+\[
+ \widehat S_{a,e}=
+ \min\!\left\{C_e,
+ \begin{cases}
+   S_{a,e}, & S_{a,e}\le H_e,\\[0.25em]
+   H_e+\left\lfloor \alpha_e(S_{a,e}-H_e)\right\rfloor,
+     & S_{a,e}>H_e,
+ \end{cases}\right\}
+ \qquad 0\le\alpha_e\le1.
+\]
+
+$H_e$ is the full-credit threshold, $\alpha_e$ the published marginal factor above it and
+$C_e$ the maximum credited score for one control domain. This is a cap on credited score, not
+a claim that one operator can never receive a large fraction of a thin epoch. Actual top-$k$
+reward shares and the Herfindahl index remain mandatory disclosures. Splitting addresses does
+not raise the limit when beneficial ownership, operator keys, payer relationships, hosting,
+network identity or other published common-control signals link them. Because hidden common
+control cannot be proven from chain data alone in every case, the domain graph and each
+classification change are reproducible scorer inputs and are challengeable with the score
+root.
+
+Let $\widehat S_e=\sum_a\widehat S_{a,e}$. The epoch Merkle tree commits leaves of the form
+$(a,\widehat S_{a,e})$, sorted by identity, together with the frozen methodology and rate-card
+hashes. Duplicate identities are invalid rather than silently merged.
+
+\subsubsection{Demand-Coupled Epoch Pool}
+
+The native epoch pool uses exact integer arithmetic. Let $K_n/K_d$ be the configured emission
+coefficient, $F_e$ the cold-start floor, $U_e$ the published per-epoch schedule ceiling,
+$C_{\mathrm{AI}}$ the cumulative AIPoW cap and $M_{<e}$ cumulative prior AIPoW creation. The
+candidate pool and final mint are
+
+\[
+  P_e=\min\!\left(
+       U_e,
+       \max\!\left(F_e,
+       \left\lfloor O_e\frac{K_n}{K_d}\right\rfloor\right)
+      \right),
+  \qquad
+  M_e=\min\!\left(P_e,\max(0,C_{\mathrm{AI}}-M_{<e})\right).
+\]
+
+This is the arithmetic implemented by the feature-gated native mint path. A positive cold-start
+floor is an explicit, measurable acquisition subsidy, not organic demand, and must be reported
+separately. Governance may set it to zero. A randomized challenge allowance in the scoring
+methodology is bounded by
+
+\[
+  S^{\mathrm{challenge}}_e \le
+  F^{\mathrm{challenge}}_e+
+  \left\lfloor O_e\frac{\chi_n}{\chi_d}\right\rfloor,
+\]
+
+where the first term is a published cold-start allowance and $\chi_n/\chi_d$ is the configured
+challenge multiplier. Related-payer and challenge settlements remain excluded from $O_e$, so
+they cannot recursively expand the demand-coupled pool. If no valid final score commitment
+exists after the grace period, the epoch is skipped with zero creation. No shortfall is owed,
+queued, extended or back-filled.
+
+\subsubsection{Distribution and Reward Maturation}
+
+For a valid epoch with $\widehat S_e>0$, domain $a$ is entitled to
+
+\[
+  R_{a,e}=\left\lfloor
+    M_e\frac{\widehat S_{a,e}}{\widehat S_e}
+  \right\rfloor,
+  \qquad
+  \sum_a R_{a,e}\le M_e.
+\]
+
+A claimant supplies a Merkle proof, but payment always goes to the committed earning identity,
+never to the transaction sender. Integer remainder and unclaimed value stay unassigned in the
+epoch distributor; no operator may redirect them. The distributor snapshots an immediate
+fraction $b/10000$, a stream length $n$ and maturation-epoch duration $\tau$. If $t_0$ is the
+claim time, the matured amount at time $t$ is
+
+\[
+  A_{a,e}(t)=I_{a,e}+
+  \left\lfloor
+   (R_{a,e}-I_{a,e})
+   \frac{\min\!\left(n,
+     \left\lfloor\frac{(\min(t,t_f)-t_0)_+}{\tau}\right\rfloor\right)}{n}
+  \right\rfloor,
+  \qquad
+  I_{a,e}=\left\lfloor R_{a,e}\frac{b}{10^4}\right\rfloor .
+\]
+
+For an un-forfeited claim $t_f=+\infty$. On proven fraud, $t_f$ is the forfeiture time and
+the unmatured remainder is permanently void; value already matured remains payable. Maturation
+is delayed payment for completed work and a period in which fraud remedies remain meaningful;
+it is not a return for passively holding or staking TOS.
+
+\subsubsection{Commit, Challenge and Native Settlement}
+
+The scoring and issuance pipeline separates expensive interpretation from deterministic
+consensus:
+
+\begin{enumerate}
+  \item Public chain data yields settled-work rows. The interim feed records only settled Task
+        Escrows and paid Service Actor requests; a production receipt adds capability class,
+        units, explicit evidence level and price-cap inputs.
+  \item Independently implemented scorers apply the same frozen methodology, rate card and
+        common-control inputs and must reproduce $O_e$, every $\widehat S_{a,e}$,
+        $\widehat S_e$ and the Merkle root byte for byte.
+  \item A committer bonds the root, total score, organic settled value, methodology hash and
+        rate-card hash. A symmetric bonded public challenge can present contrary evidence.
+        An unreviewed challenge fails the root safe after its deadline; an absent or rejected
+        root cannot halt later epochs.
+  \item After the full challenge window, the masterchain verifies the audited contract code
+        hash, canonical address, approved reviewer, final status, economic tuple and frozen
+        configuration. Collators and validators call one shared pure integer derivation for
+        $M_e$; disagreement makes the block invalid.
+  \item The settlement actor deploys an audited per-epoch distributor. Claims are
+        permissionless, Merkle-verified, pro rata, paid only to the committed identity and
+        subject to the snapshotted maturation schedule.
+\end{enumerate}
+
+Consensus does not decide whether an answer is intelligent. It decides whether the approved,
+challenge-complete score commitment and exact supply arithmetic authorize a bounded mint.
+This is an optimistic-verification boundary: its security depends on data availability,
+independent recomputation, a live challenger set and a reviewer that cannot be chosen by the
+committer. Verification of untrusted ML is itself an active research area; replication,
+proof-of-learning and cryptographic proof systems carry materially different cost and
+soundness trade-offs.\footnote{For one primary-system discussion of these trade-offs, see
+Gensyn, ``Verde: a verification system for machine learning over untrusted nodes,'' 2025:
+\url{https://blog.gensyn.ai/verde-a-verification-system-for-machine-learning-over-untrusted-nodes/}.}
+
+\subsubsection{Attack Economics and Launch Criterion}
+
+For a fraud strategy with maximum gain $G$, probability $d$ of detection and successful
+challenge, slash or forfeiture loss $L$, and direct attack cost $C$, a conservative bound is
+
+\[
+  \mathbb{E}[\Pi_{\mathrm{fraud}}]\le(1-d)G-dL-C.
+\]
+
+The economic launch criterion is not the existence of a bond; it is evidence from adversarial
+tests that the right-hand side is negative for the largest plausible single-epoch strategies,
+including wash settlement, payer-earner collusion, forged evidence, scorer equivocation,
+reviewer capture, address splitting, duplicate receipts and withholding evidence until after
+the challenge window. The project must publish assumed $G,d,L,C$, sensitivity ranges and the
+largest profitable counterexample found. Where reliable bounds cannot be established, the
+affected evidence multiplier, cold-start floor or emission coefficient must be reduced,
+possibly to zero.
+
+The implemented repository contains the interim settled-work data plane; score-commitment,
+challenge, settlement and distributor actors; an independent Merkle implementation and claim
+path; governance-gated ConfigParams 90--93; a cumulative native-supply cap; and a shared
+collator/validator mint derivation. The \texttt{capAipow} feature is off in the genesis
+template. Production activation additionally requires the full settlement-receipt schema, a
+versioned scoring methodology and control-domain policy, two independently authored scorers
+that reproduce long-running shadow epochs, data-availability and challenge tooling, review of
+the reviewer/governance trust model, external contract and consensus audits, adversarial
+economic testing, and counsel review of then-current applicable law. None of the community
+allocation is created before those gates pass, and this section promises no completion date,
+reward rate, adoption level or token value.
 
 \subsection{Broad Distribution and Concentration Controls}
 
@@ -1323,6 +1547,10 @@ Agent and task read APIs & \implemented & Authenticated reads, filtering, timeou
 Capability Registry & \implemented & Per-actor entry, metadata hashes, bond, activity and reputation \\
 Service Actor contract & \implemented & Access policy, pricing, rate limits, calls, responses and revenue \\
 Dispute and Proof Attestation foundations & \implemented & Compact resolution and evidence commitments \\
+AIPoW settled-work data plane & \implemented & Interim indexer feed for settled Task Escrows and paid Service Actor requests; full receipt fields remain planned \\
+AIPoW commitment and distribution actors & \implemented & Bonded root challenge, epoch settlement, Merkle claims, maturation and forfeiture; not production-activated \\
+AIPoW native issuance path & \implemented & ConfigParams 90--93, cumulative cap and shared collator/validator derivation; \texttt{capAipow} is off by default \\
+AIPoW production scoring and activation & \planned & Frozen methodology, control-domain inputs, independent scorer reproduction, audits, shadow epochs and governance gate \\
 Public \texttt{.tos} registrar product & \planned & Ownership lifecycle, SDK, deployment and operator tooling \\
 ARD compatibility profile & \planned & Pinned external version, catalog mapping, publisher binding, media types and conformance \\
 TOS ARD Registry & \planned & Independent REST search, ingestion, federation, provenance, visibility and bounded crawling \\
@@ -1344,6 +1572,14 @@ must cover:
   \item canonical encoding, signature domains, replay, expiry, idempotency and unknown
         critical extensions;
   \item contract authorization, escrow conservation, cancellation, refunds and disputes;
+  \item AIPoW score arithmetic, rate-card caps, duplicate rejection, common-control
+        aggregation, deterministic Merkle roots and independent scorer equality;
+  \item AIPoW commitment and challenge deadlines, reviewer failure, malformed roots,
+        canonical-address and code-hash binding, skipped epochs and data availability;
+  \item AIPoW demand-coupled pool arithmetic, integer overflow and rounding, cumulative
+        supply cap, pro-rata conservation, maturation, forfeiture and zero-mint behavior;
+  \item adversarial AIPoW wash settlement, payer-provider collusion, Sybil splitting,
+        evidence forgery, scorer equivocation, challenger inactivity and reviewer capture;
   \item resolver, descriptor, quote, payment, invocation, receipt and restart flows on a
         multi-node TOS network;
   \item pinned-version ARD publication, \texttt{POST /search}, publisher verification,
@@ -1368,6 +1604,16 @@ system-service or container hardening, migration and rollback procedures, indepe
 of externally exposed and settlement-critical components, and observed testnet operation.
 
 \section{Roadmap}
+
+\subsection{Cross-Cutting Gate: AIPoW Shadow Operation}
+
+Keep \texttt{capAipow} inactive while completing the full settlement-receipt schema, frozen
+scoring methodology, rate card, common-control inputs and public epoch dataset. Run at least
+two independently authored scorers over sustained testnet shadow epochs; publish every root,
+disagreement, challenge, concentration metric, attack simulation and parameter sensitivity.
+Activate native creation only after contract and consensus audits, adversarial economic review,
+reviewer/governance hardening and an explicit public governance decision. A failed or delayed
+gate creates no emission debt.
 
 \subsection{Foundation: TOS Core}
 
@@ -1442,6 +1688,13 @@ the ability to determine which declared service may execute a request, under wha
 privacy and evidence policy, at what price, and how the result is receipted and settled.
 Physical terminals extend that model into real-world sites while preserving offline
 operation, deterministic local priority and independent safety authority.
+
+AIPoW adds a bounded supply-side acquisition mechanism to that transaction layer. Its
+investment-relevant claim is measurable rather than rhetorical: unrelated settled demand must
+produce reproducible evidence-weighted score; issuance must remain a visible, capped function
+of that demand; and rewards must improve independent service supply without creating circular
+volume or control-domain concentration. If those metrics do not hold during shadow operation,
+the mechanism remains inactive or its parameters move toward zero.
 
 This positioning is deliberately independent of foundation-model competition. TOS Network
 does not train models and does not need to be preferred over any other foundation-model
