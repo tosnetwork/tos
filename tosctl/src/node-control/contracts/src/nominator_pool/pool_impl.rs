@@ -27,6 +27,17 @@ const POOL_STATE_IDLE: i32 = 0;
 /// scripts/check-pool-storage-reserve.py reports how far this actually goes
 /// against a given network's masterchain prices.
 const MIN_TOS_FOR_STORAGE: u64 = 10_000_000_000;
+/// Value attached to a maintenance call that only needs to pay its own way.
+/// pool.fc returns the unspent remainder, so this only has to cover the
+/// heaviest of them.
+const MAINTENANCE_GAS: u64 = 200_000_000;
+/// Headroom added on top of a shortfall so a pool is not topped up every tick.
+/// Two TOS is roughly a dozen staking rounds of rent for a full pool.
+const RENT_RUNWAY: u64 = 2_000_000_000;
+/// Ceiling on a single top-up. Rent accrues at a fraction of a TOS per round,
+/// so anything near this bound means the numbers are wrong rather than the
+/// pool being expensive.
+const MAX_TOP_UP_PER_TICK: u64 = 10_000_000_000;
 /// Withdraw requests settled per message. The contract walks the queue until
 /// the balance can no longer cover the next payout, so a bounded batch keeps
 /// one message's gas predictable and the remainder is picked up next tick.
@@ -255,6 +266,7 @@ impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
             actions.push(crate::nominator::PoolMaintenance {
                 reason: "validator set changed; pool has not counted it yet",
                 body: super::messages::update_validator_set(UnixTime::now())?,
+                value: MAINTENANCE_GAS,
             });
         }
 
@@ -275,14 +287,33 @@ impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
                 .sum();
             let required = owed.saturating_add(MIN_TOS_FOR_STORAGE);
             if balance < required {
-                tracing::error!(
+                let shortfall = required - balance;
+                // Rent is a cost of running the pool, and the validator is the
+                // one paid a share of every round for running it. Booking the
+                // top-up as a validator deposit rather than a bare transfer
+                // keeps the ledger honest: the funds become the validator's own
+                // stake in their own pool, count toward the minimum they must
+                // post, and can be withdrawn again if the pool winds down.
+                //
+                // Bounded because a wrong balance or a garbled get-method must
+                // not be able to drain a wallet in a loop. Falling short of the
+                // cap is safe -- the next tick tops up again -- while exceeding
+                // it never is.
+                let top_up = shortfall.saturating_add(RENT_RUNWAY).min(MAX_TOP_UP_PER_TICK);
+                tracing::warn!(
                     pool = %self.pool_addr,
                     balance,
                     owed,
-                    shortfall = required - balance,
+                    shortfall,
+                    top_up,
                     "pool holds less than it owes its nominators plus the storage reserve; \
-                     withdrawals will be skipped silently until it is topped up"
+                     depositing validator funds to cover it"
                 );
+                actions.push(crate::nominator::PoolMaintenance {
+                    reason: "pool owes more than it holds; covering the shortfall",
+                    body: super::messages::validator_deposit(UnixTime::now())?,
+                    value: top_up,
+                });
             }
         }
 
@@ -298,6 +329,7 @@ impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
                     UnixTime::now(),
                     WITHDRAW_REQUESTS_PER_MESSAGE,
                 )?,
+                value: MAINTENANCE_GAS,
             });
         }
 
@@ -618,6 +650,59 @@ mod tests {
         let mut stub = StubProvider::new();
         stub.withdraw_requests = true;
         stub.state = 2;
+        assert!(maintenance_for(stub, SAVED_VSET_HASH).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pool_that_owes_more_than_it_holds_is_topped_up_by_its_validator() {
+        // Rent has eaten into what the ledger says the nominators are owed.
+        let mut stub = StubProvider::new();
+        stub.nominator_amounts = vec![100_000_000_000];
+        stub.balance = 105_000_000_000; // 5 TOS short of owed + the 10 TOS reserve
+
+        let actions = maintenance_for(stub, SAVED_VSET_HASH).await;
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].reason.contains("owes more than it holds"));
+        // Shortfall plus runway, and booked as the validator's own stake so the
+        // ledger stays honest about whose money it is.
+        assert_eq!(actions[0].value, 5_000_000_000 + RENT_RUNWAY);
+
+        let mut body = chain_block::SliceData::load_cell(actions[0].body.clone()).unwrap();
+        assert_eq!(
+            body.get_next_u32().unwrap(),
+            super::super::messages::opcodes::VALIDATOR_DEPOSIT
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nonsense_shortfall_cannot_drain_the_wallet() {
+        // Whatever produced this, it is not a pool that owes ten million TOS.
+        let mut stub = StubProvider::new();
+        stub.nominator_amounts = vec![10_000_000_000_000_000];
+        stub.balance = 0;
+
+        let actions = maintenance_for(stub, SAVED_VSET_HASH).await;
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].value, MAX_TOP_UP_PER_TICK);
+    }
+
+    #[tokio::test]
+    async fn a_solvent_pool_is_not_topped_up() {
+        let mut stub = StubProvider::new();
+        stub.nominator_amounts = vec![100_000_000_000];
+        stub.balance = 110_000_000_000; // exactly owed plus the reserve
+        assert!(maintenance_for(stub, SAVED_VSET_HASH).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn solvency_is_not_judged_while_the_stake_sits_with_the_elector() {
+        // Mid-round the balance is legitimately down to the reserve because the
+        // principal is with the Elector. Reading that as insolvency would top
+        // up the pool every round for no reason.
+        let mut stub = StubProvider::new();
+        stub.state = 2;
+        stub.nominator_amounts = vec![100_000_000_000];
+        stub.balance = 10_000_000_000;
         assert!(maintenance_for(stub, SAVED_VSET_HASH).await.is_empty());
     }
 

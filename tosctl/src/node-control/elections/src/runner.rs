@@ -48,9 +48,6 @@ const RECOVER_FEE: u64 = 200_000_000;
 const NPOOL_COMPUTE_FEE: u64 = 200_000_000;
 /// Gas fee consumed by validator wallet.
 const WALLET_COMPUTE_FEE: u64 = 200_000_000;
-/// Value attached to a pool maintenance message. The pool returns what it does
-/// not spend, so this only has to cover the heaviest of these calls.
-const POOL_MAINTENANCE_VALUE: u64 = 200_000_000;
 /// Reserved minimum balance on the wallet (or pool) for stake calculations.
 const MIN_NANOTOS_FOR_STORAGE: u64 = 1_000_000_000;
 
@@ -768,7 +765,8 @@ impl ElectionRunner {
         }
 
         let wallet_balance = node.wallet_balance().await?;
-        let required = (POOL_MAINTENANCE_VALUE + WALLET_COMPUTE_FEE) * actions.len() as u64;
+        let required: u64 =
+            actions.iter().map(|action| action.value.saturating_add(WALLET_COMPUTE_FEE)).sum();
         if wallet_balance < required {
             anyhow::bail!(
                 "low wallet balance for pool maintenance: required={} TOS, available={} TOS",
@@ -779,9 +777,13 @@ impl ElectionRunner {
 
         let pool_addr = pool.address();
         for action in actions {
-            tracing::info!("node [{}] pool maintenance: {}", node_id, action.reason);
-            let msg =
-                node.wallet.message(pool_addr.clone(), POOL_MAINTENANCE_VALUE, action.body).await?;
+            tracing::info!(
+                "node [{}] pool maintenance: {} ({} TOS)",
+                node_id,
+                action.reason,
+                action.value as f64 / 1_000_000_000.0
+            );
+            let msg = node.wallet.message(pool_addr.clone(), action.value, action.body).await?;
             node.api.send_boc(&write_boc(&msg)?).await?;
         }
         Ok(())

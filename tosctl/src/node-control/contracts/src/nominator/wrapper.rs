@@ -22,6 +22,9 @@ pub struct PoolMaintenance {
     pub reason: &'static str,
     /// Message body to send to the pool address.
     pub body: Cell,
+    /// Value to attach, in nanotos. Most of these only need gas, which the
+    /// pool refunds; a top-up carries the funds themselves.
+    pub value: u64,
 }
 
 /// Trait for interacting with single-nominator smart contract
