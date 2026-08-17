@@ -6,6 +6,16 @@ This test starts a native validator, the read-only ``tosctl explorer``
 profile, and the real Agent Economy seed. It verifies route isolation,
 canonical indexing, rich transaction/message data, contract discovery, and
 durable recovery after restarting the explorer process.
+
+Run it locally before a release, or after any change to the explorer surface::
+
+    python scripts/toscan-explorer-e2e.py
+
+It takes well under a minute on a machine that has already built the node,
+which is why it is not wired to run on every push: in CI the same check spent
+most of its life being cancelled part-way through the compile in front of it.
+The workflow still carries it under ``workflow_dispatch`` for when a result has
+to come from a clean machine rather than a developer's.
 """
 
 import argparse

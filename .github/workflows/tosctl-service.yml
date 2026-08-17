@@ -42,12 +42,22 @@ jobs:
       - name: Service tests
         run: cargo test --manifest-path service/Cargo.toml --lib --locked
 
+  # On demand only. The gate itself takes under a minute; what made this a
+  # forty-seven minute job was compiling the node in front of it, which a
+  # developer machine has already done. Run it before a release, or whenever a
+  # change touches the explorer surface:
+  #
+  #   python scripts/toscan-explorer-e2e.py
+  #
+  # A check that has to be remembered is weaker than one that runs itself, and
+  # this trade is deliberate rather than a saving: the job is cheap enough
+  # locally to actually get run, and was expensive enough here that it spent
+  # most of its life cancelled mid-compile without reporting anything.
   real-chain-explorer:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    # Most of this job compiles the node on a two-core runner. Thirty-five
-    # minutes never covered a cold build, so every run so far was cancelled
-    # mid-compile -- and a cancelled run reads as one still in progress rather
-    # than as a check that has never produced a result.
+    # Still generous, because a cold runner spends most of the budget compiling
+    # before the gate starts at all.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
