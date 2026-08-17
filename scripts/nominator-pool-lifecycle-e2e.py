@@ -94,6 +94,10 @@ NOMINATOR_COUNT = 5
 DIRECT_VALIDATOR_FUNDING = 20_100 * NANO
 POOL_VALIDATOR_FUNDING = 6_000 * NANO
 NOMINATOR_FUNDING = NOMINATOR_DEPOSIT + 100 * NANO
+# A basechain wallet with no standing in the pool: not the validator, not a
+# depositor. It exists to prove that recovering a staked pool and paying its
+# depositors out needs nobody's permission.
+RESCUER_FUNDING = 50 * NANO
 POOL_DEPLOY_VALUE = 20 * NANO
 
 # pool.fc requires at least one TOS of message value to process a stake; the
@@ -276,6 +280,13 @@ class PoolLifecycle:
         self.wallets: list[WalletV1] = []
         self.nominators: list[Nominator] = []
         self.client: Any = None
+        self.rescuer: WalletV1 | None = None
+        # Messages the validator sends once its stake is in. A pool whose
+        # depositors depend on the validator staying responsive is a pool that
+        # traps them when it stops, so this has to stay at zero through
+        # recovery and exit.
+        self.validator_sends_after_stake = 0
+        self.count_validator_sends = False
         self.pool_address: Address | None = None
         self.pool_code: Cell | None = None
         self.failures: list[str] = []
@@ -434,6 +445,8 @@ class PoolLifecycle:
             description=f"{label} accepted",
             predicate=lambda value: value > before,
         )
+        if self.count_validator_sends and self.wallets and wallet is self.wallets[0]:
+            self.validator_sends_after_stake += 1
         self.event("message_sent", label=label, dest=raw_address(dest), amount=amount)
 
     # ----- phases ---------------------------------------------------------
@@ -512,10 +525,24 @@ class PoolLifecycle:
                 Nominator(index=index, wallet=wallet, key=wallet.key)
             )
 
+        before = await self.wallet_seqno(faucet)
+        self.rescuer = await faucet.deploy(
+            WalletV1Blueprint(workchain=0),
+            CurrencyCollection(tomis=RESCUER_FUNDING),
+            seqno=before,
+        )
+        await self.retry(
+            lambda: self.wallet_seqno(faucet),
+            timeout=60,
+            description="rescuer wallet funded",
+            predicate=lambda value, before=before: value > before,
+        )
+
         self.event(
             "wallets_funded",
             validators=len(self.wallets),
             nominators=len(self.nominators),
+            rescuer=raw_address(self.rescuer.address),
         )
         self.check(
             "nominator wallets are in the basechain",
@@ -710,7 +737,7 @@ class PoolLifecycle:
         leaver = self.nominators[-1]
         before = await self.balance(leaver.wallet.address)
         await self.send(
-            self.wallets[0],
+            self.rescuer,
             dest=self.pool_address,
             amount=NANO // 5,
             body=pool_message(
@@ -883,8 +910,11 @@ class PoolLifecycle:
                     required=target,
                 )
                 return
+            # Sent by the rescuer, not the validator. pool.fc puts no sender
+            # restriction on this, and that is the whole point: the counter it
+            # advances is what unlocks recovery.
             await self.send(
-                self.wallets[0],
+                self.rescuer,
                 dest=self.pool_address,
                 amount=NANO // 5,
                 body=pool_message(6, int(time.time())),
@@ -906,7 +936,7 @@ class PoolLifecycle:
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
             await self.send(
-                self.wallets[0],
+                self.rescuer,
                 dest=self.pool_address,
                 amount=NANO // 2,
                 body=pool_message(0x47657424, int(time.time())),
@@ -1012,6 +1042,12 @@ class PoolLifecycle:
                 stake_at=data.stake_at,
             )
 
+            # From here the validator does nothing. Everything that follows --
+            # telling the pool the set moved, pulling the stake back from the
+            # Elector, settling the withdrawal queue -- is driven by a wallet
+            # with no standing in the pool at all.
+            self.count_validator_sends = True
+
             await self.queue_withdrawal_while_staked()
             await self.announce_validator_set_changes(target=2)
             await self.recover()
@@ -1029,6 +1065,17 @@ class PoolLifecycle:
             )
             await self.stake_must_be_refused(next_election)
             await self.drain_withdraw_queue()
+
+            # The property a depositor actually needs when a validator stops
+            # answering: their principal came back, and getting it back took
+            # nothing from the validator.
+            self.check(
+                "a staked pool is recovered and paid out without the validator",
+                self.validator_sends_after_stake == 0,
+                validator_messages_since_staking=self.validator_sends_after_stake,
+            )
+            self.count_validator_sends = False
+
             await self.check_solvency()
 
             # A pool that has lost depositors can fall below the network's
@@ -1103,6 +1150,7 @@ class PoolLifecycle:
             "recovering does not settle a queued withdrawal",
             "a queued withdrawal keeps the pool out of the next election",
             "draining the queue pays the leaver and frees the pool",
+            "a staked pool is recovered and paid out without the validator",
             "the pool still holds enough to meet the network minimum",
             "draining the queue lets the pool back into an election",
         ]

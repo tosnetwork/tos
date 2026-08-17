@@ -668,6 +668,21 @@ async fn decode_and_store(
                 .iter()
                 .map(|position| position.amount.saturating_add(position.pending_deposit))
                 .sum::<u64>();
+
+            // What guard 68 would compare against for the next new depositor:
+            // the depth of the dictionary as it stands now, against the bound
+            // derived from a count that has already been incremented.
+            let addresses: Vec<[u8; 32]> = nominators
+                .iter()
+                .filter_map(|position| {
+                    let hex_part = position.address.split(':').nth(1)?;
+                    let bytes = hex::decode(hex_part).ok()?;
+                    <[u8; 32]>::try_from(bytes.as_slice()).ok()
+                })
+                .collect();
+            let depth_headroom = deposit_depth_bound(data.nominators_count.saturating_add(1))
+                - nominator_dictionary_depth(&addresses)
+                - 1;
             let status = match data.state {
                 0 => "idle",
                 1 => "staking",
@@ -694,6 +709,12 @@ async fn decode_and_store(
                 validator_set_changes_count: data.validator_set_changes_count,
                 validator_set_change_time: data.validator_set_change_time,
                 stake_held_for: data.stake_held_for,
+                capacity_headroom: data
+                    .max_nominators_count
+                    .saturating_sub(data.nominators_count.min(u32::from(u16::MAX)) as u16),
+                deposit_depth_headroom: depth_headroom,
+                accepting_deposits: u32::from(data.max_nominators_count) > data.nominators_count
+                    && depth_headroom > 0,
                 nominators,
             };
             store.upsert(&IndexedRecord {
@@ -743,7 +764,54 @@ struct NominatorPoolRecordDto {
     validator_set_changes_count: i32,
     validator_set_change_time: u64,
     stake_held_for: u64,
+    /// Free slots under max_nominators_count.
+    capacity_headroom: u16,
+    /// Fork levels the nominator dictionary is below pool.fc's depth guard.
+    ///
+    /// Guard 68 refuses a deposit when the dictionary is already this deep,
+    /// and the depositor is told nothing beyond a failed transaction. The
+    /// bound grows with the logarithm of the depositor count while the depth
+    /// grows with how the admitted addresses happen to branch, so a pool can
+    /// stop accepting deposits well below its stated capacity. Zero here means
+    /// the next new depositor is refused.
+    deposit_depth_headroom: i32,
+    /// Whether a new address can currently deposit at all: both limits clear.
+    accepting_deposits: bool,
     nominators: Vec<contracts::NominatorPosition>,
+}
+
+/// Cell depth of the dictionary holding these nominator addresses.
+///
+/// A hashmap node is a leaf or a two-way fork, so depth is the number of fork
+/// levels on the deepest path; a shared prefix is absorbed into a label and
+/// costs nothing. Recomputed here rather than read from the contract because
+/// what matters is whether the *next* deposit would be refused, which the
+/// contract only reveals by refusing it.
+fn nominator_dictionary_depth(addresses: &[[u8; 32]]) -> i32 {
+    fn split(keys: &[&[u8; 32]], bit: i32) -> i32 {
+        if keys.len() <= 1 || bit < 0 {
+            return 0;
+        }
+        let index = (255 - bit) as usize / 8;
+        let mask = 1u8 << (bit % 8);
+        let (ones, zeros): (Vec<_>, Vec<_>) = keys.iter().partition(|key| key[index] & mask != 0);
+        if ones.is_empty() || zeros.is_empty() {
+            return split(keys, bit - 1);
+        }
+        1 + split(&ones, bit - 1).max(split(&zeros, bit - 1))
+    }
+    if addresses.len() <= 1 {
+        return 0;
+    }
+    let refs: Vec<&[u8; 32]> = addresses.iter().collect();
+    split(&refs, 255)
+}
+
+/// pool.fc's `max(5, binary_log_ceil(count) * 2)`, where binary_log_ceil is
+/// TVM's UBITSIZE.
+fn deposit_depth_bound(nominators_count: u32) -> i32 {
+    let bits = 32 - nominators_count.leading_zeros() as i32;
+    (bits * 2).max(5)
 }
 
 impl From<&contracts::AipowDistributorData> for AipowDistributorRecordDto {
@@ -2290,5 +2358,73 @@ mod tests {
         assert_eq!(dto["claimed_count"], 1);
         // The running claimed_score advances by the claimed member's score.
         assert_eq!(dto["claimed_score"], "400000");
+    }
+}
+
+#[cfg(test)]
+mod deposit_capacity_tests {
+    use super::{deposit_depth_bound, nominator_dictionary_depth};
+
+    /// pool.fc: max(5, binary_log_ceil(count) * 2), binary_log_ceil = UBITSIZE.
+    #[test]
+    fn bound_matches_the_contract_expression() {
+        for (count, expected) in [(1, 5), (2, 5), (3, 5), (4, 6), (8, 8), (16, 10), (40, 12)] {
+            assert_eq!(deposit_depth_bound(count), expected, "count {count}");
+        }
+    }
+
+    #[test]
+    fn an_empty_or_single_entry_dictionary_has_no_forks() {
+        assert_eq!(nominator_dictionary_depth(&[]), 0);
+        assert_eq!(nominator_dictionary_depth(&[[0xAB; 32]]), 0);
+    }
+
+    #[test]
+    fn a_shared_prefix_costs_no_depth() {
+        // Two keys differing only in the last bit fork once, however long the
+        // prefix they share.
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        a[31] = 0b0;
+        b[31] = 0b1;
+        assert_eq!(nominator_dictionary_depth(&[a, b]), 1);
+    }
+
+    #[test]
+    fn keys_that_branch_early_fork_once_per_pair() {
+        // Four keys splitting on the top two bits: two levels.
+        let keys: Vec<[u8; 32]> = (0..4u8)
+            .map(|i| {
+                let mut key = [0u8; 32];
+                key[0] = i << 6;
+                key
+            })
+            .collect();
+        assert_eq!(nominator_dictionary_depth(&keys), 2);
+    }
+
+    #[test]
+    fn a_chain_of_prefixes_deepens_linearly() {
+        // Each key extends the previous one's prefix by a bit, so every key
+        // adds a level rather than sharing one. This is the shape the guard
+        // exists to refuse.
+        let keys: Vec<[u8; 32]> = (0..12usize)
+            .map(|i| {
+                let mut key = [0u8; 32];
+                for bit in 0..i {
+                    key[bit / 8] |= 1 << (7 - (bit % 8));
+                }
+                key
+            })
+            .collect();
+        let depth = nominator_dictionary_depth(&keys);
+        assert_eq!(depth, keys.len() as i32 - 1, "one fork level per key");
+        // Depth grows linearly while the bound grows logarithmically, so they
+        // cross -- which is what makes the guard reachable at all.
+        assert!(
+            depth >= deposit_depth_bound(keys.len() as u32 + 1),
+            "depth {depth} should have passed bound {}",
+            deposit_depth_bound(keys.len() as u32 + 1)
+        );
     }
 }
