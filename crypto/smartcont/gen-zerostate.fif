@@ -113,6 +113,27 @@ Masterchain swap
 TM$10000 TM$10000000 TM$40000 sg~1 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for
 65536 32768 8192 32768 config.election_params!
+// misbehaviour punishment schedule (ConfigParam 40)
+//
+// The base pair is the mildest tier (ordinary severity, short interval); the
+// severity and interval multipliers scale it up from there:
+//
+//   ordinary + short   TM$62.5   + 1/256 of stake
+//   ordinary + medium  TM$250    + 1/64
+//   ordinary + long    TM$1000   + 1/16
+//   severe   + short   TM$156.25 + 1/64
+//   severe   + medium  TM$625    + 1/16
+//   severe   + long    TM$2500   + 1/4
+//
+// Interval tiers are expressed as fractions of the 65536-second validation
+// round so that every tier is reachable within a single round: nothing below
+// 1000 seconds is punishable, a quarter round is medium, three quarters is
+// long. Without this parameter the punishment path falls back to a flat
+// TM$101 with no proportional component, which makes stake size irrelevant to
+// the penalty and leaves pooled-stake contracts unable to size a validator's
+// required own funds.
+TM$62.5 16777216 640 1024 1000 49152 4096 4096 16384 1024 1024
+config.punishment_params!
 // config-addr = -1:5555...5555
 AllOnes 5 * constant config_addr
 config_addr config.config_smc!
