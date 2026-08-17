@@ -8,10 +8,11 @@
  */
 use crate::v2::data_models::{
     AccountAgentCapability, AccountCapabilityRes, AccountDelegationGrant, AccountSessionCapability,
-    GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
-    GetMasterchainInfoRes, GetShardsRes, GetTransactionsRes, GetWalletInformationRes,
-    LifecycleGrantRequest, LifecycleMutationResultRes, LifecycleRevokeRequest, RunGetMethodParams,
-    RunGetMethodRes, SigningPayloadRes, SubmissionResultRes, TransactionIntentRes,
+    GetAddressInformationRes, GetBlockHeaderRes, GetBlockTransactionsExtRes,
+    GetBlockTransactionsRes, GetExtendedAddressInformationRes, GetMasterchainInfoRes, GetShardsRes,
+    GetTransactionsRes, GetWalletInformationRes, LifecycleGrantRequest, LifecycleMutationResultRes,
+    LifecycleRevokeRequest, RunGetMethodParams, RunGetMethodRes, SigningPayloadRes,
+    SubmissionResultRes, TransactionIntentRes,
 };
 use anyhow::Context;
 use base64::Engine;
@@ -419,7 +420,7 @@ impl ClientJsonRpc {
     }
 
     /// Like [`Self::get_block_transactions`], but supports the `after_lt`/
-    /// `after_hash` pagination cursor for blocks whose transaction count
+    /// `after_account` pagination cursor for blocks whose transaction count
     /// exceeds `count` (signalled by `incomplete: true` in the response).
     pub async fn get_block_transactions_page(
         &self,
@@ -427,7 +428,7 @@ impl ClientJsonRpc {
         shard: &str,
         seqno: u32,
         after_lt: Option<u64>,
-        after_hash: Option<&str>,
+        after_account: Option<&str>,
         count: u32,
     ) -> anyhow::Result<GetBlockTransactionsRes> {
         let mut params = serde_json::json!({
@@ -439,11 +440,59 @@ impl ClientJsonRpc {
         if let Some(lt) = after_lt {
             params["after_lt"] = serde_json::json!(lt.to_string());
         }
-        if let Some(hash) = after_hash {
-            params["after_hash"] = serde_json::json!(hash);
+        if let Some(account) = after_account {
+            params["after_account"] = serde_json::json!(account);
         }
         let res =
             self.json_rpc("getBlockTransactions", params).await.context("getBlockTransactions")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn get_block_transactions_ext_page(
+        &self,
+        workchain: i32,
+        shard: &str,
+        seqno: u32,
+        after_lt: Option<u64>,
+        after_account: Option<&str>,
+        count: u32,
+    ) -> anyhow::Result<GetBlockTransactionsExtRes> {
+        let mut params = serde_json::json!({
+            "workchain": workchain,
+            "shard": shard,
+            "seqno": seqno,
+            "count": count,
+        });
+        if let Some(lt) = after_lt {
+            params["after_lt"] = serde_json::json!(lt.to_string());
+        }
+        if let Some(account) = after_account {
+            params["after_account"] = serde_json::json!(account);
+        }
+        let res = self
+            .json_rpc("getBlockTransactionsExt", params)
+            .await
+            .context("getBlockTransactionsExt")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn get_block_header(
+        &self,
+        workchain: i32,
+        shard: &str,
+        seqno: u32,
+    ) -> anyhow::Result<GetBlockHeaderRes> {
+        let res = self
+            .json_rpc(
+                "getBlockHeader",
+                serde_json::json!({
+                    "workchain": workchain,
+                    "shard": shard,
+                    "seqno": seqno,
+                }),
+            )
+            .await
+            .context("getBlockHeader")?;
         Ok(serde_json::from_value(res)?)
     }
 

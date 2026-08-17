@@ -517,6 +517,10 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getAccountDelegations")  rest_method = "getAccountDelegations";
     else if (path == "/getAccountSessions")     rest_method = "getAccountSessions";
     else if (path == "/getAccountAgents")       rest_method = "getAccountAgents";
+    else if (path == "/getAccountJettons")      rest_method = "getAccountJettons";
+    else if (path == "/getAccountNfts")         rest_method = "getAccountNfts";
+    else if (path == "/getAccountEvents")       rest_method = "getAccountEvents";
+    else if (path == "/getAccountEvent")        rest_method = "getAccountEvent";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -599,6 +603,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
         "/getAddressInformation", "/getExtendedAddressInformation",
         "/getAccountCapability", "/getAccountDelegations", "/getAccountSessions", "/getAccountAgents",
+        "/getAccountJettons", "/getAccountNfts", "/getAccountEvents", "/getAccountEvent",
         "/getWalletInformation", "/getAddressBalance", "/getAddressState",
         "/getTokenData",
         "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",

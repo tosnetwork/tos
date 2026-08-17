@@ -393,6 +393,117 @@ async fn health_always_public() {
 }
 
 #[tokio::test]
+async fn read_only_explorer_routes_remain_public_when_operator_auth_is_enabled() {
+    let st = state_with_auth().await;
+    let resp = app(st).oneshot(get("/explorer/transactions")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let value = json(resp).await;
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["total"], 0);
+}
+
+#[tokio::test]
+async fn explorer_only_router_exposes_no_operator_or_auth_surface() {
+    let router = explorer_only_routes(state_with_auth().await);
+
+    for uri in ["/health", "/explorer/status", "/explorer/blocks"] {
+        let response = router.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), 200, "{uri} should be public");
+    }
+
+    for uri in ["/auth/login", "/auth/me", "/v1/elections", "/tasks", "/openapi.json", "/swagger"] {
+        let response = router.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), 404, "{uri} must not exist in explorer mode");
+    }
+}
+
+#[tokio::test]
+async fn explorer_search_resolves_a_durably_indexed_transaction() {
+    let st = state_with_auth().await;
+    st.indexer_store
+        .index_explorer_block(
+            &crate::indexer::ExplorerBlockRecord {
+                workchain: -1,
+                shard: i64::MIN,
+                seqno: 7,
+                root_hash: "root-seven".into(),
+                file_hash: "file-seven".into(),
+                gen_utime: 1_700_000_007,
+                tx_count: 1,
+                observed_mc_seqno: 7,
+                indexed_at: 1_000,
+            },
+            &[crate::indexer::ExplorerTransactionRecord {
+                hash: "tx-seven".into(),
+                account: "-1:account".into(),
+                lt: u64::MAX,
+                workchain: -1,
+                shard: i64::MIN,
+                seqno: 7,
+                gen_utime: 1_700_000_007,
+                fee: Some("1420000".into()),
+                in_msg_hash: Some("in-seven".into()),
+                indexed_at: 1_000,
+            }],
+        )
+        .unwrap();
+
+    let resp = app(st.clone()).oneshot(get("/explorer/search?q=tx-seven")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let value = json(resp).await;
+    assert_eq!(value["result"]["kind"], "transaction");
+    assert_eq!(value["result"]["result"]["hash"], "tx-seven");
+    assert_eq!(value["result"]["result"]["lt"], u64::MAX.to_string());
+
+    let blocks = app(st.clone()).oneshot(get("/explorer/blocks?limit=1")).await.unwrap();
+    assert_eq!(blocks.status(), 200);
+    let blocks = json(blocks).await;
+    assert_eq!(blocks["total"], 1);
+    assert_eq!(blocks["result"][0]["tx_count"], 1);
+    assert_eq!(blocks["result"][0]["gen_utime"], 1_700_000_007u64);
+
+    let transactions = app(st.clone())
+        .oneshot(get("/explorer/transactions?workchain=-1&shard=-9223372036854775808&seqno=7"))
+        .await
+        .unwrap();
+    assert_eq!(transactions.status(), 200);
+    let transactions = json(transactions).await;
+    assert_eq!(transactions["total"], 1);
+    assert_eq!(transactions["result"][0]["hash"], "tx-seven");
+
+    let partial_filter =
+        app(st).oneshot(get("/explorer/transactions?workchain=-1&seqno=7")).await.unwrap();
+    assert_eq!(partial_filter.status(), 400);
+}
+
+#[tokio::test]
+async fn explorer_block_lookup_accepts_the_nodes_base64_hash_format() {
+    use base64::Engine;
+
+    let st = state_with_auth().await;
+    st.indexer_store
+        .index_explorer_block(
+            &crate::indexer::ExplorerBlockRecord {
+                workchain: -1,
+                shard: i64::MIN,
+                seqno: 8,
+                root_hash: "11".repeat(32),
+                file_hash: "22".repeat(32),
+                gen_utime: 1_700_000_008,
+                tx_count: 0,
+                observed_mc_seqno: 8,
+                indexed_at: 1_001,
+            },
+            &[],
+        )
+        .unwrap();
+    let base64_hash = base64::engine::general_purpose::STANDARD.encode([0x11; 32]);
+    let uri = format!("/explorer/block?hash={base64_hash}");
+    let response = app(st).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
 async fn login_endpoint_always_public() {
     let st = state_with_auth().await;
     let resp = app(st)

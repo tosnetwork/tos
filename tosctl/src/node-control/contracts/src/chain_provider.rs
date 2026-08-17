@@ -71,8 +71,9 @@ use chain_rpc_client::v2::{
     RPCStackEntry,
     client_json_rpc::ClientJsonRpc,
     data_models::{
-        GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
-        GetMasterchainInfoRes, GetShardsRes, GetWalletInformationRes, RunGetMethodParams,
+        GetAddressInformationRes, GetBlockTransactionsExtRes, GetBlockTransactionsRes,
+        GetExtendedAddressInformationRes, GetMasterchainInfoRes, GetShardsRes,
+        GetWalletInformationRes, RunGetMethodParams,
     },
 };
 use tl_api::tos::tvm::StackEntry;
@@ -100,6 +101,10 @@ pub type MasterchainInfo = GetMasterchainInfoRes;
 /// `hash`), used to enumerate every account touched by a block without a
 /// full-state scan.
 pub type BlockTransactionsPage = GetBlockTransactionsRes;
+
+/// Full block transaction page used by explorers to retain fee and message
+/// summary fields without one account-history RPC per transaction.
+pub type BlockTransactionsExtPage = GetBlockTransactionsExtRes;
 
 /// Type alias: the current shard block descriptors for non-masterchain
 /// workchains, as of a given masterchain seqno. On this chain almost every
@@ -158,7 +163,7 @@ pub trait ChainProvider: Send + Sync {
     async fn get_shards(&self, seqno: u32) -> anyhow::Result<ShardsInfo>;
 
     /// List the accounts (as `account`/`lt`/`hash` short-IDs) that had a
-    /// transaction in the given block, paginated via `after_lt`/`after_hash`
+    /// transaction in the given block, paginated via `after_lt`/`after_account`
     /// when `incomplete` comes back `true`. This is the primitive a
     /// chain-wide indexer walks block-by-block to discover every account
     /// without a full-state dump.
@@ -168,9 +173,35 @@ pub trait ChainProvider: Send + Sync {
         shard: i64,
         seqno: u32,
         after_lt: Option<u64>,
-        after_hash: Option<&str>,
+        after_account: Option<&str>,
         count: u32,
     ) -> anyhow::Result<BlockTransactionsPage>;
+
+    /// Rich block transaction page. Alternate providers may leave this
+    /// unsupported; the indexer falls back to short transaction identities.
+    async fn get_block_transactions_ext_page(
+        &self,
+        _workchain: i32,
+        _shard: i64,
+        _seqno: u32,
+        _after_lt: Option<u64>,
+        _after_account: Option<&str>,
+        _count: u32,
+    ) -> anyhow::Result<BlockTransactionsExtPage> {
+        anyhow::bail!("extended block transactions are not supported")
+    }
+
+    /// Returns the block's chain-authored Unix timestamp. The default keeps
+    /// lightweight test providers source-compatible; production providers
+    /// must override it to avoid publishing an invented explorer time.
+    async fn get_block_timestamp(
+        &self,
+        _workchain: i32,
+        _shard: i64,
+        _seqno: u32,
+    ) -> anyhow::Result<u32> {
+        Ok(0)
+    }
 }
 
 // ─── JSON-RPC adapter implementation ─────────────────────────────────────────
@@ -270,7 +301,7 @@ impl ChainProvider for DefaultChainProvider {
         shard: i64,
         seqno: u32,
         after_lt: Option<u64>,
-        after_hash: Option<&str>,
+        after_account: Option<&str>,
         count: u32,
     ) -> anyhow::Result<BlockTransactionsPage> {
         self.client
@@ -279,10 +310,40 @@ impl ChainProvider for DefaultChainProvider {
                 &shard.to_string(),
                 seqno,
                 after_lt,
-                after_hash,
+                after_account,
                 count,
             )
             .await
+    }
+
+    async fn get_block_transactions_ext_page(
+        &self,
+        workchain: i32,
+        shard: i64,
+        seqno: u32,
+        after_lt: Option<u64>,
+        after_account: Option<&str>,
+        count: u32,
+    ) -> anyhow::Result<BlockTransactionsExtPage> {
+        self.client
+            .get_block_transactions_ext_page(
+                workchain,
+                &shard.to_string(),
+                seqno,
+                after_lt,
+                after_account,
+                count,
+            )
+            .await
+    }
+
+    async fn get_block_timestamp(
+        &self,
+        workchain: i32,
+        shard: i64,
+        seqno: u32,
+    ) -> anyhow::Result<u32> {
+        Ok(self.client.get_block_header(workchain, &shard.to_string(), seqno).await?.gen_utime)
     }
 }
 

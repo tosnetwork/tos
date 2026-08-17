@@ -7,7 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
-use chain_block::MsgAddressInt;
+use chain_block::{Cell, MsgAddressInt, StateInit};
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
 use common::{
     app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
@@ -15,8 +15,8 @@ use common::{
     vault_signer::VaultSigner,
 };
 use contracts::{
-    ChainProvider, DefaultChainProvider, NominatorWrapper, NominatorWrapperImpl, Wallet,
-    WalletContract, contract_provider,
+    ChainProvider, DefaultChainProvider, NominatorWrapper, NominatorWrapperImpl, SmartContract,
+    Wallet, WalletContract, contract_provider,
 };
 use secrets_vault::{
     types::{algorithm::Algorithm, secret_id::SecretId, secret_spec::SecretSpec},
@@ -42,6 +42,54 @@ pub struct RuntimeConfigStore {
     config_path: String,
     /// Hash of the last config file content we loaded, to detect external changes.
     last_file_hash: Mutex<Option<u64>>,
+    /// Read-only explorer mode never opens a vault or operator wallets.
+    explorer_only: bool,
+}
+
+/// Placeholder required by the legacy [`RuntimeConfig`] interface in
+/// read-only processes. Any attempt to construct an outbound message fails
+/// closed instead of reaching a wallet or signing backend.
+struct ReadOnlyWallet;
+
+#[async_trait::async_trait]
+impl SmartContract for ReadOnlyWallet {
+    fn address(&self) -> MsgAddressInt {
+        MsgAddressInt::with_standart(None, 0, [0u8; 32].into())
+            .expect("static read-only address must be valid")
+    }
+
+    async fn balance(&self) -> anyhow::Result<u64> {
+        Ok(0)
+    }
+}
+
+#[async_trait::async_trait]
+impl Wallet for ReadOnlyWallet {
+    async fn message(
+        &self,
+        _dest: MsgAddressInt,
+        _value: u64,
+        _payload: Cell,
+    ) -> anyhow::Result<Cell> {
+        anyhow::bail!("read-only explorer does not support message signing")
+    }
+
+    async fn deploy_message(&self, _value: u64, _payload: Cell) -> anyhow::Result<Cell> {
+        anyhow::bail!("read-only explorer does not support deploy messages")
+    }
+
+    async fn build_message(
+        &self,
+        _dest: MsgAddressInt,
+        _value: u64,
+        _payload: Cell,
+        _bounce: bool,
+        _seqno: Option<u32>,
+        _state_init_external: Option<StateInit>,
+        _state_init_internal: Option<StateInit>,
+    ) -> anyhow::Result<Cell> {
+        anyhow::bail!("read-only explorer does not support message construction")
+    }
 }
 
 struct RuntimeState {
@@ -117,10 +165,61 @@ impl RuntimeConfigStore {
             updated_at: AtomicU64::new(time_format::now()),
             config_path,
             last_file_hash: Mutex::new(hash),
+            explorer_only: false,
+        })
+    }
+
+    /// Initializes the minimal runtime needed by the public explorer.
+    ///
+    /// This path deliberately ignores Vault environment variables, wallet
+    /// bindings, pools, elections, and operator authentication. It can run
+    /// from a chain RPC endpoint and an HTTP/indexer configuration alone.
+    pub async fn initialize_explorer(
+        app_cfg: Arc<AppConfig>,
+        config_path: String,
+    ) -> anyhow::Result<Self> {
+        let hash = Self::hash_file(Path::new(&config_path));
+        let rpc_client = Self::load_rpc_client(&app_cfg).await?;
+        let chain_provider: Arc<dyn ChainProvider> =
+            Arc::new(DefaultChainProvider::new(rpc_client.clone()));
+
+        Ok(Self {
+            state: RwLock::new(Arc::new(RuntimeState {
+                config: app_cfg,
+                vault: None,
+                pools: Arc::new(HashMap::new()),
+                wallets: Arc::new(HashMap::new()),
+                rpc_client,
+                chain_provider,
+                master_wallet: Arc::new(ReadOnlyWallet),
+            })),
+            updated_at: AtomicU64::new(time_format::now()),
+            config_path,
+            last_file_hash: Mutex::new(hash),
+            explorer_only: true,
         })
     }
 
     async fn reload(&self, new_config: AppConfig) -> anyhow::Result<()> {
+        if self.explorer_only {
+            let rpc_client = Self::load_rpc_client(&new_config).await?;
+            let chain_provider: Arc<dyn ChainProvider> =
+                Arc::new(DefaultChainProvider::new(rpc_client.clone()));
+            let new_state = Arc::new(RuntimeState {
+                config: Arc::new(new_config),
+                vault: None,
+                pools: Arc::new(HashMap::new()),
+                wallets: Arc::new(HashMap::new()),
+                rpc_client,
+                chain_provider,
+                master_wallet: Arc::new(ReadOnlyWallet),
+            });
+            *self.state.write().map_err(|e| anyhow::anyhow!("state lock poisoned: {e}"))? =
+                new_state;
+            self.updated_at.store(time_format::now(), Ordering::Relaxed);
+            return Ok(());
+        }
+
         let vault = SecretVaultBuilder::from_env().await.context("failed to reopen vault")?;
         let rpc_client = Self::load_rpc_client(&new_config).await?;
         let chain_provider: Arc<dyn ChainProvider> =
@@ -147,48 +246,7 @@ impl RuntimeConfigStore {
 
     #[cfg(test)]
     pub fn from_app_config(app_config: Arc<AppConfig>) -> Self {
-        use chain_block::{Cell, StateInit};
-        use contracts::SmartContract;
-
-        struct NoopWallet;
-        #[async_trait::async_trait]
-        impl SmartContract for NoopWallet {
-            fn address(&self) -> MsgAddressInt {
-                MsgAddressInt::with_standart(None, 0, [0u8; 32].into()).unwrap()
-            }
-            async fn balance(&self) -> anyhow::Result<u64> {
-                Ok(0)
-            }
-        }
-        #[async_trait::async_trait]
-        impl Wallet for NoopWallet {
-            async fn message(
-                &self,
-                _dest: MsgAddressInt,
-                _value: u64,
-                _payload: Cell,
-            ) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support message()")
-            }
-
-            async fn deploy_message(&self, _value: u64, _payload: Cell) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support deploy_message()")
-            }
-
-            async fn build_message(
-                &self,
-                _dest: MsgAddressInt,
-                _value: u64,
-                _payload: Cell,
-                _bounce: bool,
-                _seqno: Option<u32>,
-                _state_init_external: Option<StateInit>,
-                _state_init_internal: Option<StateInit>,
-            ) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support build_message()")
-            }
-        }
-        let master_wallet = Arc::new(NoopWallet);
+        let master_wallet = Arc::new(ReadOnlyWallet);
         let rpc_client = Arc::new(
             ClientJsonRpc::connect_many(
                 app_config.chain_rpc.resolved_endpoints(),
@@ -211,6 +269,7 @@ impl RuntimeConfigStore {
             updated_at: AtomicU64::new(time_format::now()),
             config_path: "noop".to_string(),
             last_file_hash: Mutex::new(None),
+            explorer_only: true,
         }
     }
 
@@ -225,48 +284,7 @@ impl RuntimeConfigStore {
         app_config: Arc<AppConfig>,
         chain_provider: Arc<dyn ChainProvider>,
     ) -> Self {
-        use chain_block::{Cell, StateInit};
-        use contracts::SmartContract;
-
-        struct NoopWallet;
-        #[async_trait::async_trait]
-        impl SmartContract for NoopWallet {
-            fn address(&self) -> MsgAddressInt {
-                MsgAddressInt::with_standart(None, 0, [0u8; 32].into()).unwrap()
-            }
-            async fn balance(&self) -> anyhow::Result<u64> {
-                Ok(0)
-            }
-        }
-        #[async_trait::async_trait]
-        impl Wallet for NoopWallet {
-            async fn message(
-                &self,
-                _dest: MsgAddressInt,
-                _value: u64,
-                _payload: Cell,
-            ) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support message()")
-            }
-
-            async fn deploy_message(&self, _value: u64, _payload: Cell) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support deploy_message()")
-            }
-
-            async fn build_message(
-                &self,
-                _dest: MsgAddressInt,
-                _value: u64,
-                _payload: Cell,
-                _bounce: bool,
-                _seqno: Option<u32>,
-                _state_init_external: Option<StateInit>,
-                _state_init_internal: Option<StateInit>,
-            ) -> anyhow::Result<Cell> {
-                anyhow::bail!("NoopWallet does not support build_message()")
-            }
-        }
-        let master_wallet = Arc::new(NoopWallet);
+        let master_wallet = Arc::new(ReadOnlyWallet);
         let rpc_client = Arc::new(
             ClientJsonRpc::connect_many(
                 app_config.chain_rpc.resolved_endpoints(),
@@ -287,6 +305,7 @@ impl RuntimeConfigStore {
             updated_at: AtomicU64::new(time_format::now()),
             config_path: "noop".to_string(),
             last_file_hash: Mutex::new(None),
+            explorer_only: true,
         }
     }
 

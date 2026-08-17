@@ -20,7 +20,25 @@ use common::{
 use elections::election_task::BindingStatusCallback;
 use std::{collections::HashMap, path::Path, sync::Arc};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServiceProfile {
+    Full,
+    Explorer,
+}
+
 pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Full).await;
+}
+
+pub async fn run_explorer(cancellation_ctx: CancellationCtx, config_path: String) {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Explorer).await;
+}
+
+async fn run_profile(
+    cancellation_ctx: CancellationCtx,
+    config_path: String,
+    profile: ServiceProfile,
+) {
     let app_cfg = Arc::new(match AppConfig::load(Path::new(&config_path)) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -37,11 +55,11 @@ pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) {
         }
     };
 
-    tracing::info!("Service started");
-    if let Err(e) = run_with_config(cancellation_ctx, app_cfg, config_path).await {
+    tracing::info!(profile = ?profile, "Service started");
+    if let Err(e) = run_with_profile(cancellation_ctx, app_cfg, config_path, profile).await {
         tracing::error!("service error: {:#}", e);
     }
-    tracing::info!("Service stopped");
+    tracing::info!(profile = ?profile, "Service stopped");
 }
 
 pub async fn run_with_config(
@@ -49,10 +67,23 @@ pub async fn run_with_config(
     app_cfg: Arc<AppConfig>,
     config_path: String,
 ) -> anyhow::Result<()> {
+    run_with_profile(cancellation_ctx, app_cfg, config_path, ServiceProfile::Full).await
+}
+
+async fn run_with_profile(
+    cancellation_ctx: CancellationCtx,
+    app_cfg: Arc<AppConfig>,
+    config_path: String,
+    profile: ServiceProfile,
+) -> anyhow::Result<()> {
     let indexer_db_path = Path::new(&config_path).with_file_name("tosctl-indexer.db");
-    let runtime_cfg = RuntimeConfigStore::initialize(app_cfg.clone(), config_path)
-        .await
-        .context("initialize runtime config store")?;
+    let runtime_cfg = match profile {
+        ServiceProfile::Full => RuntimeConfigStore::initialize(app_cfg.clone(), config_path).await,
+        ServiceProfile::Explorer => {
+            RuntimeConfigStore::initialize_explorer(app_cfg.clone(), config_path).await
+        }
+    }
+    .context("initialize runtime config store")?;
     let runtime_cfg = Arc::new(runtime_cfg);
     let store = Arc::new(SnapshotStore::new());
     let indexer_store =
@@ -109,12 +140,14 @@ pub async fn run_with_config(
         )),
     );
 
-    let _ = tasks.get("contracts").expect("contracts task").enable().await;
-    if app_cfg.elections.is_some() {
-        let _ = tasks.get("elections").expect("elections task").enable().await;
-    }
-    if app_cfg.voting.is_some() {
-        let _ = tasks.get("voting").expect("voting task").enable().await;
+    if profile == ServiceProfile::Full {
+        let _ = tasks.get("contracts").expect("contracts task").enable().await;
+        if app_cfg.elections.is_some() {
+            let _ = tasks.get("elections").expect("elections task").enable().await;
+        }
+        if app_cfg.voting.is_some() {
+            let _ = tasks.get("voting").expect("voting task").enable().await;
+        }
     }
     // Always on: chain-wide contract discovery is a baseline read-only
     // capability, not an opt-in participation feature like elections/voting.
@@ -126,6 +159,7 @@ pub async fn run_with_config(
         runtime_cfg.clone(),
         tasks.clone(),
         indexer_store.clone(),
+        profile == ServiceProfile::Explorer,
     ));
 
     let max_wait = std::time::Duration::from_secs(10);
@@ -139,8 +173,12 @@ pub async fn run_with_config(
             _ = &mut timeout => {
                 // Reload config from file if changed
                 if runtime_cfg.reload_from_file().await {
-                    for task in tasks.values() {
-                        let _ = task.restart().await;
+                    if profile == ServiceProfile::Explorer {
+                        let _ = tasks.get("indexer").expect("indexer task").restart().await;
+                    } else {
+                        for task in tasks.values() {
+                            let _ = task.restart().await;
+                        }
                     }
                 }
             }

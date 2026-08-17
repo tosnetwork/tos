@@ -9,11 +9,24 @@
 use crate::commands::{
     chain_rpc::get_config_param_cmd::GetConfigParamCmd,
     nodectl::{
-        account_cmd::AccountCmd, admin_cmd::AdminCmd, agent_cmd::AgentCmd, auth_cmd::AuthCmd,
-        backup_cmd::BackupCmd, config_cmd::ConfigCmd, deploy_cmd::DeployCmd, host_cmd::HostCmd,
-        install_cmd::InstallCmd, key_cmd::KeyCmd, node_cmd::NodeCmd, observe_cmd::ObserveCmd,
-        pool_cmd::PoolCmd, service_api_cmd::ApiCmd, service_cmd::ServiceCmd, tx_cmd::TxCmd,
-        vote_cmd::VoteCmd, wallet_cmd::WalletCmd,
+        account_cmd::AccountCmd,
+        admin_cmd::AdminCmd,
+        agent_cmd::AgentCmd,
+        auth_cmd::AuthCmd,
+        backup_cmd::BackupCmd,
+        config_cmd::ConfigCmd,
+        deploy_cmd::DeployCmd,
+        host_cmd::HostCmd,
+        install_cmd::InstallCmd,
+        key_cmd::KeyCmd,
+        node_cmd::NodeCmd,
+        observe_cmd::ObserveCmd,
+        pool_cmd::PoolCmd,
+        service_api_cmd::ApiCmd,
+        service_cmd::{ExplorerCmd, ServiceCmd},
+        tx_cmd::TxCmd,
+        vote_cmd::VoteCmd,
+        wallet_cmd::WalletCmd,
     },
 };
 
@@ -41,6 +54,9 @@ pub enum Commands {
     /// Run as background service
     #[command(name = "service")]
     Service(ServiceCmd),
+    /// Run the public explorer index/API without Vault or operator tasks
+    #[command(name = "explorer")]
+    Explorer(ExplorerCmd),
 
     // ─── New operator commands (legacy operator parity) ─────────────
     /// Host lifecycle, modes, settings, updates

@@ -7,7 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use super::{
-    agent_query_api,
+    agent_query_api, explorer_query_api,
     login_rate_limiter::{LoginRateLimiter, login_limiter_key},
 };
 use crate::{
@@ -48,6 +48,7 @@ pub async fn run(
     runtime_cfg: Arc<RuntimeConfigStore>,
     tasks: HashMap<&'static str, Arc<TaskController>>,
     indexer_store: Arc<crate::indexer::IndexerStore>,
+    explorer_only: bool,
 ) {
     tracing::info!("http-server task started");
 
@@ -60,8 +61,15 @@ pub async fn run(
     // reload.
     // The middleware decides at request time whether to enforce authentication
     // by checking the live config.
-    let vault = runtime_cfg.vault();
-    let jwt_secret = cfg.http.auth.as_ref().and_then(|a| a.jwt_secret.clone());
+    let vault = if explorer_only { None } else { runtime_cfg.vault() };
+    let jwt_secret = if explorer_only {
+        // The explorer router has no authenticated endpoints. AppState still
+        // carries JwtAuth for compatibility with the full service state, so a
+        // process-local inert key avoids any Vault dependency.
+        Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string())
+    } else {
+        cfg.http.auth.as_ref().and_then(|a| a.jwt_secret.clone())
+    };
     let jwt_auth = match JwtAuth::new(vault, jwt_secret.as_deref()).await {
         Ok(m) => {
             tracing::info!(
@@ -106,7 +114,8 @@ pub async fn run(
         login_rate_limiter,
         indexer_store,
     };
-    let app = routes(enable_swagger, state);
+    let app =
+        if explorer_only { explorer_only_routes(state) } else { routes(enable_swagger, state) };
 
     let listener = match tokio::net::TcpListener::bind(bind_addr).await {
         Ok(l) => l,
@@ -135,7 +144,8 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
     let mut public = axum::Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/openapi.json", axum::routing::get(openapi_handler))
-        .route("/auth/login", axum::routing::post(login_handler));
+        .route("/auth/login", axum::routing::post(login_handler))
+        .merge(explorer_public_routes());
 
     if enable_swagger {
         public = public
@@ -193,6 +203,29 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         .merge(public)
         .merge(authenticated)
         .merge(operator_only)
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        .with_state(state)
+}
+
+fn explorer_public_routes() -> axum::Router<AppState> {
+    axum::Router::new()
+        .route("/explorer/status", axum::routing::get(explorer_query_api::status))
+        .route("/explorer/blocks", axum::routing::get(explorer_query_api::list_blocks))
+        .route("/explorer/transactions", axum::routing::get(explorer_query_api::list_transactions))
+        .route("/explorer/transaction", axum::routing::get(explorer_query_api::get_transaction))
+        .route("/explorer/block", axum::routing::get(explorer_query_api::get_block))
+        .route("/explorer/search", axum::routing::get(explorer_query_api::search))
+        .route("/explorer/contracts/{kind}", axum::routing::get(explorer_query_api::list_contracts))
+        .route(
+            "/explorer/contracts/{kind}/{address}",
+            axum::routing::get(explorer_query_api::get_contract),
+        )
+}
+
+pub(crate) fn explorer_only_routes(state: AppState) -> axum::Router {
+    axum::Router::new()
+        .route("/health", axum::routing::get(health_handler))
+        .merge(explorer_public_routes())
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
 }
@@ -940,6 +973,14 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_aipow_commitment
         ,agent_query_api::list_aipow_distributors
         ,agent_query_api::get_aipow_distributor
+        ,explorer_query_api::status
+        ,explorer_query_api::list_blocks
+        ,explorer_query_api::list_transactions
+        ,explorer_query_api::get_transaction
+        ,explorer_query_api::get_block
+        ,explorer_query_api::list_contracts
+        ,explorer_query_api::get_contract
+        ,explorer_query_api::search
     ),
     components(schemas(
         ApiErrorBody,
@@ -990,6 +1031,20 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::AipowDistributorListResponse,
         agent_query_api::AipowDistributorResponse,
         agent_query_api::RegistryListResponse,
+        explorer_query_api::ExplorerTransactionDto,
+        explorer_query_api::ExplorerBlockDto,
+        explorer_query_api::ExplorerContractDto,
+        explorer_query_api::ExplorerTransactionListResponse,
+        explorer_query_api::ExplorerBlockListResponse,
+        explorer_query_api::ExplorerContractListResponse,
+        explorer_query_api::ExplorerTransactionResponse,
+        explorer_query_api::ExplorerBlockResponse,
+        explorer_query_api::ExplorerContractResponse,
+        explorer_query_api::ExplorerCheckpointDto,
+        explorer_query_api::ExplorerStatusDto,
+        explorer_query_api::ExplorerStatusResponse,
+        explorer_query_api::ExplorerSearchHit,
+        explorer_query_api::ExplorerSearchResponse,
         common::snapshot::Snapshot,
         common::snapshot::ElectionsStatus,
         common::snapshot::ElectionsSnapshot,

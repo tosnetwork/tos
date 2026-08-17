@@ -16,7 +16,11 @@ impl CommandManager {
         cmd: &Commands,
         cancellation_ctx: CancellationCtx,
     ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
-        let _log_guard = if !matches!(cmd, Commands::Service(_)) { setup_log(None)? } else { None };
+        let _log_guard = if !matches!(cmd, Commands::Service(_) | Commands::Explorer(_)) {
+            setup_log(None)?
+        } else {
+            None
+        };
 
         match &cmd {
             // ─── Existing commands ───────────────────────────────────
@@ -45,6 +49,7 @@ impl CommandManager {
                 Ok(None)
             }
             Commands::Service(cmd) => Ok(Some(cmd.run(cancellation_ctx).await?)),
+            Commands::Explorer(cmd) => Ok(Some(cmd.run(cancellation_ctx).await?)),
 
             // ─── New operator commands ───────────────────────────────
             Commands::Host(cmd) => {

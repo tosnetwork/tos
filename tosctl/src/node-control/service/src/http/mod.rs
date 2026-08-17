@@ -7,6 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 pub mod agent_query_api;
+pub mod explorer_query_api;
 pub mod http_server_task;
 pub(crate) mod login_rate_limiter;
 

@@ -29,6 +29,78 @@
 
 namespace tos {
 
+namespace {
+
+void append_message_summary(td::StringBuilder &sb, td::Ref<vm::Cell> message_cell) {
+  sb << "{";
+  if (message_cell.is_null()) {
+    sb << "\"kind\":\"unknown\"}";
+    return;
+  }
+  sb << "\"hash\":\"" << td::base64_encode(message_cell->get_hash(0).as_slice()) << "\"";
+  td::Ref<vm::CellSlice> info_cs, init_cs, body_cs;
+  if (!block::gen::t_Message_Any.cell_unpack_message(
+          message_cell, info_cs, init_cs, body_cs) || info_cs.is_null()) {
+    sb << ",\"kind\":\"unknown\"}";
+    return;
+  }
+  auto tag = block::gen::CommonMsgInfo().get_tag(*info_cs);
+  if (tag != block::gen::CommonMsgInfo::int_msg_info) {
+    sb << ",\"kind\":\"external\"}";
+    return;
+  }
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  if (!tlb::csr_unpack(std::move(info_cs), info)) {
+    sb << ",\"kind\":\"unknown\"}";
+    return;
+  }
+  tos::WorkchainId source_wc, destination_wc;
+  tos::StdSmcAddress source, destination;
+  block::CurrencyCollection value;
+  if (!block::tlb::t_MsgAddressInt.extract_std_address(info.src, source_wc, source) ||
+      !block::tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_wc, destination) ||
+      !value.unpack(info.value)) {
+    sb << ",\"kind\":\"internal\"}";
+    return;
+  }
+  block::StdAddress source_address(source_wc, source);
+  block::StdAddress destination_address(destination_wc, destination);
+  sb << ",\"kind\":\"internal\""
+     << ",\"source\":" << td::JsonString(source_address.rserialize(true))
+     << ",\"destination\":" << td::JsonString(destination_address.rserialize(true))
+     << ",\"value\":\"" << value.tomis->to_dec_string() << "\""
+     << ",\"bounced\":" << (info.bounced ? "true" : "false")
+     << ",\"created_lt\":\"" << info.created_lt << "\""
+     << ",\"created_at\":" << info.created_at << "}";
+}
+
+void append_transaction_messages(td::StringBuilder &sb,
+                                 const block::gen::Transaction::Record &tx) {
+  sb << ",\"in_msg\":";
+  if (tx.r1.in_msg->prefetch_long(1) == -1) {
+    append_message_summary(sb, tx.r1.in_msg->prefetch_ref());
+  } else {
+    sb << "null";
+  }
+  sb << ",\"out_msgs\":[";
+  vm::Dictionary dictionary{tx.r1.out_msgs, 15};
+  bool first = true;
+  for (int index = 0; index < tx.outmsg_cnt; ++index) {
+    auto message = dictionary.lookup_ref(td::BitArray<15>{index});
+    if (message.is_null()) {
+      continue;
+    }
+    if (!first) {
+      sb << ",";
+    }
+    first = false;
+    append_message_summary(sb, message);
+  }
+  sb << "]";
+}
+
+}  // namespace
+
 // ─── getBlockTransactions ────────────────────────────────────────────────
 
 void JsonRpcServer::handle_getBlockTransactions(td::JsonObject &params, std::string req_id,
@@ -51,19 +123,27 @@ void JsonRpcServer::handle_getBlockTransactions(td::JsonObject &params, std::str
     count = std::min(static_cast<td::int32>(count_r.ok()), static_cast<td::int32>(256));
   }
 
-  // Parse optional after_lt and after_hash for pagination
+  // Parse optional after_lt and after_account for pagination. Older clients
+  // sent the account cursor under the misleading `after_hash` name, so keep
+  // that alias while preferring the accurately named field.
   td::int64 after_lt = 0;
   td::Bits256 after_account = td::Bits256::zero();
   td::int32 mode = 0x07;  // account + lt + hash in results
   auto after_lt_r = params.get_optional_string_field("after_lt");
-  auto after_hash_r = params.get_optional_string_field("after_hash");
+  auto after_account_r = params.get_optional_string_field("after_account");
+  if (after_account_r.is_error() || after_account_r.ok().empty()) {
+    after_account_r = params.get_optional_string_field("after_hash");
+  }
   if (after_lt_r.is_ok() && !after_lt_r.ok().empty()) {
     after_lt = std::strtoll(after_lt_r.ok().c_str(), nullptr, 10);
     mode |= 0x80;  // AFTER_MASK — use after cursor
-    if (after_hash_r.is_ok() && !after_hash_r.ok().empty()) {
-      auto hash_decoded = td::base64_decode(after_hash_r.ok());
-      if (hash_decoded.is_ok() && hash_decoded.ok().size() == 32) {
-        after_account.as_slice().copy_from(hash_decoded.ok());
+    if (after_account_r.is_ok() && !after_account_r.ok().empty()) {
+      auto decoded = td::base64_decode(after_account_r.ok());
+      if (decoded.is_error() || decoded.ok().size() != 32) {
+        decoded = td::hex_decode(after_account_r.ok());
+      }
+      if (decoded.is_ok() && decoded.ok().size() == 32) {
+        after_account.as_slice().copy_from(decoded.ok());
       }
     }
   }
@@ -182,19 +262,26 @@ void JsonRpcServer::handle_getBlockTransactionsExt(td::JsonObject &params, std::
     count = std::min(static_cast<td::int32>(count_r.ok()), static_cast<td::int32>(256));
   }
 
-  // Parse optional after_lt and after_hash for pagination
+  // Parse optional after_lt and after_account for pagination (with the old
+  // `after_hash` alias retained for compatibility).
   td::int64 after_lt = 0;
   td::Bits256 after_account = td::Bits256::zero();
   td::int32 mode = 0x07;  // account + lt + hash
   auto after_lt_r = params.get_optional_string_field("after_lt");
-  auto after_hash_r = params.get_optional_string_field("after_hash");
+  auto after_account_r = params.get_optional_string_field("after_account");
+  if (after_account_r.is_error() || after_account_r.ok().empty()) {
+    after_account_r = params.get_optional_string_field("after_hash");
+  }
   if (after_lt_r.is_ok() && !after_lt_r.ok().empty()) {
     after_lt = std::strtoll(after_lt_r.ok().c_str(), nullptr, 10);
     mode |= 0x80;  // AFTER_MASK
-    if (after_hash_r.is_ok() && !after_hash_r.ok().empty()) {
-      auto hash_decoded = td::base64_decode(after_hash_r.ok());
-      if (hash_decoded.is_ok() && hash_decoded.ok().size() == 32) {
-        after_account.as_slice().copy_from(hash_decoded.ok());
+    if (after_account_r.is_ok() && !after_account_r.ok().empty()) {
+      auto decoded = td::base64_decode(after_account_r.ok());
+      if (decoded.is_error() || decoded.ok().size() != 32) {
+        decoded = td::hex_decode(after_account_r.ok());
+      }
+      if (decoded.is_ok() && decoded.ok().size() == 32) {
+        after_account.as_slice().copy_from(decoded.ok());
       }
     }
   }
@@ -298,14 +385,14 @@ void JsonRpcServer::handle_getBlockTransactionsExt(td::JsonObject &params, std::
                   if (total_fees.unpack(tx.total_fees)) {
                     sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
                   }
-                  auto is_just = tx.r1.in_msg->prefetch_long(1);
-                  if (is_just == -1) {  // has in_msg
+                  if (tx.r1.in_msg->prefetch_long(1) == -1) {
                     auto msg_cell = tx.r1.in_msg->prefetch_ref();
                     if (msg_cell.not_null()) {
-                      auto msg_hash = msg_cell->get_hash(0);
-                      sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+                      sb << ",\"in_msg_hash\":\""
+                         << td::base64_encode(msg_cell->get_hash(0).as_slice()) << "\"";
                     }
                   }
+                  append_transaction_messages(sb, tx);
                 }
                 sb << "}";
               }
@@ -406,14 +493,14 @@ void JsonRpcServer::handle_getTransactions(td::JsonObject &params, std::string r
               sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
             }
             sb << ",\"account\":\"" << tx.account_addr.to_hex() << "\"";
-            auto is_just = tx.r1.in_msg->prefetch_long(1);
-            if (is_just == -1) {  // has in_msg
+            if (tx.r1.in_msg->prefetch_long(1) == -1) {
               auto msg_cell = tx.r1.in_msg->prefetch_ref();
               if (msg_cell.not_null()) {
-                auto msg_hash = msg_cell->get_hash(0);
-                sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+                sb << ",\"in_msg_hash\":\""
+                   << td::base64_encode(msg_cell->get_hash(0).as_slice()) << "\"";
               }
             }
+            append_transaction_messages(sb, tx);
           }
           sb << "}";
         }
@@ -1234,14 +1321,14 @@ void JsonRpcServer::handle_getTransactionsStd(td::JsonObject &params, std::strin
               sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
             }
             sb << ",\"account\":\"" << tx.account_addr.to_hex() << "\"";
-            auto is_just = tx.r1.in_msg->prefetch_long(1);
-            if (is_just == -1) {  // has in_msg
+            if (tx.r1.in_msg->prefetch_long(1) == -1) {
               auto msg_cell = tx.r1.in_msg->prefetch_ref();
               if (msg_cell.not_null()) {
-                auto msg_hash = msg_cell->get_hash(0);
-                sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+                sb << ",\"in_msg_hash\":\""
+                   << td::base64_encode(msg_cell->get_hash(0).as_slice()) << "\"";
               }
             }
+            append_transaction_messages(sb, tx);
             if (i == roots.size() - 1 || i == tl->ids_.size() - 1) {
               prev_lt = tx.prev_trans_lt;
               prev_hash_b64 = td::base64_encode(tx.prev_trans_hash.as_slice());

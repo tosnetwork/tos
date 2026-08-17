@@ -53,5 +53,6 @@ build/
 
 # Throwaway per-run workdirs created by the scripts/*-e2e.py localnet rehearsals
 test/integration/.*-e2e/
+test/integration/.toscan-*/
 # Throwaway per-run AIPoW workdirs (native-mint e2e, epoch e2e, capactivate probe, ...)
 test/integration/.aipow-*/

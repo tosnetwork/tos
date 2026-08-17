@@ -426,6 +426,46 @@ pub struct GetBlockTransactionsRes {
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct GetBlockTransactionsExtRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub id: Option<BlockIdExt>,
+    pub req_count: Option<u32>,
+    #[serde(default)]
+    pub incomplete: bool,
+    #[serde(default)]
+    pub transactions: Vec<BlockTransactionExt>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct BlockTransactionExt {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub data: String,
+    #[serde(default)]
+    pub account: String,
+    #[serde(default, with = "serde_utils::u64_as_str_or_num")]
+    pub lt: u64,
+    #[serde(default)]
+    pub utime: u32,
+    #[serde(default)]
+    pub hash: String,
+    #[serde(default)]
+    pub fee: String,
+    #[serde(default)]
+    pub in_msg_hash: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct GetBlockHeaderRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub gen_utime: u32,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct ShortTxId {
     #[serde(rename = "@type")]
     pub r#type: Option<String>,

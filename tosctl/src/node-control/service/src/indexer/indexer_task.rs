@@ -14,10 +14,12 @@
 //! checkpoint -- the masterchain itself (some actors deploy there directly)
 //! plus every other workchain's current shard(s), since that is where
 //! almost every contract actually lives -- and for every account it hasn't
-//! seen before, checks its code hash against the four known contract codes
-//! (Task Escrow, Dispute, Service Actor, Capability Registry). A match is
+//! seen before, checks its code hash against the recognized contract codes
+//! (Agent Account, Task Escrow, Dispute, Service Actor, Capability Registry
+//! and AIPoW contracts). A match is
 //! decoded via that contract's own `decode_data` -- no new decode logic --
-//! and stored in [`IndexerStore`]. An address already known to be one of
+//! and stored in [`IndexerStore`]. Every block/transaction identity is also
+//! recorded for explorer search and pagination. An address already known to be one of
 //! these kinds is *always* re-decoded when it reappears in a later block,
 //! since that is exactly how a status change (accept/settle/rule/...)
 //! becomes visible.
@@ -29,12 +31,14 @@ use std::time::Duration;
 use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::{
-    AipowCommitmentContract, AipowDistributorContract, CapabilityRegistryContract, ChainProvider,
-    DisputeContract, ServiceActorContract, TaskEscrowContract,
+    AgentAccountContract, AipowCommitmentContract, AipowDistributorContract,
+    CapabilityRegistryContract, ChainProvider, DisputeContract, ServiceActorContract,
+    TaskEscrowContract,
 };
 
 use crate::indexer::store::{
-    AipowSettlementRecord, IndexedRecord, IndexerStore, ServiceRequestRecord,
+    AipowSettlementRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
+    IndexerStore, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -50,6 +54,7 @@ const TRANSACTIONS_PAGE_SIZE: u32 = 256;
 /// theoretical one; this bounds how much already-indexed data can go stale
 /// from a single detected divergence rather than only ever checking the one
 /// block at the checkpoint itself.
+#[cfg(test)]
 const REORG_REWIND_BLOCKS: u32 = 5;
 
 pub async fn run(
@@ -88,6 +93,7 @@ impl KnownCodeHashes {
     fn compute() -> anyhow::Result<Self> {
         let mut by_hash = std::collections::HashMap::new();
         by_hash.insert(TaskEscrowContract::code()?.repr_hash(), "task_escrow");
+        by_hash.insert(AgentAccountContract::code()?.repr_hash(), "agent_account");
         by_hash.insert(DisputeContract::code()?.repr_hash(), "dispute");
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
@@ -109,22 +115,94 @@ async fn scan_new_blocks(
     let mc_info = chain_provider.get_masterchain_info().await?;
     let mc_target = mc_info.last.seqno;
 
-    // The masterchain block itself -- some actors are deployed directly to
-    // workchain -1 (e.g. Dispute/Capability Registry in some examples).
-    scan_shard(chain_provider, store, known, -1, mc_info.last.shard, mc_target).await?;
+    scan_masterchain_history(chain_provider, store, known, mc_info.last.shard, mc_target).await
+}
 
-    // Every other workchain's current shard block(s) -- this is where
-    // almost every real contract actually lives (Task Escrow, Service
-    // Actor, etc. are conventionally deployed to workchain 0). Shard block
-    // seqnos advance independently of the masterchain's, so each shard is
-    // walked (and checkpointed) on its own from its own reported head.
-    let shards = chain_provider.get_shards(mc_target).await?;
-    for shard in shards.shards {
-        scan_shard(chain_provider, store, known, shard.workchain, shard.shard, shard.seqno).await?;
+/// Advances the index from the masterchain timeline. For every masterchain
+/// block, `shards(seqno)` supplies the exact canonical shard heads referenced
+/// by that block. This avoids assuming a shard exists continuously from
+/// seqno 1 to its current head, an assumption that fails after shard
+/// split/merge topology changes.
+async fn scan_masterchain_history(
+    chain_provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    master_shard: i64,
+    target_seqno: u32,
+) -> anyhow::Result<()> {
+    let master_key = format!("-1:{master_shard}");
+    let mut next = store.checkpoint(&master_key)?.saturating_add(1).max(1);
+    let last_scanned = next.saturating_sub(1);
+
+    if last_scanned > 0 {
+        if let Some(expected_hash) = store.checkpoint_block_hash(&master_key)? {
+            if let Ok(Some(actual_hash)) =
+                fetch_block_hash(chain_provider, -1, master_shard, last_scanned).await
+            {
+                if actual_hash != expected_hash {
+                    tracing::warn!(
+                        target: "indexer",
+                        seqno = last_scanned,
+                        "masterchain reorg detected; rebuilding canonical explorer index",
+                    );
+                    store.reset_canonical_index()?;
+                    next = 1;
+                }
+            }
+        }
+    }
+
+    if next > target_seqno {
+        return Ok(());
+    }
+    let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
+    while next <= end {
+        let block_hash =
+            scan_one_seqno(chain_provider, store, known, -1, master_shard, next, next).await?;
+
+        // Anchor non-masterchain history to this exact masterchain block.
+        // Repeated descriptors are skipped by root hash; newly split shards
+        // can start at any seqno without a fabricated numeric backfill.
+        for shard in chain_provider.get_shards(next).await?.shards {
+            // A shard's zerostate descriptor is not an ordinary block and
+            // cannot be queried through getBlockTransactions. It only
+            // anchors the chain before that shard produces seqno 1.
+            if shard.seqno == 0 {
+                continue;
+            }
+            let root_hash = hex::encode(&shard.root_hash);
+            let stored = store.explorer_block_root(shard.workchain, shard.shard, shard.seqno)?;
+            if stored.as_deref() != Some(root_hash.as_str()) {
+                scan_one_seqno(
+                    chain_provider,
+                    store,
+                    known,
+                    shard.workchain,
+                    shard.shard,
+                    shard.seqno,
+                    next,
+                )
+                .await?;
+            }
+            let shard_key = format!("{}:{}", shard.workchain, shard.shard);
+            if shard.seqno >= store.checkpoint(&shard_key)? {
+                store.set_checkpoint(&shard_key, shard.seqno)?;
+                store.set_checkpoint_block_hash(&shard_key, &root_hash)?;
+            }
+        }
+
+        // Commit the masterchain cursor only after all shard heads it
+        // references are durable. A crash restarts this entire unit safely.
+        store.set_checkpoint(&master_key, next)?;
+        if let Some(hash) = block_hash {
+            store.set_checkpoint_block_hash(&master_key, &hash)?;
+        }
+        next += 1;
     }
     Ok(())
 }
 
+#[cfg(test)]
 async fn scan_shard(
     chain_provider: &Arc<dyn ChainProvider>,
     store: &IndexerStore,
@@ -156,6 +234,7 @@ async fn scan_shard(
                     );
                     next =
                         last_scanned.saturating_sub(REORG_REWIND_BLOCKS).saturating_add(1).max(1);
+                    store.rewind_explorer(workchain, shard, next)?;
                 }
             }
         }
@@ -168,7 +247,7 @@ async fn scan_shard(
 
     while next <= end {
         let block_hash =
-            scan_one_seqno(chain_provider, store, known, workchain, shard, next).await?;
+            scan_one_seqno(chain_provider, store, known, workchain, shard, next, next).await?;
         store.set_checkpoint(&shard_key, next)?;
         if let Some(hash) = block_hash {
             store.set_checkpoint_block_hash(&shard_key, &hash)?;
@@ -199,27 +278,92 @@ async fn scan_one_seqno(
     workchain: i32,
     shard: i64,
     seqno: u32,
+    observed_mc_seqno: u32,
 ) -> anyhow::Result<Option<String>> {
     let mut addresses: HashSet<String> = HashSet::new();
     let mut block_hash: Option<String> = None;
+    let mut explorer_block: Option<ExplorerBlockRecord> = None;
+    let mut explorer_transactions: Vec<ExplorerTransactionRecord> = Vec::new();
+    let indexed_at = time_format::now();
+    let mut observed_gen_utime = 0;
     let mut after_lt: Option<u64> = None;
-    let mut after_hash: Option<String> = None;
+    let mut after_account: Option<String> = None;
     loop {
-        let page = chain_provider
-            .get_block_transactions_page(
+        let extended = chain_provider
+            .get_block_transactions_ext_page(
                 workchain,
                 shard,
                 seqno,
                 after_lt,
-                after_hash.as_deref(),
+                after_account.as_deref(),
                 TRANSACTIONS_PAGE_SIZE,
             )
-            .await?;
+            .await;
+        let (id, incomplete, transactions) = match extended {
+            Ok(page) => (
+                page.id,
+                page.incomplete,
+                page.transactions
+                    .into_iter()
+                    .map(|tx| {
+                        (
+                            tx.account,
+                            tx.lt,
+                            tx.hash,
+                            (!tx.fee.is_empty()).then_some(tx.fee),
+                            (!tx.in_msg_hash.is_empty()).then_some(tx.in_msg_hash),
+                            tx.utime,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            Err(error) => {
+                tracing::debug!(
+                    target: "indexer",
+                    workchain,
+                    shard,
+                    seqno,
+                    error = %error,
+                    "extended transaction page unavailable; using identity-only page",
+                );
+                let page = chain_provider
+                    .get_block_transactions_page(
+                        workchain,
+                        shard,
+                        seqno,
+                        after_lt,
+                        after_account.as_deref(),
+                        TRANSACTIONS_PAGE_SIZE,
+                    )
+                    .await?;
+                (
+                    page.id,
+                    page.incomplete,
+                    page.transactions
+                        .into_iter()
+                        .map(|tx| (tx.account, tx.lt, tx.hash, None, None, 0))
+                        .collect::<Vec<_>>(),
+                )
+            }
+        };
         if block_hash.is_none() {
-            block_hash = page.id.as_ref().map(|id| hex::encode(&id.root_hash));
+            block_hash = id.as_ref().map(|id| hex::encode(&id.root_hash));
         }
-        for tx in &page.transactions {
-            if tx.account.is_empty() {
+        if explorer_block.is_none() {
+            explorer_block = id.as_ref().map(|id| ExplorerBlockRecord {
+                workchain: id.workchain,
+                shard: id.shard,
+                seqno: id.seqno,
+                root_hash: hex::encode(&id.root_hash),
+                file_hash: hex::encode(&id.file_hash),
+                gen_utime: 0,
+                tx_count: 0,
+                indexed_at,
+                observed_mc_seqno,
+            });
+        }
+        for (account, lt, hash, fee, in_msg_hash, utime) in &transactions {
+            if account.is_empty() {
                 continue;
             }
             // Normalize through `MsgAddressInt` rather than storing the raw
@@ -231,17 +375,48 @@ async fn scan_one_seqno(
             // A mismatch here means list endpoints (which the test suite's
             // own comparison also re-normalizes) appear to work while
             // direct by-address lookups silently 404.
-            let Ok(addr) = MsgAddressInt::from_str(&format!("{workchain}:{}", tx.account)) else {
+            let Ok(addr) = MsgAddressInt::from_str(&format!("{workchain}:{account}")) else {
                 continue;
             };
-            addresses.insert(addr.to_string());
+            let address = addr.to_string();
+            addresses.insert(address.clone());
+            if observed_gen_utime == 0 {
+                observed_gen_utime = *utime;
+            }
+            if !hash.is_empty() {
+                explorer_transactions.push(ExplorerTransactionRecord {
+                    hash: hash.clone(),
+                    account: address,
+                    lt: *lt,
+                    workchain,
+                    shard,
+                    seqno,
+                    gen_utime: 0,
+                    fee: fee.clone(),
+                    in_msg_hash: in_msg_hash.clone(),
+                    indexed_at,
+                });
+            }
         }
-        if !page.incomplete {
+        if !incomplete {
             break;
         }
-        let Some(last) = page.transactions.last() else { break };
-        after_lt = Some(last.lt);
-        after_hash = Some(last.hash.clone());
+        let Some(last) = transactions.last() else { break };
+        after_lt = Some(last.1);
+        after_account = Some(last.0.clone());
+    }
+
+    if let Some(mut block) = explorer_block {
+        block.gen_utime = if observed_gen_utime > 0 {
+            observed_gen_utime
+        } else {
+            chain_provider.get_block_timestamp(workchain, shard, seqno).await?
+        };
+        for transaction in &mut explorer_transactions {
+            transaction.gen_utime = block.gen_utime;
+        }
+        block.tx_count = explorer_transactions.len();
+        store.index_explorer_block(&block, &explorer_transactions)?;
     }
 
     for address in addresses {
@@ -314,6 +489,23 @@ async fn decode_and_store(
     now: u64,
 ) -> anyhow::Result<()> {
     match kind {
+        "agent_account" => {
+            let stack = chain_provider
+                .run_get_method(address.to_owned(), "get_agent_account_data", vec![])
+                .await?;
+            let data = AgentAccountContract::decode_data(&stack)?;
+            store.upsert(&IndexedRecord {
+                address: address.to_owned(),
+                kind: kind.to_owned(),
+                creator: Some(data.owner.to_string()),
+                counterparty: None,
+                status: Some("active".to_owned()),
+                deadline: None,
+                last_seqno: seqno,
+                updated_at: now,
+                dto_json: serde_json::to_string(&AgentAccountRecordDto::from(&data))?,
+            })
+        }
         "task_escrow" => {
             let stack =
                 chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
@@ -726,6 +918,37 @@ fn dispute_status_name(status: u8) -> &'static str {
 // they exist purely as the indexer's storage format.
 
 #[derive(serde::Serialize, serde::Deserialize)]
+struct AgentAccountRecordDto {
+    owner: String,
+    controller_pubkey: String,
+    seqno: u32,
+    spend_day: u32,
+    spent_today: u64,
+    max_per_tx: u64,
+    daily_limit: u64,
+    default_task_timeout_secs: u64,
+    metadata_hash: Option<String>,
+    service_endpoint_hash: Option<String>,
+}
+
+impl From<&contracts::AgentAccountData> for AgentAccountRecordDto {
+    fn from(data: &contracts::AgentAccountData) -> Self {
+        Self {
+            owner: data.owner.to_string(),
+            controller_pubkey: hex::encode(data.controller_pubkey),
+            seqno: data.seqno,
+            spend_day: data.spend_day,
+            spent_today: data.spent_today,
+            max_per_tx: data.max_per_tx,
+            daily_limit: data.daily_limit,
+            default_task_timeout_secs: data.default_task_timeout_secs,
+            metadata_hash: data.metadata_hash.map(hex::encode),
+            service_endpoint_hash: data.service_endpoint_hash.map(hex::encode),
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 struct TaskEscrowRecordDto {
     creator: String,
     assigned_agent: Option<String>,
@@ -859,10 +1082,39 @@ mod tests {
     //! compiles cleanly and fails only by silently dropping rows out of a
     //! list response at runtime (`filter_map` swallows the decode error).
     use super::*;
-    use crate::http::agent_query_api::{DisputeDto, RegistryDto, ServiceActorDto, TaskDto};
+    use crate::http::agent_query_api::{
+        AgentAccountDto, DisputeDto, RegistryDto, ServiceActorDto, TaskDto,
+    };
 
     fn addr(byte: u8) -> MsgAddressInt {
         MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap()
+    }
+
+    #[test]
+    fn agent_account_record_dto_deserializes_into_the_http_agent_dto() {
+        let data = contracts::AgentAccountData {
+            owner: addr(1),
+            controller_pubkey: [2; 32],
+            seqno: 3,
+            spend_day: 4,
+            spent_today: 5,
+            max_per_tx: 6,
+            daily_limit: 7,
+            default_task_timeout_secs: 8,
+            metadata_hash: Some([9; 32]),
+            service_endpoint_hash: Some([10; 32]),
+        };
+        let stored = serde_json::to_string(&AgentAccountRecordDto::from(&data)).unwrap();
+        let dto = crate::http::agent_query_api::indexed_dto::<AgentAccountDto>(
+            &stored,
+            &addr(11).to_string(),
+            false,
+        )
+        .expect("agent storage and HTTP DTO shapes must remain compatible");
+        assert_eq!(dto.owner, data.owner.to_string());
+        assert_eq!(dto.controller_pubkey, hex::encode(data.controller_pubkey));
+        assert_eq!(dto.spent_today, 5);
+        assert_eq!(dto.daily_limit, 7);
     }
 
     #[test]
@@ -1344,6 +1596,49 @@ mod tests {
         assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
         // The masterchain itself keeps advancing normally throughout.
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn newly_split_shard_is_indexed_from_its_masterchain_reported_head() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let mc_shard = i64::MIN;
+        let child_shard = 4_611_686_018_427_387_904i64;
+
+        provider.set_on(-1, mc_shard, 1, &"aa".repeat(32));
+        provider.set_on(0, child_shard, 900, &"bb".repeat(32));
+        provider.set_masterchain_info(1, mc_shard);
+        provider.set_shards(&[(0, child_shard, 900)]);
+
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+
+        assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 900);
+        assert!(store.explorer_block_root(0, child_shard, 900).unwrap().is_some());
+        assert_eq!(
+            provider.calls_made(),
+            2,
+            "only the masterchain block and the reported child head may be fetched"
+        );
+    }
+
+    #[tokio::test]
+    async fn shard_zerostate_descriptors_are_not_fetched_as_blocks() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let mc_shard = i64::MIN;
+        provider.set_on(-1, mc_shard, 1, &"aa".repeat(32));
+        provider.set_masterchain_info(1, mc_shard);
+        provider.set_shards(&[(0, i64::MIN, 0)]);
+
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+
+        assert_eq!(provider.calls_made(), 1, "only the masterchain block is queryable");
+        assert_eq!(store.checkpoint(&format!("0:{}", i64::MIN)).unwrap(), 0);
+        assert_eq!(store.checkpoint(&format!("-1:{mc_shard}")).unwrap(), 1);
     }
 
     // ─── Service Actor request-lifecycle classification (real sandbox contract) ───

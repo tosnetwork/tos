@@ -1,0 +1,79 @@
+name: tosctl service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tosctl/src/node-control/**"
+      - "validator-engine/json-rpc-server*.cpp"
+      - "scripts/localnet-jsonrpc.py"
+      - "scripts/toscan-dev-seed.py"
+      - "scripts/toscan-explorer-e2e.py"
+      - ".github/workflows/tosctl-service.yml"
+  pull_request:
+    paths:
+      - "tosctl/src/node-control/**"
+      - "validator-engine/json-rpc-server*.cpp"
+      - "scripts/localnet-jsonrpc.py"
+      - "scripts/toscan-dev-seed.py"
+      - "scripts/toscan-explorer-e2e.py"
+      - ".github/workflows/tosctl-service.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tosctl/src/node-control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tosctl/src/node-control -> target
+      - name: Formatting
+        run: cargo fmt --manifest-path service/Cargo.toml --check
+      - name: Service tests
+        run: cargo test --manifest-path service/Cargo.toml --lib --locked
+
+  real-chain-explorer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libjemalloc-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tosctl/src -> target
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Prepare Python environment
+        run: |
+          uv python install 3.14
+          uv sync --no-dev
+          uv run test/tostester/generate_tl.py
+      - name: Build native localnet and JSON-RPC
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target \
+            validator-engine dht-server create-state generate-random-id toslibjson -j2
+      - name: Build tosctl explorer
+        run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
+      - name: Real-chain TOSCAN release gate
+        run: uv run python scripts/toscan-explorer-e2e.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: toscan-real-chain-logs
+          path: test/integration/.toscan-explorer-e2e/*.log
+          retention-days: 7

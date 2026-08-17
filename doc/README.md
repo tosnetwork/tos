@@ -56,6 +56,7 @@ AI actor protocol support:
 
 Client, trust, and indexing docs:
 
+- [toscan-query-api.md](toscan-query-api.md) - implemented public explorer index, query routes, reorg behavior and production read-only gateway contract
 - [json-rpc-policy.md](json-rpc-policy.md)
 - [tos-trust-tiers.md](tos-trust-tiers.md)
 - [tos-transaction-history.md](tos-transaction-history.md)

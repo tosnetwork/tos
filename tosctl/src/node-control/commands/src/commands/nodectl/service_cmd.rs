@@ -23,6 +23,20 @@ pub struct ServiceCmd {
     config: String,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(about = "Run the read-only TOS explorer index and public API")]
+pub struct ExplorerCmd {
+    #[arg(
+        short = 'c',
+        long = "config",
+        help = "Path to the configuration file",
+        default_value = "tosctl-config.json",
+        env = "CONFIG_PATH",
+        global = true
+    )]
+    config: String,
+}
+
 impl ServiceCmd {
     pub async fn run(
         &self,
@@ -30,5 +44,15 @@ impl ServiceCmd {
     ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
         tracing::info!("starting node control service");
         Ok(tokio::spawn(service_main_task::run(cancellation_ctx, self.config.clone())))
+    }
+}
+
+impl ExplorerCmd {
+    pub async fn run(
+        &self,
+        cancellation_ctx: CancellationCtx,
+    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        tracing::info!("starting read-only explorer service");
+        Ok(tokio::spawn(service_main_task::run_explorer(cancellation_ctx, self.config.clone())))
     }
 }
