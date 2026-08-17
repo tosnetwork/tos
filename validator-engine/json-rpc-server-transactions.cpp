@@ -99,6 +99,110 @@ void append_transaction_messages(td::StringBuilder &sb,
   sb << "]";
 }
 
+void append_compute_phase(td::StringBuilder &sb, td::Ref<vm::CellSlice> phase) {
+  sb << ",\"compute\":";
+  if (phase.is_null()) {
+    sb << "null";
+    return;
+  }
+  auto tag = block::gen::t_TrComputePhase.get_tag(*phase);
+  if (tag == block::gen::TrComputePhase::tr_phase_compute_vm) {
+    block::gen::TrComputePhase::Record_tr_phase_compute_vm compute;
+    auto slice = *phase;
+    if (block::gen::t_TrComputePhase.unpack(slice, compute)) {
+      sb << "{\"skipped\":false"
+         << ",\"success\":" << (compute.success ? "true" : "false")
+         << ",\"exit_code\":" << compute.r1.exit_code
+         << ",\"vm_steps\":" << compute.r1.vm_steps
+         << ",\"account_activated\":"
+         << (compute.account_activated ? "true" : "false") << "}";
+      return;
+    }
+  } else {
+    block::gen::TrComputePhase::Record_tr_phase_compute_skipped skipped;
+    auto slice = *phase;
+    if (block::gen::t_TrComputePhase.unpack(slice, skipped)) {
+      sb << "{\"skipped\":true,\"skip_reason\":"
+         << static_cast<int>(skipped.reason) << "}";
+      return;
+    }
+  }
+  sb << "null";
+}
+
+void append_action_phase(td::StringBuilder &sb, td::Ref<vm::CellSlice> maybe_action) {
+  sb << ",\"action\":";
+  if (maybe_action.is_null()) {
+    sb << "null";
+    return;
+  }
+  auto action_cell = maybe_action->prefetch_ref();
+  block::gen::TrActionPhase::Record action;
+  if (action_cell.is_null() ||
+      !block::gen::t_TrActionPhase.cell_unpack(std::move(action_cell), action)) {
+    sb << "null";
+    return;
+  }
+  sb << "{\"success\":" << (action.success ? "true" : "false")
+     << ",\"valid\":" << (action.valid ? "true" : "false")
+     << ",\"no_funds\":" << (action.no_funds ? "true" : "false")
+     << ",\"result_code\":" << action.result_code
+     << ",\"total_actions\":" << action.tot_actions
+     << ",\"skipped_actions\":" << action.skipped_actions
+     << ",\"messages_created\":" << action.msgs_created << "}";
+}
+
+void append_transaction_execution(td::StringBuilder &sb,
+                                  const block::gen::Transaction::Record &tx) {
+  auto tag = block::gen::t_TransactionDescr.get_tag(vm::load_cell_slice(tx.description));
+  sb << ",\"transaction_type\":";
+  switch (tag) {
+    case block::gen::TransactionDescr::trans_ord: {
+      block::gen::TransactionDescr::Record_trans_ord description;
+      if (!tlb::unpack_cell(tx.description, description)) {
+        sb << "\"ordinary\",\"aborted\":null,\"destroyed\":null";
+        return;
+      }
+      sb << "\"ordinary\""
+         << ",\"aborted\":" << (description.aborted ? "true" : "false")
+         << ",\"destroyed\":" << (description.destroyed ? "true" : "false");
+      append_compute_phase(sb, description.compute_ph);
+      append_action_phase(sb, description.action);
+      return;
+    }
+    case block::gen::TransactionDescr::trans_storage:
+      sb << "\"storage\"";
+      return;
+    case block::gen::TransactionDescr::trans_tick_tock: {
+      block::gen::TransactionDescr::Record_trans_tick_tock description;
+      if (!tlb::unpack_cell(tx.description, description)) {
+        sb << "\"tick_tock\"";
+        return;
+      }
+      sb << (description.is_tock ? "\"tock\"" : "\"tick\"")
+         << ",\"aborted\":" << (description.aborted ? "true" : "false")
+         << ",\"destroyed\":" << (description.destroyed ? "true" : "false");
+      append_compute_phase(sb, description.compute_ph);
+      append_action_phase(sb, description.action);
+      return;
+    }
+    case block::gen::TransactionDescr::trans_split_prepare:
+      sb << "\"split_prepare\"";
+      return;
+    case block::gen::TransactionDescr::trans_split_install:
+      sb << "\"split_install\"";
+      return;
+    case block::gen::TransactionDescr::trans_merge_prepare:
+      sb << "\"merge_prepare\"";
+      return;
+    case block::gen::TransactionDescr::trans_merge_install:
+      sb << "\"merge_install\"";
+      return;
+    default:
+      sb << "\"unknown\"";
+  }
+}
+
 }  // namespace
 
 // ─── getBlockTransactions ────────────────────────────────────────────────
@@ -393,6 +497,7 @@ void JsonRpcServer::handle_getBlockTransactionsExt(td::JsonObject &params, std::
                     }
                   }
                   append_transaction_messages(sb, tx);
+                  append_transaction_execution(sb, tx);
                 }
                 sb << "}";
               }
@@ -501,6 +606,7 @@ void JsonRpcServer::handle_getTransactions(td::JsonObject &params, std::string r
               }
             }
             append_transaction_messages(sb, tx);
+            append_transaction_execution(sb, tx);
           }
           sb << "}";
         }
@@ -1329,6 +1435,7 @@ void JsonRpcServer::handle_getTransactionsStd(td::JsonObject &params, std::strin
               }
             }
             append_transaction_messages(sb, tx);
+            append_transaction_execution(sb, tx);
             if (i == roots.size() - 1 || i == tl->ids_.size() - 1) {
               prev_lt = tx.prev_trans_lt;
               prev_hash_b64 = td::base64_encode(tx.prev_trans_hash.as_slice());

@@ -126,10 +126,39 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           }
           auto b64 = td::base64_encode(boc_r.ok().as_slice());
 
+          std::string validator_set_json;
+          if (config_id == 32 || config_id == 34 || config_id == 36) {
+            auto validators_r = block::Config::unpack_validator_set(param_cell);
+            if (validators_r.is_ok()) {
+              auto validators = validators_r.move_as_ok();
+              td::StringBuilder decoded;
+              decoded << ",\"validator_set\":{\"utime_since\":" << validators->utime_since
+                      << ",\"utime_until\":" << validators->utime_until
+                      << ",\"total\":" << validators->total
+                      << ",\"main\":" << validators->main
+                      << ",\"total_weight\":\"" << validators->total_weight
+                      << "\",\"validators\":[";
+              bool first = true;
+              for (const auto& validator : validators->list) {
+                if (!first) decoded << ",";
+                first = false;
+                decoded << "{\"public_key\":\""
+                        << td::base64_encode(validator.pubkey.as_bits256().as_slice())
+                        << "\",\"adnl_address\":\""
+                        << td::base64_encode(validator.adnl_addr.as_slice())
+                        << "\",\"weight\":\"" << validator.weight
+                        << "\",\"cumulative_weight\":\"" << validator.cum_weight << "\"}";
+              }
+              decoded << "]}";
+              validator_set_json = decoded.as_cslice().str();
+            }
+          }
+
           if (!slot->settled) {
             slot->settled = true;
             slot->promise.set_value(make_json_ok(
-                PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
+                PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}"
+                          << validator_set_json << "}",
                 slot->req_id));
           }
         }));
