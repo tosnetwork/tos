@@ -85,7 +85,7 @@ POOL_STAKE_VALUE = NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
 # validator has to have posted at least that before pool.fc will stake.
 VALIDATOR_OWN_DEPOSIT = 5_100 * NANO
 NOMINATOR_DEPOSIT = 2_000 * NANO
-NOMINATOR_COUNT = 4
+NOMINATOR_COUNT = 5
 
 # A validator whose stake is frozen cannot enter the next election, which
 # opens before the current round ends, so continuous participation costs two
@@ -1031,6 +1031,20 @@ class PoolLifecycle:
             await self.drain_withdraw_queue()
             await self.check_solvency()
 
+            # A pool that has lost depositors can fall below the network's
+            # minimum stake and lose the ability to participate at all. From
+            # outside that is indistinguishable from still being blocked by the
+            # queue it just cleared, so name it before staking rather than
+            # letting the next wait time out ambiguously.
+            pool_balance = await self.balance(self.pool_address)
+            self.check(
+                "the pool still holds enough to meet the network minimum",
+                pool_balance >= POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE,
+                balance=pool_balance,
+                required=POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE,
+                nominators_remaining=len(self.nominators),
+            )
+
             # A fresh id rather than the one captured before the queue was
             # drained: draining takes long enough that the earlier election has
             # closed, and the Elector refuses a stake for a finished one --
@@ -1089,6 +1103,7 @@ class PoolLifecycle:
             "recovering does not settle a queued withdrawal",
             "a queued withdrawal keeps the pool out of the next election",
             "draining the queue pays the leaver and frees the pool",
+            "the pool still holds enough to meet the network minimum",
             "draining the queue lets the pool back into an election",
         ]
         observed = {entry["check"] for entry in self.report.checks}
