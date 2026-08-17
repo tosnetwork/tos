@@ -1,0 +1,32 @@
+#!/usr/bin/fift -s
+"TosUtil.fif" include
+
+{ ."usage: build-validator-count-value.fif <max-validators> <max-main-validators> <min-validators> [<savefile>]" cr
+  ."  builds a ConfigParam 16 value" cr
+  1 halt
+} : usage
+
+$# dup 3 < swap 4 > or ' usage if
+
+$1 parse-int =: max-validators
+$2 parse-int =: max-main-validators
+$3 parse-int =: min-validators
+def? $4 { @' $4 } { "config-param-16-value.boc" } cond =: savefile
+
+max-validators 16 fits not abort"max_validators must fit into 16 bits"
+max-main-validators 16 fits not abort"max_main_validators must fit into 16 bits"
+min-validators 16 fits not abort"min_validators must fit into 16 bits"
+min-validators 1 < abort"a validator set needs at least one member"
+min-validators max-validators > abort"min_validators exceeds max_validators"
+max-main-validators max-validators > abort"max_main_validators exceeds max_validators"
+
+<b max-validators 16 u, max-main-validators 16 u, min-validators 16 u, b>
+dup 16 is-valid-config? not abort"not a valid ConfigParam 16 value"
+
+."ConfigParam 16 value: " dup <s csr. cr
+."  max_validators      = " max-validators . cr
+."  max_main_validators = " max-main-validators . cr
+."  min_validators      = " min-validators . cr
+
+2 boc+>B savefile +".boc" tuck B>file
+."Saved to " type cr

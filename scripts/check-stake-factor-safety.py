@@ -179,7 +179,12 @@ def main() -> int:
     )
     print(
         f"      either keep the factor below {float(bound):g} at {validators} validators, "
-        f"or reach {needed} validators before raising it to {float(factor):g}",
+        f"or raise the floor to {needed} before raising the factor to {float(factor):g}",
+        file=sys.stderr,
+    )
+    print(
+        "      the floor moves first: scripts/propose-validator-count.sh "
+        f"--min-validators {needed}",
         file=sys.stderr,
     )
     return 1

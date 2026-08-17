@@ -67,7 +67,10 @@ def test_gate_rejects_the_upstream_factor_on_a_launch_sized_set(capsys):
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "50.00%" in captured.err
-    assert "8 validators" in captured.err
+    # Names the floor the factor needs, and which of the two parameters moves
+    # first -- the order is the part that is easy to get backwards.
+    assert "raise the floor to 8" in captured.err
+    assert "propose-validator-count.sh --min-validators 8" in captured.err
 
 
 def test_gate_accepts_the_shipped_genesis_combination(capsys):
@@ -84,3 +87,36 @@ def _run_gate(argv: list[str]) -> int:
         return gate.main()
     finally:
         sys.argv = saved
+
+
+# ===== the order the two parameters have to move in =====
+
+
+def test_raising_the_floor_first_is_the_only_safe_order():
+    """Both changes are needed; only one sequence is safe at every moment.
+
+    The factor is bounded by the smallest set the configuration permits, not
+    by the set that happens to be running. So raising the factor before the
+    floor opens a window in which the configuration allows a set where one
+    entry can hold half the weight -- and the Elector may install exactly such
+    a set during that window. Raising the floor first only makes elections
+    stricter, which is never a safety loss.
+    """
+    start_min, target_min, target_factor = 4, 8, Fraction(3)
+
+    # Factor first: legal by itself, unsafe against the floor still in force.
+    assert gate.worst_case_share(target_factor, start_min) >= Fraction(1, 3)
+
+    # Floor first: the intermediate state keeps the old factor, which was
+    # already safe and stays safe under a larger minimum.
+    assert gate.worst_case_share(Fraction(1), target_min) < Fraction(1, 3)
+    # And the destination is safe.
+    assert gate.worst_case_share(target_factor, target_min) < Fraction(1, 3)
+
+
+def test_the_floor_the_gate_demands_is_the_one_the_factor_needs():
+    """propose-validator-count.sh exists to satisfy exactly this number."""
+    for factor in (Fraction(2), Fraction(3), Fraction(5)):
+        needed = gate.min_validators_for(factor)
+        assert gate.worst_case_share(factor, needed) < Fraction(1, 3)
+        assert gate.worst_case_share(factor, needed - 1) >= Fraction(1, 3)
