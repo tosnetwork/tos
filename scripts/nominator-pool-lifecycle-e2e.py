@@ -1063,7 +1063,14 @@ class PoolLifecycle:
                 description="the next election opens",
                 predicate=lambda value: value > 0 and value != election_id,
             )
+            # This leg is the validator deliberately trying to stake and being
+            # refused, which is the opposite of abandoning the pool. It is not
+            # part of the exit path, so it does not count against the claim
+            # that the exit path needs nothing from them.
+            self.count_validator_sends = False
             await self.stake_must_be_refused(next_election)
+            self.count_validator_sends = True
+
             await self.drain_withdraw_queue()
 
             # The property a depositor actually needs when a validator stops
@@ -1072,7 +1079,7 @@ class PoolLifecycle:
             self.check(
                 "a staked pool is recovered and paid out without the validator",
                 self.validator_sends_after_stake == 0,
-                validator_messages_since_staking=self.validator_sends_after_stake,
+                validator_messages_during_recovery_and_payout=self.validator_sends_after_stake,
             )
             self.count_validator_sends = False
 

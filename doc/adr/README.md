@@ -23,6 +23,7 @@ this way and not the other plausible way?"
 | Number   | Title                                              | Status   |
 | -------- | -------------------------------------------------- | -------- |
 | ADR-0001 | [Streaming cell import and DAG residency](0001-streaming-cell-import-and-residency.md) | Accepted |
+| ADR-0002 | [Pooled stake belongs below the protocol, and stays dark until it can pay](0002-pooled-stake-belongs-below-the-protocol.md) | Accepted |
 
 ## Conventions for adding a new ADR
 
