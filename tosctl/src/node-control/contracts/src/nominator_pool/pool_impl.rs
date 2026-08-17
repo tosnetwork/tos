@@ -23,6 +23,10 @@ use tl_api::tos::tvm::StackEntry;
 const MAX_VALIDATOR_SET_CHANGES: i32 = 3;
 /// pool.fc state 0: funds are in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i32 = 0;
+/// pool.fc's MIN_TOS_FOR_STORAGE: the balance it always keeps behind.
+/// scripts/check-pool-storage-reserve.py reports how far this actually goes
+/// against a given network's masterchain prices.
+const MIN_TOS_FOR_STORAGE: u64 = 10_000_000_000;
 /// Withdraw requests settled per message. The contract walks the queue until
 /// the balance can no longer cover the next payout, so a bounded batch keeps
 /// one message's gas predictable and the remainder is picked up next tick.
@@ -254,6 +258,34 @@ impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
             });
         }
 
+        // Masterchain rent is charged against the pool's balance, which is the
+        // nominators' principal, and pool.fc books that drain against nobody:
+        // its ledger keeps saying each nominator is owed what they deposited.
+        // Once the balance no longer covers the ledger plus the reserve, the
+        // withdrawal path stops paying out -- and it does so by returning
+        // unchanged rather than throwing, so the request just sits in the queue
+        // and nothing anywhere reports a problem. Say it out loud instead.
+        if data.state == POOL_STATE_IDLE {
+            let balance = self.balance().await?;
+            let owed: u64 = self
+                .list_nominators()
+                .await?
+                .iter()
+                .map(|position| position.amount.saturating_add(position.pending_deposit))
+                .sum();
+            let required = owed.saturating_add(MIN_TOS_FOR_STORAGE);
+            if balance < required {
+                tracing::error!(
+                    pool = %self.pool_addr,
+                    balance,
+                    owed,
+                    shortfall = required - balance,
+                    "pool holds less than it owes its nominators plus the storage reserve; \
+                     withdrawals will be skipped silently until it is topped up"
+                );
+            }
+        }
+
         // A queued withdrawal blocks the next stake outright, so one nominator
         // asking to leave takes the whole pool out of the round unless the
         // queue is drained first. Only worth attempting while the pool is idle:
@@ -444,15 +476,22 @@ mod tests {
         changes_count: i32,
         saved_hash: [u8; 32],
         withdraw_requests: bool,
+        /// What the pool actually holds.
+        balance: u64,
+        /// What its ledger says each nominator is owed.
+        nominator_amounts: Vec<u64>,
     }
 
     impl StubProvider {
+        /// A solvent, idle pool with one nominator and nothing to do.
         fn new() -> Self {
             Self {
                 state: 0,
                 changes_count: 0,
                 saved_hash: SAVED_VSET_HASH,
                 withdraw_requests: false,
+                balance: 1_000_000_000_000,
+                nominator_amounts: vec![100_000_000_000],
             }
         }
     }
@@ -492,12 +531,25 @@ mod tests {
                         "0"
                     })]))
                 }
+                "list_nominators" => Ok(TvmStackParser::new(vec![list_entry(
+                    self.nominator_amounts
+                        .iter()
+                        .map(|amount| {
+                            tuple_entry(vec![
+                                number("0xabcd"),
+                                number(&amount.to_string()),
+                                number("0"),
+                                number("0"),
+                            ])
+                        })
+                        .collect(),
+                )])),
                 other => anyhow::bail!("unexpected get-method: {other}"),
             }
         }
 
         async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
-            Ok(0)
+            Ok(self.balance)
         }
     }
 
