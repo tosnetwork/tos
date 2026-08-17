@@ -717,6 +717,32 @@ async fn decode_and_store(
                     && depth_headroom > 0,
                 nominators,
             };
+
+            // Attribute this observation before the record is overwritten: the
+            // contract's ledger says what a depositor is owed now, and the
+            // difference from the last observation is the only place the reason
+            // for the change is still visible. A withdrawal deletes the entry
+            // outright, so nothing can be reconstructed after the fact.
+            let observed_positions: Vec<(String, u64, u64)> = dto
+                .nominators
+                .iter()
+                .map(|position| {
+                    (position.address.clone(), position.amount, position.pending_deposit)
+                })
+                .collect();
+            if let Err(error) = store.observe_nominator_positions(
+                address,
+                dto.state,
+                common::time_format::now(),
+                &observed_positions,
+            ) {
+                tracing::warn!(
+                    target: "indexer",
+                    pool = %address,
+                    error = %format!("{error:#}"),
+                    "could not attribute nominator positions"
+                );
+            }
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),

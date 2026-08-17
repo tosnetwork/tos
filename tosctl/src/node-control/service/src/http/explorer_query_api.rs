@@ -531,6 +531,91 @@ pub async fn staking(
     }))
 }
 
+/// One depositor's standing in one pool.
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerNominatorPositionDto {
+    pub pool_address: String,
+    /// Principal currently earning, in nanotos.
+    pub amount: String,
+    /// Deposit waiting for the next staking cycle.
+    pub pending_deposit: String,
+    /// Everything this address put in, as observed by the indexer.
+    pub deposited_total: String,
+    /// Everything the pool distributed to them.
+    pub rewarded_total: String,
+    /// Changes no earlier observation could explain -- an indexing gap across
+    /// a distribution, most likely. Reported rather than folded into rewards,
+    /// because a total that silently absorbs what it could not account for is
+    /// worse than one that says so.
+    pub unattributed_total: String,
+    /// False when unattributed_total is non-zero: the earnings figure is then
+    /// a lower bound rather than the whole story.
+    pub attribution_complete: bool,
+    pub first_seen_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerNominatorPositionsResponse {
+    pub ok: bool,
+    pub address: String,
+    /// Sum of rewarded_total across pools.
+    pub rewarded_total: String,
+    /// True only if every position's attribution is complete.
+    pub attribution_complete: bool,
+    pub result: Vec<ExplorerNominatorPositionDto>,
+}
+
+/// What one address has put into pools and what the pools have paid it.
+///
+/// The contract records only what a depositor is owed right now. What they
+/// earned is that minus what they deposited, and nothing on chain records
+/// deposits against an address -- a withdrawal deletes the ledger entry
+/// outright, so it cannot be reconstructed afterwards either. The indexer
+/// therefore attributes each change as it observes it, and this reports the
+/// result along with how much of it it could not explain.
+#[utoipa::path(get, path = "/explorer/staking/nominator/{address}", params(
+    ("address" = String, Path, description = "basechain address of the depositor")
+), responses(
+    (status = 200, body = ExplorerNominatorPositionsResponse), (status = 503, body = ApiErrorResponse)
+))]
+pub async fn nominator_positions(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+) -> Result<axum::Json<ExplorerNominatorPositionsResponse>, AppError> {
+    let entries = state.indexer_store.nominator_ledger_entries(&address).map_err(index_error)?;
+
+    let mut rewarded_total = 0u64;
+    let mut attribution_complete = true;
+    let result = entries
+        .into_iter()
+        .map(|entry| {
+            rewarded_total = rewarded_total.saturating_add(entry.rewarded_total);
+            let complete = entry.unattributed_total == 0;
+            attribution_complete &= complete;
+            ExplorerNominatorPositionDto {
+                pool_address: entry.pool_address,
+                amount: entry.last_amount.to_string(),
+                pending_deposit: entry.last_pending.to_string(),
+                deposited_total: entry.deposited_total.to_string(),
+                rewarded_total: entry.rewarded_total.to_string(),
+                unattributed_total: entry.unattributed_total.to_string(),
+                attribution_complete: complete,
+                first_seen_at: entry.first_seen_at,
+                updated_at: entry.updated_at,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(axum::Json(ExplorerNominatorPositionsResponse {
+        ok: true,
+        address,
+        rewarded_total: rewarded_total.to_string(),
+        attribution_complete,
+        result,
+    }))
+}
+
 #[utoipa::path(get, path = "/explorer/transactions", params(ExplorerPageQuery), responses(
     (status = 200, body = ExplorerTransactionListResponse), (status = 400, body = ApiErrorResponse)
 ))]

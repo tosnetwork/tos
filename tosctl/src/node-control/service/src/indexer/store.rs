@@ -30,7 +30,25 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
+/// pool.fc state 0: the stake is in the pool rather than with the Elector.
+const POOL_STATE_IDLE: i64 = 0;
+
+/// What one depositor put into one pool and what it has paid them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NominatorLedgerRecord {
+    pub pool_address: String,
+    pub nominator_address: String,
+    pub deposited_total: u64,
+    pub rewarded_total: u64,
+    /// Changes no previous observation could account for. Kept separate so a
+    /// gap in coverage is visible rather than counted as earnings.
+    pub unattributed_total: u64,
+    pub last_amount: u64,
+    pub last_pending: u64,
+    pub first_seen_at: u64,
+    pub updated_at: u64,
+}
 
 /// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
 /// version `i + 2` (e.g. `MIGRATIONS[0]` migrates v1 -> v2). Adding an
@@ -81,7 +99,38 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
                  WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%';",
         )
     },
+    |conn| conn.execute_batch(NOMINATOR_LEDGER_SCHEMA),
 ];
+
+/// What a depositor put into a pool and what the pool paid them.
+///
+/// The contract's ledger records only what someone is owed right now, which
+/// answers "what am I holding" but not "what did this earn me" -- the two
+/// differ by the deposits that got them there, and nothing on chain records
+/// those against an address. Reconstructing them afterwards is not possible
+/// either: a withdrawal deletes the entry outright.
+///
+/// So the attribution is done while it is still visible, one row per depositor
+/// per pool, by comparing each observation against the last. Deltas that
+/// cannot be attributed -- a gap in observation across a distribution, for
+/// instance -- are accumulated separately rather than folded into rewards,
+/// because a number that quietly absorbs what it could not explain is worse
+/// than one that admits the gap.
+const NOMINATOR_LEDGER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS nominator_ledger (
+        pool_address TEXT NOT NULL,
+        nominator_address TEXT NOT NULL,
+        deposited_total INTEGER NOT NULL DEFAULT 0,
+        rewarded_total INTEGER NOT NULL DEFAULT 0,
+        unattributed_total INTEGER NOT NULL DEFAULT 0,
+        last_amount INTEGER NOT NULL DEFAULT 0,
+        last_pending INTEGER NOT NULL DEFAULT 0,
+        last_pool_state INTEGER NOT NULL DEFAULT 0,
+        first_seen_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(pool_address, nominator_address)
+    );
+    CREATE INDEX IF NOT EXISTS idx_nominator_ledger_address
+        ON nominator_ledger(nominator_address);";
 
 /// v3: settlement events for the AIPoW shadow-scoring data plane. One row
 /// per observed settlement (a Task Escrow reaching `settled`, or a
@@ -292,6 +341,7 @@ impl IndexerStore {
         )?;
         conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA)?;
         conn.execute_batch(EXPLORER_SCHEMA)?;
+        conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         Ok(())
     }
 
@@ -983,6 +1033,135 @@ impl IndexerStore {
         Ok((rows, total))
     }
 
+    /// One depositor's standing in one pool, as attributed so far.
+    pub fn nominator_ledger_entries(
+        &self,
+        nominator_address: &str,
+    ) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut statement = conn.prepare(
+            "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
+                    unattributed_total, last_amount, last_pending, first_seen_at, updated_at
+             FROM nominator_ledger
+             WHERE nominator_address = ?1
+             ORDER BY pool_address",
+        )?;
+        let rows = statement.query_map(params![nominator_address], |row| {
+            Ok(NominatorLedgerRecord {
+                pool_address: row.get(0)?,
+                nominator_address: row.get(1)?,
+                deposited_total: row.get::<_, i64>(2)? as u64,
+                rewarded_total: row.get::<_, i64>(3)? as u64,
+                unattributed_total: row.get::<_, i64>(4)? as u64,
+                last_amount: row.get::<_, i64>(5)? as u64,
+                last_pending: row.get::<_, i64>(6)? as u64,
+                first_seen_at: row.get::<_, i64>(7)? as u64,
+                updated_at: row.get::<_, i64>(8)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Fold one observation of a pool's depositors into the ledger.
+    ///
+    /// Attribution follows pool.fc's own rules for where a change can come
+    /// from: while the pool is idle a deposit lands directly in `amount`;
+    /// while it is staked a deposit lands in `pending_deposit`; and a
+    /// distribution moves the pending amount plus the round's reward into
+    /// `amount` and clears pending. Anything the previous observation cannot
+    /// account for is recorded as unattributed instead of being called a
+    /// reward.
+    pub fn observe_nominator_positions(
+        &self,
+        pool_address: &str,
+        pool_state: i32,
+        observed_at: u64,
+        positions: &[(String, u64, u64)],
+    ) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let tx = conn.transaction()?;
+        for (nominator, amount, pending) in positions {
+            let previous: Option<(i64, i64, i64)> = tx
+                .query_row(
+                    "SELECT last_amount, last_pending, last_pool_state
+                     FROM nominator_ledger
+                     WHERE pool_address = ?1 AND nominator_address = ?2",
+                    params![pool_address, nominator],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+
+            let (mut deposited, mut rewarded, mut unattributed) = (0i64, 0i64, 0i64);
+            match previous {
+                None => {
+                    // First sight of this depositor. Everything they hold was
+                    // put there before anyone was watching, so it is a
+                    // deposit only in the sense that it is not a reward this
+                    // ledger observed.
+                    deposited = *amount as i64 + *pending as i64;
+                }
+                Some((last_amount, last_pending, last_state)) => {
+                    let amount_delta = *amount as i64 - last_amount;
+                    let pending_delta = *pending as i64 - last_pending;
+                    let distribution_happened = last_state != POOL_STATE_IDLE
+                        && i64::from(pool_state) == POOL_STATE_IDLE
+                        && *pending == 0;
+
+                    if distribution_happened {
+                        // amount grew by the pending deposit plus this
+                        // round's share of the reward.
+                        let reward = amount_delta - last_pending;
+                        if reward >= 0 {
+                            rewarded = reward;
+                        } else {
+                            // A loss round, or an observation gap that hid a
+                            // withdrawal. Either way it is not a reward.
+                            unattributed = reward;
+                        }
+                    } else if pending_delta > 0 {
+                        deposited = pending_delta;
+                        if amount_delta != 0 {
+                            unattributed = amount_delta;
+                        }
+                    } else if amount_delta > 0 && last_state == POOL_STATE_IDLE {
+                        deposited = amount_delta;
+                    } else if amount_delta != 0 || pending_delta != 0 {
+                        unattributed = amount_delta + pending_delta;
+                    }
+                }
+            }
+
+            tx.execute(
+                "INSERT INTO nominator_ledger
+                    (pool_address, nominator_address, deposited_total, rewarded_total,
+                     unattributed_total, last_amount, last_pending, last_pool_state,
+                     first_seen_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+                 ON CONFLICT(pool_address, nominator_address) DO UPDATE SET
+                    deposited_total = deposited_total + ?3,
+                    rewarded_total = rewarded_total + ?4,
+                    unattributed_total = unattributed_total + ?5,
+                    last_amount = excluded.last_amount,
+                    last_pending = excluded.last_pending,
+                    last_pool_state = excluded.last_pool_state,
+                    updated_at = excluded.updated_at",
+                params![
+                    pool_address,
+                    nominator,
+                    deposited.max(0),
+                    rewarded.max(0),
+                    unattributed.unsigned_abs() as i64,
+                    *amount as i64,
+                    *pending as i64,
+                    pool_state,
+                    observed_at as i64,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn upsert_service_request(&self, record: &ServiceRequestRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         conn.execute(
@@ -1644,5 +1823,145 @@ mod tests {
             rows.iter().map(|r| (r.request_id.as_str(), r.seqno)).collect::<Vec<_>>(),
             vec![("0", 3), ("1", 4)]
         );
+    }
+}
+
+#[cfg(test)]
+mod nominator_ledger_tests {
+    use super::IndexerStore;
+
+    const POOL: &str = "-1:aaaa";
+    const ALICE: &str = "0:1111";
+    const IDLE: i32 = 0;
+    const STAKED: i32 = 2;
+
+    fn only(store: &IndexerStore, who: &str) -> super::NominatorLedgerRecord {
+        let mut rows = store.nominator_ledger_entries(who).unwrap();
+        assert_eq!(rows.len(), 1, "expected one position for {who}");
+        rows.remove(0)
+    }
+
+    #[test]
+    fn a_first_sighting_is_not_treated_as_earnings() {
+        // Whatever a depositor already holds when the indexer first sees them
+        // was put there before anyone was watching. Calling it a reward would
+        // invent profit out of a cold start.
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.deposited_total, 2_000);
+        assert_eq!(entry.rewarded_total, 0);
+        assert_eq!(entry.unattributed_total, 0);
+    }
+
+    #[test]
+    fn a_deposit_while_idle_lands_in_the_principal() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 3_500, 0)]).unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.deposited_total, 3_500, "2000 seen plus 1500 deposited");
+        assert_eq!(entry.rewarded_total, 0);
+    }
+
+    #[test]
+    fn a_deposit_while_staked_lands_in_pending() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        store
+            .observe_nominator_positions(POOL, STAKED, 200, &[(ALICE.into(), 2_000, 500)])
+            .unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.deposited_total, 2_500);
+        assert_eq!(entry.rewarded_total, 0);
+    }
+
+    #[test]
+    fn a_distribution_separates_the_reward_from_the_pending_deposit() {
+        // pool.fc folds pending into the principal and adds the round's share
+        // in the same step, so the reward is the growth beyond what was
+        // already pending -- not the whole delta.
+        let store = IndexerStore::open_in_memory().unwrap();
+        store
+            .observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 500)])
+            .unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 2_600, 0)]).unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.rewarded_total, 100, "2600 - 2000 - 500 pending");
+        assert_eq!(entry.deposited_total, 2_500, "2000 seen plus 500 pending");
+        assert_eq!(entry.unattributed_total, 0);
+    }
+
+    #[test]
+    fn a_losing_round_is_not_recorded_as_a_reward() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_800, 0)]).unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.rewarded_total, 0);
+        assert_eq!(entry.unattributed_total, 200, "the shortfall is stated, not hidden");
+    }
+
+    #[test]
+    fn a_change_no_previous_observation_explains_is_kept_apart() {
+        // The principal shrank while the pool was idle, which no rule accounts
+        // for -- an unobserved withdrawal and redeposit, most likely. It must
+        // not quietly reduce or inflate the earnings figure.
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_500, 0)]).unwrap();
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.rewarded_total, 0);
+        assert_eq!(entry.deposited_total, 2_000);
+        assert_eq!(entry.unattributed_total, 500);
+    }
+
+    #[test]
+    fn rewards_accumulate_across_rounds() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let mut principal = 1_000u64;
+        store.observe_nominator_positions(POOL, IDLE, 0, &[(ALICE.into(), principal, 0)]).unwrap();
+        for round in 1..=3u64 {
+            store
+                .observe_nominator_positions(
+                    POOL,
+                    STAKED,
+                    round * 10,
+                    &[(ALICE.into(), principal, 0)],
+                )
+                .unwrap();
+            principal += 50;
+            store
+                .observe_nominator_positions(
+                    POOL,
+                    IDLE,
+                    round * 10 + 5,
+                    &[(ALICE.into(), principal, 0)],
+                )
+                .unwrap();
+        }
+
+        let entry = only(&store, ALICE);
+        assert_eq!(entry.rewarded_total, 150);
+        assert_eq!(entry.deposited_total, 1_000);
+        assert_eq!(entry.unattributed_total, 0);
+        assert_eq!(entry.last_amount, 1_150);
+    }
+
+    #[test]
+    fn positions_are_tracked_per_pool() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        store.observe_nominator_positions("-1:bbbb", IDLE, 100, &[(ALICE.into(), 700, 0)]).unwrap();
+
+        let rows = store.nominator_ledger_entries(ALICE).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().map(|r| r.deposited_total).sum::<u64>(), 2_700);
     }
 }
