@@ -85,6 +85,7 @@ pub use liquid_controller::{
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{
     NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl,
+    NominatorPosition,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

@@ -862,14 +862,14 @@ impl PoolNominatorCreateCmd {
 
 impl PoolNominatorActivateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use chain_block::{Cell, MsgAddressInt, write_boc};
+        use chain_block::{MsgAddressInt, write_boc};
         use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
             app_config::PoolConfig, chain_utils::display_tos, task_cancellation::CancellationCtx,
         };
-        use contracts::NominatorPoolWrapperImpl;
         use contracts::Wallet;
+        use contracts::{NominatorPoolWrapperImpl, nominator_pool::pool_messages};
         use std::path::Path;
         use std::str::FromStr;
 
@@ -1064,13 +1064,17 @@ impl PoolNominatorActivateCmd {
         )
         .await?;
 
-        // Send a deploy message: small amount to carry the state_init
+        // Send a deploy message with the contract's no-op opcode.  The pool
+        // always reads an opcode and query id, so an empty body aborts before
+        // StateInit can activate the account.
         let deploy_amount: u64 = 1_000_000_000; // 1 TOS for deploy gas
+        let deploy_body =
+            pool_messages::accept_coins(owner_wallet_info.seqno.unwrap_or_default() as u64)?;
         let msg = wallet
             .build_message(
                 pool_addr.clone(),
                 deploy_amount,
-                Cell::default(),
+                deploy_body,
                 false,
                 owner_wallet_info.seqno,
                 None,

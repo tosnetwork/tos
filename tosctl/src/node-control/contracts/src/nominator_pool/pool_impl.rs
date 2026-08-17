@@ -6,7 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use super::{NominatorData, NominatorPoolData, NominatorPoolWrapper};
+use super::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPosition};
 use crate::contract_codes::NOMINATOR_POOL_CODE;
 use crate::stack_utils::bytes_to_stack_entry;
 use crate::{ContractProvider, SmartContract};
@@ -14,7 +14,89 @@ use anyhow::Context;
 use chain_block::{
     BuilderData, Coins, IBitstring, MsgAddressInt, Serializable, StateInit, read_single_root_boc,
 };
+use common::tvm_stack_parser::TvmStackParser;
 use std::sync::Arc;
+use tl_api::tos::tvm::StackEntry;
+
+fn flatten_tvm_list(entry: &StackEntry, result: &mut Vec<StackEntry>) -> anyhow::Result<()> {
+    match entry {
+        StackEntry::Tvm_StackEntryList(list) => {
+            result.extend(list.list.elements().iter().cloned());
+            Ok(())
+        }
+        StackEntry::Tvm_StackEntryTuple(tuple) => {
+            let elements = tuple.tuple.elements();
+            anyhow::ensure!(elements.len() == 2, "TVM cons-list tuple must contain head and tail");
+            result.push(elements[0].clone());
+            flatten_tvm_list(&elements[1], result)
+        }
+        StackEntry::Tvm_StackEntryUnsupported => Ok(()),
+        _ => anyhow::bail!("stack entry is not a TVM list"),
+    }
+}
+
+fn parse_nominator_positions(stack: &TvmStackParser) -> anyhow::Result<Vec<NominatorPosition>> {
+    let root = stack.stack.first().context("missing nominators list")?;
+    let mut entries = Vec::new();
+    flatten_tvm_list(root, &mut entries).context("parse nominators list")?;
+    let mut result = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let item = TvmStackParser::new(vec![entry]).tuple(0).context("parse nominator tuple")?;
+        result.push(NominatorPosition {
+            address: format!("0:{}", hex::encode(item.number_bytes(0, 32)?)),
+            amount: item.u64(1)?,
+            pending_deposit: item.u64(2)?,
+            withdraw_requested: item.bool(3)?,
+        });
+    }
+    Ok(result)
+}
+
+fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> {
+    // ChainProvider normalizes the raw TVM result stack into the get-method's
+    // declaration order before contract wrappers receive it.
+    let state = stack.i64(0).context("parse state")? as i32;
+    let nominators_count = stack.i64(1).context("parse nominators_count")? as u32;
+    let stake_amount_sent = stack.u64(2).context("parse stake_amount_sent")?;
+    let validator_amount = stack.u64(3).context("parse validator_amount")?;
+    let validator_address = {
+        let mut array = [0u8; 32];
+        array.copy_from_slice(&stack.number_bytes(4, 32).context("parse validator_address")?);
+        array
+    };
+    let validator_reward_share = stack.u64(5).context("parse validator_reward_share")? as u16;
+    let max_nominators_count = stack.u64(6).context("parse max_nominators_count")? as u16;
+    let min_validator_stake = stack.u64(7).context("parse min_validator_stake")?;
+    let min_nominator_stake = stack.u64(8).context("parse min_nominator_stake")?;
+    let stake_at = stack.u64(11).context("parse stake_at")? as u32;
+    let saved_validator_set_hash = {
+        let bytes = stack.number_bytes(12, 32).context("parse saved_validator_set_hash")?;
+        let mut array = [0u8; 32];
+        array.copy_from_slice(&bytes);
+        array
+    };
+    let validator_set_changes_count =
+        stack.i64(13).context("parse validator_set_changes_count")? as i32;
+    let validator_set_change_time = stack.u64(14).context("parse validator_set_change_time")?;
+    let stake_held_for = stack.u64(15).context("parse stake_held_for")?;
+
+    Ok(NominatorPoolData {
+        state,
+        nominators_count,
+        stake_amount_sent,
+        validator_amount,
+        validator_address,
+        validator_reward_share,
+        max_nominators_count,
+        min_validator_stake,
+        min_nominator_stake,
+        stake_at,
+        saved_validator_set_hash,
+        validator_set_changes_count,
+        validator_set_change_time,
+        stake_held_for,
+    })
+}
 
 /// Implementation of the multi-nominator pool contract wrapper
 ///
@@ -128,52 +210,7 @@ impl NominatorPoolWrapper for NominatorPoolWrapperImpl {
         let stack =
             self.provider.get_method(self.pool_addr.to_string(), "get_pool_data", vec![]).await?;
 
-        let state = stack.i64(0).context("parse state")? as i32;
-        let nominators_count = stack.i64(1).context("parse nominators_count")? as u32;
-        let stake_amount_sent = stack.i64(2).context("parse stake_amount_sent")? as u64;
-        let validator_amount = stack.i64(3).context("parse validator_amount")? as u64;
-
-        // Pool config fields
-        let validator_address = {
-            let mut array = [0u8; 32];
-            array.copy_from_slice(&stack.number_bytes(4, 32).context("parse validator_address")?);
-            array
-        };
-        let validator_reward_share = stack.i64(5).context("parse validator_reward_share")? as u16;
-        let max_nominators_count = stack.i64(6).context("parse max_nominators_count")? as u16;
-        let min_validator_stake = stack.i64(7).context("parse min_validator_stake")? as u64;
-        let min_nominator_stake = stack.i64(8).context("parse min_nominator_stake")? as u64;
-
-        // Skip indices 9-10 (nominators cell, withdraw_requests cell)
-        let stake_at = stack.i64(11).context("parse stake_at")? as u32;
-        let saved_validator_set_hash = {
-            let bytes = stack.number_bytes(12, 32).context("parse saved_validator_set_hash")?;
-            let mut array = [0u8; 32];
-            array.copy_from_slice(&bytes);
-            array
-        };
-        let validator_set_changes_count =
-            stack.i64(13).context("parse validator_set_changes_count")? as i32;
-        let validator_set_change_time =
-            stack.i64(14).context("parse validator_set_change_time")? as u64;
-        let stake_held_for = stack.i64(15).context("parse stake_held_for")? as u64;
-
-        Ok(NominatorPoolData {
-            state,
-            nominators_count,
-            stake_amount_sent,
-            validator_amount,
-            validator_address,
-            validator_reward_share,
-            max_nominators_count,
-            min_validator_stake,
-            min_nominator_stake,
-            stake_at,
-            saved_validator_set_hash,
-            validator_set_changes_count,
-            validator_set_change_time,
-            stake_held_for,
-        })
+        parse_pool_data(&stack)
     }
 
     async fn get_nominator_data(&self, nominator_addr: &[u8; 32]) -> anyhow::Result<NominatorData> {
@@ -197,5 +234,109 @@ impl NominatorPoolWrapper for NominatorPoolWrapperImpl {
             .await?;
 
         Ok(stack.i64(0).context("parse has_withdraw_requests")? == -1)
+    }
+
+    async fn list_nominators(&self) -> anyhow::Result<Vec<NominatorPosition>> {
+        let stack =
+            self.provider.get_method(self.pool_addr.to_string(), "list_nominators", vec![]).await?;
+        parse_nominator_positions(&stack)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tl_api::tos::tvm::{
+        List, Number, Tuple, list,
+        numberdecimal::NumberDecimal,
+        stackentry::{StackEntryList, StackEntryNumber, StackEntryTuple},
+        tuple,
+    };
+
+    fn number(value: &str) -> tl_api::tos::tvm::StackEntry {
+        tl_api::tos::tvm::StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+            number: Number::Tvm_NumberDecimal(NumberDecimal { number: value.to_owned() }),
+        })
+    }
+
+    fn tuple_entry(elements: Vec<tl_api::tos::tvm::StackEntry>) -> tl_api::tos::tvm::StackEntry {
+        tl_api::tos::tvm::StackEntry::Tvm_StackEntryTuple(StackEntryTuple {
+            tuple: Tuple::Tvm_Tuple(tuple::Tuple { elements }),
+        })
+    }
+
+    fn list_entry(elements: Vec<tl_api::tos::tvm::StackEntry>) -> tl_api::tos::tvm::StackEntry {
+        tl_api::tos::tvm::StackEntry::Tvm_StackEntryList(StackEntryList {
+            list: List::Tvm_List(list::List { elements }),
+        })
+    }
+
+    #[test]
+    fn parses_pool_nominator_list_and_boolean_flags() {
+        let position = tuple_entry(vec![
+            number("0xabcd"),
+            number("1000000000"),
+            number("250000000"),
+            number("-1"),
+        ]);
+        let list = list_entry(vec![position]);
+
+        let parsed = parse_nominator_positions(&TvmStackParser::new(vec![list])).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].address, format!("0:{}abcd", "0".repeat(60)));
+        assert_eq!(parsed[0].amount, 1_000_000_000);
+        assert_eq!(parsed[0].pending_deposit, 250_000_000);
+        assert!(parsed[0].withdraw_requested);
+    }
+
+    #[test]
+    fn parses_cons_list_returned_by_real_pool_get_method() {
+        let position =
+            tuple_entry(vec![number("0xabcd"), number("100"), number("25"), number("0")]);
+        let cons = tuple_entry(vec![position, list_entry(vec![])]);
+
+        let parsed = parse_nominator_positions(&TvmStackParser::new(vec![cons])).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].amount, 100);
+        assert_eq!(parsed[0].pending_deposit, 25);
+        assert!(!parsed[0].withdraw_requested);
+    }
+
+    #[test]
+    fn parses_get_pool_data_in_provider_normalized_order() {
+        let stack = TvmStackParser::new(vec![
+            number("0"),
+            number("1"),
+            number("3000"),
+            number("2000"),
+            number("0xabc"),
+            number("4000"),
+            number("40"),
+            number("1000"),
+            number("100"),
+            list_entry(vec![]), // nominators dictionary
+            list_entry(vec![]), // withdraw requests
+            number("999"),
+            number("0x11"),
+            number("2"),
+            number("1234"),
+            number("3600"),
+            list_entry(vec![]), // config proposal votings
+        ]);
+
+        let parsed = parse_pool_data(&stack).unwrap();
+        assert_eq!(parsed.state, 0);
+        assert_eq!(parsed.nominators_count, 1);
+        assert_eq!(parsed.stake_amount_sent, 3000);
+        assert_eq!(parsed.validator_amount, 2000);
+        assert_eq!(parsed.validator_reward_share, 4000);
+        assert_eq!(parsed.max_nominators_count, 40);
+        assert_eq!(parsed.min_validator_stake, 1000);
+        assert_eq!(parsed.min_nominator_stake, 100);
+        assert_eq!(parsed.stake_at, 999);
+        assert_eq!(parsed.saved_validator_set_hash[31], 0x11);
+        assert_eq!(parsed.validator_set_changes_count, 2);
+        assert_eq!(parsed.validator_set_change_time, 1234);
+        assert_eq!(parsed.stake_held_for, 3600);
     }
 }

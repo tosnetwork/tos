@@ -23,6 +23,8 @@ pub trait NominatorPoolWrapper: SmartContract + Send + Sync {
     async fn get_nominator_data(&self, nominator_addr: &[u8; 32]) -> anyhow::Result<NominatorData>;
     /// Check whether there are pending withdraw requests
     async fn has_withdraw_requests(&self) -> anyhow::Result<bool>;
+    /// Enumerate the pool's current nominator positions.
+    async fn list_nominators(&self) -> anyhow::Result<Vec<NominatorPosition>>;
 }
 
 /// Pool-wide data returned by get_pool_data()
@@ -66,5 +68,18 @@ pub struct NominatorData {
     /// Pending deposit not yet included in active stake
     pub pending_deposit: u64,
     /// Whether this nominator has a pending withdraw request
+    pub withdraw_requested: bool,
+}
+
+/// One current nominator position returned by `list_nominators()`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct NominatorPosition {
+    /// Workchain-0 account as a raw lowercase address.
+    pub address: String,
+    /// Principal currently participating in rewards, in nanotos.
+    pub amount: u64,
+    /// Deposit waiting for the next staking cycle, in nanotos.
+    pub pending_deposit: u64,
+    /// Whether the nominator has requested withdrawal.
     pub withdraw_requested: bool,
 }

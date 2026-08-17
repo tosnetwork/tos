@@ -16,6 +16,7 @@ use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
 use base64::Engine;
 use chain_block::MsgAddressInt;
+use contracts::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, contract_provider_from};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -29,6 +30,7 @@ const CONTRACT_KINDS: &[&str] = &[
     "capability_registry",
     "aipow_commitment",
     "aipow_distributor",
+    "contract.pool.nominator",
 ];
 
 #[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
@@ -252,6 +254,45 @@ pub struct ExplorerStatusResponse {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingCycleDto {
+    pub election_id: u64,
+    pub unfreeze_at: u64,
+    pub duration_seconds: u64,
+    pub total_stake: String,
+    pub rewards: String,
+    pub reward_rate: f64,
+    pub annualized_apr: Option<f64>,
+    pub compounded_apy: Option<f64>,
+    pub validator_count: usize,
+    pub vset_hash: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingOverviewDto {
+    pub current_election_available: bool,
+    pub reward_history_available: bool,
+    pub active_election_id: u64,
+    pub election_closes_at: u64,
+    pub current_election_stake: String,
+    pub current_participants: usize,
+    pub minimum_stake: String,
+    pub election_failed: bool,
+    pub election_finished: bool,
+    pub pools: usize,
+    pub active_pools: usize,
+    pub nominators: u64,
+    pub total_pool_stake: String,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ExplorerStakingResponse {
+    pub ok: bool,
+    pub result: ExplorerStakingOverviewDto,
+    pub cycles: Vec<ExplorerStakingCycleDto>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", content = "result", rename_all = "snake_case")]
 pub enum ExplorerSearchHit {
     Transaction(ExplorerTransactionDto),
@@ -328,6 +369,105 @@ pub async fn status(
                 .map(|value| ExplorerCheckpointDto { shard: value.shard_key, seqno: value.seqno })
                 .collect(),
         },
+    }))
+}
+
+/// Chain-derived staking state. Current election and historical rewards come
+/// from Elector get-methods; pool totals come from code-hash-classified
+/// Nominator Pool contracts in the canonical explorer index.
+#[utoipa::path(get, path = "/explorer/staking", responses(
+    (status = 200, body = ExplorerStakingResponse), (status = 503, body = ApiErrorResponse)
+))]
+pub async fn staking(
+    State(state): State<AppState>,
+) -> Result<axum::Json<ExplorerStakingResponse>, AppError> {
+    let provider = contract_provider_from(state.runtime_cfg.chain_provider());
+    let elector = ElectorWrapperImpl::new(provider);
+    let (current_result, past_result) =
+        tokio::join!(elector.elections_info(), elector.past_elections());
+    let current_election_available = current_result.is_ok();
+    let reward_history_available = past_result.is_ok();
+    let current = current_result.unwrap_or_else(|error| {
+        tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "current Elector election is unavailable");
+        ElectionsInfo::default()
+    });
+    let mut past = past_result.unwrap_or_else(|error| {
+        tracing::warn!(target: "explorer_api", error = %format!("{error:#}"), "Elector reward history is unavailable");
+        Vec::new()
+    });
+
+    past.sort_by(|left, right| right.election_id.cmp(&left.election_id));
+    let seconds_per_year = 31_557_600_f64;
+    let cycles = past
+        .into_iter()
+        .take(64)
+        .map(|cycle| {
+            let reward_rate = if cycle.total_stake > 0 {
+                cycle.bonuses as f64 / cycle.total_stake as f64
+            } else {
+                0.0
+            };
+            let periods =
+                if cycle.stake_held > 0 { seconds_per_year / cycle.stake_held as f64 } else { 0.0 };
+            let apr = reward_rate * periods;
+            let apy = if periods > 0.0 { (1.0 + reward_rate).powf(periods) - 1.0 } else { 0.0 };
+            ExplorerStakingCycleDto {
+                election_id: cycle.election_id,
+                unfreeze_at: cycle.unfreeze_at,
+                duration_seconds: cycle.stake_held,
+                total_stake: cycle.total_stake.to_string(),
+                rewards: cycle.bonuses.to_string(),
+                reward_rate,
+                annualized_apr: apr.is_finite().then_some(apr),
+                compounded_apy: apy.is_finite().then_some(apy),
+                validator_count: cycle.frozen_map.len(),
+                vset_hash: hex::encode(cycle.vset_hash),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let (pools, _) = state
+        .indexer_store
+        .list("contract.pool.nominator", &ListFilters::default(), 0, 10_000)
+        .map_err(index_error)?;
+    let mut active_pools = 0usize;
+    let mut nominators = 0u64;
+    let mut total_pool_stake = 0u64;
+    for pool in &pools {
+        if matches!(pool.status.as_deref(), Some("staking" | "staked")) {
+            active_pools += 1;
+        }
+        if let Ok(data) = serde_json::from_str::<Value>(&pool.dto_json) {
+            nominators = nominators
+                .saturating_add(data.get("nominators_count").and_then(Value::as_u64).unwrap_or(0));
+            total_pool_stake = total_pool_stake.saturating_add(
+                data.get("total_balance_at_risk")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    Ok(axum::Json(ExplorerStakingResponse {
+        ok: true,
+        result: ExplorerStakingOverviewDto {
+            current_election_available,
+            reward_history_available,
+            active_election_id: current.election_id,
+            election_closes_at: current.elect_close,
+            current_election_stake: current.total_stake.to_string(),
+            current_participants: current.participants.len(),
+            minimum_stake: current.min_stake.to_string(),
+            election_failed: current.failed,
+            election_finished: current.finished,
+            pools: pools.len(),
+            active_pools,
+            nominators,
+            total_pool_stake: total_pool_stake.to_string(),
+            updated_at: common::time_format::now(),
+        },
+        cycles,
     }))
 }
 

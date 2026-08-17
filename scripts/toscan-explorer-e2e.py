@@ -30,6 +30,7 @@ CONTRACT_KINDS = {
     "task_escrow",
     "dispute",
 }
+NOMINATOR_POOL_KIND = "contract.pool.nominator"
 
 
 def request_json(url: str, body=None, timeout=15):
@@ -114,6 +115,10 @@ def main():
     parser.add_argument("--control-port", type=int, default=19452)
     parser.add_argument("--explorer-port", type=int, default=19453)
     parser.add_argument("--base-port", type=int, default=26900)
+    parser.add_argument(
+        "--browser-command",
+        help="optional shell command that release-gates the browser against the running real chain",
+    )
     args = parser.parse_args()
 
     workdir = Path(args.workdir).resolve()
@@ -190,7 +195,8 @@ def main():
         )
         seed = json.loads(manifest.read_text())
         assert set(seed["addresses"]) == CONTRACT_KINDS
-        print("PASS: five real Agent Economy contracts deployed")
+        pool_address = seed["staking"]["nominator_pool"]
+        print("PASS: five Agent Economy contracts and a real Nominator Pool deployed")
 
         for path in ("/auth/login", "/v1/elections", "/swagger", "/openapi.json"):
             status, _ = request_json(f"{explorer_origin}{path}")
@@ -208,6 +214,48 @@ def main():
             return True
 
         wait_until("all seeded contracts discovered chain-wide", all_contracts_visible, timeout=180)
+
+        staking_observation = None
+
+        def staking_visible():
+            nonlocal staking_observation
+            encoded = urllib.parse.quote(pool_address, safe=":")
+            pool_status, pool_body = request_json(
+                f"{explorer_origin}/explorer/contracts/{NOMINATOR_POOL_KIND}/{encoded}"
+            )
+            staking_status, staking_body = request_json(
+                f"{explorer_origin}/explorer/staking"
+            )
+            if pool_status != 200 or staking_status != 200:
+                observed = {"pool_status": pool_status, "staking_status": staking_status}
+                if observed != staking_observation:
+                    print(f"  staking gate waiting: {observed}")
+                    staking_observation = observed
+                return False
+            result = staking_body.get("result", {})
+            observed = {
+                "pool_address": pool_body.get("result", {}).get("address"),
+                "pools": result.get("pools"),
+                "nominators": result.get("nominators"),
+                "total_pool_stake": result.get("total_pool_stake"),
+                "cycles": len(staking_body.get("cycles", [])),
+            }
+            if observed != staking_observation:
+                print(f"  staking gate waiting: {observed}")
+                staking_observation = observed
+            return (
+                pool_body.get("result", {}).get("address") == pool_address
+                and result.get("pools") == 1
+                and result.get("nominators") == 1
+                and int(result.get("total_pool_stake", "0")) > 0
+                and isinstance(staking_body.get("cycles"), list)
+            )
+
+        wait_until(
+            "Elector rewards and code-verified Nominator Pool are queryable",
+            staking_visible,
+            timeout=180,
+        )
 
         rich = None
 
@@ -249,7 +297,46 @@ def main():
         assert transaction.get("fee") is not None
         assert isinstance(transaction.get("in_msg"), dict)
         assert isinstance(transaction.get("out_msgs"), list)
-        print("PASS: node returns structured transaction message flow")
+        assert transaction.get("transaction_type") in {
+            "ordinary", "storage", "tick", "tock", "split_prepare",
+            "split_install", "merge_prepare", "merge_install",
+        }
+        if transaction.get("transaction_type") in {"ordinary", "tick", "tock"}:
+            assert isinstance(transaction.get("aborted"), bool)
+            assert isinstance(transaction.get("compute"), dict)
+        print("PASS: node returns structured transaction execution and message flow")
+
+        status, config_response = request_json(
+            f"{rpc_origin}/jsonRPC",
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "getConfigParam",
+                "params": {"param": 34},
+            },
+        )
+        validator_set = config_response.get("result", {}).get("validator_set", {})
+        assert status == 200
+        assert validator_set.get("total") == len(validator_set.get("validators", []))
+        assert validator_set.get("total", 0) > 0
+        assert all(item.get("public_key") and item.get("weight") for item in validator_set["validators"])
+        print("PASS: current validator membership and weights decode from proved configuration")
+
+        if args.browser_command:
+            browser_env = dict(os.environ)
+            browser_env.update({
+                "TOSCAN_REAL_RPC_ORIGIN": rpc_origin,
+                "TOSCAN_REAL_SOURCE_ORIGIN": explorer_origin,
+                "TOSCAN_REAL_SEED_MANIFEST": str(manifest),
+            })
+            subprocess.run(
+                args.browser_command,
+                cwd=REPO,
+                shell=True,
+                check=True,
+                env=browser_env,
+            )
+            print("PASS: real-chain browser journey")
 
         before = request_json(f"{explorer_origin}/explorer/status")[1]["result"]
         stop(explorer)
@@ -266,7 +353,7 @@ def main():
         after = request_json(f"{explorer_origin}/explorer/status")[1]["result"]
         assert after["blocks"] >= before["blocks"]
         assert after["transactions"] >= before["transactions"]
-        assert after["contracts"] == before["contracts"] == 5
+        assert after["contracts"] == before["contracts"] == 6
         print("PASS: restart preserves block, transaction and contract discovery")
         print("TOSCAN REAL-CHAIN GATE: PASS")
     except Exception:

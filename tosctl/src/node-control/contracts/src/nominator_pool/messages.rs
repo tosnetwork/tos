@@ -10,6 +10,8 @@ use chain_block::{BuilderData, Cell, IBitstring};
 
 /// Opcodes for multi-nominator pool contract messages
 pub mod opcodes {
+    /// Accept an inbound transfer without changing pool accounting.
+    pub const ACCEPT_COINS: u32 = 0x01;
     /// Process pending withdraw requests
     pub const PROCESS_WITHDRAW_REQUESTS: u32 = 0x02;
     /// Validator deposit (add validator's own stake)
@@ -20,6 +22,16 @@ pub mod opcodes {
     pub const UPDATE_VALIDATOR_SET: u32 = 0x06;
     /// Recover stake from the elector
     pub const RECOVER_STAKE: u32 = 0x47657424;
+}
+
+/// Build the canonical no-op transfer body used while deploying a pool.
+///
+/// The pool contract always reads an opcode and query id.  An empty body
+/// aborts with a cell-underflow error and leaves the account uninitialized.
+pub fn accept_coins(query_id: u64) -> anyhow::Result<Cell> {
+    let mut b = BuilderData::new();
+    b.append_u32(opcodes::ACCEPT_COINS)?.append_u64(query_id)?;
+    Ok(b.into_cell()?)
 }
 
 /// Build validator deposit message body
@@ -72,6 +84,16 @@ pub fn recover_stake(query_id: u64) -> anyhow::Result<Cell> {
 mod tests {
     use super::*;
     use chain_block::SliceData;
+
+    #[test]
+    fn test_build_accept_coins() {
+        let cell = accept_coins(42).unwrap();
+        let mut slice = SliceData::load_cell(cell).unwrap();
+
+        assert_eq!(slice.get_next_u32().unwrap(), opcodes::ACCEPT_COINS);
+        assert_eq!(slice.get_next_u64().unwrap(), 42);
+        assert_eq!(slice.remaining_bits(), 0);
+    }
 
     #[test]
     fn test_build_validator_deposit() {
