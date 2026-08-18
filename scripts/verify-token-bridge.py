@@ -23,6 +23,7 @@ REQUIRED_SOURCES = [
     "tvm/params/ethereum.fc",
     "tvm/params/bsc.fc",
     "tvm/params/polygon.fc",
+    "tvm/params/tron.fc",
     "evm/contracts/Bridge.sol",
     "evm/contracts/SignatureChecker.sol",
     "evm/contracts/TosUtils.sol",
@@ -123,6 +124,7 @@ def verify_tvm_sources() -> None:
         "ethereum.fc": (79, 1),
         "bsc.fc": (81, 56),
         "polygon.fc": (82, 137),
+        "tron.fc": (83, 728126428),
     }
     for name, (param, chain_id) in expected_params.items():
         require_text(PROJECT / "tvm/params" / name, [

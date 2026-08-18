@@ -873,6 +873,7 @@ jetton_bridge_params_v1#01 bridge_address:bits256 oracles_address:bits256 oracle
 _ JettonBridgeParams = ConfigParam 79; // ETH->TOS token bridge
 _ JettonBridgeParams = ConfigParam 81; // BNB->TOS token bridge
 _ JettonBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
+_ JettonBridgeParams = ConfigParam 83; // Tron->TOS token bridge
 
 // AIPoW native issuance parameters (Phase C). Absent unless capAipow is
 // activated in ConfigParam 8; see doc/GlobalVersions.md. These are

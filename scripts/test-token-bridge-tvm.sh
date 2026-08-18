@@ -23,7 +23,7 @@ work_root="$(mktemp -d -t tos-token-bridge-test.XXXXXX)"
 trap 'rm -rf "$work_root"' EXIT
 
 total=0
-for network in ethereum bsc polygon; do
+for network in ethereum bsc polygon tron; do
   stage="$work_root/$network"
   mkdir -p "$stage/func" "$stage/test"
   cp "$PROJECT/tvm/contracts"/*.fc "$stage/func/"
@@ -36,6 +36,7 @@ for network in ethereum bsc polygon; do
     ethereum) slot=79; chain=1 ;;
     bsc)      slot=81; chain=56 ;;
     polygon)  slot=82; chain=137 ;;
+    tron)     slot=83; chain=728126428 ;;
   esac
   for js in "$stage"/test/*.js; do
     [[ "$(basename "$js")" == "funcer.js" ]] && continue

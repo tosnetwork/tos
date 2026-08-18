@@ -1,0 +1,20 @@
+;; TOS token bridge network parameters.
+;; TOS masterchain ConfigParam 83 selects Tron chain 728126428.
+;; Tron's CHAINID opcode does not return a registered chain id: it returns the
+;; last four bytes of the genesis block id, which is 728126428 on Tron mainnet.
+;; That value is what the counterparty contract's digest binds, so it is what
+;; this side must compare against. Confirm it against the target Tron network
+;; before populating the ConfigParam.
+const int CONFIG_PARAM_ID = 83;
+const int MY_CHAIN_ID = 728126428;
+const int LOG_BURN = 0xc0470ccf;
+const int LOG_SWAP_PAID = 0xc0550ccf;
+const int LOG_MINT_ON_MINTER = 0xc0660ccf;
+const int LOG_BURN_ON_MINTER = 0xc0770ccf;
+
+const int WORKCHAIN = 0;
+
+() force_chain(slice addr) impure {
+  (int wc, _) = parse_std_addr(addr);
+  throw_unless(333, wc == WORKCHAIN);
+}

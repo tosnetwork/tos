@@ -49,15 +49,18 @@ No production oracle daemon ships with this directory: it completes the smart-co
 | Ethereum | 79 | 1 |
 | BNB Smart Chain | 81 | 56 |
 | Polygon | 82 | 137 |
+| Tron | 83 | 728126428 |
 
-The ConfigParam must contain the TOS bridge address, oracle multisig address/map, state flags, fee schedule, and external EVM bridge address. No slot is enabled or populated by this directory.
+The ConfigParam must contain the TOS bridge address, oracle multisig address/map, state flags, fee schedule, and external chain bridge address. No slot is enabled or populated by this directory.
+
+Tron is not an EVM chain, but its virtual machine is close enough for this contract plane: addresses are 20 bytes inside the VM, so the 160-bit destination field needs no change, and `ecrecover` is available for the counterparty half. Its `CHAINID` differs — it yields the last four bytes of the genesis block id rather than a registered chain id — so the chain id above is that value for Tron mainnet and must be confirmed against the target network before the slot is populated. The counterparty contracts have not been deployed or exercised on Tron; treat the slot as unproven configuration.
 
 ## Build and test the TVM contracts
 
 With `func`/`fift` built (`cmake --build build --target func fift`):
 
 ```bash
-scripts/build-token-bridge.sh          # double-compile 5 contracts × 3 networks, assemble, hash
+scripts/build-token-bridge.sh          # double-compile 5 contracts × 4 networks, assemble, hash
 scripts/test-token-bridge-tvm.sh       # execute the compiled contracts in the TOS TVM
 python3 scripts/verify-token-bridge.py # invariants + protocol model tests + naming gate
 ```

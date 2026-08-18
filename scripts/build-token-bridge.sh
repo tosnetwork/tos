@@ -65,7 +65,7 @@ if [[ ! -x "$FUNC_BIN" ]]; then
 fi
 
 contracts=(jetton-bridge jetton-minter jetton-wallet multisig votes-collector)
-networks=(ethereum bsc polygon)
+networks=(ethereum bsc polygon tron)
 work_root="$(mktemp -d -t tos-token-bridge-build.XXXXXX)"
 trap 'rm -rf "$work_root"' EXIT
 
