@@ -8,7 +8,7 @@ let Bridge = artifacts.require("Bridge");
 
 let bridge;
 
-contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5]) => {
+contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, extra1, extra2, extra3, user]) => {
   describe("Bridge::instance", () => {
     it("", async() => {
       bridge = await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle2, oracle3]);
@@ -23,6 +23,33 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5]) =
 
     it("rejects a duplicate member in the initial set", async () => {
       await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle1, oracle2]).should.be.rejected;
+    });
+
+    it("rejects the zero address in the initial set", async () => {
+      await Bridge.new("Wrapped TOS Coin", "TOSCOIN",
+        [oracle1, oracle2, "0x0000000000000000000000000000000000000000"]).should.be.rejected;
+    });
+  });
+
+  describe("Bridge::threshold", () => {
+    // The threshold must be a true two-thirds majority at every set size, not
+    // a floor that collapses to half when the size is not a multiple of three.
+    const expected = {3: 2, 4: 3, 5: 4, 6: 4, 7: 5, 8: 6};
+
+    it("requires a ceiling two-thirds majority at each set size", async () => {
+      const pool = [oracle1, oracle2, oracle3, oracle4, oracle5, extra1, extra2, extra3];
+      for (const size of Object.keys(expected).map(Number)) {
+        const set = pool.slice(0, size);
+        const instance = await Bridge.new("Wrapped TOS Coin", "TOSCOIN", set);
+        const need = expected[size];
+        const data = utils.prepareSwapData(user, 1e9);
+        const sign = async (n) => utils.sortedSignatures(await Promise.all(
+          set.slice(0, n).map((o) => utils.signData(data, o, instance.address))));
+
+        await instance.voteForMinting(data, await sign(need - 1)).should.be.rejected;
+        await instance.voteForMinting(data, await sign(need)).should.be.fulfilled;
+        (await instance.balanceOf(user)).toString().should.be.equal(String(1e9));
+      }
     });
   });
   describe("WrappedTOS::minting", () => {

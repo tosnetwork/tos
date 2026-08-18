@@ -105,13 +105,14 @@ def verify_evm_sources() -> None:
     c = PROJECT / "evm/contracts"
     require_text(c / "Bridge.sol", [
         "contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS",
-        "require(signatures.length >= 2 * oraclesSet.length / 3",
         "require(!finishedVotings[digest]",
         "finishedVotings[digest] = true",
         "require(isOracle[signer]",
         "require(next_signer > last_signer",
         "require(!isOracle[newSet[i]]",
-        'require(newOracles.length > 2, "New set is too short")',
+        'require(newSet[i] != address(0), "Zero oracle in Set")',
+        'require(newSet.length > 2, "Set is too short")',
+        "require(signatures.length >= (2 * oraclesSet.length + 2) / 3",
     ])
     require_text(c / "WrappedTOS.sol", [
         'require(allowBurn, "Burn is currently disabled")',
@@ -143,7 +144,8 @@ def main() -> int:
     verify_evm_sources()
     if not args.skip_model:
         run_model_tests()
-    print("coin bridge source and protocol invariants verified")
+    print("coin bridge source checks and protocol model passed")
+    print("note: these are source-text and model checks; behavior is proven by the EVM and TVM suites")
     return 0
 
 

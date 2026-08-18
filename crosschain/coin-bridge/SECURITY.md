@@ -16,6 +16,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 
 - Wrapped-token burning starts disabled and requires an oracle vote to enable.
 - Oracle signatures must meet the quorum, be authorized members of the current set, and be strictly sorted (preventing duplicates).
+- The quorum is a ceiling two-thirds majority at every set size, and every set installed on any path holds at least three distinct non-zero members.
 - Completed EVM votes cannot be replayed (`finishedVotings`).
 - ECDSA signatures are checked for low-`s` and canonical `v` values.
 - Oracle-set updates reject sets shorter than three and duplicate members.
@@ -24,7 +25,6 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 
 ## Mandatory pre-mainnet work
 
-- [ ] Choose an oracle count divisible by three. The threshold is `floor(2n/3)`, so a four- or five-member set is satisfied by two or three signatures — half the set, not two thirds. The contract enforces only the three-member minimum; the true two-thirds property is a deployment-time choice.
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] A dedicated review of the missing chain-ID domain separation above, with a decision to either enforce unique bridge addresses per network or upgrade the digest scheme before any deployment.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.

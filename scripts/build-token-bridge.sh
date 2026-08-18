@@ -54,15 +54,18 @@ compile_pass second
 
 diff -ru "$work_root/first" "$work_root/second" >/dev/null
 
-if [[ -x "$FIFT_BIN" ]]; then
-  for fif in "$work_root"/first/*/out/*.fif; do
-    wrapper="$work_root/assemble.fif"
-    printf '"Asm.fif" include "%s" include hashu . cr\n' "$fif" > "$wrapper"
-    FIFTPATH="$FIFT_LIB" "$FIFT_BIN" -s "$wrapper" >/dev/null
-  done
-else
-  echo "warning: fift not found at $FIFT_BIN; skipping assembly check" >&2
+if [[ ! -x "$FIFT_BIN" ]]; then
+  echo "Fift assembler not found: $FIFT_BIN" >&2
+  echo "Build it with: cmake --build build --target func fift" >&2
+  echo "Assembly is part of this check; it is not optional." >&2
+  exit 2
 fi
+
+for fif in "$work_root"/first/*/out/*.fif; do
+  wrapper="$work_root/assemble.fif"
+  printf '"Asm.fif" include "%s" include hashu . cr\n' "$fif" > "$wrapper"
+  FIFTPATH="$FIFT_LIB" "$FIFT_BIN" -s "$wrapper" >/dev/null
+done
 
 rm -rf "$OUT"
 mkdir -p "$OUT"

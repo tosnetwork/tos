@@ -171,7 +171,8 @@ def main() -> int:
     verify_evm_sources()
     if not args.skip_model:
         run_model_tests()
-    print("token bridge source and protocol invariants verified")
+    print("token bridge source checks and protocol model passed")
+    print("note: these are source-text and model checks; behavior is proven by the EVM and TVM suites")
     return 0
 
 

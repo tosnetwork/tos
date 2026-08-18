@@ -29,6 +29,9 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          # PR-controlled scripts run later in this job; do not leave a usable
+          # git credential in the work tree for them to read.
+          persist-credentials: false
 
       - name: Install Node.js
         uses: actions/setup-node@v6
@@ -42,8 +45,17 @@ jobs:
           python3 scripts/verify-token-bridge.py
           python3 scripts/verify-coin-bridge.py
 
-      - name: Authenticate to the TOS builder registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Pull the TOS builder image
+        env:
+          BUILDER_IMAGE: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Keep the registry credential in a scratch DOCKER_CONFIG that is
+          # discarded before any PR-controlled script runs.
+          export DOCKER_CONFIG="$(mktemp -d)"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+          echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$BUILDER_IMAGE"
 
       - name: Build TOS func and fift
         env:

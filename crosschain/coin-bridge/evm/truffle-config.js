@@ -1,5 +1,4 @@
 require("dotenv").config();
-const HDWalletProvider = require("@truffle/hdwallet-provider");
 
 module.exports = {
   compilers: {
@@ -13,59 +12,14 @@ module.exports = {
       }
     }
   },
+  // Only the local development chain is configured. Named networks are
+  // deliberately absent: an endpoint plus a signing key is a deployment
+  // decision that belongs in a reviewed manifest, not in this repository.
   networks: {
     development: {
       host: "127.0.0.1",
       port: 8545,
       network_id: "*",
-      gas: 6721975,
-    },
-    goerli: {
-      provider: () => {
-        return new HDWalletProvider(
-          `uphold wide shed another couch focus hidden soup lazy top salon salute`, //mnemonic
-          `https://goerli.infura.io/v3/<API_KEY>`, //endpoint
-          0, 20
-        );
-      },
-      network_id: "5",
-      gasPrice: 25e9,
-      gas: 6721975,
-    },
-    bsc_testnet: {
-      provider: () => {
-        return new HDWalletProvider(
-          `uphold wide shed another couch focus hidden soup lazy top salon salute`, //mnemonic
-          `https://data-seed-prebsc-1-s1.binance.org:8545`, //endpoint
-          0, 20
-        );
-      },
-      network_id: "97",
-      gasPrice: 25e9,
-      gas: 6721975,
-    },
-    eth_mainnet: {
-      provider: () => {
-        return new HDWalletProvider(
-          ``, //mnemonic
-          `https://mainnet.infura.io/v3/<API_KEY>`, //endpoint
-           0, 20
-        );
-      },
-      network_id: "1",
-      gasPrice: 25e9,
-      gas: 6721975,
-    },
-    bsc_mainnet: {
-      provider: () => {
-        return new HDWalletProvider(
-          ``, //mnemonic
-          `https://bsc-dataseed.binance.org`, //endpoint
-           0, 20
-        );
-      },
-      network_id: "56",
-      gasPrice: 25e9,
       gas: 6721975,
     }
   },

@@ -13,16 +13,15 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
     mapping(bytes32 => bool) public finishedVotings;
 
     constructor (string memory name_, string memory symbol_, address[] memory initialSet) ERC20(name_, symbol_) {
-        // Rotation enforces this bound in voteForNewOracleSet; the initial set
-        // must meet it too, or the deployed threshold starts below quorum.
-        require(initialSet.length > 2, "Initial set is too short");
         updateOracleSet(0, initialSet);
     }
     
     function generalVote(bytes32 digest, Signature[] memory signatures) internal {
       // NOTE: In practice, the number of oracles should be chosen to be divisible by 3.
       // Note that in other cases minimum consensus is `floor( 2 * oracles_count / 3 )`. For example, with 4 oracles only 2 signatures required.
-      require(signatures.length >= 2 * oraclesSet.length / 3, "Not enough signatures");
+      // Ceiling, not floor: a floor threshold is satisfied by half the set at
+      // sizes that are not multiples of three (4 members would need only 2).
+      require(signatures.length >= (2 * oraclesSet.length + 2) / 3, "Not enough signatures");
       require(!finishedVotings[digest], "Vote is already finished");
       uint signum = signatures.length;
       uint last_signer = 0;
@@ -60,7 +59,12 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
       mint(data);
     }
 
+    // Every path that installs a set goes through here, so construction and
+    // rotation cannot drift apart: a set below three members would start the
+    // threshold below quorum, and the zero address would match the value
+    // ecrecover returns on failure.
     function updateOracleSet(int oracleSetHash, address[] memory newSet) internal {
+      require(newSet.length > 2, "Set is too short");
       uint oldSetLen = oraclesSet.length;
       for(uint i = 0; i < oldSetLen; i++) {
         isOracle[oraclesSet[i]] = false;
@@ -68,6 +72,7 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
       oraclesSet = newSet;
       uint newSetLen = oraclesSet.length;
       for(uint i = 0; i < newSetLen; i++) {
+        require(newSet[i] != address(0), "Zero oracle in Set");
         require(!isOracle[newSet[i]], "Duplicate oracle in Set");
         isOracle[newSet[i]] = true;
       }

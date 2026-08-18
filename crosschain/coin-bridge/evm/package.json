@@ -21,7 +21,6 @@
   "homepage": "https://github.com/#readme",
   "dependencies": {
     "@openzeppelin/contracts": "^4.0.0",
-    "@truffle/hdwallet-provider": "^1.2.6",
     "eth-sig-util": "^3.0.1",
     "truffle-contract-size": "^2.0.0",
     "truffle-plugin-verify": "^0.5.4",
