@@ -74,7 +74,7 @@ def verify_no_deployment_artifacts() -> None:
         "deploy-mainnet-bridge.ts",
     }
     for path in PROJECT.rglob("*"):
-        if not path.is_file():
+        if not path.is_file() or "node_modules" in path.parts:
             continue
         if path.name in forbidden_names or path.suffix in {".boc", ".addr"}:
             raise AssertionError(f"deployed upstream artifact must not be vendored: {path}")

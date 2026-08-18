@@ -15,6 +15,8 @@ This is the old **jUSDT-style wrapped-token bridge**, not Tether's current nativ
 
 Both upstreams and TOS use GPL-3.0-compatible licensing. Exact source provenance and exclusions are recorded in `UPSTREAM.lock.json` and `SOURCE_MANIFEST.sha256`.
 
+The sources are vendored into this repository: `upstream/` is a filtered byte-for-byte copy of the pinned upstream commits, and `tvm/`/`evm/` are the TOS-facing build trees. The only source deltas in the build trees are presentation-level branding strings and toolchain-compatibility renames of assembler mnemonic strings (`STGRAMS`→`STTOMIS`, `LDGRAMS`→`LDTOMIS`; identical opcode bytes). Opcodes, state layout, fee checks, quorum rules, and signed payloads are unchanged.
+
 ## Components
 
 ### TOS/TVM side
@@ -68,9 +70,9 @@ The corresponding ConfigParam must contain the TOS bridge address, oracle multis
 ## Reproducible import
 
 ```bash
-python3 scripts/import-legacy-jusdt-bridge.py
-python3 scripts/import-legacy-jusdt-bridge.py --check
-python3 scripts/verify-legacy-jusdt-bridge.py
+python3 scripts/import-legacy-jusdt-bridge.py          # regenerate from pinned upstreams
+python3 scripts/import-legacy-jusdt-bridge.py --check  # verify the committed tree matches
+python3 scripts/verify-legacy-jusdt-bridge.py          # invariants + protocol model tests
 ```
 
 The import deliberately excludes historical TON mainnet/testnet BOCs, deployed addresses, oracle key lists, and mainnet deployment scripts. Those are not valid TOS configuration and are dangerous to reuse.

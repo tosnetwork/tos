@@ -126,6 +126,12 @@ def tos_branding(text: str) -> str:
     )
 
 
+def tos_asm_mnemonics(text: str) -> str:
+    # The TOS assembler renamed the coin-amount mnemonics; the opcode bytes
+    # (0xFA00/0xFA02) are unchanged, so generated code cells stay identical.
+    return text.replace('"STGRAMS"', '"STTOMIS"').replace('"LDGRAMS"', '"LDTOMIS"')
+
+
 def params_source(config_param: int, evm_chain_id: int) -> str:
     return f""";; Generated from the pinned TON token bridge params.fc.
 ;; TOS masterchain ConfigParam {config_param} selects EVM chain {evm_chain_id}.
@@ -151,8 +157,10 @@ def make_active_tvm(project: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for path in sorted(source.iterdir()):
         if path.suffix == ".fc" or path.name in TVM_DEPLOYMENT_SOURCES:
-            text = path.read_text(encoding="utf-8")
-            (destination / path.name).write_text(tos_branding(text), encoding="utf-8")
+            text = tos_branding(path.read_text(encoding="utf-8"))
+            if path.suffix == ".fc":
+                text = tos_asm_mnemonics(text)
+            (destination / path.name).write_text(text, encoding="utf-8")
 
     params_dir = project / "tvm/params"
     params_dir.mkdir(parents=True, exist_ok=True)

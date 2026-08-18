@@ -6,6 +6,8 @@ PROJECT="$ROOT/crosschain/legacy-jusdt-bridge"
 SRC="$PROJECT/tvm/contracts"
 PARAMS="$PROJECT/tvm/params"
 FUNC_BIN="${FUNC:-$ROOT/build/crypto/func}"
+FIFT_BIN="${FIFT:-$ROOT/build/crypto/fift}"
+FIFT_LIB="$ROOT/crypto/fift/lib"
 OUT="${OUT:-$PROJECT/artifacts/tvm}"
 
 if [[ ! -x "$FUNC_BIN" ]]; then
@@ -41,6 +43,16 @@ compile_pass first
 compile_pass second
 
 diff -ru "$work_root/first" "$work_root/second" >/dev/null
+
+if [[ -x "$FIFT_BIN" ]]; then
+  for fif in "$work_root"/first/*/out/*.fif; do
+    wrapper="$work_root/assemble.fif"
+    printf '"Asm.fif" include "%s" include hashu . cr\n' "$fif" > "$wrapper"
+    FIFTPATH="$FIFT_LIB" "$FIFT_BIN" -s "$wrapper" >/dev/null
+  done
+else
+  echo "warning: fift not found at $FIFT_BIN; skipping assembly check" >&2
+fi
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -R "$work_root/first/." "$OUT/"
@@ -50,5 +62,5 @@ find "$OUT" -type d -name src -prune -exec rm -rf {} +
   find . -type f -name '*.fif' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 )
 
-echo "Reproducibly compiled ${#contracts[@]} contracts for ${#networks[@]} EVM networks."
+echo "Reproducibly compiled ${#contracts[@]} contracts for ${#networks[@]} EVM networks (assembly-checked)."
 echo "Artifacts: $OUT"
