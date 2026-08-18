@@ -172,6 +172,10 @@ This is suitable for most tokens, if you need tokens transferable between workch
   cell custom_payload = in_msg_body~load_dict();
   slice custom_payload_slice = custom_payload.begin_parse();
   int destination_address = custom_payload_slice~load_uint(160); ;; destination address in other network
+  ;; The last point at which refusing still leaves the user their tokens. After
+  ;; this the jettons are burned, and a release to the zero address fails on the
+  ;; counterparty chain with nothing to return them.
+  throw_if(error::zero_destination, destination_address == 0);
   custom_payload_slice.end_parse();
   in_msg_body.end_parse();
 

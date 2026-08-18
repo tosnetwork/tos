@@ -42,6 +42,19 @@ No production oracle daemon ships with this directory: it completes the smart-co
 4. Oracles sign the burn; `votes-collector` assembles signatures.
 5. Anyone submits the signed burn to EVM `Bridge.unlock`; replay protection marks the digest finished before transfer.
 
+## Refusals the contracts make
+
+A burn names where to release on the counterparty chain, and the zero address
+is not a destination: the ERC-20 transfer that would release the tokens there
+reverts, and by then the jettons are already destroyed. `jetton-wallet.fc`
+refuses it (`error::zero_destination`, 397) at the burn entry, which is the
+last point at which the user still has their tokens.
+
+This belongs in the contract rather than in an oracle. An oracle applying it
+would apply it *after* the burn, when refusing only strands the user — and a
+rule one operator applies and another does not produces a quorum that never
+forms rather than a rejection.
+
 ## TOS configuration slots
 
 | External network | TOS ConfigParam | EVM chain ID |

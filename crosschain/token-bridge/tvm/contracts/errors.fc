@@ -35,5 +35,10 @@ const int error::mint_fee_less_forward = 399;
 ;; fail on, and that failure is not reconcilable across the mint's three
 ;; transactions. The bridge refuses such a swap outright.
 const int error::forward_amount_not_zero = 398;
+;; A burn names a destination on the counterparty chain. The zero address is
+;; not one: the ERC-20 transfer that would release the tokens there fails, and
+;; by then the jettons on this side are already destroyed. Refusing here is the
+;; last point at which the user still has them.
+const int error::zero_destination = 397;
 
 const int error::no_bridge_config = 666;

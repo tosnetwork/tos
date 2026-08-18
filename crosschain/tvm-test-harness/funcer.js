@@ -113,9 +113,19 @@ ${inMsg.amount} constant msg_value${i} // in_msg amount
 
 ${makeCell(inMsg.body)} constant in_msg_body${i}
 
+// A complete int_msg_info header. It was previously truncated after the
+// sender, which is all some contracts read — but a contract that reads
+// further, as jetton-wallet does to reach fwd_fee, hit a cell underflow and
+// failed with exit code 9 rather than with anything about its own logic.
 <b b{0110} s,
    sender_address${i} Addr,
-   // TODO: add other data
+   contract_addr_pair Addr,                // dst: this contract
+   msg_value${i} Tomi,                     // value
+   b{0} s,                                 // no extra currencies
+   ${inMsg.ihr_fee || 0} Tomi,
+   ${inMsg.fwd_fee || 1000000} Tomi,
+   0 64 u,                                 // created_lt
+   0 32 u,                                 // created_at
 b> constant in_msg${i}
 
 0x076ef1ea           // magic
@@ -130,7 +140,12 @@ contract_address     // myself
 global_config        // global_config
 10 tuple 1 tuple constant c7
 
-msg_value${i} in_msg${i} in_msg_body${i} <s 0 code storage c7 0x75 runvmx
+// A four-argument recv_internal takes my_balance first; a three-argument one
+// takes the top three and leaves this underneath, which is harmless. Pushing
+// it unconditionally is what lets a wallet contract be tested at all — without
+// it the wallet reads msg_value as its balance and runs off the end of the
+// message, failing with a cell underflow that says nothing about its logic.
+${inMsg.contract_balance || '1000000000'} msg_value${i} in_msg${i} in_msg_body${i} <s 0 code storage c7 0x75 runvmx
 // returns ...values exit_code new_c4 c5
 swap rot
 
@@ -412,8 +427,12 @@ ${makeCell(data.data)} constant storage
 
 ${makeConfigParams(data.configParams)} constant global_config
 
-<b <b b{00110} s, <b code s, b> ref, storage ref, b>
-hashu -1 swap addr, b> constant contract_address
+// The contract's own address, kept as the (workchain, hash) pair as well as
+// the encoded cell: the pair is what the Addr word takes, and a message header needs
+// it to name a destination the contract can parse.
+<b b{00110} s, <b code s, b> ref, storage ref, b>
+hashu -1 swap 2constant contract_addr_pair
+<b contract_addr_pair addr, b> constant contract_address
 
 ${makeInMessages(data.in_msgs)}
 
