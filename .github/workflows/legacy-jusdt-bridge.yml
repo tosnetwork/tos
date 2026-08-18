@@ -1,4 +1,4 @@
-name: TOS legacy jUSDT bridge validation
+name: TOS legacy bridge validation
 
 on:
   push:
@@ -11,16 +11,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: read
 
 concurrency:
-  group: legacy-jusdt-bridge-${{ github.event.pull_request.number || github.ref }}
+  group: legacy-bridges-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   import-build-test:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
 
@@ -28,25 +27,25 @@ jobs:
       - name: Check out TOS branch
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Import pinned TON contract sources
-        run: python3 scripts/import-legacy-jusdt-bridge.py
+      - name: Verify committed sources match pinned upstreams
+        run: |
+          python3 scripts/import-legacy-jusdt-bridge.py --check
+          python3 scripts/import-legacy-toncoin-bridge.py --check
 
-      - name: Install Node.js for pinned Hardhat tests
+      - name: Install Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '18'
           cache: npm
           cache-dependency-path: crosschain/legacy-jusdt-bridge/evm/package-lock.json
 
-      - name: Verify deterministic import
-        run: python3 scripts/import-legacy-jusdt-bridge.py --check
-
       - name: Run source and protocol invariant checks
-        run: python3 scripts/verify-legacy-jusdt-bridge.py
+        run: |
+          python3 scripts/verify-legacy-jusdt-bridge.py
+          python3 scripts/verify-legacy-toncoin-bridge.py
 
       - name: Authenticate to the TOS builder registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -75,61 +74,35 @@ jobs:
       - name: Reproducibly compile all TVM bridge variants
         env:
           FUNC: ${{ github.workspace }}/build-bridge/crypto/func
-        run: scripts/build-legacy-jusdt-bridge.sh
+          FIFT: ${{ github.workspace }}/build-bridge/crypto/fift
+        run: |
+          bash scripts/build-legacy-jusdt-bridge.sh
+          bash scripts/build-legacy-toncoin-bridge.sh
 
-      - name: Compile and test EVM bridge
+      - name: Run upstream TVM-level bridge tests
+        env:
+          FUNC: ${{ github.workspace }}/build-bridge/crypto/func
+        run: bash scripts/test-legacy-toncoin-bridge.sh
+
+      - name: Compile and test jUSDT EVM bridge
         working-directory: crosschain/legacy-jusdt-bridge/evm
+        env:
+          # Dummy key: tests run only against the in-process Hardhat network,
+          # but the upstream config validates the accounts entry at load time.
+          PRIVATE_KEY: '0x0000000000000000000000000000000000000000000000000000000000000001'
         run: |
           npm ci --ignore-scripts
           npm test
 
-      - name: Record validation evidence
-        run: |
-          mkdir -p crosschain/legacy-jusdt-bridge/validation
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess
-          out = pathlib.Path('crosschain/legacy-jusdt-bridge/validation/last-success.json')
-          payload = {
-              'schema': 1,
-              'tos_commit_under_test': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-              'tvm_upstream': '4e7ec44a651e6b455ce5a09ed1383535fae3a637',
-              'evm_upstream': 'ac5f58a6d28857d7b653d8f76f7d8ca58811a1c3',
-              'checks': {
-                  'deterministic_import': 'passed',
-                  'source_invariants': 'passed',
-                  'protocol_model_tests': 'passed',
-                  'tvm_func_compile_twice': 'passed',
-                  'evm_hardhat_tests': 'passed',
-              },
-              'runner': os.environ.get('RUNNER_NAME', 'github-hosted'),
-          }
-          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
-          PY
+      - name: Compile and test Toncoin EVM bridge
+        run: bash scripts/test-legacy-toncoin-bridge-evm.sh
 
       - name: Upload reproducible build evidence
         uses: actions/upload-artifact@v6
         with:
-          name: tos-legacy-jusdt-bridge-validation
+          name: tos-legacy-bridge-validation
           path: |
             crosschain/legacy-jusdt-bridge/artifacts/tvm
-            crosschain/legacy-jusdt-bridge/validation/last-success.json
+            crosschain/legacy-toncoin-bridge/artifacts/tvm
           if-no-files-found: error
           retention-days: 30
-
-      - name: Commit imported sources and validation record
-        env:
-          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            crosschain/legacy-jusdt-bridge/upstream \
-            crosschain/legacy-jusdt-bridge/tvm \
-            crosschain/legacy-jusdt-bridge/evm \
-            crosschain/legacy-jusdt-bridge/UPSTREAM.lock.json \
-            crosschain/legacy-jusdt-bridge/SOURCE_MANIFEST.sha256 \
-            crosschain/legacy-jusdt-bridge/validation/last-success.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Import and validate TON legacy jUSDT bridge [skip ci]"
-            git push origin "HEAD:${TARGET_BRANCH}"
-          fi
