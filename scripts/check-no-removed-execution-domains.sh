@@ -6,6 +6,11 @@ set -euo pipefail
 # native TVM execution path only (see doc/workchain-execution-registry.md);
 # no other execution engine (e.g. EVM, Uno) should be reintroduced as a
 # shortcut for AI actor / agent integration work.
+#
+# crosschain/ and its import/build/verify scripts are excluded: they vendor
+# bridge contracts whose EVM half runs on external counterparty chains
+# (Ethereum/BSC/...), not inside the TOS node. They register no execution
+# engine and add no workchain descriptor; the TOS-side half is native TVM.
 
 root="${1:-.}"
 pattern='\b(evm|uno)\b'
@@ -13,6 +18,16 @@ pattern='\b(evm|uno)\b'
 matches="$(git -C "$root" ls-files -z -- \
     . \
     ':(exclude)third-party/**' \
+    ':(exclude)crosschain/**' \
+    ':(exclude)scripts/verify-token-bridge.py' \
+    ':(exclude)scripts/build-token-bridge.sh' \
+    ':(exclude)scripts/verify-coin-bridge.py' \
+    ':(exclude)scripts/build-coin-bridge.sh' \
+    ':(exclude)scripts/test-coin-bridge-tvm.sh' \
+    ':(exclude)scripts/test-coin-bridge-evm.sh' \
+    ':(exclude)scripts/test-token-bridge-tvm.sh' \
+    ':(exclude)scripts/test-token-bridge-tron.sh' \
+    ':(exclude).github/workflows/bridge-validation.yml' \
     ':(exclude)scripts/check-no-removed-execution-domains.sh' \
     ':(exclude).github/workflows/no-removed-execution-domains-scan.yml' \
   | xargs -0 -r grep -InE "$pattern" || true)"

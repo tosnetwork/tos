@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.7.0;
+pragma experimental ABIEncoderV2;
+
+import "./BridgeInterface.sol";
+import "./SignatureChecker.sol";
+import "./WrappedTOS.sol";
+
+
+contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
+    address[] public oraclesSet;
+    mapping(address => bool) public isOracle;
+    mapping(bytes32 => bool) public finishedVotings;
+    // finishedVotings only stops a digest that already executed. A governance
+    // signature that was produced but never executed stays valid forever, so
+    // an old rotation could be replayed to undo a newer one. These cursors make
+    // each governance action strictly move forward. Both values are already
+    // inside their signed digests, so the signing format is unchanged.
+    int public lastOracleSetHash;
+    int public lastBurnStatusNonce;
+
+    constructor (string memory name_, string memory symbol_, address[] memory initialSet) ERC20(name_, symbol_) {
+        updateOracleSet(0, initialSet);
+    }
+    
+    function generalVote(bytes32 digest, Signature[] memory signatures) internal {
+      // NOTE: In practice, the number of oracles should be chosen to be divisible by 3.
+      // Note that in other cases minimum consensus is `floor( 2 * oracles_count / 3 )`. For example, with 4 oracles only 2 signatures required.
+      // Ceiling, not floor: a floor threshold is satisfied by half the set at
+      // sizes that are not multiples of three (4 members would need only 2).
+      require(signatures.length >= (2 * oraclesSet.length + 2) / 3, "Not enough signatures");
+      require(!finishedVotings[digest], "Vote is already finished");
+      uint signum = signatures.length;
+      uint last_signer = 0;
+      for(uint i=0; i<signum; i++) {
+        address signer = signatures[i].signer;
+        require(isOracle[signer], "Unauthorized signer");
+        uint next_signer = uint(signer);
+        require(next_signer > last_signer, "Signatures are not sorted");
+        last_signer = next_signer;
+        checkSignature(digest, signatures[i]);
+      }
+      finishedVotings[digest] = true;
+    }
+
+    function voteForMinting(SwapData memory data, Signature[] memory signatures) override public {
+      bytes32 _id = getSwapDataId(data);
+      generalVote(_id, signatures);
+      executeMinting(data);
+    }
+
+    function voteForNewOracleSet(int oracleSetHash, address[] memory newOracles, Signature[] memory signatures) override  public {
+      require(oracleSetHash > lastOracleSetHash, "Stale oracle set hash");
+      bytes32 _id = getNewSetId(oracleSetHash, newOracles);
+      generalVote(_id, signatures);
+      lastOracleSetHash = oracleSetHash;
+      updateOracleSet(oracleSetHash, newOracles);
+    }
+
+    function voteForSwitchBurn(bool newBurnStatus, int nonce, Signature[] memory signatures) override public {
+      require(nonce > lastBurnStatusNonce, "Stale burn status nonce");
+      bytes32 _id = getNewBurnStatusId(newBurnStatus, nonce);
+      generalVote(_id, signatures);
+      lastBurnStatusNonce = nonce;
+      allowBurn = newBurnStatus;
+    }
+
+    function executeMinting(SwapData memory data) internal {
+      mint(data);
+    }
+
+    // Every path that installs a set goes through here, so construction and
+    // rotation cannot drift apart: a set below three members would start the
+    // threshold below quorum, and the zero address would match the value
+    // ecrecover returns on failure.
+    function updateOracleSet(int oracleSetHash, address[] memory newSet) internal {
+      require(newSet.length > 2, "Set is too short");
+      uint oldSetLen = oraclesSet.length;
+      for(uint i = 0; i < oldSetLen; i++) {
+        isOracle[oraclesSet[i]] = false;
+      }
+      oraclesSet = newSet;
+      uint newSetLen = oraclesSet.length;
+      for(uint i = 0; i < newSetLen; i++) {
+        require(newSet[i] != address(0), "Zero oracle in Set");
+        require(!isOracle[newSet[i]], "Duplicate oracle in Set");
+        isOracle[newSet[i]] = true;
+      }
+      emit NewOracleSet(oracleSetHash, newSet);
+    }
+    function getFullOracleSet() public view returns (address[] memory) {
+        return oraclesSet;
+    }
+}

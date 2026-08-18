@@ -148,19 +148,32 @@ of the same document gives the bound and the order the two move in.
 | 44 | `SuspendedAddressList` | suspended (blocked) addresses |
 | 45 | `PrecompiledContractsConfig` | precompiled-contract registry |
 
-**Optional external-chain bridges (inherited base schema, not used by the native TOS build)**
+**External-chain bridges**
 
-| Param | Type | Purpose |
-|---|---|---|
-| 71 / 72 / 73 | `OracleBridgeParams` | oracle-bridge descriptors for external chains |
-| 79 / 81 / 82 | `JettonBridgeParams` | token-bridge descriptors for external chains |
+These slots select which counterparty chain a bridge contract serves. The contract planes live in `crosschain/`; see each bridge's `SECURITY.md` for the gates that apply before a slot may be populated. **No slot below is enabled or populated by this build**, and none is mandatory.
 
-When adding or changing a parameter:
+| Param | Type | Counterparty | Contract tree |
+|---|---|---|---|
+| 71 | `OracleBridgeParams` | Ethereum | `crosschain/coin-bridge/tvm/ethereum` |
+| 72 | `OracleBridgeParams` | BNB Smart Chain | `crosschain/coin-bridge/tvm/bsc` |
+| 73 | `OracleBridgeParams` | Polygon | declared in the schema; no contract tree in this repository |
+| 79 | `JettonBridgeParams` | Ethereum | `crosschain/token-bridge/tvm/params/ethereum.fc` |
+| 81 | `JettonBridgeParams` | BNB Smart Chain | `crosschain/token-bridge/tvm/params/bsc.fc` |
+| 82 | `JettonBridgeParams` | Polygon | `crosschain/token-bridge/tvm/params/polygon.fc` |
+| 83 | `JettonBridgeParams` | Tron | `crosschain/token-bridge/tvm/params/tron.fc` |
 
-- update the TL-B schema if the cell shape changes
-- update zero-state generation if the initial value changes
-- add migration rules for active networks
-- keep validator and collator validation paths consistent
+Slot 80 is unallocated. Slot 83 is TOS-specific: it has no counterpart in the base schema this bridge architecture came from, and no counterparty contract has been deployed or exercised on Tron.
+
+Each bridge parameter file also fixes the chain id its contract compares against. For EVM chains that is the registered chain id (1, 56, 137). Tron is not an EVM chain and its `CHAINID` returns the last four bytes of the genesis block id, so slot 83 uses `728126428`, which must be confirmed against the target Tron network before the slot is populated.
+
+## Adding or changing a parameter
+
+- **A new index must be declared in [block.tlb](../crypto/block/block.tlb).** Config validation runs `block::gen::ConfigParam{idx}.validate_ref(...)`, and the generated `get_tag` returns `-1` for any index it does not know, which fails the whole configuration. A parameter file that compiles is therefore not enough: without a schema entry the slot can never be set on chain. `block-auto.cpp/h` are generated from `block.tlb` at build time and are not tracked, so only the schema source is committed.
+- Negative indices are deliberately exempt from that validation (`check_one_config_param` returns true for `idx < 0`). The bridge contracts read `config_param(N)` and fall back to `config_param(-N)` for staging, so a negative slot carries no schema guarantee and must never be used to hold a value a production path depends on.
+- Update the TL-B schema if the cell shape changes.
+- Update zero-state generation if the initial value changes.
+- Add migration rules for active networks.
+- Keep validator and collator validation paths consistent.
 
 ## References
 
