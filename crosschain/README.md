@@ -1,21 +1,19 @@
 # TOS cross-chain bridge contracts
 
-This directory gathers the market-proven TON bridge smart-contract planes into the TOS monorepo as vendored source code, pinned by upstream commit and rebuilt with the TOS toolchain. Nothing here is enabled on any TOS network; every bridge is gated by its own `SECURITY.md`.
+This directory contains the complete smart-contract planes of the TOS cross-chain bridges as first-class TOS source code. The state machines derive from a market-proven upstream bridge architecture (provenance and licenses are recorded in each bridge's `NOTICE.md`), fully renamed to TOS semantics and built, assembled, and tested with the TOS toolchain. Nothing here is enabled on any TOS network; every bridge is gated by its own `SECURITY.md`.
 
-| Directory | Bridge | Upstreams |
+| Directory | Bridge | Direction |
 |---|---|---|
-| `legacy-jusdt-bridge/` | ERC-20 ↔ wrapped Jetton token bridge (the jUSDT architecture) | `ton-blockchain/token-bridge-func`, `ton-blockchain/token-bridge-solidity` |
-| `legacy-toncoin-bridge/` | Native coin ↔ wrapped ERC-20 bridge | `ton-blockchain/bridge-func` (`master` + `bsc` branches), `ton-blockchain/bridge-solidity` |
-| `fift-compat/` | Fift library name shims (`TonUtil.fif` → `TosUtil.fif` and coin-word aliases) used to run upstream Fift sources under the TOS toolchain | — |
+| `token-bridge/` | ERC-20 ↔ wrapped Jetton token bridge | external ERC-20 locked, Jetton minted on TOS |
+| `coin-bridge/` | Native coin ↔ wrapped ERC-20 bridge | native TOS locked, wrapped ERC-20 minted externally |
 
 Each bridge directory contains:
 
-- `upstream/` — filtered byte-for-byte copies of the pinned upstream repositories (deployed BOCs, addresses, oracle key sets, and mainnet deployment commands are excluded).
-- `tvm/`, `evm/` — the TOS-facing build trees. The only deltas against `upstream/` are documented toolchain-compatibility renames; contract logic is unchanged.
-- `UPSTREAM.lock.json`, `SOURCE_MANIFEST.sha256` — provenance and integrity records.
-- `tests/` — dependency-free protocol model tests for the cross-plane invariants.
+- `tvm/` — the FunC/Fift contract plane, compiled with the TOS `func` compiler and selected through TOS masterchain ConfigParams.
+- `evm/` — the Solidity contract plane deployed on external counterparty chains, with its full test suite.
+- `tests/` — dependency-free protocol model tests for the cross-plane invariants (quorum, replay protection, supply conservation).
 - `README.md`, `SECURITY.md`, `NOTICE.md`.
 
-Regeneration, drift checking, building, and testing are driven by the `scripts/import-legacy-*.py`, `scripts/verify-legacy-*.py`, `scripts/build-legacy-*.sh`, and `scripts/test-legacy-*.sh` entry points at the repository root, and run in CI via `.github/workflows/legacy-jusdt-bridge.yml`.
+Building, testing, and invariant verification are driven by the `scripts/build-*-bridge.sh`, `scripts/test-coin-bridge-*.sh`, and `scripts/verify-*-bridge.py` entry points at the repository root, and run in CI via `.github/workflows/bridge-validation.yml`. The verify scripts also enforce that no legacy source-chain naming reappears in these trees.
 
 The EVM halves of these bridges target external counterparty chains (Ethereum, BNB Smart Chain, Polygon). Vendoring them does not add an execution engine to the TOS node — see `doc/workchain-execution-registry.md`.

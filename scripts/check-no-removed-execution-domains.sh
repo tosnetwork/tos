@@ -19,15 +19,13 @@ matches="$(git -C "$root" ls-files -z -- \
     . \
     ':(exclude)third-party/**' \
     ':(exclude)crosschain/**' \
-    ':(exclude)scripts/import-legacy-jusdt-bridge.py' \
-    ':(exclude)scripts/verify-legacy-jusdt-bridge.py' \
-    ':(exclude)scripts/build-legacy-jusdt-bridge.sh' \
-    ':(exclude)scripts/import-legacy-toncoin-bridge.py' \
-    ':(exclude)scripts/verify-legacy-toncoin-bridge.py' \
-    ':(exclude)scripts/build-legacy-toncoin-bridge.sh' \
-    ':(exclude)scripts/test-legacy-toncoin-bridge.sh' \
-    ':(exclude)scripts/test-legacy-toncoin-bridge-evm.sh' \
-    ':(exclude).github/workflows/legacy-jusdt-bridge.yml' \
+    ':(exclude)scripts/verify-token-bridge.py' \
+    ':(exclude)scripts/build-token-bridge.sh' \
+    ':(exclude)scripts/verify-coin-bridge.py' \
+    ':(exclude)scripts/build-coin-bridge.sh' \
+    ':(exclude)scripts/test-coin-bridge-tvm.sh' \
+    ':(exclude)scripts/test-coin-bridge-evm.sh' \
+    ':(exclude).github/workflows/bridge-validation.yml' \
     ':(exclude)scripts/check-no-removed-execution-domains.sh' \
     ':(exclude).github/workflows/no-removed-execution-domains-scan.yml' \
   | xargs -0 -r grep -InE "$pattern" || true)"
