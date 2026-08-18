@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - agent/tos-jusdt-bridge
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +15,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: legacy-jusdt-bridge-${{ github.ref }}
+  group: legacy-jusdt-bridge-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,6 +28,7 @@ jobs:
       - name: Check out TOS branch
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
           submodules: recursive
 
@@ -112,6 +117,8 @@ jobs:
           retention-days: 30
 
       - name: Commit imported sources and validation record
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -124,5 +131,5 @@ jobs:
             crosschain/legacy-jusdt-bridge/validation/last-success.json
           if ! git diff --cached --quiet; then
             git commit -m "Import and validate TON legacy jUSDT bridge [skip ci]"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            git push origin "HEAD:${TARGET_BRANCH}"
           fi
