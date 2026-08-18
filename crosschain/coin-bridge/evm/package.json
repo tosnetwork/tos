@@ -6,8 +6,6 @@
   "scripts": {
     "compile": "truffle compile --all",
     "deploy": "truffle migrate --reset --network development",
-    "deployTestnet": "truffle migrate --network testnet",
-    "deployMainnet": "truffle migrate --network mainnet",
     "ganache": "ganache-cli -i 666 -p 8545 -m 'uphold wide shed another couch focus hidden soup lazy top salon salute'"
   },
   "repository": {
@@ -36,6 +34,7 @@
     "chai": "^4.3.4",
     "dotenv": "^8.2.0",
     "truffle": "^5.3.2",
-    "eth-gas-reporter": "^0.2.25"
+    "eth-gas-reporter": "^0.2.25",
+    "ganache": "7.9.2"
   }
 }

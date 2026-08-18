@@ -10,9 +10,9 @@ let Bridge = artifacts.require("Bridge");
 
 let sigchecker;
 
-contract("SignatureChecker", ([oracle, not_oracle]) => {
+contract("SignatureChecker", ([oracle, not_oracle, _u1, _u2, _u3, oracle2, oracle3]) => {
   describe("SignatureChecker::instance", async () => {
-    sigchecker = await Bridge.deployed("Wrapped TOS Coin", "TOSCOIN", [oracle]);
+    sigchecker = await Bridge.deployed("Wrapped TOS Coin", "TOSCOIN", [oracle, oracle2, oracle3]);
   });
   describe("SignatureChecker::checks",  () => {
 

@@ -29,6 +29,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 
 ## Mandatory pre-mainnet work
 
+- [ ] Resolve mint-path partial execution. `jetton-minter` increases `total_supply` when it dispatches `internal_transfer` and ignores bounces, and `jetton-bridge` has already marked the multisig query processed by then. A wallet-side failure therefore leaves supply inflated with no wallet credit, and the vote cannot be replayed. Add bounce handling that authenticates the deterministic wallet sender and rolls the pending amount back, or an acknowledgement protocol that reports completion only after the wallet is credited. Validate the whole configured fee budget (minter and wallet storage, gas, forwarding) before minting rather than only `bridge_mint_fee > forward amount`.
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.

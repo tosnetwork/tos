@@ -8,6 +8,16 @@ FIFT_BIN="${FIFT:-$ROOT/build/crypto/fift}"
 FIFT_LIB="$ROOT/crypto/fift/lib"
 OUT="${OUT:-$PROJECT/artifacts/tvm}"
 
+# OUT is caller-supplied; refuse to recursively delete anything that is not a
+# path inside this bridge's own artifacts directory.
+canonical_out="$(readlink -m -- "$OUT")"
+artifacts_root="$(readlink -m -- "$PROJECT/artifacts")"
+if [[ "$canonical_out" != "$artifacts_root" && "$canonical_out" != "$artifacts_root"/* ]]; then
+  echo "OUT must stay inside $artifacts_root (got: $canonical_out)" >&2
+  exit 2
+fi
+OUT="$canonical_out"
+
 if [[ ! -x "$FUNC_BIN" ]]; then
   echo "FunC compiler not found: $FUNC_BIN" >&2
   echo "Build it with: cmake --build build --target func fift" >&2

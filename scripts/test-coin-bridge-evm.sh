@@ -9,10 +9,9 @@ EVM="$ROOT/crosschain/coin-bridge/evm"
 GANACHE_PORT="${GANACHE_PORT:-8545}"
 
 cd "$EVM"
-npm install --ignore-scripts --no-audit --no-fund
-npm install --ignore-scripts --no-audit --no-fund --no-save ganache@7.9.2
+npm ci --ignore-scripts --no-audit --no-fund
 
-npx ganache --chain.networkId 666 --port "$GANACHE_PORT" \
+npx --no-install ganache --chain.networkId 666 --port "$GANACHE_PORT" \
   --wallet.mnemonic 'uphold wide shed another couch focus hidden soup lazy top salon salute' \
   >/dev/null 2>&1 &
 ganache_pid=$!
@@ -25,5 +24,5 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-npx truffle test
+npx --no-install truffle test
 echo "Coin-bridge EVM contracts compiled and Truffle tests passed."

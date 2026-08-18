@@ -1,34 +1,37 @@
 import "@nomiclabs/hardhat-ethers";
-import { formatEther, parseEther, parseUnits } from "ethers/lib/utils";
+import { formatEther, parseUnits } from "ethers/lib/utils";
 import { ethers } from "hardhat";
 
-const TOS_ADDRESS_HASH =
-  "0x68a32603bc376542ac01fc6266cd1bea8a6bab324c84ea337b7c00833a48dc7a";
+// Deployment-specific values are read from the environment: committing a bridge
+// address, token address, or destination account to this repository would point
+// operators at contracts this repository does not control.
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
 
 async function main() {
+  const bridgeAddress = ethers.utils.getAddress(required("BRIDGE_ADDRESS"));
+  const tokenAddress = ethers.utils.getAddress(required("TOKEN_ADDRESS"));
+  const destinationHash = ethers.utils.hexZeroPad(required("TOS_ADDRESS_HASH"), 32);
+  const amount = parseUnits(process.env.LOCK_AMOUNT || "12");
+
   console.log("starting lock script");
   const [owner] = await ethers.getSigners();
 
-  const bridge = await ethers.getContractAt(
-    "Bridge",
-    "0x896B65f1f1078104F0d0d4723bc371bCF173B60F"
-  );
-  const token = await ethers.getContractAt(
-    "TestToken",
-    "0x6cB26573dacd1994BADfDa4CBcC7553AcafFf8d6"
-  );
+  const bridge = await ethers.getContractAt("Bridge", bridgeAddress);
+  const token = await ethers.getContractAt("TestToken", tokenAddress);
 
-  const bridgeAllowance = parseUnits("12");
-
-  // await token.transfer();
   console.log(await token.balanceOf(owner.address));
-
-  console.log(`approve ${formatEther(bridgeAllowance)} tokens to bridge`);
-  let tx = await token.approve(bridge.address, bridgeAllowance);
+  console.log(`approve ${formatEther(amount)} tokens to bridge`);
+  let tx = await token.approve(bridge.address, amount);
   await tx.wait();
   console.log("approval successfull");
-  console.log(`lock ${formatEther(bridgeAllowance)} tokens in bridge by owner`);
-  tx = await bridge.lock(token.address, bridgeAllowance, TOS_ADDRESS_HASH);
+  console.log(`lock ${formatEther(amount)} tokens in bridge by owner`);
+  tx = await bridge.lock(token.address, amount, destinationHash);
   await tx.wait();
   console.log("successfully locked");
 }

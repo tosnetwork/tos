@@ -14,6 +14,17 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5]) =
       bridge = await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle2, oracle3]);
     });
   });
+  describe("Bridge::construction", () => {
+    it("rejects an initial set too small to reach quorum", async () => {
+      await Bridge.new("Wrapped TOS Coin", "TOSCOIN", []).should.be.rejected;
+      await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1]).should.be.rejected;
+      await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle2]).should.be.rejected;
+    });
+
+    it("rejects a duplicate member in the initial set", async () => {
+      await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle1, oracle2]).should.be.rejected;
+    });
+  });
   describe("WrappedTOS::minting", () => {
    it("one random address can't mint tokens", async () => {
       let user = oracle5;

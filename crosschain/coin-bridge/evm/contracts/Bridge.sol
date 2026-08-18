@@ -13,6 +13,9 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
     mapping(bytes32 => bool) public finishedVotings;
 
     constructor (string memory name_, string memory symbol_, address[] memory initialSet) ERC20(name_, symbol_) {
+        // Rotation enforces this bound in voteForNewOracleSet; the initial set
+        // must meet it too, or the deployed threshold starts below quorum.
+        require(initialSet.length > 2, "Initial set is too short");
         updateOracleSet(0, initialSet);
     }
     

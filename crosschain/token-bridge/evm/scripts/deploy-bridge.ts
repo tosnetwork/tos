@@ -1,21 +1,31 @@
 import "@nomiclabs/hardhat-ethers";
 import {ethers} from "hardhat";
 
+// The oracle set is a custody decision and must never be committed to this
+// repository: it is read from BRIDGE_ORACLES as a comma-separated address list
+// so every deployment states its own reviewed set.
+function readOracleSet(): string[] {
+  const raw = process.env.BRIDGE_ORACLES;
+  if (!raw) {
+    throw new Error("BRIDGE_ORACLES is required: comma-separated reviewed oracle addresses");
+  }
+  const oracles = raw.split(",").map((entry) => ethers.utils.getAddress(entry.trim()));
+  if (oracles.length < 3) {
+    throw new Error(`oracle set must contain at least 3 addresses, got ${oracles.length}`);
+  }
+  if (new Set(oracles).size !== oracles.length) {
+    throw new Error("oracle set contains duplicate addresses");
+  }
+  return oracles;
+}
+
 async function main() {
-  const [owner] = await ethers.getSigners();
-
+  const oracles = readOracleSet();
   const Bridge = await ethers.getContractFactory("Bridge");
-  const oracles = [
-    '0xeb05E1B6AC0d574eF2CF29FDf01cC0bA3D8F9Bf1',
-    '0xe54CD631C97bE0767172AD16904688962d09d2FE',
-    '0xF636f40Ebe17Fb2A1343e5EEee9D13AA90888b51'
-  ];
   const bridge = await Bridge.deploy(oracles);
-  // const bridge = Bridge.attach('0xF113b76E11c738C1De215115B24f5aBe2aE104D9');
   await bridge.deployed();
-  // console.log('oracles ', await bridge.getOracleSet());
 
-  console.log("bridge deployed to ", bridge.address); // 0xF113b76E11c738C1De215115B24f5aBe2aE104D9
+  console.log("bridge deployed to ", bridge.address);
 }
 
 main().catch((error) => {

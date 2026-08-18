@@ -9,9 +9,9 @@ let Bridge = artifacts.require("Bridge");
 
 let token;
 
-contract("WrappedTOS", ([single_oracle, not_oracle, user, user2, user3]) => {
+contract("WrappedTOS", ([oracle1, not_oracle, user, user2, user3, oracle2, oracle3]) => {
   describe("WrappedTOS::instance", async () => {
-    token = await Bridge.deployed("Wrapped TOS Coin", "TOSCOIN", [single_oracle]);
+    token = await Bridge.deployed("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle2, oracle3]);
   });
 
   describe("WrappedTOS::details", () => {
@@ -35,11 +35,13 @@ contract("WrappedTOS", ([single_oracle, not_oracle, user, user2, user3]) => {
 
   describe("WrappedTOS::simple_minting", () => {
 
-    it("single oracle can mint tokens", async () => {
+    it("an oracle quorum can mint tokens", async () => {
       let data = utils.prepareSwapData(user, 1e9);
       let balance = await token.balanceOf(user);
       balance.toString().should.be.equal("0");
-      await token.voteForMinting(data, [await utils.signData(data, single_oracle, token.address)], { from: not_oracle }).should.be.fulfilled;
+      await token.voteForMinting(data, utils.sortedSignatures([
+        await utils.signData(data, oracle1, token.address),
+        await utils.signData(data, oracle2, token.address)]), { from: not_oracle }).should.be.fulfilled;
       balance = await token.balanceOf(user);
       balance.toString().should.be.equal(String(1e9));
     });
@@ -74,7 +76,7 @@ contract("WrappedTOS", ([single_oracle, not_oracle, user, user2, user3]) => {
     it("user 1 can burn tokens", async () => {
       await token.burn("1000", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.rejected;
 
-      await token.voteForSwitchBurn(true, 41, [await utils.signBurnStatus(true, 41, single_oracle, token.address)], { from: not_oracle }).should.be.fulfilled;
+      await token.voteForSwitchBurn(true, 41, utils.sortedSignatures([await utils.signBurnStatus(true, 41, oracle1, token.address), await utils.signBurnStatus(true, 41, oracle2, token.address)]), { from: not_oracle }).should.be.fulfilled;
       let initialBalance = await token.balanceOf(user);
       await token.burn("1000", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.fulfilled;
       let finalBalance = await token.balanceOf(user);
@@ -82,7 +84,7 @@ contract("WrappedTOS", ([single_oracle, not_oracle, user, user2, user3]) => {
     });
 
     it("user 3 cant burn tokens", async () => {
-      await token.voteForSwitchBurn(true, 42, [await utils.signBurnStatus(true, 42, single_oracle, token.address)], { from: not_oracle }).should.be.fulfilled;
+      await token.voteForSwitchBurn(true, 42, utils.sortedSignatures([await utils.signBurnStatus(true, 42, oracle1, token.address), await utils.signBurnStatus(true, 42, oracle2, token.address)]), { from: not_oracle }).should.be.fulfilled;
       await token.burn("1000", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user3 }).should.be.rejected;
       let finalBalance = await token.balanceOf(user3);
       finalBalance.toString().should.be.equal("0");
@@ -92,12 +94,12 @@ contract("WrappedTOS", ([single_oracle, not_oracle, user, user2, user3]) => {
       await token.approve(user2, "1200", { from: user });
       let initialBalance = await token.balanceOf(user);
 
-      await token.voteForSwitchBurn(false, 43, [await utils.signBurnStatus(false, 43, single_oracle, token.address)], { from: not_oracle }).should.be.fulfilled;
+      await token.voteForSwitchBurn(false, 43, utils.sortedSignatures([await utils.signBurnStatus(false, 43, oracle1, token.address), await utils.signBurnStatus(false, 43, oracle2, token.address)]), { from: not_oracle }).should.be.fulfilled;
 
       await token.burnFrom(user, "1100", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user2 }).should.be
           .rejected;
 
-      await token.voteForSwitchBurn(true, 44, [await utils.signBurnStatus(true, 44, single_oracle, token.address)], { from: not_oracle }).should.be.fulfilled;
+      await token.voteForSwitchBurn(true, 44, utils.sortedSignatures([await utils.signBurnStatus(true, 44, oracle1, token.address), await utils.signBurnStatus(true, 44, oracle2, token.address)]), { from: not_oracle }).should.be.fulfilled;
 
       await token.burnFrom(user3, "1100", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user2 }).should.be
         .rejected;

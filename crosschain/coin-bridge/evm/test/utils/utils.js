@@ -56,6 +56,13 @@ let signBurnStatus = async function(burnStatus, nonce, account, target) {
     return await signHash(hashData(encodeBurnStatus(burnStatus, nonce, target)), account);
 };
 
+// The bridge requires strictly ascending signers; sort so a test can pass
+// signatures in whatever order it produced them.
+let sortedSignatures = function(signatures) {
+    return signatures.slice().sort((a, b) =>
+        a.signer.toLowerCase() < b.signer.toLowerCase() ? -1 : 1);
+};
+
 module.exports = Object({
     TOS_WORKCHAIN:TOS_WORKCHAIN,
     TOS_ADDRESS_HASH:TOS_ADDRESS_HASH,
@@ -69,5 +76,6 @@ module.exports = Object({
     signHash:signHash,
     signData:signData,
     signSet:signSet,
-    signBurnStatus:signBurnStatus
+    signBurnStatus:signBurnStatus,
+    sortedSignatures:sortedSignatures
 });
