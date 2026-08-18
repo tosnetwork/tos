@@ -90,6 +90,9 @@ def excluded(kind: str, rel: Path) -> bool:
     if kind == "tvm":
         if rel.as_posix() in {"build-mainnet.txt", "build-testnet.txt"}:
             return True
+        # Empty toncli build placeholders; the repository .gitignore excludes build/.
+        if rel.as_posix().startswith("toncli_tests/build"):
+            return True
         if name.endswith((".boc", ".addr")):
             return True
         if name.startswith("uf_public_keys_"):
@@ -187,13 +190,16 @@ def make_active_evm(project: Path) -> None:
 
 
 def iter_manifest_files(project: Path) -> Iterable[Path]:
-    roots = [project / "upstream", project / "tvm", project / "evm"]
-    for root in roots:
-        if not root.exists():
+    for rel in GENERATED_PATHS:
+        if rel.name in {"UPSTREAM.lock.json", "SOURCE_MANIFEST.sha256"}:
             continue
-        for path in sorted(root.rglob("*")):
-            if path.is_file() and "node_modules" not in path.parts and "artifacts" not in path.parts:
-                yield path
+        root = project / rel
+        if root.is_file():
+            yield root
+        elif root.is_dir():
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and not {"node_modules", "artifacts", "cache"} & set(path.parts):
+                    yield path
 
 
 def write_manifest(project: Path) -> None:
