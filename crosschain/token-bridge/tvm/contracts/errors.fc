@@ -31,5 +31,9 @@ const int error::wrong_external_chain_id = 410;
 const int error::wrong_sender_workchain = 413;
 const int error::mint_fee_not_matched = 407;
 const int error::mint_fee_less_forward = 399;
+;; A non-zero forward amount is the only action the receiving wallet can
+;; fail on, and that failure is not reconcilable across the mint's three
+;; transactions. The bridge refuses such a swap outright.
+const int error::forward_amount_not_zero = 398;
 
 const int error::no_bridge_config = 666;

@@ -96,9 +96,14 @@ class TosBridgeModel:
             raise ValueError("exact mint fee required")
         self.paid_swaps.add(qid)
 
-    def mint(self, token: str, amount: int, qid: int) -> None:
+    def mint(self, token: str, amount: int, qid: int, forward_amount: int = 0) -> None:
         if self.swaps_suspended:
             raise PermissionError("swaps suspended")
+        # A non-zero forward amount is the only action the receiving wallet can
+        # fail on, and the mint spans three transactions with no atomicity, so
+        # such a failure would inflate supply with no wallet credit behind it.
+        if forward_amount != 0:
+            raise ValueError("forward amount must be zero")
         if qid not in self.paid_swaps or qid in self.minted_swaps:
             raise RuntimeError("unpaid or replayed mint")
         if amount <= 0:
@@ -201,6 +206,15 @@ class ProtocolModelTests(unittest.TestCase):
         self.tos.burns_suspended = True
         with self.assertRaises(PermissionError):
             self.tos.burn("USDT", 1, 13)
+
+    def test_mint_rejects_a_non_zero_forward_amount(self) -> None:
+        qid = query_id(1_700_000_000, "0xb", "0xt", 0)
+        self.tos.pay_swap(qid, 17)
+        with self.assertRaises(ValueError):
+            self.tos.mint("USDT", 100, qid, forward_amount=1)
+        self.assertEqual(self.tos.total_supply.get("USDT", 0), 0)
+        self.tos.mint("USDT", 100, qid)
+        self.assertEqual(self.tos.total_supply["USDT"], 100)
 
     def test_mint_requires_paid_swap_and_is_single_use(self) -> None:
         with self.assertRaises(RuntimeError):

@@ -85,6 +85,7 @@
 
         slice to_address = create_address(WORKCHAIN, addr_hash);
 
+        throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0);
         throw_unless(error::mint_fee_less_forward, bridge_mint_fee > forward_coins_amount);
 
         (slice minter_address, cell jetton_minter_state_init) = calculate_minter_address(wrapped_token_data);

@@ -10,7 +10,7 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 4. The EVM bridge address and EVM chain ID domain-separate every signed action.
 5. The TOS and EVM contracts, compiler versions, deployment BOCs/bytecode, and constructor/config cells match audited artifacts.
 6. Locked ERC-20 balances and wrapped Jetton supply are continuously reconciled.
-7. Every deployment satisfies the hard constraints below: oracles sign a zero forward amount, and the configured fee budget covers the whole mint path.
+7. Every deployment satisfies the hard constraints below. The zero forward amount is enforced by the contract; the mint-path fee budget is still an operational responsibility.
 
 A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record.
 
@@ -32,13 +32,13 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 
 These are not future work. A deployment that violates one of them is misconfigured and must not be used.
 
-### The signed forward amount must be zero
+### The signed forward amount must be zero — enforced by `jetton-bridge`
 
-Oracles must sign every swap with `forward_coins_amount = 0`, and the oracle daemon must refuse to construct a swap message with any other value.
+`jetton-bridge` rejects any swap whose `forward_coins_amount` is non-zero (`error::forward_amount_not_zero`, 398). Oracle daemons must therefore sign swaps with a zero forward amount; a message carrying any other value cannot execute.
 
 The mint spans three transactions — bridge, minter, wallet — and TVM gives no atomicity across them. `jetton-minter` commits `total_supply += amount` in its own transaction and then relies on a later wallet transaction to create the matching balance. If that wallet transaction fails, supply is inflated with no credit behind it, the multisig query is already spent, and the depositor's locked ERC-20 is stranded until a new quorum signs a different query. `jetton-minter` ignores bounced messages, so nothing reconciles this. (Note that this cannot be fixed by reordering the send and the state write: `send_raw_message` only appends to the action list, and c4 and c5 commit together at the end of a successful compute phase.)
 
-A zero forward amount closes the reachable half of that window. `jetton-wallet`'s `receive_tokens` has no insufficient-value guard in its compute phase — unlike `send_tokens`, it does not `throw_unless(error::not_enough_tos, ...)` — so its only failure path is the action phase, and the only action it can fail on is the forward notification, which it emits solely when `forward_coins_amount` is non-zero. With a zero forward amount the wallet emits at most the excesses message, which carries `SEND_MODE_IGNORE_ERRORS`.
+A zero forward amount closes the reachable half of that window, which is why the contract now requires it rather than leaving it to operational discipline. `jetton-wallet`'s `receive_tokens` has no insufficient-value guard in its compute phase — unlike `send_tokens`, it does not `throw_unless(error::not_enough_tos, ...)` — so its only failure path is the action phase, and the only action it can fail on is the forward notification, which it emits solely when `forward_coins_amount` is non-zero. With a zero forward amount the wallet emits at most the excesses message, which carries `SEND_MODE_IGNORE_ERRORS`.
 
 The residual case is a compute-phase failure of the wallet, which means the fee budget could not deploy and run it. That is covered by the fee-budget constraint below, and its complete resolution is tracked as pre-mainnet work.
 
@@ -49,7 +49,7 @@ The residual case is a compute-phase failure of the wallet, which means the fee 
 ## Mandatory pre-mainnet work
 
 - [ ] Resolve burn-path partial execution. `jetton-minter` decreases `total_supply` and then notifies `jetton-bridge` with a **non-bounceable** message. If that notification is not processed — the bridge throws, or its ConfigParam is unavailable in the asynchronous window — the depositor's jettons are already burned and supply already reduced, but no burn log is emitted, so no unlock can ever be signed on the EVM side. Unlike the mint direction, no bounce is even available to compensate. The same pending/finalize treatment applies.
-- [ ] Resolve mint-path partial execution so the bridge no longer depends on the deployment constraints above. `jetton-minter` increases `total_supply` when it dispatches `internal_transfer` and ignores bounces, and `jetton-bridge` has already marked the multisig query processed by then. Bounce handling alone is not sufficient and not trivial: a wallet action-phase failure produces no bounce at all, and the bounced body carries only the first 256 bits of the original message, which excludes the destination — so the minter cannot prove a bounce came from one of its own wallets without tracking pending mints by query ID. Prefer an acknowledgement protocol that reports completion only after the wallet is credited, and validate the whole fee budget in the contract rather than in operations.
+- [ ] Resolve mint-path partial execution so the bridge no longer depends on the fee-budget constraint above. Rejecting a non-zero forward amount closes the wallet's action-phase failure, but a compute-phase failure remains possible whenever the fee budget cannot deploy and run the wallet. `jetton-minter` increases `total_supply` when it dispatches `internal_transfer` and ignores bounces, and `jetton-bridge` has already marked the multisig query processed by then. Bounce handling alone is not sufficient and not trivial: a wallet action-phase failure produces no bounce at all, and the bounced body carries only the first 256 bits of the original message, which excludes the destination — so the minter cannot prove a bounce came from one of its own wallets without tracking pending mints by query ID. Prefer an acknowledgement protocol that reports completion only after the wallet is credited, and validate the whole fee budget in the contract rather than in operations.
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.

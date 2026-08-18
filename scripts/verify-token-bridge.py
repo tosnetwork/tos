@@ -94,6 +94,7 @@ def verify_tvm_sources() -> None:
     require_text(c / "jetton-bridge.fc", [
         "op::execute_voting::swap",
         "throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee)",
+        "throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0)",
         "calculate_minter_address(wrapped_token_data)",
         "throw_unless(error::minter_not_sender",
         "emit_log_simple(LOG_BURN",
