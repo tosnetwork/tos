@@ -5,6 +5,7 @@
 \usepackage[T1]{fontenc}
 \usepackage[english]{babel}
 \usepackage{amsmath,amssymb}
+\usepackage{array}
 \usepackage{booktabs}
 \usepackage{enumitem}
 \usepackage{geometry}
@@ -30,6 +31,11 @@
 \newcommand{\experimental}{\textbf{Experimental}}
 \newcommand{\planned}{\textbf{Planned}}
 \newcommand{\partialstatus}{\textbf{Partial}}
+
+% Left-aligned paragraph column. A justified column this narrow holds too few
+% words per line to set without stretching the interword spaces, which reads as
+% rivers of white and is what every underfull-hbox warning here was reporting.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 \title{\textbf{TOS Network}\\[0.4em]\Large Open Coordination and Settlement for\\
 AI Services and Physical Edge Intelligence}
@@ -146,7 +152,7 @@ capability against where that model actually runs. Provider roadmaps and open-we
 release patterns point toward a rough correspondence between model scale, deployment
 location and workload:
 
-\begin{longtable}{p{0.16\textwidth}p{0.32\textwidth}p{0.34\textwidth}}
+\begin{longtable}{L{0.16\textwidth}L{0.32\textwidth}L{0.34\textwidth}}
 \toprule
 Model scale & Primary deployment location & Typical workload \\
 \midrule
@@ -308,7 +314,7 @@ review and new conformance vectors.
 TOS Network is designed as independently released layers. The separation limits consensus
 risk and allows product profiles to evolve at application speed.
 
-\begin{longtable}{p{0.20\textwidth}p{0.34\textwidth}p{0.36\textwidth}}
+\begin{longtable}{L{0.20\textwidth}L{0.34\textwidth}L{0.36\textwidth}}
 \toprule
 Layer & Responsibility & Delivery boundary \\
 \midrule
@@ -988,7 +994,7 @@ policy) is created through Artificial Intelligence Proof of Work (AIPoW), a sepa
 mechanism described below, is not funded at genesis and is never held by a treasury
 wallet. The current production policy is:
 
-\begin{longtable}{p{0.48\textwidth}p{0.38\textwidth}}
+\begin{longtable}{L{0.48\textwidth}L{0.38\textwidth}}
 \toprule
 Item & Policy target \\
 \midrule
@@ -1342,7 +1348,7 @@ service availability or adoption. ``Partial'' means a reusable primitive exists 
 interoperable product surface does not. ``Planned'' identifies work assigned to a future
 protocol or product repository.
 
-\begin{longtable}{p{0.35\textwidth}p{0.18\textwidth}p{0.37\textwidth}}
+\begin{longtable}{L{0.35\textwidth}L{0.18\textwidth}L{0.37\textwidth}}
 \toprule
 Capability & Status & Scope \\
 \midrule
