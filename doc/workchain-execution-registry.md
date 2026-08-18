@@ -35,3 +35,7 @@ Any future engine outside the native TVM surface must define:
 Until such an engine exists and is registered, this binary remains focused on native TVM execution.
 
 AI actor roadmap work must not add an execution engine as a shortcut for model, service, or agent integration. Those integrations should be represented as native service actors, off-chain workers with on-chain authorization, or proof adapters.
+
+## Cross-Chain Bridge Contracts
+
+The `crosschain/` directory vendors bridge smart contracts whose Solidity half is deployed on external counterparty chains (Ethereum, BNB Smart Chain, ...), never inside the TOS node. The TOS-side half of each bridge is ordinary native TVM code selected through masterchain ConfigParams. Vendoring these sources does not register an execution engine, add a workchain descriptor, or weaken the native-TVM-only policy above, and the CI scan excludes `crosschain/` for that reason.
