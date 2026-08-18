@@ -1,0 +1,5 @@
+artifacts/
+evm/node_modules/
+evm/cache/
+evm/typechain-types/
+evm/coverage/
