@@ -20,6 +20,13 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     mapping(address => bool) public isOracle;
     mapping(address => bool) public disabledTokens;
     mapping(bytes32 => bool) public finishedVotings;
+    // finishedVotings only stops a digest that already executed. A governance
+    // signature that was produced but never executed stays valid forever, so an
+    // old rotation could be replayed to undo a newer one. These cursors make
+    // each governance action strictly move forward. Every value is already
+    // inside its signed digest, so the signing format is unchanged.
+    uint256 public lastLockStatusNonce;
+    mapping(address => uint256) public lastDisableTokenNonce;
     bool public allowLock;
 
     event Lock(
@@ -41,11 +48,17 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     );
     event NewOracleSet(uint256 oracleSetHash, address[] newOracles);
 
-    constructor(address[] memory initialSet) {
+    // initiallyDisabledTokens must name this deployment's coin-bridge wrapped
+    // token, so the token bridge cannot wrap what the coin bridge already
+    // wrapped. The addresses are supplied per deployment rather than compiled
+    // in: this contract has no way to know them ahead of the coin-plane launch.
+    constructor(address[] memory initialSet, address[] memory initiallyDisabledTokens) {
         _updateOracleSet(0, initialSet);
         disabledTokens[address(0)] = true;
-        disabledTokens[address(0x582d872A1B094FC48F5DE31D3B73F2D9bE47def1)] = true; // wrapped TOS coin
-        disabledTokens[address(0x76A797A59Ba2C17726896976B7B3747BfD1d220f)] = true; // wrapped TOS coin
+        for (uint256 i = 0; i < initiallyDisabledTokens.length; i++) {
+            require(initiallyDisabledTokens[i] != address(0), "Zero token in disabled list");
+            disabledTokens[initiallyDisabledTokens[i]] = true;
+        }
     }
 
     function _generalVote(bytes32 digest, Signature[] memory signatures)
@@ -116,6 +129,13 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     ) external {
         bytes32 _id = getNewSetId(oracleSetHash, newOracles);
         _generalVote(_id, signatures);
+        // oracleSetHash names the set being replaced. Binding it to the live
+        // set invalidates a rotation signature the moment any other rotation
+        // lands, so a stale one cannot undo a newer one.
+        require(
+            oracleSetHash == uint256(keccak256(abi.encode(oracleSet))),
+            "Stale oracle set hash"
+        );
         finishedVotings[_id] = true;
         _updateOracleSet(oracleSetHash, newOracles);
     }
@@ -127,6 +147,8 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     ) external {
         bytes32 _id = getNewLockStatusId(newLockStatus, nonce);
         _generalVote(_id, signatures);
+        require(nonce > lastLockStatusNonce, "Stale lock status nonce");
+        lastLockStatusNonce = nonce;
         finishedVotings[_id] = true;
         allowLock = newLockStatus;
     }
@@ -139,6 +161,8 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
     ) external {
         bytes32 _id = getNewDisableToken(isDisable, tokenAddress, nonce);
         _generalVote(_id, signatures);
+        require(nonce > lastDisableTokenNonce[tokenAddress], "Stale disable token nonce");
+        lastDisableTokenNonce[tokenAddress] = nonce;
         finishedVotings[_id] = true;
         if (isDisable) {
             disabledTokens[tokenAddress] = true;

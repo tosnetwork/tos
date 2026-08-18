@@ -4,7 +4,7 @@
 
 This bridge is not trustless. Safety depends on all of the following remaining true:
 
-1. At least the configured oracle quorum validates each cross-chain event honestly. The upstream EVM quorum is `floor(2n/3)` of the current oracle set; choose an oracle count divisible by 3 so the quorum is a true two-thirds majority.
+1. At least the configured oracle quorum validates each cross-chain event honestly. The EVM quorum is a ceiling two-thirds majority of the current oracle set at every set size.
 2. Oracle keys are independent, protected, and not exposed to one shared control plane.
 3. The TOS masterchain ConfigParam (71 for Ethereum, 72 for BSC) points to the intended bridge, collector, and oracle set.
 4. The TOS and EVM contracts, compiler versions, deployment bytecode, and initial storage match audited artifacts.
@@ -17,6 +17,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - Wrapped-token burning starts disabled and requires an oracle vote to enable.
 - Oracle signatures must meet the quorum, be authorized members of the current set, and be strictly sorted (preventing duplicates).
 - The quorum is a ceiling two-thirds majority at every set size, and every set installed on any path holds at least three distinct non-zero members.
+- Governance votes carry strictly increasing oracle-set hashes and burn-status nonces, so a signed-but-unexecuted vote cannot be held back and used to undo a later one. Oracle daemons must issue these values in increasing order.
 - Completed EVM votes cannot be replayed (`finishedVotings`).
 - ECDSA signatures are checked for low-`s` and canonical `v` values.
 - Oracle-set updates reject sets shorter than three and duplicate members.

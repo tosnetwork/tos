@@ -141,6 +141,10 @@ def verify_evm_sources() -> None:
         "finishedVotings[_id] = true",
         "require(newOracles[i] != address(0)",
         "require(!isOracle[newOracles[i]]",
+        "oracleSetHash == uint256(keccak256(abi.encode(oracleSet)))",
+        'require(initiallyDisabledTokens[i] != address(0), "Zero token in disabled list")',
+        'require(nonce > lastLockStatusNonce, "Stale lock status nonce")',
+        'require(nonce > lastDisableTokenNonce[tokenAddress], "Stale disable token nonce")',
     ])
     require_text(c / "SignatureChecker.sol", [
         "address(this)",

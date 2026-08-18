@@ -11,6 +11,13 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
     address[] public oraclesSet;
     mapping(address => bool) public isOracle;
     mapping(bytes32 => bool) public finishedVotings;
+    // finishedVotings only stops a digest that already executed. A governance
+    // signature that was produced but never executed stays valid forever, so
+    // an old rotation could be replayed to undo a newer one. These cursors make
+    // each governance action strictly move forward. Both values are already
+    // inside their signed digests, so the signing format is unchanged.
+    int public lastOracleSetHash;
+    int public lastBurnStatusNonce;
 
     constructor (string memory name_, string memory symbol_, address[] memory initialSet) ERC20(name_, symbol_) {
         updateOracleSet(0, initialSet);
@@ -43,15 +50,18 @@ contract Bridge is SignatureChecker, BridgeInterface, WrappedTOS {
     }
 
     function voteForNewOracleSet(int oracleSetHash, address[] memory newOracles, Signature[] memory signatures) override  public {
+      require(oracleSetHash > lastOracleSetHash, "Stale oracle set hash");
       bytes32 _id = getNewSetId(oracleSetHash, newOracles);
-      require(newOracles.length > 2, "New set is too short");
       generalVote(_id, signatures);
+      lastOracleSetHash = oracleSetHash;
       updateOracleSet(oracleSetHash, newOracles);
     }
 
     function voteForSwitchBurn(bool newBurnStatus, int nonce, Signature[] memory signatures) override public {
+      require(nonce > lastBurnStatusNonce, "Stale burn status nonce");
       bytes32 _id = getNewBurnStatusId(newBurnStatus, nonce);
       generalVote(_id, signatures);
+      lastBurnStatusNonce = nonce;
       allowBurn = newBurnStatus;
     }
 

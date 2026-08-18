@@ -17,7 +17,9 @@ from dataclasses import dataclass, field
 def quorum(oracle_count: int) -> int:
     if oracle_count < 3:
         raise ValueError("the upstream bridge requires at least three oracles")
-    return (2 * oracle_count) // 3
+    # Ceiling: a floor threshold is satisfied by half the set at sizes that
+    # are not multiples of three. Mirrors Bridge.sol.
+    return (2 * oracle_count + 2) // 3
 
 
 def vote_digest(contract: str, kind: str, payload: bytes) -> bytes:
@@ -117,11 +119,11 @@ ORACLES = (11, 22, 33)
 
 
 class QuorumTest(unittest.TestCase):
-    def test_floor_two_thirds(self) -> None:
-        self.assertEqual(quorum(3), 2)
-        self.assertEqual(quorum(4), 2)
-        self.assertEqual(quorum(6), 4)
-        self.assertEqual(quorum(9), 6)
+    def test_ceiling_two_thirds(self) -> None:
+        # Shared vector with the Solidity threshold matrix test.
+        expected = {3: 2, 4: 3, 5: 4, 6: 4, 7: 5, 8: 6, 9: 6, 10: 7, 11: 8, 12: 8}
+        for size, need in expected.items():
+            self.assertEqual(quorum(size), need, f"set size {size}")
 
     def test_tiny_sets_rejected(self) -> None:
         with self.assertRaises(ValueError):

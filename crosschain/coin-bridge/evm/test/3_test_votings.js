@@ -181,19 +181,29 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, ex
     });
     it("check replay protection", async () => {
       let user = oracle5;
-      let signatureSet = [await utils.signBurnStatus(0, 12, oracle4, bridge.address),
-                          await utils.signBurnStatus(0, 12, oracle5, bridge.address)];
-      await bridge.voteForSwitchBurn(0, 12, signatureSet, { from: oracle1 }).should.be.fulfilled;
+      // Burn-status nonces must strictly increase; 13 was consumed above.
+      let signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address),
+                          await utils.signBurnStatus(0, 15, oracle5, bridge.address)];
+      await bridge.voteForSwitchBurn(0, 15, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.rejected;
 
-      signatureSet = [await utils.signBurnStatus(1, 14, oracle4, bridge.address),
-                          await utils.signBurnStatus(1, 14, oracle5, bridge.address)];
-      await bridge.voteForSwitchBurn(1, 14, signatureSet, { from: oracle1 }).should.be.fulfilled;
+      signatureSet = [await utils.signBurnStatus(1, 16, oracle4, bridge.address),
+                          await utils.signBurnStatus(1, 16, oracle5, bridge.address)];
+      await bridge.voteForSwitchBurn(1, 16, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.fulfilled;
 
-      signatureSet = [await utils.signBurnStatus(0, 12, oracle4, bridge.address),
-                          await utils.signBurnStatus(0, 12, oracle5, bridge.address)];
-      await bridge.voteForSwitchBurn(0, 12, signatureSet, { from: oracle1 }).should.be.rejected;
+      signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address),
+                          await utils.signBurnStatus(0, 15, oracle5, bridge.address)];
+      await bridge.voteForSwitchBurn(0, 15, signatureSet, { from: oracle1 }).should.be.rejected;
+
+      // A signature produced earlier but never executed must not survive a
+      // later vote either: this is what finishedVotings alone cannot stop.
+      signatureSet = [await utils.signBurnStatus(0, 17, oracle4, bridge.address),
+                          await utils.signBurnStatus(0, 17, oracle5, bridge.address)];
+      let laterSet = [await utils.signBurnStatus(1, 18, oracle4, bridge.address),
+                          await utils.signBurnStatus(1, 18, oracle5, bridge.address)];
+      await bridge.voteForSwitchBurn(1, 18, laterSet, { from: oracle1 }).should.be.fulfilled;
+      await bridge.voteForSwitchBurn(0, 17, signatureSet, { from: oracle1 }).should.be.rejected;
       let isBurnAllowed = await bridge.allowBurn();
       isBurnAllowed.should.be.true;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.fulfilled;

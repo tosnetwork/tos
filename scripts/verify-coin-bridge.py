@@ -112,6 +112,8 @@ def verify_evm_sources() -> None:
         "require(!isOracle[newSet[i]]",
         'require(newSet[i] != address(0), "Zero oracle in Set")',
         'require(newSet.length > 2, "Set is too short")',
+        'require(oracleSetHash > lastOracleSetHash, "Stale oracle set hash")',
+        'require(nonce > lastBurnStatusNonce, "Stale burn status nonce")',
         "require(signatures.length >= (2 * oraclesSet.length + 2) / 3",
     ])
     require_text(c / "WrappedTOS.sol", [

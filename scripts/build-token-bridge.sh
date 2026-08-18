@@ -11,9 +11,20 @@ FIFT_LIB="$ROOT/crypto/fift/lib"
 OUT="${OUT:-$PROJECT/artifacts/tvm}"
 
 # OUT is caller-supplied; refuse to recursively delete anything that is not a
-# path inside this bridge's own artifacts directory.
-canonical_out="$(readlink -m -- "$OUT")"
-artifacts_root="$(readlink -m -- "$PROJECT/artifacts")"
+# path inside this bridge's own artifacts directory. Canonicalization avoids
+# `readlink -m`, which is GNU-only and absent on macOS.
+canonicalize() {
+  local target="$1" parent
+  parent="$(cd "$(dirname -- "$target")" 2>/dev/null && pwd -P)" || {
+    echo "cannot resolve parent directory of: $target" >&2
+    exit 2
+  }
+  printf '%s/%s\n' "${parent%/}" "$(basename -- "$target")"
+}
+
+canonical_out="$(canonicalize "$OUT")"
+mkdir -p "$PROJECT/artifacts"
+artifacts_root="$(cd "$PROJECT/artifacts" && pwd -P)"
 if [[ "$canonical_out" != "$artifacts_root" && "$canonical_out" != "$artifacts_root"/* ]]; then
   echo "OUT must stay inside $artifacts_root (got: $canonical_out)" >&2
   exit 2

@@ -49,7 +49,7 @@ describe("Bridge contract", () => {
     [owner] = await ethers.getSigners();
 
     const Bridge = await ethers.getContractFactory("Bridge");
-    bridge = await Bridge.deploy(oracleSetAddresses) as Bridge;
+    bridge = await Bridge.deploy(oracleSetAddresses, []) as Bridge;
     await bridge.deployed();
 
     const TestToken = await ethers.getContractFactory("TestToken");
@@ -147,34 +147,31 @@ describe("Bridge contract", () => {
     }
   });
 
-  it("Cant lock eth wrapped TOS coin", async () => {
+  it("Cant lock a token named in the constructor's disabled list", async () => {
+    // The coin-plane wrapped token is not known at compile time, so the
+    // deployment names it and the bridge must refuse it from block zero.
+    const Bridge = await ethers.getContractFactory("Bridge");
+    const guarded = await Bridge.deploy(oracleSetAddresses, [token.address]) as Bridge;
+    await guarded.deployed();
+
+    await guarded.voteForSwitchLock(true, 1,
+      signUpdateLockStatus(true, 1, oracleSet, guarded.address));
+
     const bridgeAllowance = parseUnits("5");
-    await token.approve(bridge.address, bridgeAllowance);
+    await token.approve(guarded.address, bridgeAllowance);
     try {
-      await bridge.lock(
-          '0x582d872a1b094fc48f5de31d3b73f2d9be47def1',
-          bridgeAllowance,
-          tosAddressHash
-      );
-      expect.fail()
+      await guarded.lock(token.address, bridgeAllowance, tosAddressHash);
+      expect.fail();
     } catch (err: any) {
       expect(err.toString()).to.have.string("lock: disabled token");
     }
   });
 
-  it("Cant lock bsc wrapped TOS coin", async () => {
-    const bridgeAllowance = parseUnits("5");
-    await token.approve(bridge.address, bridgeAllowance);
-    try {
-      await bridge.lock(
-          '0x76A797A59Ba2C17726896976B7B3747BfD1d220f',
-          bridgeAllowance,
-          tosAddressHash
-      );
-      expect.fail()
-    } catch (err: any) {
-      expect(err.toString()).to.have.string("lock: disabled token");
-    }
+  it("Rejects the zero address in the constructor's disabled list", async () => {
+    const Bridge = await ethers.getContractFactory("Bridge");
+    await expect(
+      Bridge.deploy(oracleSetAddresses, ["0x0000000000000000000000000000000000000000"])
+    ).to.be.reverted;
   });
 
   it("Cant lock wrapped jetton", async () => {
@@ -595,6 +592,37 @@ describe("Bridge contract", () => {
     }
   });
 
+  it("Should reject a stale rotation that would undo a newer one", async () => {
+    // The dangerous case is an overlapping rotation: the members that survive
+    // still satisfy the quorum, so their old signatures stay usable.
+    const survivors = oracleSet.slice(0, 3);
+    const survivorAddresses = survivors.map((a) => a.address);
+    const setB = [...survivorAddresses, web3.eth.accounts.create().address];
+    const setC = [...survivorAddresses, web3.eth.accounts.create().address];
+
+    const currentSet = await bridge.getFullOracleSet();
+    const oracleSetHash = keccak256(encodeOracleSet(currentSet));
+
+    // Both rotations are signed against the same current set; only one lands.
+    const toB = signUpdateOracleData(oracleSetHash, setB, oracleSet, bridge.address);
+    const toC = signUpdateOracleData(oracleSetHash, setC, oracleSet, bridge.address);
+
+    await bridge.voteForNewOracleSet(oracleSetHash, setC, toC);
+    expect(await bridge.getFullOracleSet()).to.eql(setC);
+
+    // Every signer of the stale rotation is still an authorized oracle and
+    // they still meet the quorum, so only the state binding can stop this.
+    const stillAuthorized = signUpdateOracleData(
+      oracleSetHash, setB, survivors, bridge.address);
+    try {
+      await bridge.voteForNewOracleSet(oracleSetHash, setB, stillAuthorized);
+      expect.fail();
+    } catch (err: any) {
+      expect(err.toString()).to.have.string("Stale oracle set hash");
+    }
+    expect(await bridge.getFullOracleSet()).to.eql(setC);
+  });
+
   it("update oracle set - invalid signature", async () => {
     const newSigner = web3.eth.accounts.create();
     const newUser = web3.eth.accounts.create();
@@ -660,7 +688,7 @@ describe("Bridge contract", () => {
   it("cant create with zero oracle", async ()=>{
     try {
       const Bridge = await ethers.getContractFactory("Bridge");
-      const b = await Bridge.deploy(oracleSetAddresses.concat("0x0000000000000000000000000000000000000000")) as Bridge;
+      const b = await Bridge.deploy(oracleSetAddresses.concat("0x0000000000000000000000000000000000000000"), []) as Bridge;
       await bridge.deployed();
       expect.fail()
     } catch (err: any) {

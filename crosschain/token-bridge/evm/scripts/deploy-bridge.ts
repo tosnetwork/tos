@@ -19,10 +19,23 @@ function readOracleSet(): string[] {
   return oracles;
 }
 
+function readDisabledTokens(): string[] {
+  const raw = process.env.BRIDGE_DISABLED_TOKENS;
+  if (raw === undefined) {
+    throw new Error(
+      "BRIDGE_DISABLED_TOKENS is required: comma-separated tokens this bridge must refuse, " +
+      "normally this deployment's coin-bridge wrapped token. Pass an empty string to disable none."
+    );
+  }
+  return raw.split(",").map((e) => e.trim()).filter((e) => e.length > 0)
+    .map((e) => ethers.utils.getAddress(e));
+}
+
 async function main() {
   const oracles = readOracleSet();
+  const disabledTokens = readDisabledTokens();
   const Bridge = await ethers.getContractFactory("Bridge");
-  const bridge = await Bridge.deploy(oracles);
+  const bridge = await Bridge.deploy(oracles, disabledTokens);
   await bridge.deployed();
 
   console.log("bridge deployed to ", bridge.address);
