@@ -47,4 +47,5 @@ module.exports = {
   contracts_directory: "./contracts",
   migrations_directory: "./migrations-tron",
   contracts_build_directory: "./build-tron",
+  test_directory: "./test-tron",
 };

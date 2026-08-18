@@ -95,7 +95,22 @@ export BRIDGE_DISABLED_TOKENS=       # empty, or this deployment's wrapped coin
 npm run deploy-bridge-nile
 ```
 
-There is no mainnet network entry, deliberately. **What compilation proves and what it does not:** it confirms the contracts build for Tron and that `tron-solc` accepts `block.chainid`. It says nothing about the runtime value that `CHAINID` returns on a given Tron network, about `ecrecover` behaviour there, or about the Energy cost of the lock and unlock paths. Those need a Nile deployment, and until they are measured the ConfigParam 83 chain id remains an unverified assumption.
+There is no mainnet network entry, deliberately.
+
+### Execute them inside Tron's virtual machine
+
+```bash
+scripts/test-token-bridge-tron.sh   # starts a throwaway local Tron node in docker
+```
+
+The Hardhat suite runs an EVM, so it cannot answer the questions this slot rests on. These tests can, and they establish two of them:
+
+- **`CHAINID` is the last four bytes of the genesis block id, and a contract can bind a digest to it.** The test derives that value from the node's genesis block and requires it to reproduce the digest the deployed contract computed. This is the rule ConfigParam 83's chain id is chosen by.
+- **`ecrecover` behaves as `SignatureChecker` requires.** An oracle quorum's signatures verify through a real state-changing vote, and a non-oracle signature, a below-quorum vote, and a repeat all fail to move state.
+
+One Tron-specific caveat the tests encode: a reverted state-changing call does **not** throw through TronBox — the transaction is reported as sent either way. Negative cases must assert on contract state, never on a thrown error, or they pass whether or not the contract rejected anything. For the same reason a `pure` function called constantly (`checkSignature` on its own) reverts on this path regardless of its arguments, which is why the quorum vote is the test that carries the evidence.
+
+**Still unmeasured:** the chain id of Tron *mainnet* and *Nile* specifically (the rule is confirmed, the per-network value is not), the Energy cost of the lock and unlock paths, and any end-to-end flow against a public Tron network. Until a Nile deployment measures them, ConfigParam 83's chain id remains derived rather than observed.
 
 ## Production gates
 
