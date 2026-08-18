@@ -339,7 +339,7 @@ stake-tier transition.
 | Minimum stake per validator | 10,000 TOS | Permit the first public elections while circulation is still limited |
 | Maximum submitted stake | 10,000,000 TOS | Limit a single election entry |
 | Minimum aggregate stake | 40,000 TOS | Four times the minimum stake |
-| Initial maximum effective-stake factor | 1 | Keep a four-validator set equal-weight |
+| Initial maximum effective-stake factor | 1 | Keep a four-validator set equal-weight; §5.2 governs any increase |
 
 The four-validator value is a hard protocol minimum, not a sufficient
 decentralization target. Four equal-weight validators require three
@@ -348,21 +348,96 @@ validator can be tolerated; two unavailable validators halt progress.
 
 ### 5.2 Effective-stake factor
 
-Version 0.6 does not add a validator-count-dependent factor formula to the
-Elector. The initial ConfigParam 17 maximum factor is one, so the first
-four-validator elections remain equal in effective stake.
+The Elector does not weight a validator by the stake it submitted. It weights
+the validator by what that stake is capped to
+([`elector-code.fc:770`](../crypto/smartcont/elector-code.fc)):
 
-Configuration governance may later raise the factor only after:
+```text
+true_stake = min(stake, (max_stake_factor * smallest_elected_stake) >> 16)
+```
 
-- at least eight independently controlled validators have remained elected
-  across two consecutive sets;
-- the proposed factor cannot give one entry one third or more of total
-  effective weight in the smallest allowed set;
-- common control and delegation concentration have been measured publicly;
-  and
+The surplus above the ceiling is refunded rather than staked. ConfigParam 17
+holds the factor in units of 1/65536, and genesis sets it to 65,536 — a factor
+of one — so every elected validator carries the weight of the smallest one and
+a four-validator set is equal-weight no matter what its members submitted.
+
+Version 0.6 adds no validator-count-dependent factor formula to the Elector.
+Raising the factor is an ordinary configuration change, not an automatic
+consensus rule.
+
+**The bound.** The factor decides how much heavier the largest entry may be
+than the smallest, so the worst case is one entry staking to the ceiling while
+every other sits at the minimum:
+
+```text
+worst_case_share = factor / (factor + min_validators - 1)
+```
+
+Holding that share below one third — the point at which a single party can
+stall consensus alone — is the whole rule:
+
+```text
+factor < (min_validators - 1) / 2
+```
+
+| Factor | Smallest `min_validators` that permits it | Worst-case share of one entry |
+|---:|---:|---:|
+| 1 | 4 | 25.0% |
+| 1.5 | 5 | 27.3% |
+| 2 | 6 | 28.6% |
+| 3 | 8 | 30.0% |
+| 5 | 12 | 31.25% |
+| 7 | 16 | 31.8% |
+
+The factor is not an independent knob. Upstream's value of three is harmless on
+a set of 350 and hands one entry half the weight on a set of four, so it cannot
+be copied on its own.
+
+**The order.** `min_validators` moves first, in a separate proposal that
+activates before the factor's. The bound is measured against the smallest set
+the *configuration* permits, not against the set that happens to be running:
+raising the factor first opens a window in which the configuration allows a set
+where one entry holds half the weight, and the Elector may install exactly such
+a set during that window. Raising the floor first only makes elections
+stricter, which is never a safety loss.
+
+**The tooling refuses the wrong order.**
+
+```bash
+# 1. Check the combination before writing any proposal.
+scripts/check-stake-factor-safety.py --factor 3 --validators 8
+scripts/check-stake-factor-safety.py --zerostate state.boc   # against live config
+
+# 2. Raise the floor. Refuses a floor the current set cannot absorb an
+#    absence under (--margin, default 2 validators).
+scripts/propose-validator-count.sh --state state.boc --min-validators 8
+
+# 3. Only once that proposal has activated, raise the factor. Refuses to emit
+#    a signable proposal while the floor does not support the value.
+scripts/propose-stake-factor.sh --state state.boc --factor 3
+```
+
+**The remaining preconditions are policy, not arithmetic.** Governance may
+raise the factor only after:
+
+- at least the new `min_validators` independently controlled operators — eight,
+  for a factor of three — have remained elected across two consecutive sets;
+  passing the arithmetic with keys that share effective control satisfies
+  nothing (§5.3);
+- common control and delegation concentration have been measured publicly; and
 - the change passes election simulation and safety review.
 
-This is an ordinary configuration change, not an automatic consensus rule.
+**Reading the live values.** `/explorer/staking` reports `max_stake_factor`,
+the smallest stake actually elected, the effective ceiling the two imply, and
+whether a surplus above that ceiling earns. A surface that shows a stake beside
+a reward rate without them describes a return the next unit staked will not
+receive.
+
+**What the factor gates.** While it is one, aggregating stake earns nothing at
+the margin: a pool holding ten times the minimum is paid exactly what a solo
+validator at the minimum is paid. That is why the pooled-stake contract ships
+operable but without a user-facing entry point — see
+[ADR-0002](adr/0002-pooled-stake-belongs-below-the-protocol.md).
 
 ### 5.3 Independence requirements
 
@@ -705,8 +780,13 @@ ConfigParam 17:
   min_stake             = 10,000 TOS
   max_stake             = 10,000,000 TOS
   min_total_stake       = 40,000 TOS
-  max_stake_factor      = 1
+  max_stake_factor      = 1          ;; 65,536 raw, units of 1/65536
 ```
+
+`max_stake_factor` and `min_validators` are one parameter pair, not two
+parameters: the factor is only valid against the floor, and the floor has to
+move first. §5.2 gives the bound, the ordering, and the scripts that enforce
+both.
 
 Retain the existing ConfigParam 15 election cadence unless the full bootstrap
 test proves a timing defect.
