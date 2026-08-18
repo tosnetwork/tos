@@ -1,0 +1,128 @@
+name: TOS legacy jUSDT bridge validation
+
+on:
+  push:
+    branches:
+      - agent/tos-jusdt-bridge
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: legacy-jusdt-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  import-build-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out TOS branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Import pinned TON contract sources
+        run: python3 scripts/import-legacy-jusdt-bridge.py
+
+      - name: Install Node.js for pinned Hardhat tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: '18'
+          cache: npm
+          cache-dependency-path: crosschain/legacy-jusdt-bridge/evm/package-lock.json
+
+      - name: Verify deterministic import
+        run: python3 scripts/import-legacy-jusdt-bridge.py --check
+
+      - name: Run source and protocol invariant checks
+        run: python3 scripts/verify-legacy-jusdt-bridge.py
+
+      - name: Authenticate to the TOS builder registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build TOS func and fift
+        env:
+          BUILDER_IMAGE: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e TOS_PRODUCTION_BUILD=1 \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            "$BUILDER_IMAGE" \
+            bash -lc '
+              cmake -S . -B build-bridge -GNinja \
+                -DCMAKE_C_COMPILER=clang-21 \
+                -DCMAKE_CXX_COMPILER=clang++-21 \
+                -DTOS_USE_JEMALLOC=ON \
+                -DTOS_PRODUCTION_BUILD=ON \
+                -DCMAKE_BUILD_TYPE=Release &&
+              cmake --build build-bridge --target func fift -- -j2
+            '
+
+      - name: Reproducibly compile all TVM bridge variants
+        env:
+          FUNC: ${{ github.workspace }}/build-bridge/crypto/func
+        run: scripts/build-legacy-jusdt-bridge.sh
+
+      - name: Compile and test EVM bridge
+        working-directory: crosschain/legacy-jusdt-bridge/evm
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+      - name: Record validation evidence
+        run: |
+          mkdir -p crosschain/legacy-jusdt-bridge/validation
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          out = pathlib.Path('crosschain/legacy-jusdt-bridge/validation/last-success.json')
+          payload = {
+              'schema': 1,
+              'tos_commit_under_test': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'tvm_upstream': '4e7ec44a651e6b455ce5a09ed1383535fae3a637',
+              'evm_upstream': 'ac5f58a6d28857d7b653d8f76f7d8ca58811a1c3',
+              'checks': {
+                  'deterministic_import': 'passed',
+                  'source_invariants': 'passed',
+                  'protocol_model_tests': 'passed',
+                  'tvm_func_compile_twice': 'passed',
+                  'evm_hardhat_tests': 'passed',
+              },
+              'runner': os.environ.get('RUNNER_NAME', 'github-hosted'),
+          }
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          PY
+
+      - name: Upload reproducible build evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: tos-legacy-jusdt-bridge-validation
+          path: |
+            crosschain/legacy-jusdt-bridge/artifacts/tvm
+            crosschain/legacy-jusdt-bridge/validation/last-success.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit imported sources and validation record
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            crosschain/legacy-jusdt-bridge/upstream \
+            crosschain/legacy-jusdt-bridge/tvm \
+            crosschain/legacy-jusdt-bridge/evm \
+            crosschain/legacy-jusdt-bridge/UPSTREAM.lock.json \
+            crosschain/legacy-jusdt-bridge/SOURCE_MANIFEST.sha256 \
+            crosschain/legacy-jusdt-bridge/validation/last-success.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Import and validate TON legacy jUSDT bridge [skip ci]"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
