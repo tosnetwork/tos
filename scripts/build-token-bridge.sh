@@ -12,19 +12,34 @@ OUT="${OUT:-$PROJECT/artifacts/tvm}"
 
 # OUT is caller-supplied; refuse to recursively delete anything that is not a
 # path inside this bridge's own artifacts directory. Canonicalization avoids
-# `readlink -m`, which is GNU-only and absent on macOS.
+# `readlink -m`, which is GNU-only and absent on macOS, and tolerates a path
+# whose tail does not exist yet: on a fresh checkout artifacts/ is absent.
 canonicalize() {
-  local target="$1" parent
-  parent="$(cd "$(dirname -- "$target")" 2>/dev/null && pwd -P)" || {
-    echo "cannot resolve parent directory of: $target" >&2
+  local target="$1" tail="" dir parent resolved
+  case "$target" in
+    /*) ;;
+    *) target="$PWD/$target" ;;
+  esac
+  dir="$target"
+  while [[ ! -d "$dir" ]]; do
+    tail="$(basename -- "$dir")${tail:+/$tail}"
+    parent="$(dirname -- "$dir")"
+    [[ "$parent" == "$dir" ]] && break
+    dir="$parent"
+  done
+  resolved="$(cd "$dir" 2>/dev/null && pwd -P)" || {
+    echo "cannot resolve path: $1" >&2
     exit 2
   }
-  printf '%s/%s\n' "${parent%/}" "$(basename -- "$target")"
+  if [[ -n "$tail" ]]; then
+    printf '%s/%s\n' "${resolved%/}" "$tail"
+  else
+    printf '%s\n' "$resolved"
+  fi
 }
 
 canonical_out="$(canonicalize "$OUT")"
-mkdir -p "$PROJECT/artifacts"
-artifacts_root="$(cd "$PROJECT/artifacts" && pwd -P)"
+artifacts_root="$(canonicalize "$PROJECT/artifacts")"
 if [[ "$canonical_out" != "$artifacts_root" && "$canonical_out" != "$artifacts_root"/* ]]; then
   echo "OUT must stay inside $artifacts_root (got: $canonical_out)" >&2
   exit 2
