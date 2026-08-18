@@ -57,3 +57,8 @@ test/integration/.*-e2e/
 test/integration/.toscan-*/
 # Throwaway per-run AIPoW workdirs (native-mint e2e, epoch e2e, capactivate probe, ...)
 test/integration/.aipow-*/
+
+# Reproducible contract build output. scripts/build-nominator-pool-v1.sh writes
+# here by default and pins the expected hash itself, so the artifact is checked
+# rather than stored.
+crypto/smartcont/artifacts/

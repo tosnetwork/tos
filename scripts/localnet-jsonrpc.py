@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -52,6 +53,29 @@ def rpc_call(rpc_addr: str, method: str, **params):
 def rpc_balance_nano(rpc_addr: str, address: str) -> int:
     r = rpc_call(rpc_addr, "getAddressInformation", address=address)
     return int(r["result"]["balance"])
+
+
+async def wait_masterchain_info(rpc_addr: str, timeout: float):
+    """Wait until the resumed node can answer a complete chain query.
+
+    Opening the JSON-RPC socket only proves that the HTTP listener is up. A
+    resumed validator may still be replaying consensus state, during which the
+    first getMasterchainInfo request can take longer than rpc_call's per-request
+    timeout. Keep retrying within the caller's boot budget instead of tearing
+    down an otherwise healthy validator after one slow response.
+    """
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            response = await asyncio.to_thread(rpc_call, rpc_addr, "getMasterchainInfo")
+            if response.get("result"):
+                return response["result"]
+            last_error = RuntimeError("getMasterchainInfo returned no result")
+        except Exception as error:
+            last_error = error
+        await asyncio.sleep(0.5)
+    raise TimeoutError(f"getMasterchainInfo did not become ready: {last_error}")
 
 
 def fmt(nano: int) -> str:
@@ -244,7 +268,7 @@ async def resume_saved_network(
                 executable,
                 "--global-config", node_dir / "config.global.json",
                 "--local-config", node_dir / "config.json",
-                "--db", ".", "-v3", *extra,
+                "--db", ".", "-v1", *extra,
                 cwd=node_dir,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -260,7 +284,7 @@ async def resume_saved_network(
             control_addr, asyncio.get_running_loop(), faucet, rpc_addr
         )
         try:
-            info = rpc_call(rpc_addr, "getMasterchainInfo")["result"]
+            info = await wait_masterchain_info(rpc_addr, boot_timeout)
             print("=" * 70)
             print(" TOS LOCALNET RESUMED")
             print(f"   masterchain seqno: {info['last']['seqno']}")
