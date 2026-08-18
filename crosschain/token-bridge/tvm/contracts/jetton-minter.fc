@@ -188,7 +188,7 @@ slice zero_address() inline {
     slice chain_id_value = encode_number_to_text(chain_id, 10);
     slice token_address_value = encode_number_to_text(token_address, 16);
     builder uri_builder = begin_cell() ;; max (264 + 80 + 24 + 320) = 688 bits
-            .store_slice("https://tos.network/bridge/token/") ;; 33 chars (264 bits)
+            .store_slice("https://bridge.tos.network/token/") ;; 33 chars (264 bits)
             .store_slice(chain_id_value) ;; max 10 chars (80 bits)
             .store_slice("/0x") ;; 24 bits
             .store_slice(token_address_value); ;; 40 chars (320 bits)
