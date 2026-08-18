@@ -1,0 +1,41 @@
+{
+  "excluded_upstream_artifacts": [
+    "prebuilt BOCs, compiled Fift outputs, and generated addresses",
+    "historical mainnet/testnet oracle key sets",
+    "historical mainnet deployment command files",
+    "local environment files"
+  ],
+  "mode": "legacy-oracle-toncoin-bridge",
+  "production_status": "disabled-until-independent-audit-and-governance-activation",
+  "schema": 1,
+  "tos_networks": {
+    "bsc": {
+      "config_param": 72,
+      "evm_chain_id": 56
+    },
+    "ethereum": {
+      "config_param": 71,
+      "evm_chain_id": 1
+    }
+  },
+  "upstreams": {
+    "evm": {
+      "branch": "master",
+      "commit": "f78adaf8bee30133a6231d7cfe36c9b29dd28613",
+      "license": "MIT",
+      "repository": "https://github.com/ton-blockchain/bridge-solidity.git"
+    },
+    "tvm-bsc": {
+      "branch": "bsc",
+      "commit": "01b5a05e13b1dd735821dfe2b208ad5c2dd5dec2",
+      "license": "GPL-3.0",
+      "repository": "https://github.com/ton-blockchain/bridge-func.git"
+    },
+    "tvm-ethereum": {
+      "branch": "master",
+      "commit": "9b606d5b0c886a7b1bd4732a0ecaf0d5d2351354",
+      "license": "GPL-3.0",
+      "repository": "https://github.com/ton-blockchain/bridge-func.git"
+    }
+  }
+}
