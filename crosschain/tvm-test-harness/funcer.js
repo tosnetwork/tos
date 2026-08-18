@@ -209,7 +209,10 @@ msg.body hashu ${makeCell(outMsg.body)} hashu <>
   ."Expected " ${makeCell(outMsg.body)} <s csr.
   ."Got      " msg.body <s csr.
 0 halt } if
-"${outMsg.to}" parse-smc-addr drop msg.dest 2<> { ."Error: incorrect message destination" cr 0 halt } if
+${("to" in outMsg) ? `"${outMsg.to}" parse-smc-addr drop msg.dest 2<> { ."Error: incorrect message destination" cr 0 halt } if` : ''}
+${("stateInit" in outMsg) ? (outMsg.stateInit
+  ? `msg.state-init null? { ."Error: expected a StateInit on this message" cr 0 halt } if`
+  : `msg.state-init null? not { ."Error: unexpected StateInit on this message" cr 0 halt } if`) : ''}
 msg.value ${outMsg.amount} <> { ."Error: incorrect message value" cr 0 halt } if
 send-mode ${("sendMode" in outMsg)? outMsg.sendMode : 3} <> 
 { ."Error: incorrect message sendmode" cr 
@@ -372,10 +375,13 @@ const makeTestFif = (data) => {
   2 u@+ swap 0 <> { ."src = none expected" cr 0 halt } if
   addr@+ -rot 2=: msg.dest
   Tomi@+ swap =: msg.value
-  1 i@+ swap { ref@+ swap } { null } cond =: msg.extra
+  1 i@+ swap { ref@+ } { null } cond =: msg.extra
   Tomi@+ nip Tomi@+ nip
   64 u@+ nip 32 u@+ nip
-  1 i@+ swap abort"StateInit is not supported"
+  1 i@+ swap {
+    1 i@+ swap { ref@+ }
+                { ."inline StateInit is not supported" cr 0 halt } cond
+  } { null } cond =: msg.state-init
   1 i@+ swap { ref@ } { s>c } cond =: msg.body
 } : parse-int-msg
 

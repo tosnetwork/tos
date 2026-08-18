@@ -69,11 +69,44 @@ funcer({}, {
       exit_code: 398,
     },
     {
-      // The same swap with a zero forward amount must proceed, so the check
-      // is proven to be targeted rather than rejecting every swap.
+      // The same swap with a zero forward amount must proceed, and it must
+      // actually mint: asserting only a zero exit code would pass even if the
+      // contract returned early and emitted nothing at all.
       sender: "-1:23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
       amount: MINT_FEE,
       body: swapBody(0),
+      out_msgs: [
+        {
+          // The mint: it deploys the deterministic minter, so it must carry a
+          // StateInit, and its body must name the destination and amounts the
+          // vote asked for. The destination address is the minter derived from
+          // that StateInit, which get_minter_address covers separately.
+          type: "Internal",
+          amount: MINT_FEE,
+          sendMode: 0,
+          stateInit: true,
+          body: [
+            "uint32", 21,        // op::mint
+            "uint64", 100500,
+            "Address", "0:53dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+            "coins", 1000,       // minted amount
+            "coins", 0,          // forward amount, required to be zero
+          ],
+        },
+        {
+          // The receipt back to the oracle multisig.
+          type: "Internal",
+          to: "-1:23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+          amount: 0,
+          sendMode: 64,
+          stateInit: false,
+          body: [
+            "uint32", 0x10009,
+            "uint64", 100500,
+            "uint256", 0,      // send_receipt_message writes this when body >= 0
+          ],
+        },
+      ],
     },
   ],
 });

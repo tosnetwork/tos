@@ -106,6 +106,7 @@ scripts/test-token-bridge-tron.sh   # starts a throwaway local Tron node in dock
 The Hardhat suite runs an EVM, so it cannot answer the questions this slot rests on. These tests can, and they establish two of them:
 
 - **`CHAINID` is the last four bytes of the genesis block id, and a contract can bind a digest to it.** The test derives that value from the node's genesis block and requires it to reproduce the digest the deployed contract computed. This is the rule ConfigParam 83's chain id is chosen by.
+- **Oracles must sign with the Ethereum message prefix.** TronWeb's default signer uses a TRON prefix and produces signatures this contract cannot recover; the test pins both directions so an oracle wired with TronWeb defaults cannot pass unnoticed. See `SECURITY.md`.
 - **`ecrecover` behaves as `SignatureChecker` requires.** An oracle quorum's signatures verify through a real state-changing vote, and a non-oracle signature, a below-quorum vote, and a repeat all fail to move state.
 
 One Tron-specific caveat the tests encode: a reverted state-changing call does **not** throw through TronBox — the transaction is reported as sent either way. Negative cases must assert on contract state, never on a thrown error, or they pass whether or not the contract rejected anything. For the same reason a `pure` function called constantly (`checkSignature` on its own) reverts on this path regardless of its arguments, which is why the quorum vote is the test that carries the evidence.

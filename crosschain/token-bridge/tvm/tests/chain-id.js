@@ -84,10 +84,39 @@ funcer({}, {
     },
     {
       // The counterparty this slot does name is accepted, which is what proves
-      // the compiled MY_CHAIN_ID is the value the parameter file declares.
+      // the compiled MY_CHAIN_ID is the value the parameter file declares. The
+      // actions are asserted too: a zero exit code alone would also be
+      // produced by a contract that accepted the swap and then did nothing.
       sender: "-1:23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
       amount: MINT_FEE,
       body: swapBody(100502, nativeToken),
+      out_msgs: [
+        {
+          type: "Internal",
+          amount: MINT_FEE,
+          sendMode: 0,
+          stateInit: true,
+          body: [
+            "uint32", 21,        // op::mint
+            "uint64", 100502,
+            "Address", "0:53dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+            "coins", 1000,
+            "coins", 0,
+          ],
+        },
+        {
+          type: "Internal",
+          to: "-1:23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+          amount: 0,
+          sendMode: 64,
+          stateInit: false,
+          body: [
+            "uint32", 0x10009,
+            "uint64", 100502,
+            "uint256", 0,
+          ],
+        },
+      ],
     },
   ],
 });

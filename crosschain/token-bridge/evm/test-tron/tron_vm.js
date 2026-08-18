@@ -141,6 +141,43 @@ contract("Tron VM behaviour", () => {
     return bridge.allowLock();
   };
 
+  it("rejects TronWeb's default message prefix, which is not the one the checker uses", async () => {
+    // SignatureChecker recomputes "\x19Ethereum Signed Message:\n32". TronWeb's
+    // default signer uses a TRON prefix instead, so an oracle wired with
+    // TronWeb defaults produces signatures this contract cannot recover — a
+    // full quorum of them still moves nothing. Oracles must sign with the
+    // Ethereum prefix; this test is what holds that requirement in place.
+    const digest = await bridge.getNewLockStatusId(false, 5);
+    const raw = typeof digest === "string" ? digest : digest.toString();
+
+    const tronSigned = await Promise.all(
+      oracleWallets.map(async (wallet, i) => ({
+        signer: wallet.address,
+        signature: await tronWeb.trx.signMessageV2(
+          ethers.utils.arrayify(raw), ORACLE_KEYS[i]),
+      }))
+    );
+    tronSigned.sort((a, b) => (BigInt(a.signer) < BigInt(b.signer) ? -1 : 1));
+
+    // Confirm the two schemes really do differ before relying on the result.
+    const ethSignature = await oracleWallets[0].signMessage(ethers.utils.arrayify(raw));
+    const tronSignature = tronSigned.find((s) => s.signer === oracleWallets[0].address).signature;
+    assert.notStrictEqual(
+      tronSignature.toLowerCase(), ethSignature.toLowerCase(),
+      "the two prefixes must produce different signatures for this test to mean anything");
+
+    assert.strictEqual(await bridge.allowLock(), true, "precondition: locking enabled");
+    try {
+      await bridge.voteForSwitchLock(
+        false, 5, tronSigned.slice(0, 2).map((s) => [toTronAddress(s.signer), s.signature]));
+    } catch (err) {
+      // State is what decides.
+    }
+    assert.strictEqual(
+      await bridge.allowLock(), true,
+      "a quorum signed with TronWeb's default prefix must not take effect");
+  });
+
   it("does not count a non-oracle signature toward the quorum", async () => {
     const outsider = new ethers.Wallet("4".repeat(64));
     assert.strictEqual(await bridge.allowLock(), true, "precondition: locking enabled");

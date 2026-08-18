@@ -42,6 +42,12 @@ A zero forward amount closes the reachable half of that window, which is why the
 
 The residual case is a compute-phase failure of the wallet, which means the fee budget could not deploy and run it. That is covered by the fee-budget constraint below, and its complete resolution is tracked as pre-mainnet work.
 
+### Oracles signing for Tron must use the Ethereum message prefix
+
+`SignatureChecker` recomputes `"\x19Ethereum Signed Message:\n32"`. TronWeb's default signer (`signMessageV2`) applies a TRON prefix instead and produces a different signature for the same digest, which this contract cannot recover. An oracle wired with TronWeb defaults therefore produces signatures that are rejected however many of them sign — unlocks and governance votes would simply never execute.
+
+Oracles serving a Tron deployment must sign with the Ethereum prefix (`useTronHeader=false`, or an ethers-equivalent signer). `test-tron/tron_vm.js` pins this in both directions: a full quorum signed with TronWeb's default moves no state, and one signed with the Ethereum prefix does.
+
 ### The configured fee budget must cover the whole mint path
 
 `jetton-bridge` checks only `bridge_mint_fee > forward_coins_amount`. It does not verify that `bridge_mint_fee` also covers `minter_min_tos_for_storage`, wallet deployment, `wallet_min_tos_for_storage`, and `wallet_gas_consumption`. Before enabling a ConfigParam, compute that budget against the deployed contract sizes on the target network, add margin for storage-rent accrual on the minter between mints, and verify it end to end on testnet. Re-verify after any fee, contract, or network gas-price change.
