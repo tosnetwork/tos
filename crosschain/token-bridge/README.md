@@ -77,6 +77,26 @@ PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001 n
 
 The dummy key satisfies config validation; tests run only against the in-process Hardhat network.
 
+## Build the counterparty contracts for Tron
+
+Tron runs the same Solidity plane, built with TronBox and `tron-solc` rather than Hardhat:
+
+```bash
+cd crosschain/token-bridge/evm
+npm run compile-tron                 # no network needed; runs in CI
+```
+
+Deployment to Nile, Tron's public testnet, reads every value from the environment:
+
+```bash
+export TRON_PRIVATE_KEY=...          # a Nile account, funded from the faucet
+export BRIDGE_ORACLES=T...,T...,T... # at least three reviewed oracle addresses
+export BRIDGE_DISABLED_TOKENS=       # empty, or this deployment's wrapped coin
+npm run deploy-bridge-nile
+```
+
+There is no mainnet network entry, deliberately. **What compilation proves and what it does not:** it confirms the contracts build for Tron and that `tron-solc` accepts `block.chainid`. It says nothing about the runtime value that `CHAINID` returns on a given Tron network, about `ecrecover` behaviour there, or about the Energy cost of the lock and unlock paths. Those need a Nile deployment, and until they are measured the ConfigParam 83 chain id remains an unverified assumption.
+
 ## Production gates
 
 Before any real funds are accepted, every item in `SECURITY.md` is mandatory. In particular: independent audits of the exact TOS build, isolated HSM-backed oracle keys, a 2/3-plus quorum with operational diversity, per-token exposure caps, timelocked governance, continuous balance/supply reconciliation, emergency pause drills, and a limited canary deployment.

@@ -103,6 +103,12 @@ jobs:
           npm ci --ignore-scripts
           npm test
 
+      - name: Compile the token-bridge contracts for Tron
+        working-directory: crosschain/token-bridge/evm
+        # Compilation needs no Tron network, and it is the only part of the
+        # Tron counterparty half that can be checked without one.
+        run: npm run compile-tron
+
       - name: Compile and test coin-bridge EVM contracts
         run: bash scripts/test-coin-bridge-evm.sh
 
