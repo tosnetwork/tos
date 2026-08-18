@@ -12,7 +12,6 @@ EVM="$ROOT/crosschain/token-bridge/evm"
 # Pinned by digest: a floating tag would let the node image change under
 # a green run, and these tests exist to measure that node's behaviour.
 IMAGE="${TRON_TRE_IMAGE:-tronbox/tre@sha256:f4332e11df12a9f360639a4546fd046593909630fda48af00b30410c144342f0}"
-CONTAINER="${TRON_TRE_CONTAINER:-tos-token-bridge-tre}"
 PORT="${TRON_TRE_PORT:-9090}"
 
 if ! command -v docker >/dev/null; then
@@ -20,8 +19,11 @@ if ! command -v docker >/dev/null; then
   exit 2
 fi
 
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run -d --name "$CONTAINER" -p "$PORT:9090" "$IMAGE" >/dev/null
+# Start an unnamed container and clean up by the id docker returns, so a
+# same-named container on the developer's machine is never touched. The RPC is
+# published on the loopback interface only: it is a throwaway node holding
+# published keys, and nothing on the network needs to reach it.
+CONTAINER="$(docker run -d -p "127.0.0.1:$PORT:9090" "$IMAGE")"
 trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true' EXIT
 
 echo "waiting for the local Tron node to produce blocks..."
@@ -29,9 +31,12 @@ echo "waiting for the local Tron node to produce blocks..."
 # wait for the banner too rather than racing it.
 ready=0
 for _ in $(seq 1 90); do
+  # Capture the log before matching: piping docker logs into grep -q lets grep
+  # exit early, and under pipefail a truncated writer would read as not-ready.
+  banner="$(docker logs "$CONTAINER" 2>&1 || true)"
   if curl -sf -X POST "http://127.0.0.1:$PORT/wallet/getnowblock" \
         -H 'Content-Type: application/json' >/dev/null 2>&1 \
-     && docker logs "$CONTAINER" 2>&1 | grep -q 'Private Keys'; then
+     && [[ "$banner" == *"Private Keys"* ]]; then
     ready=1
     break
   fi
@@ -46,7 +51,11 @@ fi
 # The image prints its funded accounts and their keys on startup. They exist
 # only inside this container and are destroyed with it.
 banner="$(docker logs "$CONTAINER" 2>&1)"
-mapfile -t addresses < <(grep -oE '\(([0-9])\) T[1-9A-HJ-NP-Za-km-z]{33}' <<<"$banner" \
+# A read loop rather than mapfile, which needs Bash 4; macOS still ships 3.2.
+addresses=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && addresses+=("$line")
+done < <(grep -oE '\(([0-9])\) T[1-9A-HJ-NP-Za-km-z]{33}' <<<"$banner" \
   | awk '{print $2}' | head -3 || true)
 deployer_key="$(grep -A4 'Private Keys' <<<"$banner" \
   | grep -oE '\(0\) [0-9a-f]{64}' | awk '{print $2}' | head -1 || true)"

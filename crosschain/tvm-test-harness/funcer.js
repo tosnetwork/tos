@@ -213,6 +213,10 @@ ${("to" in outMsg) ? `"${outMsg.to}" parse-smc-addr drop msg.dest 2<> { ."Error:
 ${("stateInit" in outMsg) ? (outMsg.stateInit
   ? `msg.state-init null? { ."Error: expected a StateInit on this message" cr 0 halt } if`
   : `msg.state-init null? not { ."Error: unexpected StateInit on this message" cr 0 halt } if`) : ''}
+${outMsg.stateInitMatchesDestination ? `
+msg.state-init null? { ."Error: cannot bind destination without a StateInit" cr 0 halt } if
+0 msg.state-init hashu msg.dest 2<>
+{ ."Error: destination is not the address this StateInit deploys to" cr 0 halt } if` : ''}
 msg.value ${outMsg.amount} <> { ."Error: incorrect message value" cr 0 halt } if
 send-mode ${("sendMode" in outMsg)? outMsg.sendMode : 3} <> 
 { ."Error: incorrect message sendmode" cr 

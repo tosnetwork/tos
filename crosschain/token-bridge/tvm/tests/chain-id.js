@@ -96,6 +96,7 @@ funcer({}, {
           amount: MINT_FEE,
           sendMode: 0,
           stateInit: true,
+          stateInitMatchesDestination: true,
           body: [
             "uint32", 21,        // op::mint
             "uint64", 100502,

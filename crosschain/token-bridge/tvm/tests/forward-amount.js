@@ -79,12 +79,13 @@ funcer({}, {
         {
           // The mint: it deploys the deterministic minter, so it must carry a
           // StateInit, and its body must name the destination and amounts the
-          // vote asked for. The destination address is the minter derived from
-          // that StateInit, which get_minter_address covers separately.
+          // vote asked for, and its destination must be the address that
+          // StateInit deploys to.
           type: "Internal",
           amount: MINT_FEE,
           sendMode: 0,
           stateInit: true,
+          stateInitMatchesDestination: true,
           body: [
             "uint32", 21,        // op::mint
             "uint64", 100500,
