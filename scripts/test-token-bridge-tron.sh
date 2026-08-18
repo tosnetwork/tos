@@ -9,7 +9,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EVM="$ROOT/crosschain/token-bridge/evm"
-IMAGE="${TRON_TRE_IMAGE:-tronbox/tre:latest}"
+# Pinned by digest: a floating tag would let the node image change under
+# a green run, and these tests exist to measure that node's behaviour.
+IMAGE="${TRON_TRE_IMAGE:-tronbox/tre@sha256:f4332e11df12a9f360639a4546fd046593909630fda48af00b30410c144342f0}"
 CONTAINER="${TRON_TRE_CONTAINER:-tos-token-bridge-tre}"
 PORT="${TRON_TRE_PORT:-9090}"
 

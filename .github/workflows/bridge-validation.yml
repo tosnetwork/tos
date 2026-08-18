@@ -105,9 +105,14 @@ jobs:
 
       - name: Compile the token-bridge contracts for Tron
         working-directory: crosschain/token-bridge/evm
-        # Compilation needs no Tron network, and it is the only part of the
-        # Tron counterparty half that can be checked without one.
         run: npm run compile-tron
+
+      - name: Execute the token-bridge contracts on a local Tron node
+        # The Hardhat suite runs an EVM, so this is the only step that answers
+        # what Tron's CHAINID returns to a contract and whether ecrecover
+        # behaves as the signature checker requires. The node image is pinned
+        # by digest inside the script.
+        run: bash scripts/test-token-bridge-tron.sh
 
       - name: Compile and test coin-bridge EVM contracts
         run: bash scripts/test-coin-bridge-evm.sh
