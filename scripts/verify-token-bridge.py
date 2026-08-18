@@ -52,6 +52,9 @@ def verify_required_sources() -> None:
     missing = [rel for rel in REQUIRED_SOURCES if not (PROJECT / rel).is_file()]
     if missing:
         raise AssertionError(f"missing required contracts: {missing}")
+    harness = REPO_ROOT / "crosschain/tvm-test-harness/funcer.js"
+    if not harness.is_file():
+        raise AssertionError("missing the shared TVM test harness")
 
 
 def verify_no_deployment_artifacts() -> None:
@@ -178,6 +181,7 @@ def main() -> int:
         run_model_tests()
     print("token bridge source checks and protocol model passed")
     print("note: these are source-text and model checks; behavior is proven by the EVM and TVM suites")
+    print("      (scripts/test-token-bridge-tvm.sh executes the compiled contracts)")
     return 0
 
 

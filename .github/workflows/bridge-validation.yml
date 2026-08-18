@@ -89,7 +89,9 @@ jobs:
       - name: Run TVM-level bridge tests
         env:
           FUNC: ${{ github.workspace }}/build-bridge/crypto/func
-        run: bash scripts/test-coin-bridge-tvm.sh
+        run: |
+          bash scripts/test-token-bridge-tvm.sh
+          bash scripts/test-coin-bridge-tvm.sh
 
       - name: Compile and test token-bridge EVM contracts
         working-directory: crosschain/token-bridge/evm

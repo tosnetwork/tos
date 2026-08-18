@@ -58,6 +58,7 @@ With `func`/`fift` built (`cmake --build build --target func fift`):
 
 ```bash
 scripts/build-token-bridge.sh          # double-compile 5 contracts × 3 networks, assemble, hash
+scripts/test-token-bridge-tvm.sh       # execute the compiled contracts in the TOS TVM
 python3 scripts/verify-token-bridge.py # invariants + protocol model tests + naming gate
 ```
 

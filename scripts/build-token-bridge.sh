@@ -10,11 +10,19 @@ FIFT_BIN="${FIFT:-$ROOT/build/crypto/fift}"
 FIFT_LIB="$ROOT/crypto/fift/lib"
 OUT="${OUT:-$PROJECT/artifacts/tvm}"
 
-# OUT is caller-supplied; refuse to recursively delete anything that is not a
-# path inside this bridge's own artifacts directory. Canonicalization avoids
-# `readlink -m`, which is GNU-only and absent on macOS, and tolerates a path
-# whose tail does not exist yet: on a fresh checkout artifacts/ is absent.
-canonicalize() {
+# OUT is caller-supplied and drives a recursive delete, so it must be proven to
+# sit inside this bridge's own artifacts directory. Traversal segments are
+# refused outright: a legitimate value never needs them, and re-appending an
+# unresolved tail to a resolved prefix would otherwise let ".." escape the
+# prefix check. Resolution avoids `readlink -m`, which is GNU-only.
+case "/$OUT/" in
+  */../*)
+    echo "OUT must not contain '..' segments (got: $OUT)" >&2
+    exit 2
+    ;;
+esac
+
+resolve_existing_prefix() {
   local target="$1" tail="" dir parent resolved
   case "$target" in
     /*) ;;
@@ -38,13 +46,17 @@ canonicalize() {
   fi
 }
 
-canonical_out="$(canonicalize "$OUT")"
-artifacts_root="$(canonicalize "$PROJECT/artifacts")"
-if [[ "$canonical_out" != "$artifacts_root" && "$canonical_out" != "$artifacts_root"/* ]]; then
-  echo "OUT must stay inside $artifacts_root (got: $canonical_out)" >&2
+inside_artifacts() {
+  [[ "$1" == "$artifacts_root" || "$1" == "$artifacts_root"/* ]]
+}
+
+mkdir -p "$PROJECT/artifacts"
+artifacts_root="$(cd "$PROJECT/artifacts" && pwd -P)"
+OUT="$(resolve_existing_prefix "$OUT")"
+if ! inside_artifacts "$OUT"; then
+  echo "OUT must stay inside $artifacts_root (got: $OUT)" >&2
   exit 2
 fi
-OUT="$canonical_out"
 
 if [[ ! -x "$FUNC_BIN" ]]; then
   echo "FunC compiler not found: $FUNC_BIN" >&2
@@ -93,7 +105,15 @@ for fif in "$work_root"/first/*/out/*.fif; do
   FIFTPATH="$FIFT_LIB" "$FIFT_BIN" -s "$wrapper" >/dev/null
 done
 
-rm -rf "$OUT"
+mkdir -p "$OUT"
+# Re-check once the path fully exists: only now can symlinks along it be
+# resolved, and nothing destructive has run yet.
+OUT="$(cd "$OUT" && pwd -P)"
+if ! inside_artifacts "$OUT"; then
+  echo "OUT resolves outside $artifacts_root (got: $OUT)" >&2
+  exit 2
+fi
+rm -rf "${OUT:?}"
 mkdir -p "$OUT"
 cp -R "$work_root/first/." "$OUT/"
 find "$OUT" -type d -name src -prune -exec rm -rf {} +

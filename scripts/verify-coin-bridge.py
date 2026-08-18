@@ -23,7 +23,7 @@ REQUIRED_SOURCES = [
     "tvm/bsc/votes-collector.fc",
     "tvm/bsc/bridge-config.fc",
     "tvm/bsc/stdlib.fc",
-    "tvm/tests/funcer.js",
+    "tvm/tests/eth2tos.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
@@ -54,6 +54,9 @@ def verify_required_sources() -> None:
     missing = [rel for rel in REQUIRED_SOURCES if not (PROJECT / rel).is_file()]
     if missing:
         raise AssertionError(f"missing required contracts: {missing}")
+    harness = REPO_ROOT / "crosschain/tvm-test-harness/funcer.js"
+    if not harness.is_file():
+        raise AssertionError("missing the shared TVM test harness")
 
 
 def verify_no_deployment_artifacts() -> None:

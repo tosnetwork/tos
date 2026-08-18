@@ -89,6 +89,10 @@ class TosBridgeModel:
     burns_suspended: bool = False
     paid_swaps: set[int] = field(default_factory=set)
     minted_swaps: set[int] = field(default_factory=set)
+    # The multisig marks a query processed when it dispatches the message, so a
+    # query is spent even when the bridge then rejects the swap. Nothing can be
+    # retried under the same query id.
+    processed_queries: set[int] = field(default_factory=set)
     total_supply: dict[str, int] = field(default_factory=dict)
 
     def pay_swap(self, qid: int, value: int) -> None:
@@ -97,6 +101,9 @@ class TosBridgeModel:
         self.paid_swaps.add(qid)
 
     def mint(self, token: str, amount: int, qid: int, forward_amount: int = 0) -> None:
+        if qid in self.processed_queries:
+            raise RuntimeError("query already processed by the multisig")
+        self.processed_queries.add(qid)
         if self.swaps_suspended:
             raise PermissionError("swaps suspended")
         # A non-zero forward amount is the only action the receiving wallet can
@@ -208,21 +215,34 @@ class ProtocolModelTests(unittest.TestCase):
             self.tos.burn("USDT", 1, 13)
 
     def test_mint_rejects_a_non_zero_forward_amount(self) -> None:
-        qid = query_id(1_700_000_000, "0xb", "0xt", 0)
-        self.tos.pay_swap(qid, 17)
+        rejected = query_id(1_700_000_000, "0xb", "0xt", 0)
+        self.tos.pay_swap(rejected, 17)
         with self.assertRaises(ValueError):
-            self.tos.mint("USDT", 100, qid, forward_amount=1)
+            self.tos.mint("USDT", 100, rejected, forward_amount=1)
         self.assertEqual(self.tos.total_supply.get("USDT", 0), 0)
-        self.tos.mint("USDT", 100, qid)
+
+        # The rejected query is spent: the multisig dispatched it before the
+        # bridge threw, so recovery needs a new query, not a retry.
+        with self.assertRaises(RuntimeError):
+            self.tos.mint("USDT", 100, rejected)
+
+        retried = query_id(1_700_000_000, "0xb", "0xt", 1)
+        self.tos.pay_swap(retried, 17)
+        self.tos.mint("USDT", 100, retried)
         self.assertEqual(self.tos.total_supply["USDT"], 100)
 
     def test_mint_requires_paid_swap_and_is_single_use(self) -> None:
+        # An unpaid swap is rejected, and its query is spent either way.
         with self.assertRaises(RuntimeError):
             self.tos.mint("USDT", 10, 1)
         self.tos.pay_swap(1, 17)
-        self.tos.mint("USDT", 10, 1)
         with self.assertRaises(RuntimeError):
             self.tos.mint("USDT", 10, 1)
+
+        self.tos.pay_swap(2, 17)
+        self.tos.mint("USDT", 10, 2)
+        with self.assertRaises(RuntimeError):
+            self.tos.mint("USDT", 10, 2)
 
     def test_end_to_end_lock_mint_burn_unlock_conserves_value(self) -> None:
         token = "USDT"
