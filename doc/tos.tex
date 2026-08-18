@@ -29,6 +29,7 @@
 \newcommand{\implemented}{\textbf{Implemented}}
 \newcommand{\experimental}{\textbf{Experimental}}
 \newcommand{\planned}{\textbf{Planned}}
+\newcommand{\partialstatus}{\textbf{Partial}}
 
 \title{\textbf{TOS Network}\\[0.4em]\Large Open Coordination and Settlement for\\
 AI Services and Physical Edge Intelligence}
@@ -1069,6 +1070,17 @@ complaints and penalties follow the existing Elector rules. There is no separate
 allocation, passive-holder yield, work-score reward, vote-count reward, private mint key or
 off-chain reward discretion.
 
+Penalties are proportional to the stake a validator controls rather than a flat amount. The
+misbehaviour schedule in \texttt{ConfigParam 40} sets a base fine that the severity and
+duration of the fault scale up, with the most serious tier reaching TM\$2{,}500 plus one
+quarter of the stake. Duration thresholds are expressed as fractions of the validation round
+so that every tier is reachable within one. Two consequences are worth stating: an operator
+that gathers more stake carries proportionally more at risk rather than the same fixed
+exposure, and any contract holding stake on behalf of others can size the operator's own
+required funds from this schedule instead of guessing. A network that omits the parameter
+falls back to a flat fine with no proportional component, which makes the amount at risk
+independent of the amount controlled.
+
 A validator must submit a valid bid, be selected, keep its stake locked, operate its assigned
 consensus responsibilities and remain eligible under the protocol rules. Native block
 creation and collected transaction fees are different economic flows: only ConfigParam 14
@@ -1198,9 +1210,32 @@ open network participation. Initial controls include:
 
 Four validators are only the bootstrap minimum, not a decentralization claim. The
 recommended public-launch participation target is 64 independent operators, with a
-long-term target of at least 75 eligible validators. A later increase in the effective-stake
-factor requires sustained independent participation, concentration analysis, election
-simulation and public governance review.
+long-term target of at least 75 eligible validators.
+
+A later increase in the effective-stake factor requires sustained independent
+participation, concentration analysis, election simulation and public governance review. It
+also has an arithmetic precondition that is not a matter of review. The Elector pays each
+elected validator on $\min(s_i, f \cdot s_{\min})$, where $f$ is the effective-stake factor
+and $s_{\min}$ is the smallest stake in the elected set, and it refunds the remainder. The
+largest share of effective weight one entry can therefore hold in a set of $n$ validators is
+
+\[
+  \frac{f}{f + n - 1},
+\]
+
+and requiring that this stay below one third gives
+
+\[
+  f < \frac{n - 1}{2}.
+\]
+
+The bound applies to the smallest set the configuration permits rather than to the set that
+happens to be running, because the Elector may install exactly the minimum in any round.
+Raising the factor to three therefore requires a minimum validator set of at least eight,
+and the minimum must be raised first: increasing the factor ahead of it would leave a window
+in which the configuration admits a set where one entry holds half the weight. Repository
+tooling enforces both the bound and the ordering, and refuses to emit a signable proposal
+for a combination that violates them.
 
 These controls reduce initial administrative allocation and single-entry dominance, but no
 protocol can guarantee that market ownership or operational control will never concentrate.
@@ -1323,6 +1358,7 @@ Agent and task read APIs & \implemented & Authenticated reads, filtering, timeou
 Capability Registry & \implemented & Per-actor entry, metadata hashes, bond, activity and reputation \\
 Service Actor contract & \implemented & Access policy, pricing, rate limits, calls, responses and revenue \\
 Dispute and Proof Attestation foundations & \implemented & Compact resolution and evidence commitments \\
+Pooled-stake contract and tooling & \partialstatus & Application-layer arrangement, not a protocol feature; contract, build lock, daemon support and end-to-end run exist; no user entry point and no economic effect at factor one \\
 Public \texttt{.tos} registrar product & \planned & Ownership lifecycle, SDK, deployment and operator tooling \\
 ARD compatibility profile & \planned & Pinned external version, catalog mapping, publisher binding, media types and conformance \\
 TOS ARD Registry & \planned & Independent REST search, ingestion, federation, provenance, visibility and bounded crawling \\
