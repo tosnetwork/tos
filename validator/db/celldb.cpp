@@ -863,8 +863,8 @@ void CellDbIn::flush_db_stats() {
   // Diagnostic only: rocksdb.block-cache-usage/-pinned-usage report the
   // block cache's *actual current* occupancy, unlike the cumulative
   // tickers above (hit/miss/add counts, reset every flush). This is here
-  // to answer a specific open question from the node3 RSS investigation
-  // (see doc/celldb-v2-node3-rss-growth-2026-07-26.md): whether steady
+  // to answer a specific open question from the resident-memory growth
+  // investigation on a long-running validator: whether steady
   // jemalloc allocated-byte growth, independent of the CellDB V2 app-level
   // cache, comes from the RocksDB block cache exceeding its configured
   // --celldb-cache-size capacity, and whether that's because entries are

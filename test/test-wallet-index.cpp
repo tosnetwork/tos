@@ -27,11 +27,11 @@
 */
 // Marker encode/decode coverage for the wc0 wallet index's crash-recovery
 // marker (WalletIndexDb::put_incomplete_block / for_each_incomplete_block).
-// See doc/node3-residual-leak-archive-memtable-2026-07-26.md for the bugs
-// this is regression-testing: a seqno-only marker couldn't distinguish
-// blocks at the same seqno in different shards, and a legacy-format marker
-// left on disk by an older binary must not crash the new scanner or be
-// silently treated as a valid entry.
+// Regression coverage for two bugs found on a long-running validator: a
+// seqno-only marker couldn't distinguish blocks at the same seqno in
+// different shards, and a legacy-format marker left on disk by an older
+// binary must not crash the new scanner or be silently treated as a valid
+// entry.
 #include "td/db/RocksDb.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
@@ -202,7 +202,7 @@ TEST(WalletIndex, LegacySeqnoOnlyMarkerNotSurfaced) {
   // A marker written by any binary before the full-BlockIdExt redesign (a
   // bare "0x1E + seqno_be(8)" key, 9 bytes total) must not crash the
   // scanner and must not be handed to the callback as if it were a valid
-  // BlockIdExt — see doc/node3-residual-leak-archive-memtable-2026-07-26.md.
+  // BlockIdExt.
   auto path = std::string("test-wallet-index-db-legacy");
   td::rmrf(path).ignore();
   {
