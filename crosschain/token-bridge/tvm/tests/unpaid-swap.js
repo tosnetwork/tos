@@ -49,7 +49,7 @@ const bridgeStorage = [
   "uint1", 0,
 ];
 
-// The swap key the contract derives, computed the same way here. A TON cell's
+// The swap key the contract derives, computed the same way here. A cell's
 // hash is sha256 over its two descriptor bytes and its data; this cell is 272
 // bits with no references.
 const crypto = require("crypto");

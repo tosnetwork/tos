@@ -48,7 +48,7 @@ const DESTINATION_TOKEN = "0x76A797A59Ba2C17726896976B7B3747BfD1d220f";
 
 
 // The swap key the contract derives, computed the same way here so a payment
-// can name the swap a vote is for. A TON cell's hash is sha256 over its two
+// can name the swap a vote is for. A cell's hash is sha256 over its two
 // descriptor bytes and its data; this cell is 272 bits with no references.
 const crypto = require("crypto");
 const swapKey = (extChainHash, internalIndex) => {
