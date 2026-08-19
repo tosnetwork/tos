@@ -342,7 +342,7 @@ allowing trailing message bits to be silently ignored in several operation branc
 missing \texttt{bounced}-flag checks that could in principle let an automatically bounced
 message be misparsed as a legitimate sender-authorized call. Each fix is covered by new
 sandbox tests and re-verified against the relevant contract's real-localnet end-to-end script.
-\texttt{doc/security-audit-native-2026-06.md} still explicitly excludes these AI-actor
+The native security audit still explicitly excludes these AI-actor
 primitives from its scope, so this should be read as closing concrete bugs found along the
 way, not as a substitute for that dedicated external review.
 

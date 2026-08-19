@@ -173,8 +173,8 @@ Examples:
   confirm state and in-flight policy survive a node restart and catch-up. This restart check is
   deliberately scoped to one validator restarting and catching back up -- there is no existing
   multi-validator reference pattern in this codebase to build a true multi-node fault-tolerance
-  test on top of, so that remains open rather than claimed. `doc/security-audit-native-2026-06.md`
-  still explicitly excludes all AI-actor primitives from its scope; this pass closes concrete
+  test on top of, so that remains open rather than claimed. The native security audit still
+  explicitly excludes all AI-actor primitives from its scope; this pass closes concrete
   bugs found along the way but is not a substitute for that dedicated review.
 - Extended the same testnet-readiness security pass across the rest of the native AI-actor
   contracts (Task Escrow, Dispute, Service Actor, Capability Registry, Proof Attestation),

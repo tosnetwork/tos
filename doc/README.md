@@ -78,6 +78,5 @@ Review and release docs:
 
 - [tos-release-policy.md](tos-release-policy.md)
 - [tos-upgrade-process.md](tos-upgrade-process.md)
-- [security-audit-native-2026-06.md](security-audit-native-2026-06.md)
 - [ops/tos31-tos32-validation.md](ops/tos31-tos32-validation.md)
 - [adr/README.md](adr/README.md)

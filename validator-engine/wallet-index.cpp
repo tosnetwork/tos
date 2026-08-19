@@ -33,7 +33,7 @@ constexpr uint8_t kIncompleteBlockTag = 0x1E;
 // hash. A node that ever had a real indexing failure under an older binary
 // can have real markers in this format on disk. Recognized distinctly below
 // so they surface loudly instead of being silently discarded as generic
-// "malformed" — see doc/node3-residual-leak-archive-memtable-2026-07-26.md.
+// "malformed".
 constexpr size_t kLegacySeqnoOnlyKeyLen = 1 + 8;
 
 constexpr size_t kOwnerPairKeyLen = 1 + 32 + 32;
