@@ -44,6 +44,22 @@ No production oracle daemon ships with this directory: it completes the smart-co
 
 ## Refusals the contracts make
 
+A mint whose fee nobody paid is refused (`error::swap_not_paid`, 396).
+`pay_swap` takes the fee in one transaction and the vote arrives in another,
+with nothing on chain connecting them — so the bridge used to mint on the vote
+alone, and an oracle set that did not check would have the multisig pay for
+every mint out of its own balance.
+
+The bridge now records the payment and the vote spends it. The swap's identity
+is derived by the contract from the vote it already holds
+(`cell_hash(ext_chain_hash || internal_index)`), so a payer cannot aim a
+payment at a swap of their choosing, and removing the key on use means one fee
+pays for exactly one mint.
+
+This check cannot live in an oracle. Two operators disagreeing about whether a
+payment counts produce no rejection, only a quorum that never forms.
+
+
 A burn names where to release on the counterparty chain, and the zero address
 is not a destination: the ERC-20 transfer that would release the tokens there
 reverts, and by then the jettons are already destroyed. `jetton-wallet.fc`

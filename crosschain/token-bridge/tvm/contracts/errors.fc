@@ -40,5 +40,8 @@ const int error::forward_amount_not_zero = 398;
 ;; by then the jettons on this side are already destroyed. Refusing here is the
 ;; last point at which the user still has them.
 const int error::zero_destination = 397;
+;; A mint whose fee nobody paid. pay_swap records the payment and this is the
+;; check that spends it, so the multisig never mints out of its own balance.
+const int error::swap_not_paid = 396;
 
 const int error::no_bridge_config = 666;

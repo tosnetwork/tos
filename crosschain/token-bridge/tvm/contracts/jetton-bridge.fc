@@ -7,24 +7,42 @@
 #include "config.fc";
 
 ;; collector_address: MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
-(slice, cell, cell) load_data() inline_ref {
+;;   paid_swaps:(HashmapE 256 Unit)
+;;
+;; paid_swaps holds the swaps whose mint fee has been paid and not yet spent.
+;; pay_swap adds a key; a swap vote requires one and removes it, so a fee pays
+;; for exactly one mint and the set does not grow without bound.
+(slice, cell, cell, cell) load_data() inline_ref {
     slice slice_data = get_data().begin_parse();
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code) = (slice_data~load_msg_addr(), slice_data~load_ref(), slice_data~load_ref());
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = (slice_data~load_msg_addr(), slice_data~load_ref(), slice_data~load_ref(), slice_data~load_dict());
     slice_data.end_parse();
-    return (collector_address, jetton_minter_code, jetton_wallet_code);
+    return (collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
 }
 
-() save_data(slice collector_address, cell jetton_minter_code, cell jetton_wallet_code) impure inline_ref {
+() save_data(slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) impure inline_ref {
     set_data(begin_cell()
         .store_slice(collector_address)
         .store_ref(jetton_minter_code)
         .store_ref(jetton_wallet_code)
+        .store_dict(paid_swaps)
         .end_cell()
     );
 }
 
+;; A swap's identity, derived from the source event rather than chosen.
+;;
+;; The vote already carries both halves, so the contract computes this itself
+;; and a payer cannot make a payment point at a different swap. Before this,
+;; pay_swap took whatever 256-bit number it was given and nothing checked it.
+int swap_key(int ext_chain_hash, int internal_index) inline {
+    return cell_hash(begin_cell()
+        .store_uint(ext_chain_hash, 256)
+        .store_int(internal_index, 16)
+        .end_cell());
+}
+
 (slice, cell) calculate_minter_address(cell wrapped_token_data) impure inline_ref {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code) = load_data();
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _) = load_data();
 
     cell jetton_minter_data = begin_cell()
             .store_coins(0) ;; total_supply
@@ -44,7 +62,7 @@
 }
 
 () execute_voting (slice oracles_address, slice voting_data, int query_id, int bridge_mint_fee, int state_flags, int msg_value) impure {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code) = load_data();
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = load_data();
 
     int op = voting_data~load_uint(8);
 
@@ -87,6 +105,19 @@
 
         throw_unless(error::forward_amount_not_zero, forward_coins_amount == 0);
         throw_unless(error::mint_fee_less_forward, bridge_mint_fee > forward_coins_amount);
+
+        ;; The fee is paid in its own transaction, so the contract has to
+        ;; remember it. Without this the multisig mints out of its own balance
+        ;; and nothing fails — the two transactions were connected by nothing.
+        ;;
+        ;; Last of the checks, so a vote that is malformed or meant for another
+        ;; chain is reported as that rather than as unpaid. Removing the key is
+        ;; what makes one payment pay for one mint, and what keeps the set from
+        ;; growing for as long as the bridge runs.
+        int key = swap_key(ext_chain_hash, internal_index);
+        (cell remaining, int was_paid) = paid_swaps.udict_delete?(256, key);
+        throw_unless(error::swap_not_paid, was_paid);
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, remaining);
 
         (slice minter_address, cell jetton_minter_state_init) = calculate_minter_address(wrapped_token_data);
 
@@ -134,7 +165,7 @@
         collector_address = voting_data~load_msg_addr();
         voting_data.end_parse();
 
-        save_data(collector_address, jetton_minter_code, jetton_wallet_code);
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
 
     }
 
@@ -178,7 +209,13 @@
 
         throw_if(error::oracles_sender, is_oracles);
         throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee);
+        ;; The payer quotes the swap they are paying for, computed the same way
+        ;; the vote will compute it. Recording it is what lets the swap branch
+        ;; check that a fee was paid at all.
         int swap_id = in_msg_body~load_uint(256);
+        (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, cell paid_swaps) = load_data();
+        paid_swaps~udict_set_builder(256, swap_id, begin_cell());
+        save_data(collector_address, jetton_minter_code, jetton_wallet_code, paid_swaps);
         emit_log_simple(LOG_SWAP_PAID, begin_cell().store_uint(swap_id, 256).end_cell(), 0);
     } elseif (op == op::burn_notification) {
         int jetton_amount = in_msg_body~load_coins();
@@ -219,7 +256,7 @@ slice get_minter_address(cell wrapped_token_data) method_id {
 }
 
 (int, int, cell, cell, int) get_bridge_data() method_id {
-    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code) = load_data();
+    (slice collector_address, cell jetton_minter_code, cell jetton_wallet_code, _) = load_data();
     (int wc, int addr) = parse_std_addr(collector_address);
     return (wc, addr, jetton_minter_code, jetton_wallet_code, MY_CHAIN_ID);
 }

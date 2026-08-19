@@ -38,11 +38,40 @@ const bridgeStorage = [
   "Address", "0:e53bddefb065373732ec25d5f9af0b3f7a3be358ea87ec285b4b6330a67d8c6a",
   "cell", ["uint8", 1],
   "cell", ["uint8", 2],
+  // paid_swaps: the set of swaps whose mint fee is paid and unspent.
+  "uint1", 0,
 ];
 
 // The destination is a 20-byte counterparty address. Tron addresses are also
 // 20 bytes inside its virtual machine, so this field carries them unchanged.
 const DESTINATION_TOKEN = "0x76A797A59Ba2C17726896976B7B3747BfD1d220f";
+
+
+// The swap key the contract derives, computed the same way here so a payment
+// can name the swap a vote is for. A TON cell's hash is sha256 over its two
+// descriptor bytes and its data; this cell is 272 bits with no references.
+const crypto = require("crypto");
+const swapKey = (extChainHash, internalIndex) => {
+  const data = Buffer.alloc(34);
+  Buffer.from(extChainHash.replace(/^0x/, ""), "hex").copy(data, 0);
+  data.writeInt16BE(internalIndex, 32);
+  const bits = 272;
+  const d1 = 0;                                  // no refs, not exotic, level 0
+  const d2 = Math.floor(bits / 8) + Math.ceil(bits / 8);
+  return crypto
+    .createHash("sha256")
+    .update(Buffer.concat([Buffer.from([d1, d2]), data]))
+    .digest("hex");
+};
+
+// Paying the mint fee, which the swap vote now spends.
+const payBody = (extChainHash, internalIndex) => [
+  "uint32", 8, // op::pay_swap
+  "uint64", 100499,
+  "uint256", "0x" + swapKey(extChainHash, internalIndex),
+];
+
+const EXT_CHAIN_HASH = "0x43dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
 
 const swapBody = (queryId, tokenData) => [
   "uint32", 4,            // op::execute_voting
@@ -74,6 +103,24 @@ funcer({}, {
   configParams: bridgeConfig,
   data: bridgeStorage,
   in_msgs: [
+    {
+      // The mint fee, paid in its own transaction by whoever wants the swap.
+      // Without it the vote below is refused: nothing on chain connected the
+      // two, and the multisig would have minted out of its own balance.
+      sender: "0:63dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8",
+      amount: MINT_FEE,
+      body: payBody(EXT_CHAIN_HASH, 0),
+      out_msgs: [
+        {
+          // LOG_SWAP_PAID, so the payment is observable off chain as well as
+          // recorded on it.
+          type: "External",
+          to: "0x" + "c0550ccf".padStart(64, "0"),
+          sendMode: 0,
+          body: ["uint256", "0x" + swapKey(EXT_CHAIN_HASH, 0)],
+        },
+      ],
+    },
     {
       // error::wrong_external_chain_id: a swap naming another counterparty
       // chain must not mint here, whatever slot this tree was built for.

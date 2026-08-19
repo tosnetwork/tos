@@ -145,11 +145,21 @@ global_config        // global_config
 // it unconditionally is what lets a wallet contract be tested at all — without
 // it the wallet reads msg_value as its balance and runs off the end of the
 // message, failing with a cell underflow that says nothing about its logic.
-${inMsg.contract_balance || '1000000000'} msg_value${i} in_msg${i} in_msg_body${i} <s 0 code storage c7 0x75 runvmx
+${inMsg.contract_balance || '1000000000'} msg_value${i} in_msg${i} in_msg_body${i} <s 0 code current-storage @ c7 0x75 runvmx
 // returns ...values exit_code new_c4 c5
 swap rot
 
 ${inMsg.exit_code ? makeCheckExitCode(inMsg.exit_code) : makeCheckZeroExitCode()}
+
+// Carry the contract's storage into the next message, as the chain does.
+// Without this every message starts from the deployment state, and a flow
+// that spans two transactions — which is most of what a bridge does — cannot
+// be expressed at all: the first message's writes are invisible to the second.
+//
+// Only a message that succeeded may commit. A throw leaves storage untouched
+// on chain, and a test that carried it forward anyway would be testing a
+// machine that does not exist.
+${inMsg.exit_code ? 'drop' : 'dup current-storage !'}
 
 ${inMsg.new_data ? makeCheckStorage(inMsg.new_data) : 'drop'}
 
@@ -424,6 +434,9 @@ const makeTestFif = (data) => {
 "compiled.fif" include <s constant code
 
 ${makeCell(data.data)} constant storage
+// The contract's storage as it stands, threaded from one message to the next.
+variable current-storage
+storage current-storage !
 
 ${makeConfigParams(data.configParams)} constant global_config
 
