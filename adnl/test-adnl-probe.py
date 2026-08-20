@@ -413,6 +413,59 @@ def run_failed_dial_preserves_session_case(binary):
         raise
 
 
+def run_param_bounds_case(binary):
+    """Out-of-range numeric parameters are rejected before any mutation.
+
+    A reconnect with an invalid timeout must not reset the channel and then
+    record the inevitable instant failure as a network reconnect failure;
+    an invalid dial must not replace the established peer.
+    """
+    a, b = establish_pair(binary, "bounds")
+    try:
+        # reconnect timeout_ms=0: error completion, channel untouched
+        r = a.request("reconnect", timeout_ms=0, timeout=10)
+        assert r["event"] == "error", f"timeout_ms=0 was not rejected: {r}"
+        echoed = a.request("echo", bytes=128, timeout_ms=10000)
+        assert echoed["event"] == "echoed" and echoed["ok"] is True, echoed
+        log(f"reconnect timeout_ms=0: error \"{r['message']}\"; session still echoes ({echoed['millis']} ms)")
+
+        # reconnect timeout_ms=-1: error completion, session still holds
+        r = a.request("reconnect", timeout_ms=-1, timeout=10)
+        assert r["event"] == "error", f"timeout_ms=-1 was not rejected: {r}"
+        held = a.request("hold", window_ms=1200, keepalive_ms=300, timeout=15)
+        assert held["event"] == "held" and held["completed"] is True, held
+        log(f"reconnect timeout_ms=-1: error; session still holds (survival_seconds={held['survival_seconds']})")
+
+        # dial with an invalid timeout: error completion, peer NOT replaced
+        r = a.request(
+            "dial",
+            peer_pubkey_hex="33" * 32,
+            candidates=["127.0.0.1:1"],
+            timeout_ms=0,
+            timeout=10,
+        )
+        assert r["event"] == "error", f"dial timeout_ms=0 was not rejected: {r}"
+        echoed = a.request("echo", bytes=128, timeout_ms=10000)
+        assert echoed["event"] == "echoed" and echoed["ok"] is True, echoed
+        log(f"dial timeout_ms=0: error; existing peer not replaced (echo ok in {echoed['millis']} ms)")
+
+        # sibling bounds spot checks
+        r = a.request("hold", window_ms=0, keepalive_ms=300, timeout=10)
+        assert r["event"] == "error", r
+        r = a.request("punch", targets=["127.0.0.1:1"], rounds=0, interval_ms=50, timeout=10)
+        assert r["event"] == "error", r
+        r = a.request("echo", bytes=64, timeout_ms=120001, timeout=10)
+        assert r["event"] == "error", r
+        log("sibling bounds: hold window_ms=0, punch rounds=0, echo timeout_ms=120001 all rejected")
+
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def run_close_after_establish_case(binary):
     """Close immediately following an established completion must be clean:
     the confirm tail (peer-address resolution) holds the session lease until
@@ -547,6 +600,10 @@ def main():
     log("=== failed dial preserves the established session ===")
     run_failed_dial_preserves_session_case(binary)
     log("=== dial-preservation case PASSED ===")
+
+    log("=== frozen parameter bounds ===")
+    run_param_bounds_case(binary)
+    log("=== parameter bounds case PASSED ===")
 
     log("=== command validation (required id, oversized echo) ===")
     run_command_validation_case(binary)

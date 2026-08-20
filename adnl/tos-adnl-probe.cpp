@@ -291,6 +291,58 @@ class ProbeCore : public td::actor::Actor {
     return true;
   }
 
+  // frozen protocol bounds for the numeric command parameters; the
+  // orchestrator enforces the identical limits (see PROTOCOL.md)
+  static constexpr td::int64 kMinTimeoutMs = 1;
+  static constexpr td::int64 kMaxTimeoutMs = 120000;
+  static constexpr td::int64 kMinWindowMs = 1;
+  static constexpr td::int64 kMaxWindowMs = 600000;
+  static constexpr td::int64 kMinKeepaliveMs = 1;
+  static constexpr td::int64 kMaxKeepaliveMs = 120000;
+  static constexpr td::int64 kMinPunchRounds = 1;
+  static constexpr td::int64 kMaxPunchRounds = 100;
+  static constexpr td::int64 kMinPunchIntervalMs = 1;
+  static constexpr td::int64 kMaxPunchIntervalMs = 10000;
+
+  // accepts only a canonical JSON integer token: digits only, no sign, no
+  // leading zero, no decimal point or exponent (the shared rule for the
+  // command id and every numeric parameter)
+  static td::Result<td::int64> parse_canonical_integer(td::Slice token) {
+    if (token.empty() || (token.size() > 1 && token[0] == '0')) {
+      return td::Status::Error("not a canonical integer token");
+    }
+    for (auto c : token) {
+      if (c < '0' || c > '9') {
+        return td::Status::Error("not a canonical integer token");
+      }
+    }
+    return td::to_integer_safe<td::int64>(token);
+  }
+
+  // reads a required numeric parameter with the same canonical-token rules
+  // as the id, enforcing its frozen protocol bound. called BEFORE any
+  // session/peer mutation or lease acquisition, so an out-of-range value
+  // produces an error completion and nothing changes — a control-plane
+  // mistake must never be recorded as network behavior
+  bool read_bounded_param(td::int64 id, td::JsonObject &obj, td::Slice name, td::int64 min_value, td::int64 max_value,
+                          td::int64 &out) {
+    auto field = obj.extract_field(name);
+    if (field.type() != td::JsonValue::Type::Number) {
+      emit_error(id, PSTRING() << "field \"" << name << "\" is required and must be a JSON integer in [" << min_value
+                               << ", " << max_value << "]");
+      return false;
+    }
+    auto token = field.get_number();
+    auto r_value = parse_canonical_integer(token);
+    if (r_value.is_error() || r_value.ok() < min_value || r_value.ok() > max_value) {
+      emit_error(id, PSTRING() << "field \"" << name << "\" must be a JSON integer in [" << min_value << ", "
+                               << max_value << "], got \"" << token << "\"");
+      return false;
+    }
+    out = r_value.move_as_ok();
+    return true;
+  }
+
   static td::int64 elapsed_ms(td::Timestamp since) {
     auto ms = static_cast<td::int64>((td::Timestamp::now().at() - since.at()) * 1000.0 + 0.5);
     return ms < 0 ? 0 : ms;
@@ -357,20 +409,11 @@ class ProbeCore : public td::actor::Actor {
       return;
     }
     auto id_token = id_value.get_number();
-    bool canonical_integer = !id_token.empty() && !(id_token.size() > 1 && id_token[0] == '0');
-    for (auto c : id_token) {
-      if (c < '0' || c > '9') {
-        canonical_integer = false;
-        break;
-      }
-    }
     constexpr td::int64 kMaxCommandId = (td::int64{1} << 53) - 1;
     td::int64 id = 0;
-    if (canonical_integer) {
-      auto r_id = td::to_integer_safe<td::int64>(id_token);
-      if (r_id.is_ok()) {
-        id = r_id.move_as_ok();
-      }
+    auto r_id = parse_canonical_integer(id_token);
+    if (r_id.is_ok()) {
+      id = r_id.move_as_ok();
     }
     if (id < 1 || id > kMaxCommandId) {
       emit_error(0, PSTRING() << "field \"id\" must be a JSON integer in [1, 2^53-1], got \"" << id_token << "\"");
@@ -649,11 +692,8 @@ class ProbeCore : public td::actor::Actor {
     }
     td::int64 rounds;
     td::int64 interval_ms;
-    if (!read_long_field(id, obj, "rounds", 3, rounds) || !read_long_field(id, obj, "interval_ms", 100, interval_ms)) {
-      return;
-    }
-    if (rounds <= 0 || interval_ms < 0) {
-      emit_error(id, "\"rounds\" must be > 0 and \"interval_ms\" must be >= 0");
+    if (!read_bounded_param(id, obj, "rounds", kMinPunchRounds, kMaxPunchRounds, rounds) ||
+        !read_bounded_param(id, obj, "interval_ms", kMinPunchIntervalMs, kMaxPunchIntervalMs, interval_ms)) {
       return;
     }
     punch_.active = true;
@@ -724,16 +764,18 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "not listening");
       return;
     }
-    if (!acquire_session_lease(id)) {
-      return;
-    }
+    // every parameter is validated before the lease is taken and before any
+    // session/peer mutation: an invalid command must change nothing
     adnl::AdnlNodeIdFull new_peer_full;
     adnl::AdnlNodeIdShort new_peer_id;
     if (!parse_peer_pubkey(id, obj, new_peer_full, new_peer_id)) {
       return;
     }
     td::int64 timeout_ms;
-    if (!read_long_field(id, obj, "timeout_ms", 10000, timeout_ms)) {
+    if (!read_bounded_param(id, obj, "timeout_ms", kMinTimeoutMs, kMaxTimeoutMs, timeout_ms)) {
+      return;
+    }
+    if (!acquire_session_lease(id)) {
       return;
     }
 
@@ -804,16 +846,18 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "not listening");
       return;
     }
-    if (!acquire_session_lease(id)) {
-      return;
-    }
+    // every parameter is validated before the lease is taken and before any
+    // session/peer mutation: an invalid command must change nothing
     adnl::AdnlNodeIdFull new_peer_full;
     adnl::AdnlNodeIdShort new_peer_id;
     if (!parse_peer_pubkey(id, obj, new_peer_full, new_peer_id)) {
       return;
     }
     td::int64 timeout_ms;
-    if (!read_long_field(id, obj, "timeout_ms", 10000, timeout_ms)) {
+    if (!read_bounded_param(id, obj, "timeout_ms", kMinTimeoutMs, kMaxTimeoutMs, timeout_ms)) {
+      return;
+    }
+    if (!acquire_session_lease(id)) {
       return;
     }
 
@@ -840,11 +884,14 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to reconnect to");
       return;
     }
-    if (!acquire_session_lease(id)) {
+    // the timeout is validated BEFORE the channel reset: an invalid
+    // reconnect must not reset the channel and then record the inevitable
+    // instant failure as a network reconnect failure
+    td::int64 timeout_ms;
+    if (!read_bounded_param(id, obj, "timeout_ms", kMinTimeoutMs, kMaxTimeoutMs, timeout_ms)) {
       return;
     }
-    td::int64 timeout_ms;
-    if (!read_long_field(id, obj, "timeout_ms", 10000, timeout_ms)) {
+    if (!acquire_session_lease(id)) {
       return;
     }
 
@@ -1012,17 +1059,13 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to hold");
       return;
     }
-    if (!acquire_session_lease(id)) {
-      return;
-    }
     td::int64 window_ms;
     td::int64 keepalive_ms;
-    if (!read_long_field(id, obj, "window_ms", 30000, window_ms) ||
-        !read_long_field(id, obj, "keepalive_ms", 2000, keepalive_ms)) {
+    if (!read_bounded_param(id, obj, "window_ms", kMinWindowMs, kMaxWindowMs, window_ms) ||
+        !read_bounded_param(id, obj, "keepalive_ms", kMinKeepaliveMs, kMaxKeepaliveMs, keepalive_ms)) {
       return;
     }
-    if (window_ms <= 0 || keepalive_ms <= 0) {
-      emit_error(id, "\"window_ms\" and \"keepalive_ms\" must be > 0");
+    if (!acquire_session_lease(id)) {
       return;
     }
     hold_ = HoldOp{};
@@ -1119,16 +1162,17 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to echo against");
       return;
     }
-    if (!acquire_session_lease(id)) {
-      return;
-    }
     td::int64 bytes;
     td::int64 timeout_ms;
-    if (!read_long_field(id, obj, "bytes", 1024, bytes) || !read_long_field(id, obj, "timeout_ms", 10000, timeout_ms)) {
+    if (!read_long_field(id, obj, "bytes", 1024, bytes) ||
+        !read_bounded_param(id, obj, "timeout_ms", kMinTimeoutMs, kMaxTimeoutMs, timeout_ms)) {
       return;
     }
     if (bytes <= 0) {
       emit_error(id, "\"bytes\" must be > 0");
+      return;
+    }
+    if (!acquire_session_lease(id)) {
       return;
     }
     // validate the size BEFORE any allocation: the failure path must not

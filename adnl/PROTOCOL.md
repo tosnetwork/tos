@@ -33,6 +33,31 @@ completion event carrying the same `id`.
 - An unknown `cmd` is answered with an error; the process keeps running.
 - The process exits cleanly (status 0) on the `close` command or on stdin EOF.
 
+### Protocol constants (frozen parameter bounds)
+
+Every numeric command parameter below is **required**, must be a canonical
+JSON integer token (the same rules as `id`: digits only — no sign, leading
+zero, decimal point, or exponent), and is validated against its frozen
+bound **before** the sidecar takes the session lease or mutates any
+session/peer state. An out-of-range value produces an error completion and
+changes nothing — a control-plane mistake must never be recorded as network
+behavior (e.g. `reconnect` with `timeout_ms:-1` must not reset the channel
+and then report a failed network reconnect). The orchestrator enforces the
+identical bounds.
+
+| parameter      | commands                     | bounds     |
+|----------------|------------------------------|------------|
+| `timeout_ms`   | dial, await, reconnect, echo | 1 … 120000 |
+| `window_ms`    | hold                         | 1 … 600000 |
+| `keepalive_ms` | hold                         | 1 … 120000 |
+| `rounds`       | punch                        | 1 … 100    |
+| `interval_ms`  | punch                        | 1 … 10000  |
+
+`echo`'s `bytes` keeps its own rule (optional, default 1024, must be > 0):
+oversized values deliberately take the documented `ok=false` completion
+path rather than an error, because the 64 KiB case is part of what the
+protocol measures.
+
 **Session-operation serialization (lease):** at most one of
 {`dial`, `await`, `hold`, `reconnect`, `echo`} is active at a time. A
 session command arriving while another one is in flight completes
