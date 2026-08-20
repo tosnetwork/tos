@@ -127,7 +127,23 @@ implicit return address learned from the inbound packets).
 Runs keepalive round trips at the given interval until the window elapses
 (`completed=true`, `survival` = full window) or 3 consecutive keepalives fail
 (`completed=false`, `survival` = span from hold start to the last successful
-round trip, floored at 1 second).
+round trip).
+
+Completion rules:
+
+- The hold is never reported `completed=true` while a keepalive round trip
+  is still in flight: if the window elapses with one outstanding, the hold
+  waits for that round trip (bounded by the keepalive's own timeout) and its
+  result decides the verdict — a peer that died just before a short window
+  is reported `completed=false`, not as having survived it. The same rule
+  covers `keepalive_ms` larger than `window_ms`.
+- With no keepalive outstanding at window expiry, `completed=true` requires
+  the most recent round trip in the window to have succeeded.
+- `survival_seconds` is whole seconds **by truncation with a minimum of 1**
+  — the same clamped-seconds rule the collector applies, so identical trials
+  produce identical evidence (zero already means "not measured" in the trial
+  schema, so a measured hold always reports at least 1). E.g. a completed
+  1500 ms window reports `survival_seconds:1`.
 
 ### reconnect
 

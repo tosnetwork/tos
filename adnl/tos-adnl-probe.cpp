@@ -337,7 +337,13 @@ class ProbeCore : public td::actor::Actor {
     }
     if (hold_.active) {
       if (hold_.window_end.is_in_past()) {
-        finish_hold(true);
+        // never report the window as survived while a keepalive is still in
+        // flight: that round trip (bounded by its own timeout) decides the
+        // verdict in keepalive_result. with no keepalive outstanding, the
+        // window only counts as survived if the tail had no failures
+        if (!hold_.in_flight) {
+          finish_hold(hold_.consecutive_failures == 0);
+        }
       } else if (!hold_.in_flight && hold_.next_at.is_in_past()) {
         send_keepalive();
       }
@@ -941,20 +947,26 @@ class ProbeCore : public td::actor::Actor {
       }
     }
     if (hold_.window_end.is_in_past()) {
-      finish_hold(true);
+      // the round trip that closed the window decides the verdict: a peer
+      // that died just before a short window must not be reported as
+      // having survived it
+      finish_hold(ok);
     }
   }
 
   void finish_hold(bool completed) {
     auto id = hold_.cmd_id;
+    // whole seconds by truncation with a floor of one, mirroring the
+    // collector's clamped-seconds rule: zero means "not measured" in the
+    // trial schema, so a measured hold always reports at least 1
     td::int64 survival;
     if (completed) {
-      survival = (hold_.window_ms + 500) / 1000;
+      survival = hold_.window_ms / 1000;
     } else {
       survival = static_cast<td::int64>(hold_.last_success_span);
-      if (survival < 1) {
-        survival = 1;
-      }
+    }
+    if (survival < 1) {
+      survival = 1;
     }
     hold_ = HoldOp{};
     td::JsonBuilder jb;

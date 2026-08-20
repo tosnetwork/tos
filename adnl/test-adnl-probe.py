@@ -101,6 +101,36 @@ def log(message):
     print(f"[smoke] {message}", flush=True)
 
 
+def establish_pair(binary, name):
+    """Two listening probes with an established (dialed/awaited) session.
+
+    Returns (dialer, responder); the caller owns closing/killing them.
+    """
+    a = Probe(binary, f"A({name})")
+    b = Probe(binary, f"B({name})")
+    try:
+        la = a.request("listen", bind="127.0.0.1:0")
+        lb = b.request("listen", bind="127.0.0.1:0")
+        assert la["event"] == "listening" and lb["event"] == "listening", (la, lb)
+        port_b = int(lb["addr"].rsplit(":", 1)[1])
+        await_id = b.send("await", peer_pubkey_hex=la["adnl_pubkey_hex"], timeout_ms=10000)
+        dial_id = a.send(
+            "dial",
+            peer_pubkey_hex=lb["adnl_pubkey_hex"],
+            candidates=[f"127.0.0.1:{port_b}"],
+            timeout_ms=10000,
+        )
+        dialed = a.wait_completion(dial_id, 15)
+        awaited = b.wait_completion(await_id, 15)
+        assert dialed["event"] == "established", dialed
+        assert awaited["event"] == "established", awaited
+        return a, b
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def run_flow(binary, host, wrap_host):
     """Full flow between two probes on the given loopback host.
 
@@ -271,12 +301,44 @@ def run_port0_candidate_case(binary):
         raise
 
 
+def run_hold_semantics_case(binary):
+    """Hold verdict and survival rounding.
+
+    (1) A completed 1500 ms window truncates to survival_seconds=1 (the
+    collector's clamped-seconds rule). (2) A window shorter than the
+    keepalive interval against a dead peer must NOT report completed=true:
+    the outstanding round trip decides, and it fails.
+    """
+    a, b = establish_pair(binary, "hold-semantics")
+    try:
+        held = a.request("hold", window_ms=1500, keepalive_ms=300, timeout=15)
+        assert held["event"] == "held" and held["completed"] is True, held
+        assert held["survival_seconds"] == 1, held
+        log(f"hold 1500ms window: completed=true survival_seconds={held['survival_seconds']} (truncated, not rounded)")
+
+        b.close()  # peer is now dead
+        held = a.request("hold", window_ms=600, keepalive_ms=2000, timeout=15)
+        assert held["event"] == "held", held
+        assert held["completed"] is False, f"dead peer reported as surviving the window: {held}"
+        assert held["survival_seconds"] == 1, held
+        log(f"hold 600ms window, 2000ms keepalive, dead peer: completed=false survival_seconds={held['survival_seconds']}")
+        a.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BINARY
 
     log("=== flow on 127.0.0.1 ===")
     run_flow(binary, "127.0.0.1", "127.0.0.1")
     log("=== 127.0.0.1 flow PASSED ===")
+
+    log("=== hold semantics (completion race, survival truncation) ===")
+    run_hold_semantics_case(binary)
+    log("=== hold semantics PASSED ===")
 
     log("=== identity + port handoff on 127.0.0.1 ===")
     run_identity_handoff(binary)
