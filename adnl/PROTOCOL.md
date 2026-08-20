@@ -21,6 +21,10 @@ Commands arrive one JSON object per line on stdin. Every command carries an
 integer `id` and a string `cmd`. Every command is answered by exactly one
 completion event carrying the same `id`.
 
+- The `id` is **required**: an integer in `[1, 2^53-1]` (the upper bound
+  keeps ids exact in IEEE-754 JSON readers). A command whose `id` is
+  missing, non-integer, or out of range is rejected with an error event
+  carrying `id` `0` **before** anything is dispatched or mutated.
 - Errors: `{"id":N,"event":"error","message":"..."}`.
 - A malformed line is answered with an `id` of `0`.
 - An unknown `cmd` is answered with an error; the process keeps running.
@@ -192,7 +196,8 @@ Sends an ADNL custom query to the confirmed peer whose payload is the 16-byte
 ASCII prefix `tosprobe-echo/1\n` followed by `bytes` random bytes. The answer
 must be exactly the 32-byte sha256 of those random bytes. `ok` is true only
 when the returned hash equals the locally computed one; `sha256_hex` is the
-locally computed hash either way.
+locally computed hash whenever a payload was generated (it is empty only on
+the oversized-request path below, where nothing is allocated).
 
 **Every** probe instance also answers such queries from its peer: a query
 handler is registered at listen time; on the prefix it replies with the
@@ -209,6 +214,9 @@ Consequently:
 - `echo` with `bytes` such that `16 + bytes > 8192` (so anything above
   8176 random bytes — including the required 65536 case) is **not sent**;
   the sidecar completes with `ok=false` and an `error` field naming the cap.
+  This size check runs **before any allocation** — an absurd `bytes` value
+  is not an out-of-memory vector — so no payload exists to hash and the
+  failure completion carries an **empty** `sha256_hex`.
 - `bytes:1024` works and exercises fragmentation (the ADNL message MTU is
   1024, so a 1040-byte payload is split into `adnl.message.part` fragments).
 - Inbound behavior is symmetric: a ≥ 8 KiB query from another implementation

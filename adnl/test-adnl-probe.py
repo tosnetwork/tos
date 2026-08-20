@@ -202,6 +202,7 @@ def run_flow(binary, host, wrap_host):
             log(f"echo 65536: ok in {echoed64['millis']} ms")
         else:
             assert "error" in echoed64, echoed64
+            assert echoed64["sha256_hex"] == "", echoed64  # nothing allocated, nothing hashed
             log(f"echo 65536: ok=false (expected on native stack): {echoed64['error']}")
 
         a.close()
@@ -341,6 +342,44 @@ def run_hold_semantics_case(binary):
         raise
 
 
+def run_command_validation_case(binary):
+    """Required id and allocation-free oversized echo.
+
+    (1) A command without an id is rejected with an id-0 error before
+    anything executes. (2) echo with bytes=10^12 completes instantly with
+    ok=false and an empty sha256_hex (nothing allocated), and the process
+    stays healthy enough to run a real echo right after.
+    """
+    a, b = establish_pair(binary, "validation")
+    try:
+        # missing id: raw line, must be answered with id 0 and not executed
+        a.proc.stdin.write(json.dumps({"cmd": "echo", "bytes": 64}) + "\n")
+        a.proc.stdin.flush()
+        rejected = a.wait_event(lambda e: e.get("id") == 0, 10)
+        assert rejected["event"] == "error", rejected
+        assert "id" in rejected["message"], rejected
+        log(f"command without id: error id=0 \"{rejected['message']}\"")
+
+        started = time.monotonic()
+        huge = a.request("echo", bytes=10**12, timeout_ms=10000, timeout=10)
+        elapsed = time.monotonic() - started
+        assert huge["event"] == "echoed" and huge["ok"] is False, huge
+        assert huge["sha256_hex"] == "", huge
+        assert elapsed < 2.0, f"oversized echo took {elapsed:.1f}s"
+        log(f"echo bytes=10^12: instant ok=false in {elapsed*1000:.0f} ms, sha256_hex empty")
+
+        alive = a.request("echo", bytes=1024, timeout_ms=10000)
+        assert alive["event"] == "echoed" and alive["ok"] is True, alive
+        log("process alive after oversized echo: echo 1024 ok")
+
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def run_lease_and_close_case(binary):
     """Session-operation lease and close cancellation.
 
@@ -388,6 +427,10 @@ def main():
     log("=== session lease + close cancellation ===")
     run_lease_and_close_case(binary)
     log("=== lease/close case PASSED ===")
+
+    log("=== command validation (required id, oversized echo) ===")
+    run_command_validation_case(binary)
+    log("=== command validation PASSED ===")
 
     log("=== identity + port handoff on 127.0.0.1 ===")
     run_identity_handoff(binary)

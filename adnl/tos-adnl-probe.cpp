@@ -343,12 +343,20 @@ class ProbeCore : public td::actor::Actor {
       return;
     }
     auto &obj = value.get_object();
-    auto r_id = obj.get_optional_long_field("id");
+    // the id is required and validated before anything is dispatched or
+    // mutated: a command without a usable id could otherwise execute and
+    // produce completions indistinguishable from other malformed input
+    auto r_id = obj.get_required_long_field("id");
     if (r_id.is_error()) {
-      emit_error(0, "field \"id\" must be an integer");
+      emit_error(0, "field \"id\" is required and must be an integer");
       return;
     }
     auto id = r_id.move_as_ok();
+    constexpr td::int64 kMaxCommandId = (td::int64{1} << 53) - 1;
+    if (id < 1 || id > kMaxCommandId) {
+      emit_error(0, PSTRING() << "field \"id\" must be in [1, 2^53-1], got " << id);
+      return;
+    }
     auto r_cmd = obj.get_required_string_field("cmd");
     if (r_cmd.is_error()) {
       emit_error(id, "field \"cmd\" must be a string");
@@ -1062,24 +1070,22 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "\"bytes\" must be > 0");
       return;
     }
-    auto total = static_cast<size_t>(bytes) + kEchoPrefix.size();
-    if (total > kMaxQueryPayload) {
-      // honest failure: the native stack caps query payloads well below 64 KiB
-      td::BufferSlice random_bytes{static_cast<size_t>(bytes)};
-      td::Random::secure_bytes(random_bytes.as_slice());
-      auto expected = td::sha256_bits256(random_bytes.as_slice());
+    // validate the size BEFORE any allocation: the failure path must not
+    // allocate or hash the requested payload (a huge bytes value would
+    // otherwise be an out-of-memory crash vector), so it reports an empty
+    // sha256_hex
+    if (bytes > static_cast<td::int64>(kMaxQueryPayload - kEchoPrefix.size())) {
       td::JsonBuilder jb;
       {
         auto e = jb.enter_object();
         e("id", id);
         e("event", "echoed");
         e("ok", td::JsonBool{false});
-        e("sha256_hex", td::hex_encode(expected.as_slice()));
+        e("sha256_hex", "");
         e("millis", static_cast<td::int64>(0));
-        e("error", PSTRING() << "payload of " << total
-                             << " bytes (incl. 16-byte prefix) exceeds the native adnl query cap "
-                                "huge_packet_max_size="
-                             << kMaxQueryPayload << " bytes");
+        e("error", PSTRING() << "payload of " << bytes << "+" << kEchoPrefix.size()
+                             << " bytes exceeds the native adnl query cap huge_packet_max_size=" << kMaxQueryPayload
+                             << " bytes");
       }
       emit_line(jb.string_builder().as_cslice());
       return;
