@@ -176,6 +176,7 @@ class ProbeCore : public td::actor::Actor {
     int consecutive_failures{0};
     double last_success_span{0.0};
     bool in_flight{false};
+    bool closing_probe{false};
     td::Timestamp next_at;
     td::uint64 seq{0};
   };
@@ -403,12 +404,15 @@ class ProbeCore : public td::actor::Actor {
     }
     if (hold_.active) {
       if (hold_.window_end.is_in_past()) {
-        // never report the window as survived while a keepalive is still in
-        // flight: that round trip (bounded by its own timeout) decides the
-        // verdict in keepalive_result. with no keepalive outstanding, the
-        // window only counts as survived if the tail had no failures
-        if (!hold_.in_flight) {
-          finish_hold(hold_.consecutive_failures == 0);
+        // the verdict must always rest on a round trip that completed at or
+        // after window close. a keepalive still in flight fills that role
+        // (keepalive_result finishes the hold with its result); with none
+        // outstanding, a dedicated closing round trip is launched exactly
+        // once — a success proven only early in the window must not credit
+        // the whole window
+        if (!hold_.in_flight && !hold_.closing_probe) {
+          hold_.closing_probe = true;
+          send_keepalive();
         }
       } else if (!hold_.in_flight && hold_.next_at.is_in_past()) {
         send_keepalive();
@@ -989,6 +993,12 @@ class ProbeCore : public td::actor::Actor {
     td::Bits256 expected;
     auto payload = make_echo_payload(32, expected);
     double timeout = std::max(hold_.interval, 0.05);
+    if (hold_.closing_probe) {
+      // the closing round trip is bounded like a round trip, not like the
+      // keepalive cadence: a 60 s keepalive interval must not stretch the
+      // verdict of a 3 s window by a minute
+      timeout = std::min(timeout, 5.0);
+    }
     auto self = actor_id(this);
     auto P = td::PromiseCreator::lambda([self, seq, expected](td::Result<td::BufferSlice> R) {
       td::actor::send_closure(self, &ProbeCore::keepalive_result, seq, expected, std::move(R));

@@ -156,14 +156,17 @@ round trip).
 
 Completion rules:
 
-- The hold is never reported `completed=true` while a keepalive round trip
-  is still in flight: if the window elapses with one outstanding, the hold
-  waits for that round trip (bounded by the keepalive's own timeout) and its
-  result decides the verdict — a peer that died just before a short window
-  is reported `completed=false`, not as having survived it. The same rule
-  covers `keepalive_ms` larger than `window_ms`.
-- With no keepalive outstanding at window expiry, `completed=true` requires
-  the most recent round trip in the window to have succeeded.
+- **The verdict always rests on a round trip that completed at or after
+  window close.** If the window elapses with a keepalive still in flight,
+  the hold waits for that round trip (bounded by the keepalive's own
+  timeout) and its result decides the verdict. If the window elapses with
+  no keepalive outstanding, the hold launches one dedicated **closing round
+  trip** (bounded by min(`keepalive_ms`, 5 s)) and only its success yields
+  `completed=true`; its failure yields `completed=false` with `survival` =
+  span to the last successful round trip. A success proven only early in
+  the window never credits the whole window — a peer that died mid-window
+  under a sparse keepalive cadence (e.g. 60 s keepalives in a 10 s window)
+  is reported `completed=false`.
 - `survival_seconds` is whole seconds **by truncation with a minimum of 1**
   — the same clamped-seconds rule the collector applies, so identical trials
   produce identical evidence (zero already means "not measured" in the trial

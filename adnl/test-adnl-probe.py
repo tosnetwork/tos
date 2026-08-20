@@ -341,6 +341,45 @@ def run_hold_semantics_case(binary):
         b.kill()
         raise
 
+    # closing round trip: a success proven only early in the window must not
+    # credit the whole window when the peer dies mid-window under a sparse
+    # keepalive cadence (nothing in flight when the window closes)
+    a, b = establish_pair(binary, "closing-probe")
+    try:
+        hold_id = a.send("hold", window_ms=3000, keepalive_ms=60000)
+        time.sleep(1.0)
+        b.proc.kill()
+        b.proc.wait()
+        held = a.wait_completion(hold_id, 20)
+        assert held["event"] == "held", held
+        assert held["completed"] is False, f"mid-window death credited as full survival: {held}"
+        assert held["survival_seconds"] == 1, held
+        log(f"hold 3s window, 60s keepalive, peer killed at ~1s: completed=false "
+            f"survival_seconds={held['survival_seconds']} (closing round trip failed)")
+        a.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+    # same sparse timing with the peer alive: the closing round trip succeeds
+    a, b = establish_pair(binary, "closing-probe-alive")
+    try:
+        started = time.monotonic()
+        held = a.request("hold", window_ms=3000, keepalive_ms=60000, timeout=20)
+        elapsed = time.monotonic() - started
+        assert held["event"] == "held" and held["completed"] is True, held
+        assert held["survival_seconds"] == 3, held
+        assert elapsed >= 3.0, f"hold finished before the window closed: {elapsed:.2f}s"
+        log(f"hold 3s window, 60s keepalive, peer alive: completed=true survival_seconds={held['survival_seconds']} "
+            f"after {elapsed:.2f}s (verdict from the closing round trip)")
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
 
 def run_command_validation_case(binary):
     """Required id and allocation-free oversized echo.
