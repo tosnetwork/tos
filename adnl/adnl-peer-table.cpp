@@ -228,6 +228,16 @@ void AdnlPeerTableImpl::send_query(AdnlNodeIdShort src, AdnlNodeIdShort dst, std
                           std::move(promise), timeout, std::move(data), 0);
 }
 
+void AdnlPeerTableImpl::reset_peer_channel(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id,
+                                           td::Promise<td::Unit> promise) {
+  auto peer_pair = get_peer_pair_if_exists(peer_id, local_id);
+  if (peer_pair == nullptr) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "peer pair not found"));
+    return;
+  }
+  td::actor::send_closure(peer_pair->actor, &AdnlPeerPair::reset_channel, std::move(promise));
+}
+
 void AdnlPeerTableImpl::add_id_ex(AdnlNodeIdFull id, AdnlAddressList addr_list, td::uint8 cat, td::uint32 mode) {
   CHECK(id.pubkey().is_ed25519());
   auto a = id.compute_short_id();

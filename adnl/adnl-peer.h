@@ -56,6 +56,7 @@ class AdnlPeerPair : public td::actor::Actor {
   }
   virtual void send_query(std::string name, td::Promise<td::BufferSlice> promise, td::Timestamp timeout,
                           td::BufferSlice data, td::uint32 flags) = 0;
+  virtual void reset_channel(td::Promise<td::Unit> promise) = 0;
   virtual void alarm_query(AdnlQueryId query_id) = 0;
   virtual void update_dht_node(td::actor::ActorId<dht::Dht> dht_node) = 0;
   virtual void update_peer_id(AdnlNodeIdFull id) = 0;

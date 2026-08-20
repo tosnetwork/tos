@@ -518,6 +518,22 @@ void AdnlPeerPairImpl::alarm_query(AdnlQueryId id) {
   out_queries_.erase(id);
 }
 
+void AdnlPeerPairImpl::reset_channel(td::Promise<td::Unit> promise) {
+  if (channel_inited_) {
+    td::actor::send_closure(peer_table_, &AdnlPeerTable::unregister_channel, channel_in_id_);
+    channel_.reset();
+    channel_inited_ = false;
+    channel_ready_ = false;
+  }
+  channel_pk_ = privkeys::Ed25519::random();
+  channel_pub_ = channel_pk_.pub();
+  // the new channel key must carry a strictly newer date, otherwise the peer
+  // keeps its old channel and both sides end up on different channels
+  auto now = static_cast<td::int32>(td::Clocks::system());
+  channel_pk_date_ = now > channel_pk_date_ ? now : channel_pk_date_ + 1;
+  promise.set_value(td::Unit());
+}
+
 void AdnlPeerPairImpl::get_peer_node(td::Promise<AdnlNode> promise) {
   set_idle_mark(false);
   if (!peer_id_.empty() && !addr_list_.empty()) {

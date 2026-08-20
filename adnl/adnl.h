@@ -96,6 +96,13 @@ class Adnl : public AdnlSenderInterface {
   // used mostly from DHT to avoid loops
   virtual void add_peer(AdnlNodeIdShort local_id, AdnlNodeIdFull id, AdnlAddressList addr_list) = 0;
 
+  // drops the negotiated channel to a known peer (if any) and rotates the local
+  // channel key, forcing a fresh channel handshake on the next outbound message.
+  // packet seqno state is kept, so the peer keeps accepting our packets.
+  virtual void reset_peer_channel(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, td::Promise<td::Unit> promise) {
+    promise.set_error(td::Status::Error(ErrorCode::error, "reset_peer_channel is not implemented"));
+  }
+
   // adds address list for nodes from config
   virtual void add_static_nodes_from_config(AdnlNodesList nodes) = 0;
 

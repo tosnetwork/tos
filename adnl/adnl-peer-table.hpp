@@ -65,6 +65,7 @@ class AdnlPeerTableImpl : public AdnlPeerTable {
                      td::Timestamp timeout, td::BufferSlice data, td::uint64 max_answer_size) override {
     send_query(src, dst, name, std::move(promise), timeout, std::move(data));
   }
+  void reset_peer_channel(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, td::Promise<td::Unit> promise) override;
   void add_id_ex(AdnlNodeIdFull id, AdnlAddressList addr_list, td::uint8 cat, td::uint32 mode) override;
   void del_id(AdnlNodeIdShort id, td::Promise<td::Unit> promise) override;
   void subscribe(AdnlNodeIdShort dst, std::string prefix, std::unique_ptr<Callback> callback) override;
