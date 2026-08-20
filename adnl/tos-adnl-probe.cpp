@@ -218,6 +218,64 @@ class ProbeCore : public td::actor::Actor {
   // can never be mistaken for a fresh attempt of a later operation
   td::uint64 op_seq_counter_{0};
 
+  // session-operation lease: at most one of {dial, await, hold, reconnect,
+  // echo} may be active at a time, so one operation's channel reset or peer
+  // replacement can never be recorded as another operation's network
+  // behavior. returns the name of the operation holding the lease, if any
+  td::Slice busy_session_operation() const {
+    switch (confirm_.kind) {
+      case ConfirmKind::dial:
+        return "dial";
+      case ConfirmKind::await_peer:
+        return "await";
+      case ConfirmKind::reconnect:
+        return "reconnect";
+      case ConfirmKind::none:
+        break;
+    }
+    if (hold_.active) {
+      return "hold";
+    }
+    if (echo_.active) {
+      return "echo";
+    }
+    return td::Slice();
+  }
+
+  // fail-closed: a session command arriving while another holds the lease is
+  // answered immediately with an error naming the busy operation, never
+  // queued silently
+  bool acquire_session_lease(td::int64 id) {
+    auto busy = busy_session_operation();
+    if (!busy.empty()) {
+      emit_error(id, PSTRING() << "busy: " << busy << " in progress");
+      return false;
+    }
+    return true;
+  }
+
+  // answers every in-flight command id with an error completion so that the
+  // exactly-one-completion rule survives shutdown; with the session lease at
+  // most one session operation plus one punch can be outstanding
+  void cancel_outstanding(td::Slice reason) {
+    if (punch_.active) {
+      emit_error(punch_.cmd_id, reason);
+      punch_ = PunchOp{};
+    }
+    if (confirm_.kind != ConfirmKind::none) {
+      emit_error(confirm_.cmd_id, reason);
+      confirm_ = ConfirmOp{};
+    }
+    if (hold_.active) {
+      emit_error(hold_.cmd_id, reason);
+      hold_ = HoldOp{};
+    }
+    if (echo_.active) {
+      emit_error(echo_.cmd_id, reason);
+      echo_ = EchoOp{};
+    }
+  }
+
   // reads an optional integer field; emits a protocol error and returns false
   // when the field is present but not an integer
   bool read_long_field(td::int64 id, td::JsonObject &obj, td::Slice name, td::int64 default_value, td::int64 &out) {
@@ -626,8 +684,7 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "not listening");
       return;
     }
-    if (confirm_.kind != ConfirmKind::none) {
-      emit_error(id, "dial/await/reconnect already in progress");
+    if (!acquire_session_lease(id)) {
       return;
     }
     if (!parse_peer_pubkey(id, obj)) {
@@ -702,8 +759,7 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "not listening");
       return;
     }
-    if (confirm_.kind != ConfirmKind::none) {
-      emit_error(id, "dial/await/reconnect already in progress");
+    if (!acquire_session_lease(id)) {
       return;
     }
     if (!parse_peer_pubkey(id, obj)) {
@@ -735,8 +791,7 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to reconnect to");
       return;
     }
-    if (confirm_.kind != ConfirmKind::none) {
-      emit_error(id, "dial/await/reconnect already in progress");
+    if (!acquire_session_lease(id)) {
       return;
     }
     td::int64 timeout_ms;
@@ -894,8 +949,7 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to hold");
       return;
     }
-    if (hold_.active) {
-      emit_error(id, "hold already in progress");
+    if (!acquire_session_lease(id)) {
       return;
     }
     td::int64 window_ms;
@@ -996,8 +1050,7 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, "no confirmed peer to echo against");
       return;
     }
-    if (echo_.active) {
-      emit_error(id, "echo already in progress");
+    if (!acquire_session_lease(id)) {
       return;
     }
     td::int64 bytes;
@@ -1084,6 +1137,9 @@ class ProbeCore : public td::actor::Actor {
   // ---- close ----
 
   void cmd_close(td::int64 id) {
+    // exactly-one-completion: any in-flight operation gets its terminal
+    // error event before the closed event
+    cancel_outstanding("cancelled by close");
     td::JsonBuilder jb;
     {
       auto e = jb.enter_object();
@@ -1098,6 +1154,7 @@ class ProbeCore : public td::actor::Actor {
     if (stopping_) {
       return;
     }
+    cancel_outstanding("cancelled by shutdown");
     stopping_ = true;
     adnl_.reset();
     network_manager_.reset();

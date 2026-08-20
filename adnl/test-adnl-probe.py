@@ -341,6 +341,39 @@ def run_hold_semantics_case(binary):
         raise
 
 
+def run_lease_and_close_case(binary):
+    """Session-operation lease and close cancellation.
+
+    (1) An echo issued while a hold is in flight completes immediately with
+    a busy error naming the hold. (2) close during a hold emits a cancelled
+    error for the hold's id BEFORE the closed event, keeping exactly one
+    completion per command.
+    """
+    a, b = establish_pair(binary, "lease")
+    try:
+        hold_id = a.send("hold", window_ms=4000, keepalive_ms=300)
+        time.sleep(0.3)  # hold is now mid-window
+        echoed = a.request("echo", bytes=64, timeout_ms=2000, timeout=10)
+        assert echoed["event"] == "error", echoed
+        assert "busy" in echoed["message"] and "hold" in echoed["message"], echoed
+        log(f"echo during hold: error \"{echoed['message']}\" (lease held)")
+
+        close_id = a.send("close")
+        cancelled = a.wait_completion(hold_id, 10)
+        assert cancelled["event"] == "error", cancelled
+        assert cancelled["message"] == "cancelled by close", cancelled
+        closed = a.wait_completion(close_id, 10)
+        assert closed["event"] == "closed", closed
+        rc = a.proc.wait(timeout=10)
+        assert rc == 0, rc
+        log(f"close during hold: hold id={hold_id} completed with \"{cancelled['message']}\" before closed, exit {rc}")
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BINARY
 
@@ -351,6 +384,10 @@ def main():
     log("=== hold semantics (completion race, survival truncation) ===")
     run_hold_semantics_case(binary)
     log("=== hold semantics PASSED ===")
+
+    log("=== session lease + close cancellation ===")
+    run_lease_and_close_case(binary)
+    log("=== lease/close case PASSED ===")
 
     log("=== identity + port handoff on 127.0.0.1 ===")
     run_identity_handoff(binary)

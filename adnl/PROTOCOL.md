@@ -26,6 +26,16 @@ completion event carrying the same `id`.
 - An unknown `cmd` is answered with an error; the process keeps running.
 - The process exits cleanly (status 0) on the `close` command or on stdin EOF.
 
+**Session-operation serialization (lease):** at most one of
+{`dial`, `await`, `hold`, `reconnect`, `echo`} is active at a time. A
+session command arriving while another one is in flight completes
+immediately with an error event naming the busy operation (e.g.
+`"busy: hold in progress"`) — fail-closed, never queued silently. This
+guarantees one operation's channel reset or peer replacement can never be
+recorded as another operation's network behavior. `identity`, `listen`,
+`punch`, and `close` are outside the lease (`punch` still refuses a second
+concurrent `punch`).
+
 ## Commands
 
 ### identity
@@ -230,8 +240,15 @@ here — the production pairing layer must not advertise `ip:0`.
 {"id":8,"cmd":"close"} → {"id":8,"event":"closed"}
 ```
 
-Then clean shutdown, exit 0. Stdin EOF also shuts down cleanly (without a
-`closed` event).
+Then clean shutdown, exit 0.
+
+`close` first **cancels any in-flight operation** with its own terminal
+error completion — `{"id":<outstanding>,"event":"error","message":
+"cancelled by close"}` — emitted **before** the `closed` event, so the
+exactly-one-completion rule holds across shutdown (with the session lease,
+at most one session operation plus one `punch` can be outstanding). Stdin
+EOF also shuts down cleanly: in-flight operations are cancelled the same
+way with `"cancelled by shutdown"`, and no `closed` event is emitted.
 
 ## IPv6 (measured on the native stack — do not infer from other implementations)
 
