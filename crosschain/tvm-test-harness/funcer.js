@@ -164,6 +164,14 @@ ${inMsg.exit_code ? 'drop' : 'dup current-storage !'}
 ${inMsg.new_data ? makeCheckStorage(inMsg.new_data) : 'drop'}
 
 ${inMsg.out_msgs ? makeCheckOutMessages(inMsg.out_msgs) : 'drop'}
+
+// The chain discards whatever a transaction leaves on its stack, and the
+// harness has to do the same at the end of every message segment. The
+// balance pushed above is consumed by a four-argument recv_internal but left
+// underneath by a three-argument one, and anything surviving here leaks into
+// the next segment — where a get method's depth check counts the whole stack
+// and reports phantom output that says nothing about the contract's logic.
+{ drop } depth 1- times
 `;
 }
 
