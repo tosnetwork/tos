@@ -57,6 +57,7 @@
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/UdpSocketFd.h"
 #include "td/utils/port/signals.h"
+#include "td/utils/port/sleep.h"
 
 #include "git.h"
 
@@ -196,6 +197,8 @@ class ProbeCore : public td::actor::Actor {
   td::actor::ActorOwn<adnl::AdnlNetworkManager> network_manager_;
 
   bool listening_{false};
+  bool have_identity_{false};
+  PrivateKey local_pk_;  // held from identity/listen until listen hands it to the keyring
   PublicKey local_pub_;
   adnl::AdnlNodeIdShort local_id_;
 
@@ -294,7 +297,9 @@ class ProbeCore : public td::actor::Actor {
       return;
     }
     auto cmd = r_cmd.move_as_ok();
-    if (cmd == "listen") {
+    if (cmd == "identity") {
+      cmd_identity(id);
+    } else if (cmd == "listen") {
       cmd_listen(id, obj);
     } else if (cmd == "punch") {
       cmd_punch(id, obj);
@@ -339,7 +344,56 @@ class ProbeCore : public td::actor::Actor {
     }
   }
 
+  // ---- identity ----
+
+  void ensure_identity() {
+    if (have_identity_) {
+      return;
+    }
+    local_pk_ = PrivateKey{privkeys::Ed25519::random()};
+    local_pub_ = local_pk_.compute_public_key();
+    local_id_ = adnl::AdnlNodeIdShort{local_pub_.compute_short_id()};
+    have_identity_ = true;
+  }
+
+  void cmd_identity(td::int64 id) {
+    // generates (or returns the already-generated) ephemeral transport
+    // keypair without binding any socket; a subsequent listen reuses it.
+    // lets an orchestrator hand the pubkey to the peer during rendezvous on
+    // its own socket before the sidecar takes over the same port
+    ensure_identity();
+    td::JsonBuilder jb;
+    {
+      auto e = jb.enter_object();
+      e("id", id);
+      e("event", "identity");
+      e("adnl_pubkey_hex", td::hex_encode(local_pub_.ed25519_value().raw().as_slice()));
+      e("adnl_id_hex", td::hex_encode(local_id_.as_slice()));
+    }
+    emit_line(jb.string_builder().as_cslice());
+  }
+
   // ---- listen ----
+
+  // waits (bounded) until the requested UDP port can be bound; covers the
+  // handoff where the caller closed its rendezvous socket on this port just
+  // before issuing listen. the probe bind is released again immediately, so
+  // a tiny re-bind race remains, but the transport bind follows right after
+  td::Status wait_port_bindable(td::uint16 port) {
+    td::IPAddress check;
+    TRY_STATUS(check.init_ipv4_port("0.0.0.0", port));
+    td::Status last_error;
+    for (int attempt = 0; attempt < 20; attempt++) {
+      auto r_fd = td::UdpSocketFd::open(check);
+      if (r_fd.is_ok()) {
+        r_fd.move_as_ok().close();
+        return td::Status::OK();
+      }
+      last_error = r_fd.move_as_error();
+      td::usleep_for(50000);  // 50 ms; worst case 1 s in total
+    }
+    return last_error;
+  }
 
   void cmd_listen(td::int64 id, td::JsonObject &obj) {
     if (listening_) {
@@ -393,14 +447,18 @@ class ProbeCore : public td::actor::Actor {
       }
       port = static_cast<td::uint16>(r_local.ok().get_port());
       fd.close();
+    } else {
+      auto S3 = wait_port_bindable(port);
+      if (S3.is_error()) {
+        emit_error(id, PSTRING() << "cannot bind UDP port " << port << ": " << S3.message());
+        return;
+      }
     }
 
-    auto pk = PrivateKey{privkeys::Ed25519::random()};
-    local_pub_ = pk.compute_public_key();
-    local_id_ = adnl::AdnlNodeIdShort{local_pub_.compute_short_id()};
+    ensure_identity();
 
     keyring_ = keyring::Keyring::create("");
-    td::actor::send_closure(keyring_, &keyring::Keyring::add_key, std::move(pk), true, [](td::Result<> R) {
+    td::actor::send_closure(keyring_, &keyring::Keyring::add_key, std::move(local_pk_), true, [](td::Result<> R) {
       if (R.is_error()) {
         LOG(ERROR) << "failed to add key to keyring: " << R.move_as_error();
       }

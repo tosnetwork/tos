@@ -182,12 +182,78 @@ def run_flow(binary, host, wrap_host):
         raise
 
 
+def run_identity_handoff(binary):
+    """Rendezvous handoff: identity first (no socket), then listen on a port
+    the driver just used for its own UDP socket, keypair reused exactly."""
+    import socket
+
+    a = Probe(binary, "A(handoff)")
+    b = Probe(binary, "B(handoff)")
+    try:
+        # (a) identity before any listen: keypair without a socket
+        ident = a.request("identity")
+        assert ident["event"] == "identity", ident
+        assert len(ident["adnl_pubkey_hex"]) == 64, ident
+        assert len(ident["adnl_id_hex"]) == 64, ident
+        log(f"identity: pubkey={ident['adnl_pubkey_hex'][:16]}… id={ident['adnl_id_hex'][:12]}")
+
+        # calling identity again must return the same keypair
+        ident2 = a.request("identity")
+        assert ident2["adnl_pubkey_hex"] == ident["adnl_pubkey_hex"], (ident, ident2)
+
+        # (b) the driver plays orchestrator: rendezvous on its own UDP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        rendezvous_port = sock.getsockname()[1]
+        sock.close()
+        log(f"handoff: rendezvous socket used and closed port {rendezvous_port}")
+
+        # (c) immediately hand the same port to the sidecar
+        listen_a = a.request("listen", bind=f"127.0.0.1:{rendezvous_port}")
+        assert listen_a["event"] == "listening", listen_a
+        listened_port = int(listen_a["addr"].rsplit(":", 1)[1])
+        assert listened_port == rendezvous_port, listen_a
+        assert listen_a["adnl_pubkey_hex"] == ident["adnl_pubkey_hex"], (ident, listen_a)
+        assert listen_a["adnl_id_hex"] == ident["adnl_id_hex"], (ident, listen_a)
+        log(f"handoff: listening on port {listened_port} with the identity keypair reused")
+
+        # end-to-end establishment over the handed-off port
+        listen_b = b.request("listen", bind="127.0.0.1:0")
+        assert listen_b["event"] == "listening", listen_b
+        port_b = int(listen_b["addr"].rsplit(":", 1)[1])
+        await_id = a.send("await", peer_pubkey_hex=listen_b["adnl_pubkey_hex"], timeout_ms=10000)
+        dial_id = b.send(
+            "dial",
+            peer_pubkey_hex=listen_a["adnl_pubkey_hex"],
+            candidates=[f"127.0.0.1:{rendezvous_port}"],
+            timeout_ms=10000,
+        )
+        dialed = b.wait_completion(dial_id, 15)
+        awaited = a.wait_completion(await_id, 15)
+        assert dialed["event"] == "established", dialed
+        assert awaited["event"] == "established", awaited
+        log(f"handoff: dial established in {dialed['millis']} ms over the handed-off port, "
+            f"await in {awaited['millis']} ms")
+        _ = port_b
+
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BINARY
 
     log("=== flow on 127.0.0.1 ===")
     run_flow(binary, "127.0.0.1", "127.0.0.1")
     log("=== 127.0.0.1 flow PASSED ===")
+
+    log("=== identity + port handoff on 127.0.0.1 ===")
+    run_identity_handoff(binary)
+    log("=== identity handoff PASSED ===")
 
     log("=== flow on ::1 (recording the outcome, pass or fail) ===")
     try:

@@ -28,6 +28,24 @@ completion event carrying the same `id`.
 
 ## Commands
 
+### identity
+
+```json
+{"id":1,"cmd":"identity"}
+→ {"id":1,"event":"identity","adnl_pubkey_hex":"<ed25519 public key hex>","adnl_id_hex":"<short id hex>"}
+```
+
+Generates (or returns the already-generated) ephemeral transport keypair
+**without binding any socket**. A subsequent `listen` reuses exactly this
+keypair. Calling `identity` first is optional — a bare `listen` generates
+the keypair itself, exactly as before.
+
+Rationale: an orchestrator can perform its coordinator rendezvous on its own
+UDP socket first — the remote peer needs this probe's transport pubkey during
+pairing — then close that socket and tell the sidecar to `listen` on the
+**same** port, so the NAT mapping the coordinator observed is the mapping
+the ADNL session runs over.
+
 ### listen
 
 ```json
@@ -36,9 +54,10 @@ completion event carrying the same `id`.
 ```
 
 Creates a fresh ephemeral ed25519 transport key for this process (never a
-persisted identity), binds the UDP socket, and starts the ADNL stack
-(keyring, network manager, local id) on it. Port `0` selects an ephemeral
-port; the completion reports the port actually bound.
+persisted identity) — or reuses the keypair a prior `identity` command
+generated — binds the UDP socket, and starts the ADNL stack (keyring,
+network manager, local id) on it. Port `0` selects an ephemeral port; the
+completion reports the port actually bound.
 
 Implementation notes (native stack behavior, reported honestly):
 
@@ -48,6 +67,10 @@ Implementation notes (native stack behavior, reported honestly):
 - Port 0 is resolved by pre-binding a discovery socket, reading the assigned
   port and rebinding it for the transport; a tiny race window exists between
   the two binds.
+- An explicit port is probed with a bounded bind retry (20 × 50 ms) before
+  the transport takes it, so the rendezvous handoff above works even when
+  the caller's socket close is still settling; a bind that never succeeds is
+  reported as a protocol `error` instead of aborting.
 - The local id publishes a versioned address list with **zero addresses**:
   peers that support the implicit-address rule (the native stack does) reply
   to the observed UDP source address, which is the behavior a reachability
