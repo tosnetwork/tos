@@ -78,6 +78,7 @@ class AdnlPeerPairImpl : public AdnlPeerPair {
   void send_packet_continue(AdnlPacket packet, td::actor::ActorId<AdnlNetworkConnection> conn, bool via_channel);
   void send_query(std::string name, td::Promise<td::BufferSlice> promise, td::Timestamp timeout, td::BufferSlice data,
                   td::uint32 flags) override;
+  void reset_channel(td::Promise<td::Unit> promise) override;
 
   void alarm_query(AdnlQueryId id) override;
 
