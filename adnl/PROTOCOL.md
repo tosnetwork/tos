@@ -85,7 +85,10 @@ Implementation notes (native stack behavior, reported honestly):
 
 Sends raw datagrams (64 random bytes) from the ADNL socket toward each target
 to open NAT mappings. Content is arbitrary; receivers drop it (the native
-receive path drops undecryptable packets silently).
+receive path drops undecryptable packets silently). Targets dropped by the
+implementation-limit filters (IPv6, port 0) are skipped with a stderr log;
+the command still completes with `punched` for the remaining targets (punch
+is best-effort by design, so no distinct completion exists here).
 
 ### dial
 
@@ -98,13 +101,21 @@ receive path drops undecryptable packets silently).
 Registers the peer with the candidate addresses and confirms the session with
 an ADNL-level query round trip (the echo query described below, 32-byte
 payload), retried within the window. Failure classes: `no-candidate`,
-`handshake-timeout`, `udp-blocked`, `peer-unreachable`, `internal-error`.
-The native sidecar emits `no-candidate` when the candidate list is empty,
-entirely unparseable, or contains no usable address (usable = IPv4 with a
-non-zero port; see the send-abort notes below), and `handshake-timeout` when
-no round trip completes within `timeout_ms`; the socket layer gives it no
-way to distinguish `udp-blocked` / `peer-unreachable` from a timeout, so
-those classes are accepted from other implementations but not produced here.
+`unsupported-candidate`, `handshake-timeout`, `udp-blocked`,
+`peer-unreachable`, `internal-error`.
+
+- `no-candidate`: the candidate list was empty (or contained nothing that
+  parses as `ip:port` at all).
+- `unsupported-candidate` (additive, this implementation): at least one
+  candidate was supplied but **every** one was dropped by the sidecar's
+  implementation-limit filters (IPv6, port 0 — see the send-abort notes
+  below). This is an implementation limit, not network evidence: **no trial
+  should ever be filed from it.** It exists precisely so implementation
+  limits stay distinguishable from a genuinely empty usable candidate set.
+- `handshake-timeout`: no round trip completed within `timeout_ms`.
+- `udp-blocked` / `peer-unreachable`: accepted from other implementations
+  but not produced here — the socket layer gives the native sidecar no way
+  to distinguish them from a timeout.
 
 ### await
 
@@ -205,8 +216,10 @@ Observed for two destination classes:
 
 The sidecar therefore filters unusable endpoints out of `dial` candidates
 and `punch` targets up front (IPv6 and zero/invalid ports, logged to
-stderr); a `dial` left with no usable candidate completes with
-`failed` / `no-candidate`. Note this protects only the addresses the
+stderr); a `dial` whose supplied candidates were all dropped by these
+filters completes with `failed` / `unsupported-candidate` (an
+implementation-limit marker, never network evidence — see the dial
+section). Note this protects only the addresses the
 collector supplies: an address list *advertised by the remote peer inside
 the ADNL session* is consumed by the library itself and is not filtered
 here — the production pairing layer must not advertise `ip:0`.
@@ -244,13 +257,13 @@ tree, plus the loopback test in `test-adnl-probe.py`:
    path there is not survivable. The probe therefore filters non-IPv4
    candidates/targets up front instead of passing them into the stack:
    `dial` whose candidates are all IPv6 completes with
-   `failed` / `no-candidate`, and `punch` skips IPv6 targets (logged to
-   stderr).
+   `failed` / `unsupported-candidate`, and `punch` skips IPv6 targets
+   (logged to stderr).
 
 **Observed result on ::1 (2026-08-20, this tree):** `listen` on `::1:0`
 fails with the explicit IPv4-only error; a raw `::1` dial candidate crashes
 the native stack if forwarded (hence the filter), so `dial` with only `::1`
-candidates completes with `failed` / `no-candidate`. IPv6 is **not
+candidates completes with `failed` / `unsupported-candidate`. IPv6 is **not
 functional** in the native ADNL transport; any cross-validation matrix must
 treat native IPv6 cells as unsupported-by-implementation rather than as
 network failures.

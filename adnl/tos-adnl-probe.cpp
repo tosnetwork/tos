@@ -640,6 +640,7 @@ class ProbeCore : public td::actor::Actor {
 
     auto candidates_value = obj.extract_field("candidates");
     std::vector<td::IPAddress> candidates;
+    size_t dropped_unsupported = 0;
     if (candidates_value.type() == td::JsonValue::Type::Array) {
       for (auto &el : candidates_value.get_array()) {
         if (el.type() != td::JsonValue::Type::String) {
@@ -652,10 +653,12 @@ class ProbeCore : public td::actor::Actor {
             // address to the connection layer aborts inside the UDP server
             // on send, so such candidates are unusable (see PROTOCOL.md)
             LOG(WARNING) << "dial: skipping non-IPv4 candidate " << el.get_string();
+            dropped_unsupported++;
           } else if (candidate.get_port() == 0) {
             // sending to port 0 aborts on the same unsurvivable send-error
             // path (sendmmsg EINVAL), so such candidates are unusable too
             LOG(WARNING) << "dial: skipping port-0 candidate " << el.get_string();
+            dropped_unsupported++;
           } else {
             candidates.push_back(candidate);
           }
@@ -663,7 +666,13 @@ class ProbeCore : public td::actor::Actor {
       }
     }
     if (candidates.empty()) {
-      emit_failed(id, "no-candidate");
+      // implementation limits must stay distinguishable from a genuinely
+      // empty candidate set, so no network evidence gets filed from them
+      if (dropped_unsupported > 0) {
+        emit_failed(id, "unsupported-candidate");
+      } else {
+        emit_failed(id, "no-candidate");
+      }
       return;
     }
 

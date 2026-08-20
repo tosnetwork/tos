@@ -291,8 +291,20 @@ def run_port0_candidate_case(binary):
             timeout=15,
         )
         assert dialed["event"] == "failed", dialed
+        assert dialed["class"] == "unsupported-candidate", dialed
+        log(f"dial with 127.0.0.1:0 candidate: failed class={dialed['class']} (no crash, implementation limit)")
+
+        # an actually empty candidate list is genuine no-candidate evidence
+        dialed = a.request(
+            "dial",
+            peer_pubkey_hex=lb["adnl_pubkey_hex"],
+            candidates=[],
+            timeout_ms=4000,
+            timeout=15,
+        )
+        assert dialed["event"] == "failed", dialed
         assert dialed["class"] == "no-candidate", dialed
-        log(f"dial with 127.0.0.1:0 candidate: failed class={dialed['class']} (no crash, honest failure)")
+        log(f"dial with empty candidate list: failed class={dialed['class']}")
         a.close()
         b.close()
     except Exception:
@@ -371,8 +383,8 @@ def main():
                 timeout=15,
             )
             assert dialed["event"] == "failed", dialed
-            assert dialed["class"] == "no-candidate", dialed
-            log(f"dial with ::1 candidate: failed class={dialed['class']} (no crash, honest failure)")
+            assert dialed["class"] == "unsupported-candidate", dialed
+            log(f"dial with ::1 candidate: failed class={dialed['class']} (no crash, implementation limit)")
             a.close()
             b.close()
         except Exception:
