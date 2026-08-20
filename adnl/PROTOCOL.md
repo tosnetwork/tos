@@ -131,6 +131,11 @@ payload), retried within the window. Failure classes: `no-candidate`,
   but not produced here — the socket layer gives the native sidecar no way
   to distinguish them from a timeout.
 
+A rejected or failed-before-start dial (bad arguments, `no-candidate`,
+`unsupported-candidate`) leaves any previously established session state
+untouched: `hold`/`echo`/`reconnect` against the prior peer keep working.
+Session peer state is only replaced once every dial validation has passed.
+
 ### await
 
 ```json

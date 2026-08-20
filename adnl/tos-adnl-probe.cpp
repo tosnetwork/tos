@@ -673,7 +673,12 @@ class ProbeCore : public td::actor::Actor {
 
   // ---- dial / await / reconnect: confirmed round trips ----
 
-  bool parse_peer_pubkey(td::int64 id, td::JsonObject &obj) {
+  // parses the peer key into the caller's temporaries only: session state
+  // (peer_full_/peer_id_/have_peer_/peer_confirmed_) is committed by the
+  // command handlers in one place, after ALL validation has passed, so a
+  // rejected dial/await leaves an existing established session untouched
+  bool parse_peer_pubkey(td::int64 id, td::JsonObject &obj, adnl::AdnlNodeIdFull &peer_full,
+                         adnl::AdnlNodeIdShort &peer_id) {
     auto r_hex = obj.get_required_string_field("peer_pubkey_hex");
     if (r_hex.is_error()) {
       emit_error(id, "field \"peer_pubkey_hex\" must be a string");
@@ -686,11 +691,16 @@ class ProbeCore : public td::actor::Actor {
     }
     td::Bits256 raw;
     raw.as_slice().copy_from(r_raw.ok());
-    peer_full_ = adnl::AdnlNodeIdFull{pubkeys::Ed25519{raw}};
-    peer_id_ = peer_full_.compute_short_id();
+    peer_full = adnl::AdnlNodeIdFull{pubkeys::Ed25519{raw}};
+    peer_id = peer_full.compute_short_id();
+    return true;
+  }
+
+  void commit_session_peer(adnl::AdnlNodeIdFull peer_full, adnl::AdnlNodeIdShort peer_id) {
+    peer_full_ = std::move(peer_full);
+    peer_id_ = peer_id;
     have_peer_ = true;
     peer_confirmed_ = false;
-    return true;
   }
 
   void cmd_dial(td::int64 id, td::JsonObject &obj) {
@@ -701,7 +711,9 @@ class ProbeCore : public td::actor::Actor {
     if (!acquire_session_lease(id)) {
       return;
     }
-    if (!parse_peer_pubkey(id, obj)) {
+    adnl::AdnlNodeIdFull new_peer_full;
+    adnl::AdnlNodeIdShort new_peer_id;
+    if (!parse_peer_pubkey(id, obj, new_peer_full, new_peer_id)) {
       return;
     }
     td::int64 timeout_ms;
@@ -758,6 +770,9 @@ class ProbeCore : public td::actor::Actor {
       emit_error(id, PSTRING() << "cannot build candidate address list: " << r_addrlist.error().message());
       return;
     }
+
+    // every validation has passed: only now replace the session peer state
+    commit_session_peer(std::move(new_peer_full), new_peer_id);
     td::actor::send_closure(adnl_, &adnl::Adnl::add_peer, local_id_, peer_full_, r_addrlist.move_as_ok());
 
     confirm_ = ConfirmOp{};
@@ -776,7 +791,9 @@ class ProbeCore : public td::actor::Actor {
     if (!acquire_session_lease(id)) {
       return;
     }
-    if (!parse_peer_pubkey(id, obj)) {
+    adnl::AdnlNodeIdFull new_peer_full;
+    adnl::AdnlNodeIdShort new_peer_id;
+    if (!parse_peer_pubkey(id, obj, new_peer_full, new_peer_id)) {
       return;
     }
     td::int64 timeout_ms;
@@ -784,8 +801,10 @@ class ProbeCore : public td::actor::Actor {
       return;
     }
 
+    // every validation has passed: only now replace the session peer state.
     // never dials: register the peer identity with no addresses; the peer
     // pair learns the return path from the inbound session
+    commit_session_peer(std::move(new_peer_full), new_peer_id);
     td::actor::send_closure(adnl_, &adnl::Adnl::add_peer, local_id_, peer_full_, adnl::AdnlAddressList{});
 
     confirm_ = ConfirmOp{};

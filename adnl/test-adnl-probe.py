@@ -381,6 +381,38 @@ def run_hold_semantics_case(binary):
         raise
 
 
+def run_failed_dial_preserves_session_case(binary):
+    """A dial rejected before starting (unsupported candidates, new peer
+    key) must not destroy the existing established session."""
+    a, b = establish_pair(binary, "dial-preserve")
+    try:
+        other_key = "22" * 32  # a different (never-dialed) peer key
+        dialed = a.request(
+            "dial",
+            peer_pubkey_hex=other_key,
+            candidates=["::1:12345"],
+            timeout_ms=4000,
+            timeout=15,
+        )
+        assert dialed["event"] == "failed", dialed
+        assert dialed["class"] == "unsupported-candidate", dialed
+        log(f"dial new key with only ::1 candidates: failed class={dialed['class']}")
+
+        # the established session with B must still be fully usable
+        echoed = a.request("echo", bytes=256, timeout_ms=10000)
+        assert echoed["event"] == "echoed" and echoed["ok"] is True, echoed
+        held = a.request("hold", window_ms=1200, keepalive_ms=300, timeout=15)
+        assert held["event"] == "held" and held["completed"] is True, held
+        log(f"session with the original peer intact after the failed dial: echo ok in {echoed['millis']} ms, "
+            f"hold completed survival_seconds={held['survival_seconds']}")
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def run_close_after_establish_case(binary):
     """Close immediately following an established completion must be clean:
     the confirm tail (peer-address resolution) holds the session lease until
@@ -487,6 +519,10 @@ def main():
     log("=== close on the confirm tail ===")
     run_close_after_establish_case(binary)
     log("=== confirm-tail close PASSED ===")
+
+    log("=== failed dial preserves the established session ===")
+    run_failed_dial_preserves_session_case(binary)
+    log("=== dial-preservation case PASSED ===")
 
     log("=== command validation (required id, oversized echo) ===")
     run_command_validation_case(binary)
