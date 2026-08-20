@@ -448,6 +448,30 @@ def run_command_validation_case(binary):
         assert "id" in rejected["message"], rejected
         log(f"command without id: error id=0 \"{rejected['message']}\"")
 
+        # non-integer id forms: every one rejected with id 0 before any
+        # dispatch — note the first one is a close that must NOT execute
+        bad_id_lines = [
+            '{"id":"1","cmd":"close"}',
+            '{"id":1.0,"cmd":"identity"}',
+            '{"id":1e0,"cmd":"identity"}',
+            '{"id":true,"cmd":"identity"}',
+            '{"id":null,"cmd":"identity"}',
+        ]
+        for line in bad_id_lines:
+            a.proc.stdin.write(line + "\n")
+            a.proc.stdin.flush()
+            rejected = a.wait_event(lambda e: e.get("id") == 0, 10)
+            assert rejected["event"] == "error", (line, rejected)
+        log(f"non-integer ids ({len(bad_id_lines)} forms incl. a string-id close): all rejected with id=0")
+
+        # the string-id close must not have closed anything: a real command
+        # still works and the established session state is untouched
+        ident = a.request("identity")
+        assert ident["event"] == "identity", ident
+        proof = a.request("echo", bytes=128, timeout_ms=10000)
+        assert proof["event"] == "echoed" and proof["ok"] is True, proof
+        log("process and session state untouched after rejected ids: identity + echo ok")
+
         started = time.monotonic()
         huge = a.request("echo", bytes=10**12, timeout_ms=10000, timeout=10)
         elapsed = time.monotonic() - started

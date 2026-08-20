@@ -347,17 +347,33 @@ class ProbeCore : public td::actor::Actor {
     }
     auto &obj = value.get_object();
     // the id is required and validated before anything is dispatched or
-    // mutated: a command without a usable id could otherwise execute and
-    // produce completions indistinguishable from other malformed input
-    auto r_id = obj.get_required_long_field("id");
-    if (r_id.is_error()) {
-      emit_error(0, "field \"id\" is required and must be an integer");
+    // mutated. it must be a JSON Number carrying a canonical integer token:
+    // strings ("1"), booleans, null, floats (1.0) and exponent forms (1e0)
+    // are all rejected — the generic field helpers would happily parse a
+    // string, which the protocol forbids
+    auto id_value = obj.extract_field("id");
+    if (id_value.type() != td::JsonValue::Type::Number) {
+      emit_error(0, "field \"id\" is required and must be a JSON integer");
       return;
     }
-    auto id = r_id.move_as_ok();
+    auto id_token = id_value.get_number();
+    bool canonical_integer = !id_token.empty() && !(id_token.size() > 1 && id_token[0] == '0');
+    for (auto c : id_token) {
+      if (c < '0' || c > '9') {
+        canonical_integer = false;
+        break;
+      }
+    }
     constexpr td::int64 kMaxCommandId = (td::int64{1} << 53) - 1;
+    td::int64 id = 0;
+    if (canonical_integer) {
+      auto r_id = td::to_integer_safe<td::int64>(id_token);
+      if (r_id.is_ok()) {
+        id = r_id.move_as_ok();
+      }
+    }
     if (id < 1 || id > kMaxCommandId) {
-      emit_error(0, PSTRING() << "field \"id\" must be in [1, 2^53-1], got " << id);
+      emit_error(0, PSTRING() << "field \"id\" must be a JSON integer in [1, 2^53-1], got \"" << id_token << "\"");
       return;
     }
     auto r_cmd = obj.get_required_string_field("cmd");

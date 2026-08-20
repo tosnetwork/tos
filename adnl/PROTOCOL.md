@@ -21,10 +21,13 @@ Commands arrive one JSON object per line on stdin. Every command carries an
 integer `id` and a string `cmd`. Every command is answered by exactly one
 completion event carrying the same `id`.
 
-- The `id` is **required**: an integer in `[1, 2^53-1]` (the upper bound
-  keeps ids exact in IEEE-754 JSON readers). A command whose `id` is
-  missing, non-integer, or out of range is rejected with an error event
-  carrying `id` `0` **before** anything is dispatched or mutated.
+- The `id` is **required**: a **JSON integer** in `[1, 2^53-1]` (the upper
+  bound keeps ids exact in IEEE-754 JSON readers). Only a canonical integer
+  token is accepted — a JSON string (`"1"`), boolean, null, float (`1.0`),
+  exponent form (`1e0`), or leading-zero token is rejected. A command whose
+  `id` is missing, of the wrong type, or out of range is rejected with an
+  error event carrying `id` `0` **before** anything is dispatched or
+  mutated.
 - Errors: `{"id":N,"event":"error","message":"..."}`.
 - A malformed line is answered with an `id` of `0`.
 - An unknown `cmd` is answered with an error; the process keeps running.
