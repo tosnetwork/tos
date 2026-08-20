@@ -100,11 +100,11 @@ an ADNL-level query round trip (the echo query described below, 32-byte
 payload), retried within the window. Failure classes: `no-candidate`,
 `handshake-timeout`, `udp-blocked`, `peer-unreachable`, `internal-error`.
 The native sidecar emits `no-candidate` when the candidate list is empty,
-entirely unparseable, or contains no usable (IPv4) address, and
-`handshake-timeout` when no round trip completes within `timeout_ms`; the
-socket layer gives it no way to distinguish `udp-blocked` /
-`peer-unreachable` from a timeout, so those classes are accepted from other
-implementations but not produced here.
+entirely unparseable, or contains no usable address (usable = IPv4 with a
+non-zero port; see the send-abort notes below), and `handshake-timeout` when
+no round trip completes within `timeout_ms`; the socket layer gives it no
+way to distinguish `udp-blocked` / `peer-unreachable` from a timeout, so
+those classes are accepted from other implementations but not produced here.
 
 ### await
 
@@ -177,6 +177,23 @@ Consequently:
 - Inbound behavior is symmetric: a ≥ 8 KiB query from another implementation
   is dropped by the native reassembly path (`huge message` limit), so the
   sender observes a timeout.
+
+#### Native send-abort on invalid destinations (honest limitation)
+
+The UDP server's send-error path is not survivable: a datagram whose
+destination the kernel rejects (`sendmmsg` EINVAL) **aborts the process**.
+Observed for two destination classes:
+
+- IPv6 destinations through the IPv4-only socket (see the IPv6 section), and
+- **port 0** destinations — e.g. a malformed peer advertising `ip:0`.
+
+The sidecar therefore filters unusable endpoints out of `dial` candidates
+and `punch` targets up front (IPv6 and zero/invalid ports, logged to
+stderr); a `dial` left with no usable candidate completes with
+`failed` / `no-candidate`. Note this protects only the addresses the
+collector supplies: an address list *advertised by the remote peer inside
+the ADNL session* is consumed by the library itself and is not filtered
+here — the production pairing layer must not advertise `ip:0`.
 
 ### close
 

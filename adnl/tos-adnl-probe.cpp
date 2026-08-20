@@ -545,6 +545,12 @@ class ProbeCore : public td::actor::Actor {
         LOG(WARNING) << "punch: skipping non-IPv4 target " << el.get_string();
         continue;
       }
+      if (target.get_port() == 0) {
+        // sending to port 0 aborts on the same unsurvivable send-error path
+        // (sendmmsg EINVAL), so such targets are skipped up front too
+        LOG(WARNING) << "punch: skipping port-0 target " << el.get_string();
+        continue;
+      }
       targets.push_back(target);
     }
     td::int64 rounds;
@@ -635,13 +641,17 @@ class ProbeCore : public td::actor::Actor {
         }
         td::IPAddress candidate;
         if (candidate.init_host_port(el.get_string().str()).is_ok()) {
-          if (candidate.is_ipv4()) {
-            candidates.push_back(candidate);
-          } else {
+          if (!candidate.is_ipv4()) {
             // the native transport socket is IPv4-only; handing an IPv6
             // address to the connection layer aborts inside the UDP server
             // on send, so such candidates are unusable (see PROTOCOL.md)
             LOG(WARNING) << "dial: skipping non-IPv4 candidate " << el.get_string();
+          } else if (candidate.get_port() == 0) {
+            // sending to port 0 aborts on the same unsurvivable send-error
+            // path (sendmmsg EINVAL), so such candidates are unusable too
+            LOG(WARNING) << "dial: skipping port-0 candidate " << el.get_string();
+          } else {
+            candidates.push_back(candidate);
           }
         }
       }

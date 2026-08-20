@@ -244,6 +244,33 @@ def run_identity_handoff(binary):
         raise
 
 
+def run_port0_candidate_case(binary):
+    """A malformed candidate advertising port 0 must be filtered, not crash
+    the native stack (its send-error path aborts on sendmmsg EINVAL)."""
+    a = Probe(binary, "A(port0-dial)")
+    b = Probe(binary, "B(port0-dial)")
+    try:
+        la = a.request("listen", bind="0.0.0.0:0")
+        lb = b.request("listen", bind="0.0.0.0:0")
+        assert la["event"] == "listening" and lb["event"] == "listening", (la, lb)
+        dialed = a.request(
+            "dial",
+            peer_pubkey_hex=lb["adnl_pubkey_hex"],
+            candidates=["127.0.0.1:0"],
+            timeout_ms=4000,
+            timeout=15,
+        )
+        assert dialed["event"] == "failed", dialed
+        assert dialed["class"] == "no-candidate", dialed
+        log(f"dial with 127.0.0.1:0 candidate: failed class={dialed['class']} (no crash, honest failure)")
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BINARY
 
@@ -254,6 +281,10 @@ def main():
     log("=== identity + port handoff on 127.0.0.1 ===")
     run_identity_handoff(binary)
     log("=== identity handoff PASSED ===")
+
+    log("=== port-0 candidate filtering ===")
+    run_port0_candidate_case(binary)
+    log("=== port-0 candidate case PASSED ===")
 
     log("=== flow on ::1 (recording the outcome, pass or fail) ===")
     try:
