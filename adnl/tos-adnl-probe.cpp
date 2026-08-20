@@ -154,6 +154,8 @@ class ProbeCore : public td::actor::Actor {
     td::Timestamp deadline;
     td::Timestamp retry_at = td::Timestamp::never();
     bool waiting_inbound{false};
+    bool resolving_addr{false};        // confirmed; resolving the peer address
+    td::int64 established_millis{0};   // millis measured at confirmation time
     td::uint64 seq{0};
   };
 
@@ -885,12 +887,11 @@ class ProbeCore : public td::actor::Actor {
   }
 
   void finish_confirm_success() {
-    auto kind = confirm_.kind;
-    auto id = confirm_.cmd_id;
     auto millis = elapsed_ms(confirm_.started);
-    confirm_ = ConfirmOp{};
-    peer_confirmed_ = true;
-    if (kind == ConfirmKind::reconnect) {
+    if (confirm_.kind == ConfirmKind::reconnect) {
+      auto id = confirm_.cmd_id;
+      confirm_ = ConfirmOp{};
+      peer_confirmed_ = true;
       td::JsonBuilder jb;
       {
         auto e = jb.enter_object();
@@ -902,16 +903,31 @@ class ProbeCore : public td::actor::Actor {
       emit_line(jb.string_builder().as_cslice());
       return;
     }
+    // hold the confirm state — and with it the session lease — until the
+    // established event is actually emitted: a close racing this tail still
+    // finds the operation outstanding and cancels it with a terminal error,
+    // so exactly-one-completion holds and no other session command can
+    // interleave with the address lookup
+    confirm_.resolving_addr = true;
+    confirm_.established_millis = millis;
+    confirm_.seq = ++op_seq_counter_;
+    auto seq = confirm_.seq;
     auto self = actor_id(this);
     td::actor::send_closure(adnl_, &adnl::Adnl::get_conn_ip_str, local_id_, peer_id_,
-                            td::PromiseCreator::lambda([self, id, millis](td::Result<td::string> R) {
-                              std::string peer_addr = R.is_ok() ? R.move_as_ok() : "undefined";
-                              td::actor::send_closure(self, &ProbeCore::emit_established, id, millis,
-                                                      std::move(peer_addr));
+                            td::PromiseCreator::lambda([self, seq](td::Result<td::string> R) {
+                              td::actor::send_closure(self, &ProbeCore::resolve_peer_addr_done, seq, std::move(R));
                             }));
   }
 
-  void emit_established(td::int64 id, td::int64 millis, std::string peer_addr) {
+  void resolve_peer_addr_done(td::uint64 seq, td::Result<td::string> R) {
+    if (confirm_.kind == ConfirmKind::none || !confirm_.resolving_addr || confirm_.seq != seq) {
+      return;  // the operation was cancelled; its terminal event was already emitted
+    }
+    auto id = confirm_.cmd_id;
+    auto millis = confirm_.established_millis;
+    confirm_ = ConfirmOp{};
+    peer_confirmed_ = true;
+    std::string peer_addr = R.is_ok() ? R.move_as_ok() : "undefined";
     td::JsonBuilder jb;
     {
       auto e = jb.enter_object();

@@ -381,6 +381,23 @@ def run_hold_semantics_case(binary):
         raise
 
 
+def run_close_after_establish_case(binary):
+    """Close immediately following an established completion must be clean:
+    the confirm tail (peer-address resolution) holds the session lease until
+    the established event is out, so a close in that gap either cancels the
+    operation with a terminal error or follows a fully emitted completion —
+    never a dropped completion."""
+    a, b = establish_pair(binary, "close-tail")
+    try:
+        a.close()
+        b.close()
+        log("close immediately after established: both sides closed cleanly, exit 0")
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
 def run_command_validation_case(binary):
     """Required id and allocation-free oversized echo.
 
@@ -466,6 +483,10 @@ def main():
     log("=== session lease + close cancellation ===")
     run_lease_and_close_case(binary)
     log("=== lease/close case PASSED ===")
+
+    log("=== close on the confirm tail ===")
+    run_close_after_establish_case(binary)
+    log("=== confirm-tail close PASSED ===")
 
     log("=== command validation (required id, oversized echo) ===")
     run_command_validation_case(binary)
