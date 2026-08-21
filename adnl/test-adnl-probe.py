@@ -3,7 +3,7 @@
 
 Launches two probe instances on loopback and drives the full flow:
 listen both -> dial/await -> hold -> reconnect -> echo 1024 -> echo 65536
--> close, asserting every completion event. Runs the flow on 127.0.0.1 and
+-> interrupted three-part RLDPv2 recovery -> close, asserting every completion event. Runs the flow on 127.0.0.1 and
 then attempts ::1, recording (not hiding) the ::1 outcome.
 
 Usage: test-adnl-probe.py [path-to-tos-adnl-probe]
@@ -204,6 +204,34 @@ def run_flow(binary, host, wrap_host):
             assert "error" in echoed64, echoed64
             assert echoed64["sha256_hex"] == "", echoed64  # nothing allocated, nothing hashed
             log(f"echo 65536: ok=false (expected on native stack): {echoed64['error']}")
+
+        # A deterministic response just above two full 2,000,000-byte RLDPv2
+        # parts necessarily spans three parts. The initiator starts a 150 ms
+        # whole-socket loss window only after native decoder progress and the
+        # original query, not an application retry, must recover through it.
+        transferred = a.request(
+            "rldp",
+            timeout=30,
+            bytes=4_000_001,
+            interrupt_after_bytes=2_000_000,
+            interruption_ms=150,
+            timeout_ms=20_000,
+        )
+        assert transferred["event"] == "rldp_transferred", transferred
+        assert transferred["ok"] is True, transferred
+        assert transferred["part_size_bytes"] == 2_000_000, transferred
+        assert transferred["expected_parts"] == 3, transferred
+        assert transferred["interruption_attempted"] is True, transferred
+        assert transferred["interruption_ms"] >= 150, transferred
+        assert transferred["suppressed_messages"] > 0, transferred
+        assert transferred["same_transfer_resumed"] is True, transferred
+        assert len(transferred["sha256_hex"]) == 64, transferred
+        log(
+            "rldp 4000001: three parts resumed after "
+            f"{transferred['interruption_ms']} ms loss, "
+            f"suppressed={transferred['suppressed_messages']} packets, "
+            f"round_trip={transferred['millis']} ms"
+        )
 
         a.close()
         b.close()
@@ -456,8 +484,81 @@ def run_param_bounds_case(binary):
         assert r["event"] == "error", r
         r = a.request("echo", bytes=64, timeout_ms=120001, timeout=10)
         assert r["event"] == "error", r
-        log("sibling bounds: hold window_ms=0, punch rounds=0, echo timeout_ms=120001 all rejected")
 
+        # RLDP parameters are validated before the session lease, seed,
+        # transfer id, payload allocation, or loss injector is touched.  Try
+        # every frozen boundary independently, then prove the original ADNL
+        # session still works.
+        canonical_rldp = dict(
+            bytes=4_000_001,
+            interrupt_after_bytes=2_000_000,
+            interruption_ms=150,
+            timeout_ms=20_000,
+        )
+        invalid_rldp = [
+            {**canonical_rldp, "bytes": 2_000_000},
+            {**canonical_rldp, "bytes": 16_777_217},
+            {**canonical_rldp, "interrupt_after_bytes": 1_999_999},
+            {**canonical_rldp, "interrupt_after_bytes": 2_000_001},
+            {**canonical_rldp, "interruption_ms": 99},
+            {**canonical_rldp, "interruption_ms": 10_001},
+            {**canonical_rldp, "timeout_ms": 0},
+            {**canonical_rldp, "timeout_ms": 120_001},
+        ]
+        for params in invalid_rldp:
+            r = a.request("rldp", timeout=10, **params)
+            assert r["event"] == "error", (params, r)
+        proof = a.request("echo", bytes=128, timeout_ms=10_000)
+        assert proof["event"] == "echoed" and proof["ok"] is True, proof
+        log(
+            "sibling bounds plus eight RLDP boundary mutations rejected; "
+            f"session still echoes ({proof['millis']} ms)"
+        )
+
+        a.close()
+        b.close()
+    except Exception:
+        a.kill()
+        b.kill()
+        raise
+
+
+def run_rldp_transfer_binding_case(binary):
+    """Concurrent traffic cannot impersonate this query's response progress.
+
+    Each peer starts one canonical transfer at the same time.  Consequently
+    both RLDP actors observe an unrelated inbound request transfer as well as
+    the exact complementary response transfer they own.  Both loss windows
+    must be armed by their own response id and both original queries must
+    resume without an application retry.
+    """
+    a, b = establish_pair(binary, "rldp-transfer-binding")
+    try:
+        params = dict(
+            bytes=4_000_001,
+            interrupt_after_bytes=2_000_000,
+            interruption_ms=150,
+            timeout_ms=20_000,
+        )
+        a_id = a.send("rldp", **params)
+        b_id = b.send("rldp", **params)
+        a_result = a.wait_completion(a_id, 30)
+        b_result = b.wait_completion(b_id, 30)
+        for result in (a_result, b_result):
+            assert result["event"] == "rldp_transferred", result
+            assert result["ok"] is True, result
+            assert result["bytes"] == 4_000_001, result
+            assert result["expected_parts"] == 3, result
+            assert result["interruption_attempted"] is True, result
+            assert result["interruption_ms"] >= 150, result
+            assert result["suppressed_messages"] > 0, result
+            assert result["same_transfer_resumed"] is True, result
+            assert len(result["sha256_hex"]) == 64, result
+        log(
+            "simultaneous bidirectional RLDP: exact response-transfer binding, "
+            f"A suppressed={a_result['suppressed_messages']}, "
+            f"B suppressed={b_result['suppressed_messages']}; both original queries resumed"
+        )
         a.close()
         b.close()
     except Exception:
@@ -604,6 +705,10 @@ def main():
     log("=== frozen parameter bounds ===")
     run_param_bounds_case(binary)
     log("=== parameter bounds case PASSED ===")
+
+    log("=== exact RLDP response-transfer binding under concurrent traffic ===")
+    run_rldp_transfer_binding_case(binary)
+    log("=== RLDP transfer-binding case PASSED ===")
 
     log("=== command validation (required id, oversized echo) ===")
     run_command_validation_case(binary)

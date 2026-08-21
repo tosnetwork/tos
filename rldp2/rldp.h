@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <functional>
+
 #include "adnl/adnl-sender-ex.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/buffer.h"
@@ -51,6 +53,9 @@ void complete_out_query(td::Promise<td::BufferSlice> promise, td::uint64 max_ans
 
 class Rldp : public adnl::AdnlSenderEx {
  public:
+  using PartCompletedCallback =
+      std::function<void(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::Bits256, td::uint32, td::uint64)>;
+
   Rldp() : AdnlSenderEx(default_mtu()) {
   }
   ~Rldp() override = default;
@@ -61,6 +66,21 @@ class Rldp : public adnl::AdnlSenderEx {
 
   virtual void send_message_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
                                td::BufferSlice data) = 0;
+
+  // Measurement and diagnostics may bind decoded-part observations to one
+  // exact query by choosing its request transfer id. Normal callers should
+  // continue using send_query_ex, which chooses a cryptographically random id.
+  // Explicit ids must be nonzero and cannot reuse an active complementary
+  // response id; violations fail the promise before anything is sent.
+  virtual void send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
+                                              td::Promise<td::BufferSlice> promise, td::Timestamp timeout,
+                                              td::BufferSlice data, td::uint64 max_answer_size,
+                                              td::Bits256 request_transfer_id) = 0;
+
+  // An observer sees completed inbound FEC parts after successful decode. It
+  // cannot alter transfer validity; measurement tools use it to place an
+  // independently counted network-loss window after real progress.
+  virtual void set_part_completed_callback(PartCompletedCallback callback) = 0;
 
   static td::actor::ActorOwn<Rldp> create(td::actor::ActorId<adnl::Adnl> adnl);
 };

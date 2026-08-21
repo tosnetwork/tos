@@ -133,6 +133,7 @@ class AdnlNetworkManagerImpl : public AdnlNetworkManager {
                       AdnlCategoryMask cat_mask, td::uint32 priority) override;
   void send_udp_packet(AdnlNodeIdShort src_id, AdnlNodeIdShort dst_id, td::IPAddress dst_addr, td::uint32 priority,
                        td::BufferSlice data) override;
+  void suppress_packets_until(td::Timestamp until, td::Promise<PacketSuppressionStats> promise) override;
 
   void set_local_id_category(AdnlNodeIdShort id, td::uint8 cat) override {
     if (cat == 255) {
@@ -147,6 +148,9 @@ class AdnlNetworkManagerImpl : public AdnlNetworkManager {
   void proxy_register(OutDesc &desc);
 
  private:
+  bool suppress_packet(bool inbound);
+  void finish_packet_suppression();
+
   std::unique_ptr<Callback> callback_;
 
   std::map<td::uint32, std::vector<OutDesc>> out_desc_;
@@ -155,6 +159,10 @@ class AdnlNetworkManagerImpl : public AdnlNetworkManager {
 
   td::uint64 received_messages_ = 0;
   td::uint64 sent_messages_ = 0;
+
+  td::Timestamp packet_suppression_until_;
+  td::optional<td::Promise<PacketSuppressionStats>> packet_suppression_promise_;
+  PacketSuppressionStats packet_suppression_stats_;
 
   std::vector<UdpSocketDesc> udp_sockets_;
   std::map<td::uint16, size_t> port_2_socket_;

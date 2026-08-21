@@ -186,11 +186,15 @@ td::Timestamp RldpConnection::run(ConnectionCallback &callback) {
   for (auto &data : to_receive_) {
     callback.receive(data.first, std::move(data.second));
   }
+  for (auto &[transfer_id, part, decoded_bytes] : to_part_completed_) {
+    callback.on_part_completed(transfer_id, part, decoded_bytes);
+  }
   for (auto &raw : to_send_raw_) {
     callback.send_raw(std::move(raw));
   }
   to_send_raw_.clear();
   to_receive_.clear();
+  to_part_completed_.clear();
   for (auto &res : to_on_sent_) {
     callback.on_sent(res.first, std::move(res.second));
   }
@@ -336,7 +340,10 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
       if (in_part->decoder->may_try_decode()) {
         auto r_data = in_part->decoder->try_decode(false);
         if (r_data.is_ok()) {
-          inbound.finish_part(part.part_, std::move(r_data.move_as_ok().data));
+          auto decoded = std::move(r_data.move_as_ok().data);
+          auto decoded_bytes = static_cast<td::uint64>(decoded.size());
+          inbound.finish_part(part.part_, std::move(decoded));
+          to_part_completed_.emplace_back(transfer_id, static_cast<td::uint32>(part.part_), decoded_bytes);
         }
       }
     }

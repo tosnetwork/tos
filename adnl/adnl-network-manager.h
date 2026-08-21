@@ -57,6 +57,15 @@ class AdnlNetworkConnection : public td::actor::Actor {
 
 class AdnlNetworkManager : public td::actor::Actor {
  public:
+  struct PacketSuppressionStats {
+    td::uint64 inbound{0};
+    td::uint64 outbound{0};
+
+    td::uint64 total() const {
+      return inbound + outbound;
+    }
+  };
+
   //using ConnHandle = td::uint64;
   class Callback {
    public:
@@ -80,6 +89,14 @@ class AdnlNetworkManager : public td::actor::Actor {
   //virtual void send_answer_packet(AdnlNodeIdShort src_id, AdnlNodeIdShort dst_id, td::IPAddress dst_addr,
   //                             ConnHandle conn_handle, td::uint32 priority, td::BufferSlice data) = 0;
   virtual void set_local_id_category(AdnlNodeIdShort id, td::uint8 cat) = 0;
+
+  // Measurement tools can request one bounded whole-socket loss window. The
+  // production manager implements it below the encrypted ADNL packet layer so
+  // both directions are observably suppressed. Ordinary nodes never call this
+  // method; implementations that cannot support it fail explicitly.
+  virtual void suppress_packets_until(td::Timestamp until, td::Promise<PacketSuppressionStats> promise) {
+    promise.set_error(td::Status::Error("packet suppression is unsupported by this network manager"));
+  }
 
   static constexpr td::uint32 get_mtu() {
     return 1440;

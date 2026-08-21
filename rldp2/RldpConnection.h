@@ -21,6 +21,8 @@
 #pragma once
 
 #include <set>
+#include <tuple>
+#include <vector>
 
 #include "common/bitstring.h"
 #include "td/utils/Heap.h"
@@ -44,6 +46,7 @@ class ConnectionCallback {
   virtual void send_raw(td::BufferSlice small_datagram) = 0;
   virtual void receive(TransferId transfer_id, td::Result<td::BufferSlice> r_data) = 0;
   virtual void on_sent(TransferId transfer_id, td::Result<td::Unit> state) = 0;
+  virtual void on_part_completed(TransferId transfer_id, td::uint32 part, td::uint64 decoded_bytes) = 0;
 };
 
 class RldpConnection {
@@ -110,6 +113,7 @@ class RldpConnection {
   std::vector<td::BufferSlice> to_send_raw_;
   std::vector<std::pair<TransferId, td::Result<td::BufferSlice>>> to_receive_;
   std::vector<std::pair<TransferId, td::Result<td::Unit>>> to_on_sent_;
+  std::vector<std::tuple<TransferId, td::uint32, td::uint64>> to_part_completed_;
 
   void send_packet(td::BufferSlice packet) {
     to_send_raw_.push_back(std::move(packet));
