@@ -78,9 +78,13 @@ code hashes are what the reproducible-build record must pin.
 
 ## Upstream parity
 
-Before every release, re-compare against the upstream repository's `main`
-branch (pinned in `doc/tos-blockchain/DNS.md` §6.1) and account for every
-source difference. The intended full diff is:
+`./check-upstream-parity.sh` compares this directory against the pinned
+upstream commit (byte-identical contract files, the single allowed
+`dns-utils.fc` difference) and reports any new upstream commits that need
+review; CI runs it on every change to this directory and weekly. Before
+every release, re-compare against the upstream repository's `main` branch
+(pinned in `doc/tos-blockchain/DNS.md` §6.1) and account for every source
+difference. The intended full diff is:
 
 | File | Difference |
 |---|---|

@@ -1,0 +1,21 @@
+name: DNS contract upstream parity
+
+on:
+  push:
+    paths:
+      - "crypto/smartcont/dns/**"
+  pull_request:
+    paths:
+      - "crypto/smartcont/dns/**"
+  schedule:
+    # weekly: surface new upstream commits even when this tree is idle
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare the .tos contracts against the pinned upstream commit
+        run: ./crypto/smartcont/dns/check-upstream-parity.sh
