@@ -46,7 +46,10 @@ class ConnectionCallback {
   virtual void send_raw(td::BufferSlice small_datagram) = 0;
   virtual void receive(TransferId transfer_id, td::Result<td::BufferSlice> r_data) = 0;
   virtual void on_sent(TransferId transfer_id, td::Result<td::Unit> state) = 0;
-  virtual void on_part_completed(TransferId transfer_id, td::uint32 part, td::uint64 decoded_bytes) = 0;
+  // Optional diagnostics hook. Existing protocol users do not need to
+  // observe decoded part boundaries and remain source-compatible.
+  virtual void on_part_completed(TransferId transfer_id, td::uint32 part, td::uint64 decoded_bytes) {
+  }
 };
 
 class RldpConnection {
