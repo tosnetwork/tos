@@ -16,6 +16,7 @@ use crate::commands::{
         backup_cmd::BackupCmd,
         config_cmd::ConfigCmd,
         deploy_cmd::DeployCmd,
+        domain_cmd::DomainCmd,
         host_cmd::HostCmd,
         install_cmd::InstallCmd,
         key_cmd::KeyCmd,
@@ -83,6 +84,9 @@ pub enum Commands {
     /// AI agent wallet profiles and policy
     #[command(name = "agent", visible_alias = "ag")]
     Agent(AgentCmd),
+    /// `.tos` domain operations
+    #[command(name = "domain", visible_alias = "d")]
+    Domain(DomainCmd),
     /// Transaction build, sign, and submit operations
     #[command(name = "tx")]
     Tx(TxCmd),

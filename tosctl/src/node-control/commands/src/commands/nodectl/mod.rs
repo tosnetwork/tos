@@ -25,6 +25,7 @@ pub(crate) mod config_pool_cmd;
 pub(crate) mod config_wallet_cmd;
 pub(crate) mod deploy_cmd;
 pub(crate) mod dispute_cmd;
+pub(crate) mod domain_cmd;
 pub(crate) mod host_cmd;
 pub(crate) mod install_cmd;
 pub(crate) mod key_cmd;
