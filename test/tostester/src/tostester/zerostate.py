@@ -58,6 +58,10 @@ class NetworkConfig:
     # The governance-approved reviewer the native path pins (ConfigParam 93): a
     # commitment mints only if its own reviewer equals this masterchain account id.
     aipow_reviewer_addr: int = 0x4444444444444444444444444444444444444444444444444444444444444444
+    # ConfigParam 4: masterchain account id of the .tos DNS root resolver.
+    # None (default) leaves the parameter unset so resolvers fail closed; a
+    # profile may pin the counterfactual address of a root deployed at runtime.
+    dns_root_addr: int | None = None
 
 
 @dataclass
@@ -296,6 +300,11 @@ untriple make-block-limits 23 config!
 // activating capAipow requires the complete, valid set -- see check_aipow_config).
 {aipow_config_params}
 
+// ConfigParam 4 (dns_root_addr): empty unless the profile pins a DNS root.
+// The pinned address may be the counterfactual address of a root deployed at
+// runtime; clients fail closed while the account does not exist.
+{dns_config_param}
+
 // No genesis extra-currency minting. PoW/test givers are not registered in
 // either profile; the validator-economics profile also has no native premine.
 
@@ -522,6 +531,11 @@ def create_zerostate(
         aipow_capability = "0"  # ORing 0 is a no-op: capAipow stays off
         aipow_config_params = ""
 
+    if config.dns_root_addr is not None:
+        dns_config_param = f"<b 0x{config.dns_root_addr:064x} 256 u, b> 4 config!\n"
+    else:
+        dns_config_param = ""
+
     run_fift(
         install,
         _TEMPLATE.format(
@@ -534,6 +548,7 @@ def create_zerostate(
             new_consensus_config=new_consensus_config,
             aipow_capability=aipow_capability,
             aipow_config_params=aipow_config_params,
+            dns_config_param=dns_config_param,
             **profile,
         ),
         state_dir,
