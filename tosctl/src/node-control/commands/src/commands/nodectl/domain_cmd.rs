@@ -14,12 +14,17 @@
 //! `evaluated` (DNS.md §8.1) -- the get-method ran against a named state,
 //! with no cryptographic proof of that state.
 
-use super::agent_cmd::{confirm, send_wallet_message, validate_tos_amount};
+use super::agent_cmd::{
+    build_wallet_message_boc, confirm, send_wallet_message, validate_tos_amount,
+};
+use super::output_format::OutputFormat;
 use super::utils::{get_wallet_config, load_config_vault_rpc_client, make_wallet, wallet_info};
 use anyhow::{Context, bail, ensure};
+use base64::Engine as _;
 use chain_block::{Cell, ConfigParamEnum, MsgAddressInt};
+use chain_rpc_client::v2::RPCStackEntry;
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-use chain_rpc_client::v2::data_models::AccountState;
+use chain_rpc_client::v2::data_models::{AccountState, BlockIdExt, RunGetMethodParams};
 use colored::Colorize;
 use common::app_config::AppConfig;
 use common::chain_utils::{display_tos, tos_to_nanotos};
@@ -214,6 +219,8 @@ pub struct DomainResolveCmd {
         help = "Root resolver address (default: ConfigParam 4)"
     )]
     root: Option<String>,
+    #[arg(short, long, default_value = "table", help = "Output format: table or json")]
+    format: OutputFormat,
 }
 
 impl DomainResolveCmd {
@@ -234,13 +241,15 @@ impl DomainResolveCmd {
         let mut resolver = root.clone();
         let mut hops_left = MAX_RESOLVER_HOPS;
         let mut resolver_path: Vec<String> = Vec::new();
+        let mut hop_blocks: Vec<Option<BlockIdExt>> = Vec::new();
         let outcome = loop {
             resolver_path.push(resolver.to_string());
-            let stack = dns::dnsresolve_stack(&query, &category)?;
-            let parser =
-                provider.get_method(resolver.to_string(), "dnsresolve", stack).await.with_context(
-                    || format!("dnsresolve on {resolver} (hop {})", resolver_path.len()),
-                )?;
+            let (parser, block) = dnsresolve_with_block(&rpc_client, &resolver, &query, &category)
+                .await
+                .with_context(|| {
+                    format!("dnsresolve on {resolver} (hop {})", resolver_path.len())
+                })?;
+            hop_blocks.push(block);
             let hop = dns::decode_dnsresolve(&parser)?;
             match dns::validate_hop(&query, &hop, hops_left)? {
                 HopOutcome::Continue { next_resolver, remaining } => {
@@ -252,33 +261,79 @@ impl DomainResolveCmd {
             }
         };
 
-        println!("canonical name: {}", canonical.name);
-        println!("category:       {category_label} (0x{})", hex::encode(category));
-        match outcome {
-            HopOutcome::NotFound => println!("result:         {}", "not found".yellow()),
-            HopOutcome::Terminal(None) => println!("result:         {}", "not found".yellow()),
-            HopOutcome::Terminal(Some(value)) => {
-                if category == dns::CATEGORY_ALL {
+        // For a second-level name the terminal answer comes from the Domain
+        // Item the Collection delegated to; fetch its lifecycle so no §8
+        // field is left for the caller to assemble.
+        let is_terminal = !matches!(outcome, HopOutcome::NotFound);
+        let item_address = if canonical.labels.len() == 2 && is_terminal {
+            resolver_path.last().cloned()
+        } else {
+            None
+        };
+        let (item, item_unavailable_reason) = match &item_address {
+            Some(addr) => match read_item_report(provider.as_ref(), addr).await {
+                Ok(report) => (Some(report), None),
+                Err(err) => (None, Some(format!("item state not readable: {err:#}"))),
+            },
+            None => (None, Some("no single Domain Item answers this query".to_owned())),
+        };
+
+        let report = build_resolve_report(ResolveInputs {
+            canonical_name: canonical.name.clone(),
+            category_label,
+            category,
+            outcome: &outcome,
+            root: root.to_string(),
+            root_source: root_source.to_owned(),
+            resolver_path,
+            hop_blocks,
+            item_address,
+            item,
+            item_unavailable_reason,
+            resolved_at_unix: unix_now()?,
+        })?;
+
+        if matches!(self.format, OutputFormat::Json) {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
+
+        println!("canonical name: {}", report.canonical_name);
+        println!("category:       {} ({})", report.category_hash_label(), report.category_hash);
+        match report.result.as_str() {
+            "not_found" => println!("result:         {}", "not found".yellow()),
+            "record_rejected" => println!(
+                "result:         {} {}",
+                "FAIL-CLOSED:".red().bold(),
+                report.reject_reason.as_deref().unwrap_or("record rejected")
+            ),
+            _ => println!(
+                "result:         {}",
+                report.record_value.as_deref().unwrap_or("record dictionary")
+            ),
+        }
+        println!("root resolver:  {} (from {})", report.root_resolver_address, report.root_source);
+        println!("resolver path:  {}", report.resolver_path.join(" -> "));
+        println!("hops used:      {} of {}", report.hops_used, report.max_hops);
+        match (&report.first_hop_block, &report.last_hop_block) {
+            (Some(first), Some(last)) => {
+                println!("first hop ran at block: {}", block_label(first));
+                println!("last hop ran at block:  {}", block_label(last));
+                if !report.blocks_consistent {
                     println!(
-                        "result:         record dictionary cell (repr hash {})",
-                        hex::encode(value.repr_hash().as_slice())
+                        "{} the hops ran against different blocks: a plain JSON-RPC \
+                         caller cannot pin a checkpoint; re-run or use a proving client",
+                        "WARN".yellow().bold()
                     );
-                } else {
-                    match dns::parse_record_for_category(&value, &category) {
-                        Ok(record) => println!("result:         {}", display_record(&record)),
-                        Err(err) => println!(
-                            "result:         {} record cell {} rejected: {err}",
-                            "FAIL-CLOSED:".red().bold(),
-                            hex::encode(value.repr_hash().as_slice())
-                        ),
-                    }
                 }
             }
-            HopOutcome::Continue { .. } => unreachable!("loop breaks only on terminal outcomes"),
+            _ => println!("blocks:         not reported by the endpoint"),
         }
-        println!("root resolver:  {root} (from {root_source})");
-        println!("resolver path:  {}", resolver_path.join(" -> "));
-        println!("hops used:      {} of {}", resolver_path.len(), MAX_RESOLVER_HOPS);
+        if let Some(item) = &report.item {
+            print_item_report(item);
+        } else if let Some(reason) = &report.item_unavailable_reason {
+            println!("item state:     {reason}");
+        }
         // A single JSON-RPC endpoint executed the get-methods without state
         // proofs; do not present this as proved or quorum-agreed (DNS.md §8.1).
         println!("provenance:     evaluated");
@@ -295,6 +350,8 @@ pub struct DomainInspectCmd {
     name: String,
     #[command(flatten)]
     locator: ItemLocator,
+    #[arg(short, long, default_value = "table", help = "Output format: table or json")]
+    format: OutputFormat,
 }
 
 impl DomainInspectCmd {
@@ -303,45 +360,44 @@ impl DomainInspectCmd {
         let provider = contract_provider!(rpc_client.clone());
         let label = dns::second_level_label(&self.name)?;
         let item = self.locator.item_address(provider.as_ref(), &label).await?;
-        println!("name:            {}", self.name);
-        println!("item address:    {item}");
 
-        let auction = match read_auction_info(provider.as_ref(), &item).await {
-            Ok(auction) => auction,
-            Err(err) => {
-                println!("state:           {}", "not deployed".yellow());
-                println!("(get_auction_info failed: {err:#}; the name was never registered, or");
-                println!(" the item is frozen/uninitialized -- treat it as unregistered)");
-                return Ok(());
-            }
+        let (item_report, item_unavailable_reason) =
+            match read_item_report(provider.as_ref(), &item.to_string()).await {
+                Ok(report) => (Some(report), None),
+                Err(err) => (
+                    None,
+                    Some(format!(
+                        "get_auction_info failed: {err:#}; the name was never registered, or \
+                         the item is frozen/uninitialized -- treat it as unregistered"
+                    )),
+                ),
+            };
+        let report = InspectReport {
+            name: self.name.clone(),
+            domain_item_address: item.to_string(),
+            item: item_report,
+            item_unavailable_reason,
+            resolved_at_unix: unix_now()?,
+            provenance_class: "evaluated".to_owned(),
         };
-        let last_fill_up_time = read_last_fill_up_time(provider.as_ref(), &item).await?;
-        let now = unix_now()?;
-        let lifecycle = dns::classify_domain(auction.as_ref(), last_fill_up_time, now);
 
-        if let Some(auction) = &auction {
-            println!("auction ends:    {}", auction.auction_end_time);
-            println!(
-                "max bid:         {} TOS{}",
-                auction.max_bid_amount as f64 / dns::ONE_TOS as f64,
-                auction.max_bid_address.as_ref().map(|a| format!(" from {a}")).unwrap_or_default()
-            );
-            if let Ok(min) = dns::minimum_next_bid(auction.max_bid_amount) {
-                println!("minimum raise:   {} TOS", min as f64 / dns::ONE_TOS as f64);
+        if matches!(self.format, OutputFormat::Json) {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
+
+        println!("name:            {}", report.name);
+        println!("item address:    {}", report.domain_item_address);
+        match &report.item {
+            Some(item) => print_item_report(item),
+            None => {
+                println!("state:           {}", "not deployed".yellow());
+                if let Some(reason) = &report.item_unavailable_reason {
+                    println!("({reason})");
+                }
             }
         }
-        println!("last fill-up:    {last_fill_up_time}");
-        if let Some(deadline) = lifecycle.renewal_deadline {
-            println!("renewal deadline: {deadline}");
-        }
-        println!("state:           {}", lifecycle.state.as_str());
-        println!("detail:          {}", lifecycle.detail);
-        if !lifecycle.safe_to_resolve {
-            println!(
-                "{} records of this name must NOT be trusted in its current state",
-                "WARN".yellow().bold()
-            );
-        }
+        println!("provenance:      evaluated");
         Ok(())
     }
 }
@@ -369,6 +425,8 @@ pub struct DomainRegisterCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainRegisterCmd {
@@ -408,6 +466,7 @@ impl DomainRegisterCmd {
             amount,
             body,
             self.yes,
+            self.build_only,
             &format!("Register '{}' with a {} first bid?", self.label, display_tos(amount)),
         )
         .await
@@ -429,6 +488,8 @@ pub struct DomainBidCmd {
     amount: f64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainBidCmd {
@@ -476,6 +537,7 @@ impl DomainBidCmd {
             amount,
             body,
             self.yes,
+            self.build_only,
             &format!("Bid {} on '{}'?", display_tos(amount), self.name),
         )
         .await
@@ -499,6 +561,8 @@ pub struct DomainRenewCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainRenewCmd {
@@ -519,6 +583,7 @@ impl DomainRenewCmd {
             tos_to_nanotos(self.amount),
             body,
             self.yes,
+            self.build_only,
             &format!(
                 "Renew '{}' with a {} top-up?",
                 self.name,
@@ -544,6 +609,8 @@ pub struct DomainFinishCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainFinishCmd {
@@ -573,6 +640,7 @@ impl DomainFinishCmd {
             tos_to_nanotos(self.amount),
             body,
             self.yes,
+            self.build_only,
             &format!("Finalize the ended auction on '{}'?", self.name),
         )
         .await
@@ -594,6 +662,8 @@ pub struct DomainReleaseCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainReleaseCmd {
@@ -621,6 +691,7 @@ impl DomainReleaseCmd {
             tos_to_nanotos(self.amount),
             body,
             self.yes,
+            self.build_only,
             &format!(
                 "Release '{}' and open a seven-day re-auction with your {} as first bid?",
                 self.name,
@@ -646,15 +717,34 @@ pub struct DomainTransferCmd {
     new_owner: String,
     #[arg(long, default_value_t = 0.05, help = "Message value, in TOS")]
     amount: f64,
+    #[arg(
+        long,
+        default_value_t = 0.0,
+        help = "TOS forwarded to the new owner inside the ownership-assigned notification \
+                (must be below the message value)"
+    )]
+    forward_amount: f64,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainTransferCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_tos_amount("amount", self.amount)?;
+        validate_tos_amount("forward-amount", self.forward_amount)?;
+        let amount = tos_to_nanotos(self.amount);
+        let forward_amount = tos_to_nanotos(self.forward_amount);
+        ensure!(
+            forward_amount < amount,
+            "--forward-amount ({}) must be below the message value ({}); the contract \
+             needs the difference for fees",
+            display_tos(forward_amount),
+            display_tos(amount)
+        );
         let rpc_client = connect_rpc(config_path)?;
         let provider = contract_provider!(rpc_client);
         let label = dns::second_level_label(&self.name)?;
@@ -666,23 +756,24 @@ impl DomainTransferCmd {
             self.new_owner.parse::<MsgAddressInt>().context("invalid --new-owner address")?;
         let (wallet, owner_address, seqno, rpc_client) =
             load_signer(config_path, &self.from).await?;
-        let body = dns::transfer_body(&new_owner, &owner_address, 0, self.query_id)?;
+        let body = dns::transfer_body(&new_owner, &owner_address, forward_amount, self.query_id)?;
         if !self.yes
             && !confirm(&format!("Transfer '{}' to {new_owner}? This is irreversible.", self.name))?
         {
             return Ok(());
         }
-        send_wallet_message(
-            &wallet,
-            rpc_client,
-            item,
-            tos_to_nanotos(self.amount),
-            body,
-            true,
-            seqno,
-            &owner_address,
-        )
-        .await?;
+        if self.build_only {
+            let body_hash = hex::encode(body.repr_hash().as_slice());
+            let msg_boc =
+                build_wallet_message_boc(&wallet, item.clone(), amount, body, true, seqno).await?;
+            println!(
+                "{}",
+                prepared_send_json(&self.from, &owner_address, &item, amount, &body_hash, &msg_boc)
+            );
+            return Ok(());
+        }
+        send_wallet_message(&wallet, rpc_client, item, amount, body, true, seqno, &owner_address)
+            .await?;
         println!("{} transfer of '{}' submitted", "OK".green().bold(), self.name);
         Ok(())
     }
@@ -744,6 +835,8 @@ pub struct DomainRecordSetCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainRecordSetCmd {
@@ -796,6 +889,8 @@ pub struct DomainRecordDeleteCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainRecordDeleteCmd {
@@ -815,6 +910,7 @@ impl DomainRecordDeleteCmd {
             tos_to_nanotos(self.amount),
             body,
             self.yes,
+            self.build_only,
             &format!("Delete record category 0x{} on '{}'?", hex::encode(category), self.name),
         )
         .await
@@ -838,6 +934,8 @@ pub struct DomainDelegateCmd {
     query_id: u64,
     #[arg(long)]
     yes: bool,
+    #[arg(long, help = "Build and sign only; print prepared-send JSON instead of broadcasting")]
+    build_only: bool,
 }
 
 impl DomainDelegateCmd {
@@ -859,6 +957,7 @@ impl DomainDelegateCmd {
             tos_to_nanotos(self.amount),
             body,
             self.yes,
+            self.build_only,
             &format!("Delegate the subtree of '{}' to {resolver}?", self.name),
         )
         .await
@@ -883,6 +982,7 @@ async fn send_record_change(
         tos_to_nanotos(cmd.amount),
         body,
         cmd.yes,
+        cmd.build_only,
         &format!("Set record category 0x{} on '{}'?", hex::encode(category), cmd.name),
     )
     .await
@@ -921,6 +1021,7 @@ async fn send_domain_message(
     amount: u64,
     body: Cell,
     yes: bool,
+    build_only: bool,
     prompt: &str,
 ) -> anyhow::Result<()> {
     let path = Path::new(config_path);
@@ -944,6 +1045,23 @@ async fn send_domain_message(
         return Ok(());
     }
     let wallet = make_wallet(rpc_client.clone(), wallet_config, owner_secret, from).await?;
+    if build_only {
+        let body_hash = hex::encode(body.repr_hash().as_slice());
+        let msg_boc = build_wallet_message_boc(
+            &wallet,
+            destination.clone(),
+            amount,
+            body,
+            true,
+            owner_info.seqno,
+        )
+        .await?;
+        println!(
+            "{}",
+            prepared_send_json(from, &owner_address, &destination, amount, &body_hash, &msg_boc)
+        );
+        return Ok(());
+    }
     send_wallet_message(
         &wallet,
         rpc_client,
@@ -957,6 +1075,29 @@ async fn send_domain_message(
     .await?;
     println!("{} message submitted", "OK".green().bold());
     Ok(())
+}
+
+/// The same prepared-send envelope `wallet send --build-only` emits, so
+/// `wallet broadcast-prepared --message-boc <base64>` accepts it unchanged.
+fn prepared_send_json(
+    from: &str,
+    payer: &MsgAddressInt,
+    destination: &MsgAddressInt,
+    amount: u64,
+    body_hash: &str,
+    msg_boc: &[u8],
+) -> String {
+    serde_json::json!({
+        "version": "tosctl.wallet-prepared-send.v1",
+        "message_boc_base64": base64::engine::general_purpose::STANDARD.encode(msg_boc),
+        "wallet": from,
+        "payer": payer.to_string(),
+        "destination": destination.to_string(),
+        "amount_nanotos": amount,
+        "body_hash": body_hash,
+        "state_init_hash": serde_json::Value::Null,
+    })
+    .to_string()
 }
 
 async fn dns_root_from_chain(rpc_client: &ClientJsonRpc) -> anyhow::Result<MsgAddressInt> {
@@ -1043,6 +1184,275 @@ fn unix_now() -> anyhow::Result<i64> {
         .duration_since(std::time::UNIX_EPOCH)
         .context("system clock before the Unix epoch")?;
     i64::try_from(now.as_secs()).context("system clock out of range")
+}
+
+// ─── structured §8 result (DNS.md) ─────────────────────────────────────────
+
+/// The full structured resolution result of DNS.md §8, so no field is left
+/// for the caller to assemble. `provenance_class` is always `evaluated`
+/// here: a single JSON-RPC endpoint executed the get-methods without state
+/// proofs (§8.1).
+#[derive(serde::Serialize)]
+struct ResolveReport {
+    canonical_name: String,
+    category_name: Option<String>,
+    category_hash: String,
+    /// "found" | "not_found" | "record_dictionary" | "record_rejected"
+    result: String,
+    record_type: Option<String>,
+    record_value: Option<String>,
+    reject_reason: Option<String>,
+    root_resolver_address: String,
+    root_source: String,
+    resolver_path: Vec<String>,
+    hops_used: usize,
+    max_hops: i64,
+    first_hop_block: Option<BlockIdExt>,
+    last_hop_block: Option<BlockIdExt>,
+    /// false when hops ran against different blocks -- an unpinned JSON-RPC
+    /// caller cannot rule that out, and must not present the result as
+    /// evaluated against one checkpoint when this is false
+    blocks_consistent: bool,
+    domain_item_address: Option<String>,
+    item: Option<ItemReport>,
+    item_unavailable_reason: Option<String>,
+    /// wall clock at assembly time -- NOT chain time
+    resolved_at_unix: i64,
+    provenance_class: String,
+}
+
+impl ResolveReport {
+    fn category_hash_label(&self) -> &str {
+        self.category_name.as_deref().unwrap_or("raw")
+    }
+}
+
+#[derive(serde::Serialize)]
+struct InspectReport {
+    name: String,
+    domain_item_address: String,
+    item: Option<ItemReport>,
+    item_unavailable_reason: Option<String>,
+    /// wall clock at assembly time -- NOT chain time
+    resolved_at_unix: i64,
+    provenance_class: String,
+}
+
+#[derive(serde::Serialize)]
+struct ItemReport {
+    auction_active: bool,
+    max_bidder: Option<String>,
+    max_bid_nanotos: Option<u128>,
+    auction_end_time: Option<i64>,
+    last_fill_up_time: i64,
+    renewal_deadline: Option<i64>,
+    lifecycle_state: String,
+    safe_to_resolve: bool,
+    lifecycle_detail: String,
+}
+
+struct ResolveInputs<'a> {
+    canonical_name: String,
+    category_label: String,
+    category: [u8; 32],
+    outcome: &'a HopOutcome,
+    root: String,
+    root_source: String,
+    resolver_path: Vec<String>,
+    hop_blocks: Vec<Option<BlockIdExt>>,
+    item_address: Option<String>,
+    item: Option<ItemReport>,
+    item_unavailable_reason: Option<String>,
+    resolved_at_unix: i64,
+}
+
+fn build_resolve_report(inputs: ResolveInputs<'_>) -> anyhow::Result<ResolveReport> {
+    let (result, record_type, record_value, reject_reason) = match inputs.outcome {
+        HopOutcome::NotFound | HopOutcome::Terminal(None) => ("not_found", None, None, None),
+        HopOutcome::Terminal(Some(value)) => {
+            if inputs.category == dns::CATEGORY_ALL {
+                (
+                    "record_dictionary",
+                    None,
+                    Some(format!(
+                        "record dictionary cell (repr hash {})",
+                        hex::encode(value.repr_hash().as_slice())
+                    )),
+                    None,
+                )
+            } else {
+                match dns::parse_record_for_category(value, &inputs.category) {
+                    Ok(record) => (
+                        "found",
+                        Some(record_type_name(&record).to_owned()),
+                        Some(display_record(&record)),
+                        None,
+                    ),
+                    Err(err) => (
+                        "record_rejected",
+                        None,
+                        None,
+                        Some(format!(
+                            "record cell {} rejected: {err}",
+                            hex::encode(value.repr_hash().as_slice())
+                        )),
+                    ),
+                }
+            }
+        }
+        HopOutcome::Continue { .. } => bail!("resolution ended on a non-terminal outcome"),
+    };
+    let first_hop_block = inputs.hop_blocks.first().cloned().flatten();
+    let last_hop_block = inputs.hop_blocks.last().cloned().flatten();
+    let blocks_consistent = match (&first_hop_block, &last_hop_block) {
+        (Some(a), Some(b)) => {
+            a.workchain == b.workchain
+                && a.shard == b.shard
+                && a.seqno == b.seqno
+                && a.root_hash == b.root_hash
+        }
+        _ => false,
+    };
+    let category_name = known_category_name(&inputs.category).map(str::to_owned).or_else(|| {
+        (!inputs.category_label.starts_with("0x")).then(|| inputs.category_label.clone())
+    });
+    Ok(ResolveReport {
+        canonical_name: inputs.canonical_name,
+        category_name,
+        category_hash: format!("0x{}", hex::encode(inputs.category)),
+        result: result.to_owned(),
+        record_type,
+        record_value,
+        reject_reason,
+        root_resolver_address: inputs.root,
+        root_source: inputs.root_source,
+        hops_used: inputs.resolver_path.len(),
+        max_hops: MAX_RESOLVER_HOPS,
+        resolver_path: inputs.resolver_path,
+        first_hop_block,
+        last_hop_block,
+        blocks_consistent,
+        domain_item_address: inputs.item_address,
+        item: inputs.item,
+        item_unavailable_reason: inputs.item_unavailable_reason,
+        resolved_at_unix: inputs.resolved_at_unix,
+        provenance_class: "evaluated".to_owned(),
+    })
+}
+
+fn build_item_report(auction: Option<AuctionInfo>, last_fill_up_time: i64, now: i64) -> ItemReport {
+    let lifecycle = dns::classify_domain(auction.as_ref(), last_fill_up_time, now);
+    ItemReport {
+        auction_active: auction.is_some(),
+        max_bidder: auction
+            .as_ref()
+            .and_then(|a| a.max_bid_address.as_ref().map(|addr| addr.to_string())),
+        max_bid_nanotos: auction.as_ref().map(|a| a.max_bid_amount),
+        auction_end_time: auction.as_ref().map(|a| a.auction_end_time),
+        last_fill_up_time,
+        renewal_deadline: lifecycle.renewal_deadline,
+        lifecycle_state: lifecycle.state.as_str().to_owned(),
+        safe_to_resolve: lifecycle.safe_to_resolve,
+        lifecycle_detail: lifecycle.detail.to_owned(),
+    }
+}
+
+async fn read_item_report(
+    provider: &dyn ContractProvider,
+    item_address: &str,
+) -> anyhow::Result<ItemReport> {
+    let item = item_address.parse::<MsgAddressInt>().context("invalid item address")?;
+    let auction = read_auction_info(provider, &item).await?;
+    let last_fill_up_time = read_last_fill_up_time(provider, &item).await?;
+    Ok(build_item_report(auction, last_fill_up_time, unix_now()?))
+}
+
+fn print_item_report(item: &ItemReport) {
+    if let Some(end) = item.auction_end_time {
+        println!("auction ends:    {end}");
+        if let Some(bid) = item.max_bid_nanotos {
+            println!(
+                "max bid:         {} TOS{}",
+                bid as f64 / dns::ONE_TOS as f64,
+                item.max_bidder.as_ref().map(|a| format!(" from {a}")).unwrap_or_default()
+            );
+            if let Ok(min) = dns::minimum_next_bid(bid) {
+                println!("minimum raise:   {} TOS", min as f64 / dns::ONE_TOS as f64);
+            }
+        }
+    }
+    println!("last fill-up:    {}", item.last_fill_up_time);
+    if let Some(deadline) = item.renewal_deadline {
+        println!("renewal deadline: {deadline}");
+    }
+    println!("state:           {}", item.lifecycle_state);
+    println!("detail:          {}", item.lifecycle_detail);
+    if !item.safe_to_resolve {
+        println!(
+            "{} records of this name must NOT be trusted in its current state",
+            "WARN".yellow().bold()
+        );
+    }
+}
+
+/// One dnsresolve get-method call surfacing the block it ran against.
+/// `ContractProvider::get_method` discards the response's `block_id`, so the
+/// resolve loop talks to the RPC layer directly with the same conversions.
+async fn dnsresolve_with_block(
+    rpc_client: &ClientJsonRpc,
+    resolver: &MsgAddressInt,
+    query: &[u8],
+    category: &[u8; 32],
+) -> anyhow::Result<(TvmStackParser, Option<BlockIdExt>)> {
+    let stack = dns::dnsresolve_stack(query, category)?;
+    let result = rpc_client
+        .run_get_method(&RunGetMethodParams {
+            address: resolver.to_string(),
+            method_id: "dnsresolve".to_owned(),
+            stack: Some(stack.into_iter().map(RPCStackEntry::from).collect::<Vec<_>>()),
+            seqno: None,
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("dnsresolve error: {e}"))?;
+    ensure!(result.exit_code == 0, "dnsresolve error: exit_code={}", result.exit_code);
+    let block = result.block_id;
+    // the JSON-RPC server serializes the TVM stack top-first; decoders
+    // expect bottom-first (same convention as ContractProviderImpl)
+    Ok((
+        TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()),
+        block,
+    ))
+}
+
+fn block_label(block: &BlockIdExt) -> String {
+    format!("({},{:016x},{})", block.workchain, block.shard, block.seqno)
+}
+
+fn known_category_name(category: &[u8; 32]) -> Option<&'static str> {
+    const KNOWN: [&str; 8] = [
+        "dns_next_resolver",
+        "site",
+        "wallet",
+        "agent",
+        "capability",
+        "messenger",
+        "storage",
+        "text",
+    ];
+    if *category == dns::CATEGORY_ALL {
+        return Some("all");
+    }
+    KNOWN.into_iter().find(|name| dns::category_hash(name) == *category)
+}
+
+fn record_type_name(record: &DnsRecord) -> &'static str {
+    match record {
+        DnsRecord::SmcAddress { .. } => "dns_smc_address",
+        DnsRecord::NextResolver { .. } => "dns_next_resolver",
+        DnsRecord::AdnlAddress { .. } => "dns_adnl_address",
+        DnsRecord::StorageAddress { .. } => "dns_storage_address",
+        DnsRecord::Text => "dns_text",
+    }
 }
 
 #[cfg(test)]
@@ -1134,6 +1544,170 @@ mod domain_cli_tests {
         let parsed = DomainRecordSetCmd::from_arg_matches(&matches).expect("parsed record set");
         assert_eq!(parsed.category, "wallet");
         assert_eq!(parsed.query_id, 0);
+    }
+
+    #[test]
+    fn parses_build_only_and_forward_amount() {
+        let command = DomainTransferCmd::augment_args(Command::new("transfer"));
+        let matches = command
+            .try_get_matches_from([
+                "transfer",
+                "alice.tos",
+                "--collection",
+                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "--from",
+                "master_wallet",
+                "--new-owner",
+                "0:1111111111111111111111111111111111111111111111111111111111111111",
+                "--forward-amount",
+                "0.01",
+                "--build-only",
+                "--yes",
+            ])
+            .expect("transfer flags must parse");
+        let parsed = DomainTransferCmd::from_arg_matches(&matches).expect("parsed transfer");
+        assert!(parsed.build_only);
+        assert!((parsed.forward_amount - 0.01).abs() < f64::EPSILON);
+
+        let command = DomainRegisterCmd::augment_args(Command::new("register"));
+        let matches = command
+            .try_get_matches_from([
+                "register",
+                "alice",
+                "--collection",
+                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "--from",
+                "master_wallet",
+                "--amount",
+                "500",
+                "--build-only",
+            ])
+            .expect("register flags must parse");
+        let parsed = DomainRegisterCmd::from_arg_matches(&matches).expect("parsed register");
+        assert!(parsed.build_only);
+    }
+
+    #[test]
+    fn parses_resolve_json_format() {
+        let command = DomainResolveCmd::augment_args(Command::new("resolve"));
+        let matches = command
+            .try_get_matches_from(["resolve", "alice.tos", "--format", "json"])
+            .expect("resolve --format json must parse");
+        let parsed = DomainResolveCmd::from_arg_matches(&matches).expect("parsed resolve");
+        assert!(matches!(parsed.format, OutputFormat::Json));
+    }
+
+    #[test]
+    fn prepared_send_json_shape() {
+        let payer: MsgAddressInt =
+            "0:1111111111111111111111111111111111111111111111111111111111111111"
+                .parse()
+                .expect("payer address");
+        let dest: MsgAddressInt =
+            "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f"
+                .parse()
+                .expect("dest address");
+        let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3]);
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["version"], "tosctl.wallet-prepared-send.v1");
+        assert_eq!(value["wallet"], "boss");
+        assert_eq!(value["amount_nanotos"], 42);
+        assert_eq!(value["body_hash"], "aa55");
+        assert!(value["state_init_hash"].is_null());
+        let boc = value["message_boc_base64"].as_str().expect("boc field");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.decode(boc).expect("base64"),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn resolve_report_carries_every_section_8_field() {
+        let record = dns::make_smc_address_record(
+            &"0:2222222222222222222222222222222222222222222222222222222222222222"
+                .parse()
+                .expect("record address"),
+        )
+        .expect("record cell");
+        let outcome = HopOutcome::Terminal(Some(record));
+        let item = build_item_report(
+            Some(AuctionInfo {
+                max_bid_address: None,
+                max_bid_amount: 1_000_000_000,
+                auction_end_time: 2_000,
+            }),
+            1_000,
+            1_500,
+        );
+        let report = build_resolve_report(ResolveInputs {
+            canonical_name: "alice.tos".to_owned(),
+            category_label: "wallet".to_owned(),
+            category: dns::category_hash("wallet"),
+            outcome: &outcome,
+            root: "-1:00".to_owned(),
+            root_source: "ConfigParam 4".to_owned(),
+            resolver_path: vec!["-1:00".to_owned(), "0:aa".to_owned()],
+            hop_blocks: vec![None, None],
+            item_address: Some("0:aa".to_owned()),
+            item: Some(item),
+            item_unavailable_reason: None,
+            resolved_at_unix: 1_700_000_000,
+        })
+        .expect("report");
+        let value = serde_json::to_value(&report).expect("serializable");
+        for field in [
+            "canonical_name",
+            "category_name",
+            "category_hash",
+            "result",
+            "record_type",
+            "record_value",
+            "root_resolver_address",
+            "resolver_path",
+            "hops_used",
+            "max_hops",
+            "first_hop_block",
+            "last_hop_block",
+            "blocks_consistent",
+            "domain_item_address",
+            "item",
+            "resolved_at_unix",
+            "provenance_class",
+        ] {
+            assert!(value.get(field).is_some(), "missing §8 field {field}");
+        }
+        assert_eq!(value["result"], "found");
+        assert_eq!(value["record_type"], "dns_smc_address");
+        assert_eq!(value["category_name"], "wallet");
+        assert_eq!(value["provenance_class"], "evaluated");
+        assert_eq!(value["hops_used"], 2);
+        // no block ids -> must NOT claim consistency
+        assert_eq!(value["blocks_consistent"], false);
+        let item = &value["item"];
+        assert_eq!(item["auction_active"], true);
+        assert_eq!(item["lifecycle_state"], "auction");
+        assert_eq!(item["safe_to_resolve"], false);
+        assert_eq!(item["max_bid_nanotos"], 1_000_000_000u64);
+    }
+
+    #[test]
+    fn item_report_lifecycle_fields() {
+        let leased = build_item_report(None, 1_000, 2_000);
+        assert!(!leased.auction_active);
+        assert_eq!(leased.lifecycle_state, "leased");
+        assert!(leased.safe_to_resolve);
+        assert_eq!(leased.renewal_deadline, Some(1_000 + 31_622_400));
+
+        let releasable = build_item_report(None, 1_000, 1_000 + 31_622_401);
+        assert_eq!(releasable.lifecycle_state, "releasable");
+        assert!(!releasable.safe_to_resolve);
+    }
+
+    #[test]
+    fn known_category_names_round_trip() {
+        assert_eq!(known_category_name(&dns::CATEGORY_ALL), Some("all"));
+        assert_eq!(known_category_name(&dns::category_hash("wallet")), Some("wallet"));
+        assert_eq!(known_category_name(&[0x5c; 32]), None);
     }
 
     #[test]

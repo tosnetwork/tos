@@ -2421,6 +2421,21 @@ pub(crate) async fn send_wallet_message(
     .await
 }
 
+/// Build and sign a wallet message without broadcasting it. Returns the
+/// serialized external-message BOC, suitable for
+/// `wallet broadcast-prepared --message-boc <base64>`.
+pub(crate) async fn build_wallet_message_boc(
+    wallet: &dyn Wallet,
+    destination: MsgAddressInt,
+    amount: u64,
+    body: Cell,
+    bounce: bool,
+    seqno: Option<u32>,
+) -> anyhow::Result<Vec<u8>> {
+    let msg = wallet.build_message(destination, amount, body, bounce, seqno, None, None).await?;
+    Ok(write_boc(&msg)?)
+}
+
 pub(crate) async fn send_wallet_message_with_state_init(
     wallet: &dyn Wallet,
     rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
