@@ -1,0 +1,39 @@
+#!/usr/bin/env -S fift -s
+// Generate cross-language ground-truth vectors for the .tos client libraries.
+// Output is JSON on stdout; redirect into the shared vector corpus.
+"TosUtil.fif" include
+"Asm.fif" include
+
+"func/build/nft-item-code.fif" include constant item-code
+"func/build/nft-collection-code.fif" include constant collection-code
+
+// collection StateInit exactly as deploy/gen-deploy.fif builds it
+"https://tos.network/dns/collection.json" constant collection-content-url
+<b 1 8 u, collection-content-url $, b> constant collection-content
+<b collection-content ref, item-code ref, b> constant collection-data
+<b b{00110} s, collection-code ref, collection-data ref, b> constant collection-state-init
+Basechain collection-state-init hashu 2constant collection-addr
+
+// item_index = slice_hash("alice")  (repr hash of the cell holding the slice)
+<b "alice" $, b> hashu constant alice-index
+
+// item data + StateInit (upstream layout)
+<b alice-index 256 u, collection-addr Addr, b> constant item-data
+<b b{00110} s, item-code ref, item-data ref, b> constant item-state-init
+0 item-state-init hashu 2constant item-addr
+
+{ 34 emit } : q
+// ( c -- depth )  cell depth via TVM CDEPTH
+<{ CDEPTH }>s constant cdepth-code
+{ cdepth-code runvmcode drop } : cdepth
+."{" cr
+."  " q ."collection_content_url" q .": " q collection-content-url type q ."," cr
+."  " q ."item_code_hash" q .": " q item-code hashu 64x. q ."," cr
+."  " q ."item_code_depth" q .": " item-code cdepth ._ ."," cr
+."  " q ."collection_address" q .": " q ."0:" collection-addr nip 64x. q ."," cr
+."  " q ."alice_slice_hash" q .": " q alice-index 64x. q ."," cr
+."  " q ."alice_item_data_hash" q .": " q item-data hashu 64x. q ."," cr
+."  " q ."alice_item_data_depth" q .": " item-data cdepth ._ ."," cr
+."  " q ."alice_item_state_init_hash" q .": " q item-state-init hashu 64x. q ."," cr
+."  " q ."alice_item_address" q .": " q ."0:" item-addr nip 64x. q cr
+."}" cr

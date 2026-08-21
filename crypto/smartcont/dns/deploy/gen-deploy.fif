@@ -1,0 +1,59 @@
+#!/usr/bin/env -S fift -s
+// Generate the .tos deployment artifacts from the compiled contracts:
+//   - deterministic Collection and Root addresses (Root in the masterchain,
+//     Collection in the basechain, matching params.fc workchain() = 0);
+//   - StateInit BOCs for external deployment;
+//   - code hashes for the reproducible-build record.
+//
+// Usage:
+//   export FIFTPATH="<repo>/test/shim:<tos>/crypto/fift/lib"
+//   fift -s deploy/gen-deploy.fif [<collection-content-url>]
+//
+// The printed code hashes and addresses are what the governance activation
+// record and ConfigParam 4 proposal must reference. Rerunning after any
+// source or tos-config.fc change yields different values by construction.
+
+"TosUtil.fif" include
+"Asm.fif" include
+
+$# 1 >= { 1 $() } { "https://tos.network/dns/collection.json" } cond
+constant collection-content-url
+
+// ---- load compiled code ----
+"func/build/root-dns-code.fif" include constant root-code
+"func/build/nft-collection-code.fif" include constant collection-code
+"func/build/nft-item-code.fif" include constant item-code
+
+."code hashes:" cr
+."  root:       " root-code hashu 64x. cr
+."  collection: " collection-code hashu 64x. cr
+."  item:       " item-code hashu 64x. cr cr
+
+// ---- collection StateInit ----
+// storage: content:^Cell nft_item_code:^Cell  (offchain content tag 0x01 + url)
+<b 1 8 u, collection-content-url $, b> constant collection-content
+<b collection-content ref, item-code ref, b> constant collection-data
+<b b{00110} s, collection-code ref, collection-data ref, b> constant collection-state-init
+Basechain collection-state-init hashu 2constant collection-addr
+
+."collection address: " collection-addr .addr cr
+."collection address (bounceable): " collection-addr 6 .Addr cr
+
+// ---- root StateInit ----
+// storage: MsgAddressInt of the .tos Collection
+<b collection-addr Addr, b> constant root-data
+<b b{00110} s, root-code ref, root-data ref, b> constant root-state-init
+Masterchain root-state-init hashu 2constant root-addr
+
+."root address (ConfigParam 4 value): " root-addr .addr cr
+."root address (bounceable): " root-addr 6 .Addr cr cr
+
+// ---- write artifacts ----
+collection-state-init 2 boc+>B "func/build/collection-state-init.boc" B>file
+root-state-init 2 boc+>B "func/build/root-state-init.boc" B>file
+item-code 2 boc+>B "func/build/nft-item-code.boc" B>file
+collection-addr "func/build/collection.addr" save-address
+root-addr "func/build/root.addr" save-address
+
+."wrote func/build/collection-state-init.boc, func/build/root-state-init.boc," cr
+."      func/build/nft-item-code.boc, build/collection.addr, build/root.addr" cr

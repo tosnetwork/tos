@@ -1,0 +1,9 @@
+// Compatibility shim: the vendored upstream test harness and build scripts
+// were written against TON's fift library. TOS renamed TonUtil.fif to
+// TosUtil.fif and Gram words to Tomi words; the semantics (1e9 base units)
+// are identical. This shim keeps the vendored harness byte-identical to
+// upstream, which keeps the parity diff reviewable.
+"TosUtil.fif" include
+{ Tomi, } : Gram,
+{ Tomi@+ } : Gram@+
+{ Tomi@ } : Gram@
