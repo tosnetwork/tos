@@ -1,6 +1,6 @@
 const {funcer} = require("./funcer");
 const {
-    TON, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem, AUCTION_START_TIME
+    TOS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem, AUCTION_START_TIME
 } = require("./utils");
 
 funcer({'logVmOps': false, 'logFiftCode': false}, {
@@ -11,7 +11,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + COLLECTION_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'Address', '0:' + USER_ADDRESS,
                 'cell', [
@@ -23,7 +23,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 {
                     "type": "Internal",
                     "to": "0:" + USER_ADDRESS,
-                    "amount": 0 * TON,
+                    "amount": 0 * TOS,
                     "sendMode": 64,
                     "body": [
                         "uint32", 0, // op

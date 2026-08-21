@@ -4,7 +4,7 @@ const {
     FC_COLLECTION,
     DNS_NEXT_RESOLVER_PREFIX,
     AUCTION_START_DURATION,
-    TON,
+    TOS,
     COLLECTION_ADDRESS,
     OWNER_ADDRESS,
     USER_ADDRESS,
@@ -26,7 +26,7 @@ const makeStorageItem2 = ({auctionEndTime}) => {
         'uint1', 1, // auction maybe
         'cell', [ // auction
             'Address', '0:' + USER_ADDRESS, // max_bid_address
-            'coins', 20000 * TON, // max_bid_amount
+            'coins', 20000 * TOS, // max_bid_amount
             'uint64', (AUCTION_START_TIME + AUCTION_START_DURATION) // auction_end_time
         ],
         'uint64', AUCTION_START_TIME // last_fill_up_time
@@ -42,8 +42,8 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME,
             "sender": '0:' + USER_ADDRESS,
-            "contract_balance": 21000 * TON,
-            "amount": 20000 * TON,
+            "contract_balance": 21000 * TOS,
+            "amount": 20000 * TOS,
             "body": [
                 "uint32", 0x4ed14b65,
                 "uint64", 123,
@@ -53,7 +53,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 {
                     "type": "Internal",
                     "to": "0:" + OWNER_ADDRESS,
-                    "amount": 999 * TON,
+                    "amount": 999 * TOS,
                     "sendMode": 2,
                     "body": [
                         "uint32", 0x4ed14b65, // op

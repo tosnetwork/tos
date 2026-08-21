@@ -4,7 +4,7 @@ const {
     FC_COLLECTION,
     DNS_NEXT_RESOLVER_PREFIX,
     AUCTION_START_DURATION,
-    TON,
+    TOS,
     COLLECTION_ADDRESS,
     OWNER_ADDRESS,
     USER_ADDRESS,
@@ -33,8 +33,8 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME,
             "sender": '0:' + USER_ADDRESS,
-            "contract_balance": 1000 * TON,
-            "amount": 1 * TON,
+            "contract_balance": 1000 * TOS,
+            "amount": 1 * TOS,
             "body": [
                 "uint32", 0x44beae41,
                 "uint64", 123,

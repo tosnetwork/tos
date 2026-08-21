@@ -1,7 +1,7 @@
 const {funcer} = require("./funcer");
 const {
     makeStorageItemNonInit, FC_COLLECTION, DNS_NEXT_RESOLVER_PREFIX, AUCTION_START_DURATION,
-    TON, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
+    TOS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
     makeStorageItemComplete, AUCTION_START_TIME, CONTENT
 } = require("./utils");
 
@@ -27,7 +27,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + OWNER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [],
             "new_data": makeStorageItemComplete2({
                 lastFillUpTime: AUCTION_START_TIME + 1
@@ -46,7 +46,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 ["int", 8],
                 ['cell', [
                     'uint8', 0,
-                    'string', 'alice.ton'
+                    'string', 'alice.tos'
                 ]]
             ]
         },

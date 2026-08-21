@@ -1,6 +1,6 @@
 const {funcer} = require("./funcer");
 const {
-    makeStorageRoot, FC_ROOT, DNS_NEXT_RESOLVER_PREFIX, TON, COLLECTION_ADDRESS, USER_ADDRESS
+    makeStorageRoot, FC_ROOT, DNS_NEXT_RESOLVER_PREFIX, TOS, COLLECTION_ADDRESS, USER_ADDRESS
 } = require("./utils");
 
 const storage = () => {
@@ -14,7 +14,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
     'in_msgs': [ // just fill-up
         {
             "sender": '0:' + USER_ADDRESS,
-            "amount": 10 * TON,
+            "amount": 10 * TOS,
             "body": [],
             "new_data": storage(),
             "exit_code": 0,
@@ -146,11 +146,11 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
             ]
         },
         {
-            // ".ton" is not an alias for ".tos": the TOS root serves only the
-            // `tos` zone and must not resolve the inherited TON suffixes.
+            // A foreign TLD sharing the "to" prefix but diverging at the third
+            // byte ("toz") must not resolve: the root serves only the `tos` zone.
             "name": "dnsresolve",
             "args": [
-                ['bytes', new TextEncoder().encode('ton\0alice\0')],
+                ['bytes', new TextEncoder().encode('toz\0alice\0')],
                 ['int', '0']
             ],
             "output": [

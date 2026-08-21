@@ -1,7 +1,7 @@
 const {funcer} = require("./funcer");
 const {
     makeStorageItemNonInit, FC_COLLECTION, DNS_NEXT_RESOLVER_PREFIX, AUCTION_START_DURATION,
-    TON, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
+    TOS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
     makeStorageItemComplete, AUCTION_START_TIME, CONTENT
 } = require("./utils");
 
@@ -11,19 +11,19 @@ const CONTENT_WITH_WALLET = [
         '0x82a3537ff0dbce7eec35d69edc3a189ee6f17d82f353a553f9aa96cb0be3ce89': [
             'cell', [
                 'uint8', 0,
-                'string', 'alice.ton'
+                'string', 'alice.tos'
             ]
         ],
         '0xc9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104': [
             'cell', [
                 'uint8', 0,
-                'string', 'TON Domain'
+                'string', 'TOS Domain'
             ]
         ],
         '0x6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d': [
             'cell', [
                 'uint8', 0,
-                'string', 'https://dns.ton.org/icon.png#alice',
+                'string', 'https://dns.tos.network/icon.png#alice',
             ]
         ],
         '0xe8d44050873dba865aa7c170ab4cce64d90839a34dcfd6cf71d14e0205443b1b': [
@@ -72,8 +72,8 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME,
             "sender": '0:' + OWNER_ADDRESS,
-            "contract_balance": 1000 * TON,
-            "amount": 1 * TON,
+            "contract_balance": 1000 * TOS,
+            "amount": 1 * TOS,
             "body": [
                 'uint32', 0x4eb1f0f9,
                 'uint64', 123,

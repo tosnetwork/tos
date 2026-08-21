@@ -1,7 +1,7 @@
 const {funcer} = require("./funcer");
 const {
     makeStorageItemNonInit, FC_COLLECTION, DNS_NEXT_RESOLVER_PREFIX, AUCTION_START_DURATION,
-    TON, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem, AUCTION_PROLONGATION, CONTENT_EMPTY,
+    TOS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem, AUCTION_PROLONGATION, CONTENT_EMPTY,
     AUCTION_START_TIME
 } = require("./utils");
 
@@ -17,7 +17,7 @@ const makeStorageItem2 = ({auctionEndTime}) => {
         'uint1', 1, // auction maybe
         'cell', [ // auction
             'Address', '0:' + USER_ADDRESS, // max_bid_address
-            'coins', 2000 * TON, // max_bid_amount
+            'coins', 2000 * TOS, // max_bid_amount
             'uint64', auctionEndTime || (AUCTION_START_TIME + AUCTION_START_DURATION) // auction_end_time
         ],
         'uint64', AUCTION_START_TIME // last_fill_up_time
@@ -32,9 +32,9 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
     'in_msgs': [
         {
             "time": AUCTION_START_TIME,
-            "contract_balance": 1000 * TON,
+            "contract_balance": 1000 * TOS,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 2000 * TON,
+            "amount": 2000 * TOS,
             "body": [],
             "new_data": makeStorageItem2({
                 auctionEndTime: AUCTION_START_TIME + AUCTION_PROLONGATION
@@ -43,7 +43,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 {
                     "type": "Internal",
                     "to": "0:" + OWNER_ADDRESS,
-                    "amount": 999 * TON,
+                    "amount": 999 * TOS,
                     "sendMode": 1,
                     "body": [
                         "uint32", 0x557cea20, // op

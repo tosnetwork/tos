@@ -1,7 +1,7 @@
 const {funcer} = require("./funcer");
 const {
     makeStorageItemNonInit, FC_COLLECTION, DNS_NEXT_RESOLVER_PREFIX, AUCTION_START_DURATION,
-    TON, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
+    TOS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS, YEAR, FC_ITEM, makeStorageItem,
     makeStorageItemComplete
 } = require("./utils");
 
@@ -13,8 +13,8 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_DURATION,
             "sender": '0:' + USER_ADDRESS,
-            "contract_balance": 1000 * TON,
-            "amount": 1 * TON,
+            "contract_balance": 1000 * TOS,
+            "amount": 1 * TOS,
             "body": [
                 'uint32', 0x2fcb26a2,
                 'uint64', 123,
@@ -24,7 +24,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 {
                     "type": "Internal",
                     "to": "0:" + USER_ADDRESS,
-                    "amount": 0 * TON,
+                    "amount": 0 * TOS,
                     "sendMode": 64,
                     "body": [
                         "uint32", 0x8b771735, // op

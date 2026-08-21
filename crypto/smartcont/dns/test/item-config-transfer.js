@@ -4,7 +4,7 @@ const {
     FC_COLLECTION,
     DNS_NEXT_RESOLVER_PREFIX,
     AUCTION_START_DURATION,
-    TON,
+    TOS,
     CONFIG_PARAMS,
     COLLECTION_ADDRESS,
     OWNER_ADDRESS,
@@ -26,19 +26,19 @@ const makeStorageItem2 = ({auctionEndTime}) => {
                 '0x82a3537ff0dbce7eec35d69edc3a189ee6f17d82f353a553f9aa96cb0be3ce89': [
                     'cell', [
                         'uint8', 0,
-                        'string', 'alice.ton'
+                        'string', 'alice.tos'
                     ]
                 ],
                 '0xc9046f7a37ad0ea7cee73355984fa5428982f8b37c8f7bcec91f7ac71a7cd104': [
                     'cell', [
                         'uint8', 0,
-                        'string', 'TON Domain'
+                        'string', 'TOS Domain'
                     ]
                 ],
                 '0x6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d': [
                     'cell', [
                         'uint8', 0,
-                        'string', 'https://dns.ton.org/icon.png#alice',
+                        'string', 'https://dns.tos.network/icon.png#alice',
                     ]
                 ]
             },
@@ -64,7 +64,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                         'Address', '0:' + USER_ADDRESS, // new_owner_address
                         'uint2', 0, // response_address
                         'uint1', 0, // custom_payload
-                        'coins', 0.5 * TON, // forward_amount
+                        'coins', 0.5 * TOS, // forward_amount
                         'uint1', 0 // forward_payload
                     ]
                 }
@@ -75,8 +75,8 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": 1658151331,
             "sender": '0:' + USER_ADDRESS,
-            "contract_balance": 1000 * TON,
-            "amount": 1 * TON,
+            "contract_balance": 1000 * TOS,
+            "amount": 1 * TOS,
             "body": [
                 "uint32", 11,
                 "uint64", 123,
@@ -86,7 +86,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 {
                     "type": "Internal",
                     "to": "0:" + USER_ADDRESS,
-                    "amount": 0.5 * TON,
+                    "amount": 0.5 * TOS,
                     "sendMode": 1,
                     "body": [
                         "uint32", 0x05138d91, // op

@@ -1,7 +1,7 @@
 const {funcer} = require("./funcer");
 const {
     makeStorageCollection, FC_COLLECTION, DNS_NEXT_RESOLVER_PREFIX,
-    TON, CONFIG_PARAMS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS
+    TOS, CONFIG_PARAMS, COLLECTION_ADDRESS, OWNER_ADDRESS, USER_ADDRESS
 } = require("./utils");
 
 const storage = () => {
@@ -16,14 +16,14 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
     'in_msgs': [
         {
             "sender": '0:' + COLLECTION_ADDRESS,
-            "amount": 10 * TON,
+            "amount": 10 * TOS,
             "body": [],
             // "new_data": storage,
             "exit_code": 0xffff
         },
         {
             "sender": '0:' + COLLECTION_ADDRESS,
-            "amount": 10 * TON,
+            "amount": 10 * TOS,
             "body": [
                 'uint32', 1
             ],
@@ -32,7 +32,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         },
         {
             "sender": '0:' + COLLECTION_ADDRESS,
-            "amount": 10 * TON,
+            "amount": 10 * TOS,
             "body": [
                 'uint32', 0x370fec51
             ],
@@ -46,13 +46,13 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
             "args": [
                 ["cell", [ // content
                     'uint8', 1,
-                    'string', 'https://ton.org/collection.json'
+                    'string', 'https://tos.network/collection.json'
                 ]],
             ],
             "output": [
                 ["cell", [ // content
                     'uint8', 1,
-                    'string', 'https://ton.org/collection.json'
+                    'string', 'https://tos.network/collection.json'
                 ]],
             ]
         },
@@ -64,7 +64,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
                 ["int", 0],
                 ["cell", [ // content
                     'uint8', 1,
-                    'string', 'https://ton.org/collection.json'
+                    'string', 'https://tos.network/collection.json'
                 ]],
                 ["null", "null"]
             ]

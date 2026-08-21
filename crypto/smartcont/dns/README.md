@@ -58,9 +58,10 @@ asserts that foreign suffixes (`.ton`, `.t.me`) and prefix-sharing labels
 (`tosx`) do **not** resolve. `test/utils.js` `AUCTION_START_TIME` must equal
 `func/tos-config.fc`'s `auction_start_time`.
 
-The item-code BOC embedded in `test/utils.js` `makeStorageCollection` is an
-upstream-pinned fixture used only as collection storage in tests; the deployed
-item code is built from source.
+The item-code BOC embedded in `test/utils.js` `makeStorageCollection` is the
+compiled output of `func/nft-item.fc`, used as collection storage in tests;
+after any item-code change, regenerate it from the
+`func/build/nft-item-code.boc` written by `deploy/gen-deploy.fif`.
 
 ## Deployment artifacts
 

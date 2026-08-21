@@ -1,6 +1,6 @@
 const {funcer} = require("./funcer");
 const {
-    makeStorageCollection, FC_COLLECTION, TON, USER_ADDRESS, AUCTION_START_TIME, MONTH
+    makeStorageCollection, FC_COLLECTION, TOS, USER_ADDRESS, AUCTION_START_TIME, MONTH
 } = require("./utils");
 
 const storage = () => {
@@ -12,7 +12,7 @@ const makeChars = (text, exitCode = 0) => {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', text,
@@ -28,7 +28,7 @@ const makeChars2 = (text1, text2, exitCode = 0) => {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', text1,
@@ -51,7 +51,7 @@ const makePrice = (symbolsCount, addTime, price) => {
     return [{
         "time": AUCTION_START_TIME + 1 + addTime,
         "sender": '0:' + USER_ADDRESS,
-        "amount": price * TON,
+        "amount": price * TOS,
         "body": [
             'uint32', 0,
             'string', s
@@ -62,7 +62,7 @@ const makePrice = (symbolsCount, addTime, price) => {
         {
             "time": AUCTION_START_TIME + 1 + addTime,
             "sender": '0:' + USER_ADDRESS,
-            "amount": (price - 1) * TON,
+            "amount": (price - 1) * TOS,
             "body": [
                 'uint32', 0,
                 'string', s
@@ -80,7 +80,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         { // auction not begin yet
             "time": AUCTION_START_TIME - 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', "alice",
@@ -91,7 +91,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         { // mod(len, 8) == 0
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', "alice",
@@ -103,7 +103,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         { // invalid chars - \0 char
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'bytes', new TextEncoder().encode("al\0ice"),

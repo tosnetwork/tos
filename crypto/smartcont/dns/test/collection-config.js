@@ -1,6 +1,6 @@
 const {funcer} = require("./funcer");
 const {
-    makeStorageCollection, FC_COLLECTION, TON,  COLLECTION_ADDRESS, AUCTION_START_TIME, USER_ADDRESS,
+    makeStorageCollection, FC_COLLECTION, TOS,  COLLECTION_ADDRESS, AUCTION_START_TIME, USER_ADDRESS,
 } = require("./utils");
 
 const storage = () => {
@@ -26,7 +26,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', "alice",
@@ -37,7 +37,7 @@ funcer({'logVmOps': false, 'logFiftCode': false}, {
         {
             "time": AUCTION_START_TIME + 1,
             "sender": '0:' + USER_ADDRESS,
-            "amount": 1000 * TON,
+            "amount": 1000 * TOS,
             "body": [
                 'uint32', 0,
                 'string', "alice2",
