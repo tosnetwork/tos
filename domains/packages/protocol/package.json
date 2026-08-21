@@ -1,0 +1,19 @@
+{
+  "name": "@tos-domains/protocol",
+  "version": "0.1.0",
+  "description": "Client-side .tos protocol core: canonicalization, encoding, item-address derivation, auction math, message builders, record codecs, and fail-closed lifecycle interpretation. Mirrors tosnetwork/dns-contract; never an authority.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
