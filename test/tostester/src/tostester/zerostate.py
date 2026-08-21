@@ -62,6 +62,13 @@ class NetworkConfig:
     # None (default) leaves the parameter unset so resolvers fail closed; a
     # profile may pin the counterfactual address of a root deployed at runtime.
     dns_root_addr: int | None = None
+    # ConfigParam 11 (ConfigVotingSetup): the default carries mainnet-like
+    # values (min_store_sec = 1e6 s, min_wins = 2), under which a proposal
+    # can never be accepted on a single-validator localnet whose validator
+    # set never rotates. A profile opts into a single-round-friendly
+    # override (60 s minimum storage, one win) to rehearse governance
+    # activation of ordinary parameters.
+    enable_config_voting: bool = False
 
 
 @dataclass
@@ -305,6 +312,7 @@ untriple make-block-limits 23 config!
 // runtime; clients fail closed while the account does not exist.
 {dns_config_param}
 
+
 // No genesis extra-currency minting. PoW/test givers are not registered in
 // either profile; the validator-economics profile also has no native premine.
 
@@ -316,6 +324,12 @@ untriple make-block-limits 23 config!
 _( 2 3 2 2 1000000 10000000 1 500 )
 _( 4 7 4 2 5000000 20000000 2 1000 )
 config.param_proposals_setup!
+
+// Governance-rehearsal override of ConfigParam 11 (must come AFTER the
+// default setup above): min_store_sec drops to 60s and min_wins to 1 so a
+// single-validator localnet can carry an ordinary proposal to acceptance
+// in one voting round. Empty unless the profile opts in.
+{voting_config_param}
 
 // deposit bit_pps cell_pps
 TM$100 1 500 config.complaint_prices!
@@ -536,6 +550,19 @@ def create_zerostate(
     else:
         dns_config_param = ""
 
+    if config.enable_config_voting:
+        # cfg_vote_setup#91 with identical normal/critical ConfigProposalSetup
+        # (cfg_prop_setup#36: min_tot_rounds max_tot_rounds min_wins max_losses
+        # min_store_sec max_store_sec bit_price cell_price). min_wins = 1 lets
+        # a single validator's vote accept an ordinary proposal in one round.
+        prop_setup = (
+            "<b x{36} s, 1 8 u, 8 8 u, 1 8 u, 8 8 u,"
+            " 60 32 u, 31622400 32 u, 1 32 u, 500 32 u, b>"
+        )
+        voting_config_param = f"<b x{{91}} s, {prop_setup} ref, {prop_setup} ref, b> 11 config!\n"
+    else:
+        voting_config_param = ""
+
     run_fift(
         install,
         _TEMPLATE.format(
@@ -549,6 +576,7 @@ def create_zerostate(
             aipow_capability=aipow_capability,
             aipow_config_params=aipow_config_params,
             dns_config_param=dns_config_param,
+            voting_config_param=voting_config_param,
             **profile,
         ),
         state_dir,

@@ -25,6 +25,17 @@ runtime, and drives a registration through the inherited open-auction flow:
   RESOLVE-1  the resolution chain now reaches the live item; its auction
              state is visible through get_auction_info.
 
+A second network then rehearses the OTHER activation path (DNS.md §11):
+
+  GOVERNANCE genesis has no ConfigParam 4 and relaxes ConfigParam 11 (the
+             default voting setup needs multi-round validator-set rotation
+             that a single-validator localnet never produces); resolution
+             fails closed; the Root and Collection deploy; an ordinary
+             config-change proposal carrying the Root account id is
+             registered with the config contract, the genesis validator
+             votes for it with its validator key, ConfigParam 4 appears,
+             and resolution starts working on the running chain.
+
 Full-lifecycle pieces that need wall-clock time (auction completion after the
 one-hour minimum duration, 366-day release) are exercised by the vendored
 contract suites (crypto/smartcont/dns/run-tests.sh), not here.
@@ -132,6 +143,10 @@ def parse_stack_entry(entry):
         if t == "tvm.stackEntryList" and not entry["list"]["elements"]:
             # TVM unifies null with the empty list
             return "null", None
+        if t in ("tvm.stackEntryTuple", "tvm.stackEntryList"):
+            return "tuple", entry
+    if isinstance(entry, list) and len(entry) == 2 and entry[0] in ("tuple", "list"):
+        return "tuple", entry
     raise RuntimeError(f"unhandled stack entry: {entry!r}")
 
 
@@ -260,6 +275,157 @@ def lite_client_dnsresolve(global_config: Path, name: str) -> str:
         [str(lite), "-C", str(global_config), "-t", "30", "-c", f"dnsresolve {name}"],
         capture_output=True, text=True, timeout=90)
     return proc.stdout + proc.stderr
+
+
+def param4_root_id() -> str | None:
+    """Hex account id in ConfigParam 4, or None while the parameter is absent."""
+    try:
+        cfg = rpc_call("getConfigParam", config_id=4).get("result") or {}
+        raw = cfg.get("config", {}).get("bytes", "")
+        if not raw:
+            return None
+        cell = Cell.one_from_boc(base64.b64decode(raw))
+        return cell.begin_parse().load_bytes(32).hex()
+    except Exception:
+        return None
+
+
+def config_contract_address() -> str:
+    cfg = rpc_call("getConfigParam", config_id=0)["result"]
+    cell = Cell.one_from_boc(base64.b64decode(cfg["config"]["bytes"]))
+    return "-1:" + cell.begin_parse().load_bytes(32).hex()
+
+
+async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
+                                validator_key) -> None:
+    root_addr = artifacts["root"]
+    collection_addr = artifacts["collection"]
+    root_id = bytes.fromhex(root_addr.split(":")[1])
+
+    print("\n=== GOVERNANCE: ConfigParam 4 introduced by proposal ===")
+    if not check("json-rpc ready", await wait_rpc_ready()):
+        return
+    check("ConfigParam 4 absent at genesis", param4_root_id() is None)
+    out = lite_client_dnsresolve(global_config, f"{LABEL}.tos")
+    check("lite-client fails closed without parameter 4",
+          "cannot obtain root dns address" in out or "parameter #4" in out, out[-400:])
+
+    await faucet.send(deploy_message(
+        faucet, root_addr, 2 * NANO, state_init_of(artifacts["root_init"]),
+        begin_cell().end_cell()))
+    check("Root active", await async_poll(lambda: account_state(root_addr) == "active"))
+    fill_up = begin_cell().store_uint(0x370FEC51, 32).store_uint(0, 64).end_cell()
+    await faucet.send(deploy_message(
+        faucet, collection_addr, 5 * NANO, state_init_of(artifacts["collection_init"]), fill_up))
+    check("Collection active",
+          await async_poll(lambda: account_state(collection_addr) == "active", timeout=120))
+
+    config_addr = config_contract_address()
+    print(f"  config contract: {config_addr}")
+    p11 = rpc_call("getConfigParam", config_id=11).get("result") or {}
+    check("ConfigParam 11 (voting setup) present at genesis",
+          bool(p11.get("config", {}).get("bytes")))
+
+    # cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)
+    value = begin_cell().store_uint(int.from_bytes(root_id, "big"), 256).end_cell()
+    proposal = (begin_cell()
+                .store_uint(0xF3, 8)
+                .store_uint(4, 32)
+                .store_bit(1)
+                .store_ref(value)
+                .store_bit(0)
+                .end_cell())
+    phash_bytes = proposal.hash
+    # new voting proposal: tag query_id expire_at(relative) ^proposal critical=0
+    body = (begin_cell()
+            .store_uint(0x6E565052, 32)
+            .store_uint(0, 64)
+            .store_uint(100_000, 32)
+            .store_ref(proposal)
+            .store_bit(0)
+            .end_cell())
+    await faucet.send(transfer_message(faucet, config_addr, 10 * NANO, body))
+
+    def proposal_registered() -> bool:
+        entries = run_get_method(
+            config_addr, "get_proposal",
+            [stack_num(int.from_bytes(phash_bytes, "big"))])
+        return any(k not in ("null",) for k, _ in entries)
+
+    registered = await async_poll(proposal_registered, timeout=90)
+    if not registered:
+        try:
+            entries = run_get_method(
+                config_addr, "get_proposal",
+                [stack_num(int.from_bytes(phash_bytes, "big"))])
+            print(f"  get_proposal -> {entries!r}")
+        except Exception as exc:
+            print(f"  get_proposal error: {exc}")
+        try:
+            txs = rpc_call("getTransactions", address=config_addr, limit=6)["result"]
+            print(f"  config txs={len(txs)} balance={balance(config_addr)}")
+            for tx in txs:
+                for label, msg in [("in", tx.get("in_msg") or {})] + [
+                        ("out", m) for m in tx.get("out_msgs", [])]:
+                    body = (msg.get("msg_data") or {}).get("body", "")
+                    tag = ""
+                    if body:
+                        try:
+                            s = Cell.one_from_boc(base64.b64decode(body)).begin_parse()
+                            tag = f" tag=0x{s.load_uint(32):08x}"
+                        except Exception:
+                            tag = " tag=?"
+                    print(f"  {label}: value={msg.get('value')}{tag}")
+        except Exception as exc:
+            print(f"  tx dump error: {exc}")
+        try:
+            faucet_addr = faucet.address.to_str(is_user_friendly=False)
+            txs = rpc_call("getTransactions", address=faucet_addr, limit=6)["result"]
+            print(f"  faucet {faucet_addr} txs={len(txs)}")
+            for tx in txs:
+                msgs = [("in", tx.get("in_msg") or {})]
+                msgs += [("out", m) for m in tx.get("out_msgs", [])]
+                for label, m in msgs:
+                    body = (m.get("msg_data") or {}).get("body", "")
+                    tag = ""
+                    if body:
+                        try:
+                            s = Cell.one_from_boc(base64.b64decode(body)).begin_parse()
+                            tag = f" tag=0x{s.load_uint(32):08x}"
+                        except Exception:
+                            tag = " tag=?"
+                    print(f"  faucet {label}: src={m.get('source')} dst={m.get('destination')} "
+                          f"value={m.get('value')}{tag}")
+                    if label == "in" and m.get("source", "").startswith("Ef9VVVV"):
+                        print(f"  raw answer msg: {json.dumps(m)[:600]}")
+            std = rpc_call("getTransactionsStd", address=faucet_addr, limit=6)["result"]
+            for tx in (std if isinstance(std, list) else std.get("transactions", [])):
+                inb = tx.get("in_msg") or {}
+                src = str(inb.get("source", ""))
+                if "5555" in src or src.startswith("Ef9VVVV"):
+                    print(f"  std answer msg: {json.dumps(inb)[:700]}")
+        except Exception as exc:
+            print(f"  faucet dump error: {exc}")
+    check("proposal registered with the config contract", registered)
+
+    # the genesis validator (index 0 in ConfigParam 34) votes: the vote body
+    # carries an Ed25519 signature over sign_tag(32) idx(16) proposal_hash(256)
+    to_sign = (0x566F7445).to_bytes(4, "big") + (0).to_bytes(2, "big") + phash_bytes
+    signature = validator_key.key.sign(to_sign).signature
+    vote = (begin_cell()
+            .store_uint(0x566F7465, 32)
+            .store_uint(0, 64)
+            .store_bytes(signature)
+            .store_bytes(to_sign)
+            .end_cell())
+    await faucet.send(transfer_message(faucet, config_addr, 1 * NANO, vote))
+
+    check("ConfigParam 4 appears after the validator vote",
+          await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120))
+
+    out = lite_client_dnsresolve(global_config, f"{LABEL}.tos")
+    check("resolution works on the running chain after activation",
+          VECTORS["alice_item_address"].split(":")[1].upper() in out, out[-400:])
 
 
 async def run_checks(faucet, artifacts: dict, global_config: Path) -> None:
@@ -391,8 +557,12 @@ async def main() -> int:
     if not ok:
         return 1
 
+    phases = os.environ.get("DNS_E2E_PHASES", "genesis,governance").split(",")
     install = Install(BUILD_DIR, REPO)
-    async with Network(install, WORKDIR / "net", base_port=25400) as network:
+    if "genesis" not in phases:
+        print("(skipping genesis phase per DNS_E2E_PHASES)")
+    if "genesis" in phases:
+      async with Network(install, WORKDIR / "net", base_port=25400) as network:
         network.config.dns_root_addr = int(artifacts["root"].split(":")[1], 16)
         dht = network.create_dht_node()
         node = network.create_full_node()
@@ -407,6 +577,28 @@ async def main() -> int:
             lite_cfg = WORKDIR / "liteclient.config.json"
             lite_cfg.write_text(node.liteserver_config.to_json())
             await run_checks(faucet, artifacts, lite_cfg)
+        finally:
+            for t in (node_task, dht_task):
+                t.cancel()
+            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+
+    # Phase B: governance activation on a chain born without ConfigParam 4
+    if "governance" in phases:
+      async with Network(install, WORKDIR / "net-gov", base_port=25500) as network:
+        network.config.enable_config_voting = True
+        dht = network.create_dht_node()
+        node = network.create_full_node()
+        node.make_initial_validator()
+        node.announce_to(dht)
+        dht_task = asyncio.create_task(dht.run())
+        node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        try:
+            await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            client = await node.toslib_client()
+            faucet = network.zerostate.main_wallet(client)
+            lite_cfg = WORKDIR / "liteclient.gov.config.json"
+            lite_cfg.write_text(node.liteserver_config.to_json())
+            await run_governance_checks(faucet, artifacts, lite_cfg, node.validator_key)
         finally:
             for t in (node_task, dht_task):
                 t.cancel()
