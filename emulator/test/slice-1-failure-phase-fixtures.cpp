@@ -1,7 +1,7 @@
 // Slice 1 conformance fixtures — failure-phase bounce paths (Task F2).
 //
 // References:
-//   - doc/tos-message-policy.md v5 (Approved 2026-04-29)
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 (Approved 2026-04-29)
 //       §2.2 — v12 bounce body shape (`new_bounce_body#fffffffe` …
 //                                     bounced_by_phase:uint8 exit_code:int32
 //                                     compute_phase:(Maybe NewBounceComputePhaseInfo)).
@@ -10,7 +10,7 @@
 //              (insufficient gas to enter compute) as **orthogonal** to
 //              every "Execute" / "Deploy + execute" / "Unfreeze, execute"
 //              row.
-//   - doc/GlobalVersions.md §"Version 12" — canonical TL-B for
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md §"Version 12" — canonical TL-B for
 //       `new_bounce_body`, semantics of `bounced_by_phase ∈ {0, 1, 2}`,
 //       and the `exit_code` partition for skipped compute (`-1, -2, -3,
 //       -4`).
@@ -58,7 +58,7 @@
 // the resulting **wire-level bounce body** that the production code
 // writes into the v12 `new_bounce_body#fffffffe` constructor at
 // `crypto/block/transaction.cpp:3551-3580`. The "predicate-extract"
-// pattern (see `doc/tos-message-policy.md` emulator-semantics
+// pattern (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` emulator-semantics
 // guidance, and the F1 / F3 sibling fixtures) is used: production
 // branches are replicated as small predicates inside this file so the
 // fixtures can drive Stage 2 transaction-level assertions even before
@@ -146,7 +146,7 @@ tos::SmartContract::State make_state_with_data(td::Ref<vm::Cell> code) {
 // crypto/block/transaction.cpp. The fixtures below assert against these
 // replicas instead of (or in addition to) the SmartContract emulator's
 // aggregated `Answer` fields, which mix compute and action phases for
-// internal messages. See `doc/tos-message-policy.md` emulator-semantics
+// internal messages. See `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` emulator-semantics
 // guidance and the F1 / F3 sibling fixtures.
 //
 // These replicas are intentionally narrow: they cover only the branches
@@ -277,7 +277,7 @@ ActionWalkResult walk_actions_data_no_refs(td::Ref<vm::Cell> list) {
 // F2.1 — Out-of-gas (bounced_by_phase = 0, exit_code = -3).
 // ---------------------------------------------------------------------------
 //
-// Scenario per `doc/tos-message-policy.md` §6.2 paragraph after the
+// Scenario per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` §6.2 paragraph after the
 // state-partitioned table:
 //
 //   "Orthogonal to it, `exit_code = -3` (insufficient gas to enter the
@@ -406,7 +406,7 @@ TEST(Slice1FailurePhaseFixtures, F2_1_OutOfGas_BouncedByPhase0_ExitCode_Neg3) {
 // F2.2 — Compute-phase exception (bounced_by_phase = 1, exit_code = 7777).
 // ---------------------------------------------------------------------------
 //
-// Scenario per `doc/tos-message-policy.md` §2.2 second bullet:
+// Scenario per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` §2.2 second bullet:
 //
 //   "`1` — compute phase failed; `exit_code` is the compute-phase
 //    result."
@@ -519,7 +519,7 @@ TEST(Slice1FailurePhaseFixtures, F2_2_ComputePhaseException_BouncedByPhase1_Exit
 // F2.3 — Action-phase failure (bounced_by_phase = 2).
 // ---------------------------------------------------------------------------
 //
-// Scenario per `doc/tos-message-policy.md` §2.2 third bullet:
+// Scenario per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` §2.2 third bullet:
 //
 //   "`2` — action phase failed."
 //

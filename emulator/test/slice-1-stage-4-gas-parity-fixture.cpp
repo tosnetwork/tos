@@ -36,11 +36,11 @@
 //   `tos-message-policy.md` §10.1.
 //
 // References:
-//   - doc/tos-message-policy.md §8.1 — bit-identical wire commitment that
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §8.1 — bit-identical wire commitment that
 //     makes the inbound bytes the same for both sides.
-//   - doc/tos-message-policy.md §10.1 — ≤ 15% bytecode budget the ratio
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §10.1 — ≤ 15% bytecode budget the ratio
 //     gate enforces in the gas dimension.
-//   - doc/tos-message-envelope-migration.md — bytecode-cell ratios per
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-envelope-migration.md — bytecode-cell ratios per
 //     contract (FunC 11/Tol 9 for jetton-minter, etc.).
 //   - emulator/test/slice-1-stage-2-roundtrip-fixture.cpp — the pattern
 //     this fixture extends (compile_tvm + make_state + SmartContract::
@@ -142,7 +142,7 @@ namespace {
 // when changing the policy budget.
 //
 // Per-contract overrides: wallet-v5's bytecode-cell ratio is FunC 20 /
-// Tol 22 = 1.10 per `doc/tos-message-envelope-migration.md` (the only
+// Tol 22 = 1.10 per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-envelope-migration.md` (the only
 // reference contract that grew during migration, because of the
 // explicit §5.3 error-class classification of 16 distinct FunC throw
 // sites). On short fast-paths (empty-body, short-body) the fixed
@@ -406,7 +406,7 @@ ScenarioResult run_scenario(const char* name, td::Ref<vm::Cell> func_code,
 //                            address; both throw 73 (admin required)
 //                            before any state mutation.
 //
-// Per `doc/tos-message-envelope-migration.md` the bytecode-cell ratio
+// Per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-envelope-migration.md` the bytecode-cell ratio
 // for jetton-minter is FunC 11 / Tol 9 = 0.82. We expect Tol_gas / FunC_gas
 // to be ≤ 1.0 in the steady state and clearly under the 1.15 budget.
 // ---------------------------------------------------------------------------

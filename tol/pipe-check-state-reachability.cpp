@@ -57,7 +57,7 @@ static int require_declared_state(StateCheckInfo& info, V<ast_identifier> state_
   std::string state_name = to_string(state_identifier->name);
   auto it = info.state_to_idx.find(state_name);
   if (it == info.state_to_idx.end()) {
-    err("{} `{}` is not declared in `states:`; see doc/tos-language-syntax-policy.md §3.4", role, state_name)
+    err("{} `{}` is not declared in `states:`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4", role, state_name)
       .fire(state_identifier);
   }
   return it->second;
@@ -115,7 +115,7 @@ static void scan_hidden_state_expr(AnyExprV expr) {
       return;
     case ast_dot_access:
       if (is_storage_state_read(expr->as<ast_dot_access>())) {
-        err("receiver code may not read compiler-reserved `storage.__state`; use `become` or `keep_state`. See doc/tos-language-syntax-policy.md §3.4.")
+        err("receiver code may not read compiler-reserved `storage.__state`; use `become` or `keep_state`. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4.")
           .fire(expr);
       }
       return scan_hidden_state_expr(expr->as<ast_dot_access>()->get_obj());
@@ -249,7 +249,7 @@ static StatementFlow analyze_statement(AnyV statement, StateCheckInfo& info, int
       return {try_flow.terminates && catch_flow.terminates, try_flow.via_state_tail || catch_flow.via_state_tail};
     }
     case ast_return_statement:
-      err("state-bearing receivers must end with `become` or `keep_state`, not `return`; see doc/tos-language-syntax-policy.md §3.4")
+      err("state-bearing receivers must end with `become` or `keep_state`, not `return`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
         .fire(statement);
     case ast_throw_statement:
       return {true, false};
@@ -263,7 +263,7 @@ static StatementFlow analyze_block(V<ast_block_statement> block, StateCheckInfo&
   for (AnyV item : block->get_items()) {
     if (flow.terminates) {
       if (flow.via_state_tail) {
-        err("statements after `become` or `keep_state` are not permitted in the same control-flow path; see doc/tos-language-syntax-policy.md §3.4")
+        err("statements after `become` or `keep_state` are not permitted in the same control-flow path; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
           .fire(item);
       }
       return flow;
@@ -321,14 +321,14 @@ static StateCheckInfo build_state_info(V<ast_contract_declaration> contract) {
     std::string state_name = to_string(contract->get_state(i)->name);
     auto [it, inserted] = info.state_to_idx.emplace(state_name, i);
     if (!inserted) {
-      err("duplicate state `{}` in `states:` declaration; see doc/tos-language-syntax-policy.md §3.4", state_name)
+      err("duplicate state `{}` in `states:` declaration; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4", state_name)
         .fire(contract->get_state(i));
     }
     info.states.push_back(std::move(state_name));
   }
 
   if (!contract->get_initial_state_identifier()) {
-    err("state-bearing contract must declare exactly one `@initial state <State>`; see doc/tos-language-syntax-policy.md §3.4")
+    err("state-bearing contract must declare exactly one `@initial state <State>`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
       .fire(contract->get_identifier());
   }
   info.initial_idx = require_declared_state(info, contract->get_initial_state_identifier(), "`@initial` state");
@@ -341,7 +341,7 @@ static void check_storage_reserved_state_field(V<ast_contract_declaration> contr
     return;
   }
   if (StructFieldPtr field = storage_struct->find_field("__state")) {
-    err("state-bearing contract storage struct may not declare compiler-reserved field `__state`; see doc/tos-language-syntax-policy.md §3.4")
+    err("state-bearing contract storage struct may not declare compiler-reserved field `__state`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
       .fire(field->ident_anchor);
   }
 }
@@ -365,7 +365,7 @@ static void check_reachability(StateCheckInfo& info) {
 
   for (int i = 0; i < static_cast<int>(info.states.size()); ++i) {
     if (!reachable[i]) {
-      err("state `{}` is unreachable from `@initial`; see doc/tos-language-syntax-policy.md §3.4", info.states[i])
+      err("state `{}` is unreachable from `@initial`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4", info.states[i])
         .fire(info.contract->get_state(i));
     }
   }
@@ -377,14 +377,14 @@ static void check_state_contract(V<ast_contract_declaration> contract) {
 
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
-    // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `@deploy` receivers and the
+    // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6): `@deploy` receivers and the
     // reserved `receive(msg: UnknownOpcode)` catch-all do NOT participate in the state machine.
     // The `@deploy` body materializes c4 + injects @initial via lowering; the unknown-opcode
     // catch-all runs after `loadData()` regardless of state. Both are forbidden from carrying
     // `become` / `keep_state` (handled below for @deploy) and don't need an `on <State>` clause.
     if (receive->is_deploy) {
       if (contains_state_tail_statement(receive->get_body())) {
-        err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+        err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
           .fire(receive->get_body());
       }
       continue;
@@ -394,19 +394,19 @@ static void check_state_contract(V<ast_contract_declaration> contract) {
       // call `save(...)` as a normal receiver but must not carry `on <State>` (rejected by the
       // parser already), and `become` / `keep_state` would be ambiguous (no source state).
       if (contains_state_tail_statement(receive->get_body())) {
-        err("`become` and `keep_state` are not permitted inside `receive(msg: UnknownOpcode)`; the catch-all body has no source state; see doc/tos-language-syntax-policy.md §3.2")
+        err("`become` and `keep_state` are not permitted inside `receive(msg: UnknownOpcode)`; the catch-all body has no source state; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2")
           .fire(receive->get_body());
       }
       continue;
     }
     if (!receive->has_state_clause()) {
-      err("state-bearing contract receiver must declare `on <State>`; see doc/tos-language-syntax-policy.md §3.4")
+      err("state-bearing contract receiver must declare `on <State>`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
         .fire(receive);
     }
     int current_state = require_declared_state(info, receive->state_identifier, "receiver state");
     StatementFlow flow = analyze_block(receive->get_body(), info, current_state);
     if (!flow.terminates) {
-      err("state-bearing receiver must end every successful control-flow path with `become` or `keep_state`; see doc/tos-language-syntax-policy.md §3.4")
+      err("state-bearing receiver must end every successful control-flow path with `become` or `keep_state`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
         .fire(receive->get_body());
     }
   }
@@ -416,24 +416,24 @@ static void check_state_contract(V<ast_contract_declaration> contract) {
 
 static void check_non_state_contract(V<ast_contract_declaration> contract) {
   if (contract->get_initial_state_identifier()) {
-    err("`@initial state` requires a `states:` declaration; see doc/tos-language-syntax-policy.md §3.4")
+    err("`@initial state` requires a `states:` declaration; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
       .fire(contract->get_initial_state_identifier());
   }
   for (int i = 0; i < contract->get_num_receives(); ++i) {
     V<ast_receive_block> receive = contract->get_receive(i);
-    // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `become`/`keep_state` are also
+    // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6): `become`/`keep_state` are also
     // forbidden inside `@deploy` for non-state-bearing contracts (where they are forbidden
     // anyway, but emit the §3.6-anchored message for clarity).
     if (receive->is_deploy && contains_state_tail_statement(receive->get_body())) {
-      err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+      err("`become` and `keep_state` are not permitted inside an `@deploy receive(...)` body; deployment has exactly one authoritative initial state; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
         .fire(receive->get_body());
     }
     if (receive->has_state_clause()) {
-      err("`receive(...) on <State>` requires a `states:` declaration; see doc/tos-language-syntax-policy.md §3.4")
+      err("`receive(...) on <State>` requires a `states:` declaration; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
         .fire(receive->state_identifier);
     }
     if (contains_state_tail_statement(receive->get_body())) {
-      err("`become` and `keep_state` require a state-bearing contract; see doc/tos-language-syntax-policy.md §3.4")
+      err("`become` and `keep_state` require a state-bearing contract; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
         .fire(receive->get_body());
     }
   }

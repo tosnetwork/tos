@@ -1,4 +1,4 @@
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): two `receive_external`
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): two `receive_external`
 // blocks dispatch on the 32-bit body opcode prefix; the synthesized
 // `onExternalMessage` checks each branch in source order and falls through to a
 // Protocol-class throw on no match (top byte 0x04 = ErrorClass.Protocol;

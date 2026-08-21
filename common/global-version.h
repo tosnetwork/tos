@@ -18,7 +18,7 @@
 
 namespace tos {
 
-// See doc/GlobalVersions.md
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md
 constexpr int SUPPORTED_VERSION = 15;
 
 }  // namespace tos

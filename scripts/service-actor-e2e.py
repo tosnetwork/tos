@@ -3,7 +3,7 @@
 """
 service-actor-e2e.py — real-localnet acceptance of the concurrent-escrow
 Service Actor contract and its `tosctl agent service` CLI. See
-doc/service-actor-concurrent-escrow-upgrade.md for the full design.
+https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md for the full design.
 
 Boots a single-process local TOS chain (same machinery as
 agent-task-escrow-e2e.py), provisions a file vault plus a tosctl config,
@@ -39,7 +39,7 @@ Exit code 0 iff every check passes.
 NOTE on response_sla/refund_claim_window: MIN_RESPONSE_SLA and
 MIN_REFUND_CLAIM_WINDOW are protocol constants fixed at 3600s (1 hour) each,
 enforced on chain with no owner override -- see
-doc/service-actor-concurrent-escrow-upgrade.md's Service Policy section.
+https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md's Service Policy section.
 Actually waiting out 3600s+ of real wall-clock time is impractical for a
 routine e2e run, so this script does not exercise the *success* side of
 `expire`/`claim_refund`/`sweep_expired_request` (i.e. actually crossing
@@ -506,7 +506,7 @@ async def run_checks(faucet) -> None:
         check("both concurrent requests now resolved", data["pending_count"] == 0, str(data))
         # respond credits price + storage_fee to withdrawable_revenue (the
         # storage fee is non-refundable once the entry resolves -- see
-        # doc/service-actor-concurrent-escrow-upgrade.md's Financial Accounting
+        # https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md's Financial Accounting
         # transition table), not price alone.
         expected_revenue = 2 * (0.05 + STORAGE_FEE)
         check("revenue accrued for both calls (price + storage_fee each)",

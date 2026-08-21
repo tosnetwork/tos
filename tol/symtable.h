@@ -308,7 +308,7 @@ struct StructFieldData final : Symbol {
   AnyTypeV type_node;
   TypePtr declared_type = nullptr;      // = resolved type_node
   AnyExprV default_value;               // nullptr if no default
-  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` field scoping.
+  // Slice 2 Stage 3 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` field scoping.
   // empty = field readable in every state. Mirror of Vertex<ast_struct_field>::on_states; copied
   // out into the symbol so passes that only have a StructFieldPtr can still see the annotation.
   // Diagnostic anchor: callers should fire on `ident_anchor` (the field's identifier vertex).

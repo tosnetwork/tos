@@ -16,7 +16,7 @@
 */
 //
 // Slice 2 Stage 3 — `@on(State1, State2)` field scoping plus expression-level taint analysis.
-// See doc/tos-language-syntax-policy.md §3.4 (rules) and §5 (taint propagation requirements).
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4 (rules) and §5 (taint propagation requirements).
 //
 // This pass runs in the policy-mandated band, immediately AFTER
 // pipeline_check_state_reachability() and BEFORE pipeline_lower_contracts().
@@ -382,13 +382,13 @@ static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& c
     FunctionPtr called_fun = resolve_called_function(fc);
     if (asm_function_uses_c4_register(called_fun)) {
       err("c4 serialization escapes `@on` scoping; asm function `{}` uses c4 and is not permitted inside a state-bearing receiver. "
-          "See doc/tos-language-syntax-policy.md §5.", called_fun->name)
+          "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.", called_fun->name)
         .collect(expr);
     } else if (called_fun) {
       std::unordered_set<FunctionPtr> seen;
       if (function_body_uses_c4_escape(called_fun, seen)) {
         err("c4 serialization escapes `@on` scoping; helper function `{}` reaches c4 and is not permitted inside a state-bearing receiver. "
-            "See doc/tos-language-syntax-policy.md §5.", called_fun->name)
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.", called_fun->name)
           .collect(expr);
       }
     }
@@ -398,14 +398,14 @@ static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& c
       if (is_storage_reference(dot->get_obj())) {
         if (method == "toCell" || method == "toSlice" || method == "asCell" || method == "asSlice") {
           err("c4 serialization escapes `@on` scoping; `storage.{}()` is not permitted inside a state-bearing receiver. "
-              "See doc/tos-language-syntax-policy.md §5.", method)
+              "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.", method)
             .collect(expr);
         }
       }
       if (is_contract_reference(dot->get_obj())) {
         if (method == "getData" || method == "rawData" || method == "loadData") {
           err("c4 serialization escapes `@on` scoping; `contract.{}()` is not permitted inside a state-bearing receiver. "
-              "See doc/tos-language-syntax-policy.md §5.", method)
+              "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.", method)
             .collect(expr);
         }
       }
@@ -415,7 +415,7 @@ static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& c
       // free-fun escape hatches (`currentData()` style wrappers around `c4 PUSH`)
       if (name == "currentData" || name == "getContractData" || name == "rawC4Push" || name == "rawC4Pop") {
         err("c4 serialization escapes `@on` scoping; `{}()` is not permitted inside a state-bearing receiver. "
-            "See doc/tos-language-syntax-policy.md §5.", name)
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.", name)
           .collect(expr);
       }
     }
@@ -425,7 +425,7 @@ static bool detect_c4_serialisation_escape(AnyExprV expr, FieldScopingContext& c
   if (auto cast = expr->try_as<ast_cast_as_operator>()) {
     if (is_storage_reference(cast->get_expr())) {
       err("c4 serialization escapes `@on` scoping; casting `storage` to a cell/slice is not permitted "
-          "inside a state-bearing receiver. See doc/tos-language-syntax-policy.md §5.")
+          "inside a state-bearing receiver. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.")
         .collect(expr);
     }
   }
@@ -455,7 +455,7 @@ static std::vector<std::string> check_storage_field_access(V<ast_dot_access> dot
   }
   if (ctx.in_deploy_receiver) {
     err("storage field `{}` may not be read inside an `@deploy receive(...)` body "
-        "because deployment runs before storage exists. See doc/tos-language-syntax-policy.md §3.6.",
+        "because deployment runs before storage exists. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6.",
         field_name)
       .collect(dot);
     return field->has_on_states_annotation() ? field->on_states : std::vector<std::string>{};
@@ -464,7 +464,7 @@ static std::vector<std::string> check_storage_field_access(V<ast_dot_access> dot
     return {};
   } else if (!ctx.current_state.empty() && !state_in_list(field->on_states, ctx.current_state)) {
     err("storage field `{}` is annotated `@on({})` and may not be read inside a `receive(...) on {}` body. "
-        "See doc/tos-language-syntax-policy.md §3.4.",
+        "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4.",
         field_name, format_state_list(field->on_states), ctx.current_state)
       .collect(dot);
   }
@@ -756,14 +756,14 @@ static void check_call_arguments(V<ast_function_call> call, FieldScopingContext&
     if (ctx.in_deploy_receiver && expr_references_storage(arg_expr)) {
       err("`storage` may not be forwarded across function boundary inside an `@deploy receive(...)` body "
           "because deployment runs before storage exists. Inline the initialization value instead. "
-          "See doc/tos-language-syntax-policy.md §3.6.")
+          "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6.")
         .collect(arg_expr);
       continue;
     }
     std::vector<std::string> taint = compute_taint_of_expr(arg_expr, ctx);
     if (!taint.empty()) {
       err("forwarding `@on({})` field across function boundary not yet supported; inline the use site at "
-          "`{}(...)`. See doc/tos-language-syntax-policy.md §5.",
+          "`{}(...)`. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.",
           format_state_list(taint), callee_for_diag)
         .collect(arg_expr);
       continue;
@@ -788,7 +788,7 @@ static void check_expr(AnyExprV expr, FieldScopingContext& ctx) {
       auto ref = expr->as<ast_reference>();
       if (is_storage_reference(expr) && ctx.in_deploy_receiver) {
         err("`storage` may not be read inside an `@deploy receive(...)` body because deployment runs before storage exists. "
-            "See doc/tos-language-syntax-policy.md §3.6.")
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6.")
           .collect(expr);
         return;
       }
@@ -796,7 +796,7 @@ static void check_expr(AnyExprV expr, FieldScopingContext& ctx) {
       if (it != ctx.tainted_locals.end()) {
         if (!ctx.current_state.empty() && !state_in_list(it->second, ctx.current_state)) {
           err("local `{}` was tainted by an `@on({})` storage field and may not be read inside a "
-              "`receive(...) on {}` body. See doc/tos-language-syntax-policy.md §5.",
+              "`receive(...) on {}` body. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5.",
               ref->get_name(), format_state_list(it->second), ctx.current_state)
             .collect(ref);
         }
@@ -1018,7 +1018,7 @@ static void validate_on_states_against_declared(StructPtr storage_struct, FieldS
     for (const std::string& referenced : field->on_states) {
       if (ctx.declared_states.find(referenced) == ctx.declared_states.end()) {
         err("`@on(...)` references state `{}`, which is not declared in `states:`. "
-            "See doc/tos-language-syntax-policy.md §3.4.", referenced)
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4.", referenced)
           .collect(field->ident_anchor);
       }
     }
@@ -1061,7 +1061,7 @@ static void check_non_state_contract(V<ast_contract_declaration> contract) {
   for (StructFieldPtr field : storage_struct->fields) {
     if (field->has_on_states_annotation()) {
       err("`@on(...)` requires a `states:` declaration on the surrounding contract. "
-          "See doc/tos-language-syntax-policy.md §3.4.")
+          "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4.")
         .collect(field->ident_anchor);
     }
   }
@@ -1097,7 +1097,7 @@ static void check_free_struct_fields_have_no_on_annotation(const std::unordered_
     for (StructFieldPtr field : s->fields) {
       if (field->has_on_states_annotation()) {
         err("`@on(...)` is only permitted on storage struct fields of a state-bearing contract; "
-            "struct `{}` is not used as such. See doc/tos-language-syntax-policy.md §3.4.", s->name)
+            "struct `{}` is not used as such. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4.", s->name)
           .collect(field->ident_anchor);
       }
     }

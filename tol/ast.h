@@ -1255,7 +1255,7 @@ template<>
 // around each receiver's lowered body. It carries no semantic effect at codegen — every later
 // pass treats the marker as transparent and recurses into its inner block. Its sole purpose is
 // to bind per-receiver analysis records inside `pipeline_check_query_id_propagation` (see
-// doc/tos-language-syntax-policy.md §3.2.1, §10.1, security review v2 closure).
+// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1, §10.1, security review v2 closure).
 //
 // The marker is NOT user-writable. It is constructed only by `tol/pipe-lower-contract.cpp`.
 struct Vertex<ast_receiver_scope_marker> final : ASTStatementUnary {
@@ -1459,17 +1459,17 @@ template<>
 // `@disclaim_query_id` is a Slice 2 Stage 7 per-receiver annotation. When set, the lowering
 // pipeline injects a `disclaim_query_id()` call at the top of this receiver's scope marker so
 // pipeline_check_query_id_propagation skips reply-emission diagnostics for THIS receiver only.
-// See doc/tos-language-syntax-policy.md §3.2.1.
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1.
 //
 // `@deploy` (Slice 2 Stage 4) marks the bootstrap receiver: the synthesized onInternalMessage
 // dispatches it BEFORE loadData(), so the body must materialize storage via save(...). For
 // state-bearing contracts, the lowering injects `__state = @initial` into the deploy save().
-// See doc/tos-language-syntax-policy.md §3.6 / §4.1 v3.
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §4.1 v3.
 //
 // `is_unknown_opcode_catch_all` (Slice 2 Stage 4) marks the reserved `receive(msg: UnknownOpcode)`
 // catch-all body. It runs as the unknown-opcode last-resort branch when the contract has no
 // `@unknown_silent_drop` / `@unknown_throw(N)` annotation; the parameter is bound to `in.body`
-// (the raw, unparsed slice). See doc/tos-language-syntax-policy.md §3.2 v3.
+// (the raw, unparsed slice). See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3.
 struct Vertex<ast_receive_block> final : ASTOtherVararg {
   AnyTypeV message_type_node;
   V<ast_identifier> state_identifier;  // nullptr unless `receive(msg: T) on State`
@@ -1502,7 +1502,7 @@ template<>
 // ast_receive_external_block is a Slice 2 Stage 6 external-message receiver inside a contract.
 // example: `receive_external(msg: SignedExternal) { ... }`
 //
-// Per doc/tos-language-syntax-policy.md §3.8, externals do NOT have an InMessage envelope,
+// Per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8, externals do NOT have an InMessage envelope,
 // query_id, or @disclaim_query_id semantics. They lower to a synthesized `onExternalMessage`
 // entry that dispatches by 32-bit body opcode prefix. No `@deploy` (deploys come via internal),
 // no `on State` clause (state-machine guards are internal-only).
@@ -1522,7 +1522,7 @@ template<>
 // ast_get_fun_block is a `get fun` declaration inside a Slice 2 contract block
 // example: `get fun balance(): coins { return storage.totalSupply; }`
 // the optional `@method_id(N)` annotation pins method_id; otherwise it is auto-derived
-// from `crc16(name) | 0x10000` (see doc/tos-language-syntax-policy.md §3.5)
+// from `crc16(name) | 0x10000` (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5)
 struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
   AnyTypeV return_type_node;          // mandatory return type
   AnyExprV tvm_method_id_expr;        // nullptr unless `@method_id(...)` was specified
@@ -1541,7 +1541,7 @@ struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
     , extra_fun_flags(extra_fun_flags), inline_mode(inline_mode) {}
 };
 
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
 // `default_protocol_throw` is the synthesized fallback when no annotation and no UnknownOpcode
 //   receiver are present; the lowering throws OP_ERROR (0x00010001) — see common.tol.
 // `silent_drop` is the explicit `@unknown_silent_drop;` mode (matches wallet-v5 semantics).
@@ -1568,12 +1568,12 @@ struct Vertex<ast_contract_declaration> final : ASTOtherVararg {
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier;
   int n_receive_blocks;               // children layout: [name, receive*, receive_external*, get_fun*]; receives come first
-  int n_receive_external_blocks;      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
+  int n_receive_external_blocks;      // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8)
   int on_bounced_policy_flags = 0;     // FunctionData::flagManualOnBounce / flagIgnoreOnBounce for synthesized onInternalMessage
   // Slice 2 Stage 4: contract-level unknown-opcode mode. Parser sets this from
   // `@unknown_silent_drop` / `@unknown_throw(N)` or from a `receive(msg: UnknownOpcode)` body.
   // Default `default_protocol_throw` lowers to a `throw OP_ERROR` last branch.
-  // See doc/tos-language-syntax-policy.md §3.2 v3.
+  // See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3.
   ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
   int64_t unknown_throw_code = 0;          // meaningful only when unknown_mode == throw_code
   SrcRange unknown_annotation_range;       // for diagnostics; points at `@unknown_*` (or the catch-all receive)
@@ -1627,7 +1627,7 @@ struct Vertex<ast_struct_field> final : ASTOtherVararg {
   bool is_readonly;               // declared as `readonly field: int`
   AnyTypeV type_node;             // always exists, typing struct fields is mandatory
   AnyExprV default_value;         // nullptr if no default
-  // Slice 2 Stage 3 (doc/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` annotation
+  // Slice 2 Stage 3 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4): `@on(State1, State2)` annotation
   // empty = no annotation (field readable in every state); non-empty = field is only readable
   // inside receivers whose `on State` clause names one of the listed states.
   std::vector<std::string_view> on_states;

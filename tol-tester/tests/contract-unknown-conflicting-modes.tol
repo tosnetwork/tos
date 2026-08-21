@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): the `@unknown_throw(N)`
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): the `@unknown_throw(N)`
 // contract-level annotation is mutually exclusive with declaring a `receive(msg: UnknownOpcode)`
 // catch-all receiver — the contract must pick exactly one unknown-opcode handler. Declaring
 // both is a compile error.
@@ -27,5 +27,5 @@ contract ContractUnknownConflicting {
 /**
 @compilation_should_fail
 @stderr declares both `@unknown_throw` and `receive(msg: UnknownOpcode)`
-@stderr doc/tos-language-syntax-policy.md §3.2
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2
  */

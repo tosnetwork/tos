@@ -3,7 +3,7 @@
 ;; per-call access on-chain, with concurrent outstanding requests.
 ;;
 ;; This is a direct, incompatible replacement of the single-pending-slot
-;; Service Actor. See doc/service-actor-concurrent-escrow-upgrade.md for the
+;; Service Actor. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md for the
 ;; full design: every request is identified by a contract-assigned
 ;; `request_id`, snapshots the policy and attestor key in force at `call`
 ;; time, and resolves independently of every other outstanding request via

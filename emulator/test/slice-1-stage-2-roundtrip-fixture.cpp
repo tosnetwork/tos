@@ -23,7 +23,7 @@
 // round-trips the conformance fixtures.
 //
 // References:
-//   - doc/tos-message-policy.md v6 (Approved 2026-04-29) §3.1, §3.2, §4.4.
+//   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6 (Approved 2026-04-29) §3.1, §3.2, §4.4.
 //   - crypto/smartcont/echo-envelope.tol — the documentary Tol contract
 //     this fixture exercises. The TVM-asm body in `kEchoEnvelopeAsm` below
 //     is the verbatim output of `tol crypto/smartcont/echo-envelope.tol`

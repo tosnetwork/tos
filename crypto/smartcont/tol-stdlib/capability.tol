@@ -2,7 +2,7 @@
 //
 // This is a stdlib authorization plane over public account addresses. It does
 // not implement protocol admission control and it intentionally rejects the
-// reusable-public-bearer-token model from doc/tos-capability-policy.md.
+// reusable-public-bearer-token model from https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-capability-policy.md.
 tol 1.3
 
 const SLICE6_CAPABILITY_THROW_INVALID_BUDGET = 0x1401

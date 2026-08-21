@@ -136,7 +136,7 @@ class CheckPostponementVisitor final : public ASTVisitorFunctionBody {
     err("direct write to `PostponedQueue.{}` bypasses Slice 4 bounded-postponement accounting. "
         "Use `@stdlib/postponement` helpers (`enqueue*`, `dropNonce`, `expireFirst`, or `drain`) "
         "so item count, total body footprint, duplicate keys, and cell-depth budgets remain synchronized. "
-        "See doc/tos-postponement-policy.md §8.", field_name)
+        "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-postponement-policy.md §8.", field_name)
       .collect(dot, cur_f);
   }
 
@@ -147,7 +147,7 @@ protected:
         is_postponed_queue_type(v->get_obj()->inferred_type) &&
         !is_allowed_postponement_helper(cur_f)) {
       err("direct access to `PostponedQueue.{}` bypasses Slice 4 duplicate-key, FIFO, expiry, and budget accounting. "
-          "Use `@stdlib/postponement` helpers instead. See doc/tos-postponement-policy.md §8.", field_name)
+          "Use `@stdlib/postponement` helpers instead. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-postponement-policy.md §8.", field_name)
         .collect(v, cur_f);
     }
     parent::visit(v);
@@ -179,7 +179,7 @@ protected:
         !is_allowed_postponement_helper(cur_f)) {
       err("raw map-based postponement is warning-only for legacy code; stdlib/generated Slice 4 contracts must use "
           "`PostponedQueue.enqueue*`, `.dropNonce`, `.expireFirst`, or `.drain` so budgets, FIFO order, duplicate keys, "
-          "and expiry accounting are enforced. See doc/tos-postponement-policy.md §8.")
+          "and expiry accounting are enforced. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-postponement-policy.md §8.")
         .warning(v, cur_f);
     }
     parent::visit(v);
@@ -227,7 +227,7 @@ public:
         err("external-message postponement is not permitted in Slice 4 Stage 2; external signed bodies must be handled "
             "or rejected in the current transaction, not stored as postponed internal work. "
             "This check follows helper calls reachable from `onExternalMessage`. "
-            "See doc/tos-postponement-policy.md §2 / §8.")
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-postponement-policy.md §2 / §8.")
           .collect(site, fun_ref);
       }
     }

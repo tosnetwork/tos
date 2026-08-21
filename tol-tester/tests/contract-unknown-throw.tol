@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): `@unknown_throw(N)` lowers
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): `@unknown_throw(N)` lowers
 // the unknown-opcode dispatch tail into `throw N`. Verified compile-only here; the migration
 // reference is `crypto/smartcont/jetton-minter.tol` which throws 0xffff on unknown opcode
 // (the FUNC_THROW_UNKNOWN_OPCODE convention).

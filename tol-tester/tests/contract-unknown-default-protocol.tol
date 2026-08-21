@@ -1,8 +1,8 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): a contract with no
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): a contract with no
 // `@unknown_silent_drop`, no `@unknown_throw(N)`, and no `receive(msg: UnknownOpcode)`
 // catch-all uses the default-protocol-throw mode. The synthesized `onInternalMessage`
 // throws OP_ERROR (0x00010001) — the canonical Protocol-class application error code per
-// `crypto/smartcont/tol-stdlib/common.tol` and `doc/tos-message-policy.md §5.2 / §5.3`.
+// `crypto/smartcont/tol-stdlib/common.tol` and `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §5.2 / §5.3`.
 
 struct ContractUnknownDefaultStorage {
     counter: uint32;

@@ -33,5 +33,5 @@ contract ContractDeployOnField {
 /**
 @compilation_should_fail
 @stderr storage field `gated` may not be read inside an `@deploy receive(...)` body
-@stderr doc/tos-language-syntax-policy.md §3.6
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6
  */

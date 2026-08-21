@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): at most one `@deploy` receiver
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6): at most one `@deploy` receiver
 // per contract; declaring two is a compile error. Deployment has a single bootstrap path.
 
 struct ContractDeployMultipleStorage {
@@ -30,5 +30,5 @@ contract ContractDeployMultiple {
 /**
 @compilation_should_fail
 @stderr declares more than one `@deploy receive(...)`
-@stderr doc/tos-language-syntax-policy.md §3.6
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6
  */

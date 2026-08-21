@@ -1,4 +1,4 @@
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — `require(...)`
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) — `require(...)`
 // codes for different ErrorClass values land in different top-byte ranges,
 // even when both are the first site of their class within the contract.
 //

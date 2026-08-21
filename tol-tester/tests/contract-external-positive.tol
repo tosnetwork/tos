@@ -1,4 +1,4 @@
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): a contract that declares
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): a contract that declares
 // a single `receive_external(...)` block compiles cleanly and synthesizes the
 // `onExternalMessage` entry-point. The compiled fif is expected to contain a
 // `recv_external` declaration paired with the synthesized procedure.

@@ -5,7 +5,7 @@
  */
 
 //! Sandbox (offline TVM) lifecycle tests for the concurrent-escrow Service
-//! Actor -- see `doc/service-actor-concurrent-escrow-upgrade.md` for the
+//! Actor -- see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md` for the
 //! full design. This is a direct, incompatible replacement of the
 //! single-pending-slot Service Actor: every request is identified by a
 //! contract-assigned `request_id`, snapshots the policy/attestor key in

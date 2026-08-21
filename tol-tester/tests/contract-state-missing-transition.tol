@@ -19,5 +19,5 @@ contract ContractStateMissing {
 /**
 @compilation_should_fail
 @stderr state-bearing receiver must end every successful control-flow path with `become` or `keep_state`
-@stderr doc/tos-language-syntax-policy.md §3.4
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4
  */

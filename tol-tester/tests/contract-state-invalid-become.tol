@@ -19,5 +19,5 @@ contract ContractStateInvalidBecome {
 /**
 @compilation_should_fail
 @stderr `become` target state `Closed` is not declared in `states:`
-@stderr doc/tos-language-syntax-policy.md §3.4
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4
  */

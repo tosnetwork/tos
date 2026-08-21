@@ -19,4 +19,4 @@ Each bridge directory contains:
 
 Building, testing, and invariant verification are driven by the `scripts/build-*-bridge.sh`, `scripts/test-*-bridge-*.sh`, and `scripts/verify-*-bridge.py` entry points at the repository root, and run in CI via `.github/workflows/bridge-validation.yml`. The verify scripts also enforce that no legacy source-chain naming reappears in these trees.
 
-The EVM halves of these bridges target external counterparty chains (Ethereum, BNB Smart Chain, Polygon). Vendoring them does not add an execution engine to the TOS node — see `doc/workchain-execution-registry.md`.
+The EVM halves of these bridges target external counterparty chains (Ethereum, BNB Smart Chain, Polygon). Vendoring them does not add an execution engine to the TOS node — see [`workchain-execution-registry.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/workchain-execution-registry.md).

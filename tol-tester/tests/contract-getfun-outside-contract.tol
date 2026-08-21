@@ -22,5 +22,5 @@ contract ContractGetFunOutside {
 @compilation_should_fail
 @stderr cannot also declare top-level `get fun
 @stderr move the get-method inside the contract
-@stderr doc/tos-language-syntax-policy.md §3.5
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5
  */

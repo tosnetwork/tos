@@ -18,5 +18,5 @@ contract ContractFreeFun {
 /**
 @compilation_should_fail
 @stderr free-standing `fun` declarations are not permitted inside a contract block
-@stderr doc/tos-language-syntax-policy.md §3.1
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1
  */

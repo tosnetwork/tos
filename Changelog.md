@@ -10,7 +10,7 @@
 1. Networking improvements: anti-spam measures that could affect block rate have been introduced in overlays, ADNL, and QUIC
 2. Improved tooling for handling QUIC ports
 3. Mempool changes that protect the collation process from external message overload
-4. Slice 1 actor-layer envelope discipline (on the `actor-layer` branch): covered by [`doc/tos-message-policy.md`](./doc/tos-message-policy.md). Zero wire-format changes; opt-in Tol-stdlib `Envelope` / `Error` / `OP_ERROR` types; three reference migrations (`jetton-minter`, `jetton-wallet`, `wallet-v5`) all within the bytecode budget.
+4. Slice 1 actor-layer envelope discipline (on the `actor-layer` branch): covered by [`tos-message-policy.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md). Zero wire-format changes; opt-in Tol-stdlib `Envelope` / `Error` / `OP_ERROR` types; three reference migrations (`jetton-minter`, `jetton-wallet`, `wallet-v5`) all within the bytecode budget.
 
 
 Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [contest](https://t.me/contest/447) participants. The full list will be added to changelog and release note after contest result finalization.
@@ -72,7 +72,7 @@ Besides the work of the core team, this update also includes contributions from 
 
 ## 2025.11 Update
 
-1. [TVM version v12](./doc/GlobalVersions.md) update: forbid unused high bits in extra_flags, bounce extra_flags equal to initial message extra_flags, new TVM opcodes.
+1. [TVM version v12](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md) update: forbid unused high bits in extra_flags, bounce extra_flags equal to initial message extra_flags, new TVM opcodes.
 2. Abseil upgrade
 3. Improvements in node synchronisation
 4. Fixing rare ArchiveManager issues
@@ -82,7 +82,7 @@ Besides the work of the core team, this update is based on the efforts of the @L
 
 ## 2025.10 Update
 
-1. [TVM version v12](./doc/GlobalVersions.md): full bounces, new `BTOS` and `HASHBU` instuctions, limit on contract size in masterchain.
+1. [TVM version v12](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md): full bounces, new `BTOS` and `HASHBU` instuctions, limit on contract size in masterchain.
 2. Optimistic collation/validation: allow nodes to generate and check block candidates before previous block is fully signed (not fully activated yet).
 3. Introduced custom block compression algorithm.
 4. Overlay improvements: improved overlay discovery on shard configuration update, private externals in custom overlays.
@@ -99,7 +99,7 @@ Separation of validation and collation processes that allows to host them on ind
 ## 2025.06 Update
 
 1. ADNL and candidate broadcast optimization
-2. [TVM version v11](./doc/GlobalVersions.md): new opcodes, and `c7` entry to improve developer experience. It also activates storage stats and `ihr_fee`  nullification.
+2. [TVM version v11](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md): new opcodes, and `c7` entry to improve developer experience. It also activates storage stats and `ihr_fee`  nullification.
 3. Fixed `start_lt` of tick transactions [see details on 01.06.2025 incident](https://telegra.ph/Report-on-June-1-2025-Operation-Incident-06-02).
 4. Introduction of persistent state sharding, as well as making serialization of large BOCs more deterministic
 5. Emulator improvements: in get methods, set config from provided `c7`; allow retrieval of logs from emulator runs for get methods
@@ -112,7 +112,7 @@ Besides the work of the core team, this update is based on the efforts of the RS
 
 1. Introduced substantial improvements of CellDB performance: celldb-v2, bloom filters.
 2. Accelerated a number of intrinsic node operations: SHA256, cell operations, large boc serialization, validator set checks.
-3. [TVM version v10](./doc/GlobalVersions.md)
+3. [TVM version v10](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md)
 4. Overlay broadcast speed up and improved network stats.
 5. Fixed some issues in toslib
 6. Added normalized hash
@@ -121,7 +121,7 @@ Besides the work of the core team, this update is based on the efforts of the RS
 Besides the work of the core team, this update is based on the efforts of  @Stanislav-Povolotsky (toslib fixes); @ice-charon (toslib fixes); RSquad team (due payments improvements in v10); Arayz, Robinlzw, @wy666444 @Lucian-code233 from TosBit (improvements in RUNVM); @Skydev0h and @pyAndr3w (Asm.fif).
 
 ## 2025.03 Update
-1. New extracurrency behavior introduced, check [GlobalVersions.md](./doc/GlobalVersions.md#version-10)
+1. New extracurrency behavior introduced, check [GlobalVersions.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md#version-10)
 2. Optmization of validation process, in particular CellStorageStat.
 3. Flag for speeding up broadcasts in various overlays.
 4. Fixes for static builds for emulator and toslibjson
@@ -135,7 +135,7 @@ Besides the work of the core team, this update is based on the efforts of  @Stan
 Besides the work of the core team, this update is based on external contributor efforts (UB in toslib).
 
 ## 2025.02 Update
-1. Series of improvement/fixes for `Config8.version >= 9`, check [GlobalVersions.md](./doc/GlobalVersions.md)
+1. Series of improvement/fixes for `Config8.version >= 9`, check [GlobalVersions.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md)
 2. Fix for better discovery of updated nodes' (validators') IPs: retry dht queries
 3. Series of improvements for extra currency adoption: fixed c7 in rungetmethod, reserve modes
 4. TVM: Fix processing continuation control data on deep jump

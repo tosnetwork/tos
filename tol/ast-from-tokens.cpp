@@ -1502,11 +1502,11 @@ static AnyV parse_try_catch_statement(Lexer& lex, bool in_contract_receive = fal
 }
 
 static const char* slice2_deferred_msg() {
-  return "deferred to future Slice 2 commit; see doc/tos-language-syntax-policy.md §10.1";
+  return "deferred to future Slice 2 commit; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §10.1";
 }
 
 static bool is_slice2_deferred_statement(std::string_view name) {
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) ships `require(...)`;
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) ships `require(...)`;
   // it's no longer deferred. Keep the helper around for future deferred names.
   (void)name;
   return false;
@@ -1668,12 +1668,12 @@ static V<ast_annotation> parse_annotation(Lexer& lex) {
     }
     case AnnotationKind::on_states: {
       if (!v_arg || v_arg->size() == 0) {
-        err("expecting `(State1, State2, ...)` after {}; see doc/tos-language-syntax-policy.md §3.4", name).fire(range);
+        err("expecting `(State1, State2, ...)` after {}; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4", name).fire(range);
       }
       for (int i = 0; i < v_arg->size(); ++i) {
         AnyExprV item = v_arg->get_item(i);
         if (item->kind != ast_reference) {
-          err("`@on(...)` arguments must be state identifiers; see doc/tos-language-syntax-policy.md §3.4").fire(item);
+          err("`@on(...)` arguments must be state identifiers; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4").fire(item);
         }
       }
       break;
@@ -1881,7 +1881,7 @@ static AnyV parse_struct_field(Lexer& lex) {
     switch (v_annotation->kind) {
       case AnnotationKind::on_states: {
         if (!on_states.empty()) {
-          err("`@on(...)` may be specified at most once per field; see doc/tos-language-syntax-policy.md §3.4")
+          err("`@on(...)` may be specified at most once per field; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4")
             .fire(v_annotation);
         }
         on_states_range = v_annotation->range;
@@ -2066,7 +2066,7 @@ static AnyTypeV parse_contract_type_identifier(Lexer& lex, const char* what) {
 }
 
 static bool is_deferred_contract_member_name(std::string_view name) {
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8) ships `receive_external`;
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8) ships `receive_external`;
   // the parser handles it as a real keyword above. Reserved for future deferred names.
   (void)name;
   return false;
@@ -2074,7 +2074,7 @@ static bool is_deferred_contract_member_name(std::string_view name) {
 
 // Parse a `get fun` block inside a contract declaration.
 // Caller has already consumed `get` (and any annotations are passed in).
-// see doc/tos-language-syntax-policy.md §3.5
+// see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5
 static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_annotation>>& annotations) {
   SrcRange range = lex.cur_range();
   lex.expect(tok_fun, "`fun` after `get`");
@@ -2092,7 +2092,7 @@ static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_ann
     lex.next();
     ret_type = parse_type_from_tokens(lex);
   } else {
-    err("`get fun` must declare an explicit return type; see doc/tos-language-syntax-policy.md §3.5").fire(v_ident);
+    err("`get fun` must declare an explicit return type; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5").fire(v_ident);
   }
 
   // process annotations: only @method_id, @inline, @inline_ref, @noinline, @pure, @deprecated, custom are allowed
@@ -2123,7 +2123,7 @@ static AnyV parse_contract_get_fun_block(Lexer& lex, const std::vector<V<ast_ann
         // allowed; opaque to the compiler (e.g. @deprecated)
         break;
       default:
-        err("annotation `@{}` is not applicable to `get fun`; see doc/tos-language-syntax-policy.md §3.5", v_annotation->name).fire(v_annotation);
+        err("annotation `@{}` is not applicable to `get fun`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5", v_annotation->name).fire(v_annotation);
     }
   }
 
@@ -2162,7 +2162,7 @@ static AnyV parse_receive_block(Lexer& lex,
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
 
-  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): the reserved literal type name
+  // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): the reserved literal type name
   // `UnknownOpcode` flips this receive into the catch-all kind. The parameter is bound to the
   // raw `in.body` slice at lowering time. Other annotations are mutually exclusive with
   // `UnknownOpcode` per §3.2 / §3.6.
@@ -2170,28 +2170,28 @@ static AnyV parse_receive_block(Lexer& lex,
   if (auto leaf = msg_type->try_as<ast_type_leaf_text>(); leaf && leaf->text == "UnknownOpcode") {
     is_unknown_opcode_catch_all = true;
     if (state_identifier != nullptr) {
-      err("`receive(msg: UnknownOpcode)` cannot carry an `on <State>` clause; the catch-all body runs irrespective of contract state; see doc/tos-language-syntax-policy.md §3.2")
+      err("`receive(msg: UnknownOpcode)` cannot carry an `on <State>` clause; the catch-all body runs irrespective of contract state; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2")
         .fire(state_identifier);
     }
     if (has_disclaim_query_id_annotation) {
-      err("`@disclaim_query_id` cannot decorate `receive(msg: UnknownOpcode)`; the unknown-opcode catch-all has no parsed query_id surface; see doc/tos-language-syntax-policy.md §3.2")
+      err("`@disclaim_query_id` cannot decorate `receive(msg: UnknownOpcode)`; the unknown-opcode catch-all has no parsed query_id surface; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2")
         .fire(disclaim_annotation_range);
     }
     if (is_deploy) {
-      err("`@deploy` cannot decorate `receive(msg: UnknownOpcode)`; deploy and unknown-opcode catch-all are distinct entry points; see doc/tos-language-syntax-policy.md §3.6")
+      err("`@deploy` cannot decorate `receive(msg: UnknownOpcode)`; deploy and unknown-opcode catch-all are distinct entry points; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
         .fire(deploy_annotation_range);
     }
   }
 
-  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `@deploy` cannot combine with
+  // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6): `@deploy` cannot combine with
   // `on <State>` (deployment has exactly one initial state) nor with `@disclaim_query_id`.
   if (is_deploy) {
     if (state_identifier != nullptr) {
-      err("`@deploy` cannot combine with `on <State>`; deployment has exactly one authoritative initial state; see doc/tos-language-syntax-policy.md §3.6")
+      err("`@deploy` cannot combine with `on <State>`; deployment has exactly one authoritative initial state; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
         .fire(state_identifier);
     }
     if (has_disclaim_query_id_annotation) {
-      err("`@deploy` cannot combine with `@disclaim_query_id`; the deploy receiver runs before storage exists and has its own scope rules; see doc/tos-language-syntax-policy.md §3.6")
+      err("`@deploy` cannot combine with `@disclaim_query_id`; the deploy receiver runs before storage exists and has its own scope rules; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
         .fire(disclaim_annotation_range);
     }
   }
@@ -2202,7 +2202,7 @@ static AnyV parse_receive_block(Lexer& lex,
                                     is_unknown_opcode_catch_all);
 }
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): parse a
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): parse a
 // `receive_external(msg: T) { ... }` block. Externals do NOT carry an
 // `on State` clause (state-machine guards apply only to internals) and
 // do NOT accept `@disclaim_query_id` (externals have no query_id).
@@ -2215,7 +2215,7 @@ static AnyV parse_receive_external_block(Lexer& lex) {
   AnyTypeV msg_type = parse_contract_type_identifier(lex, "receive_external message type");
   lex.expect(tok_clpar, "`)`");
   if (lex.tok() == tok_identifier && lex.cur_str() == "on") {
-    err("`receive_external(...)` cannot carry an `on State` clause; state-machine guards apply to internal receivers only; see doc/tos-language-syntax-policy.md §3.8").fire(lex.cur_range());
+    err("`receive_external(...)` cannot carry an `on State` clause; state-machine guards apply to internal receivers only; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8").fire(lex.cur_range());
   }
   auto v_body = parse_block_statement(lex, true);
   range.end(v_body->range);
@@ -2281,12 +2281,12 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
   std::vector<V<ast_identifier>> state_identifiers;
   V<ast_identifier> initial_state_identifier = nullptr;
   std::vector<AnyV> receive_blocks;
-  std::vector<AnyV> receive_external_blocks;       // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8)
+  std::vector<AnyV> receive_external_blocks;       // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8)
   std::vector<AnyV> get_fun_blocks;
   // annotations queued for the next `get fun` (see §3.5 / §10.1: parser fix at line 1712 — @method_id is now accepted on contract get fun)
   std::vector<V<ast_annotation>> pending_member_annotations;
 
-  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
+  // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): contract-level unknown-opcode mode.
   // Tracks whether `@unknown_silent_drop;` or `@unknown_throw(N);` was declared at contract scope,
   // so we can diagnose duplicates and conflicts with a `receive(msg: UnknownOpcode)` body.
   ContractUnknownMode unknown_mode = ContractUnknownMode::default_protocol_throw;
@@ -2309,12 +2309,12 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
           err("`@initial state` cannot follow other annotations").fire(lex.cur_range());
         }
         if (initial_state_identifier) {
-          err("contract block may contain only one `@initial state` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
+          err("contract block may contain only one `@initial state` declaration; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
         }
         initial_state_identifier = parse_initial_state(lex);
         continue;
       }
-      // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1):
+      // Slice 2 Stage 7 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1):
       // `@disclaim_query_id` is a per-receiver annotation; consume it directly
       // and pass the flag into the upcoming receive block.
       if (lex.cur_str() == "@disclaim_query_id") {
@@ -2333,7 +2333,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
           lex.next();
         }
         if (lex.tok() != tok_receive) {
-          err("`@disclaim_query_id` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.2.1").fire(annotation_range);
+          err("`@disclaim_query_id` is only valid immediately before a `receive(...)` block; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1").fire(annotation_range);
         }
         if (!storage_type) {
           err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
@@ -2343,7 +2343,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
             /*is_deploy=*/deploy_follows, deploy_range));
         continue;
       }
-      // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6):
+      // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6):
       // `@deploy` is a per-receiver annotation marking the bootstrap path that runs before
       // loadData(). Multiple `@deploy` receivers are a compile error.
       if (lex.cur_str() == "@deploy") {
@@ -2361,7 +2361,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
           lex.next();
         }
         if (lex.tok() != tok_receive) {
-          err("`@deploy` is only valid immediately before a `receive(...)` block; see doc/tos-language-syntax-policy.md §3.6").fire(annotation_range);
+          err("`@deploy` is only valid immediately before a `receive(...)` block; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6").fire(annotation_range);
         }
         if (!storage_type) {
           err("contract `storage:` declaration must appear before `receive(...)` blocks").fire(lex.cur_range());
@@ -2371,7 +2371,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
             /*is_deploy=*/true, annotation_range));
         continue;
       }
-      // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3):
+      // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3):
       // `@unknown_silent_drop;` / `@unknown_throw(N);` are contract-level statements declaring
       // the unknown-opcode dispatch tail. Mutually exclusive with each other and with a
       // `receive(msg: UnknownOpcode)` catch-all receiver (the latter is checked at lowering).
@@ -2382,7 +2382,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         SrcRange annotation_range = lex.cur_range();
         lex.next();
         if (unknown_set_explicitly) {
-          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see doc/tos-language-syntax-policy.md §3.2",
+          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2",
               std::string(unknown_set_label)).fire(annotation_range);
         }
         unknown_mode = ContractUnknownMode::silent_drop;
@@ -2401,15 +2401,15 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         SrcRange annotation_range = lex.cur_range();
         lex.next();
         if (unknown_set_explicitly) {
-          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see doc/tos-language-syntax-policy.md §3.2",
+          err("contract block already declares `{}`; `@unknown_silent_drop` and `@unknown_throw(...)` are mutually exclusive; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2",
               std::string(unknown_set_label)).fire(annotation_range);
         }
         if (lex.tok() != tok_oppar) {
-          err("`@unknown_throw` requires a literal int argument: `@unknown_throw(N);`; see doc/tos-language-syntax-policy.md §3.2").fire(annotation_range);
+          err("`@unknown_throw` requires a literal int argument: `@unknown_throw(N);`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2").fire(annotation_range);
         }
         lex.next();
         if (lex.tok() != tok_int_const) {
-          err("`@unknown_throw(N)` requires a literal int; see doc/tos-language-syntax-policy.md §3.2").fire(lex.cur_range());
+          err("`@unknown_throw(N)` requires a literal int; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2").fire(lex.cur_range());
         }
         td::RefInt256 parsed_int = parse_tok_int_const(lex.cur_str(), lex.cur_range());
         if (!parsed_int->signed_fits_bits(64)) {
@@ -2436,11 +2436,11 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         SrcRange annotation_range = lex.cur_range();
         lex.next();
         if (implicit_protocol_default) {
-          err("contract block already declares `@implicit_protocol_default`; duplicate state-cross-product suppressions are not allowed; see doc/tos-language-syntax-policy.md §5")
+          err("contract block already declares `@implicit_protocol_default`; duplicate state-cross-product suppressions are not allowed; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5")
             .fire(annotation_range);
         }
         if (lex.tok() == tok_oppar) {
-          err("`@implicit_protocol_default` takes no arguments; write `@implicit_protocol_default;`; see doc/tos-language-syntax-policy.md §5")
+          err("`@implicit_protocol_default` takes no arguments; write `@implicit_protocol_default;`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5")
             .fire(annotation_range);
         }
         implicit_protocol_default = true;
@@ -2457,7 +2457,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         SrcRange annotation_range = lex.cur_range();
         lex.next();
         if (lex.tok() != tok_oppar) {
-          err("`@implicit_protocol_for` requires `(MessageType, StateName)`; see doc/tos-language-syntax-policy.md §5")
+          err("`@implicit_protocol_for` requires `(MessageType, StateName)`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5")
             .fire(annotation_range);
         }
         lex.next();
@@ -2499,7 +2499,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
         err("annotations are not applicable to `states:`").fire(pending_member_annotations.front());
       }
       if (!state_identifiers.empty()) {
-        err("contract block may contain only one `states:` declaration; see doc/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
+        err("contract block may contain only one `states:` declaration; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4").fire(lex.cur_range());
       }
       parse_contract_state_list(lex, state_identifiers);
       continue;
@@ -2515,10 +2515,10 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       continue;
     }
     if (lex.tok() == tok_receive_external) {
-      // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): external receivers
+      // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): external receivers
       // do not accept any annotations (no `@deploy`, no `@disclaim_query_id`, etc).
       if (!pending_member_annotations.empty()) {
-        err("`receive_external(...)` blocks do not accept annotations; see doc/tos-language-syntax-policy.md §3.8").fire(pending_member_annotations.front());
+        err("`receive_external(...)` blocks do not accept annotations; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8").fire(pending_member_annotations.front());
       }
       if (!storage_type) {
         err("contract `storage:` declaration must appear before `receive_external(...)` blocks").fire(lex.cur_range());
@@ -2536,12 +2536,12 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
       continue;
     }
     if (lex.tok() == tok_fun) {
-      err("free-standing `fun` declarations are not permitted inside a contract block; see doc/tos-language-syntax-policy.md §3.1").fire(lex.cur_range());
+      err("free-standing `fun` declarations are not permitted inside a contract block; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1").fire(lex.cur_range());
     }
     if (lex.tok() == tok_identifier && is_deferred_contract_member_name(lex.cur_str())) {
       err("`{}` is {}", lex.cur_str(), slice2_deferred_msg()).fire(lex.cur_range());
     }
-    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `@implicit_protocol_default`, `@implicit_protocol_for(...)`, `receive(...)`, `receive_external(...)`, and `get fun` declarations; see doc/tos-language-syntax-policy.md §3.1 / §3.5 / §3.8").fire(lex.cur_range());
+    err("contract blocks may contain only `storage:`, `states:`, `@initial state`, `@implicit_protocol_default`, `@implicit_protocol_for(...)`, `receive(...)`, `receive_external(...)`, and `get fun` declarations; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1 / §3.5 / §3.8").fire(lex.cur_range());
   }
 
   if (!pending_member_annotations.empty()) {
@@ -2551,14 +2551,14 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     err("contract block must contain exactly one `storage:` declaration").fire(v_ident);
   }
   if (receive_blocks.empty()) {
-    // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): every contract is
+    // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): every contract is
     // addressable internally, so at least one `receive(...)` is required even when
     // the contract is wallet-style external-driven. External-only contracts can
     // still ship a single trivial `receive(msg: NoOpInternal) {}` to satisfy this.
     err("contract block must contain at least one `receive(...)` declaration").fire(v_ident);
   }
 
-  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 / §3.6):
+  // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 / §3.6):
   // - At most one `@deploy` receiver per contract.
   // - At most one `receive(msg: UnknownOpcode)` receiver per contract.
   // - `UnknownOpcode` receiver is mutually exclusive with `@unknown_silent_drop` and
@@ -2569,7 +2569,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     auto rv = r->as<ast_receive_block>();
     if (rv->is_deploy) {
       if (first_deploy != nullptr) {
-        err("contract `{}` declares more than one `@deploy receive(...)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.6",
+        err("contract `{}` declares more than one `@deploy receive(...)`; first declared at {}; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6",
             v_ident->name, first_deploy->range.stringify_start_location(false))
           .fire(rv->deploy_annotation_range);
       }
@@ -2577,7 +2577,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
     }
     if (rv->is_unknown_opcode_catch_all) {
       if (first_unknown_catch_all != nullptr) {
-        err("contract `{}` declares more than one `receive(msg: UnknownOpcode)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.2",
+        err("contract `{}` declares more than one `receive(msg: UnknownOpcode)`; first declared at {}; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2",
             v_ident->name, first_unknown_catch_all->range.stringify_start_location(false))
           .fire(rv->range);
       }
@@ -2587,7 +2587,7 @@ static AnyV parse_contract_declaration(Lexer& lex, const std::vector<V<ast_annot
 
   if (first_unknown_catch_all != nullptr) {
     if (unknown_set_explicitly) {
-      err("contract `{}` declares both `{}` and `receive(msg: UnknownOpcode)`; pick one of the two unknown-opcode handlers; see doc/tos-language-syntax-policy.md §3.2",
+      err("contract `{}` declares both `{}` and `receive(msg: UnknownOpcode)`; pick one of the two unknown-opcode handlers; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2",
           v_ident->name, std::string(unknown_set_label))
         .fire(unknown_annotation_range);
     }
@@ -2611,7 +2611,7 @@ static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>
   for (AnyV v : declarations) {
     if (auto v_contract = v->try_as<ast_contract_declaration>()) {
       if (contract_decl) {
-        err("Slice 2 Stage 1 supports one `contract` declaration per .tol file; see doc/tos-language-syntax-policy.md §10.1").fire(v_contract);
+        err("Slice 2 Stage 1 supports one `contract` declaration per .tol file; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §10.1").fire(v_contract);
       }
       contract_decl = v_contract;
     } else if (auto v_func = v->try_as<ast_function_declaration>(); v_func && v_func->get_identifier()->name == "onInternalMessage") {
@@ -2624,16 +2624,16 @@ static void reject_contract_mixed_with_onInternalMessage(const std::vector<AnyV>
   }
 
   if (contract_decl && on_internal) {
-    err("a .tol file cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`; see doc/tos-language-syntax-policy.md §6.3").fire(on_internal);
+    err("a .tol file cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §6.3").fire(on_internal);
   }
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): the contract block synthesizes
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): the contract block synthesizes
   // `onExternalMessage` from declared `receive_external` blocks; a hand-written
   // `fun onExternalMessage(...)` would collide with the synthesized one.
   if (contract_decl && contract_decl->get_num_externals() > 0 && on_external) {
-    err("a .tol file with `receive_external(...)` blocks cannot also declare top-level `fun onExternalMessage(...)`; the contract synthesizes it; see doc/tos-language-syntax-policy.md §3.8").fire(on_external);
+    err("a .tol file with `receive_external(...)` blocks cannot also declare top-level `fun onExternalMessage(...)`; the contract synthesizes it; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8").fire(on_external);
   }
   if (contract_decl && file_scope_get_fun) {
-    err("a .tol file with a `contract X { ... }` block cannot also declare top-level `get fun {}(...)`; move the get-method inside the contract; see doc/tos-language-syntax-policy.md §3.5",
+    err("a .tol file with a `contract X { ... }` block cannot also declare top-level `get fun {}(...)`; move the get-method inside the contract; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5",
         file_scope_get_fun->get_identifier()->name).fire(file_scope_get_fun);
   }
 }

@@ -27,5 +27,5 @@ contract ContractStateUnreachable {
 /**
 @compilation_should_fail
 @stderr state `Dead` is unreachable from `@initial`
-@stderr doc/tos-language-syntax-policy.md §3.4
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4
  */

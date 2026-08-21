@@ -23,7 +23,7 @@
 // bounces (slice-1-failure-phase-fixtures.cpp) and the extra_flags mask
 // boundary (slice-1-extra-flags-fixtures.cpp).
 //
-//   * doc/tos-message-policy.md v6 (Approved 2026-04-29) --
+//   * https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6 (Approved 2026-04-29) --
 //     - §6.2 "Inbound message handling": the state-partitioned table
 //       this file verifies. Crucially, the "Bounce?" column is
 //       conditional on inbound `bounce=true` AND remaining value covering

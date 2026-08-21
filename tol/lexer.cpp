@@ -431,7 +431,7 @@ struct ChunkIdentifierOrKeyword final : ChunkLexerBase {
         break;
       case 16:
         // Slice 2 Stage 6: external-message receiver entry-point keyword.
-        // See doc/tos-language-syntax-policy.md §3.8.
+        // See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8.
         if (str == "receive_external") return tok_receive_external;
         break;
       default:

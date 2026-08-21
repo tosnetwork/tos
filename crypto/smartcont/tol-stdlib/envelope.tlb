@@ -8,7 +8,7 @@
 // source.
 //
 // Authoritative policy:
-//   doc/tos-message-policy.md v5 (Approved 2026-04-29)
+//   https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 (Approved 2026-04-29)
 //     §3.1 — Standard body layout (Envelope)
 //     §3.2 — Special opcodes (text-comment exception)
 //     §4.1 — query_id allocation
@@ -129,7 +129,7 @@ error_class_back_pressure $00000101 = ErrorClass;  // 0x05 — Reserved Slice 5+
 // Any change to the wire encoding implied by this file MUST be
 // paired with the corresponding change in
 // `crypto/smartcont/tol-stdlib/common.tol:1944-2024` AND must be
-// accompanied by a v6+ revision of `doc/tos-message-policy.md`.
+// accompanied by a v6+ revision of `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`.
 // The two files (this `.tlb` and the Tol structs in `common.tol`)
 // are wire-equivalent by policy; divergence between them is a
 // hardening violation.

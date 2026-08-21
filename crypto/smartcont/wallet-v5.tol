@@ -1,11 +1,11 @@
 // =============================================================================
 // Slice 2 Stage 8c — wallet-v5 Tol re-migration to high-level syntax.
 //
-// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2
+// Policy reference: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1, §3.2
 // (`@unknown_silent_drop`), §3.8 (`receive_external`), §4.1 (wallet-v5-style
 // non-standard internal dispatch caveat), §6.1 (wire-bit-identity), and §7
 // (migration path). Inherits Slice 1 Stage 3.3 wire commitments from
-// doc/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
+// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
 // body), §5.3 (error_class), and §8.1 (bit-for-bit compatibility for existing
 // wallet-vN formats). Per §9.3, wallet external messages are not governed by
 // the Slice 1 internal-message envelope.

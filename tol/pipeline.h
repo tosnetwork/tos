@@ -35,11 +35,11 @@ namespace tol {
 // Per-contract origin lookup for method_id collision detection.
 // pipe-lower-contract.cpp populates this; pipe-generate-fif-output.cpp consumes it.
 // Returns "" for legacy file-scope `get fun` (no contract origin).
-// See doc/tos-language-syntax-policy.md §3.5: cross-contract auto-derived ID
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5: cross-contract auto-derived ID
 // sharing is NOT a collision; collisions are reported only within a contract.
 std::string_view contract_origin_of_getter(FunctionPtr fun_ref);
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — per-contract
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) — per-contract
 // origin lookup for ANY synthesized function (onInternalMessage,
 // onExternalMessage, getters, helpers). Returns "" for hand-written
 // top-level `fun`s. Consumed by `pipe-assign-require-codes.cpp` to bucket
@@ -68,7 +68,7 @@ const std::vector<RequireSiteEntry>& get_require_site_manifest();
 // groups by their origin contract, and fires a compile error on the second
 // offender's source range when two get-methods in the same contract end up
 // with the same tvm_method_id (auto-derived OR @method_id-pinned).
-// See doc/tos-language-syntax-policy.md §3.5 / §10.1.
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5 / §10.1.
 void check_contract_method_id_collisions();
 
 

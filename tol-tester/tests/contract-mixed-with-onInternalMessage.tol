@@ -18,5 +18,5 @@ fun onInternalMessage(in: InMessage) {
 /**
 @compilation_should_fail
 @stderr cannot contain both `contract X { ... }` and top-level `fun onInternalMessage(...)`
-@stderr doc/tos-language-syntax-policy.md §6.3
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §6.3
  */

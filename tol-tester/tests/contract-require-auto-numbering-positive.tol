@@ -1,4 +1,4 @@
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — auto-numbered
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) — auto-numbered
 // `require(cond, ErrorClass.X)` codes. Two sites with the same ErrorClass must
 // receive distinct codes (top byte = ErrorClass.tag = 3 for Authorization,
 // bottom 16 bits = per-(contract, ErrorClass) source-order site index).

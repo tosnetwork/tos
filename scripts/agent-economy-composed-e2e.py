@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026  TOS Network.
 """
 agent-economy-composed-e2e.py — real-localnet acceptance of the full composed
-AI-agent workflow from doc/ai-agent-workflow-example.md, exercised end to end
+AI-agent workflow from https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-agent-workflow-example.md, exercised end to end
 in a single running network rather than per-contract in isolation:
 
   Planner -> Task Escrow -> Agent Account (worker) -> Service Actor
@@ -365,7 +365,7 @@ async def run_checks(faucet) -> None:
     check("service actor accrued revenue for the mid-task call",
           float(service_after_call["withdrawable_revenue"]) > revenue_before, str(service_after_call))
     # There is no terminal per-request record once a request resolves (see
-    # doc/service-actor-concurrent-escrow-upgrade.md's Persistent State
+    # https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md's Persistent State
     # section) -- the attested response having been accepted is observed by
     # the request no longer being pending, not by a stored response hash.
     happy_request_after = await tosctl_json(

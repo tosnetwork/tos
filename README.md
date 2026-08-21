@@ -47,17 +47,21 @@ and formatting rules.
 - `validator-engine/` — validator node process and JSON-RPC server
 - `lite-client/` — command-line chain client
 - `tosctl/` — Rust operator and node-control tooling
-- `doc/` — protocol, configuration, operator, and development documentation
+- [`tosnetwork/doc`](https://github.com/tosnetwork/doc/tree/main/tos-blockchain) — protocol, configuration, operator, and development documentation
 - `third-party/` — vendored dependencies
 
 ## Documentation
 
-- [Documentation index](doc/README.md)
+Blockchain documentation is maintained in the
+[`tosnetwork/doc`](https://github.com/tosnetwork/doc/tree/main/tos-blockchain)
+repository.
+
+- [Documentation index](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/README.md)
 - [Build guide](BUILD.md)
-- [Validator guide](doc/Validator.md)
-- [Full-node guide](doc/FullNode.md)
-- [Lite Client guide](doc/LiteClient.md)
-- [Configuration parameters](doc/ConfigParam.md)
+- [Validator guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Validator.md)
+- [Full-node guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/FullNode.md)
+- [Lite Client guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/LiteClient.md)
+- [Configuration parameters](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ConfigParam.md)
 
 ## License
 

@@ -29,5 +29,5 @@ contract ContractOnAlias {
 /**
 @compilation_should_fail
 @stderr was tainted by an `@on(Settling)` storage field
-@stderr doc/tos-language-syntax-policy.md §5
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5
  */

@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026  TOS Network.
 """
 agent-wallet-account-e2e.py — real-localnet acceptance of the Agent Wallet /
-Agent Account CLI lifecycle (doc/agent-wallet-mvp.md's "next engineering
+Agent Account CLI lifecycle (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/agent-wallet-mvp.md's "next engineering
 step": public-testnet-style acceptance for controller-signed Agent Account
 actions, beyond the throwaway per-op coverage other scripts exercise
 indirectly).
@@ -27,7 +27,7 @@ end to end against a real validator:
 
 It then stops and restarts the validator mid-lifecycle (with its data
 directory intact) and re-verifies the Agent Account's on-chain state is
-still correct after catch-up -- doc/ai-actor-testing-matrix.md's "restart
+still correct after catch-up -- https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-testing-matrix.md's "restart
 one validator during task lifecycle" / "verify transaction history after
 catch-up" Local Testnet Tests, scoped to a single-node restart (this harness
 has no existing multi-validator example to build a true multi-validator

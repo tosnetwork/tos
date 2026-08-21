@@ -10,7 +10,7 @@ Local example:
 
 Multi-region example:
 
-    python3 scripts/simplex2-soak.py --inventory doc/examples/simplex2-soak-inventory.json
+    python3 scripts/simplex2-soak.py --inventory /path/to/tos-blockchain/examples/simplex2-soak-inventory.json
 """
 
 from __future__ import annotations

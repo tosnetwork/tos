@@ -20,7 +20,7 @@
 //
 // These fixtures discharge two policy obligations:
 //
-//   * doc/tos-message-policy.md v5 (Approved 2026-04-29) --
+//   * https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 (Approved 2026-04-29) --
 //     - §3.4 "Extension reservation in `extra_flags`": bits 2 and 3 are
 //       reserved by this policy but currently invalid to set; the active
 //       mask is `tol::EXTRA_FLAGS_VALID_MASK`, currently 3, and any attempt
@@ -108,7 +108,7 @@ static std::string current_dir() {
 // -----------------------------------------------------------------------------
 // F3.1 -- Accepted boundary.
 //
-// Cite: doc/tos-message-policy.md v5 §3.4 (current valid mask is `& 3`)
+// Cite: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 §3.4 (current valid mask is `& 3`)
 //       and §10.1 (named-constant introduction; note the caveat that
 //       bit 1 alone has no useful v12 rich-bounce semantics, so this
 //       fixture validates wire-level acceptance only, not semantic
@@ -147,7 +147,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_1_accepted_boundary) {
 // -----------------------------------------------------------------------------
 // F3.2 -- Rejected boundary (canonical Stage 1 fixture).
 //
-// Cite: doc/tos-message-policy.md v5 §3.4 -- "Bits 2 and 3 are reserved by
+// Cite: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 §3.4 -- "Bits 2 and 3 are reserved by
 //       this policy but **currently invalid to set**; sending an internal
 //       message with `extra_flags & 12 != 0` triggers
 //       `check_skip_invalid(45)`."
@@ -192,7 +192,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_2_rejected_boundary) {
 // -----------------------------------------------------------------------------
 // F3.3 -- Synchronized-constants self-check.
 //
-// Cite: doc/tos-message-policy.md v5 §3.4 "Synchronized constants" --
+// Cite: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 §3.4 "Synchronized constants" --
 //       the mask is owned by tol::EXTRA_FLAGS_VALID_MASK and consumed by
 //       transaction.cpp / validate-query.cpp. A Slice-4/6 PR that widens one
 //       side without the others is a hardening violation.
@@ -219,7 +219,7 @@ TEST(Slice1ExtraFlagsFixtures, F3_2_rejected_boundary) {
 static_assert(tol::EXTRA_FLAGS_VALID_MASK == 3,
               "Slice 1 extra_flags mask is 3 (bits 0..1). If this changes, "
               "all three synchronized-constants sites must update in lockstep "
-              "-- see doc/tos-message-policy.md v5 §3.4.");
+              "-- see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v5 §3.4.");
 
 // Compile-time sanity for the named bit constants. These are not the
 // synchronized-constants invariant per se, but they assert the bit

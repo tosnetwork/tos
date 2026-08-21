@@ -1,7 +1,7 @@
 // =============================================================================
 // Slice 1 Stage 2 — minimal Envelope round-trip contract.
 //
-// Per doc/tos-message-policy.md v6:
+// Per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6:
 //   - §3.1 (Standard body layout)  — every non-comment internal message body
 //                                    begins with `opcode:uint32 query_id:uint64
 //                                    payload:...`. EchoRequest/EchoReply below
@@ -36,7 +36,7 @@
 // is required here — the reply body is constructed via `createMessage`.
 //
 // The S2-A check pass `tol/pipe-check-query-id-propagation.cpp` (per
-// `doc/tos-message-policy.md` §4.4) treats the `lazy
+// `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` §4.4) treats the `lazy
 // EchoRequest.fromSlice(in.body)` + `body: EchoReply { queryId: msg.queryId,
 // ... }` pattern as a propagating reply and stays silent. This contract
 // therefore compiles clean (no warnings, no errors).

@@ -24,8 +24,8 @@
 
 /*
  *   This pipe enforces the §4.4 query_id propagation rule from
- *   doc/tos-message-policy.md (v6) AND the per-receiver scope rule
- *   from doc/tos-language-syntax-policy.md §3.2.1 (v3, security
+ *   https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md (v6) AND the per-receiver scope rule
+ *   from https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1 (v3, security
  *   review v2 closure):
  *
  *     - Every handler that returns a reply propagates the inbound
@@ -246,8 +246,8 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
     if (scope.saw_reply_emit.empty()) {
       err("inbound envelope carries `queryId` but the receiver emits no reply — "
           "call `disclaim_query_id()` to acknowledge fire-and-forget. "
-          "See doc/tos-message-policy.md \xc2\xa7""4.4 / "
-          "doc/tos-language-syntax-policy.md \xc2\xa7""3.2.1.")
+          "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md \xc2\xa7""4.4 / "
+          "https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md \xc2\xa7""3.2.1.")
         .warning(anchor, cur_f);
       return;
     }
@@ -257,8 +257,8 @@ class CheckQueryIdPropagationVisitor final : public ASTVisitorFunctionBody {
         err("reply does not propagate inbound `queryId` — "
             "set `body.queryId` from the inbound queryId or call "
             "`disclaim_query_id()`. "
-            "See doc/tos-message-policy.md \xc2\xa7""4.4 / "
-            "doc/tos-language-syntax-policy.md \xc2\xa7""3.2.1.")
+            "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md \xc2\xa7""4.4 / "
+            "https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md \xc2\xa7""3.2.1.")
           .warning(site.at, cur_f);
       }
     }
@@ -562,7 +562,7 @@ void pipeline_check_query_id_propagation() {
     auto v_file = file->ast->as<ast_tol_file>();
     for (AnyV declaration : v_file->get_toplevel_declarations()) {
       if (declaration->kind == ast_contract_declaration) {
-        err("internal: pipeline order violation: pipeline_check_query_id_propagation ran before pipeline_lower_contracts (contract `{}` still present at top level). See doc/tos-language-syntax-policy.md §10.1.",
+        err("internal: pipeline order violation: pipeline_check_query_id_propagation ran before pipeline_lower_contracts (contract `{}` still present at top level). See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §10.1.",
             declaration->as<ast_contract_declaration>()->get_identifier()->name)
           .fire(declaration);
       }

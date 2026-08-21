@@ -22,5 +22,5 @@ contract ExhaustivenessSuppressBadMessage {
 /**
 @compilation_should_fail
 @stderr references message type `MissingMessage`
-@stderr doc/tos-language-syntax-policy.md §5
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5
  */

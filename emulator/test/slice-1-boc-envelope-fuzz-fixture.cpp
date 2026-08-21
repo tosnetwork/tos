@@ -20,7 +20,7 @@
 //
 // This fixture gives CI a stable BoC-side fuzz signal. The corpus is deterministic, small, and
 // focused on the Slice 1 envelope shape (`opcode:uint32 query_id:uint64 ...`)
-// from `doc/tos-message-policy.md` v6 §3.1. The Tol-side sibling lives in
+// from `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md` v6 §3.1. The Tol-side sibling lives in
 // `tol-tester/tests/slice-1-envelope-fuzz-smoke.tol` and exercises
 // Envelope/OP_ERROR struct round-trips directly.
 //

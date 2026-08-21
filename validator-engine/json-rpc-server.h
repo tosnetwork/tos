@@ -356,7 +356,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void handle_getTokenData(td::JsonObject &params, std::string req_id,
                            td::Promise<HttpReturn> promise);
 
-  // wc=0 in-process wallet index (see doc/tos-wc0-wallet-index.md)
+  // wc=0 in-process wallet index (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-wc0-wallet-index.md)
   void handle_getAccountJettons(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
   void handle_getAccountNfts(td::JsonObject &params, std::string req_id,

@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): state-bearing
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §4.1 v3): state-bearing
 // contract with `@deploy`. The deploy body's `save(...)` does NOT spell `__state` — the
 // lowering injects the contract's `@initial` state tag automatically. Compile must succeed.
 

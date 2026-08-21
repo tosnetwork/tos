@@ -22,5 +22,5 @@ contract ExhaustivenessSuppressBadState {
 /**
 @compilation_should_fail
 @stderr references state `MissingState`
-@stderr doc/tos-language-syntax-policy.md §5
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5
  */

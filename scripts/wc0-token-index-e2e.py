@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 wc0-token-index-e2e.py — end-to-end proof of the wc=0 wallet index's
-*state-verified* token indexing (doc/tos-wc0-wallet-index.md).
+*state-verified* token indexing (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-wc0-wallet-index.md).
 
 Boots a single-process local TOS chain (same machinery as localnet-jsonrpc.py),
 then exercises the security-critical verification path through real contracts:

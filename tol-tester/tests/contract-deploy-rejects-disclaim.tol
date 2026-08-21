@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §3.2.1): `@deploy` cannot
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §3.2.1): `@deploy` cannot
 // combine with `@disclaim_query_id`. The deploy receiver runs before storage exists and
 // has its own scope rules; mixing it with the per-receiver disclaim semantics is rejected.
 
@@ -23,5 +23,5 @@ contract ContractDeployDisclaim {
 /**
 @compilation_should_fail
 @stderr `@deploy` cannot combine with `@disclaim_query_id`
-@stderr doc/tos-language-syntax-policy.md §3.6
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6
  */

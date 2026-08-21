@@ -1,4 +1,4 @@
-// Per doc/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
+// Per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
 // scope confirmation: a contract with two receivers, NEITHER disclaiming, where
 // each receiver propagates the inbound queryId correctly. The check pass must
 // be silent on both receivers; this exercises the per-scope envelope binding

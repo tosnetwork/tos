@@ -10,7 +10,7 @@ else sits at the minimum:
 
     worst_case_share = factor / (factor + validators - 1)
 
-The launch policy in doc/tos-validator-only-token-economics.md requires that no
+The launch policy in https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md requires that no
 single entry can reach one third of effective weight in the smallest allowed
 validator set -- one third is the threshold at which a single party can stall
 consensus on its own. Solving ``factor / (factor + n - 1) < 1/3`` gives

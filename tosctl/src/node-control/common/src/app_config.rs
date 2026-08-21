@@ -462,7 +462,7 @@ pub struct ServiceActorConfig {
     /// Price per call, in nano-TOS.
     pub price_per_call: u64,
     /// Fixed, non-refundable fee collected alongside `price_per_call` at
-    /// `call` time, in nano-TOS. See `doc/service-actor-concurrent-escrow-upgrade.md`.
+    /// `call` time, in nano-TOS. See `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/service-actor-concurrent-escrow-upgrade.md`.
     #[serde(default)]
     pub storage_fee: u64,
     /// Paid to whoever calls `sweep_expired_request` once a request's rights

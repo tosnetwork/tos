@@ -1415,7 +1415,7 @@ static AsmOp compile_expect_type(std::vector<VarDescr>&, std::vector<VarDescr>& 
 }
 
 // fun disclaim_query_id(): void;
-// Slice 1 scaffolding stub; see doc/tos-message-policy.md §4.4.
+// Slice 1 scaffolding stub; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §4.4.
 // Detected by name in the future pipe-check-query-id-propagation pass
 // to silence the warning for legitimate fire-and-forget handlers.
 // Compile-time marker only — emits no TVM opcodes at runtime.
@@ -1864,7 +1864,7 @@ void define_builtins() {
                                 FunctionData::flagMarkedAsPure | FunctionData::flagAllowAnyWidthT);
 
   // disclaim_query_id() — Slice 1 scaffolding stub.
-  // See doc/tos-message-policy.md §4.4. The future
+  // See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §4.4. The future
   // pipe-check-query-id-propagation pass detects calls to this
   // builtin to silence the warning for legitimate fire-and-forget
   // handlers (e.g. broadcast notifications, telemetry pings).

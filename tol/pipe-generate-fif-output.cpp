@@ -236,7 +236,7 @@ void pipeline_generate_fif_output(std::ostream& os) {
   os << std::endl;
   os << "PROGRAM{\n";
 
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — debug manifest
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) — debug manifest
   // for `require(...)` auto-numbered error codes. Two `require(cond, ErrorClass.X)`
   // sites in the same contract receive distinct codes, and this side-table maps each
   // code back to its source location so external tooling (e.g. `tonscan`,
@@ -245,7 +245,7 @@ void pipeline_generate_fif_output(std::ostream& os) {
     const auto& manifest = get_require_site_manifest();
     if (!manifest.empty()) {
       os << "  // require_site_table\n";
-      os << "  // see doc/tos-language-syntax-policy.md §3.7\n";
+      os << "  // see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7\n";
       for (const RequireSiteEntry& e : manifest) {
         os << "  //   contract=" << (e.contract_name.empty() ? "<file-scope>" : e.contract_name)
            << " function=" << e.function_name

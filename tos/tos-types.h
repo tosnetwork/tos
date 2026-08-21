@@ -73,7 +73,7 @@ enum GlobalCapabilities {
 };
 
 // capAipow must be the next free power-of-two bit and must not collide with any
-// existing capability (dark-scaffolding invariant; see doc/GlobalVersions.md).
+// existing capability (dark-scaffolding invariant; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md).
 static_assert(capAipow == 1024, "capAipow must be bit 10 (1024)");
 static_assert((capAipow & (capIhrEnabled | capCreateStatsEnabled | capBounceMsgBody | capReportVersion |
                            capSplitMergeTransactions | capShortDequeue | capStoreOutMsgQueueSize |

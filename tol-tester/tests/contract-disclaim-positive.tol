@@ -1,4 +1,4 @@
-// Per doc/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
+// Per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1 (Slice 2 Stage 7) — per-receiver
 // `@disclaim_query_id` scope. Receiver A is a fire-and-forget telemetry sink and
 // disclaims its inbound queryId; receiver B is a query/reply pair and propagates
 // the inbound queryId into its reply body. Both must compile cleanly with no

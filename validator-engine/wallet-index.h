@@ -10,7 +10,7 @@
     Writes happen best-effort on block apply (off the consensus path): a failed
     write only degrades RPC for that block, it never blocks consensus.
 
-    See doc/tos-wc0-wallet-index.md.
+    See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-wc0-wallet-index.md.
 */
 #pragma once
 

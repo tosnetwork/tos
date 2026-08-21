@@ -24,5 +24,5 @@ contract ContractStateTail {
 /**
 @compilation_should_fail
 @stderr statements after `become` or `keep_state` are not permitted
-@stderr doc/tos-language-syntax-policy.md §3.4
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4
  */

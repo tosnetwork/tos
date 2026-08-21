@@ -1,4 +1,4 @@
-// Per doc/tos-message-policy.md v6 §4.4 — query_id propagation rule.
+// Per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6 §4.4 — query_id propagation rule.
 //
 // Baseline case: handler does NOT use the
 // `lazy <Struct>.fromSlice(in.body)` idiom that identifies an

@@ -1,10 +1,10 @@
 // =============================================================================
 // Slice 2 Stage 8b — jetton-wallet Tol re-migration to high-level syntax.
 //
-// Policy reference: doc/tos-language-syntax-policy.md §3.1, §3.2
+// Policy reference: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1, §3.2
 // (`@unknown_throw`), §3.5 (`get fun`), §6.1 (wire-bit-identity), and §7
 // (migration path). Inherits Slice 1 Stage 3.2 wire commitments from
-// doc/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
+// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6 §3.1 (standard body layout), §5.2 (OP_ERROR
 // body), §5.3 (error_class), and §8.1 (bit-for-bit compatibility for existing
 // TEP-74 formats).
 //

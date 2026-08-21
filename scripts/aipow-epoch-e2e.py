@@ -4,7 +4,7 @@
 aipow-epoch-e2e.py — phase-A AIPoW shadow-scoring rehearsal on a real localnet.
 
 Closes the loop specified by the shadow-scoring data plane doc
-(doc/aipow-shadow-scoring.md): real settlements on a real chain flow through
+(https://github.com/tosnetwork/doc/blob/main/tos-blockchain/aipow-shadow-scoring.md): real settlements on a real chain flow through
 the tosctld indexer's settlement-event table, out of `GET /aipow/settled-work`,
 into the external AIPoW scorer, and back out as a signed epoch commitment.
 

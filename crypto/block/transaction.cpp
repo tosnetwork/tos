@@ -3400,7 +3400,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     }
     if (cfg.global_version >= 12) {
       td::RefInt256 extra_flags = tlb::t_Tomis.as_integer(info.extra_flags);
-      // Synchronized constant — see doc/tos-message-policy.md §3.4 and §10.1.
+      // Synchronized constant — see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §3.4 and §10.1.
       if (!extra_flags_within_valid_mask(extra_flags)) {
         LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
         return check_skip_invalid(45);

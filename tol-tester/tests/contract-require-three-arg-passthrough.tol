@@ -1,4 +1,4 @@
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7) — explicit-code
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7) — explicit-code
 // escape hatch. The 3-argument `require(cond, ErrorClass.X, customCode)`
 // passes through unchanged: the rewrite pass leaves the explicit code
 // alone and records the site in the debug manifest as `explicit_code=...`.

@@ -37,5 +37,5 @@ contract ContractOnTuple {
 /**
 @compilation_should_fail
 @stderr forwarding `@on(Settling)` field across function boundary not yet supported
-@stderr doc/tos-language-syntax-policy.md §5
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5
  */

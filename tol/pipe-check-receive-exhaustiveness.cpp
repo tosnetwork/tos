@@ -62,7 +62,7 @@ static void warn_implicit_unknown_policy(V<ast_contract_declaration> contract) {
   }
   err("contract `{}` has no visible unknown-opcode policy; opcodes outside the declared receive map use the implicit Protocol throw. "
       "Declare `@unknown_throw(...)`, `@unknown_silent_drop`, or `receive(msg: UnknownOpcode)` to make Slice 3 receive exhaustiveness explicit. "
-      "See doc/tos-language-syntax-policy.md §5 / doc/tol.tex.",
+      "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5 / https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tol.tex.",
       contract->get_identifier()->name)
     .warning(contract->get_identifier());
 }
@@ -117,7 +117,7 @@ static void check_state_cross_product(V<ast_contract_declaration> contract) {
       err("receive exhaustiveness warning: contract `{}` does not declare `receive(msg: {}) on {}`; "
           "the known opcode is accepted by the dispatch table but reaches the synthesized state guard and throws 1024 in that state. "
           "Add an explicit receiver, `@implicit_protocol_for({}, {});`, or `@implicit_protocol_default;` to document the implicit Protocol path. "
-          "See doc/tos-language-syntax-policy.md §5 / doc/tol.tex.",
+          "See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5 / https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tol.tex.",
           contract->get_identifier()->name, coverage.message_name, state_name, coverage.message_name, state_name)
         .warning(coverage.first_receive);
     }
@@ -130,11 +130,11 @@ static void validate_implicit_protocol_suppressions(V<ast_contract_declaration> 
   }
   if (!contract->has_state_machine()) {
     if (contract->implicit_protocol_default) {
-      err("`@implicit_protocol_default` requires a state-bearing contract; see doc/tos-language-syntax-policy.md §5")
+      err("`@implicit_protocol_default` requires a state-bearing contract; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5")
         .fire(contract->implicit_protocol_default_range);
     }
     for (const ContractImplicitProtocolFor& suppression : contract->implicit_protocol_for) {
-      err("`@implicit_protocol_for({}, {})` requires a state-bearing contract; see doc/tos-language-syntax-policy.md §5",
+      err("`@implicit_protocol_for({}, {})` requires a state-bearing contract; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5",
           suppression.message_name, suppression.state_name)
         .fire(suppression.range);
     }
@@ -161,18 +161,18 @@ static void validate_implicit_protocol_suppressions(V<ast_contract_declaration> 
   std::unordered_set<std::string> seen_pairs;
   for (const ContractImplicitProtocolFor& suppression : contract->implicit_protocol_for) {
     if (!declared_messages.count(suppression.message_name)) {
-      err("`@implicit_protocol_for({}, {})` references message type `{}` that is not declared by any `receive(msg: ...)` in contract `{}`; see doc/tos-language-syntax-policy.md §5",
+      err("`@implicit_protocol_for({}, {})` references message type `{}` that is not declared by any `receive(msg: ...)` in contract `{}`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5",
           suppression.message_name, suppression.state_name, suppression.message_name, contract->get_identifier()->name)
         .fire(suppression.range);
     }
     if (!declared_states.count(suppression.state_name)) {
-      err("`@implicit_protocol_for({}, {})` references state `{}` that is not declared in contract `{}`; see doc/tos-language-syntax-policy.md §5",
+      err("`@implicit_protocol_for({}, {})` references state `{}` that is not declared in contract `{}`; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5",
           suppression.message_name, suppression.state_name, suppression.state_name, contract->get_identifier()->name)
         .fire(suppression.range);
     }
     std::string key = suppression_key(suppression.message_name, suppression.state_name);
     if (!seen_pairs.insert(key).second) {
-      err("duplicate `@implicit_protocol_for({}, {})` suppression; see doc/tos-language-syntax-policy.md §5",
+      err("duplicate `@implicit_protocol_for({}, {})` suppression; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §5",
           suppression.message_name, suppression.state_name)
         .fire(suppression.range);
     }

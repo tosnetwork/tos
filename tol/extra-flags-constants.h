@@ -16,7 +16,7 @@
 */
 #pragma once
 
-// Synchronized constant set -- see doc/tos-message-policy.md §3.4 and §10.1.
+// Synchronized constant set -- see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §3.4 and §10.1.
 //
 // The extra_flags mask is owned here and consumed by transaction /
 // validation code. A future Slice 4 (bit 2) or Slice 6 (bit 3)

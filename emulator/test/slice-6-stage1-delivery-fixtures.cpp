@@ -15,7 +15,7 @@
 // =============================================================================
 // Slice 6 Stage 1 delivery-failure foundation fixtures.
 //
-// These are predicate-level fixtures for doc/tos-delivery-sla-policy.md v0.2.
+// These are predicate-level fixtures for https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-delivery-sla-policy.md v0.2.
 // They do not activate delivery-SLA protocol behavior; they lock the canonical
 // cell shapes that later scheduler/monitor/supervision stages will reference.
 // =============================================================================

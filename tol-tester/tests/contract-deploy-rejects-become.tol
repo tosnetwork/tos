@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6): `become` and `keep_state` are
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6): `become` and `keep_state` are
 // compile errors inside an `@deploy receive(...)` body — deployment has exactly one
 // authoritative initial state, so issuing a transition would be ambiguous.
 
@@ -33,5 +33,5 @@ contract ContractDeployRejectsBecome {
 /**
 @compilation_should_fail
 @stderr `become` and `keep_state` are not permitted inside an `@deploy receive(...)` body
-@stderr doc/tos-language-syntax-policy.md §3.6
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6
  */

@@ -20,5 +20,5 @@ contract ContractStateReadHidden {
 /**
 @compilation_should_fail
 @stderr receiver code may not read compiler-reserved `storage.__state`
-@stderr doc/tos-language-syntax-policy.md §3.4
+@stderr https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.4
  */

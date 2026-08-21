@@ -1,4 +1,4 @@
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): `@unknown_silent_drop` lowers
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): `@unknown_silent_drop` lowers
 // the unknown-opcode dispatch tail into a plain `return;` (no actions, vm exit code 0).
 // This matches `crypto/smartcont/wallet-v5.tol`, which silently drops bodies whose 32-bit
 // opcode tag does not appear in the dispatch table.

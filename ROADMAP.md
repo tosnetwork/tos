@@ -275,7 +275,7 @@ Examples:
   are indexer-only from the start, since there was no chain-wide way to list any of these
   three contract types before. This deliberately does not follow the in-node,
   block-apply-hook pattern of the (separate, token/NFT-specific, still in-progress) wc=0
-  wallet index described in `doc/tos-wc0-wallet-index.md` -- that hooks directly into
+  wallet index described in [`tos-wc0-wallet-index.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-wc0-wallet-index.md) -- that hooks directly into
   `validator-engine`'s block-apply path in C++; this indexer instead polls the existing
   JSON-RPC surface from within the `tosctld` service process, so it needs no consensus-
   adjacent node changes and works against any RPC endpoint. If a single indexing
@@ -286,8 +286,8 @@ Examples:
   a Capability Registry entry deployed through one `tosctl` config are discovered by a
   second `tosctld` instance's `GET /tasks` / `GET /registry` that never ran a single
   `agent task create` or `agent registry deploy` command itself.
-  Reorgs are a real, documented hazard on this chain (`doc/tos-message-policy.md`'s
-  replay-across-reorgs note, `doc/tos-time-policy.md`'s scheduled-entry rollback
+  Reorgs are a real, documented hazard on this chain ([`tos-message-policy.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md)'s
+  replay-across-reorgs note, [`tos-time-policy.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-time-policy.md)'s scheduled-entry rollback
   semantics), not a theoretical one, so each shard also records the block hash it last
   scanned alongside its checkpoint; before advancing, the indexer re-verifies that hash
   against the chain's current report for that seqno and, on a mismatch, rewinds a fixed
@@ -368,7 +368,7 @@ Examples:
   change to the attestation scheme: any signature minted before this fix must be
   re-signed against the new domain-bound hash.
 - Add workflow examples that compose planner, worker, service and verifier actors: see
-  [`doc/ai-agent-workflow-example.md`](doc/ai-agent-workflow-example.md), which walks a
+  [`ai-agent-workflow-example.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-agent-workflow-example.md), which walks a
   planner posting a Task Escrow, a worker (Agent Account) accepting it and paying a Service
   Actor mid-task, a verifier settling the happy path, and a reviewer (Dispute contract)
   resolving a contested one. This composition is exercised end to end against a real
@@ -379,7 +379,7 @@ Examples:
   separately Planner -> dispute -> attested Dispute ruling -> Task Escrow resolve with the
   ruling's split-translated payout.
 - Publish reference schemas for result metadata and evidence bundles: see
-  [`doc/ai-workflow-schemas.md`](doc/ai-workflow-schemas.md) -- a canonical-JSON-plus-SHA-256
+  [`ai-workflow-schemas.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-workflow-schemas.md) -- a canonical-JSON-plus-SHA-256
   hashing convention and JSON shapes for every `*_hash` field across Task Escrow, Capability
   Registry, Service Actor, Dispute and Agent Account.
 
@@ -393,8 +393,8 @@ Examples:
 
 ## Near-Term Engineering Tasks
 
-- Add `doc/ai-actors.md` to describe the actor-model architecture for AI agents.
-- Add `doc/agent-wallet-mvp.md` to define the first local Agent Wallet slice.
+- Add [`ai-actors.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md) to describe the actor-model architecture for AI agents.
+- Add [`agent-wallet-mvp.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/agent-wallet-mvp.md) to define the first local Agent Wallet slice.
 - Add example task and Agent Account contracts under the native smart-contract tree.
 - Extend `tosctl` from Agent Account policy operations toward task commands.
 - Add JSON-RPC endpoints or examples for querying agent and task state.

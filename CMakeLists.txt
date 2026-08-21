@@ -512,20 +512,6 @@ endif()
 #Compilation database
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
-#BEGIN internal
-option(TOS_BUILD_DOCS "Build LaTeX/PDF documentation targets" OFF)
-find_package(LATEX)
-if (TOS_BUILD_DOCS AND LATEX_FOUND)
-  include(UseLATEX)
-  add_latex_document(doc/tvm.tex TARGET_NAME tos_vm_description)
-  add_latex_document(doc/tblkch.tex TARGET_NAME tos_blockchain_description)
-  add_latex_document(doc/fiftbase.tex TARGET_NAME fift_basic_description)
-  add_latex_document(doc/catchain.tex TARGET_NAME catchain_consensus_description)
-elseif (TOS_BUILD_DOCS)
-  message(STATUS "Could NOT find LATEX (this is NOT an error)")
-endif()
-#END internal
-
 if (NOT OPENSSL_FOUND)
   find_package(OpenSSL REQUIRED)
 endif()
@@ -911,7 +897,7 @@ add_custom_target(tos_report_bond_oracle_contract
 add_executable(test-emulator
         test/test-td-main.cpp
         emulator/test/emulator-tests.cpp
-        # Slice 1 conformance fixtures (doc/tos-message-policy.md v6
+        # Slice 1 conformance fixtures (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6
         # §3.4 / §6.2 / §10.1).
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp

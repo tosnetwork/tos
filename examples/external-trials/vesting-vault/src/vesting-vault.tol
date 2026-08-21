@@ -22,7 +22,7 @@ import "@stdlib/time"
 import "@stdlib/capability"
 import "@stdlib/safe-payments"
 
-// ── Opcodes (32-bit, per doc/tos-language-syntax-policy.md §3.2 v3) ───────────
+// ── Opcodes (32-bit, per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3) ───────────
 
 const VAULT_OP_DEPLOY          = 0x00000001
 const VAULT_OP_FUND            = 0x00000002

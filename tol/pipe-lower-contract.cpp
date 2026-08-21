@@ -236,18 +236,18 @@ static StateLoweringContext make_state_lowering_context(V<ast_contract_declarati
 static void check_receive_opcode_prefix(V<ast_receive_block> receive, StructPtr message_struct) {
   int prefix_len = message_struct->opcode.prefix_len;
   if (prefix_len != 32) {
-    err("contract receive message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See doc/tos-language-syntax-policy.md §3.2.",
+    err("contract receive message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.",
         message_struct->name, prefix_len)
       .fire(receive->message_type_node);
   }
 }
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): an external receiver's
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): an external receiver's
 // message struct must also declare a 32-bit opcode prefix.
 static void check_receive_external_opcode_prefix(V<ast_receive_external_block> receive, StructPtr message_struct) {
   int prefix_len = message_struct->opcode.prefix_len;
   if (prefix_len != 32) {
-    err("contract receive_external message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See doc/tos-language-syntax-policy.md §3.8.",
+    err("contract receive_external message type `{}` must declare exactly a 32-bit opcode prefix; actual prefix length is {}. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8.",
         message_struct->name, prefix_len)
       .fire(receive->message_type_node);
   }
@@ -359,7 +359,7 @@ static V<ast_function_declaration> make_save_state_function(
       FunctionData::EMPTY_TVM_METHOD_ID, 0, FunctionInlineMode::notCalculated);
 }
 
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): for state-bearing
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §4.1 v3): for state-bearing
 // contracts, the `@deploy` body's `save(...)` calls are rewritten to `__deploySave(...)` so
 // that the deploy path bypasses the regular `make_state_save_function` (which loads the
 // existing `__state` from c4 — c4 is empty during deploy). `__deploySave` writes the
@@ -551,7 +551,7 @@ static AnyV make_receive_scope_marker(
   }
   scope_items.push_back(make_msg_decode_decl(range, receive));
   if (receive->has_disclaim_query_id_annotation) {
-    // Slice 2 Stage 7 (doc/tos-language-syntax-policy.md §3.2.1): the parser annotation
+    // Slice 2 Stage 7 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1): the parser annotation
     // lowers to a `disclaim_query_id()` call inserted at the top of the marker scope so
     // pipeline_check_query_id_propagation observes it as a regular call inside this scope.
     SrcRange disclaim_range = receive->disclaim_annotation_range.is_defined() ? receive->disclaim_annotation_range : range;
@@ -587,7 +587,7 @@ static AnyV make_receive_branch(
   // Wrap the receiver scope in an ast_receiver_scope_marker. This binds
   // pipeline_check_query_id_propagation's per-scope analysis records — receiver A's
   // `@disclaim_query_id` cannot silence receiver B's reply. See
-  // doc/tos-language-syntax-policy.md §3.2.1, §10.1.
+  // https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2.1, §10.1.
   AnyV scope_marker = make_receive_scope_marker(contract, receive, message_struct, state_ctx, load_storage_in_branch, true);
 
   std::vector<AnyV> if_body_items;
@@ -622,7 +622,7 @@ static AnyV make_receive_state_group_branch(
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): build the @deploy
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §4.1 v3): build the @deploy
 // branch of `onInternalMessage`. Runs BEFORE loadData(); inside the body, references to
 // `storage` are not in scope (the user must call save(...)). For state-bearing contracts,
 // `save(...)` calls in the body are rewritten to `__deploySave(...)` so the helper writes
@@ -656,7 +656,7 @@ static AnyV make_deploy_branch(V<ast_contract_declaration> contract, V<ast_recei
   return createV<ast_if_statement>(range, false, cond, if_body, else_body);
 }
 
-// Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.2 v3): build the unknown-opcode tail.
+// Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3): build the unknown-opcode tail.
 // The contract's ContractUnknownMode picks the shape:
 //   - default_protocol_throw → throw OP_ERROR (0x00010001) per §3.2 / common.tol
 //   - silent_drop            → fall through (no statement; caller appends return)
@@ -669,7 +669,7 @@ static std::vector<AnyV> make_unknown_mode_tail(V<ast_contract_declaration> cont
   switch (contract->unknown_mode) {
     case ContractUnknownMode::default_protocol_throw:
       // OP_ERROR (0x00010001) per crypto/smartcont/tol-stdlib/common.tol — the canonical
-      // Protocol-class application error code. See doc/tos-message-policy.md §5.2 / §5.3.
+      // Protocol-class application error code. See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §5.2 / §5.3.
       tail.push_back(make_throw(range, 0x00010001));
       break;
     case ContractUnknownMode::silent_drop:
@@ -701,7 +701,7 @@ static std::vector<AnyV> make_unknown_mode_tail(V<ast_contract_declaration> cont
   return tail;
 }
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): build one dispatch branch
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): build one dispatch branch
 // for an external receiver. Mirrors `make_receive_branch` but:
 //   - reads the body slice from the synthesized `inMsgBody` parameter (no `in.body`)
 //   - skips state-machine guards (state-machines are internal-only)
@@ -743,7 +743,7 @@ static AnyV make_external_unknown_tail(V<ast_contract_declaration> contract, V<a
       range, contract->get_identifier()->name, "ExternalUnknownOpcode", receive->range, scope_block);
 }
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): synthesize the
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): synthesize the
 // `onExternalMessage(inMsgBody: slice)` entry from the contract's `receive_external` blocks.
 // Per task scope: any unrecognized external opcode throws (the wallet-style
 // "throw on malformed signed request" semantics). Stage 4's @unknown_* annotations
@@ -800,7 +800,7 @@ static V<ast_function_declaration> make_on_internal_function(
   auto params = createV<ast_parameter_list>(range, std::vector<AnyV>{param});
   bool load_storage_before_dispatch = contract->unknown_mode != ContractUnknownMode::silent_drop;
 
-  // Slice 2 Stage 4 dispatch shape (doc/tos-language-syntax-policy.md §4.1 v3):
+  // Slice 2 Stage 4 dispatch shape (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §4.1 v3):
   //   1. if `in.body.remainingBitsCount() < 32` → run UnknownMode tail (cannot parse opcode).
   //   2. parse opcode (32 bits) from a copy slice.
   //   3. if opcode == Deploy.opcode → run @deploy branch and return BEFORE loadData().
@@ -835,7 +835,7 @@ static V<ast_function_declaration> make_on_internal_function(
   // point). For wallet-v5-style `@unknown_silent_drop;` this still preserves the byte-for-byte
   // "drop short bodies silently" semantics; for the default and `@unknown_throw(N)` modes it
   // throws the same way the legacy hand-written contracts do. See
-  // doc/tos-language-syntax-policy.md §3.2 v3 / §4.1 v3.
+  // https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.2 v3 / §4.1 v3.
   std::vector<AnyV> short_body_tail;
   switch (contract->unknown_mode) {
     case ContractUnknownMode::default_protocol_throw:
@@ -933,7 +933,7 @@ static V<ast_function_declaration> make_on_internal_function(
 }
 
 // Names that mutate persistent storage / emit c5 actions.
-// `get fun` bodies must be free of these per doc/tos-language-syntax-policy.md §3.5
+// `get fun` bodies must be free of these per https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5
 // (the get-method execution path has no commit() and must not produce actions).
 static bool is_forbidden_in_get_fun_top_level(std::string_view name) {
   return name == "save" || name == "saveData" || name == "commitContractDataAndActions"
@@ -963,7 +963,7 @@ protected:
     if (auto v_ref = callee->try_as<ast_reference>()) {
       std::string_view name = v_ref->get_name();
       if (is_forbidden_in_get_fun_top_level(name)) {
-        err("`{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see doc/tos-language-syntax-policy.md §3.5",
+        err("`{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5",
             name, get_fun_name).fire(v);
       }
     } else if (auto v_dot = callee->try_as<ast_dot_access>()) {
@@ -973,7 +973,7 @@ protected:
         obj_name = obj_ref->get_name();
       }
       if (is_forbidden_in_get_fun_method(obj_name, field_name)) {
-        err("`{}.{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see doc/tos-language-syntax-policy.md §3.5",
+        err("`{}.{}(...)` is not permitted in `get fun {}`; the get-method execution path is read-only and may not emit actions or commit storage; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5",
             obj_name.empty() ? std::string("<expr>") : std::string(obj_name), field_name, get_fun_name).fire(v);
       }
     }
@@ -1030,7 +1030,7 @@ static V<ast_function_declaration> make_get_fun_lowering(V<ast_get_fun_block> ge
 // so we MUST group by contract origin.
 static std::unordered_map<AnyV, std::string> g_contract_getter_origin;
 
-// Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): map every synthesized
+// Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7): map every synthesized
 // function (onInternalMessage, onExternalMessage, getters, loadData, save, state helpers)
 // back to its origin contract name, so the `pipe-assign-require-codes` pass can group
 // `require(...)` sites per-(contract, ErrorClass) for unique site indices.
@@ -1062,7 +1062,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
   StructPtr storage_struct = resolve_struct_type(contract->storage_type_node, "contract storage type");
   StateLoweringContext state_ctx = make_state_lowering_context(contract, storage_struct);
 
-  // Slice 2 Stage 4 (doc/tos-language-syntax-policy.md §3.6 / §4.1 v3): a state-bearing
+  // Slice 2 Stage 4 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6 / §4.1 v3): a state-bearing
   // contract with `@deploy` requires `@initial state X` to be declared so the lowering knows
   // which state tag to inject into the deploy save().
   bool has_deploy = false;
@@ -1073,7 +1073,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     }
   }
   if (state_ctx.enabled && has_deploy && contract->get_initial_state_identifier() == nullptr) {
-    err("`@deploy receive(...)` in a state-bearing contract requires `@initial state <Name>` to be declared so the deploy lowering knows which initial state tag to inject; see doc/tos-language-syntax-policy.md §3.6")
+    err("`@deploy receive(...)` in a state-bearing contract requires `@initial state <Name>` to be declared so the deploy lowering knows which initial state tag to inject; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.6")
       .fire(contract->get_identifier());
   }
 
@@ -1121,7 +1121,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     message_structs.push_back(message_struct);
   }
 
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.8): external receivers form a
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8): external receivers form a
   // separate dispatch domain from internal receivers. Opcode prefixes are 32-bit and
   // unique within the external-only set; an external opcode MAY clash with an internal
   // opcode without ambiguity because each lands in a distinct entrypoint.
@@ -1133,7 +1133,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     V<ast_receive_external_block> receive = contract->get_external(i);
     if (is_unknown_opcode_type_node(receive->message_type_node)) {
       if (first_external_unknown_catch_all != nullptr) {
-        err("contract `{}` declares more than one `receive_external(msg: UnknownOpcode)`; first declared at {}; see doc/tos-language-syntax-policy.md §3.8",
+        err("contract `{}` declares more than one `receive_external(msg: UnknownOpcode)`; first declared at {}; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.8",
             contract->get_identifier()->name, first_external_unknown_catch_all->range.stringify_start_location(false))
           .fire(receive->range);
       }
@@ -1162,7 +1162,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     V<ast_get_fun_block> get_fun = contract->get_get_fun(i);
     std::string_view name = get_fun->get_name();
     if (name == "loadData" || name == "save" || name == "onInternalMessage" || name == "onExternalMessage") {
-      err("`get fun {}` shadows a contract-internal function generated by the lowering; pick a different name; see doc/tos-language-syntax-policy.md §3.5",
+      err("`get fun {}` shadows a contract-internal function generated by the lowering; pick a different name; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5",
           name).fire(get_fun->get_identifier());
     }
     auto [it, inserted] = get_fun_by_name.emplace(name, get_fun);
@@ -1215,7 +1215,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
     generated.push_back(lowered);
   }
 
-  // Slice 2 Stage 6 (doc/tos-language-syntax-policy.md §3.7): tag every synthesized
+  // Slice 2 Stage 6 (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7): tag every synthesized
   // function with its origin contract name so the `pipe-assign-require-codes` pass
   // can bucket `require(...)` sites per-(contract, ErrorClass).
   for (AnyV decl : generated) {
@@ -1231,7 +1231,7 @@ static std::vector<AnyV> lower_contract(V<ast_contract_declaration> contract) {
 // Groups contract getters by origin contract name, then for each group reports
 // the SECOND offender so the diff is small. Legacy file-scope getters (origin = "")
 // share a single global group, preserving the existing behaviour.
-// See doc/tos-language-syntax-policy.md §3.5 / §10.1.
+// See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5 / §10.1.
 void check_contract_method_id_collisions() {
   // group: contract_name (or "" for file-scope) -> [(method_id, FunctionPtr)]
   std::unordered_map<std::string, std::unordered_map<int, FunctionPtr>> seen_per_contract;
@@ -1251,7 +1251,7 @@ void check_contract_method_id_collisions() {
     } else {
       char id_buf[16];
       std::snprintf(id_buf, sizeof(id_buf), "0x%x", static_cast<unsigned>(fun_ref->tvm_method_id));
-      err("method_id collision: get fun `{}` (method_id {}) collides with get fun `{}` in contract `{}`; rename one or pin via @method_id(N); see doc/tos-language-syntax-policy.md §3.5",
+      err("method_id collision: get fun `{}` (method_id {}) collides with get fun `{}` in contract `{}`; rename one or pin via @method_id(N); see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.5",
           fun_ref->name, std::string(id_buf), first->name, origin).fire(fun_ref->ident_anchor);
     }
   }

@@ -30,7 +30,7 @@
 
 /*
  *   Slice 2 Stage 6 — `require(...)` auto-numbering pass.
- *   See doc/tos-language-syntax-policy.md §3.7 / §10.1.
+ *   See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.7 / §10.1.
  *
  *   Input AST (post-pipeline_lower_contracts):
  *     - 2-arg form: `require(cond, ErrorClass.X)` — auto-numbered here.
@@ -44,7 +44,7 @@
  *     - bottom 16 bits = per-(contract, ErrorClass) site index, source-order.
  *     - first occurrence of a class within a contract → site_index 0.
  *     - the formula is `(class << 16) | site_index`.
- *     - the lower-1024 reservation in `doc/tos-message-policy.md §5.2` is
+ *     - the lower-1024 reservation in `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §5.2` is
  *       respected: any non-Ok class tag (>=1) puts the resulting code at
  *       >= 0x10000, which is far above 1023.
  *
