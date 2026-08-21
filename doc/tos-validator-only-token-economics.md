@@ -854,8 +854,6 @@ At minimum, inspect:
 - `doc/Validator-Local.md`;
 - `doc/validator-genesis-bootstrap.md`;
 - `doc/Validator.md`;
-- `doc/tos.tex`;
-- `doc/tos.pdf`;
 - the repository `README.md`; and
 - public website token and validator descriptions.
 

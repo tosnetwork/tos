@@ -1,22 +1,12 @@
 # TOS Documentation
 
-This directory contains protocol, operator, standards, and design documents for TOS.
+This directory contains protocol, operator, standards, and design documents for
+the TOS Blockchain. The repository's canonical scope is the base layer:
+consensus, sharding, native TVM execution, networking, cryptography, node
+operation, and developer tooling.
 
-The current project direction is the AI Actor Model:
+Additional research:
 
-- accounts, contracts, agents, services, and tasks are modeled as independent actors
-- workflows use asynchronous messages instead of synchronous cross-contract calls
-- native TVM execution remains the focused execution surface
-- task state, payments, permissions, and verification metadata remain inspectable from chain state
-
-Implementation rule: AI actor work should add native contracts, message schemas,
-SDK/RPC helpers, tests, and operator workflows. It should not add unrelated
-execution engines or bypass the native TVM actor model.
-
-Whitepapers:
-
-- [tos.tex](tos.tex) - TOS Network whitepaper: architecture, economics, security model,
-  governance, and roadmap, explicit about what is implemented versus planned
 - [agi.tex](agi.tex) - AGI Futures and the On-Chain Agent Economy: a long-range,
   explicitly speculative scenario for AGI development, paired with a literal,
   implementation-grounded description of how autonomous agents earn money on TOS

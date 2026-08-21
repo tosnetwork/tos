@@ -18,7 +18,7 @@ Build **TOS Birdeye**, a new, standalone, browser-based spatial explorer for TOS
 distinct visual identity: a real-time, cinematic, "digital-rain" / neon-glow presentation of chain activity —
 blocks, shards, accounts and transactions rendered as a living, animated graph rather than as
 static HTML tables. The explorer should read as a piece of the TOS brand (precise, engineering-
-forward, technically substantiated — see `~/tos/doc/tos.pdf` §2 Design Principles) while looking
+forward, technically substantiated by the implementation and protocol documentation) while looking
 unmistakably premium: this is the public-facing surface most people will actually open, and it
 should not look like a decade-old testnet tool.
 
@@ -680,7 +680,7 @@ stack:
   local collision/legibility tool, not the source of truth for topology. Transactions/messages
   render as edges/particles between stable anchors, and new blocks enter with an animated
   "materialize" transition rather than popping in.
-  - See `~/tos/doc/tos.pdf` §3.6 (Sharding) when a future phase needs to visualize shard
+  - See the protocol documentation for dynamic sharding when a future phase needs to visualize shard
     structure rather than the linear masterchain backbone — dynamic shard splits/merges will need
     their own layout treatment; this design does not attempt to solve that for Phase 0–3 (see
     §10 Phase 7).
