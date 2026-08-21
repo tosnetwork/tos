@@ -56,12 +56,13 @@ void DNSResolver::sync() {
 void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
   auto it = cache_.find(host);
   if (it != cache_.end()) {
-    const CacheEntry &entry = it->second;
+    const tos::dns::DnsCacheEntry &entry = it->second;
     double now = td::Time::now();
-    if (now < entry.created_at_ + CACHE_TIMEOUT_HARD) {
+    if (now < entry.expires_at_) {
       promise.set_result(entry.address_);
       promise.reset();
-      if (now < entry.created_at_ + CACHE_TIMEOUT_SOFT) {
+      // refresh in the background only near expiry
+      if (now < entry.expires_at_ - (CACHE_TIMEOUT_HARD - CACHE_TIMEOUT_SOFT)) {
         return;
       }
     }
@@ -99,35 +100,133 @@ void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
       }
       return;
     }
-    td::actor::send_closure(SelfId, &DNSResolver::save_to_cache, std::move(host), result);
-    if (promise) {
-      promise.set_result(std::move(result));
+    if (obj->resolver_path_.empty()) {
+      // without the answering item's address its lifecycle cannot be
+      // verified: fail closed rather than serve unverifiable records
+      if (promise) {
+        promise.set_error(td::Status::Error("resolver path missing; cannot verify domain lifecycle"));
+      }
+      return;
     }
+    auto item_address = obj->resolver_path_.back()->account_address_;
+    td::actor::send_closure(SelfId, &DNSResolver::check_lifecycle, std::move(host), std::move(result),
+                            std::move(item_address), std::move(promise));
   });
   td::actor::send_closure(toslib_client_, &toslib::ToslibClientWrapper::send_request<toslib_api::dns_resolve>,
                           std::move(obj), std::move(P));
 }
 
-void DNSResolver::save_to_cache(std::string host, std::string address) {
-  double now = td::Time::now();
-  if (cache_.size() >= max_cache_entries_ && cache_.find(host) == cache_.end()) {
-    // evict expired entries first, then the stalest live entry
-    auto oldest = cache_.end();
-    for (auto it = cache_.begin(); it != cache_.end();) {
-      if (now >= it->second.created_at_ + CACHE_TIMEOUT_HARD) {
-        it = cache_.erase(it);
-        continue;
-      }
-      if (oldest == cache_.end() || it->second.created_at_ < oldest->second.created_at_) {
-        oldest = it;
-      }
-      ++it;
-    }
-    if (cache_.size() >= max_cache_entries_ && oldest != cache_.end()) {
-      cache_.erase(oldest);
-    }
+namespace {
+
+td::Result<td::int64> stack_number(const toslib_api::object_ptr<toslib_api::tvm_StackEntry> &entry) {
+  auto *num = dynamic_cast<toslib_api::tvm_stackEntryNumber *>(entry.get());
+  if (num == nullptr || !num->number_) {
+    return td::Status::Error("stack entry is not a number");
   }
-  CacheEntry &entry = cache_[host];
-  entry.address_ = address;
+  return td::to_integer_safe<td::int64>(num->number_->number_);
+}
+
+}  // namespace
+
+void DNSResolver::check_lifecycle(std::string host, std::string address, std::string item_address,
+                                  td::Promise<std::string> promise) {
+  // fail-closed lifecycle gate (DNS.md §6.5): read the answering item's
+  // auction state and renewal clock before serving or caching its records
+  auto toslib = toslib_client_;
+  auto self = actor_id(this);
+  auto load_p = td::PromiseCreator::lambda([toslib, self, host = std::move(host), address = std::move(address),
+                                            promise = std::move(promise)](
+                                               td::Result<toslib_api::object_ptr<toslib_api::smc_info>> R) mutable {
+    if (R.is_error()) {
+      promise.set_error(R.move_as_error_prefix("cannot load domain item: "));
+      return;
+    }
+    auto smc_id = R.move_as_ok()->id_;
+    auto auction_p = td::PromiseCreator::lambda(
+        [toslib, self, smc_id, host = std::move(host), address = std::move(address), promise = std::move(promise)](
+            td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
+          if (R.is_error()) {
+            promise.set_error(R.move_as_error_prefix("cannot read auction state: "));
+            return;
+          }
+          auto res = R.move_as_ok();
+          // get_auction_info returns (max_bid_address, max_bid_amount,
+          // auction_end_time), bottom-first: end time is the last entry
+          if (res->exit_code_ != 0 || res->stack_.size() != 3) {
+            promise.set_error(td::Status::Error("get_auction_info failed; refusing the record"));
+            return;
+          }
+          auto r_end_time = stack_number(res->stack_[2]);
+          if (r_end_time.is_error()) {
+            promise.set_error(r_end_time.move_as_error_prefix("bad auction state: "));
+            return;
+          }
+          auto end_time = r_end_time.move_as_ok();
+          auto lfut_p = td::PromiseCreator::lambda(
+              [toslib, self, smc_id, host = std::move(host), address = std::move(address), end_time,
+               promise = std::move(promise)](
+                  td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
+                // release the toslib-side contract instance either way
+                td::actor::send_closure(
+                    toslib, &toslib::ToslibClientWrapper::send_request<toslib_api::smc_forget>,
+                    toslib_api::make_object<toslib_api::smc_forget>(smc_id),
+                    td::PromiseCreator::lambda([](td::Result<toslib_api::object_ptr<toslib_api::ok>>) {}));
+                if (R.is_error()) {
+                  promise.set_error(R.move_as_error_prefix("cannot read renewal clock: "));
+                  return;
+                }
+                auto res = R.move_as_ok();
+                if (res->exit_code_ != 0 || res->stack_.size() != 1) {
+                  promise.set_error(td::Status::Error("get_last_fill_up_time failed; refusing the record"));
+                  return;
+                }
+                auto r_lfut = stack_number(res->stack_[0]);
+                if (r_lfut.is_error()) {
+                  promise.set_error(r_lfut.move_as_error_prefix("bad renewal clock: "));
+                  return;
+                }
+                td::actor::send_closure(self, &DNSResolver::finish_lifecycle, std::move(host), std::move(address),
+                                        end_time, r_lfut.move_as_ok(), std::move(promise));
+              });
+          td::actor::send_closure(
+              toslib, &toslib::ToslibClientWrapper::send_request<toslib_api::smc_runGetMethod>,
+              toslib_api::make_object<toslib_api::smc_runGetMethod>(
+                  smc_id, toslib_api::make_object<toslib_api::smc_methodIdName>("get_last_fill_up_time"),
+                  std::vector<toslib_api::object_ptr<toslib_api::tvm_StackEntry>>()),
+              std::move(lfut_p));
+        });
+    td::actor::send_closure(toslib, &toslib::ToslibClientWrapper::send_request<toslib_api::smc_runGetMethod>,
+                            toslib_api::make_object<toslib_api::smc_runGetMethod>(
+                                smc_id, toslib_api::make_object<toslib_api::smc_methodIdName>("get_auction_info"),
+                                std::vector<toslib_api::object_ptr<toslib_api::tvm_StackEntry>>()),
+                            std::move(auction_p));
+  });
+  td::actor::send_closure(toslib_client_, &toslib::ToslibClientWrapper::send_request<toslib_api::smc_load>,
+                          toslib_api::make_object<toslib_api::smc_load>(
+                              toslib_api::make_object<toslib_api::accountAddress>(std::move(item_address))),
+                          std::move(load_p));
+}
+
+void DNSResolver::finish_lifecycle(std::string host, std::string address, td::int64 auction_end_time,
+                                   td::int64 last_fill_up_time, td::Promise<std::string> promise) {
+  auto now_unix = static_cast<td::int64>(td::Clocks::system());
+  auto r_deadline = tos::dns::check_domain_lifecycle(auction_end_time, last_fill_up_time, now_unix);
+  if (r_deadline.is_error()) {
+    // the name may have been cached while healthy: drop it now
+    cache_.erase(host);
+    promise.set_error(r_deadline.move_as_error());
+    return;
+  }
+  save_to_cache(std::move(host), address, r_deadline.move_as_ok());
+  promise.set_result(std::move(address));
+}
+
+void DNSResolver::save_to_cache(std::string host, std::string address, td::int64 renewal_deadline) {
+  double now = td::Time::now();
+  auto now_unix = static_cast<td::int64>(td::Clocks::system());
+  tos::dns::evict_for_insert(cache_, host, now, max_cache_entries_);
+  tos::dns::DnsCacheEntry &entry = cache_[host];
+  entry.address_ = std::move(address);
   entry.created_at_ = now;
+  entry.expires_at_ = tos::dns::bounded_cache_expiry(now, CACHE_TIMEOUT_HARD, renewal_deadline, now_unix);
 }

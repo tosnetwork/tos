@@ -1927,6 +1927,34 @@ void do_dns_test(CheckedDns&& dns) {
   }
 };
 
+TEST(Smartcont, DnsResolverHopBudget) {
+  // The shared budget decision every recursive client consults before
+  // following a partial (next-resolver) answer. Simulate walking delegation
+  // chains of various depths (`depth` = resolver contacts a full resolution
+  // would need) and count the contacts actually made.
+  auto walk = [](int depth) {
+    int contacts = 0;
+    int hops_left = tos::DNS_MAX_RESOLVER_HOPS;
+    while (true) {
+      contacts++;
+      bool partial = contacts < depth;  // the final resolver answers terminally
+      if (!partial) {
+        return std::make_pair(contacts, true);
+      }
+      if (tos::dns_next_hop_exceeds_budget(hops_left)) {
+        return std::make_pair(contacts, false);  // distinct budget error
+      }
+      hops_left--;
+    }
+  };
+  // a chain the budget covers exactly: eight contacts, success
+  CHECK(walk(8) == std::make_pair(8, true));
+  // one deeper: still eight contacts (never a ninth), reported as an error
+  CHECK(walk(9) == std::make_pair(8, false));
+  CHECK(walk(100) == std::make_pair(8, false));
+  CHECK(walk(1) == std::make_pair(1, true));
+}
+
 TEST(Smartcont, DnsManual) {
   using ManualDns = tos::ManualDns;
   auto test_entry_data = [](auto&& entry_data) {

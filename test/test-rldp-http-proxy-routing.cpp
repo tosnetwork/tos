@@ -89,3 +89,70 @@ TEST(RldpHttpProxyRouting, resync_callback_is_unconditional) {
   CHECK(calls == 1);
   CHECK(!route);
 }
+
+// ─── .tos DNS lifecycle gate and bounded cache (DNSLifecycle.h) ──────────────
+
+#include "rldp-http-proxy/DNSLifecycle.h"
+
+TEST(RldpHttpProxyDns, lifecycle_fails_closed_under_auction) {
+  // an active auction and an ended-but-unfinalized auction both present a
+  // nonzero auction_end_time; neither may serve records
+  CHECK(tos::dns::check_domain_lifecycle(2000, 0, 1000).is_error());
+  CHECK(tos::dns::check_domain_lifecycle(2000, 0, 3000).is_error());
+}
+
+TEST(RldpHttpProxyDns, lifecycle_fails_closed_when_overdue_or_clockless) {
+  constexpr td::int64 lease = tos::dns::DNS_LEASE_SECONDS;
+  constexpr td::int64 lfut = 1000;
+  // exactly at the deadline still serves; one second past does not
+  CHECK(tos::dns::check_domain_lifecycle(0, lfut, lfut + lease).is_ok());
+  CHECK(tos::dns::check_domain_lifecycle(0, lfut, lfut + lease + 1).is_error());
+  // a missing renewal clock is refused, not defaulted
+  CHECK(tos::dns::check_domain_lifecycle(0, 0, 1000).is_error());
+}
+
+TEST(RldpHttpProxyDns, lifecycle_returns_the_renewal_deadline) {
+  auto r = tos::dns::check_domain_lifecycle(0, 5000, 6000);
+  CHECK(r.is_ok());
+  CHECK(r.ok() == 5000 + tos::dns::DNS_LEASE_SECONDS);
+}
+
+TEST(RldpHttpProxyDns, cache_expiry_never_outlives_the_lease) {
+  // plenty of lease left: the base ttl applies
+  CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, 2'000'000, 1'000'000) == 400.0);
+  // 10 seconds of lease left: the entry expires with the lease
+  CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, 1'000'010, 1'000'000) == 110.0);
+  // lease already over: the entry is born expired
+  CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, 999'000, 1'000'000) == 100.0);
+}
+
+TEST(RldpHttpProxyDns, cache_evicts_expired_first_then_stalest) {
+  constexpr size_t max_entries = 1024;
+  std::map<std::string, tos::dns::DnsCacheEntry> cache;
+  double now = 1000.0;
+  for (size_t i = 0; i < max_entries; i++) {
+    auto &e = cache["host" + std::to_string(i)];
+    e.created_at_ = now - 500.0 + static_cast<double>(i);  // host0 is stalest
+    e.expires_at_ = now + 100.0;                           // all still live
+  }
+  // full cache, all live: the stalest entry makes room
+  tos::dns::evict_for_insert(cache, "newhost", now, max_entries);
+  CHECK(cache.size() == max_entries - 1);
+  CHECK(cache.find("host0") == cache.end());
+  CHECK(cache.find("host1") != cache.end());
+  cache["newhost"] = {"addr", now, now + 100.0};
+  CHECK(cache.size() == max_entries);
+
+  // expire a specific entry: it is evicted before any live entry
+  cache["host7"].expires_at_ = now - 1.0;
+  tos::dns::evict_for_insert(cache, "another", now, max_entries);
+  CHECK(cache.find("host7") == cache.end());
+  CHECK(cache.find("host1") != cache.end());
+  CHECK(cache.size() == max_entries - 1);
+
+  // re-inserting an existing key never evicts anything
+  cache["another"] = {"addr", now, now + 100.0};
+  auto before = cache.size();
+  tos::dns::evict_for_insert(cache, "newhost", now, max_entries);
+  CHECK(cache.size() == before);
+}

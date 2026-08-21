@@ -41,6 +41,15 @@ const td::Bits256 DNS_NEXT_RESOLVER_CATEGORY =
 // error instead of looping.
 constexpr int DNS_MAX_RESOLVER_HOPS = 8;
 
+// Shared budget decision: with `hops_left` remaining out of
+// DNS_MAX_RESOLVER_HOPS, following one more delegation would contact a
+// resolver beyond the budget. Both recursive clients consult this before
+// following a partial (next-resolver) answer, so a full budget performs at
+// most DNS_MAX_RESOLVER_HOPS resolver contacts in total.
+inline bool dns_next_hop_exceeds_budget(int hops_left) {
+  return hops_left <= 1;
+}
+
 class DnsInterface {
  public:
   struct EntryDataText {

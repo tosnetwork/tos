@@ -5477,7 +5477,14 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
   auto dns = tos::ManualDns::create(dns_finish_data.smc_state, std::move(address));
   TRY_RESULT_PROMISE(promise, entries, dns->resolve(name, category));
 
-  if (entries.size() == 1 && entries[0].partially_resolved && ttl > 0) {
+  if (entries.size() == 1 && entries[0].partially_resolved) {
+    // budget check BEFORE following the delegation: a partial answer at an
+    // exhausted budget is a distinct error, never a silent partial success
+    // (and never a ninth resolver contact)
+    if (tos::dns_next_hop_exceeds_budget(ttl)) {
+      TRY_STATUS_PROMISE(promise, td::Status::Error(PSLICE() << "resolver hop limit (" << tos::DNS_MAX_RESOLVER_HOPS
+                                                             << ") exhausted while resolving '" << name << "'"));
+    }
     td::Slice got_name = entries[0].name;
     if (got_name.size() > name.size()) {
       TRY_STATUS_PROMISE(promise, ToslibError::Internal("domain is too long"));

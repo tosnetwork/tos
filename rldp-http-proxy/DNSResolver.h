@@ -24,6 +24,7 @@
     from all source files in the program, then also delete it here.
 */
 #pragma once
+#include "DNSLifecycle.h"
 #include "adnl/adnl.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
@@ -38,16 +39,17 @@ class DNSResolver : public td::actor::Actor {
 
  private:
   void sync();
-  void save_to_cache(std::string host, std::string address);
+  void check_lifecycle(std::string host, std::string address, std::string item_address,
+                       td::Promise<std::string> promise);
+  void finish_lifecycle(std::string host, std::string address, td::int64 auction_end_time,
+                        td::int64 last_fill_up_time, td::Promise<std::string> promise);
+  void save_to_cache(std::string host, std::string address, td::int64 renewal_deadline);
 
   td::actor::ActorId<toslib::ToslibClientWrapper> toslib_client_;
 
-  struct CacheEntry {
-    std::string address_;
-    double created_at_;
-  };
   // Bounded: an attacker who can drive lookups must not be able to grow the
-  // cache without limit. When full, the stalest entry is evicted first.
+  // cache without limit. When full, expired entries are evicted first, then
+  // the stalest live entry.
   static constexpr std::size_t max_cache_entries_ = 1024;
-  std::map<std::string, CacheEntry> cache_;
+  std::map<std::string, tos::dns::DnsCacheEntry> cache_;
 };

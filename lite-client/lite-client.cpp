@@ -1995,7 +1995,7 @@ void TestNode::dns_resolve_finish(tos::WorkchainId workchain, tos::StdSmcAddress
     if ((mode & 1)) {
       return;  // no recursive resolving
     }
-    if (hops_left <= 1) {
+    if (tos::dns_next_hop_exceeds_budget(hops_left)) {
       // distinct from "not found": the name may exist behind a longer chain,
       // but this client refuses to follow it
       LOG(ERROR) << "resolver hop limit (" << max_dns_resolver_hops << ") exhausted while resolving '" << domain
