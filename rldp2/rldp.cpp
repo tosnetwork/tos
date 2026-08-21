@@ -87,6 +87,9 @@ class RldpConnectionActor : public td::actor::Actor, private ConnectionCallback 
   void on_sent(TransferId transfer_id, td::Result<td::Unit> state) override {
     send_closure(rldp_, &RldpIn::on_sent, transfer_id, std::move(state));
   }
+  void on_part_completed(TransferId transfer_id, td::uint32 part, td::uint64 decoded_bytes) override {
+    send_closure(rldp_, &RldpIn::on_part_completed, src_, dst_, transfer_id, part, decoded_bytes);
+  }
 };
 
 namespace {
@@ -119,19 +122,33 @@ void RldpIn::send_message_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort ds
 void RldpIn::send_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
                            td::Promise<td::BufferSlice> promise, td::Timestamp timeout, td::BufferSlice data,
                            td::uint64 max_answer_size) {
+  send_query_ex_with_transfer_id(src, dst, std::move(name), std::move(promise), timeout, std::move(data),
+                                 max_answer_size, get_random_transfer_id());
+}
+
+void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
+                                            td::Promise<td::BufferSlice> promise, td::Timestamp timeout,
+                                            td::BufferSlice data, td::uint64 max_answer_size,
+                                            td::Bits256 request_transfer_id) {
+  if (request_transfer_id.is_zero()) {
+    promise.set_error(td::Status::Error("explicit RLDP request transfer id must be nonzero"));
+    return;
+  }
   auto query_id = adnl::AdnlQuery::random_query_id();
 
   auto date = static_cast<td::uint32>(timeout.at_unix()) + 1;
   auto B = serialize_tl_object(create_tl_object<tos_api::rldp_query>(query_id, max_answer_size, date, std::move(data)),
                                true);
 
-  auto connection = get_or_create_connection(src, dst, false, timeout);
-  auto transfer_id = get_random_transfer_id();
-  auto response_transfer_id = get_responce_transfer_id(transfer_id);
-  send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
-  send_closure(connection, &RldpConnectionActor::send, transfer_id, std::move(B), timeout);
-
+  auto response_transfer_id = get_responce_transfer_id(request_transfer_id);
+  if (queries_.count(response_transfer_id) != 0) {
+    promise.set_error(td::Status::Error("explicit RLDP response transfer id is already active"));
+    return;
+  }
   queries_.emplace(response_transfer_id, OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
+  auto connection = get_or_create_connection(src, dst, false, timeout);
+  send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
+  send_closure(connection, &RldpConnectionActor::send, request_transfer_id, std::move(B), timeout);
 }
 
 void RldpIn::answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
@@ -260,6 +277,13 @@ void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
 
 void RldpIn::on_sent(TransferId transfer_id, td::Result<td::Unit> state) {
   //TODO: completed transfer
+}
+
+void RldpIn::on_part_completed(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id,
+                               td::uint32 part, td::uint64 decoded_bytes) {
+  if (part_completed_callback_) {
+    part_completed_callback_(local_id, peer_id, transfer_id, part, decoded_bytes);
+  }
 }
 
 void RldpIn::add_id(adnl::AdnlNodeIdShort local_id) {

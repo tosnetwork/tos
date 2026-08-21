@@ -47,11 +47,14 @@ identical bounds.
 
 | parameter      | commands                     | bounds     |
 |----------------|------------------------------|------------|
-| `timeout_ms`   | dial, await, reconnect, echo | 1 … 120000 |
+| `timeout_ms`   | dial, await, reconnect, echo, rldp | 1 … 120000 |
 | `window_ms`    | hold                         | 1 … 600000 |
 | `keepalive_ms` | hold                         | 1 … 120000 |
 | `rounds`       | punch                        | 1 … 100    |
 | `interval_ms`  | punch                        | 1 … 10000  |
+| `bytes`        | rldp                         | 2000001 … 16777216 |
+| `interrupt_after_bytes` | rldp                | exactly 2000000 |
+| `interruption_ms` | rldp                      | 100 … 10000 |
 
 `echo`'s `bytes` keeps its own rule (optional, default 1024, must be > 0):
 oversized values deliberately take the documented `ok=false` completion
@@ -59,7 +62,7 @@ path rather than an error, because the 64 KiB case is part of what the
 protocol measures.
 
 **Session-operation serialization (lease):** at most one of
-{`dial`, `await`, `hold`, `reconnect`, `echo`} is active at a time. A
+{`dial`, `await`, `hold`, `reconnect`, `echo`, `rldp`} is active at a time. A
 session command arriving while another one is in flight completes
 immediately with an error event naming the busy operation (e.g.
 `"busy: hold in progress"`) — fail-closed, never queued silently. This
@@ -259,7 +262,46 @@ Consequently:
   is dropped by the native reassembly path (`huge message` limit), so the
   sender observes a timeout.
 
-#### Native send-abort on invalid destinations (honest limitation)
+### rldp
+
+```json
+{"id":8,"cmd":"rldp","bytes":4000001,"interrupt_after_bytes":2000000,"interruption_ms":150,"timeout_ms":20000}
+→ {"id":8,"event":"rldp_transferred","ok":true|false,"bytes":4000001,"part_size_bytes":2000000,"expected_parts":3,"interrupt_after_bytes":2000000,"planned_interruption_ms":150,"interruption_attempted":true|false,"interruption_ms":N,"suppressed_messages":N,"same_transfer_resumed":true|false,"sha256_hex":"<payload hash>","millis":N[,"error":"..."]}
+```
+
+Runs exactly one native RLDPv2 query over the confirmed peer. The request is
+the 16-byte ASCII prefix `tosprobe-rldp/1\n`, a four-byte big-endian response
+size, and a random 32-byte seed. A confirmed peer returns that seed followed by
+the requested deterministic payload. Payload blocks are SHA-256 of the bytes
+`tos.messaging.reachability-rldp-payload.v1\0`, the seed, and an eight-byte
+big-endian counter. `sha256_hex` is the initiator's expected payload digest.
+Only the confirmed ADNL peer can request a response, sizes are bounded before
+allocation, and responses are rate-limited to one per second.
+
+The native RLDPv2 implementation fixes FEC parts at 2,000,000 bytes. The
+canonical 4,000,001-byte payload therefore necessarily uses three parts. The
+sidecar chooses the request transfer ID itself and binds the part observer to
+the exact complementary response transfer ID; progress from a concurrent or
+malicious unrelated transfer cannot trigger the interruption. Once one exact
+response part has decoded, the native UDP manager suppresses both inbound and
+outbound packets for the predeclared window and counts packets that otherwise
+would have entered or left the socket. It does not destroy the RLDP actor or
+issue another application query.
+
+`ok` and `same_transfer_resumed` are true only when all of these are true:
+
+- the exact response transfer reached a complete 2,000,000-byte decoded part;
+- the suppression lasted at least the requested duration and dropped at least
+  one packet;
+- the original query completed after that window; and
+- the returned seed, size and SHA-256 payload digest match exactly.
+
+A timeout, wrong response, no exact-transfer progress, unsupported suppression,
+zero actually suppressed packets, or a short window completes with `ok=false`.
+Invalid command parameters are rejected before the session lease, allocation,
+query, or fault window, so a control-plane error never becomes network evidence.
+
+### Native send-abort on invalid destinations (honest limitation)
 
 The UDP server's send-error path is not survivable: a datagram whose
 destination the kernel rejects (`sendmmsg` EINVAL) **aborts the process**.

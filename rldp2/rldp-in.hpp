@@ -62,6 +62,12 @@ class RldpIn : public RldpImpl {
     return 128;
   }
   void on_sent(TransferId transfer_id, td::Result<td::Unit> state);
+  void on_part_completed(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id,
+                         td::uint32 part, td::uint64 decoded_bytes);
+
+  void set_part_completed_callback(PartCompletedCallback callback) override {
+    part_completed_callback_ = std::move(callback);
+  }
 
   void send_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data) override;
   void send_message_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
@@ -74,6 +80,9 @@ class RldpIn : public RldpImpl {
   void send_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
                      td::Promise<td::BufferSlice> promise, td::Timestamp timeout, td::BufferSlice data,
                      td::uint64 max_answer_size) override;
+  void send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
+                                      td::Promise<td::BufferSlice> promise, td::Timestamp timeout, td::BufferSlice data,
+                                      td::uint64 max_answer_size, td::Bits256 request_transfer_id) override;
   void answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
                     adnl::AdnlQueryId query_id, TransferId transfer_id, td::BufferSlice data);
 
@@ -118,6 +127,7 @@ class RldpIn : public RldpImpl {
   std::map<TransferId, OutQuery> queries_;
 
   std::set<adnl::AdnlNodeIdShort> local_ids_;
+  PartCompletedCallback part_completed_callback_;
 
   td::actor::ActorId<RldpConnectionActor> get_or_create_connection(adnl::AdnlNodeIdShort local_id,
                                                                    adnl::AdnlNodeIdShort peer_id, bool incoming,

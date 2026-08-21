@@ -27,6 +27,49 @@ namespace tos {
 
 namespace adnl {
 
+void AdnlNetworkManagerImpl::suppress_packets_until(td::Timestamp until, td::Promise<PacketSuppressionStats> promise) {
+  if (!until || until.is_in_past()) {
+    promise.set_error(td::Status::Error("packet suppression deadline must be in the future"));
+    return;
+  }
+  if (packet_suppression_promise_) {
+    promise.set_error(td::Status::Error("packet suppression is already active"));
+    return;
+  }
+  packet_suppression_until_ = until;
+  packet_suppression_stats_ = {};
+  packet_suppression_promise_ = std::move(promise);
+  alarm_timestamp().relax(until);
+}
+
+void AdnlNetworkManagerImpl::finish_packet_suppression() {
+  if (!packet_suppression_promise_) {
+    return;
+  }
+  auto promise = std::move(*packet_suppression_promise_);
+  packet_suppression_promise_ = {};
+  packet_suppression_until_ = {};
+  auto stats = packet_suppression_stats_;
+  packet_suppression_stats_ = {};
+  promise.set_value(std::move(stats));
+}
+
+bool AdnlNetworkManagerImpl::suppress_packet(bool inbound) {
+  if (!packet_suppression_promise_) {
+    return false;
+  }
+  if (packet_suppression_until_.is_in_past()) {
+    finish_packet_suppression();
+    return false;
+  }
+  if (inbound) {
+    packet_suppression_stats_.inbound++;
+  } else {
+    packet_suppression_stats_.outbound++;
+  }
+  return true;
+}
+
 td::actor::ActorOwn<AdnlNetworkManager> AdnlNetworkManager::create(td::uint16 port) {
   return td::actor::create_actor<AdnlNetworkManagerImpl>("NetworkManager", port);
 }
@@ -119,6 +162,9 @@ void AdnlNetworkManagerImpl::receive_udp_message(td::UdpMessage message, size_t 
   }
   if (message.data.size() < 32) {
     VLOG(ADNL_WARNING) << this << ": received too small proxy packet of size " << message.data.size();
+    return;
+  }
+  if (suppress_packet(true)) {
     return;
   }
   if (message.data.size() >= get_mtu() + 128) {
@@ -240,6 +286,10 @@ void AdnlNetworkManagerImpl::send_udp_packet(AdnlNodeIdShort src_id, AdnlNodeIdS
   auto &v = *out;
   auto &socket = udp_sockets_[v.socket_idx];
 
+  if (suppress_packet(false)) {
+    return;
+  }
+
   if (!v.is_proxy()) {
     td::UdpMessage M;
     M.address = dst_addr;
@@ -288,7 +338,13 @@ void AdnlNetworkManagerImpl::proxy_register(OutDesc &desc) {
 }
 
 void AdnlNetworkManagerImpl::alarm() {
+  if (packet_suppression_promise_ && packet_suppression_until_.is_in_past()) {
+    finish_packet_suppression();
+  }
   alarm_timestamp() = td::Timestamp::in(60.0);
+  if (packet_suppression_promise_) {
+    alarm_timestamp().relax(packet_suppression_until_);
+  }
   for (auto &vec : out_desc_) {
     for (auto &desc : vec.second) {
       if (desc.is_proxy()) {

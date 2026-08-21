@@ -50,6 +50,7 @@
 #include "common/checksum.h"
 #include "common/errorcode.h"
 #include "keys/keys.hpp"
+#include "rldp2/rldp.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Random.h"
@@ -67,10 +68,14 @@ namespace probe {
 
 constexpr td::Slice kProtocol = "tos-adnl-probe/1";
 constexpr td::Slice kEchoPrefix = "tosprobe-echo/1\n";  // 16 bytes
+constexpr td::Slice kRldpPrefix = "tosprobe-rldp/1\n";  // 16 bytes
+constexpr char kRldpPayloadDomain[] = "tos.messaging.reachability-rldp-payload.v1";
 // The native stack refuses queries whose payload exceeds
 // Adnl::huge_packet_max_size(); larger echo requests are reported as
 // unsupported instead of being sent (see PROTOCOL.md).
 constexpr size_t kMaxQueryPayload = Adnl::huge_packet_max_size();
+constexpr td::uint32 kRldpPartSize = 2000000;
+constexpr td::uint32 kMaxRldpPayload = 16 << 20;
 
 std::mutex &stdout_mutex() {
   static std::mutex mutex;
@@ -117,6 +122,24 @@ class ProbeCallback : public adnl::Adnl::Callback {
 
  private:
   std::function<void(adnl::AdnlNodeIdShort)> note_inbound_;
+};
+
+class RldpProbeCallback : public adnl::Adnl::Callback {
+ public:
+  using QueryHandler =
+      std::function<void(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::BufferSlice, td::Promise<td::BufferSlice>)>;
+
+  explicit RldpProbeCallback(QueryHandler handler) : handler_(std::move(handler)) {
+  }
+  void receive_message(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::BufferSlice) override {
+  }
+  void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                     td::Promise<td::BufferSlice> promise) override {
+    handler_(src, dst, std::move(data), std::move(promise));
+  }
+
+ private:
+  QueryHandler handler_;
 };
 
 class ProbeCore : public td::actor::Actor {
@@ -191,6 +214,30 @@ class ProbeCore : public td::actor::Actor {
     td::uint64 seq{0};
   };
 
+  struct RldpOp {
+    bool active{false};
+    td::int64 cmd_id{0};
+    td::Timestamp started;
+    td::Timestamp interruption_started;
+    td::Timestamp interruption_deadline;
+    td::Timestamp query_completed_at;
+    td::uint32 payload_bytes{0};
+    td::uint32 interrupt_after_bytes{0};
+    td::int64 planned_interruption_ms{0};
+    td::Bits256 seed;
+    td::Bits256 expected_payload_hash;
+    td::Bits256 expected_response_transfer_id;
+    td::uint64 seq{0};
+    td::uint64 decoded_bytes{0};
+    td::uint64 suppressed_messages{0};
+    td::int64 actual_interruption_ms{0};
+    bool interruption_attempted{false};
+    bool suppression_done{false};
+    bool query_done{false};
+    bool query_ok{false};
+    std::string failure;
+  };
+
   std::shared_ptr<LineQueue> queue_;
   bool stopping_{false};
   bool eof_handled_{false};
@@ -198,6 +245,7 @@ class ProbeCore : public td::actor::Actor {
   td::actor::ActorOwn<keyring::Keyring> keyring_;
   td::actor::ActorOwn<adnl::Adnl> adnl_;
   td::actor::ActorOwn<adnl::AdnlNetworkManager> network_manager_;
+  td::actor::ActorOwn<rldp2::Rldp> rldp2_;
 
   bool listening_{false};
   bool have_identity_{false};
@@ -216,6 +264,8 @@ class ProbeCore : public td::actor::Actor {
   PunchOp punch_;
   HoldOp hold_;
   EchoOp echo_;
+  RldpOp rldp_op_;
+  td::Timestamp next_rldp_answer_at_;
 
   // shared monotone counter so a stale in-flight completion of one operation
   // can never be mistaken for a fresh attempt of a later operation
@@ -241,6 +291,9 @@ class ProbeCore : public td::actor::Actor {
     }
     if (echo_.active) {
       return "echo";
+    }
+    if (rldp_op_.active) {
+      return "rldp";
     }
     return td::Slice();
   }
@@ -276,6 +329,10 @@ class ProbeCore : public td::actor::Actor {
     if (echo_.active) {
       emit_error(echo_.cmd_id, reason);
       echo_ = EchoOp{};
+    }
+    if (rldp_op_.active) {
+      emit_error(rldp_op_.cmd_id, reason);
+      rldp_op_ = RldpOp{};
     }
   }
 
@@ -441,6 +498,8 @@ class ProbeCore : public td::actor::Actor {
       cmd_reconnect(id, obj);
     } else if (cmd == "echo") {
       cmd_echo(id, obj);
+    } else if (cmd == "rldp") {
+      cmd_rldp(id, obj);
     } else if (cmd == "close") {
       cmd_close(id);
     } else {
@@ -604,6 +663,7 @@ class ProbeCore : public td::actor::Actor {
     adnl_ = adnl::Adnl::create("", keyring_.get());
     network_manager_ = adnl::AdnlNetworkManager::create(port);
     td::actor::send_closure(adnl_, &adnl::Adnl::register_network_manager, network_manager_.get());
+    rldp2_ = rldp2::Rldp::create(adnl_.get());
 
     td::IPAddress self_addr;
     self_addr.init_ipv4_port("0.0.0.0", port).ensure();
@@ -628,10 +688,25 @@ class ProbeCore : public td::actor::Actor {
                             static_cast<td::uint8>(0));
 
     auto self = actor_id(this);
+    td::actor::send_closure(rldp2_, &rldp2::Rldp::set_default_mtu, static_cast<td::uint64>(kMaxRldpPayload + 4096));
+    td::actor::send_closure(rldp2_, &rldp2::Rldp::set_part_completed_callback,
+                            [self](adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id,
+                                   td::Bits256 transfer_id, td::uint32 part, td::uint64 decoded_bytes) {
+                              td::actor::send_closure(self, &ProbeCore::rldp_part_completed, local_id, peer_id,
+                                                      transfer_id, part, decoded_bytes);
+                            });
+    td::actor::send_closure(rldp2_, &rldp2::Rldp::add_id, local_id_);
     td::actor::send_closure(adnl_, &adnl::Adnl::subscribe, local_id_, kEchoPrefix.str(),
                             std::make_unique<ProbeCallback>([self](adnl::AdnlNodeIdShort src) {
                               td::actor::send_closure(self, &ProbeCore::note_inbound, src);
                             }));
+    td::actor::send_closure(
+        adnl_, &adnl::Adnl::subscribe, local_id_, kRldpPrefix.str(),
+        std::make_unique<RldpProbeCallback>([self](adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
+                                                   td::BufferSlice data, td::Promise<td::BufferSlice> promise) mutable {
+          td::actor::send_closure(self, &ProbeCore::handle_rldp_probe_query, src, dst, std::move(data),
+                                  std::move(promise));
+        }));
 
     listening_ = true;
 
@@ -1155,6 +1230,257 @@ class ProbeCore : public td::actor::Actor {
     emit_line(jb.string_builder().as_cslice());
   }
 
+  // ---- RLDPv2 segmented transfer and same-query recovery ----
+
+  static td::uint32 load_be32(td::Slice data) {
+    return (static_cast<td::uint32>(static_cast<td::uint8>(data[0])) << 24) |
+           (static_cast<td::uint32>(static_cast<td::uint8>(data[1])) << 16) |
+           (static_cast<td::uint32>(static_cast<td::uint8>(data[2])) << 8) |
+           static_cast<td::uint32>(static_cast<td::uint8>(data[3]));
+  }
+
+  static void store_be32(td::MutableSlice data, td::uint32 value) {
+    data[0] = static_cast<char>(value >> 24);
+    data[1] = static_cast<char>(value >> 16);
+    data[2] = static_cast<char>(value >> 8);
+    data[3] = static_cast<char>(value);
+  }
+
+  static td::BufferSlice deterministic_rldp_payload(td::Bits256 seed, td::uint32 size) {
+    td::BufferSlice payload{size};
+    auto output = payload.as_slice();
+    td::uint64 counter = 0;
+    while (!output.empty()) {
+      td::BufferSlice input{sizeof(kRldpPayloadDomain) + 32 + 8};
+      auto input_slice = input.as_slice();
+      input_slice.copy_from(td::Slice{kRldpPayloadDomain, sizeof(kRldpPayloadDomain)});
+      input_slice.remove_prefix(sizeof(kRldpPayloadDomain));
+      input_slice.copy_from(seed.as_slice());
+      input_slice.remove_prefix(32);
+      for (size_t i = 0; i < 8; i++) {
+        input_slice[i] = static_cast<char>(counter >> ((7 - i) * 8));
+      }
+      auto block = td::sha256_bits256(input.as_slice());
+      auto take = std::min(output.size(), block.as_slice().size());
+      output.copy_from(block.as_slice().truncate(take));
+      output.remove_prefix(take);
+      counter++;
+    }
+    return payload;
+  }
+
+  void handle_rldp_probe_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                               td::Promise<td::BufferSlice> promise) {
+    auto request = data.as_slice();
+    const size_t request_size = kRldpPrefix.size() + 4 + 32;
+    if (!listening_ || !peer_confirmed_ || src != peer_id_ || dst != local_id_) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "RLDP probe peer is not confirmed"));
+      return;
+    }
+    if (request.size() != request_size || request.substr(0, kRldpPrefix.size()) != kRldpPrefix) {
+      promise.set_error(td::Status::Error(ErrorCode::protoviolation, "bad RLDP probe request"));
+      return;
+    }
+    if (next_rldp_answer_at_ && !next_rldp_answer_at_.is_in_past()) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "RLDP probe response rate limit"));
+      return;
+    }
+    request.remove_prefix(kRldpPrefix.size());
+    auto payload_bytes = load_be32(request.substr(0, 4));
+    request.remove_prefix(4);
+    if (payload_bytes <= kRldpPartSize || payload_bytes > kMaxRldpPayload) {
+      promise.set_error(td::Status::Error(ErrorCode::protoviolation, "RLDP probe payload is outside bounds"));
+      return;
+    }
+    td::Bits256 seed;
+    seed.as_slice().copy_from(request);
+    auto payload = deterministic_rldp_payload(seed, payload_bytes);
+    td::BufferSlice response{32 + payload.size()};
+    auto response_slice = response.as_slice();
+    response_slice.copy_from(seed.as_slice());
+    response_slice.remove_prefix(32);
+    response_slice.copy_from(payload.as_slice());
+    next_rldp_answer_at_ = td::Timestamp::in(1.0);
+    promise.set_value(std::move(response));
+  }
+
+  void cmd_rldp(td::int64 id, td::JsonObject &obj) {
+    if (!listening_ || !have_peer_ || !peer_confirmed_) {
+      emit_error(id, "no confirmed peer for an RLDP transfer");
+      return;
+    }
+    td::int64 payload_bytes;
+    td::int64 interrupt_after_bytes;
+    td::int64 interruption_ms;
+    td::int64 timeout_ms;
+    if (!read_bounded_param(id, obj, "bytes", kRldpPartSize + 1, kMaxRldpPayload, payload_bytes) ||
+        !read_bounded_param(id, obj, "interrupt_after_bytes", kRldpPartSize, kRldpPartSize, interrupt_after_bytes) ||
+        !read_bounded_param(id, obj, "interruption_ms", 100, 10000, interruption_ms) ||
+        !read_bounded_param(id, obj, "timeout_ms", kMinTimeoutMs, kMaxTimeoutMs, timeout_ms)) {
+      return;
+    }
+    if (!acquire_session_lease(id)) {
+      return;
+    }
+
+    rldp_op_ = RldpOp{};
+    rldp_op_.active = true;
+    rldp_op_.cmd_id = id;
+    rldp_op_.started = td::Timestamp::now();
+    rldp_op_.payload_bytes = static_cast<td::uint32>(payload_bytes);
+    rldp_op_.interrupt_after_bytes = static_cast<td::uint32>(interrupt_after_bytes);
+    rldp_op_.planned_interruption_ms = interruption_ms;
+    rldp_op_.seq = ++op_seq_counter_;
+    td::Random::secure_bytes(rldp_op_.seed.as_slice());
+    td::Bits256 request_transfer_id;
+    td::Random::secure_bytes(request_transfer_id.as_slice());
+    if (request_transfer_id.is_zero()) {
+      request_transfer_id.as_slice()[0] = 1;
+    }
+    rldp_op_.expected_response_transfer_id = request_transfer_id;
+    for (auto &byte : rldp_op_.expected_response_transfer_id.as_slice()) {
+      byte = static_cast<char>(static_cast<td::uint8>(byte) ^ 0xff);
+    }
+    auto expected = deterministic_rldp_payload(rldp_op_.seed, rldp_op_.payload_bytes);
+    rldp_op_.expected_payload_hash = td::sha256_bits256(expected.as_slice());
+
+    td::BufferSlice request{kRldpPrefix.size() + 4 + 32};
+    auto request_slice = request.as_slice();
+    request_slice.copy_from(kRldpPrefix);
+    request_slice.remove_prefix(kRldpPrefix.size());
+    store_be32(request_slice, rldp_op_.payload_bytes);
+    request_slice.remove_prefix(4);
+    request_slice.copy_from(rldp_op_.seed.as_slice());
+
+    auto self = actor_id(this);
+    auto seq = rldp_op_.seq;
+    auto promise = td::PromiseCreator::lambda([self, seq](td::Result<td::BufferSlice> result) {
+      td::actor::send_closure(self, &ProbeCore::rldp_query_result, seq, std::move(result));
+    });
+    td::actor::send_closure(rldp2_, &rldp2::Rldp::send_query_ex_with_transfer_id, local_id_, peer_id_, "probe-rldp",
+                            std::move(promise), td::Timestamp::in(static_cast<double>(timeout_ms) / 1000.0),
+                            std::move(request), static_cast<td::uint64>(payload_bytes + 1024), request_transfer_id);
+  }
+
+ public:
+  void rldp_part_completed(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, td::Bits256 transfer_id,
+                           td::uint32, td::uint64 decoded_bytes) {
+    if (!rldp_op_.active || rldp_op_.interruption_attempted || local_id != local_id_ || peer_id != peer_id_ ||
+        transfer_id != rldp_op_.expected_response_transfer_id) {
+      return;
+    }
+    rldp_op_.decoded_bytes += decoded_bytes;
+    if (rldp_op_.decoded_bytes < rldp_op_.interrupt_after_bytes) {
+      return;
+    }
+    rldp_op_.interruption_attempted = true;
+    rldp_op_.interruption_started = td::Timestamp::now();
+    rldp_op_.interruption_deadline = td::Timestamp::in(static_cast<double>(rldp_op_.planned_interruption_ms) / 1000.0);
+    auto self = actor_id(this);
+    auto seq = rldp_op_.seq;
+    td::actor::send_closure(
+        network_manager_, &adnl::AdnlNetworkManager::suppress_packets_until, rldp_op_.interruption_deadline,
+        td::PromiseCreator::lambda([self, seq](td::Result<adnl::AdnlNetworkManager::PacketSuppressionStats> result) {
+          td::actor::send_closure(self, &ProbeCore::rldp_suppression_result, seq, std::move(result));
+        }));
+  }
+
+  void rldp_query_result(td::uint64 seq, td::Result<td::BufferSlice> result) {
+    if (!rldp_op_.active || rldp_op_.seq != seq) {
+      return;
+    }
+    rldp_op_.query_done = true;
+    rldp_op_.query_completed_at = td::Timestamp::now();
+    if (result.is_error()) {
+      rldp_op_.failure = result.move_as_error().message().str();
+      maybe_finish_rldp();
+      return;
+    }
+    auto response = result.move_as_ok();
+    if (response.size() != static_cast<size_t>(32 + rldp_op_.payload_bytes)) {
+      rldp_op_.failure = "RLDP response size mismatch";
+      maybe_finish_rldp();
+      return;
+    }
+    auto response_slice = response.as_slice();
+    if (response_slice.substr(0, 32) != rldp_op_.seed.as_slice()) {
+      rldp_op_.failure = "RLDP response seed mismatch";
+      maybe_finish_rldp();
+      return;
+    }
+    response_slice.remove_prefix(32);
+    if (td::sha256_bits256(response_slice) != rldp_op_.expected_payload_hash) {
+      rldp_op_.failure = "RLDP response digest mismatch";
+      maybe_finish_rldp();
+      return;
+    }
+    rldp_op_.query_ok = true;
+    maybe_finish_rldp();
+  }
+
+  void rldp_suppression_result(td::uint64 seq, td::Result<adnl::AdnlNetworkManager::PacketSuppressionStats> result) {
+    if (!rldp_op_.active || rldp_op_.seq != seq) {
+      return;
+    }
+    rldp_op_.suppression_done = true;
+    rldp_op_.actual_interruption_ms = elapsed_ms(rldp_op_.interruption_started);
+    if (result.is_error()) {
+      rldp_op_.failure = result.move_as_error().message().str();
+    } else {
+      rldp_op_.suppressed_messages = result.move_as_ok().total();
+    }
+    maybe_finish_rldp();
+  }
+
+ private:
+  void maybe_finish_rldp() {
+    if (!rldp_op_.active || !rldp_op_.query_done || (rldp_op_.interruption_attempted && !rldp_op_.suppression_done)) {
+      return;
+    }
+    if (!rldp_op_.interruption_attempted && rldp_op_.failure.empty()) {
+      rldp_op_.failure = "RLDP transfer completed before the interruption point";
+    }
+    if (rldp_op_.suppression_done && rldp_op_.suppressed_messages == 0 && rldp_op_.failure.empty()) {
+      rldp_op_.failure = "RLDP interruption suppressed no packets";
+    }
+    if (rldp_op_.suppression_done && rldp_op_.actual_interruption_ms < rldp_op_.planned_interruption_ms &&
+        rldp_op_.failure.empty()) {
+      rldp_op_.failure = "RLDP interruption ended before its planned duration";
+    }
+    if (rldp_op_.query_done && rldp_op_.interruption_attempted &&
+        rldp_op_.query_completed_at.at() < rldp_op_.interruption_deadline.at() && rldp_op_.failure.empty()) {
+      rldp_op_.failure = "RLDP query completed before the interruption window ended";
+    }
+    bool ok = rldp_op_.query_ok && rldp_op_.interruption_attempted && rldp_op_.suppression_done &&
+              rldp_op_.suppressed_messages > 0 && rldp_op_.actual_interruption_ms >= rldp_op_.planned_interruption_ms &&
+              rldp_op_.failure.empty();
+    auto millis = elapsed_ms(rldp_op_.started);
+    auto completed = std::move(rldp_op_);
+    rldp_op_ = RldpOp{};
+    td::JsonBuilder jb;
+    {
+      auto e = jb.enter_object();
+      e("id", completed.cmd_id);
+      e("event", "rldp_transferred");
+      e("ok", td::JsonBool{ok});
+      e("bytes", static_cast<td::int64>(completed.payload_bytes));
+      e("part_size_bytes", static_cast<td::int64>(kRldpPartSize));
+      e("expected_parts", static_cast<td::int64>((completed.payload_bytes + kRldpPartSize - 1) / kRldpPartSize));
+      e("interrupt_after_bytes", static_cast<td::int64>(completed.interrupt_after_bytes));
+      e("planned_interruption_ms", completed.planned_interruption_ms);
+      e("interruption_attempted", td::JsonBool{completed.interruption_attempted});
+      e("interruption_ms", completed.actual_interruption_ms);
+      e("suppressed_messages", static_cast<td::int64>(completed.suppressed_messages));
+      e("same_transfer_resumed", td::JsonBool{ok});
+      e("sha256_hex", td::hex_encode(completed.expected_payload_hash.as_slice()));
+      e("millis", millis);
+      if (!completed.failure.empty()) {
+        e("error", completed.failure);
+      }
+    }
+    emit_line(jb.string_builder().as_cslice());
+  }
+
   // ---- echo ----
 
   void cmd_echo(td::int64 id, td::JsonObject &obj) {
@@ -1267,6 +1593,7 @@ class ProbeCore : public td::actor::Actor {
     }
     cancel_outstanding("cancelled by shutdown");
     stopping_ = true;
+    rldp2_.reset();
     adnl_.reset();
     network_manager_.reset();
     keyring_.reset();

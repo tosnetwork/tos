@@ -93,7 +93,7 @@ target_link_libraries(adnl-pong PUBLIC tdactor tos_crypto tl_api tdnet common tl
 
 add_executable(tos-adnl-probe tos-adnl-probe.cpp)
 target_include_directories(tos-adnl-probe PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos-adnl-probe PUBLIC tdactor tos_crypto tl_api tdnet common tl-utils adnl dht git)
+target_link_libraries(tos-adnl-probe PUBLIC tdactor tos_crypto tl_api tdnet common tl-utils adnl rldp2 dht git)
 
 add_library(adnltest STATIC ${ADNL_TEST_SOURCE})
 target_include_directories(adnltest PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
