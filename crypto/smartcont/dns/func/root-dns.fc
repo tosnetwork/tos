@@ -1,6 +1,6 @@
 ;; Root DNS resolver for the `.tos` zone in the masterchain.
-;; Adapted from the TON root resolver 2.0 (ton-blockchain/dns-contract
-;; commit d08131031fb659d2826cccc417ddd9b98476f814): the resolution and
+;; Adapted from the upstream reference root resolver 2.0 (pinned commit
+;; d08131031fb659d2826cccc417ddd9b98476f814): the resolution and
 ;; consumed-bit semantics are unchanged; the only differences are that this
 ;; root serves a single `.tos` zone and stores a single delegated resolver
 ;; address. The contract is immutable: it has no owner, no upgrade path, and

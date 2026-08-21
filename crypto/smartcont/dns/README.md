@@ -1,13 +1,12 @@
 # TOS DNS Smart Contracts
 
 Smart contracts of the `.tos` zone, vendored in-tree at
-`crypto/smartcont/dns/` and ported from
-[ton-blockchain/dns-contract](https://github.com/ton-blockchain/dns-contract)
-at commit `d08131031fb659d2826cccc417ddd9b98476f814` with **zero semantic
-divergence** in the auction, renewal, release, and resolution state machine
-(see `doc/tos-blockchain/DNS.md` §6.1 in `tosnetwork/doc`). The pinned
-upstream repository remains the parity source; this directory is the sole
-home of the `.tos` contracts.
+`crypto/smartcont/dns/` and ported from the upstream reference DNS contracts
+at pinned commit `d08131031fb659d2826cccc417ddd9b98476f814` with **zero
+semantic divergence** in the auction, renewal, release, and resolution state
+machine. The upstream repository identity and parity rules are recorded in
+`doc/tos-blockchain/DNS.md` §6.1 (in `tosnetwork/doc`); this directory is
+the sole home of the `.tos` contracts.
 
 ## Contracts
 
@@ -40,7 +39,7 @@ export FIFTPATH="$(pwd)/test/shim:$(pwd)/../../fift/lib"
 cd func && sh compile.sh
 ```
 
-`test/shim/TonUtil.fif` maps the upstream harness's TON fift words
+`test/shim/TonUtil.fif` maps the upstream harness's original fift words
 (`TonUtil.fif`, `Gram,`) onto their renamed TOS equivalents (`TosUtil.fif`,
 `Tomi,`); both use the same 1e9 base-unit scale, so the shim changes no
 semantics and keeps the vendored harness byte-comparable to upstream.
@@ -56,8 +55,8 @@ toolchain in `<repo>/build`; override with `TOS_SRC`/`TOS_BUILD` if your
 build directory lives elsewhere. It runs the vendored upstream suite (root, collection, item: bids, prolongation,
 records, transfer, fill-up, loss, finish, config/governance) against the TOS
 toolchain. `test/root.js` is adapted to the single `.tos` zone and additionally
-asserts that `.ton`, `.t.me`, and prefix-sharing labels (`tosx`) do **not**
-resolve. `test/utils.js` `AUCTION_START_TIME` must equal
+asserts that foreign suffixes (`.ton`, `.t.me`) and prefix-sharing labels
+(`tosx`) do **not** resolve. `test/utils.js` `AUCTION_START_TIME` must equal
 `func/tos-config.fc`'s `auction_start_time`.
 
 The item-code BOC embedded in `test/utils.js` `makeStorageCollection` is an
@@ -79,8 +78,9 @@ code hashes are what the reproducible-build record must pin.
 
 ## Upstream parity
 
-Before every release, re-compare against `ton-blockchain/dns-contract:main`
-and account for every source difference. The intended full diff is:
+Before every release, re-compare against the upstream repository's `main`
+branch (pinned in `doc/tos-blockchain/DNS.md` §6.1) and account for every
+source difference. The intended full diff is:
 
 | File | Difference |
 |---|---|
