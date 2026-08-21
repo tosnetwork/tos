@@ -24,6 +24,7 @@
     from all source files in the program, then also delete it here.
 */
 #include "common/delay.h"
+#include "smc-envelope/ManualDns.h"
 #include "td/utils/overloaded.h"
 
 #include "DNSResolver.h"
@@ -67,7 +68,7 @@ void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
   }
 
   td::Bits256 category = td::sha256_bits256(td::Slice("site", 4));
-  auto obj = toslib_api::make_object<toslib_api::dns_resolve>(nullptr, host, category, 16);
+  auto obj = toslib_api::make_object<toslib_api::dns_resolve>(nullptr, host, category, tos::DNS_MAX_RESOLVER_HOPS);
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), host = std::move(host)](
                                           td::Result<toslib_api::object_ptr<toslib_api::dns_resolved>> R) mutable {
     if (R.is_error()) {

@@ -34,6 +34,13 @@ namespace tos {
 const td::Bits256 DNS_NEXT_RESOLVER_CATEGORY =
     td::sha256_bits256(td::Slice("dns_next_resolver", strlen("dns_next_resolver")));
 
+// Uniform resolver hop budget shared by every client (lite-client, toslib,
+// toslib-cli, rldp-http-proxy). Exhausting it must be reported as a distinct
+// error, never as "not found". Each hop consumes at least one byte of the
+// encoded name, so with this cap a delegation cycle terminates as a budget
+// error instead of looping.
+constexpr int DNS_MAX_RESOLVER_HOPS = 8;
+
 class DnsInterface {
  public:
   struct EntryDataText {

@@ -5462,7 +5462,8 @@ td::Result<toslib_api::object_ptr<toslib_api::dns_EntryData>> to_toslib_api(
 }
 
 void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td::int32 ttl,
-                                      td::optional<tos::BlockIdExt> block_id, block::StdAddress address,
+                                      td::optional<tos::BlockIdExt> block_id,
+                                      std::vector<block::StdAddress> resolver_path, block::StdAddress address,
                                       DnsFinishData dns_finish_data,
                                       td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise) {
   if (!block_id) {
@@ -5503,7 +5504,8 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
           ToslibError::Internal("partially-resolved DNS entry is not a next-resolver record"));
     }
     auto address = entries[0].data.data.get<tos::ManualDns::EntryDataNextResolver>().resolver;
-    return do_dns_request(prefix, category, ttl - 1, std::move(block_id), address, std::move(promise));
+    return do_dns_request(prefix, category, ttl - 1, std::move(block_id), std::move(resolver_path), address,
+                          std::move(promise));
   }
 
   std::vector<toslib_api::object_ptr<toslib_api::dns_entry>> api_entries;
@@ -5512,15 +5514,25 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
     api_entries.push_back(
         toslib_api::make_object<toslib_api::dns_entry>(entry.name, entry.category, std::move(entry_data)));
   }
-  promise.set_value(toslib_api::make_object<toslib_api::dns_resolved>(std::move(api_entries)));
+  std::vector<toslib_api::object_ptr<toslib_api::accountAddress>> api_path;
+  for (auto& resolver : resolver_path) {
+    api_path.push_back(toslib_api::make_object<toslib_api::accountAddress>(resolver.rserialize(true)));
+  }
+  // provenance (DNS.md §8.1): toslib proves each account state against the
+  // pinned block and reaches that block through a verified proof chain
+  promise.set_value(toslib_api::make_object<toslib_api::dns_resolved>(
+      std::move(api_entries), to_toslib_api(block_id.value()), std::move(api_path), "chain_anchored"));
 }
 
 void ToslibClient::do_dns_request(std::string name, td::Bits256 category, td::int32 ttl,
-                                  td::optional<tos::BlockIdExt> block_id, block::StdAddress address,
+                                  td::optional<tos::BlockIdExt> block_id,
+                                  std::vector<block::StdAddress> resolver_path, block::StdAddress address,
                                   td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise) {
+  resolver_path.push_back(address);
   auto block_id_copy = block_id.copy();
   td::Promise<DnsFinishData> new_promise = promise.send_closure(actor_id(this), &ToslibClient::finish_dns_resolve, name,
-                                                                category, ttl, std::move(block_id), address);
+                                                                category, ttl, std::move(block_id),
+                                                                std::move(resolver_path), address);
 
   if (0) {
     make_request(int_api::GetAccountState{address, std::move(block_id_copy), {}},
@@ -5551,12 +5563,11 @@ td::Status ToslibClient::do_request(const toslib_api::dns_resolve& request,
   // to 16 here; cap the recursion at eight hops so every client follows the
   // same bound. A partial result returned at the cap is still reported as
   // partially resolved, never as "not found".
-  constexpr td::int32 max_dns_resolver_hops = 8;
-  auto ttl = td::clamp(request.ttl_, 0, max_dns_resolver_hops);
+  auto ttl = td::clamp(request.ttl_, 0, tos::DNS_MAX_RESOLVER_HOPS);
   if (!request.account_address_) {
     make_request(int_api::GetDnsResolver{},
                  promise.send_closure(actor_id(this), &ToslibClient::do_dns_request, request.name_, request.category_,
-                                      ttl, std::move(block_id)));
+                                      ttl, std::move(block_id), std::vector<block::StdAddress>{}));
     return td::Status::OK();
   }
   std::string name = request.name_;
@@ -5564,7 +5575,7 @@ td::Status ToslibClient::do_request(const toslib_api::dns_resolve& request,
     name += '.';
   }
   TRY_RESULT(account_address, get_account_address(request.account_address_->account_address_));
-  do_dns_request(name, request.category_, ttl, std::move(block_id), account_address, std::move(promise));
+  do_dns_request(name, request.category_, ttl, std::move(block_id), {}, account_address, std::move(promise));
   return td::Status::OK();
 }
 

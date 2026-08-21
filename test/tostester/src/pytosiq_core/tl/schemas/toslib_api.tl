@@ -128,7 +128,7 @@ dns.actionDeleteAll = dns.Action;
 dns.actionDelete name:string category:int256 = dns.Action;
 dns.actionSet entry:dns.entry = dns.Action;
 
-dns.resolved entries:vector<dns.entry> = dns.Resolved;
+dns.resolved entries:vector<dns.entry> block_id:tos.blockIdExt resolver_path:vector<accountAddress> provenance_class:string = dns.Resolved;
 
 
 //

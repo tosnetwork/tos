@@ -371,14 +371,15 @@ class ToslibClient : public td::actor::Actor {
                              td::uint32 missing_library_fetches = 0);
 
   void do_dns_request(std::string name, td::Bits256 category, td::int32 ttl, td::optional<tos::BlockIdExt> block_id,
-                      block::StdAddress address, td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise);
+                      std::vector<block::StdAddress> resolver_path, block::StdAddress address,
+                      td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise);
   struct DnsFinishData {
     tos::BlockIdExt block_id;
     tos::SmartContract::State smc_state;
   };
   void finish_dns_resolve(std::string name, td::Bits256 category, td::int32 ttl, td::optional<tos::BlockIdExt> block_id,
-                          block::StdAddress address, DnsFinishData dns_finish_data,
-                          td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise);
+                          std::vector<block::StdAddress> resolver_path, block::StdAddress address,
+                          DnsFinishData dns_finish_data, td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise);
 
   td::Status do_request(int_api::GetAccountState request, td::Promise<td::unique_ptr<AccountState>>&&);
   td::Status do_request(int_api::GetAccountStateByTransaction request, td::Promise<td::unique_ptr<AccountState>>&&);

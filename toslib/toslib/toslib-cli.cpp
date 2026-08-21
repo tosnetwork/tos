@@ -972,6 +972,21 @@ class ToslibCli : public td::actor::Actor {
       td::TerminalIO::out() << "  " << entry->name_ << " " << entry->category_ << " "
                             << toslib::to_dns_entry_data(*entry->entry_).move_as_ok() << "\n";
     }
+    if (resolved->block_id_) {
+      td::TerminalIO::out() << "  block: (" << resolved->block_id_->workchain_ << ","
+                            << td::format::as_hex(resolved->block_id_->shard_) << "," << resolved->block_id_->seqno_
+                            << ")\n";
+    }
+    if (!resolved->resolver_path_.empty()) {
+      td::TerminalIO::out() << "  resolver path:";
+      for (auto& hop : resolved->resolver_path_) {
+        td::TerminalIO::out() << " " << hop->account_address_;
+      }
+      td::TerminalIO::out() << "\n";
+    }
+    if (!resolved->provenance_class_.empty()) {
+      td::TerminalIO::out() << "  provenance: " << resolved->provenance_class_ << "\n";
+    }
     promise.set_value(td::Unit());
   }
 
@@ -989,7 +1004,12 @@ class ToslibCli : public td::actor::Actor {
     entries.push_back(make_object<toslib_api::dns_entry>(
         "", tos::DNS_NEXT_RESOLVER_CATEGORY,
         make_object<toslib_api::dns_entryDataNextResolver>(std::move(address.address))));
-    do_dns_resolve(name.str(), category, 10, make_object<toslib_api::dns_resolved>(std::move(entries)),
+    // synthetic local seed (no chain interaction yet): provenance is empty
+    // until the real dns.resolve query below fills it in
+    do_dns_resolve(name.str(), category, tos::DNS_MAX_RESOLVER_HOPS,
+                   make_object<toslib_api::dns_resolved>(
+                       std::move(entries), nullptr,
+                       std::vector<toslib_api::object_ptr<toslib_api::accountAddress>>{}, ""),
                    std::move(promise));
   }
   void dns_cmd(td::Slice cmd, td::ConstParser& parser, td::Promise<td::Unit> promise) {
