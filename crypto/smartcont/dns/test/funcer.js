@@ -25,7 +25,7 @@ function bytesToHex(buffer) {
 const makeType = (key) => {
     if (key === 'coins') {
 
-        return 'Gram,';
+        return 'Tomi,';
 
     } else if (key === 'address') {
 
@@ -151,10 +151,10 @@ ${makeCell(inMsg.body)} constant in_msg_body${i}
 <b b{0110} s, // flags
    sender_address${i} Addr, // sender address
    sender_address${i} Addr, // dest address
-   0 Gram,  // value
+   0 Tomi,  // value
    0 1 u, // extra currency dict
-   0 Gram, // ihr_fee
-   0 Gram, // fwd_fee
+   0 Tomi, // ihr_fee
+   0 Tomi, // fwd_fee
 b> constant in_msg${i}
 
 0x076ef1ea           // magic
@@ -262,14 +262,14 @@ const makeCheckReserveAction = (action) => {
     return `
 4 B@+ swap B{36e6b809} B= not abort"Wrong reserve tag"
 8 u@+ swap =: send-mode
-Gram@+ swap =: actual-ton
+Tomi@+ swap =: actual-amount
 dup =: actual-collection
-${action.amount} =: expected-ton
+${action.amount} =: expected-amount
 <b b{0} s, <b b> ref, b> <s =: expected-collection
-expected-ton actual-ton <> 
+expected-amount actual-amount <> 
 { ."Error: incorrect reserve amount" cr 
-  ."Expected " expected-ton . cr
-  ."Got      " actual-ton . cr
+  ."Expected " expected-amount . cr
+  ."Got      " actual-amount . cr
 0 halt } if
 
 expected-collection s>c hashu actual-collection s>c hashu <> 
@@ -391,7 +391,7 @@ const makeGetMethods = (getMethods) => {
 
 const makeTestFif = (data) => {
     return `
-"TonUtil.fif" include
+"TosUtil.fif" include
 "Asm.fif" include
 
 // $ -- id
@@ -431,9 +431,9 @@ const makeTestFif = (data) => {
   1 i@+ nip
   2 u@+ swap 0 <> { ."src = none expected" cr 0 halt } if
   addr@+ -rot 2=: msg.dest
-  Gram@+ swap =: msg.value
+  Tomi@+ swap =: msg.value
   1 i@+ swap { ref@+ swap } { null } cond =: msg.extra
-  Gram@+ nip Gram@+ nip
+  Tomi@+ nip Tomi@+ nip
   64 u@+ nip 32 u@+ nip
   1 i@+ swap abort"StateInit is not supported"
   1 i@+ swap { ref@ } { s>c } cond =: msg.body

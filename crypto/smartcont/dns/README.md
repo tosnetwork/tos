@@ -35,14 +35,13 @@ this directory, `crypto/smartcont/dns/`):
 
 ```sh
 export PATH="<repo>/build/crypto:$PATH"
-export FIFTPATH="$(pwd)/test/shim:$(pwd)/../../fift/lib"
+export FIFTPATH="$(pwd)/../../fift/lib"
 cd func && sh compile.sh
 ```
 
-`test/shim/TonUtil.fif` maps the upstream harness's original fift words
-(`TonUtil.fif`, `Gram,`) onto their renamed TOS equivalents (`TosUtil.fif`,
-`Tomi,`); both use the same 1e9 base-unit scale, so the shim changes no
-semantics and keeps the vendored harness byte-comparable to upstream.
+`test/funcer.js` is adapted to the TOS fift library naming (`TosUtil.fif`,
+`Tomi,` instead of the upstream `TonUtil.fif`, `Gram,`); both use the same
+1e9 base-unit scale, so the adaptation changes no test semantics.
 
 ## Testing
 
@@ -87,7 +86,7 @@ source difference. The intended full diff is:
 | `func/root-dns.fc` | single `.tos` zone (source adaptation, same semantics) |
 | `func/dns-utils.fc` | `auction_start_time` moved to `tos-config.fc` |
 | `func/tos-config.fc` | new; deployment decision only |
-| `func/compile.sh`, `deploy/`, `test/shim/`, `test/root.js`, `test/utils.js` | toolchain, deployment, and zone adaptation |
+| `func/compile.sh`, `deploy/`, `test/funcer.js`, `test/root.js`, `test/utils.js` | toolchain, deployment, and zone adaptation |
 
 Anything beyond this list is a semantic fork and requires its own TIP, review,
 and vectors.

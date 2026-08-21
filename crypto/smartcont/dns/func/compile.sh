@@ -3,8 +3,8 @@
 #
 # Requires `func` and `fift` on PATH (e.g. from a TOS build tree:
 #   export PATH="<repo>/build/crypto:$PATH")
-# and FIFTPATH pointing at the fift library plus the test shim:
-#   export FIFTPATH="$(pwd)/../test/shim:$(pwd)/../../../fift/lib"
+# and FIFTPATH pointing at the fift library:
+#   export FIFTPATH="$(pwd)/../../../fift/lib"
 set -e
 
 rm -f build/nft-item-code.fif

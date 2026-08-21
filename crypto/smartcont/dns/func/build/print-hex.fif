@@ -1,5 +1,5 @@
 #!/usr/bin/fift -s
-"TonUtil.fif" include
+"TosUtil.fif" include
 "Asm.fif" include
 
 ."nft-collection:" cr
