@@ -115,7 +115,12 @@ export class NftCollection implements Contract {
      *   op(32) = 1  query_id(64)  item_index(64)  amount(coins)
      *   ref: item_owner(address) + ref(item_content)
      *
-     * @param args.index   - sequential item index
+     * Only sequential 64-bit-indexed collections use this op. Hash-indexed
+     * collections (uint256 indexes, e.g. the `.tos` domain collection, whose
+     * `next_item_index` is -1) mint through their own flow — for `.tos`,
+     * an op-0 comment registration; see the dns module.
+     *
+     * @param args.index   - sequential item index (must fit 64 bits)
      * @param args.owner   - initial owner of the new NFT
      * @param args.content - individual content cell for the item
      * @param args.value   - TOS (in nanoTOS) attached to the deploy message
@@ -131,6 +136,13 @@ export class NftCollection implements Contract {
             queryId?: bigint;
         },
     ): Promise<void> {
+        if (args.index >= 1n << 64n) {
+            throw new Error(
+                'sendMint requires a sequential 64-bit index; hash-indexed collections ' +
+                    '(uint256 indexes, e.g. .tos domains) do not use the op-1 mint',
+            );
+        }
+
         const itemContent = beginCell()
             .storeAddress(args.owner)
             .storeRef(args.content)

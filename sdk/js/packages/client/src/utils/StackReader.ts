@@ -66,6 +66,13 @@ function cellBytesFromEntry(entry: unknown): string {
     return String(cell?.["bytes"] ?? "");
   }
 
+  // Named-type slice (emitted by runGetMethodStd for slice results, e.g.
+  // dnsresolve answers): { "@type": "tvm.stackEntrySlice", "slice": { "bytes": "..." } }
+  if (obj["@type"] === "tvm.stackEntrySlice") {
+    const slice = obj["slice"] as Record<string, unknown>;
+    return String(slice?.["bytes"] ?? "");
+  }
+
   // Compact-array: ["cell", { "bytes": "..." }] or ["slice", { "bytes": "..." }]
   if (Array.isArray(entry) && (entry[0] === "cell" || entry[0] === "slice")) {
     const cell = entry[1] as Record<string, unknown>;
