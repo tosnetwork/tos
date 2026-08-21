@@ -201,6 +201,12 @@ TM$0.569879384 TM$0.335223167 config.block_create_fees!
 // extra-currency mint power.
 config_addr config.minter_smc!
 
+// ConfigParam 4 (masterchain root DNS resolver) is deliberately not set at
+// genesis: clients treat an absent parameter 4 as "DNS unavailable" and fail
+// closed. To activate TOS DNS from genesis, generate the root resolver
+// StateInit (see tosnetwork/dns-contract deploy/gen-deploy.fif), then set:
+// 0x<root-resolver-account-hash> config.dns_root_smc!
+
 // ConfigParam 7 governs extra currencies only and is intentionally omitted, so
 // genesis mints no extra currency. Native TOS creation is separate: each
 // produced block creates the amount configured by ConfigParam 14 above.

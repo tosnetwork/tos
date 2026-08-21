@@ -108,7 +108,25 @@ void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
 }
 
 void DNSResolver::save_to_cache(std::string host, std::string address) {
+  double now = td::Time::now();
+  if (cache_.size() >= max_cache_entries_ && cache_.find(host) == cache_.end()) {
+    // evict expired entries first, then the stalest live entry
+    auto oldest = cache_.end();
+    for (auto it = cache_.begin(); it != cache_.end();) {
+      if (now >= it->second.created_at_ + CACHE_TIMEOUT_HARD) {
+        it = cache_.erase(it);
+        continue;
+      }
+      if (oldest == cache_.end() || it->second.created_at_ < oldest->second.created_at_) {
+        oldest = it;
+      }
+      ++it;
+    }
+    if (cache_.size() >= max_cache_entries_ && oldest != cache_.end()) {
+      cache_.erase(oldest);
+    }
+  }
   CacheEntry &entry = cache_[host];
   entry.address_ = address;
-  entry.created_at_ = td::Time::now();
+  entry.created_at_ = now;
 }

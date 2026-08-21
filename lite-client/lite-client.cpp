@@ -1857,11 +1857,11 @@ bool TestNode::dns_resolve_start(tos::WorkchainId workchain, tos::StdSmcAddress 
       return get_config_params(mc_last_id_, std::move(P), 0x3000, "", {4});
     }
   }
-  return dns_resolve_send(workchain, addr, blkid, domain, qdomain, cat, mode);
+  return dns_resolve_send(workchain, addr, blkid, domain, qdomain, cat, mode, max_dns_resolver_hops);
 }
 
 bool TestNode::dns_resolve_send(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt blkid,
-                                std::string domain, std::string qdomain, td::Bits256 cat, int mode) {
+                                std::string domain, std::string qdomain, td::Bits256 cat, int mode, int hops_left) {
   LOG(INFO) << "dns_resolve for '" << domain << "' category=" << cat << " mode=" << mode
             << " starting from smart contract " << workchain << ":" << addr.to_hex() << " with respect to block "
             << blkid.to_str();
@@ -1873,8 +1873,8 @@ bool TestNode::dns_resolve_send(tos::WorkchainId workchain, tos::StdSmcAddress a
   std::vector<vm::StackEntry> params;
   params.emplace_back(vm::load_cell_slice_ref(cell));
   params.emplace_back(td::bits_to_refint(cat.cbits(), 256, false));
-  auto P = td::PromiseCreator::lambda([this, workchain, addr, blkid, domain, qdomain, cat,
-                                       mode](td::Result<std::vector<vm::StackEntry>> R) {
+  auto P = td::PromiseCreator::lambda([this, workchain, addr, blkid, domain, qdomain, cat, mode,
+                                       hops_left](td::Result<std::vector<vm::StackEntry>> R) {
     if (R.is_error()) {
       LOG(ERROR) << R.move_as_error();
       return;
@@ -1892,7 +1892,8 @@ bool TestNode::dns_resolve_send(tos::WorkchainId workchain, tos::StdSmcAddress a
       LOG(ERROR) << "invalid integer result of dnsresolve (" << x << ")";
       return;
     }
-    return dns_resolve_finish(workchain, addr, blkid, domain, qdomain, cat, mode, (int)x->to_long(), std::move(cell));
+    return dns_resolve_finish(workchain, addr, blkid, domain, qdomain, cat, mode, hops_left, (int)x->to_long(),
+                              std::move(cell));
   });
   return start_run_method(workchain, addr, blkid, "dnsresolve", std::move(params), 0x17, std::move(P));
 }
@@ -1954,13 +1955,13 @@ bool TestNode::show_dns_record(std::ostream& os, td::Bits256 cat, Ref<vm::CellSl
 }
 
 void TestNode::dns_resolve_finish(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt blkid,
-                                  std::string domain, std::string qdomain, td::Bits256 cat, int mode, int used_bits,
-                                  Ref<vm::Cell> value) {
+                                  std::string domain, std::string qdomain, td::Bits256 cat, int mode, int hops_left,
+                                  int used_bits, Ref<vm::Cell> value) {
   if (used_bits <= 0) {
     td::TerminalIO::out() << "domain '" << domain << "' not found" << std::endl;
     return;
   }
-  if ((used_bits & 7) || (unsigned)used_bits > 8 * std::min<std::size_t>(qdomain.size(), 126)) {
+  if ((used_bits & 7) || (unsigned)used_bits > 8 * qdomain.size()) {
     LOG(ERROR) << "too many bits used (" << used_bits << " out of " << qdomain.size() * 8 << ")";
     return;
   }
@@ -1991,7 +1992,14 @@ void TestNode::dns_resolve_finish(tos::WorkchainId workchain, tos::StdSmcAddress
     if ((mode & 1)) {
       return;  // no recursive resolving
     }
-    if (!(dns_resolve_send(nx_wc, nx_addr, blkid, domain, qdomain.substr(pos), cat, mode))) {
+    if (hops_left <= 1) {
+      // distinct from "not found": the name may exist behind a longer chain,
+      // but this client refuses to follow it
+      LOG(ERROR) << "resolver hop limit (" << max_dns_resolver_hops << ") exhausted while resolving '" << domain
+                 << "'";
+      return;
+    }
+    if (!(dns_resolve_send(nx_wc, nx_addr, blkid, domain, qdomain.substr(pos), cat, mode, hops_left - 1))) {
       LOG(ERROR) << "cannot send next dns query";
       return;
     }

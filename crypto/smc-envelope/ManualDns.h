@@ -191,7 +191,12 @@ class DnsInterface {
   static std::string decode_name(td::Slice name);
 
   static size_t get_default_max_name_size() {
-    return 128;
+    // The encoded form (labels reversed, NUL after every label) is always the
+    // dotted length plus one byte, and dnsresolve receives it as the data bits
+    // of a single cell: 1023 bits fit at most 127 bytes. The dotted name is
+    // therefore bounded at 126 bytes; 127 and 128 passed this check before but
+    // always failed deeper in resolve_args_raw with "encoded name too long".
+    return 126;
   }
   static td::Result<SmartContract::Args> resolve_args_raw(td::Slice encoded_name, td::Bits256 category,
                                                           block::StdAddress address = {});

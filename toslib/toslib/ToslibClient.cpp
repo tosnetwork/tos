@@ -5465,7 +5465,12 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
                                       td::optional<tos::BlockIdExt> block_id, block::StdAddress address,
                                       DnsFinishData dns_finish_data,
                                       td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise) {
-  block_id = dns_finish_data.block_id;
+  if (!block_id) {
+    // Pin the entire multi-hop resolution to the block the first hop ran at:
+    // later hops reuse this anchor instead of whatever block each previous
+    // hop's state was served from, so one lookup cannot straddle checkpoints.
+    block_id = dns_finish_data.block_id;
+  }
   // TODO: check if the smartcontract supports Dns interface
   // TODO: should we use some DnsInterface instead of ManualDns?
   auto dns = tos::ManualDns::create(dns_finish_data.smc_state, std::move(address));
@@ -5542,10 +5547,16 @@ void ToslibClient::do_dns_request(std::string name, td::Bits256 category, td::in
 td::Status ToslibClient::do_request(const toslib_api::dns_resolve& request,
                                     td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise) {
   auto block_id = query_context_.block_id.copy();
+  // Uniform resolver hop budget: callers historically passed anything from 0
+  // to 16 here; cap the recursion at eight hops so every client follows the
+  // same bound. A partial result returned at the cap is still reported as
+  // partially resolved, never as "not found".
+  constexpr td::int32 max_dns_resolver_hops = 8;
+  auto ttl = td::clamp(request.ttl_, 0, max_dns_resolver_hops);
   if (!request.account_address_) {
     make_request(int_api::GetDnsResolver{},
                  promise.send_closure(actor_id(this), &ToslibClient::do_dns_request, request.name_, request.category_,
-                                      request.ttl_, std::move(block_id)));
+                                      ttl, std::move(block_id)));
     return td::Status::OK();
   }
   std::string name = request.name_;
@@ -5553,7 +5564,7 @@ td::Status ToslibClient::do_request(const toslib_api::dns_resolve& request,
     name += '.';
   }
   TRY_RESULT(account_address, get_account_address(request.account_address_->account_address_));
-  do_dns_request(name, request.category_, request.ttl_, std::move(block_id), account_address, std::move(promise));
+  do_dns_request(name, request.category_, ttl, std::move(block_id), account_address, std::move(promise));
   return td::Status::OK();
 }
 

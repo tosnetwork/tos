@@ -46,5 +46,8 @@ class DNSResolver : public td::actor::Actor {
     std::string address_;
     double created_at_;
   };
+  // Bounded: an attacker who can drive lookups must not be able to grow the
+  // cache without limit. When full, the stalest entry is evicted first.
+  static constexpr std::size_t max_cache_entries_ = 1024;
   std::map<std::string, CacheEntry> cache_;
 };
