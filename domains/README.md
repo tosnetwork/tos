@@ -27,9 +27,13 @@ authority** — finalized TOS chain state is the only authority
     not refresh the renewal clock), record set/delete, transfer, release;
   - DNSRecord codecs and transport-agnostic resolver-hop validation with the
     uniform eight-hop budget.
-- `apps/web` — minimal offline inspector: canonicalization, registrability,
-  item index/address derivation, and minimum-bid display from the pinned
-  collection configuration. The full bidding/management UI builds on this.
+- `apps/web` — non-custodial registrar and manager. It reads Domain Item
+  getters from a configurable HTTPS JSON-RPC endpoint, connects only to the
+  injected TOS Connect v2 provider, shows lifecycle and raw-address warnings,
+  builds every inherited registration/auction/renewal/record/NFT message
+  locally, and asks the wallet to sign and broadcast it. Pending intents are
+  kept in browser storage for reload recovery; no owner key or RPC credential
+  is accepted or retained.
 
 ## Develop
 
@@ -47,9 +51,12 @@ npm -w @tos-domains/web run dev
 the compiled contracts. Regenerate after any contract or `tos-config.fc` change;
 a mismatch fails the test suite.
 
-## Remaining product work
+## Deployment gates
 
-Wallet connection and signing, live chain reads (auction state, records,
-lifecycle) against a TOS JSON-RPC endpoint, bid/outbid/finalization recovery
-UX, overdue-name warnings, transaction-state recovery, phishing defenses, and
-the CSP/security review required before any public deployment.
+Set `apps/web/src/config.json` only from the governance-published Collection
+address, immutable item code hash/depth, launch time, and public RPC endpoint.
+The checked-in `_headers` policy must be reproduced by the actual CDN (a meta
+CSP cannot enforce `frame-ancestors`). Before public deployment, run the
+localnet acceptance suite with a real injected wallet and commission an
+independent application and contract review. The UI deliberately stays
+mainnet-only and disables registration before the published launch time.

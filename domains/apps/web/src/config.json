@@ -3,5 +3,6 @@
   "collection_address": "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
   "item_code_hash": "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78",
   "item_code_depth": 11,
-  "auction_start_time": 1798761600
+  "auction_start_time": 1798761600,
+  "rpc_endpoint": ""
 }

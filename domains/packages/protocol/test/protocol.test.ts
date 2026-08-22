@@ -12,6 +12,7 @@ import {
   ONE_TOS,
   ONE_YEAR,
   bytesToHex,
+  serializeBoc,
   canonicalizeName,
   classifyDomain,
   decodeName,
@@ -321,5 +322,16 @@ describe('BOC parsing', () => {
 
   it('rejects garbage', () => {
     expect(() => parseBoc(new Uint8Array([1, 2, 3]))).toThrow(/BOC/);
+  });
+
+  it('round-trips message bodies with refs through canonical BOC serialization', () => {
+    const child = new Builder().storeUint(7, 3).endCell();
+    const root = new Builder().storeUint(0x4eb1f0f9, 32).storeRef(child).endCell();
+    expect(bytesToHex(serializeBoc(root))).toBe(
+      'b5ee9c7201010201000a0001084eb1f0f9010001f0',
+    ); // byte-for-byte ground truth from @tos/core Cell.toBoc({ crc32: false })
+    const parsed = parseBoc(serializeBoc(root));
+    expect(parsed.hashHex()).toBe(root.hashHex());
+    expect(parsed.refs[0]?.hashHex()).toBe(child.hashHex());
   });
 });

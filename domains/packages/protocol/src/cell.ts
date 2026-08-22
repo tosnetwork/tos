@@ -260,6 +260,84 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/** Serialize one ordinary-cell tree as a canonical, unindexed, CRC-less BOC. */
+export function serializeBoc(root: Cell): Uint8Array {
+  const cells: Cell[] = [];
+  const indexes = new Map<Cell, number>();
+  const visit = (cell: Cell): void => {
+    if (indexes.has(cell)) return;
+    indexes.set(cell, cells.length);
+    cells.push(cell);
+    for (const ref of cell.refs) visit(ref);
+  };
+  visit(root);
+  const refByteSize = bytesNeeded(cells.length - 1);
+  const bodies = cells.map((cell) => {
+    const dataBytes = Math.ceil(cell.bitLen / 8);
+    const body = new Uint8Array(2 + dataBytes + cell.refs.length * refByteSize);
+    body[0] = cell.refs.length;
+    body[1] = Math.floor(cell.bitLen / 8) + Math.ceil(cell.bitLen / 8);
+    body.set(cell.data, 2);
+    if (cell.bitLen % 8 !== 0) {
+      body[1 + dataBytes] = (body[1 + dataBytes] as number) | (0x80 >> (cell.bitLen % 8));
+    }
+    let offset = 2 + dataBytes;
+    for (const ref of cell.refs) {
+      writeUint(body, offset, indexes.get(ref) as number, refByteSize);
+      offset += refByteSize;
+    }
+    return body;
+  });
+  const totalSize = bodies.reduce((sum, body) => sum + body.length, 0);
+  const offsetByteSize = bytesNeeded(totalSize);
+  const headerSize = 6 + 3 * refByteSize + offsetByteSize + refByteSize;
+  const out = new Uint8Array(headerSize + totalSize);
+  out.set([0xb5, 0xee, 0x9c, 0x72], 0);
+  out[4] = refByteSize;
+  out[5] = offsetByteSize;
+  let offset = 6;
+  for (const value of [cells.length, 1, 0]) {
+    writeUint(out, offset, value, refByteSize);
+    offset += refByteSize;
+  }
+  writeUint(out, offset, totalSize, offsetByteSize);
+  offset += offsetByteSize;
+  writeUint(out, offset, 0, refByteSize);
+  offset += refByteSize;
+  for (const body of bodies) {
+    out.set(body, offset);
+    offset += body.length;
+  }
+  return out;
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+export function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function bytesNeeded(value: number): number {
+  let width = 1;
+  while (value >= 256 ** width) width++;
+  return width;
+}
+
+function writeUint(target: Uint8Array, offset: number, value: number, width: number): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value >= 256 ** width) {
+    throw new Error('BOC integer does not fit its field');
+  }
+  for (let index = width - 1; index >= 0; index--) {
+    target[offset + index] = value & 0xff;
+    value = Math.floor(value / 256);
+  }
+}
+
 /**
  * Parse a standard BOC (serialized bag of cells) into its root cell.
  * Ordinary cells only; exotic cells and multiple roots are rejected.

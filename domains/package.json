@@ -5,7 +5,7 @@
   "description": "Non-custodial registrar and management application for the .tos zone",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "test": "npm -w @tos-domains/protocol run test",
-    "build": "npm -w @tos-domains/protocol run build"
+    "test": "npm -w @tos-domains/protocol run test && npm -w @tos-domains/web run test",
+    "build": "npm -w @tos-domains/protocol run build && npm -w @tos-domains/web run build"
   }
 }
