@@ -96,6 +96,26 @@ TEST(WalletIndex, AccountEventExactLookupAndCursorPagination) {
   td::rmrf(path).ignore();
 }
 
+TEST(WalletIndex, NftReverseOwnerCanBeRemovedAfterOwnershipEnds) {
+  auto path = std::string("test-wallet-index-db-nft-owner");
+  auto db = open_fresh_db(path);
+  tos_wallet_index::HashKey nft = td::Bits256::zero();
+  tos_wallet_index::HashKey owner = td::Bits256::zero();
+  nft.as_slice()[31] = 0x11;
+  owner.as_slice()[31] = 0x22;
+
+  ASSERT_TRUE(db->put_nft_owner(nft, owner).is_ok());
+  tos_wallet_index::HashKey found;
+  auto before = db->get_nft_owner(nft, found);
+  ASSERT_TRUE(before.is_ok() && before.ok());
+  ASSERT_TRUE(found == owner);
+
+  ASSERT_TRUE(db->erase_nft_owner(nft).is_ok());
+  auto after = db->get_nft_owner(nft, found);
+  ASSERT_TRUE(after.is_ok() && !after.ok());
+  td::rmrf(path).ignore();
+}
+
 TEST(WalletIndex, IncompleteBlockMarkerRoundTrip) {
   auto path = std::string("test-wallet-index-db-roundtrip");
   auto db = open_fresh_db(path);

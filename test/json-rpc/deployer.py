@@ -6,6 +6,7 @@ the pre-funded main wallet at -1:000...000.  All deployment happens via Fift
 scripts + the JSON-RPC ``sendBoc`` endpoint — no lite-client needed.
 """
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -645,7 +646,7 @@ def deploy_generic_contract(
   b{{10}} s, b{{0}} s, {addr_wc} 8 i,
   0x{addr_hex} 256 u,
   {amount_nano} Tomi, b{{0}} s, 0 Tomi, 0 Tomi, 0 64 u, 0 32 u,
-  b{{1}} s, b{{1}} s, si_cell ref, b{{0}} s, b{{0}} s,
+  b{{1}} s, b{{1}} s, si_cell ref, b{{0}} s,
 b> constant int_msg
 
 <b {seqno} 32 u, 3 8 u, int_msg ref, b>
@@ -679,6 +680,98 @@ b>
     # Cleanup
     shutil.rmtree(str(working_dir))
     return {"address": full_addr, "code_hash": code_hash}
+
+
+def send_internal_body(endpoint: str, destination: str, amount_nano: int, body_fift: str) -> None:
+    """Send one signed internal message from the deterministic faucet wallet."""
+    dest_wc_text, dest_hash = destination.split(":", 1)
+    seqno = get_seqno(endpoint, MAIN_WALLET_ADDR)
+    script = f"""\
+"TosUtil.fif" include
+"Asm.fif" include
+"{MAIN_WALLET_PK}" load-keypair constant mw_pk constant mw_pub
+{body_fift}
+constant msg_body
+<b
+  b{{0}} s, b{{1}} s, b{{0}} s, b{{0}} s, b{{00}} s,
+  b{{10}} s, b{{0}} s, {int(dest_wc_text)} 8 i, 0x{dest_hash} 256 u,
+  {amount_nano} Tomi, b{{0}} s, 0 Tomi, 0 Tomi, 0 64 u, 0 32 u,
+  b{{0}} s, b{{1}} s, msg_body ref,
+b> constant int_msg
+<b {seqno} 32 u, 3 8 u, int_msg ref, b>
+dup constant payload
+dup hashu mw_pk ed25519_sign_uint constant signature
+<b b{{1000100}} s, -1 0 addr, 0 Tomi, b{{00}} s,
+   signature B, payload <s s, b>
+2 boc+>B dup ."BOC:" Bx. cr
+"""
+    output = run_fift(script)
+    boc_hex = next((line[4:].strip() for line in output.splitlines() if line.startswith("BOC:")), None)
+    if not boc_hex:
+        raise RuntimeError(f"No BOC in internal transfer:\n{output}")
+    result = send_boc(endpoint, base64.b64encode(bytes.fromhex(boc_hex)).decode())
+    if not result.get("ok"):
+        raise RuntimeError(f"sendBoc failed: {result}")
+
+
+def mint_test_jettons(endpoint: str, master: str, owner: str, amount: int = 1_000_000_000) -> None:
+    """Mint the deterministic TEP-74 fixture and wait for its wallet index entry."""
+    owner_wc, owner_hash = owner.split(":", 1)
+    body = f"""\
+<b
+  21 32 u, 1 64 u,
+  b{{10}} s, b{{0}} s, {int(owner_wc)} 8 i, 0x{owner_hash} 256 u,
+  100000000 Tomi,
+  <b 0x178d4519 32 u, 1 64 u, {amount} Tomi,
+     b{{10}} s, b{{0}} s, -1 8 i, 0 256 u,
+     b{{00}} s, 0 Tomi, b{{0}} s,
+  b> ref,
+b>
+"""
+    send_internal_body(endpoint, master, 200_000_000, body)
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        response = requests.post(
+            f"{endpoint}jsonRPC",
+            json={"jsonrpc": "2.0", "id": 1, "method": "getAccountJettons", "params": {"address": owner}},
+            timeout=8,
+        ).json()
+        rows = response.get("result", {}).get("jettons", [])
+        if any(str(row.get("jetton_master", "")).lower() == master.lower() for row in rows):
+            return
+        time.sleep(0.5)
+    raise RuntimeError("Minted Jetton did not appear in getAccountJettons")
+
+
+def mint_test_nft(endpoint: str, collection: str, owner: str) -> str:
+    """Mint one canonical TEP-62 fixture and return its indexed item address."""
+    owner_wc, owner_hash = owner.split(":", 1)
+    metadata = _tep64_content_fift({
+        "name": "TOS Test NFT #0",
+        "description": "Deterministic local TOS NFT item fixture",
+        "image": "https://example.invalid/tos-test-nft-0.png",
+    }, "item_content")
+    body = f"""\
+{metadata}
+<b 1 32 u, 2 64 u, 0 64 u, 100000000 Tomi,
+   <b b{{10}} s, b{{0}} s, {int(owner_wc)} 8 i, 0x{owner_hash} 256 u,
+      item_content ref, b> ref,
+b>
+"""
+    send_internal_body(endpoint, collection, 200_000_000, body)
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        response = requests.post(
+            f"{endpoint}jsonRPC",
+            json={"jsonrpc": "2.0", "id": 1, "method": "getAccountNfts", "params": {"address": owner}},
+            timeout=8,
+        ).json()
+        rows = response.get("result", {}).get("nfts", [])
+        for row in rows:
+            if str(row.get("collection", "")).lower() == collection.lower():
+                return row["nft_item"]
+        time.sleep(0.5)
+    raise RuntimeError("Minted NFT did not appear in getAccountNfts")
 
 
 def deploy_multisig_contract(
@@ -1053,7 +1146,7 @@ dictnew
 JETTON_MINTER_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/jetton-minter"
 JETTON_WALLET_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/jetton-wallet"
 NFT_COLLECTION_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/nft-collection"
-NFT_ITEM_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/tele-nft-item"
+NFT_ITEM_SRC = TOS_ROOT / "test/json-rpc/contracts"
 
 
 def _compile_func(src_dir: Path, main_file: str) -> Path:
@@ -1070,17 +1163,34 @@ def _compile_func(src_dir: Path, main_file: str) -> Path:
 
 
 def _ensure_compiled():
-    """Compile all token contracts if not already done."""
+    """Compile all token contracts and materialize their code-cell BOCs."""
     contracts = [
-        (JETTON_MINTER_SRC, "jetton-minter.fc"),
-        (JETTON_WALLET_SRC, "jetton-wallet.fc"),
-        (NFT_COLLECTION_SRC, "nft-collection-editable.fc"),
-        (NFT_ITEM_SRC, "nft-item.fc"),
+        (JETTON_MINTER_SRC, "jetton-minter.fc", "jetton-minter-code.boc"),
+        (JETTON_WALLET_SRC, "jetton-wallet.fc", "jetton-wallet-code.boc"),
+        (NFT_COLLECTION_SRC, "nft-collection-editable.fc", "nft-collection-code.boc"),
+        (NFT_ITEM_SRC, "nft-item.fc", "nft-item-code.boc"),
     ]
-    for src_dir, main_file in contracts:
+    for src_dir, main_file, boc_name in contracts:
         out = Path(f"/tmp/{main_file.replace('.fc', '.fif')}")
-        if not out.exists():
+        boc = Path("/tmp") / boc_name
+        if not out.exists() or out.stat().st_mtime < (src_dir / main_file).stat().st_mtime:
             _compile_func(src_dir, main_file)
+        if not boc.exists() or boc.stat().st_mtime < out.stat().st_mtime:
+            run_fift(f'"{out}" include\n2 boc+>B "{boc}" B>file')
+
+
+def _tep64_content_fift(metadata: dict[str, str], constant: str) -> str:
+    """Build a named TEP-64 on-chain metadata cell for deterministic fixtures."""
+    lines = ["dictnew"]
+    for key, value in metadata.items():
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        lines.extend([
+            f'<b <b 0 8 u, "{escaped}" $, b> ref, b> <s',
+            f'0x{digest} rot 256 udict! not abort"cannot store TEP-64 {key}"',
+        ])
+    lines.append(f"<b 0 8 u, swap dict, b> constant {constant}")
+    return "\n".join(lines)
 
 
 def deploy_jetton_master(endpoint: str, admin_addr: str) -> dict:
@@ -1091,11 +1201,19 @@ def deploy_jetton_master(endpoint: str, admin_addr: str) -> dict:
     admin_hash = parts[1]
 
     # Data: total_supply(coins=0) + admin_address + content(cell) + wallet_code(cell)
+    metadata_fift = _tep64_content_fift({
+        "name": "TOS Test Jetton",
+        "symbol": "TTJ",
+        "decimals": "9",
+        "description": "Deterministic local TOS Jetton fixture",
+        "image": "https://example.invalid/tos-test-jetton.png",
+    }, "jetton_content")
     data_fift = f"""\
+{metadata_fift}
 <b
   0 Tomi,                                          // total_supply = 0
   b{{10}} s, b{{0}} s, {admin_wc} 8 i, 0x{admin_hash} 256 u, // admin_address
-  <b 0 8 u, b> ref,                                // content: onchain marker
+  jetton_content ref,                               // TEP-64 on-chain content
   "jetton-wallet-code.boc" file>B B>boc ref,        // jetton_wallet_code
 b>"""
 
@@ -1111,11 +1229,17 @@ def deploy_nft_collection(endpoint: str, owner_addr: str) -> dict:
     owner_hash = parts[1]
 
     # Data: owner + next_item_index + content_ref + item_code_ref + royalty_ref
+    metadata_fift = _tep64_content_fift({
+        "name": "TOS Test NFTs",
+        "description": "Deterministic local TOS NFT collection fixture",
+        "image": "https://example.invalid/tos-test-nft.png",
+    }, "collection_content")
     data_fift = f"""\
+{metadata_fift}
 <b
   b{{10}} s, b{{0}} s, {owner_wc} 8 i, 0x{owner_hash} 256 u, // owner_address
   0 64 u,                                           // next_item_index = 0
-  <b <b 0 8 u, b> ref,                              // collection_content (onchain empty)
+  <b collection_content ref,                         // collection_content (TEP-64)
      <b 0 8 u, b> ref,                              // common_content
   b> ref,                                            // content cell
   "nft-item-code.boc" file>B B>boc ref,              // nft_item_code
@@ -1128,20 +1252,14 @@ b>"""
     return deploy_generic_contract(endpoint, code_fift, data_fift, amount_nano=1_000_000_000)
 
 
-def deploy_all_tokens(endpoint: str) -> dict:
+def deploy_all_tokens(endpoint: str, fixture_owner: str | None = None) -> dict:
     """Deploy Jetton master and NFT collection."""
     results = {}
 
-    # Use the first deployed wallet as admin/owner
-    cache = _read_cache()
-    wallets = cache.get("wallets", {})
-    admin_addr = None
-    for w in wallets.values():
-        if w.get("address"):
-            admin_addr = w["address"]
-            break
-    if not admin_addr:
-        admin_addr = MAIN_WALLET_ADDR
+    # The deterministic faucet owns token fixtures so subsequent integration
+    # tests can mint and mutate them. Picking an arbitrary deployed wallet here
+    # creates an owner for which the harness has no signing key.
+    admin_addr = MAIN_WALLET_ADDR
 
     print(f"Using admin address: {admin_addr}")
 
@@ -1149,6 +1267,10 @@ def deploy_all_tokens(endpoint: str) -> dict:
     try:
         results["jetton_master"] = deploy_jetton_master(endpoint, admin_addr)
         print(f"  -> {results['jetton_master']['address']}")
+        if fixture_owner:
+            mint_test_jettons(endpoint, results["jetton_master"]["address"], fixture_owner)
+            results["jetton_master"]["fixture_owner"] = fixture_owner
+            print(f"  -> minted 1 TTJ to {fixture_owner}")
     except Exception as e:
         print(f"  FAILED: {e}")
         results["jetton_master"] = {"address": None, "error": str(e)}
@@ -1157,6 +1279,11 @@ def deploy_all_tokens(endpoint: str) -> dict:
     try:
         results["nft_collection"] = deploy_nft_collection(endpoint, admin_addr)
         print(f"  -> {results['nft_collection']['address']}")
+        if fixture_owner:
+            item = mint_test_nft(endpoint, results["nft_collection"]["address"], fixture_owner)
+            results["nft_collection"]["fixture_owner"] = fixture_owner
+            results["nft_collection"]["fixture_item"] = item
+            print(f"  -> minted NFT {item} to {fixture_owner}")
     except Exception as e:
         print(f"  FAILED: {e}")
         results["nft_collection"] = {"address": None, "error": str(e)}
@@ -1182,7 +1309,8 @@ def deploy_all(endpoint: str, force: bool = False) -> dict:
     all_contracts["wallets"] = _merge_category_results(previous.get("wallets", {}), wallets_result)
 
     # 2. Tokens (Jetton + NFT)
-    tokens_result = deploy_all_tokens(endpoint)
+    fixture_owner = wallets_result.get("wallet_v4r2", {}).get("address")
+    tokens_result = deploy_all_tokens(endpoint, fixture_owner=fixture_owner)
     all_contracts["tokens"] = _merge_category_results(previous.get("tokens", {}), tokens_result)
 
     # Save cache without clobbering last-known-good fixtures with failed deploys.

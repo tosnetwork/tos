@@ -320,6 +320,12 @@ td::Status WalletIndexDb::put_nft_owner(const HashKey& nft, const HashKey& owner
   return db_->set(td::Slice{key, kSingleHashKeyLen}, owner.as_slice());
 }
 
+td::Status WalletIndexDb::erase_nft_owner(const HashKey& nft) {
+  char key[kSingleHashKeyLen];
+  make_owner_prefix(kNftOwnerTag, nft, key);
+  return db_->erase(td::Slice{key, kSingleHashKeyLen});
+}
+
 td::Result<bool> WalletIndexDb::get_nft_owner(const HashKey& nft, HashKey& owner) {
   char key[kSingleHashKeyLen];
   make_owner_prefix(kNftOwnerTag, nft, key);

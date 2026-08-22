@@ -57,16 +57,28 @@ std::string tep64_decode_snake(td::Ref<vm::Cell> cell) {
   return out;
 }
 
-// Append parsed TEP-64 on-chain metadata (name/symbol/decimals/image/description)
-// to `sb` from a jetton/NFT content cell. No-op if the content is not on-chain.
-void tep64_append_metadata(td::StringBuilder &sb, td::Ref<vm::Cell> content) {
+// Append parsed TEP-64 metadata to `sb`. `prefix` keeps the response fields
+// unambiguous for Jetton masters, NFT items, and NFT collections. Both on-chain
+// dictionaries (0x00) and off-chain URI content (0x01) are supported.
+void tep64_append_metadata(td::StringBuilder &sb, td::Ref<vm::Cell> content, td::Slice prefix) {
   if (content.is_null()) {
     return;
   }
   try {
     auto cs = vm::load_cell_slice(content);
-    if (cs.size() < 8 || cs.fetch_ulong(8) != 0) {
-      return;  // only on-chain (0x00) content is parsed here
+    if (cs.size() < 8) {
+      return;
+    }
+    auto kind = cs.prefetch_ulong(8);
+    if (kind == 1) {
+      auto uri = tep64_decode_snake(content);
+      if (!uri.empty()) {
+        sb << ",\"" << prefix << "metadata_uri\":" << td::JsonString(td::Slice(uri));
+      }
+      return;
+    }
+    if (cs.fetch_ulong(8) != 0) {
+      return;
     }
     vm::Dictionary dict{vm::DictAdvance{}, cs, 256};
     auto get_attr = [&](const char *attr) -> std::string {
@@ -83,13 +95,13 @@ void tep64_append_metadata(td::StringBuilder &sb, td::Ref<vm::Cell> content) {
     struct {
       const char *attr;
       const char *json;
-    } fields[] = {{"name", "jetton_name"},       {"symbol", "jetton_symbol"},
-                  {"decimals", "jetton_decimals"}, {"image", "jetton_image"},
-                  {"description", "jetton_description"}};
+    } fields[] = {{"name", "name"},             {"symbol", "symbol"},
+                  {"decimals", "decimals"},     {"image", "image"},
+                  {"description", "description"}};
     for (auto &f : fields) {
       auto v = get_attr(f.attr);
       if (!v.empty()) {
-        sb << ",\"" << f.json << "\":" << td::JsonString(td::Slice(v));
+        sb << ",\"" << prefix << f.json << "\":" << td::JsonString(td::Slice(v));
       }
     }
   } catch (...) {
@@ -222,7 +234,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                          << ",\"jetton_content\":" << td::JsonString(td::Slice(content_b64))
                          << ",\"jetton_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64));
                       // TEP-64: append parsed on-chain metadata (name/symbol/decimals/...).
-                      tep64_append_metadata(sb, content_e.as_cell());
+                      tep64_append_metadata(sb, content_e.as_cell(), "jetton_");
                       sb << "}";
                       promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
                       return;
@@ -328,8 +340,9 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                 sb << "{\"@type\":\"ext.tokens.nftCollectionData\""
                    << ",\"next_item_index\":" << td::JsonString(td::Slice(next_item_index))
                    << ",\"collection_content\":" << td::JsonString(td::Slice(content_b64))
-                   << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
-                   << "}";
+                   << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str));
+                tep64_append_metadata(sb, content_e.as_cell(), "collection_");
+                sb << "}";
                 promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
               }));
             };
@@ -383,8 +396,9 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                << ",\"index\":" << td::JsonString(td::Slice(index_val))
                << ",\"collection_address\":" << td::JsonString(td::Slice(collection_str))
                << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
-               << ",\"individual_content\":" << td::JsonString(td::Slice(content_b64))
-               << "}";
+               << ",\"individual_content\":" << td::JsonString(td::Slice(content_b64));
+            tep64_append_metadata(sb, content_e.as_cell(), "nft_");
+            sb << "}";
             promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
           }));
         }));

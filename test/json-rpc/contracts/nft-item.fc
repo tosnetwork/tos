@@ -1,0 +1,49 @@
+#include "../../../crypto/func/auto-tests/legacy_tests/nft-collection/stdlib.fc";
+
+;; Minimal canonical TEP-62 item used only by the JSON-RPC localnet fixture.
+;; Initial data is index:uint64 + collection_address. The collection's deploy
+;; body supplies owner_address + ^individual_content.
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice body) impure {
+    slice envelope = in_msg_full.begin_parse();
+    int flags = envelope~load_uint(4);
+    if (flags & 1) {
+        return ();
+    }
+    slice sender = envelope~load_msg_addr();
+    slice ds = get_data().begin_parse();
+    int index = ds~load_uint(64);
+    slice collection = ds~load_msg_addr();
+
+    if ((ds.slice_bits() == 0) & (ds.slice_refs() == 0)) {
+        throw_unless(401, equal_slices(sender, collection));
+        slice owner = body~load_msg_addr();
+        cell content = body~load_ref();
+        set_data(begin_cell().store_uint(index, 64).store_slice(collection)
+            .store_slice(owner).store_ref(content).end_cell());
+        return ();
+    }
+
+    slice owner = ds~load_msg_addr();
+    cell content = ds~load_ref();
+    if (body.slice_empty?()) {
+        return ();
+    }
+    int op = body~load_uint(32);
+    throw_unless(402, op == 0x5fcc3d14);
+    throw_unless(403, equal_slices(sender, owner));
+    body~skip_bits(64); ;; query_id
+    slice new_owner = body~load_msg_addr();
+    set_data(begin_cell().store_uint(index, 64).store_slice(collection)
+        .store_slice(new_owner).store_ref(content).end_cell());
+}
+
+(int, int, slice, slice, cell) get_nft_data() method_id {
+    slice ds = get_data().begin_parse();
+    int index = ds~load_uint(64);
+    slice collection = ds~load_msg_addr();
+    if ((ds.slice_bits() == 0) & (ds.slice_refs() == 0)) {
+        return (0, index, collection, null(), null());
+    }
+    return (-1, index, collection, ds~load_msg_addr(), ds~load_ref());
+}

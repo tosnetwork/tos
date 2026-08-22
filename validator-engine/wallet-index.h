@@ -75,6 +75,7 @@ class WalletIndexDb {
   // Tracks the last verified owner of each indexed NFT so the writer can erase
   // the previous owner's 0x11 entry when ownership changes (no stale entries).
   td::Status put_nft_owner(const HashKey& nft, const HashKey& owner);
+  td::Status erase_nft_owner(const HashKey& nft);
   // Returns true and fills `owner` if a previous owner is recorded. Reads
   // committed state only — an open write batch is not visible — which is what
   // the writer wants: the pre-block owner.
