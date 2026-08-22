@@ -109,6 +109,42 @@ TEST(RldpHttpProxyDns, lifecycle_fails_closed_when_overdue_or_clockless) {
   CHECK(tos::dns::check_domain_lifecycle(0, lfut, lfut + lease + 1).is_error());
   // a missing renewal clock is refused, not defaulted
   CHECK(tos::dns::check_domain_lifecycle(0, 0, 1000).is_error());
+  // hostile getter values cannot overflow the signed deadline calculation
+  CHECK(tos::dns::check_domain_lifecycle(0, std::numeric_limits<td::int64>::max(), 1000).is_error());
+}
+
+TEST(RldpHttpProxyDns, domain_item_is_the_canonical_third_hop_not_the_last) {
+  std::vector<std::string> direct{"root", "collection", "item"};
+  auto r_direct = tos::dns::select_tos_domain_item("alice.tos", direct);
+  CHECK(r_direct.is_ok());
+  CHECK(r_direct.ok().collection == "collection");
+  CHECK(r_direct.ok().item == "item");
+  CHECK(r_direct.ok().label == "alice");
+
+  std::vector<std::string> delegated{"root", "collection", "item", "delegate", "terminal"};
+  auto r_delegated = tos::dns::select_tos_domain_item("site.alice.tos.", delegated);
+  CHECK(r_delegated.is_ok());
+  CHECK(r_delegated.ok().item == "item");
+  CHECK(r_delegated.ok().item != delegated.back());
+  CHECK(r_delegated.ok().label == "alice");
+
+  CHECK(tos::dns::select_tos_domain_item("tos", direct).is_error());
+  CHECK(tos::dns::select_tos_domain_item("alice.example", direct).is_error());
+  CHECK(tos::dns::select_tos_domain_item("alice.tos", {"root", "collection"}).is_error());
+}
+
+TEST(RldpHttpProxyDns, loaded_contract_cleanup_runs_exactly_once_on_every_exit) {
+  int cleanup_calls = 0;
+  {
+    tos::dns::SharedCleanup outer([&] { cleanup_calls++; });
+    {
+      auto nested = outer;
+      auto deepest = nested;
+      CHECK(cleanup_calls == 0);
+    }
+    CHECK(cleanup_calls == 0);
+  }
+  CHECK(cleanup_calls == 1);
 }
 
 TEST(RldpHttpProxyDns, lifecycle_returns_the_renewal_deadline) {
@@ -124,6 +160,11 @@ TEST(RldpHttpProxyDns, cache_expiry_never_outlives_the_lease) {
   CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, 1'000'010, 1'000'000) == 110.0);
   // lease already over: the entry is born expired
   CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, 999'000, 1'000'000) == 100.0);
+  // extreme hostile values are saturated by the TTL without integer overflow
+  CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, std::numeric_limits<td::int64>::max(),
+                                       std::numeric_limits<td::int64>::min()) == 400.0);
+  CHECK(tos::dns::bounded_cache_expiry(100.0, 300.0, std::numeric_limits<td::int64>::min(),
+                                       std::numeric_limits<td::int64>::max()) == 100.0);
 }
 
 TEST(RldpHttpProxyDns, cache_evicts_expired_first_then_stalest) {

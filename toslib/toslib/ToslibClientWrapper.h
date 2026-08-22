@@ -49,6 +49,25 @@ class ToslibClientWrapper : public td::actor::Actor {
     td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(obj));
   }
 
+  // Execute a typed request under one explicit block context. `withBlock`
+  // itself returns the untyped Object produced by the nested function, so the
+  // wrapper restores the same type check provided by send_request().
+  template <typename F>
+  void send_request_at_block(toslib_api::object_ptr<toslib_api::tos_blockIdExt> block_id, toslib_api::object_ptr<F> obj,
+                             td::Promise<typename F::ReturnType> promise) {
+    auto id = next_request_id_++;
+    auto P = promise.wrap([](toslib_api::object_ptr<toslib_api::Object> x) -> td::Result<typename F::ReturnType> {
+      if (!x || x->get_id() != F::ReturnType::element_type::ID) {
+        return td::Status::Error("Invalid response from toslib withBlock request");
+      }
+      return tos::move_tl_object_as<typename F::ReturnType::element_type>(std::move(x));
+    });
+    CHECK(requests_.emplace(id, std::move(P)).second);
+    toslib_api::object_ptr<toslib_api::Function> function = std::move(obj);
+    auto wrapped = toslib_api::make_object<toslib_api::withBlock>(std::move(block_id), std::move(function));
+    td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(wrapped));
+  }
+
  private:
   void receive_request_result(td::uint64 id, td::Result<toslib_api::object_ptr<toslib_api::Object>> R);
 
