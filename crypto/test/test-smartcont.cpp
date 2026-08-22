@@ -42,6 +42,7 @@
 #include "smc-envelope/WalletV3.h"
 #include "smc-envelope/WalletV4.h"
 #include "td/utils/PathView.h"
+#include "td/utils/JsonBuilder.h"
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/StringBuilder.h"
@@ -1960,6 +1961,32 @@ TEST(Smartcont, DnsResolverHopBudget) {
   CHECK(tos::dns_resolver_path_contains(resolver_path, 1));
   CHECK(tos::dns_resolver_path_contains(resolver_path, 3));
   CHECK(!tos::dns_resolver_path_contains(resolver_path, 4));
+}
+
+TEST(Smartcont, DnsTip1Corpus) {
+  auto raw = td::read_file_str(current_dir() + "../../test/testdata/tip-1-dns-v1.json").move_as_ok();
+  auto json = td::json_decode(raw).move_as_ok();
+  CHECK(json.type() == td::JsonValue::Type::Object);
+  const auto &root = json.get_object();
+  CHECK(root.get_required_string_field("schema").move_as_ok() == "tos.tip-1.dns-v1.v1");
+
+  auto object_field = [](const td::JsonObject &object, td::Slice name) -> const td::JsonObject & {
+    for (const auto &field : object.field_values_) {
+      if (field.first == name && field.second.type() == td::JsonValue::Type::Object) {
+        return field.second.get_object();
+      }
+    }
+    UNREACHABLE();
+  };
+  const auto &lifecycle = object_field(root, "lifecycle");
+  const auto &resolver = object_field(root, "resolver_policy");
+  CHECK(lifecycle.get_required_long_field("renewal_interval_seconds").move_as_ok() == 31622400);
+  CHECK(resolver.get_required_int_field("maximum_contacts").move_as_ok() == tos::DNS_MAX_RESOLVER_HOPS);
+
+  const auto &categories = object_field(root, "categories");
+  const auto &wallet = object_field(categories, "wallet");
+  CHECK(wallet.get_required_string_field("sha256").move_as_ok() ==
+        "e8d44050873dba865aa7c170ab4cce64d90839a34dcfd6cf71d14e0205443b1b");
 }
 
 TEST(Smartcont, DnsManual) {

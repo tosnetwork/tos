@@ -1,0 +1,165 @@
+{
+  "schema": "tos.tip-1.dns-v1.v1",
+  "network": "tos-mainnet-candidate",
+  "upstream": {
+    "repository": "https://github.com/ton-blockchain/dns-contract",
+    "commit": "d08131031fb659d2826cccc417ddd9b98476f814"
+  },
+  "release": {
+    "auction_start_time": 1798761600,
+    "auction_start_time_utc": "2027-01-01T00:00:00Z",
+    "collection_content_url": "https://tos.network/dns/collection.json",
+    "root_code_hash": "e8e8a3bef546ec2dc8f7cfbe140045f264e200b808c2b8a78bd1c369442f7934",
+    "collection_code_hash": "714bb5d0ec68be59dc3e6e163c3f0ce49bcb10d3640d70d18257bcaf76e8b94b",
+    "item_code_hash": "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78",
+    "root_address": "-1:280e2d46c2bea67664609ad2df6db55ef92dd257ff5b16c3317eed59fa649a32",
+    "collection_address": "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a"
+  },
+  "categories": {
+    "dns_next_resolver": {
+      "sha256": "19f02441ee588fdb26ee24b2568dd035c3c9206e11ab979be62e55558a1d17ff",
+      "record_type": "dns_next_resolver"
+    },
+    "site": {
+      "sha256": "fbae041b02c41ed0fd8a4efb039bc780dd6af4a1f0c420f42561ae705dda43fe",
+      "record_type": "dns_adnl_address"
+    },
+    "wallet": {
+      "sha256": "e8d44050873dba865aa7c170ab4cce64d90839a34dcfd6cf71d14e0205443b1b",
+      "record_type": "dns_smc_address"
+    },
+    "agent": {
+      "sha256": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
+      "record_type": "dns_smc_address"
+    },
+    "capability": {
+      "sha256": "38a5be91af79d7e5ba9809bf383c699b6864ee50446239fe56a45e32b84638fe",
+      "record_type": "dns_smc_address"
+    },
+    "messenger": {
+      "sha256": "050f993ea2322d4b6940f8560a253a11709fdc5ab08fd994bceb096846ea1645",
+      "record_type": "dns_smc_address"
+    },
+    "storage": {
+      "sha256": "49a25f9feefaffecad0fcd30c50dc9331cff8b55ece53def6285c09e17e6f5d7",
+      "record_type": "dns_storage_address"
+    },
+    "text": {
+      "sha256": "982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1",
+      "record_type": "dns_text"
+    }
+  },
+  "name_encoding": [
+    {
+      "input": "alice.tos",
+      "canonical": "alice.tos",
+      "encoded_hex": "746f7300616c69636500",
+      "encoded_length": 10,
+      "result": "accept"
+    },
+    {
+      "input": "translate.alice.tos",
+      "canonical": "translate.alice.tos",
+      "encoded_hex": "746f7300616c696365007472616e736c61746500",
+      "encoded_length": 20,
+      "result": "accept"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tos",
+      "canonical": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tos",
+      "encoded_hex": "746f7300616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100",
+      "encoded_length": 127,
+      "result": "accept"
+    },
+    { "input": "alice.tos.", "result": "reject", "reason": "trailing_dot" },
+    { "input": "alice..tos", "result": "reject", "reason": "empty_component" },
+    { "input": "Alice.tos", "result": "reject_registration", "lookup_canonical": "alice.tos" },
+    { "input": "älice.tos", "result": "reject", "reason": "non_ascii" },
+    { "input": "-alice.tos", "result": "reject_registration", "contract_exit": 203 },
+    { "input": "alice-.tos", "result": "reject_registration", "contract_exit": 203 },
+    { "input": "xn--80ak6aa92e.tos", "result": "accept_contract_warn_ui" }
+  ],
+  "item_derivation": {
+    "label": "alice",
+    "label_utf8_hex": "616c696365",
+    "slice_hash": "56121e387810a23e51711d37fbb3241ee8ea09af40a72d0a1b37985af8af1d08",
+    "plain_sha256_negative_control": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
+    "item_data_hash": "0890ab4aa0a01f85fc143cfd4749815e7e60d0c962e22e006db8938264bd469a",
+    "item_data_depth": 0,
+    "item_state_init_hash": "d1a8a3d62880a1afb40186d7dc67e5072eb2740b094bd3d407e703bf3a26674d",
+    "item_address": "0:d1a8a3d62880a1afb40186d7dc67e5072eb2740b094bd3d407e703bf3a26674d"
+  },
+  "auction": {
+    "base_unit_tomi": "1000000000",
+    "initial_duration_seconds": 604800,
+    "final_duration_seconds": 3600,
+    "prolongation_seconds": 3600,
+    "period_seconds": 2592000,
+    "duration_vectors": [
+      { "period": 0, "seconds": 604800 },
+      { "period": 1, "seconds": 554700 },
+      { "period": 6, "seconds": 304200 },
+      { "period": 12, "seconds": 3600 },
+      { "period": 13, "seconds": 3600 }
+    ],
+    "price_tiers_whole_tos": [
+      { "label_bytes": 4, "initial": 1000, "floor": 100 },
+      { "label_bytes": 5, "initial": 500, "floor": 50 },
+      { "label_bytes": 6, "initial": 400, "floor": 40 },
+      { "label_bytes": 7, "initial": 300, "floor": 30 },
+      { "label_bytes": 8, "initial": 200, "floor": 20 },
+      { "label_bytes": 9, "initial": 100, "floor": 10 },
+      { "label_bytes": 10, "initial": 50, "floor": 5 },
+      { "label_bytes_min": 11, "label_bytes_max": 126, "initial": 10, "floor": 1 }
+    ],
+    "price_vectors_tomi_for_4_bytes": [
+      { "period": 0, "amount": "1000000000000" },
+      { "period": 1, "amount": "900000000000" },
+      { "period": 12, "amount": "282429536481" },
+      { "period": 21, "amount": "109418989128" },
+      { "period": 22, "amount": "100000000000" }
+    ],
+    "minimum_next_bid_vectors": [
+      { "previous": "100000000000", "minimum": "105000000000", "one_below": "104999999999" },
+      { "previous": "100000000001", "minimum": "105000000001", "one_below": "105000000000" }
+    ]
+  },
+  "lifecycle": {
+    "renewal_interval_seconds": 31622400,
+    "comparison": "now > last_fill_up_time + renewal_interval_seconds",
+    "boundary_vectors": [
+      { "last_fill_up_time": 1000, "now": 31623400, "usable": true },
+      { "last_fill_up_time": 1000, "now": 31623401, "usable": false }
+    ],
+    "auction_end_time_zero_means_no_auction": true,
+    "ended_but_unfinalized_is_usable": false,
+    "records_survive_release": true,
+    "item_address_survives_release": true
+  },
+  "operations": {
+    "transfer": "0x5fcc3d14",
+    "edit_content": "0x1a0b9d51",
+    "change_dns_record": "0x4eb1f0f9",
+    "get_static_data": "0x2fcb26a2",
+    "report_static_data": "0x8b771735",
+    "fill_up": "0x370fec51",
+    "outbid_notification": "0x557cea20",
+    "process_governance_decision": "0x44beae41",
+    "dns_balance_release": "0x4ed14b65"
+  },
+  "resolver_policy": {
+    "maximum_contacts": 8,
+    "reject_repeated_address_before_contact": true,
+    "single_checkpoint": true,
+    "fail_closed_on_missing_parameter_4": true,
+    "fail_closed_on_category_type_mismatch": true,
+    "positive_cache_ttl_cap_seconds": 300,
+    "event_driven_record_delegation_and_reorg_invalidation": true
+  },
+  "governance": {
+    "parameter_4_is_critical": true,
+    "parameter_80_present": false,
+    "auction_proceeds": "permanently_locked_in_immutable_collection",
+    "upgrade_mechanism": "new_root_collection_and_parameter_4_vote"
+  }
+}

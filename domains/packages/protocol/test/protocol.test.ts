@@ -42,6 +42,21 @@ import {
 const vectors = JSON.parse(
   readFileSync(fileURLToPath(new URL('./vectors.json', import.meta.url)), 'utf8'),
 );
+const tip1 = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../../../test/testdata/tip-1-dns-v1.json', import.meta.url)), 'utf8'),
+);
+
+describe('canonical TIP-1 corpus', () => {
+  it('consumes policy and accepted name vectors without semantic copies', () => {
+    expect(tip1.schema).toBe('tos.tip-1.dns-v1.v1');
+    expect(tip1.lifecycle.renewal_interval_seconds).toBe(ONE_YEAR);
+    expect(tip1.resolver_policy.maximum_contacts).toBe(MAX_RESOLVER_HOPS);
+    expect(tip1.categories.wallet.sha256).toBe(CATEGORY_WALLET.toString(16));
+    for (const vector of tip1.name_encoding.filter((value: { result: string }) => value.result === 'accept')) {
+      expect(bytesToHex(encodeName(vector.input))).toBe(vector.encoded_hex);
+    }
+  });
+});
 
 describe('name encoding (DNS.md §4.2)', () => {
   it('encodes reverse zero-delimited', () => {
