@@ -1,7 +1,7 @@
 {
   "comment": "Localnet deployment configuration; replace with governance-published values for a public network.",
-  "collection_address": "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
-  "item_code_hash": "501f3036d7b892f6b35113addb8f0c271d9e50b581199600b9baf6b04e2de8fb",
+  "collection_address": "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
+  "item_code_hash": "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78",
   "item_code_depth": 11,
-  "auction_start_time": 1735689600
+  "auction_start_time": 1798761600
 }

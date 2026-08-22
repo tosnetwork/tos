@@ -766,23 +766,23 @@ mod tests {
     }
 
     // ── vectors.json ground truth (gen-vectors.fif, auction_start_time
-    //    1735689600) ──────────────────────────────────────────────────────
+    //    1798761600, TIP-1) ───────────────────────────────────────────────
     const VECTOR_COLLECTION: &str =
-        "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f";
+        "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a";
     const VECTOR_ITEM_CODE_HASH: &str =
-        "501f3036d7b892f6b35113addb8f0c271d9e50b581199600b9baf6b04e2de8fb";
+        "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
     const VECTOR_ITEM_CODE_DEPTH: u16 = 11;
     const VECTOR_ALICE_SLICE_HASH: &str =
         "56121e387810a23e51711d37fbb3241ee8ea09af40a72d0a1b37985af8af1d08";
     const VECTOR_ALICE_PLAIN_SHA256: &str =
         "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90";
     const VECTOR_ALICE_ITEM_DATA_HASH: &str =
-        "29ff7b1865a686e2381b4e2abbbcea39ce82b7289fa4719e9fb82d191517e2aa";
+        "0890ab4aa0a01f85fc143cfd4749815e7e60d0c962e22e006db8938264bd469a";
     const VECTOR_ALICE_ITEM_ADDRESS: &str =
-        "0:7f4832987201ad76f96f8aaf9da1f14eff201e7526100937d10468ad5f8ab427";
+        "0:d1a8a3d62880a1afb40186d7dc67e5072eb2740b094bd3d407e703bf3a26674d";
     const VECTOR_CATEGORY_NEXT_RESOLVER: &str =
         "19f02441ee588fdb26ee24b2568dd035c3c9206e11ab979be62e55558a1d17ff";
-    const AUCTION_START: i64 = 1_735_689_600;
+    const AUCTION_START: i64 = 1_798_761_600;
 
     fn vector_config() -> CollectionConfig {
         CollectionConfig {

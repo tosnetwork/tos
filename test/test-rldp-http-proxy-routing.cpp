@@ -167,6 +167,25 @@ TEST(RldpHttpProxyDns, cache_expiry_never_outlives_the_lease) {
                                        std::numeric_limits<td::int64>::max()) == 100.0);
 }
 
+TEST(RldpHttpProxyDns, checkpoint_identity_detects_progress_and_reorganization) {
+  tos::dns::DnsCheckpoint original{0, -1, 42, "root-a", "file-a"};
+  auto identical = original;
+  CHECK(original == identical);
+
+  auto next_height = original;
+  next_height.seqno++;
+  CHECK(original != next_height);
+
+  // Reorgs may replace a block without changing its logical height.
+  auto same_height_reorg = original;
+  same_height_reorg.root_hash = "root-b";
+  CHECK(original != same_height_reorg);
+
+  auto different_file = original;
+  different_file.file_hash = "file-b";
+  CHECK(original != different_file);
+}
+
 TEST(RldpHttpProxyDns, cache_evicts_expired_first_then_stalest) {
   constexpr size_t max_entries = 1024;
   std::map<std::string, tos::dns::DnsCacheEntry> cache;

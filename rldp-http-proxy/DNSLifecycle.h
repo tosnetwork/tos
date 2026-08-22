@@ -40,6 +40,26 @@ struct DnsCacheEntry {
   double expires_at_ = 0;
 };
 
+// Identity of the exact chain state against which a DNS answer was proved.
+// Both hashes are part of the identity: seqno alone is insufficient across a
+// reorganization, while hashes alone make diagnostics and tests less useful.
+struct DnsCheckpoint {
+  td::int32 workchain = 0;
+  td::int64 shard = 0;
+  td::int32 seqno = 0;
+  std::string root_hash;
+  std::string file_hash;
+};
+
+inline bool operator==(const DnsCheckpoint& lhs, const DnsCheckpoint& rhs) {
+  return lhs.workchain == rhs.workchain && lhs.shard == rhs.shard && lhs.seqno == rhs.seqno &&
+         lhs.root_hash == rhs.root_hash && lhs.file_hash == rhs.file_hash;
+}
+
+inline bool operator!=(const DnsCheckpoint& lhs, const DnsCheckpoint& rhs) {
+  return !(lhs == rhs);
+}
+
 // A copyable cleanup token for asynchronous callback chains. The cleanup runs
 // exactly once when the last copy is destroyed, including on every early-error
 // return. This is used to pair every successful smc.load with smc.forget.

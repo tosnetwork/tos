@@ -208,7 +208,7 @@ PROGRAM{
     1000000000 PUSHINT	//  now_time start_min_price end_min_price _9=1000000000
     MUL	//  now_time start_min_price end_min_price
     s0 s2 XCHG
-    1735689600 PUSHINT	//  end_min_price start_min_price now_time _12=1735689600
+    1798761600 PUSHINT	//  end_min_price start_min_price now_time _12=1798761600
     SUB	//  end_min_price start_min_price seconds
     2592000 PUSHINT	//  end_min_price start_min_price seconds _15=2592000
     DIV	//  end_min_price start_min_price months
@@ -445,7 +445,7 @@ PROGRAM{
       STDICT	//  msg_value collection_address index from_address domain _54
       ENDC	//  msg_value collection_address index from_address domain content
       NOW	//  msg_value collection_address index from_address domain content _57
-      1735689600 PUSHINT	//  msg_value collection_address index from_address domain content _57 _58=1735689600
+      1798761600 PUSHINT	//  msg_value collection_address index from_address domain content _57 _58=1798761600
       SUB	//  msg_value collection_address index from_address domain content seconds
       2592000 PUSHINT	//  msg_value collection_address index from_address domain content seconds _61=2592000
       DIV	//  msg_value collection_address index from_address domain content months

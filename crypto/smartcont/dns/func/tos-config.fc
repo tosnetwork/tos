@@ -9,14 +9,10 @@
 ;;     twelve 30-day steps after this timestamp (complete after 360 days);
 ;;   - the minimum-price decay: 10% per 30-day month for 21 months, then flat.
 ;;
-;; Governance must approve the mainnet value before activation:
-;;   - keeping the historical upstream value would launch `.tos` with the ramp
-;;     already elapsed (one-hour auctions, fully decayed floor prices);
-;;   - a TOS activation timestamp restarts the ramp with the same algorithm.
-;;
-;; The value below is a LOCALNET/TEST value only (auctions open immediately,
-;; ramp starts at this instant). Release builds fail closed: the deploy
-;; tooling refuses to publish code hashes until governance substitutes the
-;; approved value and records it next to the reproducible build output.
+;; TIP-1 selects a candidate `.tos` mainnet activation at the start of 2027.
+;; Registration must not be activated unless all TIP-1 gates pass before this
+;; instant. If the window is missed, move the value to a later UTC midnight,
+;; rebuild every artifact, regenerate the shared vectors, and repeat review;
+;; never deploy with a partially elapsed launch ramp.
 
-const int auction_start_time = 1735689600; ;; 2025-01-01 00:00:00 UTC - localnet/test placeholder
+const int auction_start_time = 1798761600; ;; 2027-01-01 00:00:00 UTC (TIP-1)

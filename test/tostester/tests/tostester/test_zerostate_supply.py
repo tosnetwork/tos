@@ -198,6 +198,7 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
 
     param10 = _config(state, 10, ConfigParam10)
     assert 3 in param10.critical_params
+    assert 4 in param10.critical_params
 
     param14 = _config(state, 14, ConfigParam14)
     assert param14.masterchain_block_fee == 569_879_384

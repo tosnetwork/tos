@@ -42,13 +42,13 @@ import {
 // toolchain against the compiled .tos contracts); regenerate after any
 // contract or tos-config.fc change.
 const VECTORS = {
-  auctionStartTime: 1735689600,
-  itemCodeHash: "501f3036d7b892f6b35113addb8f0c271d9e50b581199600b9baf6b04e2de8fb",
+  auctionStartTime: 1798761600,
+  itemCodeHash: "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78",
   itemCodeDepth: 11,
-  collectionAddress: "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+  collectionAddress: "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
   aliceSliceHash: "56121e387810a23e51711d37fbb3241ee8ea09af40a72d0a1b37985af8af1d08",
   alicePlainSha256: "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90",
-  aliceItemAddress: "0:7f4832987201ad76f96f8aaf9da1f14eff201e7526100937d10468ad5f8ab427",
+  aliceItemAddress: "0:d1a8a3d62880a1afb40186d7dc67e5072eb2740b094bd3d407e703bf3a26674d",
   categoryDnsNextResolver: "19f02441ee588fdb26ee24b2568dd035c3c9206e11ab979be62e55558a1d17ff",
 };
 

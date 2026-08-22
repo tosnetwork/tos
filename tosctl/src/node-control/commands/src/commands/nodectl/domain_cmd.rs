@@ -1470,7 +1470,7 @@ mod domain_cli_tests {
                 "--category",
                 "wallet",
                 "--root",
-                "-1:8894ba5b65878886259e0695213d0b8f6ca659c735dd3275379c88c9759aeb76",
+                "-1:280e2d46c2bea67664609ad2df6db55ef92dd257ff5b16c3317eed59fa649a32",
             ])
             .expect("resolve flags must parse");
         let parsed = DomainResolveCmd::from_arg_matches(&matches).expect("parsed resolve args");
@@ -1487,9 +1487,9 @@ mod domain_cli_tests {
                 "bid",
                 "alice.tos",
                 "--collection",
-                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
                 "--item-code-hash",
-                "501f3036d7b892f6b35113addb8f0c271d9e50b581199600b9baf6b04e2de8fb",
+                "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78",
                 "--item-code-depth",
                 "11",
                 "--from",
@@ -1511,7 +1511,7 @@ mod domain_cli_tests {
             "bid",
             "alice.tos",
             "--collection",
-            "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+            "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
             "--item-code-depth",
             "11",
             "--from",
@@ -1530,7 +1530,7 @@ mod domain_cli_tests {
                 "set",
                 "alice.tos",
                 "--collection",
-                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
                 "--from",
                 "master_wallet",
                 "--category",
@@ -1554,7 +1554,7 @@ mod domain_cli_tests {
                 "transfer",
                 "alice.tos",
                 "--collection",
-                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
                 "--from",
                 "master_wallet",
                 "--new-owner",
@@ -1575,7 +1575,7 @@ mod domain_cli_tests {
                 "register",
                 "alice",
                 "--collection",
-                "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f",
+                "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a",
                 "--from",
                 "master_wallet",
                 "--amount",
@@ -1604,7 +1604,7 @@ mod domain_cli_tests {
                 .parse()
                 .expect("payer address");
         let dest: MsgAddressInt =
-            "0:9af984dec57312139ca31cf499aaeb8fddd7f323442fd7ea41fd4bc68025a27f"
+            "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a"
                 .parse()
                 .expect("dest address");
         let json = prepared_send_json("boss", &payer, &dest, 42, "aa55", &[1, 2, 3]);

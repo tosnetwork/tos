@@ -5535,6 +5535,11 @@ void ToslibClient::do_dns_request(std::string name, td::Bits256 category, td::in
                                   td::optional<tos::BlockIdExt> block_id,
                                   std::vector<block::StdAddress> resolver_path, block::StdAddress address,
                                   td::Promise<object_ptr<toslib_api::dns_resolved>>&& promise) {
+  if (tos::dns_resolver_path_contains(resolver_path, address)) {
+    promise.set_error(td::Status::Error(PSLICE() << "resolver cycle detected before contacting "
+                                                 << address.rserialize(true)));
+    return;
+  }
   resolver_path.push_back(address);
   auto block_id_copy = block_id.copy();
   td::Promise<DnsFinishData> new_promise = promise.send_closure(actor_id(this), &ToslibClient::finish_dns_resolve, name,

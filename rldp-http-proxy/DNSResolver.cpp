@@ -46,13 +46,41 @@ void DNSResolver::sync() {
   auto obj = toslib_api::make_object<toslib_api::sync>();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](
                                           td::Result<toslib_api::object_ptr<toslib_api::tos_blockIdExt>> R) {
-    if (R.is_error()) {
-      LOG(WARNING) << "Sync error: " << R.move_as_error();
-      tos::delay_action([SelfId]() { td::actor::send_closure(SelfId, &DNSResolver::sync); }, td::Timestamp::in(5.0));
-    }
+    td::actor::send_closure(SelfId, &DNSResolver::on_sync, std::move(R));
   });
   td::actor::send_closure(toslib_client_, &toslib::ToslibClientWrapper::send_request<toslib_api::sync>, std::move(obj),
                           std::move(P));
+}
+
+namespace {
+
+tos::dns::DnsCheckpoint make_checkpoint(const toslib_api::tos_blockIdExt &id) {
+  return {id.workchain_, id.shard_, id.seqno_, id.root_hash_, id.file_hash_};
+}
+
+}  // namespace
+
+void DNSResolver::on_sync(td::Result<toslib_api::object_ptr<toslib_api::tos_blockIdExt>> result) {
+  if (result.is_error()) {
+    LOG(WARNING) << "Sync error: " << result.move_as_error();
+  } else {
+    auto block_id = result.move_as_ok();
+    if (!block_id) {
+      LOG(WARNING) << "Sync returned no checkpoint";
+    } else {
+      auto next = make_checkpoint(*block_id);
+      if ((!has_checkpoint_ && !cache_.empty()) || (has_checkpoint_ && checkpoint_ != next)) {
+        // The cache does not currently retain record/subtree provenance, so a
+        // checkpoint transition invalidates it as a unit. This also covers a
+        // same-seqno reorganization because the block hashes are compared.
+        cache_.clear();
+      }
+      checkpoint_ = std::move(next);
+      has_checkpoint_ = true;
+    }
+  }
+  auto self = actor_id(this);
+  tos::delay_action([self]() { td::actor::send_closure(self, &DNSResolver::sync); }, td::Timestamp::in(5.0));
 }
 
 void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
@@ -148,8 +176,9 @@ void DNSResolver::resolve(std::string host, td::Promise<std::string> promise) {
       td::actor::send_closure(SelfId, &DNSResolver::finish_error, std::move(host), r_domain_path.move_as_error(), true);
       return;
     }
+    auto checkpoint = make_checkpoint(*obj->block_id_);
     td::actor::send_closure(SelfId, &DNSResolver::check_lifecycle, std::move(host), std::move(result),
-                            r_domain_path.move_as_ok(), std::move(obj->block_id_));
+                            r_domain_path.move_as_ok(), std::move(obj->block_id_), std::move(checkpoint));
   });
   td::actor::send_closure(toslib_client_, &toslib::ToslibClientWrapper::send_request<toslib_api::dns_resolve>,
                           std::move(obj), std::move(P));
@@ -188,12 +217,14 @@ td::Result<block::StdAddress> stack_address(const toslib_api::object_ptr<toslib_
 }  // namespace
 
 void DNSResolver::check_lifecycle(std::string host, std::string address, tos::dns::DomainItemPath domain_path,
-                                  toslib_api::object_ptr<toslib_api::tos_blockIdExt> block_id) {
+                                  toslib_api::object_ptr<toslib_api::tos_blockIdExt> block_id,
+                                  tos::dns::DnsCheckpoint checkpoint) {
   auto self = actor_id(this);
   auto block_for_load = clone_block_id(*block_id);
   auto header_p = td::PromiseCreator::lambda(
       [self, host = std::move(host), address = std::move(address), domain_path = std::move(domain_path),
-       block_id = std::move(block_for_load)](td::Result<toslib_api::object_ptr<toslib_api::blocks_header>> R) mutable {
+       block_id = std::move(block_for_load), checkpoint = std::move(checkpoint)](
+          td::Result<toslib_api::object_ptr<toslib_api::blocks_header>> R) mutable {
         if (R.is_error()) {
           td::actor::send_closure(self, &DNSResolver::finish_error, std::move(host),
                                   R.move_as_error_prefix("cannot read resolution block time: "), true);
@@ -201,7 +232,8 @@ void DNSResolver::check_lifecycle(std::string host, std::string address, tos::dn
         }
         auto header = R.move_as_ok();
         td::actor::send_closure(self, &DNSResolver::load_lifecycle_at_block, std::move(host), std::move(address),
-                                std::move(domain_path), std::move(block_id), header->gen_utime_);
+                                std::move(domain_path), std::move(block_id), header->gen_utime_,
+                                std::move(checkpoint));
       });
   td::actor::send_closure(toslib_client_, &toslib::ToslibClientWrapper::send_request<toslib_api::blocks_getBlockHeader>,
                           toslib_api::make_object<toslib_api::blocks_getBlockHeader>(std::move(block_id)),
@@ -210,14 +242,15 @@ void DNSResolver::check_lifecycle(std::string host, std::string address, tos::dn
 
 void DNSResolver::load_lifecycle_at_block(std::string host, std::string address, tos::dns::DomainItemPath domain_path,
                                           toslib_api::object_ptr<toslib_api::tos_blockIdExt> block_id,
-                                          td::int64 block_utime) {
+                                          td::int64 block_utime, tos::dns::DnsCheckpoint checkpoint) {
   // The Domain Item is the third canonical .tos hop, not the last hop (which
   // may be owner-controlled). Load it at the exact resolution checkpoint.
   auto toslib = toslib_client_;
   auto self = actor_id(this);
   auto load_p = td::PromiseCreator::lambda([toslib, self, host = std::move(host), address = std::move(address),
                                             expected_collection = std::move(domain_path.collection),
-                                            expected_label = std::move(domain_path.label), block_utime](
+                                            expected_label = std::move(domain_path.label), block_utime,
+                                            checkpoint = std::move(checkpoint)](
                                                td::Result<toslib_api::object_ptr<toslib_api::smc_info>> R) mutable {
     if (R.is_error()) {
       td::actor::send_closure(self, &DNSResolver::finish_error, std::move(host),
@@ -235,7 +268,8 @@ void DNSResolver::load_lifecycle_at_block(std::string host, std::string address,
     auto identity_p = td::PromiseCreator::lambda(
         [toslib, self, smc_id, cleanup, host = std::move(host), address = std::move(address),
          expected_collection = std::move(expected_collection), expected_label = std::move(expected_label),
-         block_utime](td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
+         block_utime, checkpoint = std::move(checkpoint)](
+            td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
           if (R.is_error()) {
             td::actor::send_closure(self, &DNSResolver::finish_error, std::move(host),
                                     R.move_as_error_prefix("cannot verify Domain Item identity: "), true);
@@ -274,7 +308,8 @@ void DNSResolver::load_lifecycle_at_block(std::string host, std::string address,
           }
           auto auction_p = td::PromiseCreator::lambda(
               [toslib, self, smc_id, cleanup, host = std::move(host), address = std::move(address),
-               block_utime](td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
+               block_utime, checkpoint = std::move(checkpoint)](
+                  td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
                 if (R.is_error()) {
                   td::actor::send_closure(self, &DNSResolver::finish_error, std::move(host),
                                           R.move_as_error_prefix("cannot read auction state: "), true);
@@ -297,7 +332,8 @@ void DNSResolver::load_lifecycle_at_block(std::string host, std::string address,
                 auto end_time = r_end_time.move_as_ok();
                 auto lfut_p = td::PromiseCreator::lambda(
                     [self, cleanup, host = std::move(host), address = std::move(address), end_time,
-                     block_utime](td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
+                     block_utime, checkpoint = std::move(checkpoint)](
+                        td::Result<toslib_api::object_ptr<toslib_api::smc_runResult>> R) mutable {
                       if (R.is_error()) {
                         td::actor::send_closure(self, &DNSResolver::finish_error, std::move(host),
                                                 R.move_as_error_prefix("cannot read renewal clock: "), true);
@@ -317,7 +353,7 @@ void DNSResolver::load_lifecycle_at_block(std::string host, std::string address,
                         return;
                       }
                       td::actor::send_closure(self, &DNSResolver::finish_lifecycle, std::move(host), std::move(address),
-                                              end_time, r_lfut.move_as_ok(), block_utime);
+                                              end_time, r_lfut.move_as_ok(), block_utime, std::move(checkpoint));
                     });
                 td::actor::send_closure(
                     toslib, &toslib::ToslibClientWrapper::send_request<toslib_api::smc_runGetMethod>,
@@ -346,7 +382,14 @@ void DNSResolver::load_lifecycle_at_block(std::string host, std::string address,
 }
 
 void DNSResolver::finish_lifecycle(std::string host, std::string address, td::int64 auction_end_time,
-                                   td::int64 last_fill_up_time, td::int64 block_utime) {
+                                   td::int64 last_fill_up_time, td::int64 block_utime,
+                                   tos::dns::DnsCheckpoint checkpoint) {
+  if (has_checkpoint_ && checkpoint_ != checkpoint) {
+    // A sync completed while this asynchronous lookup was in flight. Do not
+    // let a result proved against the old branch/height repopulate the cache.
+    finish_error(std::move(host), td::Status::Error("DNS checkpoint advanced during resolution; retry"), true);
+    return;
+  }
   auto now_unix = static_cast<td::int64>(td::Clocks::system());
   // State is evaluated at its proved block time; the local clock is used only
   // conservatively so a stale finalized checkpoint cannot extend a lease.
@@ -356,7 +399,12 @@ void DNSResolver::finish_lifecycle(std::string host, std::string address, td::in
     finish_error(std::move(host), r_deadline.move_as_error(), true);
     return;
   }
-  save_to_cache(host, address, r_deadline.move_as_ok());
+  // A chain-anchored result may be returned during startup, but it is not
+  // reusable until the independent sync loop has established the cache's
+  // current trusted checkpoint.
+  if (has_checkpoint_) {
+    save_to_cache(host, address, r_deadline.move_as_ok());
+  }
   finish_success(std::move(host), std::move(address));
 }
 

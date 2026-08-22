@@ -1866,7 +1866,11 @@ bool TestNode::dns_resolve_send(tos::WorkchainId workchain, tos::StdSmcAddress a
   LOG(INFO) << "dns_resolve for '" << domain << "' category=" << cat << " mode=" << mode
             << " starting from smart contract " << workchain << ":" << addr.to_hex() << " with respect to block "
             << blkid.to_str();
-  resolver_path.push_back(PSTRING() << workchain << ":" << addr.to_hex());
+  auto resolver = PSTRING() << workchain << ":" << addr.to_hex();
+  if (tos::dns_resolver_path_contains(resolver_path, resolver)) {
+    return set_error(PSTRING() << "resolver cycle detected before contacting " << resolver);
+  }
+  resolver_path.push_back(std::move(resolver));
   vm::CellBuilder cb;
   Ref<vm::Cell> cell;
   if (!(cb.store_bytes_bool(td::Slice(qdomain)) && cb.finalize_to(cell))) {

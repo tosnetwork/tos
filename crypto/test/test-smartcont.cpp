@@ -1953,6 +1953,13 @@ TEST(Smartcont, DnsResolverHopBudget) {
   CHECK(walk(9) == std::make_pair(8, false));
   CHECK(walk(100) == std::make_pair(8, false));
   CHECK(walk(1) == std::make_pair(1, true));
+
+  // Cycle detection is independent of hop exhaustion and fires before the
+  // repeated resolver would become another network contact.
+  std::vector<int> resolver_path{1, 2, 3};
+  CHECK(tos::dns_resolver_path_contains(resolver_path, 1));
+  CHECK(tos::dns_resolver_path_contains(resolver_path, 3));
+  CHECK(!tos::dns_resolver_path_contains(resolver_path, 4));
 }
 
 TEST(Smartcont, DnsManual) {

@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
+#include <algorithm>
 #include <map>
 
 #include "common/checksum.h"
@@ -36,9 +37,8 @@ const td::Bits256 DNS_NEXT_RESOLVER_CATEGORY =
 
 // Uniform resolver hop budget shared by every client (lite-client, toslib,
 // toslib-cli, rldp-http-proxy). Exhausting it must be reported as a distinct
-// error, never as "not found". Each hop consumes at least one byte of the
-// encoded name, so with this cap a delegation cycle terminates as a budget
-// error instead of looping.
+// error, never as "not found". Cycles are rejected independently before the
+// repeated resolver is contacted; the budget remains a separate depth bound.
 constexpr int DNS_MAX_RESOLVER_HOPS = 8;
 
 // Shared budget decision: with `hops_left` remaining out of
@@ -48,6 +48,13 @@ constexpr int DNS_MAX_RESOLVER_HOPS = 8;
 // most DNS_MAX_RESOLVER_HOPS resolver contacts in total.
 inline bool dns_next_hop_exceeds_budget(int hops_left) {
   return hops_left <= 1;
+}
+
+// Shared cycle decision for recursive clients. Keep it generic so Lite Client
+// can retain its printable path while Toslib retains parsed StdAddress values.
+template <class Container, class Value>
+inline bool dns_resolver_path_contains(const Container& resolver_path, const Value& resolver) {
+  return std::find(resolver_path.begin(), resolver_path.end(), resolver) != resolver_path.end();
 }
 
 class DnsInterface {
