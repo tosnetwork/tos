@@ -22,8 +22,10 @@ the sole home of the `.tos` contracts.
 - `func/dns-utils.fc` — shared helpers. One change: `auction_start_time` moved
   to `func/tos-config.fc` so the launch-timestamp decision is explicit.
 - `func/tos-config.fc` — the single TOS deployment decision (launch
-  timestamp). The committed value is a localnet/test placeholder; mainnet
-  requires the governance-approved value (DNS.md §6.6).
+  timestamp). The committed value is the TIP-1 candidate
+  `2027-01-01T00:00:00Z`; missing a release gate requires a replacement TIP
+  and artifact set rather than silently changing or launching after it
+  (DNS.md §6.6).
 
 Item index is `slice_hash` (TVM `HASHSU`) of the label slice and is out of
 order; `get_collection_data` always returns `next_item_index = -1`.
