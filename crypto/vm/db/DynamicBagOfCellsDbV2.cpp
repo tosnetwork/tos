@@ -17,7 +17,13 @@ extern "C" int malloc_trim(size_t) __attribute__((weak));
 // whether jemalloc actually replaced malloc/free: the symbol resolves to
 // jemalloc's real implementation when the final link pulls in libjemalloc,
 // and to a null function pointer when it doesn't.
-extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) __attribute__((weak));
+#if defined(__APPLE__)
+extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen)
+    __attribute__((weak_import));
+#else
+extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen)
+    __attribute__((weak));
+#endif
 
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/base64.h"

@@ -368,7 +368,7 @@ target_link_libraries(tos_crypto PUBLIC ${SODIUM_LIBRARY_RELEASE})
 add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto)
+target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto ${JEMALLOC_LIBRARIES})
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
 target_include_directories(fift-lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
