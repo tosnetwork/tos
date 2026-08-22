@@ -36,8 +36,9 @@ use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_for
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, AipowCommitmentContract, AipowDistributorContract,
-    CapabilityRegistryContract, ChainProvider, DisputeContract, NominatorPoolWrapper,
-    NominatorPoolWrapperImpl, ServiceActorContract, TaskEscrowContract, contract_provider_from,
+    CapabilityRegistryContract, ChainProvider, DisputeContract, MasterchainCheckpoint,
+    NominatorPoolWrapper, NominatorPoolWrapperImpl, ServiceActorContract, TaskEscrowContract,
+    contract_provider_from,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -432,6 +433,13 @@ async fn scan_one_seqno(
         store.index_explorer_block(&block, &explorer_transactions)?;
     }
 
+    let dns_checkpoint =
+        store.masterchain_block(observed_mc_seqno)?.map(|block| MasterchainCheckpoint {
+            seqno: block.seqno,
+            root_hash: block.root_hash,
+            file_hash: block.file_hash,
+        });
+
     for address in addresses {
         if let Err(e) = visit_address(
             chain_provider,
@@ -441,6 +449,7 @@ async fn scan_one_seqno(
             seqno,
             observed_mc_seqno,
             u64::from(block_gen_utime),
+            dns_checkpoint.as_ref(),
         )
         .await
         {
@@ -458,6 +467,7 @@ async fn visit_address(
     seqno: u32,
     observed_mc_seqno: u32,
     block_time: u64,
+    dns_checkpoint: Option<&MasterchainCheckpoint>,
 ) -> anyhow::Result<()> {
     let existing_kind = store.kind_of(address)?;
     let kind = match existing_kind {
@@ -499,6 +509,9 @@ async fn visit_address(
             seqno,
             observed_mc_seqno,
             block_time,
+            dns_checkpoint.ok_or_else(|| {
+                anyhow::anyhow!("DNS observation lacks its canonical masterchain block")
+            })?,
         )
         .await;
     }
@@ -800,10 +813,12 @@ async fn decode_dns_domain(
     account_seqno: u32,
     mc_seqno: u32,
     now: u64,
+    checkpoint: &MasterchainCheckpoint,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(mc_seqno > 0, "DNS observation lacks a masterchain checkpoint");
+    anyhow::ensure!(checkpoint.seqno == mc_seqno, "DNS checkpoint seqno mismatch");
     let nft = chain_provider
-        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], mc_seqno)
+        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], checkpoint)
         .await?;
     anyhow::ensure!(nft.bool(0)?, "DNS Domain Item is not initialized");
     let index = nft.decimal_string(1)?.to_owned();
@@ -821,7 +836,7 @@ async fn decode_dns_domain(
     let content = nft.cell(4)?;
 
     let domain_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_domain", vec![], mc_seqno)
+        .run_get_method_at(address.to_owned(), "get_domain", vec![], checkpoint)
         .await?;
     let domain_slice = domain_stack.slice(0)?;
     anyhow::ensure!(
@@ -856,7 +871,7 @@ async fn decode_dns_domain(
     );
 
     let auction_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], mc_seqno)
+        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], checkpoint)
         .await?;
     let auction_end_time = auction_stack.i64(2)?;
     let max_bid_amount = auction_stack.decimal_string(1)?.parse::<u128>()?;
@@ -869,7 +884,7 @@ async fn decode_dns_domain(
         auction_end_time,
     });
     let fill_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], mc_seqno)
+        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], checkpoint)
         .await?;
     let last_fill_up_time = fill_stack.i64(0)?;
     anyhow::ensure!(last_fill_up_time > 0, "DNS Domain Item lacks a renewal clock");
@@ -897,8 +912,8 @@ async fn decode_dns_domain(
         observed_mc_seqno: mc_seqno,
         observed_at: now,
         dto_json: dto_json.clone(),
-        root_hash: None,
-        file_hash: None,
+        root_hash: Some(checkpoint.root_hash.clone()),
+        file_hash: Some(checkpoint.file_hash.clone()),
     })?;
     store.upsert(&IndexedRecord {
         address: address.to_owned(),

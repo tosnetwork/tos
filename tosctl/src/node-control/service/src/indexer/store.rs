@@ -30,7 +30,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = 8;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -101,7 +101,23 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     },
     |conn| conn.execute_batch(NOMINATOR_LEDGER_SCHEMA),
     |conn| conn.execute_batch(DNS_HISTORY_SCHEMA),
+    migrate_dns_checkpoint_hashes,
 ];
+
+fn migrate_dns_checkpoint_hashes(conn: &Connection) -> rusqlite::Result<()> {
+    let mut columns = conn.prepare("PRAGMA table_info(dns_domain_history)")?;
+    let names =
+        columns.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?;
+    if !names.iter().any(|name| name == "root_hash") {
+        conn.execute("ALTER TABLE dns_domain_history ADD COLUMN root_hash TEXT", [])?;
+    }
+    if !names.iter().any(|name| name == "file_hash") {
+        conn.execute("ALTER TABLE dns_domain_history ADD COLUMN file_hash TEXT", [])?;
+    }
+    // Older rows were only height-bound and cannot be upgraded honestly.
+    conn.execute("DELETE FROM dns_domain_history", [])?;
+    Ok(())
+}
 
 const DNS_HISTORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS dns_domain_history (
         address TEXT NOT NULL,
@@ -109,6 +125,8 @@ const DNS_HISTORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS dns_domain_history 
         observed_mc_seqno INTEGER NOT NULL,
         observed_at INTEGER NOT NULL,
         dto_json TEXT NOT NULL,
+        root_hash TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
         PRIMARY KEY(address, observed_mc_seqno)
     );
     CREATE INDEX IF NOT EXISTS idx_dns_domain_history_checkpoint
@@ -681,13 +699,19 @@ impl IndexerStore {
     }
 
     pub fn record_dns_domain_history(&self, record: &DnsDomainHistoryRecord) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            record.root_hash.as_ref().is_some_and(|hash| !hash.is_empty())
+                && record.file_hash.as_ref().is_some_and(|hash| !hash.is_empty()),
+            "DNS history requires a full masterchain checkpoint"
+        );
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         conn.execute(
-            "INSERT INTO dns_domain_history(address,account_seqno,observed_mc_seqno,observed_at,dto_json)
-             VALUES(?1,?2,?3,?4,?5)
+            "INSERT INTO dns_domain_history(address,account_seqno,observed_mc_seqno,observed_at,dto_json,root_hash,file_hash)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)
              ON CONFLICT(address,observed_mc_seqno) DO UPDATE SET
-               account_seqno=excluded.account_seqno,observed_at=excluded.observed_at,dto_json=excluded.dto_json",
-            params![record.address, record.account_seqno, record.observed_mc_seqno, record.observed_at, record.dto_json],
+               account_seqno=excluded.account_seqno,observed_at=excluded.observed_at,
+               dto_json=excluded.dto_json,root_hash=excluded.root_hash,file_hash=excluded.file_hash",
+            params![record.address, record.account_seqno, record.observed_mc_seqno, record.observed_at, record.dto_json, record.root_hash, record.file_hash],
         )?;
         Ok(())
     }
@@ -701,9 +725,8 @@ impl IndexerStore {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let mut statement = conn.prepare(
             "SELECT h.address,h.account_seqno,h.observed_mc_seqno,h.observed_at,h.dto_json,
-                    b.root_hash,b.file_hash
-             FROM dns_domain_history h LEFT JOIN explorer_blocks b
-               ON b.workchain=-1 AND b.seqno=h.observed_mc_seqno
+                    h.root_hash,h.file_hash
+             FROM dns_domain_history h
              WHERE h.observed_mc_seqno>?1
                 OR (h.observed_mc_seqno=?1 AND h.address>?2)
              ORDER BY h.observed_mc_seqno,h.address LIMIT ?3",
@@ -720,6 +743,21 @@ impl IndexerStore {
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn masterchain_block(&self, seqno: u32) -> anyhow::Result<Option<ExplorerBlockRecord>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.query_row(
+            "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
+                    (SELECT COUNT(*) FROM explorer_transactions t
+                     WHERE t.workchain=b.workchain AND t.shard=b.shard AND t.seqno=b.seqno),
+                    b.indexed_at, b.observed_mc_seqno
+             FROM explorer_blocks b WHERE b.workchain=-1 AND b.seqno=?1",
+            params![seqno],
+            row_to_explorer_block,
+        )
+        .optional()
+        .map_err(Into::into)
     }
 
     pub fn explorer_block_root(
@@ -1458,6 +1496,40 @@ mod tests {
     }
 
     #[test]
+    fn dns_checkpoint_migration_discards_height_only_history() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE dns_domain_history (
+                address TEXT NOT NULL, account_seqno INTEGER NOT NULL,
+                observed_mc_seqno INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+                dto_json TEXT NOT NULL, PRIMARY KEY(address, observed_mc_seqno)
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO dns_domain_history
+             (address,account_seqno,observed_mc_seqno,observed_at,dto_json)
+             VALUES('0:old',1,7,8,'{}')",
+            [],
+        )
+        .unwrap();
+        migrate_dns_checkpoint_hashes(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM dns_domain_history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        let columns = conn
+            .prepare("PRAGMA table_info(dns_domain_history)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|name| name == "root_hash"));
+        assert!(columns.iter().any(|name| name == "file_hash"));
+    }
+
+    #[test]
     fn reopening_a_database_with_a_newer_schema_version_fails_loudly() {
         let conn = Connection::open_in_memory().unwrap();
         IndexerStore::init_schema(&conn).unwrap();
@@ -1728,6 +1800,19 @@ mod tests {
     #[test]
     fn dns_history_is_checkpoint_bound_and_removed_by_reorg_reset() {
         let store = IndexerStore::open_in_memory().expect("store");
+        assert!(
+            store
+                .record_dns_domain_history(&DnsDomainHistoryRecord {
+                    address: "0:unbound".to_owned(),
+                    account_seqno: 1,
+                    observed_mc_seqno: 7,
+                    observed_at: 1_700_000_000,
+                    dto_json: "{}".to_owned(),
+                    root_hash: None,
+                    file_hash: None,
+                })
+                .is_err()
+        );
         store
             .index_explorer_block(
                 &ExplorerBlockRecord {
@@ -1751,8 +1836,8 @@ mod tests {
                 observed_mc_seqno: 7,
                 observed_at: 1_700_000_000,
                 dto_json: r#"{"name":"alice.tos"}"#.to_owned(),
-                root_hash: None,
-                file_hash: None,
+                root_hash: Some("root-seven".to_owned()),
+                file_hash: Some("file-seven".to_owned()),
             })
             .expect("DNS history");
         let rows = store.dns_domain_history(0, "", 10).expect("read DNS history");

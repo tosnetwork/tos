@@ -70,7 +70,9 @@ pub use attestation::{
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
 };
-pub use chain_provider::{ChainProvider, DefaultChainProvider, contract_provider_from};
+pub use chain_provider::{
+    ChainProvider, DefaultChainProvider, MasterchainCheckpoint, contract_provider_from,
+};
 pub use config_contract::{
     ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
 };

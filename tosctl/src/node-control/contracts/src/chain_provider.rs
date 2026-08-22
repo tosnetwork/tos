@@ -113,6 +113,16 @@ pub type BlockTransactionsExtPage = GetBlockTransactionsExtRes;
 /// consumer that only walks the masterchain would miss nearly everything.
 pub type ShardsInfo = GetShardsRes;
 
+/// Exact masterchain identity used to bind checkpoint-sensitive reads.
+/// A seqno alone is not an identity: after a same-height reorganization it
+/// may name a different state, so both hashes are mandatory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MasterchainCheckpoint {
+    pub seqno: u32,
+    pub root_hash: String,
+    pub file_hash: String,
+}
+
 // ─── Trait ─────────────────────────────────────────────────────────────────
 
 /// TOS chain RPC provider trait.
@@ -139,7 +149,7 @@ pub trait ChainProvider: Send + Sync {
         _address: String,
         _method: &str,
         _stack: Vec<StackEntry>,
-        _mc_seqno: u32,
+        _checkpoint: &MasterchainCheckpoint,
     ) -> anyhow::Result<TvmStackParser> {
         anyhow::bail!("checkpoint-pinned get-method execution is unsupported")
     }
@@ -272,16 +282,20 @@ impl ChainProvider for DefaultChainProvider {
         address: String,
         method: &str,
         stack: Vec<StackEntry>,
-        mc_seqno: u32,
+        checkpoint: &MasterchainCheckpoint,
     ) -> anyhow::Result<TvmStackParser> {
-        anyhow::ensure!(mc_seqno > 0, "get-method checkpoint must be non-zero");
+        anyhow::ensure!(checkpoint.seqno > 0, "get-method checkpoint must be non-zero");
+        anyhow::ensure!(
+            checkpoint.root_hash.len() == 64 && checkpoint.file_hash.len() == 64,
+            "get-method checkpoint hashes must be 32-byte lowercase hex"
+        );
         let result = self
             .client
             .run_get_method(&RunGetMethodParams {
                 address,
                 method_id: method.to_owned(),
                 stack: Some(stack.into_iter().map(RPCStackEntry::from).collect::<Vec<_>>()),
-                seqno: Some(mc_seqno),
+                seqno: Some(checkpoint.seqno),
             })
             .await
             .map_err(|e| anyhow::anyhow!("checkpoint get-method {} error: {}", method, e))?;
@@ -295,10 +309,7 @@ impl ChainProvider for DefaultChainProvider {
             .block_id
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("checkpoint get-method omitted block identity"))?;
-        anyhow::ensure!(
-            block.workchain == -1 && block.seqno == mc_seqno,
-            "checkpoint get-method returned another block"
-        );
+        validate_masterchain_checkpoint(block, checkpoint)?;
         Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
     }
 
@@ -391,6 +402,49 @@ impl ChainProvider for DefaultChainProvider {
         seqno: u32,
     ) -> anyhow::Result<u32> {
         Ok(self.client.get_block_header(workchain, &shard.to_string(), seqno).await?.gen_utime)
+    }
+}
+
+fn validate_masterchain_checkpoint(
+    block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    expected: &MasterchainCheckpoint,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        block.workchain == -1
+            && block.seqno == expected.seqno
+            && hex::encode(&block.root_hash) == expected.root_hash
+            && hex::encode(&block.file_hash) == expected.file_hash,
+        "checkpoint get-method returned another block"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    use chain_rpc_client::v2::data_models::BlockIdExt;
+
+    fn block(root: u8, file: u8) -> BlockIdExt {
+        BlockIdExt {
+            r#type: "tos.blockIdExt".to_owned(),
+            workchain: -1,
+            shard: i64::MIN,
+            seqno: 42,
+            root_hash: vec![root; 32],
+            file_hash: vec![file; 32],
+        }
+    }
+
+    #[test]
+    fn checkpoint_rejects_same_height_reorganization() {
+        let expected = MasterchainCheckpoint {
+            seqno: 42,
+            root_hash: hex::encode([1; 32]),
+            file_hash: hex::encode([2; 32]),
+        };
+        assert!(validate_masterchain_checkpoint(&block(1, 2), &expected).is_ok());
+        assert!(validate_masterchain_checkpoint(&block(9, 2), &expected).is_err());
+        assert!(validate_masterchain_checkpoint(&block(1, 9), &expected).is_err());
     }
 }
 

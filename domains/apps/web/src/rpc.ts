@@ -29,7 +29,14 @@ export interface RpcConfig {
   itemCodeDepth: number;
 }
 
-type RunResult = { exit_code: number; stack: unknown[] };
+export type RpcBlockId = {
+  workchain: number;
+  seqno: number;
+  root_hash: string;
+  file_hash: string;
+};
+
+type RunResult = { exit_code: number; stack: unknown[]; block_id?: RpcBlockId };
 
 export class TosRpc {
   private id = 0;
@@ -63,14 +70,26 @@ export class TosRpc {
     }
   }
 
-  async run(address: string, method: string): Promise<unknown[]> {
-    const result = await this.call<RunResult>('runGetMethod', { address, method, stack: [] });
+  async run(address: string, method: string, checkpoint?: RpcBlockId): Promise<RunResult> {
+    const params: Record<string, unknown> = { address, method, stack: [] };
+    if (checkpoint) params.seqno = checkpoint.seqno;
+    const result = await this.call<RunResult>('runGetMethod', params);
     if (result.exit_code !== 0 && result.exit_code !== 1) {
       throw new Error(`${method} failed with TVM exit code ${result.exit_code}`);
     }
     if (!Array.isArray(result.stack)) throw new Error(`${method} returned a malformed stack`);
-    return result.stack;
+    if (!result.block_id) throw new Error(`${method} omitted its masterchain block identity`);
+    if (checkpoint && !sameCheckpoint(result.block_id, checkpoint)) {
+      throw new Error(`${method} returned state from another masterchain checkpoint`);
+    }
+    return result;
   }
+}
+
+export function sameCheckpoint(actual: RpcBlockId, expected: RpcBlockId): boolean {
+  return actual.workchain === -1 && expected.workchain === -1 &&
+    actual.seqno === expected.seqno && actual.root_hash === expected.root_hash &&
+    actual.file_hash === expected.file_hash;
 }
 
 export async function inspectDomain(config: RpcConfig, label: string): Promise<DomainSnapshot> {
@@ -78,11 +97,19 @@ export async function inspectDomain(config: RpcConfig, label: string): Promise<D
   const rpc = new TosRpc(config.endpoint);
   const observedAt = Math.floor(Date.now() / 1_000);
   try {
-    const [auctionStack, fillStack, nftStack] = await Promise.all([
-      rpc.run(itemAddress, 'get_auction_info'),
-      rpc.run(itemAddress, 'get_last_fill_up_time'),
-      rpc.run(itemAddress, 'get_nft_data'),
+    const nftResult = await rpc.run(itemAddress, 'get_nft_data');
+    const checkpoint = nftResult.block_id as RpcBlockId;
+    if (checkpoint.workchain !== -1 || checkpoint.seqno <= 0 ||
+        !checkpoint.root_hash || !checkpoint.file_hash) {
+      throw new Error('get_nft_data returned an invalid masterchain checkpoint');
+    }
+    const [auctionResult, fillResult] = await Promise.all([
+      rpc.run(itemAddress, 'get_auction_info', checkpoint),
+      rpc.run(itemAddress, 'get_last_fill_up_time', checkpoint),
     ]);
+    const auctionStack = auctionResult.stack;
+    const fillStack = fillResult.stack;
+    const nftStack = nftResult.stack;
     if (auctionStack.length < 3 || fillStack.length < 1 || nftStack.length < 4) {
       throw new Error('Domain Item getters returned incomplete stacks');
     }
