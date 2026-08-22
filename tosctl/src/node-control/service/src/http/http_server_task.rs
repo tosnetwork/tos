@@ -220,6 +220,7 @@ fn explorer_public_routes() -> axum::Router<AppState> {
         .route("/explorer/transaction", axum::routing::get(explorer_query_api::get_transaction))
         .route("/explorer/block", axum::routing::get(explorer_query_api::get_block))
         .route("/explorer/search", axum::routing::get(explorer_query_api::search))
+        .route("/explorer/dns/history", axum::routing::get(explorer_query_api::dns_history))
         .route("/explorer/contracts/{kind}", axum::routing::get(explorer_query_api::list_contracts))
         .route(
             "/explorer/contracts/{kind}/{address}",
@@ -985,6 +986,7 @@ impl utoipa::Modify for BearerAuthAddon {
         ,explorer_query_api::list_transactions
         ,explorer_query_api::get_transaction
         ,explorer_query_api::get_block
+        ,explorer_query_api::dns_history
         ,explorer_query_api::list_contracts
         ,explorer_query_api::get_contract
         ,explorer_query_api::search
@@ -1047,6 +1049,8 @@ impl utoipa::Modify for BearerAuthAddon {
         explorer_query_api::ExplorerTransactionResponse,
         explorer_query_api::ExplorerBlockResponse,
         explorer_query_api::ExplorerContractResponse,
+        explorer_query_api::DnsDomainHistoryDto,
+        explorer_query_api::DnsDomainHistoryResponse,
         explorer_query_api::ExplorerCheckpointDto,
         explorer_query_api::ExplorerStatusDto,
         explorer_query_api::ExplorerStatusResponse,

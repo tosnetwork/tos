@@ -132,6 +132,18 @@ pub trait ChainProvider: Send + Sync {
         stack: Vec<StackEntry>,
     ) -> anyhow::Result<TvmStackParser>;
 
+    /// Execute against one exact masterchain checkpoint. Implementations that
+    /// cannot pin state must fail rather than silently substitute latest state.
+    async fn run_get_method_at(
+        &self,
+        _address: String,
+        _method: &str,
+        _stack: Vec<StackEntry>,
+        _mc_seqno: u32,
+    ) -> anyhow::Result<TvmStackParser> {
+        anyhow::bail!("checkpoint-pinned get-method execution is unsupported")
+    }
+
     /// Query the balance (in nanotos) of an address.
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64>;
 
@@ -252,6 +264,41 @@ impl ChainProvider for DefaultChainProvider {
         // The JSON-RPC server serializes the TVM stack top-first (vm::Stack::at(0)
         // is the top). Decoders index entries in get-method return order, so
         // reverse to bottom-first at the RPC boundary.
+        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
+    }
+
+    async fn run_get_method_at(
+        &self,
+        address: String,
+        method: &str,
+        stack: Vec<StackEntry>,
+        mc_seqno: u32,
+    ) -> anyhow::Result<TvmStackParser> {
+        anyhow::ensure!(mc_seqno > 0, "get-method checkpoint must be non-zero");
+        let result = self
+            .client
+            .run_get_method(&RunGetMethodParams {
+                address,
+                method_id: method.to_owned(),
+                stack: Some(stack.into_iter().map(RPCStackEntry::from).collect::<Vec<_>>()),
+                seqno: Some(mc_seqno),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("checkpoint get-method {} error: {}", method, e))?;
+        anyhow::ensure!(
+            result.exit_code == 0,
+            "checkpoint get-method {} exit_code={}",
+            method,
+            result.exit_code
+        );
+        let block = result
+            .block_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("checkpoint get-method omitted block identity"))?;
+        anyhow::ensure!(
+            block.workchain == -1 && block.seqno == mc_seqno,
+            "checkpoint get-method returned another block"
+        );
         Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
     }
 

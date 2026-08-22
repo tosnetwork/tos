@@ -30,7 +30,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -100,7 +100,19 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
         )
     },
     |conn| conn.execute_batch(NOMINATOR_LEDGER_SCHEMA),
+    |conn| conn.execute_batch(DNS_HISTORY_SCHEMA),
 ];
+
+const DNS_HISTORY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS dns_domain_history (
+        address TEXT NOT NULL,
+        account_seqno INTEGER NOT NULL,
+        observed_mc_seqno INTEGER NOT NULL,
+        observed_at INTEGER NOT NULL,
+        dto_json TEXT NOT NULL,
+        PRIMARY KEY(address, observed_mc_seqno)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dns_domain_history_checkpoint
+        ON dns_domain_history(observed_mc_seqno, address);";
 
 /// What a depositor put into a pool and what the pool paid them.
 ///
@@ -279,6 +291,17 @@ pub struct ExplorerIndexStats {
     pub latest_indexed_at: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DnsDomainHistoryRecord {
+    pub address: String,
+    pub account_seqno: u32,
+    pub observed_mc_seqno: u32,
+    pub observed_at: u64,
+    pub dto_json: String,
+    pub root_hash: Option<String>,
+    pub file_hash: Option<String>,
+}
+
 /// Filters accepted by [`IndexerStore::list`]. All fields are optional
 /// (`None` = no filter on that column).
 #[derive(Clone, Debug, Default)]
@@ -342,6 +365,7 @@ impl IndexerStore {
         conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA)?;
         conn.execute_batch(EXPLORER_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
+        conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         Ok(())
     }
 
@@ -646,6 +670,7 @@ impl IndexerStore {
         tx.execute("DELETE FROM indexed_contracts", [])?;
         tx.execute("DELETE FROM service_request_lifecycle", [])?;
         tx.execute("DELETE FROM aipow_settlement_events", [])?;
+        tx.execute("DELETE FROM dns_domain_history", [])?;
         tx.execute(
             "DELETE FROM indexer_meta
              WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%'",
@@ -653,6 +678,48 @@ impl IndexerStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn record_dns_domain_history(&self, record: &DnsDomainHistoryRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.execute(
+            "INSERT INTO dns_domain_history(address,account_seqno,observed_mc_seqno,observed_at,dto_json)
+             VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(address,observed_mc_seqno) DO UPDATE SET
+               account_seqno=excluded.account_seqno,observed_at=excluded.observed_at,dto_json=excluded.dto_json",
+            params![record.address, record.account_seqno, record.observed_mc_seqno, record.observed_at, record.dto_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn dns_domain_history(
+        &self,
+        after_mc_seqno: u32,
+        after_address: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<DnsDomainHistoryRecord>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut statement = conn.prepare(
+            "SELECT h.address,h.account_seqno,h.observed_mc_seqno,h.observed_at,h.dto_json,
+                    b.root_hash,b.file_hash
+             FROM dns_domain_history h LEFT JOIN explorer_blocks b
+               ON b.workchain=-1 AND b.seqno=h.observed_mc_seqno
+             WHERE h.observed_mc_seqno>?1
+                OR (h.observed_mc_seqno=?1 AND h.address>?2)
+             ORDER BY h.observed_mc_seqno,h.address LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![after_mc_seqno, after_address, limit], |row| {
+            Ok(DnsDomainHistoryRecord {
+                address: row.get(0)?,
+                account_seqno: row.get(1)?,
+                observed_mc_seqno: row.get(2)?,
+                observed_at: row.get::<_, i64>(3)? as u64,
+                dto_json: row.get(4)?,
+                root_hash: row.get(5)?,
+                file_hash: row.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn explorer_block_root(
@@ -1656,6 +1723,44 @@ mod tests {
                 latest_indexed_at: Some(1_007),
             }
         );
+    }
+
+    #[test]
+    fn dns_history_is_checkpoint_bound_and_removed_by_reorg_reset() {
+        let store = IndexerStore::open_in_memory().expect("store");
+        store
+            .index_explorer_block(
+                &ExplorerBlockRecord {
+                    workchain: -1,
+                    shard: i64::MIN,
+                    seqno: 7,
+                    root_hash: "root-seven".to_owned(),
+                    file_hash: "file-seven".to_owned(),
+                    gen_utime: 1_700_000_000,
+                    tx_count: 0,
+                    indexed_at: 1_700_000_001,
+                    observed_mc_seqno: 7,
+                },
+                &[],
+            )
+            .expect("block");
+        store
+            .record_dns_domain_history(&DnsDomainHistoryRecord {
+                address: "0:domain".to_owned(),
+                account_seqno: 3,
+                observed_mc_seqno: 7,
+                observed_at: 1_700_000_000,
+                dto_json: r#"{"name":"alice.tos"}"#.to_owned(),
+                root_hash: None,
+                file_hash: None,
+            })
+            .expect("DNS history");
+        let rows = store.dns_domain_history(0, "", 10).expect("read DNS history");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].root_hash.as_deref(), Some("root-seven"));
+        assert_eq!(rows[0].file_hash.as_deref(), Some("file-seven"));
+        store.reset_canonical_index().expect("reorg reset");
+        assert!(store.dns_domain_history(0, "", 10).expect("history after reset").is_empty());
     }
 
     #[test]

@@ -28,7 +28,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chain_block::{Cell, MsgAddressInt, UInt256, read_single_root_boc};
+use base64::Engine;
+use chain_block::{
+    Cell, Deserializable, MsgAddressInt, SliceData, UInt256, read_single_root_boc, write_boc,
+};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
@@ -37,9 +40,14 @@ use contracts::{
     NominatorPoolWrapperImpl, ServiceActorContract, TaskEscrowContract, contract_provider_from,
 };
 
+const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
+const DNS_COLLECTION_ADDRESS: &str =
+    "0:cec242160fa821bc402586947649f25d4a0c1b02808d1dce93c893e98061bb8a";
+const DNS_ITEM_CODE_DEPTH: u16 = 11;
+
 use crate::indexer::store::{
-    AipowSettlementRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
-    IndexerStore, ServiceRequestRecord,
+    AipowSettlementRecord, DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord,
+    IndexedRecord, IndexerStore, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -100,6 +108,7 @@ impl KnownCodeHashes {
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
         by_hash.insert(AipowCommitmentContract::code()?.repr_hash(), "aipow_commitment");
         by_hash.insert(AipowDistributorContract::code()?.repr_hash(), "aipow_distributor");
+        by_hash.insert(UInt256::from_slice(&hex::decode(DNS_ITEM_CODE_HASH)?), "dns_domain");
         let nominator_pool_code = read_single_root_boc(hex::decode(NOMINATOR_POOL_CODE)?)?;
         by_hash.insert(nominator_pool_code.repr_hash(), "contract.pool.nominator");
         Ok(Self { by_hash })
@@ -409,12 +418,13 @@ async fn scan_one_seqno(
         after_account = Some(last.0.clone());
     }
 
+    let block_gen_utime = if observed_gen_utime > 0 {
+        observed_gen_utime
+    } else {
+        chain_provider.get_block_timestamp(workchain, shard, seqno).await?
+    };
     if let Some(mut block) = explorer_block {
-        block.gen_utime = if observed_gen_utime > 0 {
-            observed_gen_utime
-        } else {
-            chain_provider.get_block_timestamp(workchain, shard, seqno).await?
-        };
+        block.gen_utime = block_gen_utime;
         for transaction in &mut explorer_transactions {
             transaction.gen_utime = block.gen_utime;
         }
@@ -423,7 +433,17 @@ async fn scan_one_seqno(
     }
 
     for address in addresses {
-        if let Err(e) = visit_address(chain_provider, store, known, &address, seqno).await {
+        if let Err(e) = visit_address(
+            chain_provider,
+            store,
+            known,
+            &address,
+            seqno,
+            observed_mc_seqno,
+            u64::from(block_gen_utime),
+        )
+        .await
+        {
             tracing::warn!(target: "indexer", address = %address, error = %format!("{e:#}"), "failed to index account");
         }
     }
@@ -436,6 +456,8 @@ async fn visit_address(
     known: &KnownCodeHashes,
     address: &str,
     seqno: u32,
+    observed_mc_seqno: u32,
+    block_time: u64,
 ) -> anyhow::Result<()> {
     let existing_kind = store.kind_of(address)?;
     let kind = match existing_kind {
@@ -469,6 +491,17 @@ async fn visit_address(
         }
     };
 
+    if kind == "dns_domain" {
+        return decode_dns_domain(
+            chain_provider,
+            store,
+            address,
+            seqno,
+            observed_mc_seqno,
+            block_time,
+        )
+        .await;
+    }
     decode_and_store(chain_provider, store, address, &kind, seqno, time_format::now()).await
 }
 
@@ -760,6 +793,144 @@ async fn decode_and_store(
     }
 }
 
+async fn decode_dns_domain(
+    chain_provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    address: &str,
+    account_seqno: u32,
+    mc_seqno: u32,
+    now: u64,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(mc_seqno > 0, "DNS observation lacks a masterchain checkpoint");
+    let nft = chain_provider
+        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], mc_seqno)
+        .await?;
+    anyhow::ensure!(nft.bool(0)?, "DNS Domain Item is not initialized");
+    let index = nft.decimal_string(1)?.to_owned();
+    let mut collection_slice = nft.slice(2)?;
+    let collection = MsgAddressInt::construct_from(&mut collection_slice)?;
+    anyhow::ensure!(
+        collection.to_string() == DNS_COLLECTION_ADDRESS,
+        "DNS Item belongs to a non-canonical Collection"
+    );
+    anyhow::ensure!(
+        collection_slice.remaining_bits() == 0 && collection_slice.remaining_references() == 0,
+        "trailing Collection address data"
+    );
+    let owner = parse_optional_dns_address(nft.slice(3)?)?.map(|value| value.to_string());
+    let content = nft.cell(4)?;
+
+    let domain_stack = chain_provider
+        .run_get_method_at(address.to_owned(), "get_domain", vec![], mc_seqno)
+        .await?;
+    let domain_slice = domain_stack.slice(0)?;
+    anyhow::ensure!(
+        domain_slice.remaining_bits() % 8 == 0 && domain_slice.remaining_references() == 0,
+        "DNS label is not one refless byte string"
+    );
+    let domain_bytes = domain_slice.get_bytestring(0);
+    let label = String::from_utf8(domain_bytes)?;
+    anyhow::ensure!(
+        contracts::dns::label_contract_error(&label).is_none(),
+        "on-chain DNS label is invalid"
+    );
+    let expected_index = contracts::dns::label_slice_hash(&label)?;
+    anyhow::ensure!(
+        nft.number_bytes(1, 32)? == expected_index,
+        "DNS Item index differs from label slice hash"
+    );
+    let item_hash: [u8; 32] =
+        hex::decode(DNS_ITEM_CODE_HASH)?.try_into().expect("constant is 32 bytes");
+    let derived = contracts::dns::derive_item_address(
+        &contracts::dns::CollectionConfig {
+            collection: collection.clone(),
+            item_code_hash: item_hash,
+            item_code_depth: DNS_ITEM_CODE_DEPTH,
+            item_workchain: 0,
+        },
+        &label,
+    )?;
+    anyhow::ensure!(
+        derived.to_string() == address,
+        "DNS Item address is not canonical for its label"
+    );
+
+    let auction_stack = chain_provider
+        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], mc_seqno)
+        .await?;
+    let auction_end_time = auction_stack.i64(2)?;
+    let max_bid_amount = auction_stack.decimal_string(1)?.parse::<u128>()?;
+    anyhow::ensure!(auction_end_time >= 0, "negative DNS auction end time");
+    let max_bid_address =
+        parse_optional_dns_address(auction_stack.slice(0)?)?.map(|value| value.to_string());
+    let auction = (auction_end_time != 0).then_some(contracts::dns::AuctionInfo {
+        max_bid_address: max_bid_address.as_deref().map(str::parse).transpose()?,
+        max_bid_amount,
+        auction_end_time,
+    });
+    let fill_stack = chain_provider
+        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], mc_seqno)
+        .await?;
+    let last_fill_up_time = fill_stack.i64(0)?;
+    anyhow::ensure!(last_fill_up_time > 0, "DNS Domain Item lacks a renewal clock");
+    let lifecycle =
+        contracts::dns::classify_domain(auction.as_ref(), last_fill_up_time, now as i64);
+    let dto = DnsDomainRecordDto {
+        name: format!("{label}.tos"),
+        label,
+        index,
+        collection: collection.to_string(),
+        owner,
+        max_bid_address,
+        max_bid_amount: max_bid_amount.to_string(),
+        auction_end_time,
+        last_fill_up_time,
+        renewal_deadline: lifecycle.renewal_deadline,
+        safe_to_resolve: lifecycle.safe_to_resolve,
+        content_boc_base64: base64::engine::general_purpose::STANDARD.encode(write_boc(&content)?),
+        content_hash: hex::encode(content.repr_hash()),
+    };
+    let dto_json = serde_json::to_string(&dto)?;
+    store.record_dns_domain_history(&DnsDomainHistoryRecord {
+        address: address.to_owned(),
+        account_seqno,
+        observed_mc_seqno: mc_seqno,
+        observed_at: now,
+        dto_json: dto_json.clone(),
+        root_hash: None,
+        file_hash: None,
+    })?;
+    store.upsert(&IndexedRecord {
+        address: address.to_owned(),
+        kind: "dns_domain".to_owned(),
+        creator: dto.owner.clone(),
+        counterparty: dto.max_bid_address.clone(),
+        status: Some(lifecycle.state.as_str().to_owned()),
+        deadline: lifecycle.renewal_deadline.and_then(|value| u64::try_from(value).ok()),
+        last_seqno: account_seqno,
+        updated_at: now,
+        dto_json,
+    })
+}
+
+fn parse_optional_dns_address(mut value: SliceData) -> anyhow::Result<Option<MsgAddressInt>> {
+    let mut tag = value.clone();
+    let prefix = tag.get_next_int(2)?;
+    if prefix == 0 {
+        anyhow::ensure!(
+            value.remaining_bits() == 2 && value.remaining_references() == 0,
+            "trailing data after addr_none"
+        );
+        return Ok(None);
+    }
+    let address = MsgAddressInt::construct_from(&mut value)?;
+    anyhow::ensure!(
+        value.remaining_bits() == 0 && value.remaining_references() == 0,
+        "trailing internal-address data"
+    );
+    Ok(Some(address))
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct AipowDistributorRecordDto {
     operator: String,
@@ -770,6 +941,23 @@ struct AipowDistributorRecordDto {
     claimed_score: String,
     score_root: String,
     commitment_ref: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct DnsDomainRecordDto {
+    name: String,
+    label: String,
+    index: String,
+    collection: String,
+    owner: Option<String>,
+    max_bid_address: Option<String>,
+    max_bid_amount: String,
+    auction_end_time: i64,
+    last_fill_up_time: i64,
+    renewal_deadline: Option<i64>,
+    safe_to_resolve: bool,
+    content_boc_base64: String,
+    content_hash: String,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1265,6 +1453,13 @@ mod tests {
 
     fn addr(byte: u8) -> MsgAddressInt {
         MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap()
+    }
+
+    #[test]
+    fn canonical_dns_item_code_hash_is_classified() {
+        let known = KnownCodeHashes::compute().expect("known code hashes");
+        let hash = UInt256::from_slice(&hex::decode(DNS_ITEM_CODE_HASH).expect("DNS hash"));
+        assert_eq!(known.by_hash.get(&hash), Some(&"dns_domain"));
     }
 
     #[test]

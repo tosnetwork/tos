@@ -11,7 +11,10 @@
 
 #[allow(unused_imports)]
 use super::http_server_task::{ApiErrorResponse, AppError, AppState};
-use crate::indexer::{ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord, ListFilters};
+use crate::indexer::{
+    DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
+    ListFilters,
+};
 use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
 use base64::Engine;
@@ -35,6 +38,7 @@ const CONTRACT_KINDS: &[&str] = &[
     "aipow_commitment",
     "aipow_distributor",
     "contract.pool.nominator",
+    "dns_domain",
 ];
 
 #[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
@@ -65,6 +69,52 @@ pub struct HashQuery {
 #[derive(Clone, serde::Deserialize, utoipa::IntoParams)]
 pub struct SearchQuery {
     pub q: String,
+}
+
+#[derive(Clone, Default, serde::Deserialize, utoipa::IntoParams)]
+pub struct DnsHistoryQuery {
+    pub after_mc_seqno: Option<u32>,
+    pub after_address: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DnsDomainHistoryDto {
+    pub address: String,
+    pub account_seqno: u32,
+    pub observed_mc_seqno: u32,
+    pub observed_at: u64,
+    pub root_hash: String,
+    pub file_hash: String,
+    pub data: Value,
+}
+
+impl TryFrom<DnsDomainHistoryRecord> for DnsDomainHistoryDto {
+    type Error = AppError;
+
+    fn try_from(value: DnsDomainHistoryRecord) -> Result<Self, Self::Error> {
+        let (Some(root_hash), Some(file_hash)) = (value.root_hash, value.file_hash) else {
+            return Err(AppError::internal("DNS history lacks its canonical masterchain block"));
+        };
+        let mut data = serde_json::from_str::<Value>(&value.dto_json)
+            .map_err(|_| AppError::internal("DNS history contains invalid JSON"))?;
+        make_json_browser_safe(&mut data);
+        Ok(Self {
+            address: value.address,
+            account_seqno: value.account_seqno,
+            observed_mc_seqno: value.observed_mc_seqno,
+            observed_at: value.observed_at,
+            root_hash,
+            file_hash,
+            data,
+        })
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct DnsDomainHistoryResponse {
+    pub ok: bool,
+    pub result: Vec<DnsDomainHistoryDto>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
@@ -717,6 +767,28 @@ pub async fn get_block(
     }
     let record = record.ok_or_else(|| AppError::not_found("block hash is not indexed"))?;
     Ok(axum::Json(ExplorerBlockResponse { ok: true, result: record.into() }))
+}
+
+#[utoipa::path(get, path = "/explorer/dns/history", params(DnsHistoryQuery), responses(
+    (status = 200, body = DnsDomainHistoryResponse), (status = 500, body = ApiErrorResponse)
+))]
+pub async fn dns_history(
+    State(state): State<AppState>,
+    Query(query): Query<DnsHistoryQuery>,
+) -> Result<axum::Json<DnsDomainHistoryResponse>, AppError> {
+    let limit = query.limit.unwrap_or(MAX_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
+    let after_address = query.after_address.unwrap_or_default();
+    if !after_address.is_empty() {
+        MsgAddressInt::from_str(&after_address)
+            .map_err(|_| AppError::bad_request("invalid DNS history cursor address"))?;
+    }
+    let rows = state
+        .indexer_store
+        .dns_domain_history(query.after_mc_seqno.unwrap_or(0), &after_address, limit)
+        .map_err(index_error)?;
+    let result =
+        rows.into_iter().map(DnsDomainHistoryDto::try_from).collect::<Result<Vec<_>, _>>()?;
+    Ok(axum::Json(DnsDomainHistoryResponse { ok: true, result }))
 }
 
 #[utoipa::path(get, path = "/explorer/contracts/{kind}", params(
