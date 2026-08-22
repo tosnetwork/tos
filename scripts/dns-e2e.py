@@ -336,13 +336,15 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
                 .store_bit(0)
                 .end_cell())
     phash_bytes = proposal.hash
-    # new voting proposal: tag query_id expire_at(relative) ^proposal critical=0
+    # ConfigParam 4 is listed in ConfigParam 10, so the proposal must use the
+    # critical setup even though the local rehearsal gives both setups the
+    # same single-validator thresholds.
     body = (begin_cell()
             .store_uint(0x6E565052, 32)
             .store_uint(0, 64)
             .store_uint(100_000, 32)
             .store_ref(proposal)
-            .store_bit(0)
+            .store_bit(1)
             .end_cell())
     await faucet.send(transfer_message(faucet, config_addr, 10 * NANO, body))
 
@@ -510,6 +512,18 @@ async def run_checks(faucet, artifacts: dict, global_config: Path) -> None:
     print(f"  minimum price now: {price / NANO} TOS; sending {bid / NANO} TOS")
     body = begin_cell().store_uint(0, 32).store_bytes(LABEL.encode()).end_cell()
     await faucet.send(transfer_message(faucet, collection_addr, bid, body))
+
+    if now <= VECTORS["auction_start_time"]:
+        # TIP-1 intentionally freezes a future mainnet activation time.  A
+        # localnet run before that date must prove the launch gate remains
+        # closed instead of waiting for an item that cannot legally deploy.
+        await asyncio.sleep(4)
+        check("pre-launch registration is rejected and deploys no Domain Item",
+              account_state(item_addr) in ("uninitialized", "nonexist", ""))
+        print("  post-launch auction checks require a chain timestamp after "
+              f"{VECTORS['auction_start_time']}")
+        return
+
     check("Domain Item deployed at the derived (vector) address",
           await async_poll(lambda: account_state(item_addr) == "active", timeout=120))
 
