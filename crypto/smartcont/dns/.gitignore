@@ -1,0 +1,9 @@
+# The repository-root "**/*build*/" pattern would ignore func/build/, but the
+# compiled .fif outputs there are tracked (as upstream tracks them). Re-include
+# the directory and ignore only locally generated artifacts.
+!func/build/
+func/compiled.fif
+func/test.fif
+func/build/*.boc
+func/build/*.addr
+node_modules/

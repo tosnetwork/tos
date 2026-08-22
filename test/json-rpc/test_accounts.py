@@ -481,8 +481,12 @@ class TestGetTokenData:
         result = data["result"]
         assert result["@type"] == "ext.tokens.nftCollectionData"
         assert "next_item_index" in result
-        assert isinstance(result["next_item_index"], int)
-        assert result["next_item_index"] >= 0
+        # next_item_index is a decimal string: hashed-index collections (DNS)
+        # use full uint256 item indices and next_item_index = -1, which cannot
+        # be represented as a JSON int64.
+        assert isinstance(result["next_item_index"], str)
+        next_item_index = int(result["next_item_index"])  # decimal round-trip
+        assert next_item_index >= -1
         assert "collection_content" in result
         assert "owner_address" in result
         assert len(result["owner_address"]) > 0

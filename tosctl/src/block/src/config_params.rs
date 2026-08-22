@@ -196,7 +196,12 @@ impl ConfigParams {
         };
         Ok(addr)
     }
-    // TODO 4 dns_root_addr
+    pub fn dns_root_address(&self) -> Result<AccountId> {
+        match self.config(4)? {
+            Some(ConfigParamEnum::ConfigParam4(param)) => Ok(param.dns_root_addr),
+            _ => fail!("no dns root address in config"),
+        }
+    }
     pub fn mint_prices(&self) -> Result<ConfigParam6> {
         match self.config(6)? {
             Some(ConfigParamEnum::ConfigParam6(cp)) => Ok(cp),

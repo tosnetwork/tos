@@ -132,7 +132,13 @@ dns.actionDeleteAll = dns.Action;
 dns.actionDelete name:string category:int256 = dns.Action;
 dns.actionSet entry:dns.entry = dns.Action;
 
-dns.resolved entries:vector<dns.entry> = dns.Resolved;
+//
+// Result provenance: block_id is the one finalized block every hop of the
+// lookup was pinned to; resolver_path lists each resolver contacted in order
+// (the first entry is the root); provenance_class names the assurance the
+// caller actually gets ("chain_anchored" for toslib: state proved against a
+// block reached through a verified proof chain).
+dns.resolved entries:vector<dns.entry> block_id:tos.blockIdExt resolver_path:vector<accountAddress> provenance_class:string = dns.Resolved;
 
 
 //

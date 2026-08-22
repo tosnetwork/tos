@@ -34,6 +34,22 @@ namespace tos {
 const td::Bits256 DNS_NEXT_RESOLVER_CATEGORY =
     td::sha256_bits256(td::Slice("dns_next_resolver", strlen("dns_next_resolver")));
 
+// Uniform resolver hop budget shared by every client (lite-client, toslib,
+// toslib-cli, rldp-http-proxy). Exhausting it must be reported as a distinct
+// error, never as "not found". Each hop consumes at least one byte of the
+// encoded name, so with this cap a delegation cycle terminates as a budget
+// error instead of looping.
+constexpr int DNS_MAX_RESOLVER_HOPS = 8;
+
+// Shared budget decision: with `hops_left` remaining out of
+// DNS_MAX_RESOLVER_HOPS, following one more delegation would contact a
+// resolver beyond the budget. Both recursive clients consult this before
+// following a partial (next-resolver) answer, so a full budget performs at
+// most DNS_MAX_RESOLVER_HOPS resolver contacts in total.
+inline bool dns_next_hop_exceeds_budget(int hops_left) {
+  return hops_left <= 1;
+}
+
 class DnsInterface {
  public:
   struct EntryDataText {
@@ -191,7 +207,12 @@ class DnsInterface {
   static std::string decode_name(td::Slice name);
 
   static size_t get_default_max_name_size() {
-    return 128;
+    // The encoded form (labels reversed, NUL after every label) is always the
+    // dotted length plus one byte, and dnsresolve receives it as the data bits
+    // of a single cell: 1023 bits fit at most 127 bytes. The dotted name is
+    // therefore bounded at 126 bytes; 127 and 128 passed this check before but
+    // always failed deeper in resolve_args_raw with "encoded name too long".
+    return 126;
   }
   static td::Result<SmartContract::Args> resolve_args_raw(td::Slice encoded_name, td::Bits256 category,
                                                           block::StdAddress address = {});

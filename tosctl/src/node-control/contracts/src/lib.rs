@@ -31,6 +31,7 @@ pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
 pub mod dispute;
+pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
 pub mod nominator;

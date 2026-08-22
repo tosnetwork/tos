@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>.tos domains</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 46rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
+    input { font: inherit; width: 100%; padding: .5rem .6rem; box-sizing: border-box; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .8rem; }
+    dt { font-weight: 600; }
+    dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+    .warn { color: #b45309; }
+    .err { color: #b91c1c; }
+    .note { opacity: .75; font-size: .9em; }
+  </style>
+</head>
+<body>
+  <h1>.tos name inspector</h1>
+  <p class="note">
+    Offline derivation demo: canonicalization, contract validity, item index,
+    and the deterministic Domain Item address, computed locally from the
+    pinned collection configuration. A name is an alias — never identity,
+    authorization, or payment authority.
+  </p>
+  <input id="name" placeholder="alice.tos" autofocus>
+  <div id="out"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

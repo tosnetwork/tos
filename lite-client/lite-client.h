@@ -31,6 +31,7 @@
 #include "auto/tl/lite_api.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "smc-envelope/ManualDns.h"
 #include "td/utils/filesystem.h"
 #include "terminal/terminal.h"
 #include "tl-utils/tl-utils.hpp"
@@ -217,10 +218,14 @@ class TestNode : public td::actor::Actor {
   bool dns_resolve_start(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt blkid, std::string domain,
                          td::Bits256 cat, int mode);
   bool dns_resolve_send(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt blkid, std::string domain,
-                        std::string qdomain, td::Bits256 cat, int mode);
+                        std::string qdomain, td::Bits256 cat, int mode, int hops_left,
+                        std::vector<std::string> resolver_path = {});
   void dns_resolve_finish(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt blkid,
-                          std::string domain, std::string qdomain, td::Bits256 cat, int mode, int used_bits,
-                          Ref<vm::Cell> value);
+                          std::string domain, std::string qdomain, td::Bits256 cat, int mode, int hops_left,
+                          std::vector<std::string> resolver_path, int used_bits, Ref<vm::Cell> value);
+  // uniform resolver hop budget: exhausting it is reported as a distinct
+  // error, never as "not found"
+  static constexpr int max_dns_resolver_hops = tos::DNS_MAX_RESOLVER_HOPS;
   bool show_dns_record(std::ostream& os, td::Bits256 cat, Ref<vm::CellSlice> value, bool raw_dump);
   bool get_all_shards(std::string filename = "", bool use_last = true, tos::BlockIdExt blkid = {});
   void got_all_shards(tos::BlockIdExt blk, td::BufferSlice proof, td::BufferSlice data, std::string filename);

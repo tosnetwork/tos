@@ -595,6 +595,11 @@ void dns_resolve(Client& client, const Wallet& dns, std::string name) {
                                         std::move(address), name, td::sha256_bits256(td::Slice("cat", 3)), 4))
                       .move_as_ok();
   CHECK(resolved->entries_.size() == 1);
+  // provenance (DNS.md §8): the whole lookup is pinned to one finalized
+  // block, every contacted resolver is listed, and the assurance is named
+  CHECK(resolved->block_id_ != nullptr);
+  CHECK(!resolved->resolver_path_.empty());
+  CHECK(resolved->provenance_class_ == "chain_anchored");
   LOG(INFO) << to_string(resolved);
   LOG(INFO) << "OK";
 }

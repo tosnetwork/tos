@@ -315,13 +315,18 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                 auto& content_e = stk->at(1);
                 auto& next_item_e = stk->at(2);
 
-                td::int64 next_item_index = next_item_e.is_int() ? next_item_e.as_int()->to_long() : 0;
+                // Hashed-index collections (e.g. DNS) use full uint256 item
+                // indices and next_item_index = -1; to_long() would silently
+                // saturate to INT64_MIN outside 64 bits, so the complete VM
+                // integer is preserved as a decimal string.
+                std::string next_item_index =
+                    next_item_e.is_int() ? next_item_e.as_int()->to_dec_string() : "0";
                 auto owner_str = parse_address_from_slice(owner_e);
                 auto content_b64 = cell_to_b64(content_e);
 
                 td::StringBuilder sb;
                 sb << "{\"@type\":\"ext.tokens.nftCollectionData\""
-                   << ",\"next_item_index\":" << next_item_index
+                   << ",\"next_item_index\":" << td::JsonString(td::Slice(next_item_index))
                    << ",\"collection_content\":" << td::JsonString(td::Slice(content_b64))
                    << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
                    << "}";
@@ -364,8 +369,10 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             auto& index_e = stk->at(3);
             auto& init_e = stk->at(4);
 
-            bool init_val = init_e.is_int() && init_e.as_int()->to_long() != 0;
-            td::int64 index_val = index_e.is_int() ? index_e.as_int()->to_long() : 0;
+            bool init_val = init_e.is_int() && init_e.as_int()->sgn() != 0;
+            // Full 256-bit item index as a decimal string; see the collection
+            // handler above for why to_long() cannot be used here.
+            std::string index_val = index_e.is_int() ? index_e.as_int()->to_dec_string() : "0";
             auto collection_str = parse_address_from_slice(collection_e);
             auto owner_str = parse_address_from_slice(owner_e);
             auto content_b64 = cell_to_b64(content_e);
@@ -373,7 +380,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             td::StringBuilder sb;
             sb << "{\"@type\":\"ext.tokens.nftItemData\""
                << ",\"init\":" << (init_val ? "true" : "false")
-               << ",\"index\":" << index_val
+               << ",\"index\":" << td::JsonString(td::Slice(index_val))
                << ",\"collection_address\":" << td::JsonString(td::Slice(collection_str))
                << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
                << ",\"individual_content\":" << td::JsonString(td::Slice(content_b64))

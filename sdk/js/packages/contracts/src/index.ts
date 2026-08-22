@@ -9,3 +9,6 @@ export { NftCollection } from './nft/NftCollection';
 export { NftItem } from './nft/NftItem';
 export { NFT_COLLECTION_CODE_HEX, NFT_ITEM_CODE_HEX } from './nft/codes';
 export type { NftCollectionData, NftItemData } from './nft/types';
+
+// .tos naming system (TOS DNS)
+export * from './dns';

@@ -171,5 +171,9 @@ variable special-dict
 { make-smc-addr-cell 1 config! } : config.elector_smc!
 { make-smc-addr-cell 2 config! } : config.minter_smc!
 { make-smc-addr-cell 3 config! } : config.collector_smc!
+// masterchain root DNS resolver address (dns_root_addr:bits256).
+// Clients hard-code the masterchain workchain for this address, so only the
+// 256 address bits are stored. Absent parameter 4 means "DNS unavailable".
+{ make-smc-addr-cell 4 config! } : config.dns_root_smc!
 
 { <b swap dict, b> 7 config! } : config.to_mint!

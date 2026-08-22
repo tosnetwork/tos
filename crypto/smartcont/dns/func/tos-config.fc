@@ -1,0 +1,22 @@
+;; TOS deployment configuration for the `.tos` zone.
+;;
+;; This file holds the ONLY compile-time value that DNS.md (§6.6) leaves as an
+;; explicit deployment decision. Everything else in this repository keeps zero
+;; semantic divergence from the upstream TON contracts.
+;;
+;; auction_start_time drives two upstream formulas:
+;;   - the first-auction duration ramp: seven days falling to one hour in
+;;     twelve 30-day steps after this timestamp (complete after 360 days);
+;;   - the minimum-price decay: 10% per 30-day month for 21 months, then flat.
+;;
+;; Governance must approve the mainnet value before activation:
+;;   - keeping the historical upstream value would launch `.tos` with the ramp
+;;     already elapsed (one-hour auctions, fully decayed floor prices);
+;;   - a TOS activation timestamp restarts the ramp with the same algorithm.
+;;
+;; The value below is a LOCALNET/TEST value only (auctions open immediately,
+;; ramp starts at this instant). Release builds fail closed: the deploy
+;; tooling refuses to publish code hashes until governance substitutes the
+;; approved value and records it next to the reproducible build output.
+
+const int auction_start_time = 1735689600; ;; 2025-01-01 00:00:00 UTC - localnet/test placeholder

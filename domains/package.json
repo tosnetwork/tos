@@ -1,0 +1,11 @@
+{
+  "name": "tos-domains",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Non-custodial registrar and management application for the .tos zone",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm -w @tos-domains/protocol run test",
+    "build": "npm -w @tos-domains/protocol run build"
+  }
+}
