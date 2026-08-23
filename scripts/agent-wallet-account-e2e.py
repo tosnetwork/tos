@@ -262,7 +262,7 @@ async def run_checks(faucet, node) -> None:
 
     print("\n=== deploy: Agent Wallet + Agent Account ===")
     await tosctl(
-        "agent", "wallet", "create", "--name", "agent-1", "-v", "V3R2", "-w", "0",
+        "agent", "wallet", "create", "--name", "agent-1", "-v", "V5R1", "-w", "0",
         "--max-per-tx", "2", "--daily-limit", "10",
     )
     deploy_out = await tosctl_json(
