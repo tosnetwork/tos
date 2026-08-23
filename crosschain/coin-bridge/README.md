@@ -17,8 +17,8 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 ### EVM side (`evm/`)
 
 - `Bridge.sol` + `WrappedTOS.sol`: oracle-quorum minting of wrapped coins, vote-gated burning, oracle-set rotation, `finishedVotings` replay protection.
-- `SignatureChecker.sol`: low-`s` ECDSA verification with digests bound to the bridge contract address.
-- Truffle tests.
+- `SignatureChecker.sol`: low-`s` ECDSA verification with digests bound to both the bridge contract address and EIP-1344 chain ID.
+- Truffle tests plus same-address, dual-chain replay and legacy-format rejection tests.
 
 No production oracle daemon ships with this directory; oracle operation remains an independently implemented and audited service.
 
@@ -46,9 +46,9 @@ Outputs are written to `crosschain/coin-bridge/artifacts/tvm/` and are not commi
 ## Build and test the EVM contracts
 
 ```bash
-scripts/test-coin-bridge-evm.sh   # truffle compile + tests on a local dev chain
+scripts/test-coin-bridge-evm.sh   # regression suite + dual-chain replay rejection
 ```
 
 ## Production gates
 
-Before any real funds are accepted, every item in `SECURITY.md` is mandatory — including the chain-ID domain-separation review specific to this contract generation: vote digests bind the bridge contract address but not the EVM chain ID, so one bridge address must never exist on two networks with an overlapping oracle set.
+Before any real funds are accepted, every item in `SECURITY.md` is mandatory. The EVM chain-ID domain-separation change is implemented and tested, but it is not deployment approval: the production oracle signer must match the committed golden vectors, target chain IDs must be pairwise distinct, independent audits must pass, and live deployment state must be established from traceable node evidence.

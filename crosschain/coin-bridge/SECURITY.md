@@ -10,7 +10,7 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 4. The TOS and EVM contracts, compiler versions, deployment bytecode, and initial storage match audited artifacts.
 5. Locked native TOS and minted wrapped-token supply are continuously reconciled.
 
-A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record. The historical Solidity plane predates the token bridge: its vote digests include `address(this)` but **not** the EVM chain ID, so the same bridge contract address must never exist on two networks with an overlapping oracle set — a signature for one chain would replay on the other.
+A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record. The historical Solidity plane predates the token bridge and originally bound vote digests to `address(this)` but not the EVM chain ID. That inherited format allowed replay at the same bridge address when signatures from one chain contained at least the other chain's current quorum (`ceil(2n/3)`). The implementation now binds all three digests to `chainid()` as well; [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md) records the exact format, tests, TVM analysis, signer constraint, and remaining deployment blockers.
 
 ## Preserved contract controls
 
@@ -19,6 +19,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - The quorum is a ceiling two-thirds majority at every set size, and every set installed on any path holds at least three distinct non-zero members.
 - Governance votes carry strictly increasing oracle-set hashes and burn-status nonces, so a signed-but-unexecuted vote cannot be held back and used to undo a later one. Oracle daemons must issue these values in increasing order.
 - Completed EVM votes cannot be replayed (`finishedVotings`).
+- EVM vote digests bind both the bridge address and EIP-1344 chain ID; all target chain IDs must be pairwise distinct.
 - ECDSA signatures are checked for low-`s` and canonical `v` values.
 - Oracle-set updates reject sets shorter than three and duplicate members.
 - The TOS side tracks `total_locked`, applies flat/network/percentage fees, and supports suspending TOS→EVM transfers via state flags.
@@ -27,7 +28,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 ## Mandatory pre-mainnet work
 
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
-- [ ] A dedicated review of the missing chain-ID domain separation above, with a decision to either enforce unique bridge addresses per network or upgrade the digest scheme before any deployment.
+- [x] Bind all three EVM vote digests to the EIP-1344 chain ID and bridge address; update test signers, commit golden vectors, reject cross-chain and legacy-format signatures, record the upstream delta, and verify the TVM multisig's existing `wallet_id`/destination binding. See [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md). The external production signer and independent audits remain separate open deployment gates.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
 - [ ] Per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide economic rate limiting by themselves.

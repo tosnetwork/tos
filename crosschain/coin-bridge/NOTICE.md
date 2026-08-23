@@ -8,7 +8,7 @@ The contracts in this directory derive from the official TON Foundation coin bri
 | TVM/FunC (BSC) | `ton-blockchain/bridge-func` | `bsc` | `01b5a05e13b1dd735821dfe2b208ad5c2dd5dec2` | GPL-3.0 |
 | EVM/Solidity | `ton-blockchain/bridge-solidity` | `master` | `f78adaf8bee30133a6231d7cfe36c9b29dd28613` | GPL-3.0 |
 
-TOS preserves the upstream licenses and this attribution. The sources have been renamed to TOS semantics (identifiers, assembler mnemonics, file names, and documentation); opcodes, state layout, fee arithmetic, and signed payload structures are unchanged.
+TOS preserves the upstream licenses and this attribution. Except for the reviewed deltas below, the sources retain the upstream opcodes, state layout, fee arithmetic, and behavior. Identifiers, assembler mnemonics, file names, and documentation use TOS semantics.
 
 ## Reviewed deltas against the pinned upstream
 
@@ -21,5 +21,6 @@ Everything below is a deliberate change; anything else appearing in a diff again
 5. The test harness normalizes `eth_sign` recovery values, which upstream assumed to be `0`/`1`, across dev-chain generations.
 6. `Bridge.sol`: oracle-set hashes and burn-status nonces must strictly increase. Upstream checked only `finishedVotings`, so a signed-but-unexecuted governance vote stayed valid forever and a stale one could undo a newer one. This makes the nonce an ordered sequence rather than an arbitrary unique label, which the oracle daemon must honour.
 7. Named-network entries were removed from both `migrations/` and `truffle-config.js`, along with the publicly known development mnemonic they carried and the now-unused wallet provider dependency. An endpoint plus a signing key plus an oracle set is a deployment decision that belongs in a reviewed manifest.
+8. `evm/contracts/SignatureChecker.sol`: all three EVM vote digests now add EIP-1344 chain-ID domain separation in the exact order `magic, address(this), chainId, fields`. The Solidity 0.7.x contract reads `chainid()` through inline assembly; the test signer takes the chain ID explicitly. This signed-payload change is intentionally not byte-identical to the pinned upstream and must be adopted atomically by every oracle signer. `evm/test/vectors/chain-id-domain-separation.json` pins the cross-implementation wire values, while the dual-Ganache test proves that mint, oracle-set, burn-status, and legacy-format signatures cannot replay into another chain-ID domain at the same contract address.
 
 Historical upstream network BOCs, prebuilt compile outputs, deployed addresses, oracle key sets, and mainnet deployment command files are intentionally excluded and must not be reused for TOS.
