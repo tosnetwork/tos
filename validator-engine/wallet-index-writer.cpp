@@ -312,8 +312,9 @@ NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, t
     }
     owner_out = owner;
     return NftVerification::Verified;
-  } catch (vm::VmError&) {
-    return NftVerification::Absent;
+  } catch (vm::VmError& err) {
+    return err.get_errno() == static_cast<int>(vm::Excno::virt_err) ? NftVerification::Indeterminate
+                                                                    : NftVerification::Absent;
   } catch (vm::VmVirtError&) {
     return NftVerification::Indeterminate;
   }
