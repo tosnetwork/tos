@@ -3,6 +3,7 @@
 ;; Persistent data layout:
 ;;   owner:MsgAddress
 ;;   controller_pubkey:uint256
+;;   deployment_id:uint256
 ;;   seqno:uint32
 ;;   spend_day:uint32
 ;;   spent_today:coins
@@ -20,12 +21,24 @@
 ;;                         default_task_timeout:uint64 metadata_hash:(Maybe uint256)
 ;;                         service_endpoint_hash:(Maybe uint256) = InternalMsgBody;
 ;;   rotate_controller#41475002 query_id:uint64 controller_pubkey:uint256 = InternalMsgBody;
-;;   task_send#41475003 seqno:uint32 valid_until:uint32 target:MsgAddressInt
-;;             value:coins body:^Cell = SignedExternalBody;
+;;   task_send#41475003 global_id:int32 seqno:uint32 valid_until:uint32
+;;             target:MsgAddressInt value:coins body:^Cell = SignedExternalBody;
+;;   native_send#41475004 global_id:int32 seqno:uint32 valid_until:uint32
+;;             target:MsgAddressInt value:coins = SignedExternalBody;
+;;   cancel_seqno#41475005 global_id:int32 seqno:uint32 valid_until:uint32
+;;             = SignedExternalBody;
+
+int get_global_id() asm "GLOBALID";
 
 const int op::agent_update_policy = 0x41475001;      ;; "AGP\1"
 const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
 const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
+const int op::agent_native_send = 0x41475004;        ;; "AGP\4"
+const int op::agent_cancel_seqno = 0x41475005;       ;; "AGP\5"
+
+;; sha256("tos.agent-account.controller-signature.v1")
+const int agent_controller_signature_domain =
+  0xede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471;
 
 const int err::invalid_policy = 1701;
 const int err::not_owner = 1702;
@@ -34,11 +47,14 @@ const int err::bad_signature = 1704;
 const int err::bad_seqno = 1705;
 const int err::expired = 1706;
 const int err::policy_exceeded = 1707;
+const int err::wrong_network = 1708;
+const int err::bad_value = 1709;
 
-(slice, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
+(slice, int, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int controller_pubkey = ds~load_uint(256);
+  int deployment_id = ds~load_uint(256);
   int seqno = ds~load_uint(32);
   int spend_day = ds~load_uint(32);
   int spent_today = ds~load_coins();
@@ -64,6 +80,7 @@ const int err::policy_exceeded = 1707;
   return (
     owner,
     controller_pubkey,
+    deployment_id,
     max_per_tx,
     daily_limit,
     default_task_timeout,
@@ -78,6 +95,7 @@ const int err::policy_exceeded = 1707;
 cell pack_agent_state(
   slice owner,
   int controller_pubkey,
+  int deployment_id,
   int seqno,
   int spend_day,
   int spent_today,
@@ -111,6 +129,7 @@ cell pack_agent_state(
   return begin_cell()
     .store_slice(owner)
     .store_uint(controller_pubkey, 256)
+    .store_uint(deployment_id, 256)
     .store_uint(seqno, 32)
     .store_uint(spend_day, 32)
     .store_coins(spent_today)
@@ -153,6 +172,7 @@ cell pack_agent_state(
   (
     slice owner,
     int controller_pubkey,
+    int deployment_id,
     int max_per_tx,
     int daily_limit,
     int default_task_timeout,
@@ -180,6 +200,7 @@ cell pack_agent_state(
     set_data(pack_agent_state(
       owner,
       controller_pubkey,
+      deployment_id,
       seqno,
       spend_day,
       spent_today,
@@ -201,7 +222,8 @@ cell pack_agent_state(
     set_data(pack_agent_state(
       owner,
       new_controller_pubkey,
-      seqno,
+      deployment_id,
+      seqno + 1,
       spend_day,
       spent_today,
       max_per_tx,
@@ -222,6 +244,7 @@ cell pack_agent_state(
   (
     slice owner,
     int controller_pubkey,
+    int deployment_id,
     int max_per_tx,
     int daily_limit,
     int default_task_timeout,
@@ -232,29 +255,63 @@ cell pack_agent_state(
     int spent_today
   ) = load_agent_state();
 
-  ;; Domain-bind the signed payload to this Agent Account's own address so
-  ;; a signature cannot be replayed against a different Agent Account that
-  ;; happens to share the same controller key (e.g. an operator reusing key
-  ;; material across several agent identities) and a coincidentally-valid
-  ;; seqno -- the bare slice_hash used previously had no such binding. Hash
-  ;; the payload first, then domain-bind that hash: the same two-step
-  ;; pattern (and the same `contracts::domain_bound_hash` helper) as Task
-  ;; Escrow/Dispute/Service Actor's attestation signatures.
+  slice header = signed_body;
+  int header_op = header~load_uint(32);
+  throw_unless(err::unknown_op,
+    (header_op == op::agent_task_send) |
+    (header_op == op::agent_native_send) |
+    (header_op == op::agent_cancel_seqno));
+  int msg_global_id = header~load_int(32);
+  throw_unless(err::wrong_network, msg_global_id == get_global_id());
+
+  ;; Bind the signature to the protocol, actual chain, exact account and full
+  ;; payload. Wrong-network requests fail before signature work and acceptance.
   int payload_hash = slice_hash(signed_body);
   (int wc, int addr) = my_address().parse_std_addr();
   int domain_hash = cell_hash(begin_cell()
-    .store_int(wc, 8).store_uint(addr, 256).store_uint(payload_hash, 256).end_cell());
+    .store_uint(agent_controller_signature_domain, 256)
+    .store_int(msg_global_id, 32)
+    .store_int(wc, 8)
+    .store_uint(addr, 256)
+    .store_uint(payload_hash, 256)
+  .end_cell());
   throw_unless(err::bad_signature, check_signature(domain_hash, signature, controller_pubkey));
 
   int op = signed_body~load_uint(32);
-  throw_unless(err::unknown_op, op == op::agent_task_send);
+  int parsed_global_id = signed_body~load_int(32);
+  throw_unless(err::wrong_network, parsed_global_id == msg_global_id);
   int request_seqno = signed_body~load_uint(32);
   int valid_until = signed_body~load_uint(32);
   throw_unless(err::bad_seqno, request_seqno == seqno);
   throw_unless(err::expired, valid_until > now());
+  throw_unless(err::expired, valid_until <= now() + default_task_timeout);
+
+  if (op == op::agent_cancel_seqno) {
+    signed_body.end_parse();
+    accept_message();
+    set_data(pack_agent_state(
+      owner,
+      controller_pubkey,
+      deployment_id,
+      seqno + 1,
+      spend_day,
+      spent_today,
+      max_per_tx,
+      daily_limit,
+      default_task_timeout,
+      metadata_hash,
+      service_endpoint_hash
+    ));
+    return ();
+  }
+
   slice target = signed_body~load_msg_addr();
   int value = signed_body~load_coins();
-  cell body = signed_body~load_ref();
+  throw_unless(err::bad_value, value > 0);
+  cell body = null();
+  if (op == op::agent_task_send) {
+    body = signed_body~load_ref();
+  }
   signed_body.end_parse();
   throw_unless(err::policy_exceeded, value <= max_per_tx);
   int current_day = now() / 86400;
@@ -265,17 +322,21 @@ cell pack_agent_state(
   throw_unless(err::policy_exceeded, spent_today + value <= daily_limit);
 
   accept_message();
-  send_raw_message(begin_cell()
+  builder outbound = begin_cell()
     .store_uint(0x10, 6)
     .store_slice(target)
     .store_tomis(value)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
-    .store_uint(1, 1)
-    .store_ref(body)
-  .end_cell(), 1);
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1);
+  if (op == op::agent_task_send) {
+    outbound = outbound.store_uint(1, 1).store_ref(body);
+  } else {
+    outbound = outbound.store_uint(0, 1);
+  }
+  send_raw_message(outbound.end_cell(), 3);
   set_data(pack_agent_state(
     owner,
     controller_pubkey,
+    deployment_id,
     seqno + 1,
     spend_day,
     spent_today + value,
@@ -287,22 +348,22 @@ cell pack_agent_state(
   ));
 }
 
-(slice, int, int, int, int, int, int, int, int, int) get_agent_account_data() method_id {
+(slice, int, int, int, int, int, int, int, int, int, int) get_agent_account_data() method_id {
   return load_agent_state();
 }
 
 slice get_owner() method_id {
-  var (owner, _, _, _, _, _, _, _, _, _) = load_agent_state();
+  var (owner, _, _, _, _, _, _, _, _, _, _) = load_agent_state();
   return owner;
 }
 
 int get_controller_pubkey() method_id {
-  var (_, controller_pubkey, _, _, _, _, _, _, _, _) = load_agent_state();
+  var (_, controller_pubkey, _, _, _, _, _, _, _, _, _) = load_agent_state();
   return controller_pubkey;
 }
 
 (int, int, int, int, int) get_agent_policy() method_id {
-  var (_, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash, _, _, _) =
+  var (_, _, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash, _, _, _) =
     load_agent_state();
   return (max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash);
 }

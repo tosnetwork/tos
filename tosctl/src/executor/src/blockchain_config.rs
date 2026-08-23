@@ -228,6 +228,10 @@ impl BlockchainConfig {
             mc_cell_price_ps: 500000,
         });
         let _ = config.set_config(ConfigParamEnum::ConfigParam18(storage));
+        // GLOBALID reads ConfigParam 19 from c7[14]. Keep the emulator's raw
+        // configuration consistent with the sandbox masterchain state, whose
+        // global_id is also 42, so network-bound signatures can be exercised.
+        let _ = config.set_config(ConfigParamEnum::ConfigParam19(42));
         let _ = config.set_config(ConfigParamEnum::ConfigParam20(GasLimitsPrices::default_mc()));
         let _ = config.set_config(ConfigParamEnum::ConfigParam21(GasLimitsPrices::default_wc()));
         let _ = config.set_config(ConfigParamEnum::ConfigParam24(MsgForwardPrices::default_mc()));

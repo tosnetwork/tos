@@ -1301,6 +1301,7 @@ fn dispute_status_name(status: u8) -> &'static str {
 struct AgentAccountRecordDto {
     owner: String,
     controller_pubkey: String,
+    deployment_id: String,
     seqno: u32,
     spend_day: u32,
     spent_today: u64,
@@ -1316,6 +1317,7 @@ impl From<&contracts::AgentAccountData> for AgentAccountRecordDto {
         Self {
             owner: data.owner.to_string(),
             controller_pubkey: hex::encode(data.controller_pubkey),
+            deployment_id: hex::encode(data.deployment_id),
             seqno: data.seqno,
             spend_day: data.spend_day,
             spent_today: data.spent_today,
@@ -1482,6 +1484,7 @@ mod tests {
         let data = contracts::AgentAccountData {
             owner: addr(1),
             controller_pubkey: [2; 32],
+            deployment_id: [11; 32],
             seqno: 3,
             spend_day: 4,
             spent_today: 5,

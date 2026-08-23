@@ -21,6 +21,7 @@
 //! responsibility -- see `examples/agent_sdk_walkthrough.rs` for an
 //! end-to-end construction walkthrough that runs without `tosctl`.
 pub mod agent_account;
+pub mod agent_account_custody;
 pub mod aipow_commitment;
 pub mod aipow_distributor;
 pub mod aipow_merkle;
@@ -46,6 +47,10 @@ pub mod wallet;
 
 pub use agent_account::{
     AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
+};
+pub use agent_account_custody::{
+    AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
+    ControllerActionStatus,
 };
 pub use aipow_commitment::{
     AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
