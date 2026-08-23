@@ -34,40 +34,50 @@ distinguishes one EVM network from another.
 ### Why this is a replay surface
 
 `address(this)` works as a domain separator **only for as long as the same
-bridge address never exists on two EVM chains whose oracle sets overlap.** The
-moment those two conditions hold, a signature gathered for chain A is a valid
-signature for the identical call on chain B: same contract address, same magic,
-same fields, same signer set, same digest, same `ecrecover`. An attacker replays
-a quorum of chain-A signatures against chain B and drives a mint, an oracle-set
-rotation, or a burn-status flip there that no chain-B oracle ever intended.
+bridge address never exists on a second EVM chain whose current oracle set shares
+enough signers with the signatures an attacker already holds.** State the
+condition precisely — a replay from chain A onto chain B succeeds when both hold:
 
-The two conditions are not exotic:
+1. **Same contract address on A and B.** With `CREATE2` this needs the same
+   deployer, salt, and init code; with plain `CREATE`, the same deployer and the
+   same nonce. Operators frequently *want* one address on every chain for
+   discoverability, so this is a realistic, often deliberate, configuration.
+2. **Quorum-carrying signer overlap.** The signatures gathered on A must contain,
+   among signers that are members of B's *current* oracle set, at least B's
+   quorum:
 
-- **Same address on two chains** is the *default* outcome of `CREATE2`
-  deterministic deployment, and is also reachable with plain `CREATE` when a
-  deployer reuses an address/nonce across chains. Operators frequently *want*
-  the same address on every chain for discoverability.
-- **Overlapping oracle sets** is the natural operational choice — the same
-  trusted operators running the same keys for a multi-chain bridge.
+   ```text
+   | signers(A signatures) ∩ current_oracle_set(B) | >= ceil(2 * |oracle_set(B)| / 3)
+   ```
+
+When both hold, the chain-A signatures verify byte-for-byte on B — same address,
+magic, fields, digest, `ecrecover` — and an attacker replays them to drive a mint,
+an oracle-set rotation, or a burn-status flip that no chain-B oracle intended.
+Mere set overlap is not sufficient; the overlap must reach B's quorum.
 
 ### This is inherited from upstream, verbatim
 
-`NOTICE.md` records that the coin-bridge Solidity plane derives from
-`ton-blockchain/bridge-solidity@f78adaf8` and that "signed payload structures are
-unchanged." That older upstream uses exactly this `abi.encode(magic,
-address(this), …)` scheme with no chain ID, and coin-bridge inherits it verbatim.
-The newer token-bridge, from a different (RSquad/TON Foundation) upstream, already
-carries `block.chainid` — its `NOTICE.md` reviewed-delta list does not add it, so
-chain-ID binding came from that newer upstream, not from TOS. So this is a
-generational gap in upstream, not a TOS regression: coin-bridge is the older
-plane and its upstream never added the separator.
+`NOTICE.md` records the coin-bridge Solidity provenance (the pinned upstream
+`bridge-solidity` commit) and that "signed payload structures are unchanged." That
+older upstream uses exactly this `abi.encode(magic, address(this), …)` scheme with
+no chain ID, and coin-bridge inherits it verbatim. The newer token-bridge derives
+from a different, later upstream (see its own `NOTICE.md`) that already carries
+`block.chainid`; token-bridge's reviewed-delta list does not add it, so chain-ID
+binding came from that newer upstream, not from TOS. This is therefore a
+generational gap in the upstream lineage, not a TOS regression: coin-bridge is the
+older plane and its upstream never added the separator.
 
-Upstream TON does not defend the older scheme cryptographically; it defends it
-**operationally**: each EVM chain gets a separate deployment at a distinct
-address, and the ETH and BSC bridges are separate codebases (`tvm/ethereum` vs
-`tvm/bsc`, config params 71 vs 72) with their own oracle wiring. TOS's
-`SECURITY.md` chose to make that assumption explicit rather than inherit it
-silently.
+**Do not assume the older scheme is safe in practice because "addresses and
+oracle sets differ."** The pinned upstream does *not* enforce that: its own
+`migrations/1_initial_migration.js` wires the **same** oracle set across chains
+(the same operator keys for the two mainnet EVM targets, and again for the two
+testnet targets), and nothing in the upstream repo forces distinct deployment
+addresses. So the operational separation that would make `address(this)`-only
+sufficient is an assumption about how a specific deployment is run, not a property
+the code or upstream tooling guarantees. Whether any real TOS deployment would
+avoid the replay condition can only be established with independent on-chain
+evidence — it cannot be inferred from the source. TOS's `SECURITY.md` was right to
+flag this rather than inherit the assumption silently.
 
 ## 2. Proposed fix
 
@@ -158,8 +168,8 @@ is tracked as part of the same work item.
 
 ## 4. Upstream-parity impact
 
-This is a **deliberate divergence** from `ton-blockchain/bridge-solidity`. When
-implemented:
+This is a **deliberate divergence** from the pinned upstream `bridge-solidity`
+commit recorded in `NOTICE.md`. When implemented:
 
 - `NOTICE.md` must record it as a reviewed delta (the next numbered item under
   "Reviewed deltas against the pinned upstream"), stating that the signed payload
@@ -177,8 +187,10 @@ The implementation is incomplete until all of the following exist and pass.
 1. A quorum of signatures produced for `getSwapDataId` under `chainId = A` is
    **rejected** when the identical call is verified under `chainId = B`, at the
    same contract address. This is the property the whole change exists to create;
-   drive it by deploying/verifying under two distinct chain IDs (Hardhat network
-   `chainId` override, or a harness that mocks the `chainid()` return).
+   drive it with the repo's actual toolchain — Truffle/Ganache, **not** Hardhat:
+   run two Ganache instances with distinct `chainId`s, deploy to the **same
+   address** on both (same deployer + nonce, or same CREATE2 salt/init code), sign
+   on instance A, and assert the vote is rejected on instance B.
 2. The same rejection test for `getNewSetId` and `getNewBurnStatusId`.
 3. A **negative/regression** test: a pre-upgrade signature (digest without
    `chainId`) is rejected after the upgrade — proves the preimage actually moved.
@@ -208,12 +220,53 @@ these updates.
 7. `scripts/verify-coin-bridge.py` passes with the digest change recorded as an
    expected delta, and fails if any *other* unreviewed change appears.
 
-## 6. Rollout
+## 6. Deployment status and rollout
 
-The bridge is currently dark: no `ConfigParam`, not deployed, no production
-oracle set (`SECURITY.md`). There is therefore **no live migration** — the
-coordinated change (contracts + signer + tests + parity + NOTICE) simply must
-land, be audited, and be verified before the *first* deployment. If the bridge
-were ever deployed before this lands, closing the gap afterward would require a
-contract upgrade plus an oracle-set rotation, which is exactly the kind of live
-key ceremony a pre-deployment fix avoids.
+**Deployment status is a precondition to confirm, not a fact this document
+establishes.** `SECURITY.md` states the bridge is not activated, and the
+mainnet-readiness review found no bridge `ConfigParam` wired at genesis. This
+proposal does **not** independently prove the current on-chain state. Before the
+"no live migration" reasoning below is relied upon, confirm and attach evidence:
+
+- an independent node read of masterchain `ConfigParam` 71 and 72 (the ETH/BSC
+  bridge multisig slots) — network, block seqno, and the values (or their
+  absence);
+- the EVM side: for each target chain, whether a `Bridge`/`SignatureChecker` is
+  deployed at the intended address, with the on-chain bytecode hash.
+
+If that evidence shows the bridge is genuinely undeployed, there is **no live
+migration**: the coordinated change (contracts + signer + tests + parity +
+NOTICE) simply must land, be audited, and be verified before the *first*
+deployment.
+
+**If any instance is already deployed, an in-place fix is impossible.**
+`Bridge.sol` is a plain contract (a `constructor`, inheriting `SignatureChecker`)
+— not a proxy, with no upgrade entry point — so the `SignatureChecker` digest
+algorithm of a deployed instance cannot be changed, and an oracle-set rotation
+does not change the digest algorithm either. Closing the gap on an already-live
+bridge therefore requires a full redeploy-and-migrate, not an upgrade:
+
+1. deploy a new EVM `Bridge` with the chain-ID-bound digest at a new address;
+2. migrate locked assets / wrapped supply from the old contract to the new one;
+3. atomically switch the TOS-side `ConfigParam` and the oracle observers to the
+   new bridge;
+4. freeze the old bridge and reconcile balances across the cutover.
+
+That is precisely the live key-and-asset ceremony a pre-deployment fix avoids,
+which is why this must land before first value flows.
+
+## 7. Recommended decisions (for owner ratification)
+
+A review of the pinned upstream and both bridges suggests these answers; the
+owner ratifies.
+
+| Decision | Recommendation |
+|---|---|
+| Add chain ID to coin-bridge digests | **Accept** — required before first deployment. |
+| Solidity version | Keep `0.7.x`; read the chain ID with an inline-assembly `chainid()` (EIP-1344) rather than bump the whole compiler for one field. Reading the member under a `0.8.x` bump is the alternative, at a wider recompile/audit surface. |
+| Field order | `magic, address(this), chainId, fields…` — align with token-bridge. |
+| Move to EIP-712 now | **Defer** — it changes the signing envelope too and widens the audit surface; adopt later if the signer is rewritten. |
+| Change token-bridge | **Reject** — it already binds the chain ID. |
+| Change TVM code now | **No code change yet on evidence available**: the TVM multisig already signs over `wallet_id` and the full destination message. Still required before deployment: an ETH↔BSC replay-rejection test on the TVM side, and an operational rule that distinct deployments use unique `wallet_id`/StateInit. |
+| Merge this PR | It is a **proposal doc only**; it does not implement the fix. Land it to record the decision, then implement in a separate reviewed+audited PR with the tests in §5. |
+| First value-bearing deployment | **Blocked** until the implementation PR, golden vectors, an independent audit, and live on-chain proof of the pre-deployment state all pass. |
