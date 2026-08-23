@@ -38,6 +38,7 @@ pub struct AgentAccountDto {
     pub address: String,
     pub owner: String,
     pub controller_pubkey: String,
+    pub deployment_id: String,
     pub seqno: u32,
     pub spend_day: u32,
     pub spent_today: u64,
@@ -259,6 +260,7 @@ pub async fn get_agent(
             address: address.to_string(),
             owner: data.owner.to_string(),
             controller_pubkey: hex::encode(data.controller_pubkey),
+            deployment_id: hex::encode(data.deployment_id),
             seqno: data.seqno,
             spend_day: data.spend_day,
             spent_today: data.spent_today,
@@ -1439,6 +1441,7 @@ mod tests {
             let init = AgentAccountInit {
                 owner: self.creator.address().clone(),
                 controller_pubkey: [0x01; 32],
+                deployment_id: [0x02; 32],
                 max_per_tx: 1_000_000_000,
                 daily_limit: 10_000_000_000,
                 default_task_timeout_secs: 3_600,

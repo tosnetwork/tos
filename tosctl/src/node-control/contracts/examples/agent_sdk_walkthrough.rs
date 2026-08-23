@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
     let agent_init = AgentAccountInit {
         owner: owner.clone(),
         controller_pubkey,
+        deployment_id: [0x55; 32],
         max_per_tx: 500_000_000,
         daily_limit: 5_000_000_000,
         default_task_timeout_secs: 3_600,
@@ -46,16 +47,17 @@ fn main() -> anyhow::Result<()> {
     // --- Agent Account: a controller-signed task-send message ---
     let task_escrow_placeholder = MsgAddressInt::with_standart(None, -1, [0x22; 32].into())?;
     let payload = AgentAccountContract::build_task_send_payload(
+        /* network_global_id */ 1,
         /* seqno */ 0,
         /* valid_until */ 1_900_000_000,
         &task_escrow_placeholder,
         /* value */ 100_000_000,
         TaskEscrowContract::accept(1)?,
     )?;
-    let hash_to_sign = AgentAccountContract::task_send_hash_to_sign(&agent_address, &payload)?;
+    let hash_to_sign = AgentAccountContract::controller_hash_to_sign(&agent_address, 1, &payload)?;
     let signature: [u8; 64] = controller.sign(&hash_to_sign).to_bytes();
-    let signed = AgentAccountContract::build_signed_task_send_message(payload, &signature)?;
-    let external = AgentAccountContract::build_external_task_send_message(agent_address, signed)?;
+    let signed = AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+    let external = AgentAccountContract::build_external_controller_message(agent_address, signed)?;
     print_cell("signed external task-send message", &external)?;
 
     // --- Task Escrow: deploy state, with an inline settlement attestor ---

@@ -10,9 +10,24 @@ use contracts::{
     AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract,
     TaskEscrowInit,
 };
-use tos_sandbox::{Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury};
+use tos_sandbox::{
+    Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
+};
 
 const TOS: u64 = 1_000_000_000;
+const GLOBAL_ID: i32 = 42;
+
+#[test]
+fn source_compiles_to_the_embedded_final_interface() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../crypto/smartcont/agent-account-code.fc");
+    let compiled = compile_func_with_stdlib(&[source]).expect("compile Agent Account source");
+    assert_eq!(
+        compiled.repr_hash(),
+        AgentAccountContract::code().expect("embedded Agent Account code").repr_hash(),
+        "embedded Agent Account BOC must be regenerated whenever FunC changes"
+    );
+}
 
 struct Fixture {
     bc: Blockchain,
@@ -38,7 +53,8 @@ impl Fixture {
     /// different values here to actually deploy to different addresses,
     /// which the cross-account replay test below depends on.
     fn with_controller_and_limit(controller_secret: [u8; 32], max_per_tx: u64) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
+        // Agent Account pins the minimum supported TVM global version.
+        let mut bc = Blockchain::with_global_version(4).expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
         let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
@@ -47,6 +63,7 @@ impl Fixture {
         let init = AgentAccountInit {
             owner: owner.address().clone(),
             controller_pubkey: controller.verifying_key(),
+            deployment_id: [max_per_tx as u8; 32],
             max_per_tx,
             daily_limit: max_per_tx + TOS,
             default_task_timeout_secs: 3_600,
@@ -97,15 +114,59 @@ impl Fixture {
         value: u64,
         body: Cell,
     ) -> Cell {
-        let payload =
-            AgentAccountContract::build_task_send_payload(seqno, valid_until, target, value, body)
-                .expect("payload");
+        let payload = AgentAccountContract::build_task_send_payload(
+            GLOBAL_ID,
+            seqno,
+            valid_until,
+            target,
+            value,
+            body,
+        )
+        .expect("payload");
+        self.sign_payload(secret, GLOBAL_ID, payload)
+    }
+
+    fn sign_payload(&self, secret: &[u8; 32], global_id: i32, payload: Cell) -> Cell {
         let hash_to_sign =
-            AgentAccountContract::task_send_hash_to_sign(&self.account, &payload).expect("hash");
+            AgentAccountContract::controller_hash_to_sign(&self.account, global_id, &payload)
+                .expect("hash");
         let key = ed25519_create_private_key(secret).expect("signing key");
         let signature = key.sign(&hash_to_sign);
-        AgentAccountContract::build_signed_task_send_message(payload, &signature)
+        AgentAccountContract::build_signed_controller_message(payload, &signature)
             .expect("signed body")
+    }
+
+    fn signed_native(
+        &self,
+        secret: &[u8; 32],
+        global_id: i32,
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+    ) -> Cell {
+        let payload = AgentAccountContract::build_native_send_payload(
+            global_id,
+            seqno,
+            valid_until,
+            target,
+            value,
+        )
+        .expect("native payload");
+        self.sign_payload(secret, global_id, payload)
+    }
+
+    fn signed_cancel(
+        &self,
+        secret: &[u8; 32],
+        global_id: i32,
+        seqno: u32,
+        valid_until: u32,
+    ) -> Cell {
+        let payload =
+            AgentAccountContract::build_cancel_seqno_payload(global_id, seqno, valid_until)
+                .expect("cancel payload");
+        self.sign_payload(secret, global_id, payload)
     }
 
     fn send_external(&mut self, body: Cell) -> SandboxResult<SendResult> {
@@ -130,7 +191,15 @@ impl Fixture {
             .run_get_method(&self.account, "get_agent_account_data", vec![])
             .expect("get data")
             .expect_success()
-            .int_at(7)
+            .int_at(8)
+    }
+
+    fn spent_today(&self) -> i128 {
+        self.bc
+            .run_get_method(&self.account, "get_agent_account_data", vec![])
+            .expect("get data")
+            .expect_success()
+            .int_at(10)
     }
 
     fn policy(&self) -> (u64, u64) {
@@ -141,6 +210,108 @@ impl Fixture {
         let stack = binding.expect_success();
         (stack.int_at(0) as u64, stack.int_at(1) as u64)
     }
+}
+
+#[test]
+fn native_send_is_one_bodyless_non_bouncing_transfer() {
+    let mut fixture = Fixture::new();
+    let target = fixture.target.address().clone();
+    let action = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        TOS,
+    );
+    let result = fixture.send_external(action).expect("native send");
+    result.expect_success().expect_out_msgs(1);
+
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), TOS as i128);
+    let target_tx = result
+        .transactions_for(&target)
+        .into_iter()
+        .next()
+        .expect("exact destination must receive the transfer");
+    let inbound = target_tx.read_in_msg().expect("read inbound").expect("inbound message");
+    let header = inbound.int_header().expect("internal header");
+    assert!(!header.bounce, "native sends are intentionally non-bouncing");
+    assert!(inbound.state_init().is_none(), "native sends never carry StateInit");
+    assert!(
+        inbound
+            .body()
+            .is_none_or(|body| body.remaining_bits() == 0 && body.remaining_references() == 0)
+    );
+}
+
+#[test]
+fn cancel_consumes_seqno_without_spend_or_outbound_message() {
+    let mut fixture = Fixture::new();
+    let cancel =
+        fixture.signed_cancel(&fixture.controller_secret, GLOBAL_ID, 0, fixture.bc.now() + 300);
+    fixture.send_external(cancel).expect("cancel").expect_success().expect_out_msgs(0);
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), 0);
+}
+
+#[test]
+fn controller_message_rejects_wrong_network_and_payload_tampering() {
+    let mut fixture = Fixture::new();
+    let valid_until = fixture.bc.now() + 300;
+    let target = fixture.target.address().clone();
+
+    let wrong_network = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID + 1,
+        0,
+        valid_until,
+        &target,
+        TOS,
+    );
+    fixture.expect_external_exit(wrong_network, 1708);
+
+    let original =
+        AgentAccountContract::build_native_send_payload(GLOBAL_ID, 0, valid_until, &target, TOS)
+            .expect("original payload");
+    let original_hash =
+        AgentAccountContract::controller_hash_to_sign(&fixture.account, GLOBAL_ID, &original)
+            .expect("hash");
+    let key = ed25519_create_private_key(&fixture.controller_secret).expect("key");
+    let signature = key.sign(&original_hash);
+    let tampered = AgentAccountContract::build_native_send_payload(
+        GLOBAL_ID,
+        0,
+        valid_until,
+        &target,
+        2 * TOS,
+    )
+    .expect("tampered payload");
+    let tampered =
+        AgentAccountContract::build_signed_controller_message(tampered, &signature).unwrap();
+    fixture.expect_external_exit(tampered, 1704);
+    assert_eq!(fixture.seqno(), 0);
+}
+
+#[test]
+fn ignored_native_send_action_still_consumes_seqno_and_daily_budget() {
+    let mut fixture = Fixture::new();
+    let invalid_workchain = MsgAddressInt::with_params(1, [0x55; 32]).unwrap();
+    let action = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID,
+        0,
+        fixture.bc.now() + 300,
+        &invalid_workchain,
+        TOS,
+    );
+    fixture
+        .send_external(action)
+        .expect("mode 3 keeps compute/state successful when the send action is invalid")
+        .expect_success()
+        .expect_out_msgs(0);
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), TOS as i128);
 }
 
 #[test]
@@ -174,6 +345,10 @@ fn controller_action_rejects_invalid_signature_expiry_replay_and_policy_overflow
     let expired = fixture.signed_action(&fixture.controller_secret, 0, fixture.bc.now(), TOS);
     fixture.expect_external_exit(expired, 1706);
 
+    let too_far =
+        fixture.signed_action(&fixture.controller_secret, 0, fixture.bc.now() + 3_601, TOS);
+    fixture.expect_external_exit(too_far, 1706);
+
     let oversized = fixture.signed_action(&fixture.controller_secret, 0, valid_until, 6 * TOS);
     fixture.expect_external_exit(oversized, 1707);
 
@@ -186,6 +361,16 @@ fn controller_action_rejects_invalid_signature_expiry_replay_and_policy_overflow
 #[test]
 fn controller_action_enforces_and_resets_daily_limit() {
     let mut fixture = Fixture::new();
+    let owner_addr = fixture.owner.address().clone();
+    let long_timeout = AgentAccountPolicyUpdate {
+        max_per_tx: 5 * TOS,
+        daily_limit: 6 * TOS,
+        default_task_timeout_secs: 2 * 86_400,
+        metadata_hash: None,
+        service_endpoint_hash: None,
+    };
+    let update = AgentAccountContract::build_update_policy_message(1, &long_timeout).unwrap();
+    fixture.send_internal(&owner_addr, update).expect_success();
     let valid_until = fixture.bc.now() + 86_700;
     let first = fixture.signed_action(&fixture.controller_secret, 0, valid_until, 4 * TOS);
     fixture.send_external(first).expect("first action").expect_success();
@@ -307,16 +492,17 @@ fn owner_can_update_policy_and_rotate_controller_others_rejected() {
 
     // Owner rotates the controller key.
     fixture.send_internal(&owner_addr, rotate_body).expect_success();
+    assert_eq!(fixture.seqno(), 2, "controller rotation invalidates every outstanding signature");
 
     // The old key's signature is now rejected...
-    let old_key_action_2 = fixture.signed_action(&fixture.controller_secret, 1, valid_until, TOS);
+    let old_key_action_2 = fixture.signed_action(&fixture.controller_secret, 2, valid_until, TOS);
     fixture.expect_external_exit(old_key_action_2, 1704);
-    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.seqno(), 2);
 
     // ...only the newly-rotated-in key works.
-    let new_key_action = fixture.signed_action(&new_secret, 1, valid_until, TOS);
+    let new_key_action = fixture.signed_action(&new_secret, 2, valid_until, TOS);
     fixture.send_external(new_key_action).expect("new key works").expect_success();
-    assert_eq!(fixture.seqno(), 2);
+    assert_eq!(fixture.seqno(), 3);
 }
 
 #[test]

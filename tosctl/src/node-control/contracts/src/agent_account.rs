@@ -14,16 +14,22 @@ use chain_block::{
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEAEAAwsAART/APSkE/S88sgLAQIBIAIDAgFIBAUB+PKDCNcY7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkKvkB+Cj6RAHIygfL/8v/yfkAVBDJ+RDy5qgJ0x8BghBBR1ADuvLmp9Mf0x9RI7ry5qn4I7zy5qr6QPoA1NFTGLvy5qv4I4IBUYAOAsDQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJAvTH9M/MSGCEEFHUAG64wI5ghBBR1ACuuMCXwvyxqcGBwIBIAgJAWYxbDMzM1FUxwXy5qb6APoA0z/TAAGT0/8BkX/iAdMAAZPT/wGRf+IB0fgAEHkQaBBnEFYPAMxRmMcF8uamBtP/0fgAEHkIBgdVQCTBAPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAGzxYUy/8Syx/LHwH6AszJ7VQCAUgKCwIBIAwNAGe2Jb2omh9IGn/6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvgbYSwAGO3NL2omh9IGn/6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvhMABfua6+1E0PpA0//TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJIAGe55P7UTQ+kDT/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkEIlfCYAXapBFMMvZM8cD2RMOJTwaAou/Lmq/gAcXCAEMjLBVAFzxYj+gIUy2kTywASzMlx+wABpFCqoBB5EGhVQA8ApCTBAPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAGzxYUy/8Syx/LHwH6AszJ7VQ=";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEwEABBYAART/APSkE/S88sgLAQIBIAIDAgFIBAUBzvKDCNcY7UTQ+kDT/9P/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQr0x8hghBBR1ADuiKCEEFHUAS6sQKCEEFHUAW6ErHy5qfSHzD4NVIQuvLmrCz5Afgo+kQOAsTQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkDNMf0z8xIYIQQUdQAbrjAjqCEEFHUAK64wJfDPLGpwYHAgEgCAkBZjFsMzMzUWXHBfLmpvoA+gDTP9MAAZPT/wGRf+IB0wABk9P/AZF/4gHR+AAQihB5EGgQVhIA1lGpxwXy5qYH0//R+AAHpBCKEHkQaFVgJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAfPFhXL/xPL/8sfyx8B+gLMye1UAgFICgsCASAMDQBrtiW9qJofSBp/+n/6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvgbYawAGe3NL2omh9IGn/6f/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+FQAGO5rr7UTQ+kDT/9P/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABrueT+1E0PpA0//T/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkEJpfCoA/6C8O3nFamFL7uiw8I07Q0nMprjTWJjqCz7YhXah8kWg7RxyMv/UkDKHxLKB8v/y//J+QBUEOv5EPLmqAvTH9IfDrry5qwM0x/TH1EkuvLmqSD4I7zy5qr4Iyegu/LmqiyCEEFHUAW64wL6QPoAIcIA8uatbS+CEEFHUAO64wABDxARAMY8C9H4AKQQihB5EGgHVUAkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQB88WFcv/E8v/yx/LHwH6AszJ7VQABjDUAQG40VMZu/Lmq/gjggFRgKkEUwS9kzRwPpEw4lPRoCm78uar+ABwgBDIywVQBM8WIvoCE8tpDoIQQUdQA7qWcVAOywDMlXAyDcsA4slz+wABpFCroBCKEHkQaBBnVUASAKgkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQB88WFcv/E8v/yx/LHwH6AszJ7VQ=";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
+pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
+pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
+pub const AGENT_CONTROLLER_SIGNATURE_DOMAIN: &str =
+    "ede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471";
 
 #[derive(Clone, Debug)]
 pub struct AgentAccountInit {
     pub owner: MsgAddressInt,
     pub controller_pubkey: [u8; 32],
+    /// Random immutable identifier for this deployment generation.
+    pub deployment_id: [u8; 32],
     pub max_per_tx: u64,
     pub daily_limit: u64,
     pub default_task_timeout_secs: u64,
@@ -37,6 +43,7 @@ pub struct AgentAccountContract;
 pub struct AgentAccountData {
     pub owner: MsgAddressInt,
     pub controller_pubkey: [u8; 32],
+    pub deployment_id: [u8; 32],
     pub seqno: u32,
     pub spend_day: u32,
     pub spent_today: u64,
@@ -74,6 +81,7 @@ impl AgentAccountContract {
         let mut data = BuilderData::new();
         init.owner.write_to(&mut data)?;
         data.append_raw(&init.controller_pubkey, 256)?;
+        data.append_raw(&init.deployment_id, 256)?;
         data.append_u32(0)?;
         data.append_u32(0)?;
         Coins::new(0).write_to(&mut data)?;
@@ -109,14 +117,15 @@ impl AgentAccountContract {
         Ok(AgentAccountData {
             owner,
             controller_pubkey: parse_hash(&stack, 1)?,
-            max_per_tx: stack.u64(2)?,
-            daily_limit: stack.u64(3)?,
-            default_task_timeout_secs: stack.u64(4)?,
-            metadata_hash: parse_maybe_hash(&stack, 5)?,
-            service_endpoint_hash: parse_maybe_hash(&stack, 6)?,
-            seqno: stack.u64(7)? as u32,
-            spend_day: stack.u64(8)? as u32,
-            spent_today: stack.u64(9)?,
+            deployment_id: parse_hash(&stack, 2)?,
+            max_per_tx: stack.u64(3)?,
+            daily_limit: stack.u64(4)?,
+            default_task_timeout_secs: stack.u64(5)?,
+            metadata_hash: parse_maybe_hash(&stack, 6)?,
+            service_endpoint_hash: parse_maybe_hash(&stack, 7)?,
+            seqno: stack.u64(8)? as u32,
+            spend_day: stack.u64(9)? as u32,
+            spent_today: stack.u64(10)?,
         })
     }
 
@@ -146,11 +155,10 @@ impl AgentAccountContract {
         Ok(body.into_cell()?)
     }
 
-    /// Build the controller-signed payload. The controller must sign the
-    /// hash returned by [`Self::task_send_hash_to_sign`] -- *not* this
-    /// payload cell's own hash directly -- before calling
-    /// `build_signed_task_send_message`.
+    /// Build a controller task payload. The controller signs the hash returned
+    /// by [`Self::controller_hash_to_sign`], never this cell hash directly.
     pub fn build_task_send_payload(
+        network_global_id: i32,
         seqno: u32,
         valid_until: u32,
         target: &MsgAddressInt,
@@ -158,30 +166,80 @@ impl AgentAccountContract {
         body: chain_block::Cell,
     ) -> anyhow::Result<chain_block::Cell> {
         let mut payload = BuilderData::new();
-        payload.append_u32(AGENT_TASK_SEND_OPCODE)?.append_u32(seqno)?.append_u32(valid_until)?;
+        payload
+            .append_u32(AGENT_TASK_SEND_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
         target.write_to(&mut payload)?;
         Coins::new(value).write_to(&mut payload)?;
         payload.checked_append_reference(body)?;
         Ok(payload.into_cell()?)
     }
 
-    /// The hash the controller must actually sign for a `task_send` payload:
-    /// domain-bound to `account_address` (the Agent Account that will
-    /// verify it) so a signature cannot be replayed against a different
-    /// Agent Account that happens to share the same controller key (e.g.
-    /// an operator reusing key material across several agent identities).
-    /// Mirrors Task Escrow/Dispute/Service Actor's attestation scheme: hash
-    /// the payload, then domain-bind that hash via the same
-    /// [`crate::domain_bound_hash`] helper.
-    pub fn task_send_hash_to_sign(
+    /// Build a bodyless, single native-TOS transfer for the Agent Account.
+    pub fn build_native_send_payload(
+        network_global_id: i32,
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+    ) -> anyhow::Result<chain_block::Cell> {
+        if value == 0 {
+            anyhow::bail!("Agent Account native send value must be positive");
+        }
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(AGENT_NATIVE_SEND_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
+        target.write_to(&mut payload)?;
+        Coins::new(value).write_to(&mut payload)?;
+        Ok(payload.into_cell()?)
+    }
+
+    /// Build a generic sequence-consuming cancellation with no outbound action.
+    pub fn build_cancel_seqno_payload(
+        network_global_id: i32,
+        seqno: u32,
+        valid_until: u32,
+    ) -> anyhow::Result<chain_block::Cell> {
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(AGENT_CANCEL_SEQNO_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
+        Ok(payload.into_cell()?)
+    }
+
+    /// Compute the exact hash signed by the controller for every external
+    /// Agent Account operation. The contract independently compares
+    /// `network_global_id` with TVM GLOBALID before accepting the request.
+    pub fn controller_hash_to_sign(
         account_address: &MsgAddressInt,
+        network_global_id: i32,
         payload: &chain_block::Cell,
     ) -> anyhow::Result<[u8; 32]> {
         let payload_hash = *payload.repr_hash().as_array();
-        crate::domain_bound_hash(account_address, &payload_hash)
+        let domain = hex::decode(AGENT_CONTROLLER_SIGNATURE_DOMAIN)?;
+        let workchain = i8::try_from(account_address.workchain_id())?;
+        let address: [u8; 32] = account_address
+            .address()
+            .get_bytestring(0)
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Agent Account address must be 32 bytes"))?;
+        let mut binding = BuilderData::new();
+        binding.append_raw(&domain, 256)?;
+        binding.append_i32(network_global_id)?;
+        binding.append_i8(workchain)?;
+        binding.append_raw(&address, 256)?;
+        binding.append_raw(&payload_hash, 256)?;
+        Ok(*binding.into_cell()?.repr_hash().as_array())
     }
 
-    pub fn build_signed_task_send_message(
+    pub fn build_signed_controller_message(
         payload: chain_block::Cell,
         signature: &[u8; 64],
     ) -> anyhow::Result<chain_block::Cell> {
@@ -191,7 +249,7 @@ impl AgentAccountContract {
         Ok(message.into_cell()?)
     }
 
-    pub fn build_external_task_send_message(
+    pub fn build_external_controller_message(
         account: MsgAddressInt,
         signed_body: chain_block::Cell,
     ) -> anyhow::Result<chain_block::Cell> {
@@ -297,6 +355,7 @@ mod tests {
         AgentAccountInit {
             owner: MsgAddressInt::with_standart(None, -1, [0x11; 32].into()).unwrap(),
             controller_pubkey: [0x22; 32],
+            deployment_id: [0x55; 32],
             max_per_tx: 500_000_000,
             daily_limit: 5_000_000_000,
             default_task_timeout_secs: 3_600,
@@ -350,6 +409,7 @@ mod tests {
                     slice: slice::Slice { bytes: owner_bytes },
                 }),
                 hash_number(init.controller_pubkey),
+                hash_number(init.deployment_id),
                 number(init.max_per_tx.to_string()),
                 number(init.daily_limit.to_string()),
                 number(init.default_task_timeout_secs.to_string()),
@@ -365,6 +425,7 @@ mod tests {
 
         assert_eq!(data.owner, init.owner);
         assert_eq!(data.controller_pubkey, init.controller_pubkey);
+        assert_eq!(data.deployment_id, init.deployment_id);
         assert_eq!(data.seqno, 17);
         assert_eq!(data.spend_day, 20);
         assert_eq!(data.spent_today, 123_456_789);
@@ -414,6 +475,7 @@ mod tests {
         let target = MsgAddressInt::with_standart(None, -1, [0x66; 32].into()).unwrap();
         let task_body = BuilderData::new().into_cell().unwrap();
         let payload = AgentAccountContract::build_task_send_payload(
+            1,
             7,
             1_900_000_000,
             &target,
@@ -422,8 +484,8 @@ mod tests {
         )
         .unwrap();
         let signed =
-            AgentAccountContract::build_signed_task_send_message(payload, &[0xAA; 64]).unwrap();
-        let external = AgentAccountContract::build_external_task_send_message(
+            AgentAccountContract::build_signed_controller_message(payload, &[0xAA; 64]).unwrap();
+        let external = AgentAccountContract::build_external_controller_message(
             MsgAddressInt::with_standart(None, -1, [0x77; 32].into()).unwrap(),
             signed,
         )

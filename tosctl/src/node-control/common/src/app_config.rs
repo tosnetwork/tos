@@ -368,6 +368,9 @@ pub struct AgentWalletConfig {
     /// Fixed native Agent Account address after successful deployment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_account_address: Option<String>,
+    /// Immutable random ID committed to this Agent Account deployment's StateInit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_account_deployment_id: Option<String>,
     /// Controller key used by the agent runtime for bounded automated actions.
     pub controller_key: KeyConfig,
     /// Machine-readable spending and service-call policy.

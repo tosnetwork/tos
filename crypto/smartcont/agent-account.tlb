@@ -12,12 +12,20 @@ agent_rotate_controller#41475002 query_id:uint64
   controller_pubkey:uint256
   = InternalMsgBody;
 
-agent_task_send#41475003 seqno:uint32 valid_until:uint32
+agent_task_send#41475003 global_id:int32 seqno:uint32 valid_until:uint32
   target:MsgAddressInt value:Grams body:^Cell
+  = ExternalMsgBody;
+
+agent_native_send#41475004 global_id:int32 seqno:uint32 valid_until:uint32
+  target:MsgAddressInt value:Grams
+  = ExternalMsgBody;
+
+agent_cancel_seqno#41475005 global_id:int32 seqno:uint32 valid_until:uint32
   = ExternalMsgBody;
 
 _ owner:MsgAddress
   controller_pubkey:uint256
+  deployment_id:uint256
   seqno:uint32
   spend_day:uint32
   spent_today:Grams

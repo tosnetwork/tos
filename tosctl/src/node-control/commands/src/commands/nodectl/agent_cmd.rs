@@ -22,7 +22,8 @@ use super::utils::{
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{
-    BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, read_single_root_boc, write_boc,
+    BuilderData, Cell, ConfigParamEnum, IBitstring, MsgAddressInt, Serializable,
+    read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::data_models::AccountState;
 use clap::ValueEnum;
@@ -37,16 +38,18 @@ use common::{
     time_format,
 };
 use contracts::{
-    AgentAccountContract, AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
-    TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet,
+    AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentAccountInit,
+    AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionStatus, TaskEscrowContract,
+    TaskEscrowData, TaskEscrowInit, Wallet,
 };
 use futures_util::{StreamExt, stream};
+use rand::RngCore;
 use secrets_vault::types::{
     algorithm::Algorithm, secret::Secret, secret_id::SecretId, secret_spec::SecretSpec,
 };
 use secrets_vault::vault::SecretVault;
 use sha2::{Digest, Sha256};
-use std::{io::Write, path::Path, str::FromStr};
+use std::{fs, io::Write, path::Path, str::FromStr};
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -153,6 +156,12 @@ pub struct AgentTaskSendCmd {
         help = "Controller action expiry; defaults to now + 300s"
     )]
     valid_until: Option<u32>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        help = "Stable 64-lowercase-hex idempotency ID for the controller action"
+    )]
+    controller_action_id: Option<String>,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
     #[arg(long)]
@@ -443,6 +452,10 @@ pub enum AgentAccountAction {
     RotateController(AgentAccountRotateControllerCmd),
     /// Send a controller-signed transfer from a deployed Agent Account
     TaskSend(AgentAccountTaskSendCmd),
+    /// Prepare one owner-authorized, bodyless native TOS transfer without broadcasting it
+    NativePrepare(AgentAccountNativePrepareCmd),
+    /// Prepare one owner-authorized cancellation for an existing controller action
+    CancelPrepare(AgentAccountCancelPrepareCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -556,7 +569,51 @@ pub struct AgentAccountTaskSendCmd {
     body_boc: Option<String>,
     #[arg(long, help = "Unix timestamp after which the request is invalid")]
     valid_until: u32,
+    #[arg(long, help = "Stable 64-lowercase-hex idempotency ID")]
+    action_id: String,
     #[arg(long, help = "Skip confirmation prompt")]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Prepare an exact Agent Account native-send BOC; never broadcasts")]
+pub struct AgentAccountNativePrepareCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long)]
+    target: String,
+    #[arg(long, help = "Exact native TOS amount in nanoTOS")]
+    amount_nanotos: u64,
+    #[arg(long)]
+    fee_reserve_nanotos: u64,
+    #[arg(long)]
+    valid_until: u32,
+    #[arg(long)]
+    action_id: String,
+    #[arg(long)]
+    request_digest: String,
+    #[arg(long)]
+    response_digest: String,
+    #[arg(long)]
+    owner_authorization_digest: String,
+    #[arg(long)]
+    unsigned_transfer_digest: String,
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Prepare an exact same-seqno Agent Account cancellation; never broadcasts")]
+pub struct AgentAccountCancelPrepareCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Primary controller action's stable idempotency ID")]
+    action_id: String,
+    #[arg(long)]
+    owner_authorization_digest: String,
+    #[arg(long)]
+    valid_until: u32,
+    #[arg(long)]
     yes: bool,
 }
 
@@ -856,6 +913,7 @@ struct AgentWalletView {
     name: String,
     address: String,
     agent_account_address: Option<String>,
+    agent_account_deployment_id: Option<String>,
     version: WalletVersion,
     workchain: i32,
     subwallet_id: u32,
@@ -874,6 +932,7 @@ struct AgentRuntimeManifest {
     name: String,
     address: String,
     agent_account_address: Option<String>,
+    agent_account_deployment_id: Option<String>,
     controller_key: String,
     policy: AgentWalletPolicy,
     metadata_hash: Option<String>,
@@ -913,6 +972,7 @@ struct AgentAccountStateView {
     owner: String,
     controller_key: String,
     controller_pubkey: String,
+    deployment_id: String,
     max_per_tx: u64,
     daily_limit: u64,
     default_task_timeout_secs: u64,
@@ -928,6 +988,7 @@ struct AgentAccountDeployView {
     wallet: String,
     address: String,
     owner: String,
+    deployment_id: String,
     payer: String,
     payer_address: String,
     amount: String,
@@ -963,6 +1024,8 @@ struct AgentAccountChainView {
     #[serde(skip_serializing_if = "Option::is_none")]
     controller_pubkey: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    deployment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seqno: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_per_tx: Option<u64>,
@@ -990,6 +1053,8 @@ struct AgentAccountTemplateView {
     update_policy_opcode: String,
     rotate_controller_opcode: String,
     task_send_opcode: String,
+    native_send_opcode: String,
+    cancel_seqno_opcode: String,
     get_methods: Vec<&'static str>,
     code_hash: String,
     code_boc: String,
@@ -1023,6 +1088,8 @@ impl AgentAccountCmd {
             AgentAccountAction::UpdatePolicy(cmd) => cmd.run(config_path).await,
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::NativePrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::CancelPrepare(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -1317,6 +1384,11 @@ impl AgentTaskSendCmd {
                 value: nanotos_to_tos_f64(amount_nanotos)?,
                 body_boc: Some(body_boc),
                 valid_until: self.valid_until.unwrap_or_else(|| time_format::now() as u32 + 300),
+                action_id: self.controller_action_id.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--controller-action-id is required for crash-safe Agent Account actions"
+                    )
+                })?,
                 yes: self.yes,
             }
             .run(config_path)
@@ -1886,14 +1958,23 @@ impl AgentTaskBuildStateCmd {
 impl AgentAccountBuildStateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let path = Path::new(config_path);
-        let (config, vault) = load_config_vault(path).await?;
+        let (mut config, vault) = load_config_vault(path).await?;
         let agent_wallet = config
             .agent_wallets
             .get(&self.wallet)
-            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
+            .clone();
 
         let (init, owner_address) =
-            build_agent_account_init(&self.wallet, agent_wallet, vault).await?;
+            build_agent_account_init(&self.wallet, &agent_wallet, vault).await?;
+        if agent_wallet.agent_account_deployment_id.is_none() {
+            config
+                .agent_wallets
+                .get_mut(&self.wallet)
+                .expect("checked Agent wallet")
+                .agent_account_deployment_id = Some(hex::encode(init.deployment_id));
+            save_config(&config, path)?;
+        }
         let state_init = AgentAccountContract::build_state_init(&init)?;
         let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
         let state_cell = state_init.write_to_new_cell()?.into_cell()?;
@@ -1909,6 +1990,7 @@ impl AgentAccountBuildStateCmd {
             owner: owner_address,
             controller_key: describe_key(&agent_wallet.controller_key),
             controller_pubkey: hex::encode(init.controller_pubkey),
+            deployment_id: hex::encode(init.deployment_id),
             max_per_tx: init.max_per_tx,
             daily_limit: init.daily_limit,
             default_task_timeout_secs: init.default_task_timeout_secs,
@@ -1930,6 +2012,7 @@ impl AgentAccountBuildStateCmd {
         println!("  Owner:                {}", view.owner);
         println!("  Controller key:       {}", view.controller_key);
         println!("  Controller pubkey:    {}", view.controller_pubkey);
+        println!("  Deployment ID:        {}", view.deployment_id);
         println!("  Max per action:       {} TOS", display_tos(view.max_per_tx));
         println!("  Daily limit:          {} TOS", display_tos(view.daily_limit));
         println!("  Default task timeout: {}s", view.default_task_timeout_secs);
@@ -2078,6 +2161,7 @@ impl AgentAccountDeployCmd {
             wallet: self.wallet.clone(),
             address: address.to_string(),
             owner: owner.to_string(),
+            deployment_id: hex::encode(init.deployment_id),
             payer: self.from.clone(),
             payer_address: payer_address.to_string(),
             amount: display_tos(amount_nanotos),
@@ -2085,11 +2169,12 @@ impl AgentAccountDeployCmd {
             data_hash: hex::encode(data_cell.hash(0)),
             status: "deployed".to_string(),
         };
-        config
+        let deployed_profile = config
             .agent_wallets
             .get_mut(&self.wallet)
-            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
-            .agent_account_address = Some(address.to_string());
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        deployed_profile.agent_account_address = Some(address.to_string());
+        deployed_profile.agent_account_deployment_id = Some(hex::encode(init.deployment_id));
         save_config(&config, path)?;
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -2199,6 +2284,14 @@ impl AgentAccountRotateControllerCmd {
 
 impl AgentAccountTaskSendCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        if self.action_id.len() != 64
+            || !self
+                .action_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            anyhow::bail!("action_id must be exactly 64 lowercase hexadecimal characters");
+        }
         validate_tos_amount("value", self.value)?;
         if self.value == 0.0 {
             anyhow::bail!("value must be greater than zero");
@@ -2229,6 +2322,11 @@ impl AgentAccountTaskSendCmd {
         if self.valid_until <= now {
             anyhow::bail!("valid_until must be a future Unix timestamp");
         }
+        if u128::from(self.valid_until)
+            > u128::from(now) + u128::from(data.default_task_timeout_secs)
+        {
+            anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+        }
         let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
         let keypair = secret.as_keypair()?;
         let controller_pubkey: [u8; 32] = keypair
@@ -2246,28 +2344,416 @@ impl AgentAccountTaskSendCmd {
             }
             None => Cell::default(),
         };
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let action_body_hash = *body.repr_hash().as_array();
         let payload = AgentAccountContract::build_task_send_payload(
+            global_id,
             data.seqno,
             self.valid_until,
             &target,
             value,
             body,
         )?;
-        let hash_to_sign = AgentAccountContract::task_send_hash_to_sign(&account, &payload)?;
-        let signature = keypair.sign(&hash_to_sign).await?;
-        let signature: [u8; 64] = signature
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
-        let signed = AgentAccountContract::build_signed_task_send_message(payload, &signature)?;
-        let message =
-            AgentAccountContract::build_external_task_send_message(account.clone(), signed)?;
-        if !self.yes && !confirm(&format!("Send controller action from {}?", account))? {
+        let hash_to_sign =
+            AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize controller action {} from {} to {} for {}, seqno {}, valid_until {}?",
+                self.action_id,
+                account,
+                target,
+                display_tos(value),
+                data.seqno,
+                self.valid_until
+            ))?
+        {
             return Ok(());
         }
-        rpc_client.send_boc(&write_boc(&message)?).await?;
+
+        let mut identity = Sha256::new();
+        identity.update(b"tos.agent-account.controller-action.v1\0");
+        let account_text = account.to_string();
+        let target_text = target.to_string();
+        for part in [self.action_id.as_bytes(), account_text.as_bytes(), target_text.as_bytes()] {
+            identity.update((part.len() as u64).to_be_bytes());
+            identity.update(part);
+        }
+        for part in [
+            global_id.to_be_bytes().as_slice(),
+            value.to_be_bytes().as_slice(),
+            self.valid_until.to_be_bytes().as_slice(),
+            action_body_hash.as_slice(),
+        ] {
+            identity.update((part.len() as u64).to_be_bytes());
+            identity.update(part);
+        }
+        let claim = ControllerActionClaim {
+            account: account.to_string(),
+            network_global_id: global_id,
+            seqno: data.seqno,
+            action_kind: "agent-task-send".to_owned(),
+            idempotency_key: self.action_id.clone(),
+            action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
+            valid_until: self.valid_until,
+        };
+        let journal = open_controller_journal(Path::new(config_path))?;
+        journal.reconcile_finalized_seqno(&claim.account, data.seqno, time_format::now())?;
+        let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
+        if record.status == ControllerActionStatus::Resolved {
+            println!(
+                "{} controller action {} was already resolved",
+                "OK".green().bold(),
+                self.action_id
+            );
+            return Ok(());
+        }
+        if record.status == ControllerActionStatus::Broadcasting {
+            anyhow::bail!(
+                "controller action broadcast is ambiguous; resolve finalized seqno before retrying"
+            );
+        }
+        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let signature = keypair.sign(&hash_to_sign).await?;
+            let signature: [u8; 64] = signature
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            journal.attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                time_format::now(),
+            )?;
+            boc
+        };
+        journal.begin_broadcast(&claim, time_format::now())?;
+        rpc_client.send_boc(&boc).await?;
         println!("{} controller task action sent from {}", "OK".green().bold(), account);
         Ok(())
     }
+}
+
+impl AgentAccountNativePrepareCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_controller_action_id(&self.action_id)?;
+        for (name, value) in [
+            ("request_digest", &self.request_digest),
+            ("response_digest", &self.response_digest),
+            ("owner_authorization_digest", &self.owner_authorization_digest),
+            ("unsigned_transfer_digest", &self.unsigned_transfer_digest),
+        ] {
+            validate_sha256_digest(name, value)?;
+        }
+        if self.amount_nanotos == 0 {
+            anyhow::bail!("amount_nanotos must be greater than zero");
+        }
+        let now = time_format::now() as u32;
+        if self.valid_until <= now {
+            anyhow::bail!("valid_until must be a future Unix timestamp");
+        }
+
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent Account is not deployed for this wallet"))?
+            .parse::<MsgAddressInt>()?;
+        let target = self.target.parse::<MsgAddressInt>().context("invalid target address")?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        if u128::from(self.valid_until)
+            > u128::from(now) + u128::from(data.default_task_timeout_secs)
+        {
+            anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+        }
+        if self.amount_nanotos > data.max_per_tx {
+            anyhow::bail!("Gift amount exceeds Agent Account max_per_tx");
+        }
+        if data.spent_today.saturating_add(self.amount_nanotos) > data.daily_limit {
+            anyhow::bail!("Gift amount exceeds Agent Account remaining daily limit");
+        }
+        let account_info = rpc_client.get_address_information(&account).await?;
+        if account_info.state != AccountState::Active
+            || account_info.balance < self.amount_nanotos.saturating_add(self.fee_reserve_nanotos)
+        {
+            anyhow::bail!("Agent Account is inactive or lacks Gift principal plus fee reserve");
+        }
+        let deployed_code =
+            account_info.code.as_ref().context("Agent Account has no deployed code")?;
+        if read_single_root_boc(deployed_code)?.hash(0) != AgentAccountContract::code()?.hash(0) {
+            anyhow::bail!("Agent Account code does not match the supported final interface");
+        }
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .context("controller secret has no public key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        if controller_pubkey != data.controller_pubkey {
+            anyhow::bail!("configured controller key does not match the Agent Account");
+        }
+
+        let mut identity = Sha256::new();
+        identity.update(b"tos.agent-account.native-action.v1\0");
+        for value in [
+            self.action_id.as_bytes(),
+            account.to_string().as_bytes(),
+            target.to_string().as_bytes(),
+            self.request_digest.as_bytes(),
+            self.response_digest.as_bytes(),
+            self.owner_authorization_digest.as_bytes(),
+            self.unsigned_transfer_digest.as_bytes(),
+            global_id.to_be_bytes().as_slice(),
+            self.amount_nanotos.to_be_bytes().as_slice(),
+            self.fee_reserve_nanotos.to_be_bytes().as_slice(),
+            self.valid_until.to_be_bytes().as_slice(),
+        ] {
+            identity.update((value.len() as u64).to_be_bytes());
+            identity.update(value);
+        }
+        let claim = ControllerActionClaim {
+            account: account.to_string(),
+            network_global_id: global_id,
+            seqno: data.seqno,
+            action_kind: "agent-native-send".to_owned(),
+            idempotency_key: self.action_id.clone(),
+            action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
+            valid_until: self.valid_until,
+        };
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize native Gift {} from {} to {} for {} nanoTOS, seqno {}, valid_until {}?",
+                self.action_id, account, target, self.amount_nanotos, data.seqno, self.valid_until
+            ))?
+        {
+            anyhow::bail!("owner declined Gift authorization");
+        }
+        let journal = open_controller_journal(path)?;
+        journal.reconcile_finalized_seqno(&claim.account, data.seqno, time_format::now())?;
+        let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
+        if record.status == ControllerActionStatus::Resolved {
+            anyhow::bail!("controller action is already resolved");
+        }
+        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let payload = AgentAccountContract::build_native_send_payload(
+                global_id,
+                data.seqno,
+                self.valid_until,
+                &target,
+                self.amount_nanotos,
+            )?;
+            let hash =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let signature: [u8; 64] = keypair
+                .sign(&hash)
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            journal.attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                time_format::now(),
+            )?;
+            boc
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.prepared-action.v1",
+                "action_id": self.action_id,
+                "action": "agent-native-send",
+                "account": account.to_string(),
+                "seqno": data.seqno,
+                "network_global_id": global_id,
+                "valid_until": self.valid_until,
+                "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountCancelPrepareCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_controller_action_id(&self.action_id)?;
+        validate_sha256_digest("owner_authorization_digest", &self.owner_authorization_digest)?;
+        let now = time_format::now() as u32;
+        if self.valid_until <= now {
+            anyhow::bail!("valid_until must be a future Unix timestamp");
+        }
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        if u128::from(self.valid_until)
+            > u128::from(now) + u128::from(data.default_task_timeout_secs)
+        {
+            anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+        }
+        let journal = open_controller_journal(path)?;
+        journal.reconcile_finalized_seqno(&account.to_string(), data.seqno, time_format::now())?;
+        let record = journal
+            .find_primary(&account.to_string(), &self.action_id)?
+            .context("primary controller action not found")?;
+        if record.status == ControllerActionStatus::Resolved || record.claim.seqno != data.seqno {
+            anyhow::bail!("primary action is no longer cancellable at the finalized sequence");
+        }
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        if global_id != record.claim.network_global_id {
+            anyhow::bail!("primary action network no longer matches the connected chain");
+        }
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize cancellation of action {} on {} at seqno {}?",
+                self.action_id, account, data.seqno
+            ))?
+        {
+            anyhow::bail!("owner declined cancellation authorization");
+        }
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .context("controller secret has no public key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        if controller_pubkey != data.controller_pubkey {
+            anyhow::bail!("configured controller key does not match the Agent Account");
+        }
+        let cancellation_identity = {
+            let mut digest = Sha256::new();
+            digest.update(b"tos.agent-account.cancel-authorization.v1\0");
+            digest.update(self.action_id.as_bytes());
+            digest.update(self.owner_authorization_digest.as_bytes());
+            digest.update(self.valid_until.to_be_bytes());
+            format!("sha256:{}", hex::encode(digest.finalize()))
+        };
+        let boc = if let Some(encoded) = record.cancellation_boc_base64 {
+            if record.cancellation_identity.as_deref() != Some(&cancellation_identity) {
+                anyhow::bail!("changed cancellation conflicts with custody journal");
+            }
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let payload = AgentAccountContract::build_cancel_seqno_payload(
+                global_id,
+                data.seqno,
+                self.valid_until,
+            )?;
+            let hash =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let signature: [u8; 64] = keypair
+                .sign(&hash)
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            journal.authorize_cancellation(
+                &record.claim,
+                &cancellation_identity,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                time_format::now(),
+            )?;
+            boc
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.prepared-action.v1",
+                "action_id": self.action_id,
+                "action": "agent-cancel-seqno",
+                "account": account.to_string(),
+                "seqno": data.seqno,
+                "network_global_id": global_id,
+                "valid_until": self.valid_until,
+                "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+            })
+        );
+        Ok(())
+    }
+}
+
+fn validate_controller_action_id(value: &str) -> anyhow::Result<()> {
+    if value.len() != 64
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        anyhow::bail!("action_id must be exactly 64 lowercase hexadecimal characters");
+    }
+    Ok(())
+}
+
+fn validate_sha256_digest(name: &str, value: &str) -> anyhow::Result<()> {
+    if value.len() != 71
+        || !value.starts_with("sha256:")
+        || !value[7..].bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        anyhow::bail!("{} must be a canonical sha256 digest", name);
+    }
+    Ok(())
+}
+
+fn open_controller_journal(config_path: &Path) -> anyhow::Result<AgentAccountCustodyJournal> {
+    let absolute =
+        fs::canonicalize(config_path).context("resolve tosctl config path for custody journal")?;
+    let directory = absolute
+        .parent()
+        .context("tosctl config path has no parent")?
+        .join(".tosctl-agent-controller-journal");
+    fs::create_dir_all(&directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+    }
+    AgentAccountCustodyJournal::open(directory)
 }
 
 async fn run_agent_account_owner_action(
@@ -2516,6 +3002,7 @@ async fn load_agent_account_chain_view(
         template_matches,
         owner: data.as_ref().map(|data| data.owner.to_string()),
         controller_pubkey: data.as_ref().map(|data| hex::encode(data.controller_pubkey)),
+        deployment_id: data.as_ref().map(|data| hex::encode(data.deployment_id)),
         seqno: data.as_ref().map(|data| data.seqno),
         max_per_tx: data.as_ref().map(|data| data.max_per_tx),
         daily_limit: data.as_ref().map(|data| data.daily_limit),
@@ -2533,6 +3020,7 @@ async fn load_agent_account_chain_view(
 fn agent_account_data_matches(data: &AgentAccountData, expected: &AgentAccountInit) -> bool {
     data.owner == expected.owner
         && data.controller_pubkey == expected.controller_pubkey
+        && data.deployment_id == expected.deployment_id
         && data.max_per_tx == expected.max_per_tx
         && data.daily_limit == expected.daily_limit
         && data.default_task_timeout_secs == expected.default_task_timeout_secs
@@ -2567,6 +3055,9 @@ fn print_agent_account_chain_view(
     }
     if let Some(controller) = &view.controller_pubkey {
         println!("  Controller pubkey:    {}", controller);
+    }
+    if let Some(deployment_id) = &view.deployment_id {
+        println!("  Deployment ID:        {}", deployment_id);
     }
     if let Some(seqno) = view.seqno {
         println!("  Controller seqno:     {}", seqno);
@@ -2609,6 +3100,8 @@ impl AgentAccountShowTemplateCmd {
             update_policy_opcode: "0x41475001".to_string(),
             rotate_controller_opcode: "0x41475002".to_string(),
             task_send_opcode: "0x41475003".to_string(),
+            native_send_opcode: "0x41475004".to_string(),
+            cancel_seqno_opcode: "0x41475005".to_string(),
             get_methods: vec![
                 "get_agent_account_data",
                 "get_owner",
@@ -2631,6 +3124,8 @@ impl AgentAccountShowTemplateCmd {
         println!("  Update policy opcode:     {}", view.update_policy_opcode);
         println!("  Rotate controller opcode: {}", view.rotate_controller_opcode);
         println!("  Task send opcode:         {}", view.task_send_opcode);
+        println!("  Native send opcode:       {}", view.native_send_opcode);
+        println!("  Cancel seqno opcode:      {}", view.cancel_seqno_opcode);
         println!("  Get methods:              {}", view.get_methods.join(", "));
         println!("  Code hash:                {}", view.code_hash);
         Ok(())
@@ -2713,6 +3208,7 @@ impl AgentWalletCreateCmd {
         let agent_wallet = AgentWalletConfig {
             wallet: wallet.clone(),
             agent_account_address: None,
+            agent_account_deployment_id: None,
             controller_key: KeyConfig::VaultKey { name: controller_secret_name.clone() },
             policy,
             metadata_hash: self.metadata_hash.clone(),
@@ -2828,6 +3324,7 @@ impl AgentWalletExportRuntimeCmd {
             name: view.name,
             address: view.address,
             agent_account_address: view.agent_account_address,
+            agent_account_deployment_id: view.agent_account_deployment_id,
             controller_key: view.controller_key,
             policy: view.policy,
             metadata_hash: view.metadata_hash,
@@ -3348,11 +3845,21 @@ async fn build_agent_account_init(
         .await?
         .try_into()
         .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+    let deployment_id = if let Some(value) = &agent_wallet.agent_account_deployment_id {
+        parse_optional_hash("agent-account-deployment-id", &Some(value.clone()))?
+            .expect("present deployment ID")
+    } else {
+        let mut generated = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut generated);
+        generated
+    };
+    anyhow::ensure!(deployment_id != [0u8; 32], "Agent Account deployment ID must be nonzero");
 
     Ok((
         AgentAccountInit {
             owner,
             controller_pubkey,
+            deployment_id,
             max_per_tx: agent_wallet.policy.max_per_tx,
             daily_limit: agent_wallet.policy.daily_limit,
             default_task_timeout_secs: agent_wallet.policy.default_task_timeout_secs,
@@ -3547,6 +4054,7 @@ async fn build_view(
         name: name.to_string(),
         address,
         agent_account_address: agent_wallet.agent_account_address.clone(),
+        agent_account_deployment_id: agent_wallet.agent_account_deployment_id.clone(),
         version: agent_wallet.wallet.version,
         workchain: agent_wallet.wallet.workchain,
         subwallet_id: agent_wallet.wallet.subwallet_id,

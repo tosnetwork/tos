@@ -12,6 +12,9 @@ deploys an Agent Wallet/Account, and exercises every lifecycle CLI command
 end to end against a real validator:
 
   agent account deploy / show / status
+  agent account native-prepare         (bodyless native TOS Gift profile)
+  exact BOC retry + duplicate submission
+  agent account cancel-prepare         (same-seqno finalized invalidation)
   agent account task-send            (controller-signed transfer)
   agent wallet update-policy + agent account update-policy
       (pushes the local policy to chain -- this is the exact code path a
@@ -82,6 +85,15 @@ def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
 
 
+def broadcast_boc(exact_boc_base64: str, may_fail: bool = False):
+    try:
+        return rpc_call("sendBoc", boc=exact_boc_base64)
+    except urllib.error.HTTPError as error:
+        if not may_fail:
+            raise
+        return {"http_status": error.code, "body": error.read().decode(errors="replace")}
+
+
 async def tosctl(*args: str, may_fail: bool = False) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
@@ -102,6 +114,11 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
 
 async def tosctl_json(*args: str):
     return json.loads(await tosctl(*args, "--format", "json"))
+
+
+async def tosctl_action_json(*args: str):
+    """Decode commands whose only output format is their strict JSON artifact."""
+    return json.loads(await tosctl(*args))
 
 
 def norm_addr(addr: str) -> str:
@@ -147,11 +164,57 @@ async def poll_predicate(predicate, timeout: float = 60.0) -> bool:
     return False
 
 
+async def predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+    """Continuously disprove a negative invariant over the normal CI window."""
+    deadline = time.time() + duration
+    observed = False
+    while time.time() < deadline:
+        try:
+            holds = predicate()
+            observed = True
+            if not holds:
+                return False
+        except Exception:
+            # A transient RPC failure is not evidence that the invariant held.
+            pass
+        await asyncio.sleep(1)
+    return observed
+
+
+async def async_predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+    """Async counterpart for invariants that require a CLI state read."""
+    deadline = time.time() + duration
+    observed = False
+    while time.time() < deadline:
+        try:
+            holds = await predicate()
+            observed = True
+            if not holds:
+                return False
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return observed
+
+
 async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             if balance(addr) >= target:
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
+async def wait_account_seqno(account: str, target: int, timeout: float = 60.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            state = await tosctl_json("agent", "account", "show", "--address", account)
+            if state.get("seqno") == target:
                 return True
         except Exception:
             pass
@@ -199,7 +262,7 @@ async def run_checks(faucet, node) -> None:
 
     print("\n=== deploy: Agent Wallet + Agent Account ===")
     await tosctl(
-        "agent", "wallet", "create", "--name", "agent-1", "-v", "V3R2", "-w", "0",
+        "agent", "wallet", "create", "--name", "agent-1", "-v", "V5R1", "-w", "0",
         "--max-per-tx", "2", "--daily-limit", "10",
     )
     deploy_out = await tosctl_json(
@@ -230,15 +293,77 @@ async def run_checks(faucet, node) -> None:
     check("status reports local profile matches chain",
           status_out.get("matches_profile") is True, str(status_out))
 
-    print("\n=== controller-signed transfer (agent account task-send) ===")
     await tosctl("wallet", "create", "-n", "target", "-v", "V3R2", "-w", "0")
     target_ls = await tosctl_json("wallet", "ls")
     target = norm_addr(next(e["address"] for e in target_ls if e["name"] == "target"))
+
+    print("\n=== bodyless native Gift: exact retry and duplicate submission ===")
     target_before = balance(target)
-    valid_until = int(time.time()) + 3600
+    # Stay well inside the 3600-second contract ceiling: local wall time can
+    # lead finalized block time slightly, so using the exact ceiling is flaky.
+    valid_until = int(time.time()) + 300
+    native_args = (
+        "agent", "account", "native-prepare", "--wallet", "agent-1", "--target", target,
+        "--amount-nanotos", str(500_000_000), "--fee-reserve-nanotos", str(50_000_000),
+        "--valid-until", str(valid_until), "--action-id", "a" * 64,
+        "--request-digest", "sha256:" + "1" * 64,
+        "--response-digest", "sha256:" + "2" * 64,
+        "--owner-authorization-digest", "sha256:" + "3" * 64,
+        "--unsigned-transfer-digest", "sha256:" + "4" * 64, "--yes",
+    )
+    prepared = await tosctl_action_json(*native_args)
+    retried = await tosctl_action_json(*native_args)
+    exact_boc = prepared.get("exact_signed_boc", "")
+    check("native Gift returns the frozen prepared-action schema",
+          prepared.get("schema") == "tosctl.agent-account.prepared-action.v1"
+          and prepared.get("action") == "agent-native-send" and bool(exact_boc), str(prepared))
+    check("exact native Gift retry returns byte-identical BOC",
+          retried.get("exact_signed_boc") == exact_boc)
+    first_submit = broadcast_boc(exact_boc)
+    duplicate_submit = broadcast_boc(exact_boc, may_fail=True)
+    check("node accepts exact BOC submission path",
+          "result" in first_submit and
+          ("result" in duplicate_submit or duplicate_submit.get("http_status") == 500),
+          f"first={first_submit} duplicate={duplicate_submit}")
+    check("duplicate native Gift submission credits exactly once", await wait_balance_at_least(
+        target, target_before + 500_000_000))
+    check("duplicate native Gift remains credited exactly once for the observation window",
+          await predicate_stays_true(
+              lambda: balance(target) == target_before + 500_000_000))
+    check("native Gift consumes exactly one Agent Account seqno",
+          await wait_account_seqno(account, 1))
+
+    print("\n=== same-seqno cancellation wins and original Gift stays unpaid ===")
+    cancel_target_before = balance(target)
+    cancel_valid_until = int(time.time()) + 300
+    cancel_primary = await tosctl_action_json(
+        "agent", "account", "native-prepare", "--wallet", "agent-1", "--target", target,
+        "--amount-nanotos", str(200_000_000), "--fee-reserve-nanotos", str(50_000_000),
+        "--valid-until", str(cancel_valid_until), "--action-id", "b" * 64,
+        "--request-digest", "sha256:" + "5" * 64,
+        "--response-digest", "sha256:" + "6" * 64,
+        "--owner-authorization-digest", "sha256:" + "7" * 64,
+        "--unsigned-transfer-digest", "sha256:" + "8" * 64, "--yes",
+    )
+    cancellation = await tosctl_action_json(
+        "agent", "account", "cancel-prepare", "--wallet", "agent-1",
+        "--action-id", "b" * 64,
+        "--owner-authorization-digest", "sha256:" + "9" * 64,
+        "--valid-until", str(cancel_valid_until), "--yes",
+    )
+    broadcast_boc(cancellation.get("exact_signed_boc", ""))
+    check("cancellation consumes the shared sequence", await wait_account_seqno(account, 2))
+    broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
+    check("finalized cancellation prevents destination credit for the observation window",
+          await predicate_stays_true(lambda: balance(target) == cancel_target_before))
+
+    print("\n=== controller-signed transfer (agent account task-send) ===")
+    target_before = balance(target)
+    task_valid_until = int(time.time()) + 300
     await tosctl(
         "agent", "account", "task-send", "--wallet", "agent-1", "--target", target,
-        "--value", "0.5", "--valid-until", str(valid_until), "--yes",
+        "--value", "0.5", "--valid-until", str(task_valid_until),
+        "--action-id", "c" * 64, "--yes",
     )
     check("controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before + int(0.49 * NANO)))
@@ -260,10 +385,11 @@ async def run_checks(faucet, node) -> None:
     await tosctl("agent", "wallet", "rotate-controller", "--name", "agent-1")
     await tosctl("agent", "account", "rotate-controller", "--wallet", "agent-1", "--amount", "0.05", "--yes")
     target_before_2 = balance(target)
-    valid_until_2 = int(time.time()) + 3600
+    valid_until_2 = int(time.time()) + 300
     await tosctl(
         "agent", "account", "task-send", "--wallet", "agent-1", "--target", target,
-        "--value", "0.3", "--valid-until", str(valid_until_2), "--yes",
+        "--value", "0.3", "--valid-until", str(valid_until_2),
+        "--action-id", "d" * 64, "--yes",
     )
     check("post-rotation controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before_2 + int(0.29 * NANO)))
@@ -292,6 +418,38 @@ async def run_checks(faucet, node) -> None:
           post_restart.get("max_per_tx") == 1 * NANO, str(post_restart))
     check("post-restart balance matches pre-restart total transfers",
           balance(target) >= target_before_3 + int(0.29 * NANO))
+
+    print("\n=== finalized chain time rejects an expired native Gift ===")
+    expired_target_before = balance(target)
+    expired_seqno = (await tosctl_json(
+        "agent", "account", "show", "--address", account))["seqno"]
+    expiry = int(time.time()) + 3
+    expired = await tosctl_action_json(
+        "agent", "account", "native-prepare", "--wallet", "agent-1", "--target", target,
+        "--amount-nanotos", str(100_000_000), "--fee-reserve-nanotos", str(50_000_000),
+        "--valid-until", str(expiry), "--action-id", "e" * 64,
+        "--request-digest", "sha256:" + "a" * 64,
+        "--response-digest", "sha256:" + "b" * 64,
+        "--owner-authorization-digest", "sha256:" + "c" * 64,
+        "--unsigned-transfer-digest", "sha256:" + "d" * 64, "--yes",
+    )
+    # Cross the validity boundary and then require a new finalized block before
+    # submission, so rejection is based on chain time rather than local sleep.
+    await asyncio.sleep(max(0, expiry - int(time.time()) + 1))
+    pre_expiry_seqno = rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
+    check("chain finalizes a block after the Gift validity boundary",
+          await poll_predicate(
+              lambda: rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
+              > pre_expiry_seqno))
+    broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
+
+    async def expired_state_unchanged() -> bool:
+        state = await tosctl_json("agent", "account", "show", "--address", account)
+        return (state.get("seqno") == expired_seqno
+                and balance(target) == expired_target_before)
+
+    check("expired native Gift consumes no seqno and produces no credit for the observation window",
+          await async_predicate_stays_true(expired_state_unchanged))
 
 
 async def main() -> int:

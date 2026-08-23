@@ -16,9 +16,11 @@ sha2 = "0.10"
 tl_api = { version = "0.4.32", path = "../../tl/api" }
 tracing = "0.1"
 chain-rpc-client = { path = "../chain-rpc-client" }
+fs2 = "0.4"
 
 [dev-dependencies]
 tokio = "1.48.0"
 tos_sandbox = { path = '../../sandbox' }
 tos_vm = { path = '../../vm' }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+tempfile = "3"
