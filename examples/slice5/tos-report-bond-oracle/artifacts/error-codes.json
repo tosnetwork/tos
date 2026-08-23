@@ -14,7 +14,7 @@
       "code": 4866,
       "hex": "0x1302",
       "class": "Value",
-      "description": "in.valueCoins < BOND_ORACLE_MIN_BOND (1 TON) on a SubmitReport message"
+      "description": "in.valueCoins < BOND_ORACLE_MIN_BOND (1 TOS) on a SubmitReport message"
     },
     {
       "name": "BOND_ORACLE_THROW_NO_ACTIVE_ROUND",

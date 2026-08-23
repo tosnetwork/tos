@@ -122,7 +122,7 @@ bool parse_settlement_ledger(td::Ref<vm::Cell> data, SettlementLedger& out) {
   long long earner_workchain;
   // version:16 next_epoch:32 epoch_seconds:32 register_grace:32 challenge_window:32
   // earner_workchain:int8 immediate_bps:16 stream_epochs:16 mat_epoch_seconds:32
-  // minted_total:Grams total_cap:Grams ^distributor_code ^commitment_code
+  // minted_total:Tomis total_cap:Tomis ^distributor_code ^commitment_code
   // registrations:HashmapE
   if (!(cs.fetch_uint_to(16, version) && cs.fetch_uint_to(32, next_epoch) &&
         cs.fetch_uint_to(32, epoch_seconds) && cs.fetch_uint_to(32, register_grace) &&
@@ -252,7 +252,7 @@ bool parse_commitment_state(td::Ref<vm::Cell> data, CommitmentState& out) {
   try {
   vm::CellSlice cs = vm::load_cell_slice(data);
   // version:16 committer:MsgAddress reviewer:MsgAddress status:8 epoch:64
-  // window_deadline:64 review_deadline:64 commit_bond:Grams challenge_bond:Grams
+  // window_deadline:64 review_deadline:64 commit_bond:Tomis challenge_bond:Tomis
   // ^[score_root methodology total_score organic] ^[challenger ...] ^[settlement]
   // The economic tuple is the first ref; the whole outer layout is consumed and
   // validated (strict, D9) so a noncanonical parent is rejected.
@@ -391,7 +391,7 @@ bool copy_msg_address(vm::CellSlice& cs, vm::CellBuilder& cb) {
   return copy_bits(cs, cb, nbits);
 }
 
-// Copy one Grams/Tomis value (variable width, no refs) from `cs` into `cb`.
+// Copy one Tomis value (variable width, no refs) from `cs` into `cb`.
 bool copy_grams(vm::CellSlice& cs, vm::CellBuilder& cb) {
   vm::CellSlice probe = cs;
   if (block::tlb::t_Tomis.as_integer_skip(probe).is_null()) {
@@ -424,7 +424,7 @@ td::Ref<vm::Cell> build_default_challenge_cell() {
 // caller then skips the candidate, fail closed). Layout (mirrors
 // parse_commitment_state):
 //   version:16 committer:MsgAddress reviewer:MsgAddress status:8 epoch:64
-//   window_deadline:64 review_deadline:64 commit_bond:Grams challenge_bond:Grams
+//   window_deadline:64 review_deadline:64 commit_bond:Tomis challenge_bond:Tomis
 //   ^tuple ^challenge ^settlement
 td::Ref<vm::Cell> reconstruct_commitment_init_data(const td::Ref<vm::Cell>& data) {
   if (data.is_null()) {

@@ -69,7 +69,7 @@
 ;;                     ^nominator_data = InternalMsgBody;
 ;;       (nominator_data is the sender's deploy data cell, used to authenticate that
 ;;        sender == hash(StateInit(commitment_code, nominator_data)). The message must
-;;        also carry >= MIN_REGISTRATION_BOND grams (the H1 economic-close bond).)
+;;        also carry >= MIN_REGISTRATION_BOND nanoTOS (the H1 economic-close bond).)
 ;;   skip#41505302 query_id:uint64 = InternalMsgBody;
 ;;   (settle) winner_id:uint256, from the minter -1:00..00.
 
@@ -113,7 +113,7 @@ const int REGISTER_HORIZON = 1024;
 ;; The epoch cursor is a uint32 field; it cannot advance past this value.
 const int MAX_EPOCH = 0xffffffff;
 ;; Minimum value a `register` must carry (H1 economic close). This floor is NOT a gas
-;; check -- TON already charges an underfunded message's compute from its own value (it
+;; check -- TOS already charges an underfunded message's compute from its own value (it
 ;; runs out of gas on its own). It exists because a `register` GROWS STATE: it inserts a
 ;; candidate entry into this epoch's bucket in the registrations dict, which this account
 ;; then carries (and pays storage rent on) until the epoch settles or is skipped. The
@@ -143,7 +143,7 @@ const int STORAGE_RESERVE_BITS = 48000;
 const int STORAGE_RESERVE_CELLS = 96;
 const int STORAGE_RESERVE_FLOOR = 100000000;     ;; 0.1 TOS backstop
 
-;; The TON to keep back so this masterchain account can pay its own storage rent for
+;; The TOS to keep back so this masterchain account can pay its own storage rent for
 ;; STORAGE_RESERVE_SECONDS and never freeze. Priced from the live config; floored.
 int storage_reserve() inline {
   int fee = get_storage_fee(-1, STORAGE_RESERVE_SECONDS, STORAGE_RESERVE_BITS, STORAGE_RESERVE_CELLS);
@@ -318,7 +318,7 @@ cell build_state_init(cell code, cell data) inline {
   cell msg = begin_cell()
     .store_uint(0x10, 6)           ;; non-bounceable internal message
     .store_slice(dest)
-    .store_tomis(pool)             ;; grams: exactly the recorded pool
+    .store_tomis(pool)             ;; nanoTOS: exactly the recorded pool
     .store_uint(0, 1 + 4 + 4 + 64 + 32) ;; other + ihr_fee + fwd_fee + created_lt + created_at
     .store_uint(1, 1)              ;; init present
     .store_uint(1, 1)              ;; init as ^StateInit (Either right)

@@ -2387,7 +2387,7 @@ bool Collator::init_value_create() {
       LOG(WARNING) << "minting of " << value_flow_.minted.to_str() << " disabled: no minting smart contract defined";
       value_flow_.minted.set_zero();
     }
-    // Phase C: the AIPoW aggregate epoch mint is base grams to the settlement
+    // Phase C: the AIPoW aggregate epoch mint is base coins to the settlement
     // account (ConfigParam 93), NOT the extra-currency minter (ConfigParam 2), so
     // it is added AFTER the minter-contract guard above and settled by its own
     // special message. Dark (a no-op) while capAipow is off.
@@ -3319,10 +3319,10 @@ bool Collator::create_special_transactions() {
   CHECK(is_masterchain());
   // value_flow_.minted aggregates two disjoint mints by currency type: extra
   // currencies (ConfigParam 7 vs global balance) go to the ConfigParam-2 minter,
-  // and the Phase C AIPoW base-gram mint goes to the settlement via its own
+  // and the Phase C AIPoW base-coin mint goes to the settlement via its own
   // message. Split them so each special message carries exactly its own value:
   // the ConfigParam-2 message gets the extra part with tomis zeroed (unchanged
-  // from before AIPoW, since the extra-currency mint never mints base grams).
+  // from before AIPoW, since the extra-currency mint never mints base coins).
   block::CurrencyCollection minter_minted = value_flow_.minted;
   minter_minted.tomis = td::make_refint(0);
   return create_special_transaction(value_flow_.recovered, config_->get_config_param(3, 1), recover_create_msg_) &&
