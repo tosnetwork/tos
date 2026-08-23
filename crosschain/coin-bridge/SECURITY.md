@@ -10,7 +10,7 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 4. The TOS and EVM contracts, compiler versions, deployment bytecode, and initial storage match audited artifacts.
 5. Locked native TOS and minted wrapped-token supply are continuously reconciled.
 
-A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record. The historical Solidity plane predates the token bridge: its vote digests include `address(this)` but **not** the EVM chain ID, so the same bridge contract address must never exist on two networks with an overlapping oracle set — a signature for one chain would replay on the other.
+A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record. The historical Solidity plane predates the token bridge: its vote digests include `address(this)` but **not** the EVM chain ID, so the same bridge contract address must never exist on two networks where the signatures gathered on one chain contain, among signers of the other chain’s *current* oracle set, at least that chain’s quorum (`ceil(2n/3)`) — those signatures would then replay onto it. See [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md) for the precise condition and the proposed fix.
 
 ## Preserved contract controls
 

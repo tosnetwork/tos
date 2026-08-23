@@ -81,28 +81,45 @@ flag this rather than inherit the assumption silently.
 
 ## 2. Proposed fix
 
-Bind `block.chainid` into every EVM vote digest, so a signature is
-cryptographically valid on exactly one chain regardless of deployment address.
+Bind the EVM chain ID into every EVM vote digest, so a signature is
+cryptographically valid in exactly one configured chain-ID domain regardless of
+deployment address. (Binding the chain ID cannot stop replay between two networks
+that *share* a chain ID — see the signer requirement in §3 that every target
+network's chain ID be distinct.)
 
 Add the chain ID as an explicit field in each `abi.encode`:
 
 Adopt the **exact field ordering token-bridge already uses** —
-`<magic>, address(this), block.chainid, <fields…>` — so the two bridges share one
-layout and token-bridge's working tests are a template:
+`<magic>, address(this), chainId, <fields…>` — so the two bridges share one
+layout and token-bridge's working tests are a template.
+
+coin-bridge is on `pragma solidity ^0.7.0`, where the Solidity global
+`block.chainid` does **not** exist (it is a later-Solidity member). Under 0.7.x
+the chain ID is read with the Yul `chainid()` opcode via a tiny helper, and the
+digests use that helper:
 
 ```solidity
+// Solidity 0.7.x: `block.chainid` is unavailable; read the opcode via assembly.
+function getChainId() internal view returns (uint256 id) {
+    assembly { id := chainid() }
+}
+
 // getSwapDataId
-keccak256(abi.encode(0xDA7A, address(this), block.chainid,
+keccak256(abi.encode(0xDA7A, address(this), getChainId(),
                      data.receiver, data.amount,
                      data.tx.address_.workchain, data.tx.address_.address_hash,
                      data.tx.tx_hash, data.tx.lt));
 
 // getNewSetId
-keccak256(abi.encode(0x5E7, address(this), block.chainid, oracleSetHash, set));
+keccak256(abi.encode(0x5E7, address(this), getChainId(), oracleSetHash, set));
 
 // getNewBurnStatusId
-keccak256(abi.encode(0xB012, address(this), block.chainid, newBurnStatus, nonce));
+keccak256(abi.encode(0xB012, address(this), getChainId(), newBurnStatus, nonce));
 ```
+
+(On a 0.8.x bump the helper body becomes `id = block.chainid;`; the abi.encode
+layout — and therefore the digest and the golden vectors — is identical either
+way. This exact layout is what the golden vectors in the test plan pin.)
 
 Notes and alternatives considered:
 
@@ -113,9 +130,9 @@ Notes and alternatives considered:
   where the `block.chainid` member does **not** exist; it would need the
   `chainid()` opcode via inline assembly (EIP-1344, Istanbul). token-bridge, by
   contrast, is on `pragma solidity ^0.8.9` and uses the `block.chainid` member
-  directly. Bumping coin-bridge to a 0.8.x pragma aligns the two planes and is the
-  cleaner option; reading `chainid()` via assembly under 0.7 is the smaller diff.
-  This is a decision for the review. Read the value live per call (do not cache at
+  directly. §7 recommends staying on `0.7.x` and reading `chainid()` via the
+  assembly helper (the smaller diff); a `0.8.x` bump is the alternative at a wider
+  recompile/audit surface. Either way read the value live per call (do not cache at
   construction) so the bridge is correct across a chain hard-fork that changes the
   ID.
 - **EIP-712 typed-data domain** (`{name, version, chainId, verifyingContract}`)
@@ -146,10 +163,16 @@ change atomically or the bridge stops verifying its own oracles:
 
 1. **On-chain EVM** — `SignatureChecker.sol` (the three functions above).
 2. **The off-chain oracle/relayer signer** — the watcher that observes a TOS
-   event and signs the EVM digest must add `block.chainid` in byte-identical
-   order. (The relayer implementation lives outside this repo — `~/relayer` is
-   still spec-only — so this is a forward constraint recorded here, plus a golden
-   vector, see the test plan.)
+   event and signs the EVM digest must include the chain ID in byte-identical
+   order. Critically, the signer must not read the chain ID from an arbitrary RPC
+   per call: it MUST pin an `expected_chain_id` in its audited deployment config,
+   verify at startup that its target RPC actually returns that value, refuse to
+   run on a mismatch, and treat any chain-ID change as a governance/deployment
+   event — never a silent runtime input. The set of `expected_chain_id`s across
+   all target networks MUST be pairwise distinct (a shared chain ID re-opens the
+   replay the digest is meant to close). (The relayer implementation lives outside
+   this repo — `~/relayer` is still spec-only — so this is a forward constraint
+   recorded here, plus a golden vector, see the test plan.)
 3. **The test signer** — `evm/test/utils/utils.js` (`encodeSwapData`,
    `encodeSet`, `encodeBurnStatus`) mirrors the contract's `abi.encode` and must
    gain the same `chainId` field in the same position.
@@ -192,8 +215,10 @@ The implementation is incomplete until all of the following exist and pass.
    address** on both (same deployer + nonce, or same CREATE2 salt/init code), sign
    on instance A, and assert the vote is rejected on instance B.
 2. The same rejection test for `getNewSetId` and `getNewBurnStatusId`.
-3. A **negative/regression** test: a pre-upgrade signature (digest without
-   `chainId`) is rejected after the upgrade — proves the preimage actually moved.
+3. A **negative/regression** test: a legacy-format signature (digest without the
+   chain ID) is rejected by the new deployment — proves the preimage actually
+   moved. (The contract is not upgradeable; this is a property of the new build,
+   not an in-place change.)
 
 **EVM regression (no behavior lost):** token-bridge's own EVM test suite —
 which already signs `block.chainid`-bound digests — is the working template for
@@ -223,10 +248,12 @@ these updates.
 ## 6. Deployment status and rollout
 
 **Deployment status is a precondition to confirm, not a fact this document
-establishes.** `SECURITY.md` states the bridge is not activated, and the
-mainnet-readiness review found no bridge `ConfigParam` wired at genesis. This
-proposal does **not** independently prove the current on-chain state. Before the
-"no live migration" reasoning below is relied upon, confirm and attach evidence:
+establishes.** Repository evidence does not establish current deployment status:
+this proposal does **not** prove the on-chain state, and does not rely on any
+claim that `SECURITY.md` or another in-repo document proves the bridge is
+undeployed. Before the "no live migration" reasoning below is relied upon,
+confirm and attach evidence (traceable to a document/commit, network, and block
+height):
 
 - an independent node read of masterchain `ConfigParam` 71 and 72 (the ETH/BSC
   bridge multisig slots) — network, block seqno, and the values (or their
@@ -239,21 +266,27 @@ migration**: the coordinated change (contracts + signer + tests + parity +
 NOTICE) simply must land, be audited, and be verified before the *first*
 deployment.
 
-**If any instance is already deployed, an in-place fix is impossible.**
-`Bridge.sol` is a plain contract (a `constructor`, inheriting `SignatureChecker`)
-— not a proxy, with no upgrade entry point — so the `SignatureChecker` digest
-algorithm of a deployed instance cannot be changed, and an oracle-set rotation
-does not change the digest algorithm either. Closing the gap on an already-live
-bridge therefore requires a full redeploy-and-migrate, not an upgrade:
+**If any instance is already deployed, this proposal's simple rollout is blocked
+and there is NO safe in-place or short migration.** The obstacle is structural,
+not just the absence of a proxy:
 
-1. deploy a new EVM `Bridge` with the chain-ID-bound digest at a new address;
-2. migrate locked assets / wrapped supply from the old contract to the new one;
-3. atomically switch the TOS-side `ConfigParam` and the oracle observers to the
-   new bridge;
-4. freeze the old bridge and reconcile balances across the cutover.
+- the EVM `Bridge` *is itself* the wrapped-TOS ERC-20 (`Bridge is SignatureChecker,
+  BridgeInterface, WrappedTOS`). A new address is a **new token identity**; holder
+  balances cannot simply be "migrated";
+- the contract exposes no wrapped-supply migration interface, no admin power to
+  move holder balances, no global mint pause, no freeze/retire entry, and no proxy
+  upgrade path;
+- switching the TOS-side `ConfigParam` does **not** disable a deployed EVM
+  contract — the old oracle quorum can still execute mints on the old `Bridge`.
 
-That is precisely the live key-and-asset ceremony a pre-deployment fix avoids,
-which is why this must land before first value flows.
+Therefore: **if any existing deployment or balance is found, it immediately blocks
+this proposal's rollout.** A separate, independently audited plan must be written
+and reviewed before any action — covering legacy-token redemption/swap,
+dual-contract supply reconciliation, revocation of the old oracle quorum's
+authority, and final sealing of the old bridge. This proposal does not attempt to
+specify that plan, and no four-step summary should be read as one. This is exactly
+the live token-and-key problem a pre-deployment fix avoids, which is why the fix
+must land before first value flows.
 
 ## 7. Recommended decisions (for owner ratification)
 
