@@ -12,6 +12,25 @@ namespace tos_wallet_index {
 constexpr long long kWalletIndexGetMethodGasLimit = 1'000'000;
 constexpr long long kWalletIndexBlockVerificationGasLimit = 10'000'000;
 
+enum class WalletIndexGetMethodStatus { Success, ContractFailure, Indeterminate };
+
+// A failed get-method is indeterminate only when the node, rather than the
+// contract, prevented a conclusive answer. In particular, preserve an old
+// ownership claim when the fair-share scheduler supplied less than the normal
+// per-method limit and that reduced share was exhausted. A contract that burns
+// the full normal limit still fails verification, otherwise it could pin stale
+// ownership forever by deliberately running out of gas.
+inline WalletIndexGetMethodStatus wallet_index_classify_get_method_failure(long long reserved_gas, td::int32 exit_code,
+                                                                           long long gas_used) {
+  auto out_of_gas = ~static_cast<td::int32>(vm::Excno::out_of_gas);
+  auto virtualization_error = ~static_cast<td::int32>(vm::Excno::virt_err);
+  if (exit_code == virtualization_error || (reserved_gas > 0 && reserved_gas < kWalletIndexGetMethodGasLimit &&
+                                            exit_code == out_of_gas && gas_used >= reserved_gas)) {
+    return WalletIndexGetMethodStatus::Indeterminate;
+  }
+  return WalletIndexGetMethodStatus::ContractFailure;
+}
+
 // Both limit and max must be bounded. A hostile get-method may execute ACCEPT,
 // which raises the current limit up to gas_max.
 inline vm::GasLimits wallet_index_get_method_gas_limits(

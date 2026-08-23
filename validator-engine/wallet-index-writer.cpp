@@ -120,10 +120,8 @@ class StateAccounts {
   std::unique_ptr<vm::AugmentedDictionary> dict_;
 };
 
-enum class GetMethodStatus { Success, ContractFailure, ResourceExhausted };
-
 struct GetMethodResult {
-  GetMethodStatus status;
+  WalletIndexGetMethodStatus status;
   td::Ref<vm::Stack> stack;
 };
 
@@ -133,7 +131,7 @@ GetMethodResult run_get(const tos::SmartContract::State& st, const td::Bits256& 
                         std::vector<vm::StackEntry> params, WalletIndexVerificationBudget& budget) {
   auto reserved_gas = budget.acquire();
   if (reserved_gas <= 0) {
-    return {GetMethodStatus::ResourceExhausted, {}};
+    return {WalletIndexGetMethodStatus::Indeterminate, {}};
   }
   try {
     auto smc = tos::SmartContract::create(st);
@@ -144,13 +142,16 @@ GetMethodResult run_get(const tos::SmartContract::State& st, const td::Bits256& 
     auto res = smc->run_get_method(method, std::move(args));
     budget.refund_unused(reserved_gas, res.gas_used);
     if (!res.success || res.stack.is_null()) {
-      return {GetMethodStatus::ContractFailure, {}};
+      return {wallet_index_classify_get_method_failure(reserved_gas, res.code, res.gas_used), {}};
     }
-    return {GetMethodStatus::Success, std::move(res.stack)};
-  } catch (vm::VmError&) {
-    return {GetMethodStatus::ContractFailure, {}};
+    return {WalletIndexGetMethodStatus::Success, std::move(res.stack)};
+  } catch (vm::VmError& err) {
+    auto status = err.get_errno() == static_cast<int>(vm::Excno::virt_err)
+                      ? WalletIndexGetMethodStatus::Indeterminate
+                      : WalletIndexGetMethodStatus::ContractFailure;
+    return {status, {}};
   } catch (vm::VmVirtError&) {
-    return {GetMethodStatus::ContractFailure, {}};
+    return {WalletIndexGetMethodStatus::Indeterminate, {}};
   }
 }
 
@@ -202,7 +203,7 @@ bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::B
   }
   auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
   auto stack = std::move(result.stack);
-  if (result.status != GetMethodStatus::Success || stack->depth() < 4) {
+  if (result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 4) {
     return false;
   }
   // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
@@ -220,7 +221,7 @@ bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::B
   }
   auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
   auto resolved_stack = std::move(resolved_result.stack);
-  if (resolved_result.status != GetMethodStatus::Success || resolved_stack->depth() < 1) {
+  if (resolved_result.status != WalletIndexGetMethodStatus::Success || resolved_stack->depth() < 1) {
     return false;
   }
   td::Bits256 resolved;
@@ -250,11 +251,11 @@ NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, t
     return NftVerification::Indeterminate;
   }
   auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
-  if (item_result.status == GetMethodStatus::ResourceExhausted) {
+  if (item_result.status == WalletIndexGetMethodStatus::Indeterminate) {
     return NftVerification::Indeterminate;
   }
   auto stack = std::move(item_result.stack);
-  if (item_result.status != GetMethodStatus::Success || stack->depth() < 5) {
+  if (item_result.status != WalletIndexGetMethodStatus::Success || stack->depth() < 5) {
     return NftVerification::Absent;
   }
   try {
@@ -294,11 +295,11 @@ NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, t
       }
       auto resolved_result =
           run_get(cstate, collection, "get_nft_address_by_index", {vm::StackEntry(std::move(index))}, budget);
-      if (resolved_result.status == GetMethodStatus::ResourceExhausted) {
+      if (resolved_result.status == WalletIndexGetMethodStatus::Indeterminate) {
         return NftVerification::Indeterminate;
       }
       auto resolved_stack = std::move(resolved_result.stack);
-      if (resolved_result.status != GetMethodStatus::Success || resolved_stack->depth() < 1) {
+      if (resolved_result.status != WalletIndexGetMethodStatus::Success || resolved_stack->depth() < 1) {
         return NftVerification::Absent;
       }
       td::Bits256 resolved;
@@ -311,10 +312,11 @@ NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, t
     }
     owner_out = owner;
     return NftVerification::Verified;
-  } catch (vm::VmError&) {
-    return NftVerification::Absent;
+  } catch (vm::VmError& err) {
+    return err.get_errno() == static_cast<int>(vm::Excno::virt_err) ? NftVerification::Indeterminate
+                                                                    : NftVerification::Absent;
   } catch (vm::VmVirtError&) {
-    return NftVerification::Absent;
+    return NftVerification::Indeterminate;
   }
 }
 

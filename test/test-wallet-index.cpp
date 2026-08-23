@@ -93,6 +93,41 @@ TEST(WalletIndex, VerificationBudgetIsFairAcrossCandidates) {
   ASSERT_TRUE(budget.acquire() > 0);
 }
 
+TEST(WalletIndex, ReducedShareOutOfGasIsIndeterminate) {
+  auto reduced_share = tos_wallet_index::kWalletIndexGetMethodGasLimit / 2;
+  auto out_of_gas = ~static_cast<td::int32>(vm::Excno::out_of_gas);
+  ASSERT_EQ(tos_wallet_index::wallet_index_classify_get_method_failure(reduced_share, out_of_gas, reduced_share),
+            tos_wallet_index::WalletIndexGetMethodStatus::Indeterminate);
+}
+
+TEST(WalletIndex, FullLimitOutOfGasIsContractFailure) {
+  auto full_limit = tos_wallet_index::kWalletIndexGetMethodGasLimit;
+  auto out_of_gas = ~static_cast<td::int32>(vm::Excno::out_of_gas);
+  ASSERT_EQ(tos_wallet_index::wallet_index_classify_get_method_failure(full_limit, out_of_gas, full_limit),
+            tos_wallet_index::WalletIndexGetMethodStatus::ContractFailure);
+}
+
+TEST(WalletIndex, ReducedShareEarlyOutOfGasIsContractFailure) {
+  auto reduced_share = tos_wallet_index::kWalletIndexGetMethodGasLimit / 2;
+  auto out_of_gas = ~static_cast<td::int32>(vm::Excno::out_of_gas);
+  ASSERT_EQ(tos_wallet_index::wallet_index_classify_get_method_failure(reduced_share, out_of_gas, reduced_share - 1),
+            tos_wallet_index::WalletIndexGetMethodStatus::ContractFailure);
+}
+
+TEST(WalletIndex, ReducedShareNonGasFailureIsContractFailure) {
+  auto reduced_share = tos_wallet_index::kWalletIndexGetMethodGasLimit / 2;
+  auto type_check_error = ~static_cast<td::int32>(vm::Excno::type_chk);
+  ASSERT_EQ(tos_wallet_index::wallet_index_classify_get_method_failure(reduced_share, type_check_error, reduced_share),
+            tos_wallet_index::WalletIndexGetMethodStatus::ContractFailure);
+}
+
+TEST(WalletIndex, VirtualizationFailureIsIndeterminate) {
+  auto virtualization_error = ~static_cast<td::int32>(vm::Excno::virt_err);
+  ASSERT_EQ(tos_wallet_index::wallet_index_classify_get_method_failure(tos_wallet_index::kWalletIndexGetMethodGasLimit,
+                                                                       virtualization_error, 0),
+            tos_wallet_index::WalletIndexGetMethodStatus::Indeterminate);
+}
+
 TEST(WalletIndex, ForeignShardAbsenceIsNotAuthoritative) {
   auto left = tos::shard_child(tos::ShardIdFull{0}, true);
   td::Bits256 low = td::Bits256::zero();
