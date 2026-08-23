@@ -5,9 +5,13 @@ alters a signed payload. This document scopes the problem, the fix, the
 cross-plane coordination it forces, its deliberate divergence from upstream,
 and the test plan that must accompany the eventual implementation.
 
-Scope: the `coin-bridge` EVM/Solidity plane. The `token-bridge` shares the same
-digest construction and inherits the same gap; the analysis and fix below apply
-to it verbatim and it must be changed in the same coordinated step.
+Scope: the `coin-bridge` EVM/Solidity plane **only**. The newer `token-bridge`
+is **not** affected — its `evm/contracts/SignatureChecker.sol` already binds
+`block.chainid` in all four of its digests (`abi.encode(<magic>, address(this),
+block.chainid, …)`), inherited from its own, newer upstream. token-bridge is
+therefore the in-repo reference for the layout this proposal adopts, not a
+second thing to fix. This matches `SECURITY.md`'s wording that the affected
+plane is "the historical Solidity plane [that] predates the token bridge."
 
 ## 1. The problem
 
@@ -48,16 +52,22 @@ The two conditions are not exotic:
 
 ### This is inherited from upstream, verbatim
 
-`NOTICE.md` records that the Solidity plane derives from
+`NOTICE.md` records that the coin-bridge Solidity plane derives from
 `ton-blockchain/bridge-solidity@f78adaf8` and that "signed payload structures are
-unchanged." Upstream TON uses exactly this `abi.encode(magic, address(this), …)`
-scheme with no chain ID. TON does not defend this cryptographically; it defends
-it **operationally**: each EVM chain gets a separate deployment at a distinct
-address, and the ETH and BSC bridges are separate codebases (upstream's
-`bridge-func` `master` vs `bsc` branches; here `tvm/ethereum` vs `tvm/bsc`, config
-params 71 vs 72) with their own oracle wiring. The gap is therefore not a TOS
-regression — it is an upstream design assumption that TOS's `SECURITY.md` chose
-to make explicit rather than inherit silently.
+unchanged." That older upstream uses exactly this `abi.encode(magic,
+address(this), …)` scheme with no chain ID, and coin-bridge inherits it verbatim.
+The newer token-bridge, from a different (RSquad/TON Foundation) upstream, already
+carries `block.chainid` — its `NOTICE.md` reviewed-delta list does not add it, so
+chain-ID binding came from that newer upstream, not from TOS. So this is a
+generational gap in upstream, not a TOS regression: coin-bridge is the older
+plane and its upstream never added the separator.
+
+Upstream TON does not defend the older scheme cryptographically; it defends it
+**operationally**: each EVM chain gets a separate deployment at a distinct
+address, and the ETH and BSC bridges are separate codebases (`tvm/ethereum` vs
+`tvm/bsc`, config params 71 vs 72) with their own oracle wiring. TOS's
+`SECURITY.md` chose to make that assumption explicit rather than inherit it
+silently.
 
 ## 2. Proposed fix
 
@@ -66,18 +76,22 @@ cryptographically valid on exactly one chain regardless of deployment address.
 
 Add the chain ID as an explicit field in each `abi.encode`:
 
+Adopt the **exact field ordering token-bridge already uses** —
+`<magic>, address(this), block.chainid, <fields…>` — so the two bridges share one
+layout and token-bridge's working tests are a template:
+
 ```solidity
 // getSwapDataId
-keccak256(abi.encode(0xDA7A, block.chainid, address(this),
+keccak256(abi.encode(0xDA7A, address(this), block.chainid,
                      data.receiver, data.amount,
                      data.tx.address_.workchain, data.tx.address_.address_hash,
                      data.tx.tx_hash, data.tx.lt));
 
 // getNewSetId
-keccak256(abi.encode(0x5E7, block.chainid, address(this), oracleSetHash, set));
+keccak256(abi.encode(0x5E7, address(this), block.chainid, oracleSetHash, set));
 
 // getNewBurnStatusId
-keccak256(abi.encode(0xB012, block.chainid, address(this), newBurnStatus, nonce));
+keccak256(abi.encode(0xB012, address(this), block.chainid, newBurnStatus, nonce));
 ```
 
 Notes and alternatives considered:
@@ -85,19 +99,35 @@ Notes and alternatives considered:
 - **Keep `address(this)` as well.** Chain ID separates chains; the contract
   address still separates two independent bridge instances on the *same* chain.
   Both belong in the preimage (defense in depth), so this is additive.
-- **`block.chainid` requires Solidity ≥ 0.8.0 / the `CHAINID` opcode (EIP-1344,
-  Istanbul).** The contracts pin `pragma solidity ^0.7.0`, which supports the
-  `chainid()` builtin via inline assembly on an Istanbul-or-later EVM; a bump to
-  a pragma with the `block.chainid` member is cleaner. Deciding the pragma/EVM
-  target is part of this review. Cache the value read at construction only if the
-  contract must survive a chain hard-fork that changes the ID — for a bridge,
-  reading it live per call is the safer default.
+- **Pragma decision (concrete).** coin-bridge pins `pragma solidity ^0.7.0`,
+  where the `block.chainid` member does **not** exist; it would need the
+  `chainid()` opcode via inline assembly (EIP-1344, Istanbul). token-bridge, by
+  contrast, is on `pragma solidity ^0.8.9` and uses the `block.chainid` member
+  directly. Bumping coin-bridge to a 0.8.x pragma aligns the two planes and is the
+  cleaner option; reading `chainid()` via assembly under 0.7 is the smaller diff.
+  This is a decision for the review. Read the value live per call (do not cache at
+  construction) so the bridge is correct across a chain hard-fork that changes the
+  ID.
 - **EIP-712 typed-data domain** (`{name, version, chainId, verifyingContract}`)
   is the canonical, tooling-friendly form and subsumes both `chainId` and
   `verifyingContract`. It is the recommended target if the oracle/relayer signer
   is being rewritten anyway; the minimal `abi.encode` addition above is the
   smaller change if signer churn must be minimized. This document recommends the
   minimal addition now and flags EIP-712 as the preferred end state.
+
+### Tron: a known-unverified chain-ID surface
+
+Binding `block.chainid` presumes the EVM the contract runs on returns a stable,
+network-unique chain ID. On Tron this is not settled. token-bridge already
+targets Tron (`tvm/params/tron.fc`, ConfigParam 83) and its `NOTICE.md` records
+that slot and its Tron chain ID "have no upstream counterpart at all" and that
+"deployment to a public Tron network, and the chain id of that network
+specifically, remain unverified." coin-bridge has no Tron target today, so adding
+`block.chainid` does not introduce a Tron dependency by itself — but if coin-bridge
+is ever extended to Tron, the same unverified-chain-ID caveat applies, and the
+golden-vector test (§5, item 5) must be run against Tron's actual `chainid()` return
+before any Tron deployment. Flagging it here so the two bridges' Tron stories stay
+consistent.
 
 ## 3. Cross-plane coordination (why this cannot be a one-file change)
 
@@ -153,7 +183,9 @@ The implementation is incomplete until all of the following exist and pass.
 3. A **negative/regression** test: a pre-upgrade signature (digest without
    `chainId`) is rejected after the upgrade — proves the preimage actually moved.
 
-**EVM regression (no behavior lost):**
+**EVM regression (no behavior lost):** token-bridge's own EVM test suite —
+which already signs `block.chainid`-bound digests — is the working template for
+these updates.
 4. The existing `1_test_token.js`, `2_test_signatureChecker.js`, and
    `3_test_votings.js` suites pass after `utils.js` is updated to include
    `chainId`. Threshold, strict-signer-ordering, low-`s`/canonical-`v`,
