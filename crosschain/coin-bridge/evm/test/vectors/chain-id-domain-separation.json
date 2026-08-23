@@ -1,0 +1,30 @@
+{
+  "schema": "tos.coin-bridge.chain-id-domain-separation.v1",
+  "chainId": "7001",
+  "verifyingContract": "0x1111111111111111111111111111111111111111",
+  "swap": {
+    "receiver": "0x2222222222222222222222222222222222222222",
+    "amount": "1234567890123",
+    "tx": {
+      "address_": {
+        "workchain": -1,
+        "address_hash": "0x3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+      "lt": "19459352000003"
+    }
+  },
+  "oracleSetHash": "123456789",
+  "oracleSet": [
+    "0x5555555555555555555555555555555555555555",
+    "0x6666666666666666666666666666666666666666",
+    "0x7777777777777777777777777777777777777777"
+  ],
+  "burnStatus": true,
+  "burnStatusNonce": "987654321",
+  "expected": {
+    "swapDigest": "0x1076da06ebb215d560d118d95919d9935c4d7c4428d1ab94f0affe4c89b26607",
+    "oracleSetDigest": "0x491494d548dca67509fdfa9cfecddeb30e3d45f7ec6306e931d921b7cca26c3f",
+    "burnStatusDigest": "0x5d080b0a9af78132f7ee679e7368320e2f5ae2db67657cc89e0918613ecb2787"
+  }
+}

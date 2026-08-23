@@ -6,6 +6,14 @@ import "./TosUtils.sol";
 
 contract SignatureChecker is TosUtils {
 
+    // Solidity 0.7.x does not expose block.chainid. Read the EIP-1344 opcode
+    // directly and keep the value live so a chain-ID change invalidates
+    // signatures from the old domain.
+    function getChainId() internal pure returns (uint256 id) {
+        // solhint-disable-next-line no-inline-assembly
+        assembly { id := chainid() }
+    }
+
     function checkSignature(bytes32 digest, Signature memory sig) public pure {
           if (sig.signature.length != 65) {
               revert("ECDSA: invalid signature length");
@@ -54,6 +62,7 @@ contract SignatureChecker is TosUtils {
                 abi.encode(
                     0xDA7A,
                     address(this),
+                    getChainId(),
                     data.receiver,
                     data.amount,
                     data.tx.address_.workchain,
@@ -74,6 +83,7 @@ contract SignatureChecker is TosUtils {
                 abi.encode(
                     0x5e7,
                     address(this),
+                    getChainId(),
                     oracleSetHash,
                     set                    
                 )
@@ -90,6 +100,7 @@ contract SignatureChecker is TosUtils {
                 abi.encode(
                     0xB012,
                     address(this),
+                    getChainId(),
                     newBurnStatus,
                     nonce
                 )

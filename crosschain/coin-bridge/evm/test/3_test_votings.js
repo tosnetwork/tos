@@ -7,8 +7,12 @@ let utils = require("./utils/utils.js");
 let Bridge = artifacts.require("Bridge");
 
 let bridge;
+let chainId;
 
 contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, extra1, extra2, extra3, user]) => {
+  before(async () => {
+    chainId = String(await web3.eth.getChainId());
+  });
   describe("Bridge::instance", () => {
     it("", async() => {
       bridge = await Bridge.new("Wrapped TOS Coin", "TOSCOIN", [oracle1, oracle2, oracle3]);
@@ -44,7 +48,7 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, ex
         const need = expected[size];
         const data = utils.prepareSwapData(user, 1e9);
         const sign = async (n) => utils.sortedSignatures(await Promise.all(
-          set.slice(0, n).map((o) => utils.signData(data, o, instance.address))));
+          set.slice(0, n).map((o) => utils.signData(data, o, instance.address, chainId))));
 
         await instance.voteForMinting(data, await sign(need - 1)).should.be.rejected;
         await instance.voteForMinting(data, await sign(need)).should.be.fulfilled;
@@ -56,49 +60,49 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, ex
    it("one random address can't mint tokens", async () => {
       let user = oracle5;
       let data = utils.prepareSwapData(user, 1e9);
-      await bridge.voteForMinting(data, [await utils.signData(data, not_oracle, bridge.address)], { from: not_oracle }).should.not.be.fulfilled;
+      await bridge.voteForMinting(data, [await utils.signData(data, not_oracle, bridge.address, chainId)], { from: not_oracle }).should.not.be.fulfilled;
     });
    it("random address can't add signatures to authorized ones", async () => {
       let user = oracle5;
       let data = utils.prepareSwapData(user, 1e9);
       let not_oracle2 = oracle4;
       let not_oracle3 = oracle5;
-      await bridge.voteForMinting(data, [await utils.signData(data, oracle1, bridge.address),
-                                         await utils.signData(data, not_oracle, bridge.address),
-                                         await utils.signData(data, not_oracle2, bridge.address),
-                                         await utils.signData(data, not_oracle3, bridge.address),], { from: oracle1 }).should.not.be.fulfilled;
+      await bridge.voteForMinting(data, [await utils.signData(data, oracle1, bridge.address, chainId),
+                                         await utils.signData(data, not_oracle, bridge.address, chainId),
+                                         await utils.signData(data, not_oracle2, bridge.address, chainId),
+                                         await utils.signData(data, not_oracle3, bridge.address, chainId),], { from: oracle1 }).should.not.be.fulfilled;
     });
     it("2/3 of the set of oracles can mint tokens", async () => {
       let user = oracle5;
       let data = utils.prepareSwapData(user, 1e9);
       let balance = await bridge.balanceOf(user);
       balance.toString().should.be.equal("0");
-      let signatureSet = [await utils.signData(data, oracle1, bridge.address),
-                          await utils.signData(data, oracle2, bridge.address)];
+      let signatureSet = [await utils.signData(data, oracle1, bridge.address, chainId),
+                          await utils.signData(data, oracle2, bridge.address, chainId)];
       await bridge.voteForMinting(data, signatureSet, { from: oracle1 }).should.be.fulfilled;
       balance = await bridge.balanceOf(user);
       balance.toString().should.be.equal(String(1e9));
-      let isFinished = await bridge.finishedVotings(utils.hashData(utils.encodeSwapData(data, bridge.address)));
+      let isFinished = await bridge.finishedVotings(utils.hashData(utils.encodeSwapData(data, bridge.address, chainId)));
       isFinished.should.be.true;
       await bridge.voteForMinting(data, signatureSet, { from: oracle1 }).should.be.rejected;
     });
     it("check duplications in signature set", async () => {
       let user = oracle5;
       let data = utils.prepareSwapData(user, 1e9);
-      let signatureSet = [await utils.signData(data, oracle1, bridge.address),
-                          await utils.signData(data, oracle1, bridge.address)];
+      let signatureSet = [await utils.signData(data, oracle1, bridge.address, chainId),
+                          await utils.signData(data, oracle1, bridge.address, chainId)];
       await bridge.voteForMinting(data, signatureSet, { from: oracle1 }).should.be.rejected;
-      signatureSet = [await utils.signData(data, oracle1, bridge.address),
-                          await utils.signData(data, oracle2, bridge.address),
-                          await utils.signData(data, oracle1, bridge.address)];
+      signatureSet = [await utils.signData(data, oracle1, bridge.address, chainId),
+                          await utils.signData(data, oracle2, bridge.address, chainId),
+                          await utils.signData(data, oracle1, bridge.address, chainId)];
       await bridge.voteForMinting(data, signatureSet, { from: oracle1 }).should.be.rejected;
     });
 
     it("check unsorted signature set", async () => {
       let user = oracle5;
       let data = utils.prepareSwapData(user, 1e9);
-      let signatureSet = [await utils.signData(data, oracle2, bridge.address),
-                          await utils.signData(data, oracle1, bridge.address)];
+      let signatureSet = [await utils.signData(data, oracle2, bridge.address, chainId),
+                          await utils.signData(data, oracle1, bridge.address, chainId)];
       await bridge.voteForMinting(data, signatureSet, { from: oracle1 }).should.be.rejected;
     });
 
@@ -126,15 +130,15 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, ex
     });
     it("initial oracles can set new set", async () => {
       let newSet = [oracle3, oracle4, oracle5];
-      let signatureSet = [await utils.signSet(13, newSet, oracle1, bridge.address),
-                          await utils.signSet(13, newSet, oracle2, bridge.address)];
+      let signatureSet = [await utils.signSet(13, newSet, oracle1, bridge.address, chainId),
+                          await utils.signSet(13, newSet, oracle2, bridge.address, chainId)];
       await bridge.voteForNewOracleSet(13, newSet, signatureSet, { from: oracle1 }).should.be.fulfilled;
 
-      await bridge.voteForNewOracleSet(14, newSet, [await utils.signSet(14, newSet, oracle1, bridge.address),
-          await utils.signSet(14, newSet, oracle2, bridge.address)], { from: oracle1 }).should.be.rejected;
+      await bridge.voteForNewOracleSet(14, newSet, [await utils.signSet(14, newSet, oracle1, bridge.address, chainId),
+          await utils.signSet(14, newSet, oracle2, bridge.address, chainId)], { from: oracle1 }).should.be.rejected;
 
-      await bridge.voteForNewOracleSet(14, newSet, [await utils.signSet(14, newSet, oracle3, bridge.address),
-          await utils.signSet(14, newSet, oracle5, bridge.address)], { from: oracle1 }).should.be.fulfilled;
+      await bridge.voteForNewOracleSet(14, newSet, [await utils.signSet(14, newSet, oracle3, bridge.address, chainId),
+          await utils.signSet(14, newSet, oracle5, bridge.address, chainId)], { from: oracle1 }).should.be.fulfilled;
     });
     it("check correctness of new set", async () => {
       // list
@@ -166,42 +170,42 @@ contract("Bridge", ([oracle1, not_oracle, oracle2, oracle3, oracle4, oracle5, ex
       isBurnAllowed.should.be.false;
       /*
       let user = oracle5;
-      let signatureSet = [await utils.signBurnStatus(0, 12, oracle4),
-                          await utils.signBurnStatus(0, 12, oracle5)];
+      let signatureSet = [await utils.signBurnStatus(0, 12, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(0, 12, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(0, 12, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain:-1, address_hash:"0x00"}, { from: user }).should.be.rejected;
       */
     });
     it("restore burning", async () => {
       let user = oracle5;
-      let signatureSet = [await utils.signBurnStatus(1, 13, oracle4, bridge.address),
-                          await utils.signBurnStatus(1, 13, oracle5, bridge.address)];
+      let signatureSet = [await utils.signBurnStatus(1, 13, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(1, 13, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(1, 13, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.fulfilled;
     });
     it("check replay protection", async () => {
       let user = oracle5;
       // Burn-status nonces must strictly increase; 13 was consumed above.
-      let signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address),
-                          await utils.signBurnStatus(0, 15, oracle5, bridge.address)];
+      let signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(0, 15, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(0, 15, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.rejected;
 
-      signatureSet = [await utils.signBurnStatus(1, 16, oracle4, bridge.address),
-                          await utils.signBurnStatus(1, 16, oracle5, bridge.address)];
+      signatureSet = [await utils.signBurnStatus(1, 16, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(1, 16, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(1, 16, signatureSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.burn("1", {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH}, { from: user }).should.be.fulfilled;
 
-      signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address),
-                          await utils.signBurnStatus(0, 15, oracle5, bridge.address)];
+      signatureSet = [await utils.signBurnStatus(0, 15, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(0, 15, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(0, 15, signatureSet, { from: oracle1 }).should.be.rejected;
 
       // A signature produced earlier but never executed must not survive a
       // later vote either: this is what finishedVotings alone cannot stop.
-      signatureSet = [await utils.signBurnStatus(0, 17, oracle4, bridge.address),
-                          await utils.signBurnStatus(0, 17, oracle5, bridge.address)];
-      let laterSet = [await utils.signBurnStatus(1, 18, oracle4, bridge.address),
-                          await utils.signBurnStatus(1, 18, oracle5, bridge.address)];
+      signatureSet = [await utils.signBurnStatus(0, 17, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(0, 17, oracle5, bridge.address, chainId)];
+      let laterSet = [await utils.signBurnStatus(1, 18, oracle4, bridge.address, chainId),
+                          await utils.signBurnStatus(1, 18, oracle5, bridge.address, chainId)];
       await bridge.voteForSwitchBurn(1, 18, laterSet, { from: oracle1 }).should.be.fulfilled;
       await bridge.voteForSwitchBurn(0, 17, signatureSet, { from: oracle1 }).should.be.rejected;
       let isBurnAllowed = await bridge.allowBurn();

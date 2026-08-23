@@ -19,17 +19,25 @@ let prepareSwapData = function(receiver, amount,
         }
     }
 };
-let encodeSwapData = function(d, target) {
-    console.log([0xDA7A, target, d.receiver, d.amount, d.tx.address_.workchain, d.tx.address_.address_hash, d.tx.tx_hash, d.tx.lt]);
-    return web3.eth.abi.encodeParameters(['int', 'address', 'address', 'uint256', 'int8', 'bytes32', 'bytes32', 'uint64'],
-        [0xDA7A, target, d.receiver, d.amount, d.tx.address_.workchain, d.tx.address_.address_hash, d.tx.tx_hash, d.tx.lt]);
-}
-let encodeSet = function(setHash, set, target) {
-    return web3.eth.abi.encodeParameters(['int', 'address', 'int', 'address[]'], [0x5E7, target, setHash, set]);
+let requireChainId = function(chainId) {
+    if (chainId === undefined || chainId === null || !web3.utils.toBN(chainId).gtn(0)) {
+        throw new Error('a positive, deployment-pinned chainId is required');
+    }
+    return String(chainId);
 }
 
-let encodeBurnStatus = function(burnStatus, nonce, target) {
-    return web3.eth.abi.encodeParameters(['int', 'address', 'bool', 'int'], [0xB012, target, burnStatus, nonce]);
+let encodeSwapData = function(d, target, chainId) {
+    return web3.eth.abi.encodeParameters(['int', 'address', 'uint256', 'address', 'uint256', 'int8', 'bytes32', 'bytes32', 'uint64'],
+        [0xDA7A, target, requireChainId(chainId), d.receiver, d.amount, d.tx.address_.workchain, d.tx.address_.address_hash, d.tx.tx_hash, d.tx.lt]);
+}
+let encodeSet = function(setHash, set, target, chainId) {
+    return web3.eth.abi.encodeParameters(['int', 'address', 'uint256', 'int', 'address[]'],
+        [0x5E7, target, requireChainId(chainId), setHash, set]);
+}
+
+let encodeBurnStatus = function(burnStatus, nonce, target, chainId) {
+    return web3.eth.abi.encodeParameters(['int', 'address', 'uint256', 'bool', 'int'],
+        [0xB012, target, requireChainId(chainId), burnStatus, nonce]);
 }
 
 let hashData = function(encoded) {
@@ -46,14 +54,14 @@ let signHash = async function(hash, account) {
         signature: signature
     }
 };
-let signData = async function(swapData, account, target) {
-    return await signHash(hashData(encodeSwapData(swapData, target)), account);
+let signData = async function(swapData, account, target, chainId) {
+    return await signHash(hashData(encodeSwapData(swapData, target, chainId)), account);
 };
-let signSet = async function(setHash, newSet, account, target) {
-    return await signHash(hashData(encodeSet(setHash, newSet, target)), account);
+let signSet = async function(setHash, newSet, account, target, chainId) {
+    return await signHash(hashData(encodeSet(setHash, newSet, target, chainId)), account);
 };
-let signBurnStatus = async function(burnStatus, nonce, account, target) {
-    return await signHash(hashData(encodeBurnStatus(burnStatus, nonce, target)), account);
+let signBurnStatus = async function(burnStatus, nonce, account, target, chainId) {
+    return await signHash(hashData(encodeBurnStatus(burnStatus, nonce, target, chainId)), account);
 };
 
 // The bridge requires strictly ascending signers; sort so a test can pass

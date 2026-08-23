@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -28,6 +29,9 @@ REQUIRED_SOURCES = [
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
     "evm/contracts/TosUtils.sol",
+    "evm/test/chainid-domain-separation.js",
+    "evm/test/utils/utils.js",
+    "evm/test/vectors/chain-id-domain-separation.json",
 ]
 
 # Legacy naming from the source chain must not reappear anywhere in the
@@ -99,7 +103,14 @@ def verify_tvm_sources() -> None:
             "state_flags",
             "total_locked",
         ])
-        require_text(c / "multisig-code.fc", ["check_signature", "recv_external"])
+        require_text(c / "multisig-code.fc", [
+            "check_signature",
+            "recv_external",
+            "var hash = slice_hash(in_msg);",
+            "int query_wallet_id = in_msg~load_uint(32);",
+            "throw_unless(42, query_wallet_id == wallet_id);",
+            "throw_unless(36, slice_hash(msg) == slice_hash(in_msg));",
+        ])
         require_text(c / "votes-collector.fc", ["get_bridge_config"])
         require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 
@@ -123,12 +134,56 @@ def verify_evm_sources() -> None:
         'require(allowBurn, "Burn is currently disabled")',
         "_burn(msg.sender, amount)",
     ])
-    require_text(c / "SignatureChecker.sol", [
+    signature_checker = c / "SignatureChecker.sol"
+    require_text(signature_checker, [
         "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
         "if (v != 27 && v != 28)",
         'require(ecrecover(prefixedHash, v, r, s) == sig.signer, "Wrong signature")',
+        "function getChainId() internal pure returns (uint256 id)",
+        "assembly { id := chainid() }",
     ])
+    signature_text = signature_checker.read_text(encoding="utf-8")
+    if signature_text.count("getChainId(),") != 3:
+        raise AssertionError("all three EVM vote digests must bind getChainId()")
+    for magic in ("0xDA7A", "0x5e7", "0xB012"):
+        pattern = re.compile(
+            rf"{magic},\s*address\(this\),\s*getChainId\(\),",
+            re.MULTILINE,
+        )
+        if not pattern.search(signature_text):
+            raise AssertionError(
+                f"{magic} digest must use magic,address(this),chainId field order"
+            )
     require_text(c / "TosUtils.sol", ["bytes32 tx_hash", "uint64 lt"])
+
+
+def verify_domain_separation_artifacts() -> None:
+    vector_path = PROJECT / "evm/test/vectors/chain-id-domain-separation.json"
+    vector = json.loads(vector_path.read_text(encoding="utf-8"))
+    if vector.get("schema") != "tos.coin-bridge.chain-id-domain-separation.v1":
+        raise AssertionError("unexpected chain-ID golden-vector schema")
+    if int(vector.get("chainId", 0)) <= 0:
+        raise AssertionError("golden vector must pin a positive chain ID")
+    digest_pattern = re.compile(r"^0x[0-9a-f]{64}$")
+    expected = vector.get("expected", {})
+    for name in ("swapDigest", "oracleSetDigest", "burnStatusDigest"):
+        if not digest_pattern.fullmatch(expected.get(name, "")):
+            raise AssertionError(f"golden vector has no valid {name}")
+
+    require_text(PROJECT / "evm/test/chainid-domain-separation.js", [
+        "same contract address",
+        'expectRevert("swap replay"',
+        'expectRevert("oracle-set replay"',
+        'expectRevert("burn-status replay"',
+        'expectRevert("legacy swap"',
+        'expectRevert("legacy oracle set"',
+        'expectRevert("legacy burn status"',
+    ])
+    require_text(PROJECT / "NOTICE.md", [
+        "chain-ID domain separation",
+        "magic, address(this), chainId, fields",
+        "chain-id-domain-separation.json",
+    ])
 
 
 def run_model_tests() -> None:
@@ -147,6 +202,7 @@ def main() -> int:
     verify_no_legacy_branding()
     verify_tvm_sources()
     verify_evm_sources()
+    verify_domain_separation_artifacts()
     if not args.skip_model:
         run_model_tests()
     print("coin bridge source checks and protocol model passed")
