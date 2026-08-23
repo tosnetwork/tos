@@ -5,10 +5,13 @@
  * See the LICENSE file in the root of this repository.
  */
 
-use chain_block::{Cell, MsgAddressInt, SliceData, ed25519_create_private_key};
+use chain_block::{
+    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData,
+    ed25519_create_private_key,
+};
 use contracts::{
-    AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract,
-    TaskEscrowInit,
+    AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE, AgentAccountContract,
+    AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract, TaskEscrowInit,
 };
 use tos_sandbox::{
     Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
@@ -63,7 +66,7 @@ impl Fixture {
         let init = AgentAccountInit {
             owner: owner.address().clone(),
             controller_pubkey: controller.verifying_key(),
-            deployment_id: [max_per_tx as u8; 32],
+            deployment_id: [(max_per_tx / TOS) as u8; 32],
             max_per_tx,
             daily_limit: max_per_tx + TOS,
             default_task_timeout_secs: 3_600,
@@ -116,6 +119,7 @@ impl Fixture {
     ) -> Cell {
         let payload = AgentAccountContract::build_task_send_payload(
             GLOBAL_ID,
+            self.controller_epoch() as u64,
             seqno,
             valid_until,
             target,
@@ -147,6 +151,7 @@ impl Fixture {
     ) -> Cell {
         let payload = AgentAccountContract::build_native_send_payload(
             global_id,
+            self.controller_epoch() as u64,
             seqno,
             valid_until,
             target,
@@ -163,9 +168,13 @@ impl Fixture {
         seqno: u32,
         valid_until: u32,
     ) -> Cell {
-        let payload =
-            AgentAccountContract::build_cancel_seqno_payload(global_id, seqno, valid_until)
-                .expect("cancel payload");
+        let payload = AgentAccountContract::build_cancel_seqno_payload(
+            global_id,
+            self.controller_epoch() as u64,
+            seqno,
+            valid_until,
+        )
+        .expect("cancel payload");
         self.sign_payload(secret, global_id, payload)
     }
 
@@ -191,7 +200,15 @@ impl Fixture {
             .run_get_method(&self.account, "get_agent_account_data", vec![])
             .expect("get data")
             .expect_success()
-            .int_at(8)
+            .int_at(9)
+    }
+
+    fn controller_epoch(&self) -> i128 {
+        self.bc
+            .run_get_method(&self.account, "get_agent_account_data", vec![])
+            .expect("get data")
+            .expect_success()
+            .int_at(3)
     }
 
     fn spent_today(&self) -> i128 {
@@ -199,7 +216,7 @@ impl Fixture {
             .run_get_method(&self.account, "get_agent_account_data", vec![])
             .expect("get data")
             .expect_success()
-            .int_at(10)
+            .int_at(11)
     }
 
     fn policy(&self) -> (u64, u64) {
@@ -272,7 +289,7 @@ fn controller_message_rejects_wrong_network_and_payload_tampering() {
     fixture.expect_external_exit(wrong_network, 1708);
 
     let original =
-        AgentAccountContract::build_native_send_payload(GLOBAL_ID, 0, valid_until, &target, TOS)
+        AgentAccountContract::build_native_send_payload(GLOBAL_ID, 0, 0, valid_until, &target, TOS)
             .expect("original payload");
     let original_hash =
         AgentAccountContract::controller_hash_to_sign(&fixture.account, GLOBAL_ID, &original)
@@ -281,6 +298,7 @@ fn controller_message_rejects_wrong_network_and_payload_tampering() {
     let signature = key.sign(&original_hash);
     let tampered = AgentAccountContract::build_native_send_payload(
         GLOBAL_ID,
+        0,
         0,
         valid_until,
         &target,
@@ -475,6 +493,22 @@ fn owner_can_update_policy_and_rotate_controller_others_rejected() {
     fixture.send_internal(&owner_addr, update_body).expect_success();
     assert_eq!(fixture.policy(), (2 * TOS, 3 * TOS));
 
+    // Mint a future-seqno signature while controller A is in epoch 0. Merely
+    // bumping seqno on rotation would let this revive after A -> B -> A.
+    let target = fixture.target.address().clone();
+    let pre_rotation_payload = AgentAccountContract::build_task_send_payload(
+        GLOBAL_ID,
+        0,
+        4,
+        fixture.bc.now() + 300,
+        &target,
+        TOS,
+        Cell::default(),
+    )
+    .unwrap();
+    let pre_rotation_signature =
+        fixture.sign_payload(&fixture.controller_secret, GLOBAL_ID, pre_rotation_payload);
+
     // Non-owner cannot rotate the controller key.
     let new_secret = [0x99; 32];
     let new_pubkey = ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
@@ -493,6 +527,7 @@ fn owner_can_update_policy_and_rotate_controller_others_rejected() {
     // Owner rotates the controller key.
     fixture.send_internal(&owner_addr, rotate_body).expect_success();
     assert_eq!(fixture.seqno(), 2, "controller rotation invalidates every outstanding signature");
+    assert_eq!(fixture.controller_epoch(), 1);
 
     // The old key's signature is now rejected...
     let old_key_action_2 = fixture.signed_action(&fixture.controller_secret, 2, valid_until, TOS);
@@ -503,6 +538,34 @@ fn owner_can_update_policy_and_rotate_controller_others_rejected() {
     let new_key_action = fixture.signed_action(&new_secret, 2, valid_until, TOS);
     fixture.send_external(new_key_action).expect("new key works").expect_success();
     assert_eq!(fixture.seqno(), 3);
+
+    let old_pubkey =
+        ed25519_create_private_key(&fixture.controller_secret).expect("old key").verifying_key();
+    let rotate_back = AgentAccountContract::build_rotate_controller_message(3, old_pubkey).unwrap();
+    fixture.send_internal(&owner_addr, rotate_back).expect_success();
+    assert_eq!(fixture.seqno(), 4);
+    assert_eq!(fixture.controller_epoch(), 2);
+
+    // Controller A is active again and the seqno now matches, but the epoch
+    // proves this signature belongs to the retired A/epoch-0 generation.
+    fixture.expect_external_exit(pre_rotation_signature, 1710);
+}
+
+#[test]
+fn owner_cannot_install_a_policy_above_the_signed_action_wire_limit() {
+    let mut fixture = Fixture::new();
+    let owner_addr = fixture.owner.address().clone();
+    let too_large = AGENT_ACCOUNT_MAX_ACTION_VALUE + 1;
+    let mut body = BuilderData::new();
+    body.append_u32(AGENT_UPDATE_POLICY_OPCODE).unwrap().append_u64(1).unwrap();
+    Coins::new(too_large).write_to(&mut body).unwrap();
+    Coins::new(too_large).write_to(&mut body).unwrap();
+    body.append_u64(3_600).unwrap().append_bit_zero().unwrap().append_bit_zero().unwrap();
+    fixture
+        .send_internal(&owner_addr, body.into_cell().unwrap())
+        .expect_aborted()
+        .expect_exit_code(1701);
+    assert_eq!(fixture.policy(), (5 * TOS, 6 * TOS));
 }
 
 #[test]

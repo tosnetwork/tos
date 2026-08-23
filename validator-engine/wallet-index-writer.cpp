@@ -44,10 +44,6 @@ constexpr unsigned long long kNftOwnershipAssigned = 0x05138d91ULL;        // TE
 // TEP-62 op handled by the NFT item itself.
 constexpr unsigned long long kNftTransfer = 0x5fcc3d14ULL;
 
-// Get-method execution budget. Standard get_wallet_data / get_nft_data /
-// resolver methods use a few thousand gas; the cap bounds what a hostile
-// contract can burn per verification attempt.
-constexpr long long kGetMethodGasLimit = 1'000'000;
 // Bound the TVM verification work a single block can demand.
 constexpr size_t kMaxTokenCandidatesPerBlock = 1024;
 
@@ -72,7 +68,9 @@ unsigned long long read_op(td::Ref<vm::CellSlice> body) {
 // Post-apply shard state accounts, the ground truth token claims are verified against.
 class StateAccounts {
  public:
-  explicit StateAccounts(td::Ref<vm::Cell> state_root) {
+  enum class LoadResult { Active, Inactive, Indeterminate };
+
+  StateAccounts(td::Ref<vm::Cell> state_root, tos::ShardIdFull shard) : shard_(shard) {
     block::gen::ShardStateUnsplit::Record sstate;
     if (state_root.not_null() && tlb::unpack_cell(state_root, sstate)) {
       dict_ = std::make_unique<vm::AugmentedDictionary>(vm::load_cell_slice_ref(sstate.accounts), 256,
@@ -83,49 +81,77 @@ class StateAccounts {
     return dict_ != nullptr;
   }
   // Load the active-state code+data of `addr`. False for missing / uninit / frozen.
-  bool load(const td::Bits256& addr, tos::SmartContract::State& out) {
+  LoadResult load(const td::Bits256& addr, tos::SmartContract::State& out) {
     if (!dict_) {
-      return false;
+      return LoadResult::Indeterminate;
+    }
+    if (!wallet_index_state_contains(shard_, addr)) {
+      return LoadResult::Indeterminate;
     }
     auto shard_acc_csr = dict_->lookup(addr.bits(), 256);
     if (shard_acc_csr.is_null()) {
-      return false;
+      return LoadResult::Inactive;
     }
     block::gen::ShardAccount::Record shard_acc;
     block::gen::Account::Record_account acc;
     block::gen::AccountStorage::Record store;
     block::gen::StateInit::Record state_init;
     if (!(tlb::csr_unpack(std::move(shard_acc_csr), shard_acc) && tlb::unpack_cell(shard_acc.account, acc) &&
-          tlb::csr_unpack(std::move(acc.storage), store) && store.state->prefetch_ulong(1) == 1 &&
-          store.state.write().advance(1) && tlb::csr_unpack(std::move(store.state), state_init))) {
-      return false;
+          tlb::csr_unpack(std::move(acc.storage), store)) || store.state.is_null() || store.state->size() < 1) {
+      return LoadResult::Indeterminate;
     }
-    if (state_init.code->size_refs() < 1 || state_init.data->size_refs() < 1) {
-      return false;
+    if (store.state->prefetch_ulong(1) != 1) {
+      return LoadResult::Inactive;
+    }
+    if (!(store.state.write().advance(1) && tlb::csr_unpack(std::move(store.state), state_init))) {
+      return LoadResult::Indeterminate;
+    }
+    if (state_init.code.is_null() || state_init.data.is_null() || state_init.code->size_refs() < 1 ||
+        state_init.data->size_refs() < 1) {
+      return LoadResult::Indeterminate;
     }
     out.code = state_init.code->prefetch_ref();
     out.data = state_init.data->prefetch_ref();
-    return true;
+    return LoadResult::Active;
   }
 
  private:
+  tos::ShardIdFull shard_;
   std::unique_ptr<vm::AugmentedDictionary> dict_;
 };
 
-// Run a gas-bounded get-method on (code,data) at wc=0 address `addr`.
-// Returns a null stack on any failure.
-td::Ref<vm::Stack> run_get(const tos::SmartContract::State& st, const td::Bits256& addr, td::Slice method,
-                           std::vector<vm::StackEntry> params) {
-  auto smc = tos::SmartContract::create(st);
-  tos::SmartContract::Args args;
-  args.set_address(block::StdAddress(0, addr));
-  args.set_limits(vm::GasLimits{kGetMethodGasLimit});
-  args.set_stack(std::move(params));
-  auto res = smc->run_get_method(method, std::move(args));
-  if (!res.success || res.stack.is_null()) {
-    return {};
+enum class GetMethodStatus { Success, ContractFailure, ResourceExhausted };
+
+struct GetMethodResult {
+  GetMethodStatus status;
+  td::Ref<vm::Stack> stack;
+};
+
+// Run a gas-bounded get-method while keeping node-side budget exhaustion
+// distinct from a contract that fails or returns no usable result.
+GetMethodResult run_get(const tos::SmartContract::State& st, const td::Bits256& addr, td::Slice method,
+                        std::vector<vm::StackEntry> params, WalletIndexVerificationBudget& budget) {
+  auto reserved_gas = budget.acquire();
+  if (reserved_gas <= 0) {
+    return {GetMethodStatus::ResourceExhausted, {}};
   }
-  return res.stack;
+  try {
+    auto smc = tos::SmartContract::create(st);
+    tos::SmartContract::Args args;
+    args.set_address(block::StdAddress(0, addr));
+    args.set_limits(wallet_index_get_method_gas_limits(reserved_gas));
+    args.set_stack(std::move(params));
+    auto res = smc->run_get_method(method, std::move(args));
+    budget.refund_unused(reserved_gas, res.gas_used);
+    if (!res.success || res.stack.is_null()) {
+      return {GetMethodStatus::ContractFailure, {}};
+    }
+    return {GetMethodStatus::Success, std::move(res.stack)};
+  } catch (vm::VmError&) {
+    return {GetMethodStatus::ContractFailure, {}};
+  } catch (vm::VmVirtError&) {
+    return {GetMethodStatus::ContractFailure, {}};
+  }
 }
 
 // An internal MsgAddressInt slice for `addr` in wc=0, as a get-method argument.
@@ -137,17 +163,26 @@ vm::StackEntry make_addr_slice(const td::Bits256& addr) {
   return vm::StackEntry{vm::load_cell_slice_ref(cb.finalize())};
 }
 
-bool extract_wc0_address(td::Ref<vm::CellSlice> csr, td::Bits256& out) {
+enum class AddressExtraction { Wc0, OutsideWc0, Invalid };
+
+AddressExtraction extract_indexed_address(td::Ref<vm::CellSlice> csr, td::Bits256& out) {
   if (csr.is_null()) {
-    return false;
+    return AddressExtraction::Invalid;
   }
   tos::WorkchainId wc;
   tos::StdSmcAddress addr;
-  if (!block::tlb::t_MsgAddressInt.extract_std_address(csr, wc, addr) || wc != 0) {
-    return false;
+  if (!block::tlb::t_MsgAddressInt.extract_std_address(csr, wc, addr)) {
+    return AddressExtraction::Invalid;
+  }
+  if (wc != 0) {
+    return AddressExtraction::OutsideWc0;
   }
   out = addr;
-  return true;
+  return AddressExtraction::Wc0;
+}
+
+bool extract_wc0_address(td::Ref<vm::CellSlice> csr, td::Bits256& out) {
+  return extract_indexed_address(std::move(csr), out) == AddressExtraction::Wc0;
 }
 
 bool is_addr_none(const td::Ref<vm::CellSlice>& csr) {
@@ -160,13 +195,14 @@ bool is_addr_none(const td::Ref<vm::CellSlice>& csr) {
 // can claim any owner/master in get_wallet_data, but cannot make a master it
 // does not control resolve back to it.
 bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
-                          td::Bits256& master_out) {
+                          td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
   tos::SmartContract::State wstate;
-  if (!state.load(wallet, wstate)) {
+  if (state.load(wallet, wstate) != StateAccounts::LoadResult::Active) {
     return false;
   }
-  auto stack = run_get(wstate, wallet, "get_wallet_data", {});
-  if (stack.is_null() || stack->depth() < 4) {
+  auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
+  auto stack = std::move(result.stack);
+  if (result.status != GetMethodStatus::Success || stack->depth() < 4) {
     return false;
   }
   // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
@@ -179,11 +215,12 @@ bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::B
     return false;
   }
   tos::SmartContract::State mstate;
-  if (!state.load(master, mstate)) {
+  if (state.load(master, mstate) != StateAccounts::LoadResult::Active) {
     return false;  // fail-closed: unverifiable claim is not indexed
   }
-  auto resolved_stack = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)});
-  if (resolved_stack.is_null() || resolved_stack->depth() < 1) {
+  auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
+  auto resolved_stack = std::move(resolved_result.stack);
+  if (resolved_result.status != GetMethodStatus::Success || resolved_stack->depth() < 1) {
     return false;
   }
   td::Bits256 resolved;
@@ -199,54 +236,86 @@ bool verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::B
 // NFTs the collection's get_nft_address_by_index must resolve back to the item;
 // a standalone NFT (collection = addr_none) is its own sole authority and is
 // indexed as a self-claim, keyed by its own address.
-bool verify_nft_item(StateAccounts& state, const td::Bits256& item, td::Bits256& owner_out, bool& has_collection,
-                     td::Bits256& collection_out) {
+enum class NftVerification { Verified, Absent, Indeterminate };
+
+NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, td::Bits256& owner_out,
+                                bool& has_collection, td::Bits256& collection_out,
+                                WalletIndexVerificationBudget& budget) {
   tos::SmartContract::State istate;
-  if (!state.load(item, istate)) {
-    return false;
+  auto item_status = state.load(item, istate);
+  if (item_status == StateAccounts::LoadResult::Inactive) {
+    return NftVerification::Absent;
   }
-  auto stack = run_get(istate, item, "get_nft_data", {});
-  if (stack.is_null() || stack->depth() < 5) {
-    return false;
+  if (item_status != StateAccounts::LoadResult::Active) {
+    return NftVerification::Indeterminate;
   }
-  // get_nft_data -> (int init?, int index, slice collection, slice owner, cell content)
-  auto& s = stack.write();
-  s.pop();  // content
-  auto owner_csr = s.pop_cellslice();
-  auto coll_csr = s.pop_cellslice();
-  auto index = s.pop_int();
-  auto init = s.pop_int();
-  if (init->sgn() == 0) {
-    return false;  // uninitialized item
+  auto item_result = run_get(istate, item, "get_nft_data", {}, budget);
+  if (item_result.status == GetMethodStatus::ResourceExhausted) {
+    return NftVerification::Indeterminate;
   }
-  td::Bits256 owner;
-  if (!extract_wc0_address(std::move(owner_csr), owner)) {
-    return false;
+  auto stack = std::move(item_result.stack);
+  if (item_result.status != GetMethodStatus::Success || stack->depth() < 5) {
+    return NftVerification::Absent;
   }
-  if (is_addr_none(coll_csr)) {
-    has_collection = false;
-  } else {
-    td::Bits256 collection;
-    if (!extract_wc0_address(std::move(coll_csr), collection)) {
-      return false;  // collection outside wc=0 cannot be verified — fail-closed
+  try {
+    // get_nft_data -> (int init?, int index, slice collection, slice owner, cell content)
+    auto& s = stack.write();
+    s.pop();  // content
+    auto owner_csr = s.pop_cellslice();
+    auto coll_csr = s.pop_cellslice();
+    auto index = s.pop_int();
+    auto init = s.pop_int();
+    if (init->sgn() == 0) {
+      return NftVerification::Absent;
     }
-    tos::SmartContract::State cstate;
-    if (!state.load(collection, cstate)) {
-      return false;
+    td::Bits256 owner;
+    if (is_addr_none(owner_csr)) {
+      return NftVerification::Absent;
     }
-    auto resolved_stack = run_get(cstate, collection, "get_nft_address_by_index", {vm::StackEntry(std::move(index))});
-    if (resolved_stack.is_null() || resolved_stack->depth() < 1) {
-      return false;
+    auto owner_address = extract_indexed_address(std::move(owner_csr), owner);
+    if (owner_address != AddressExtraction::Wc0) {
+      return NftVerification::Absent;
     }
-    td::Bits256 resolved;
-    if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != item) {
-      return false;
+    if (is_addr_none(coll_csr)) {
+      has_collection = false;
+    } else {
+      td::Bits256 collection;
+      auto collection_address = extract_indexed_address(std::move(coll_csr), collection);
+      if (collection_address != AddressExtraction::Wc0) {
+        return NftVerification::Absent;
+      }
+      tos::SmartContract::State cstate;
+      auto collection_status = state.load(collection, cstate);
+      if (collection_status == StateAccounts::LoadResult::Inactive) {
+        return NftVerification::Absent;
+      }
+      if (collection_status != StateAccounts::LoadResult::Active) {
+        return NftVerification::Indeterminate;
+      }
+      auto resolved_result =
+          run_get(cstate, collection, "get_nft_address_by_index", {vm::StackEntry(std::move(index))}, budget);
+      if (resolved_result.status == GetMethodStatus::ResourceExhausted) {
+        return NftVerification::Indeterminate;
+      }
+      auto resolved_stack = std::move(resolved_result.stack);
+      if (resolved_result.status != GetMethodStatus::Success || resolved_stack->depth() < 1) {
+        return NftVerification::Absent;
+      }
+      td::Bits256 resolved;
+      auto resolved_address = extract_indexed_address(resolved_stack.write().pop_cellslice(), resolved);
+      if (resolved_address != AddressExtraction::Wc0 || resolved != item) {
+        return NftVerification::Absent;
+      }
+      has_collection = true;
+      collection_out = collection;
     }
-    has_collection = true;
-    collection_out = collection;
+    owner_out = owner;
+    return NftVerification::Verified;
+  } catch (vm::VmError&) {
+    return NftVerification::Absent;
+  } catch (vm::VmVirtError&) {
+    return NftVerification::Absent;
   }
-  owner_out = owner;
-  return true;
 }
 
 td::Ref<vm::Cell> make_jetton_value(const td::Bits256& wallet, unsigned long long lt) {
@@ -315,9 +384,9 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
 
 // Verify and index one jetton-wallet candidate (into the open batch).
 void index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
-                            unsigned long long end_lt) {
+                            unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
   td::Bits256 owner, master;
-  if (!verify_jetton_wallet(state, wallet, owner, master)) {
+  if (!verify_jetton_wallet(state, wallet, owner, master, budget)) {
     return;
   }
   auto status = db->put_jetton(owner, master, make_jetton_value(wallet, end_lt));
@@ -329,24 +398,29 @@ void index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::B
 // Verify and index one NFT-item candidate; erases the previous owner's entry
 // when ownership changed (no stale entries).
 void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& item,
-                         unsigned long long end_lt) {
+                         unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
   td::Bits256 owner, collection;
   bool has_collection = false;
-  if (!verify_nft_item(state, item, owner, has_collection, collection)) {
+  td::Bits256 prev_owner;
+  auto prev_r = db->get_nft_owner(item, prev_owner);
+  auto verification = verify_nft_item(state, item, owner, has_collection, collection, budget);
+  if (verification == NftVerification::Indeterminate) {
+    if (prev_r.is_ok() && prev_r.ok()) {
+      LOG(WARNING) << "wc0-index: NFT verification indeterminate; preserving previous ownership";
+    }
+    return;
+  }
+  if (verification == NftVerification::Absent) {
     // A previously indexed NFT can become unowned, uninitialized, frozen, or
     // deleted (DNS expiry/release is the important case). Its committed
     // post-state no longer proves the old ownership claim, so remove both
     // directions in the same batch.
-    td::Bits256 prev_owner;
-    auto prev_r = db->get_nft_owner(item, prev_owner);
     if (prev_r.is_ok() && prev_r.ok()) {
       db->erase_nft(prev_owner, item).ignore();
       db->erase_nft_owner(item).ignore();
     }
     return;
   }
-  td::Bits256 prev_owner;
-  auto prev_r = db->get_nft_owner(item, prev_owner);
   if (prev_r.is_ok() && prev_r.ok() && prev_owner != owner) {
     db->erase_nft(prev_owner, item).ignore();
   }
@@ -381,6 +455,14 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
     td::Bits256 account = acc_blk.account_addr;
     vm::AugmentedDictionary trans_dict{vm::DictNonEmpty(), acc_blk.transactions, 64,
                                        block::tlb::aug_AccountTransactions};
+    // Re-verify a known NFT at most once per touched account, not once per
+    // transaction in that account block.
+    td::Bits256 previous_owner;
+    auto previous_owner_r = db->get_nft_owner(account, previous_owner);
+    if (previous_owner_r.is_ok() && previous_owner_r.ok() &&
+        jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
+      nfts.insert(account);
+    }
     trans_dict.check_for_each_extra([db, &account, &jettons, &nfts](td::Ref<vm::CellSlice> tvalue,
                                                                     td::Ref<vm::CellSlice> /*textra*/,
                                                                     td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
@@ -410,17 +492,6 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
         if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
           nfts.insert(account);
         }
-      }
-      // Once an account has been proven to be an NFT, every subsequent state
-      // transition can change or remove ownership even when the application
-      // uses a custom/empty opcode (for example DNS auction loss or release).
-      // Re-verify known items instead of trying to enumerate every contract's
-      // private operation vocabulary.
-      td::Bits256 previous_owner;
-      auto previous_owner_r = db->get_nft_owner(account, previous_owner);
-      if (previous_owner_r.is_ok() && previous_owner_r.ok() &&
-          jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
-        nfts.insert(account);
       }
       if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
         collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), jettons, nfts);
@@ -481,22 +552,34 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
         LOG(WARNING) << "wc0-index: token candidate cap (" << kMaxTokenCandidatesPerBlock
                      << ") hit in block seqno=" << seqno << "; some token updates were skipped";
       }
-      StateAccounts state{std::move(state_root)};
+      StateAccounts state{std::move(state_root), tos::ShardIdFull{block_id.id.workchain, block_id.id.shard}};
       if (state.ok()) {
+        WalletIndexVerificationBudget verification_budget;
+        size_t remaining_candidates = jetton_candidates.size() + nft_candidates.size();
         // Each candidate is verified independently; one hostile contract must not
         // be able to abort the rest of the block's token indexing.
         for (const auto& wallet : jetton_candidates) {
+          verification_budget.begin_candidate(remaining_candidates--);
           try {
-            index_jetton_candidate(db, state, wallet, end_lt);
+            index_jetton_candidate(db, state, wallet, end_lt, verification_budget);
           } catch (vm::VmError&) {
           } catch (vm::VmVirtError&) {
+          } catch (const std::exception& err) {
+            LOG(WARNING) << "wc0-index: jetton candidate failed: " << err.what();
+          } catch (...) {
+            LOG(WARNING) << "wc0-index: jetton candidate failed with unknown error";
           }
         }
         for (const auto& item : nft_candidates) {
+          verification_budget.begin_candidate(remaining_candidates--);
           try {
-            index_nft_candidate(db, state, item, end_lt);
+            index_nft_candidate(db, state, item, end_lt, verification_budget);
           } catch (vm::VmError&) {
           } catch (vm::VmVirtError&) {
+          } catch (const std::exception& err) {
+            LOG(WARNING) << "wc0-index: NFT candidate failed: " << err.what();
+          } catch (...) {
+            LOG(WARNING) << "wc0-index: NFT candidate failed with unknown error";
           }
         }
       } else {

@@ -4,6 +4,7 @@
 ;;   owner:MsgAddress
 ;;   controller_pubkey:uint256
 ;;   deployment_id:uint256
+;;   controller_epoch:uint64
 ;;   seqno:uint32
 ;;   spend_day:uint32
 ;;   spent_today:coins
@@ -21,11 +22,11 @@
 ;;                         default_task_timeout:uint64 metadata_hash:(Maybe uint256)
 ;;                         service_endpoint_hash:(Maybe uint256) = InternalMsgBody;
 ;;   rotate_controller#41475002 query_id:uint64 controller_pubkey:uint256 = InternalMsgBody;
-;;   task_send#41475003 global_id:int32 seqno:uint32 valid_until:uint32
+;;   task_send#41475003 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             target:MsgAddressInt value:coins body:^Cell = SignedExternalBody;
-;;   native_send#41475004 global_id:int32 seqno:uint32 valid_until:uint32
+;;   native_send#41475004 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             target:MsgAddressInt value:coins = SignedExternalBody;
-;;   cancel_seqno#41475005 global_id:int32 seqno:uint32 valid_until:uint32
+;;   cancel_seqno#41475005 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             = SignedExternalBody;
 
 int get_global_id() asm "GLOBALID";
@@ -35,6 +36,7 @@ const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
 const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
 const int op::agent_native_send = 0x41475004;        ;; "AGP\4"
 const int op::agent_cancel_seqno = 0x41475005;       ;; "AGP\5"
+const int max_signed_action_value = 281474976710655; ;; 2^48 - 1 nanoTOS
 
 ;; sha256("tos.agent-account.controller-signature.v1")
 const int agent_controller_signature_domain =
@@ -49,12 +51,14 @@ const int err::expired = 1706;
 const int err::policy_exceeded = 1707;
 const int err::wrong_network = 1708;
 const int err::bad_value = 1709;
+const int err::stale_controller = 1710;
 
-(slice, int, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
+(slice, int, int, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int controller_pubkey = ds~load_uint(256);
   int deployment_id = ds~load_uint(256);
+  int controller_epoch = ds~load_uint(64);
   int seqno = ds~load_uint(32);
   int spend_day = ds~load_uint(32);
   int spent_today = ds~load_coins();
@@ -81,6 +85,7 @@ const int err::bad_value = 1709;
     owner,
     controller_pubkey,
     deployment_id,
+    controller_epoch,
     max_per_tx,
     daily_limit,
     default_task_timeout,
@@ -96,6 +101,7 @@ cell pack_agent_state(
   slice owner,
   int controller_pubkey,
   int deployment_id,
+  int controller_epoch,
   int seqno,
   int spend_day,
   int spent_today,
@@ -106,6 +112,7 @@ cell pack_agent_state(
   int service_endpoint_hash
 ) inline {
   throw_if(err::invalid_policy, max_per_tx < 0);
+  throw_if(err::invalid_policy, max_per_tx > max_signed_action_value);
   throw_if(err::invalid_policy, daily_limit < max_per_tx);
   throw_if(err::invalid_policy, default_task_timeout <= 0);
 
@@ -130,6 +137,7 @@ cell pack_agent_state(
     .store_slice(owner)
     .store_uint(controller_pubkey, 256)
     .store_uint(deployment_id, 256)
+    .store_uint(controller_epoch, 64)
     .store_uint(seqno, 32)
     .store_uint(spend_day, 32)
     .store_coins(spent_today)
@@ -173,6 +181,7 @@ cell pack_agent_state(
     slice owner,
     int controller_pubkey,
     int deployment_id,
+    int controller_epoch,
     int max_per_tx,
     int daily_limit,
     int default_task_timeout,
@@ -201,6 +210,7 @@ cell pack_agent_state(
       owner,
       controller_pubkey,
       deployment_id,
+      controller_epoch,
       seqno,
       spend_day,
       spent_today,
@@ -223,6 +233,7 @@ cell pack_agent_state(
       owner,
       new_controller_pubkey,
       deployment_id,
+      controller_epoch + 1,
       seqno + 1,
       spend_day,
       spent_today,
@@ -245,6 +256,7 @@ cell pack_agent_state(
     slice owner,
     int controller_pubkey,
     int deployment_id,
+    int controller_epoch,
     int max_per_tx,
     int daily_limit,
     int default_task_timeout,
@@ -263,6 +275,8 @@ cell pack_agent_state(
     (header_op == op::agent_cancel_seqno));
   int msg_global_id = header~load_int(32);
   throw_unless(err::wrong_network, msg_global_id == get_global_id());
+  int msg_controller_epoch = header~load_uint(64);
+  throw_unless(err::stale_controller, msg_controller_epoch == controller_epoch);
 
   ;; Bind the signature to the protocol, actual chain, exact account and full
   ;; payload. Wrong-network requests fail before signature work and acceptance.
@@ -280,6 +294,8 @@ cell pack_agent_state(
   int op = signed_body~load_uint(32);
   int parsed_global_id = signed_body~load_int(32);
   throw_unless(err::wrong_network, parsed_global_id == msg_global_id);
+  int parsed_controller_epoch = signed_body~load_uint(64);
+  throw_unless(err::stale_controller, parsed_controller_epoch == controller_epoch);
   int request_seqno = signed_body~load_uint(32);
   int valid_until = signed_body~load_uint(32);
   throw_unless(err::bad_seqno, request_seqno == seqno);
@@ -293,6 +309,7 @@ cell pack_agent_state(
       owner,
       controller_pubkey,
       deployment_id,
+      controller_epoch,
       seqno + 1,
       spend_day,
       spent_today,
@@ -337,6 +354,7 @@ cell pack_agent_state(
     owner,
     controller_pubkey,
     deployment_id,
+    controller_epoch,
     seqno + 1,
     spend_day,
     spent_today + value,
@@ -348,22 +366,22 @@ cell pack_agent_state(
   ));
 }
 
-(slice, int, int, int, int, int, int, int, int, int, int) get_agent_account_data() method_id {
+(slice, int, int, int, int, int, int, int, int, int, int, int) get_agent_account_data() method_id {
   return load_agent_state();
 }
 
 slice get_owner() method_id {
-  var (owner, _, _, _, _, _, _, _, _, _, _) = load_agent_state();
+  var (owner, _, _, _, _, _, _, _, _, _, _, _) = load_agent_state();
   return owner;
 }
 
 int get_controller_pubkey() method_id {
-  var (_, controller_pubkey, _, _, _, _, _, _, _, _, _) = load_agent_state();
+  var (_, controller_pubkey, _, _, _, _, _, _, _, _, _, _) = load_agent_state();
   return controller_pubkey;
 }
 
 (int, int, int, int, int) get_agent_policy() method_id {
-  var (_, _, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash, _, _, _) =
+  var (_, _, _, _, max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash, _, _, _) =
     load_agent_state();
   return (max_per_tx, daily_limit, default_task_timeout, metadata_hash, service_endpoint_hash);
 }

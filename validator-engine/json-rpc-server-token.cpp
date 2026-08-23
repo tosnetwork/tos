@@ -27,6 +27,8 @@
 #include "td/utils/crypto.h"
 
 #include <cstring>
+#include <memory>
+#include <optional>
 
 namespace tos {
 
@@ -137,10 +139,22 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
   }
   auto params_boc = std::make_shared<td::BufferSlice>(params_boc_r.move_as_ok());
 
-  auto do_query_token = [addr, params_boc, req_id = std::move(req_id),
-                         self_id = actor_id(this), promise = std::move(promise)](
+  // The block-selection request and the token-method request form one HTTP
+  // operation. Keep its completion in a single-use slot so every first-stage
+  // failure can settle it instead of silently dropping a moved promise.
+  auto promise_slot = std::make_shared<std::optional<td::Promise<HttpReturn>>>(std::move(promise));
+  auto req_id_slot = std::make_shared<std::string>(std::move(req_id));
+
+  auto do_query_token = [addr, params_boc, promise_slot, req_id_slot,
+                         self_id = actor_id(this)](
       td::int32 blk_wc, td::int64 blk_shard, td::int32 blk_seqno,
       td::Bits256 blk_root, td::Bits256 blk_file) mutable {
+        if (!promise_slot->has_value()) {
+          return;
+        }
+        auto promise = std::move(promise_slot->value());
+        promise_slot->reset();
+        auto req_id = *req_id_slot;
 
         auto saved_wc = blk_wc;
         auto saved_shard = blk_shard;
@@ -404,20 +418,15 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
         }));
   };
 
-  // The step-1 lookupBlock /
-  // getMasterchainInfo callbacks below drop the HTTP promise on error
-  // (`return;` without settle). `promise` was captured by-move into
-  // `do_query_token` and into the deeply-nested jetton→NFT→collection
-  // fallback cascade — refactoring the whole cascade to a shared slot
-  // should be handled as a separate focused change. Residual behavior:
-  // a malformed seqno or transient liteserver failure in step 1 results
-  // in the HTTP connection hanging until the per-request timeout
-  // (default 30s, see Options::request_timeout). Below the request
-  // timeout, the connection is bounded; above it, the timeout fires
-  // and the client gets a clean disconnect.
-  //
-  // Track the shared-slot refactor as a deferred follow-up rather than
-  // mixing it into this multi-callback path.
+  auto fail_block_lookup = [promise_slot, req_id_slot](td::Slice message) mutable {
+    if (!promise_slot->has_value()) {
+      return;
+    }
+    auto promise = std::move(promise_slot->value());
+    promise_slot->reset();
+    promise.set_value(make_json_error(-32603, message.str(), *req_id_slot));
+  };
+
   if (has_seqno) {
     auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
         -1, static_cast<td::int64>(-1LL << 63), seqno);
@@ -427,12 +436,15 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
     auto lookup_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
     send_liteserver_query(std::move(lookup_query),
-        [do_query_token = std::move(do_query_token)](td::Result<td::BufferSlice> R) mutable {
+        [do_query_token = std::move(do_query_token), fail_block_lookup = std::move(fail_block_lookup)](
+            td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
+            fail_block_lookup("block lookup failed");
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
           if (lb_r.is_error()) {
+            fail_block_lookup("invalid block lookup response");
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -445,12 +457,15 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
     send_liteserver_query(std::move(mc_query),
-        [do_query_token = std::move(do_query_token)](td::Result<td::BufferSlice> R) mutable {
+        [do_query_token = std::move(do_query_token), fail_block_lookup = std::move(fail_block_lookup)](
+            td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
+            fail_block_lookup("masterchain lookup failed");
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
+            fail_block_lookup("invalid masterchain lookup response");
             return;
           }
           auto mc = mc_r.move_as_ok();

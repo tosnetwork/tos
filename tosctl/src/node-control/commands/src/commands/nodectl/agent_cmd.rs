@@ -489,6 +489,12 @@ pub struct AgentAccountDeployCmd {
     #[arg(long = "yes", help = "Skip confirmation prompt")]
     yes: bool,
 
+    #[arg(
+        long = "new-generation",
+        help = "Replace a previously deployed inactive Agent Account with a fresh deployment ID/address"
+    )]
+    new_generation: bool,
+
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -1025,6 +1031,8 @@ struct AgentAccountChainView {
     controller_pubkey: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deployment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controller_epoch: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     seqno: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1971,7 +1979,7 @@ impl AgentAccountBuildStateCmd {
             config
                 .agent_wallets
                 .get_mut(&self.wallet)
-                .expect("checked Agent wallet")
+                .context("Agent wallet disappeared while persisting deployment ID")?
                 .agent_account_deployment_id = Some(hex::encode(init.deployment_id));
             save_config(&config, path)?;
         }
@@ -2032,18 +2040,54 @@ impl AgentAccountDeployCmd {
 
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
-        let agent_wallet = config
+        let mut agent_wallet = config
             .agent_wallets
             .get(&self.wallet)
-            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
+            .clone();
+
+        let mut retired_generation = None;
+        if self.new_generation {
+            let old_address = agent_wallet
+                .agent_account_address
+                .as_ref()
+                .context("--new-generation requires a previously deployed Agent Account")?
+                .parse::<MsgAddressInt>()?;
+            let old_info = rpc_client.get_address_information(&old_address).await?;
+            match old_info.state {
+                AccountState::Active => anyhow::bail!(
+                    "refusing to replace active Agent Account {}; retire or recover it first",
+                    old_address
+                ),
+                AccountState::Frozen => anyhow::bail!(
+                    "refusing to replace frozen Agent Account {}; it can still be unfrozen with its old StateInit",
+                    old_address
+                ),
+                AccountState::Uninitialized => {}
+            }
+            let old_deployment_id = agent_wallet
+                .agent_account_deployment_id
+                .clone()
+                .context("--new-generation requires the previous deployment ID")?;
+            let mut deployment_id = [0u8; 32];
+            while deployment_id == [0u8; 32] {
+                rand::rngs::OsRng.fill_bytes(&mut deployment_id);
+            }
+            retired_generation = Some((old_address.to_string(), old_deployment_id));
+            agent_wallet.agent_account_deployment_id = Some(hex::encode(deployment_id));
+            agent_wallet.agent_account_address = None;
+        }
 
         let (init, _owner_address) =
-            build_agent_account_init(&self.wallet, agent_wallet, vault.clone()).await?;
+            build_agent_account_init(&self.wallet, &agent_wallet, vault.clone()).await?;
         let owner = init.owner.clone();
         let state_init = AgentAccountContract::build_state_init(&init)?;
         let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
         let address_info = rpc_client.get_address_information(&address).await?;
         if address_info.state == AccountState::Active {
+            if self.new_generation {
+                anyhow::bail!("fresh deployment ID unexpectedly resolves to an active account");
+            }
             let deployed_code = address_info.code.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("Agent Account '{}' has no deployed code", self.wallet)
             })?;
@@ -2090,6 +2134,12 @@ impl AgentAccountDeployCmd {
         }
         if address_info.state == AccountState::Frozen {
             anyhow::bail!("Agent Account '{}' ({}) is frozen", self.wallet, address);
+        }
+        if agent_wallet.agent_account_address.is_some() {
+            anyhow::bail!(
+                "Agent Account generation at {} is no longer active; use --new-generation to deploy a fresh deployment ID/address",
+                address
+            );
         }
 
         let payer_cfg =
@@ -2145,6 +2195,33 @@ impl AgentAccountDeployCmd {
                 Some(state_init),
             )
             .await?;
+        if let Some((old_address, old_deployment_id)) = retired_generation {
+            let old_address_parsed = old_address.parse::<MsgAddressInt>()?;
+            let old_info = rpc_client.get_address_information(&old_address_parsed).await?;
+            if old_info.state != AccountState::Uninitialized {
+                anyhow::bail!(
+                    "previous Agent Account {} changed state before replacement; refusing new generation",
+                    old_address
+                );
+            }
+            let global_id = match rpc_client.get_config_param(19).await? {
+                ConfigParamEnum::ConfigParam19(value) => value as i32,
+                _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+            };
+            open_controller_journal(path)?.retire_generation(
+                &old_address,
+                global_id,
+                &old_deployment_id,
+                time_format::now(),
+            )?;
+            let profile = config
+                .agent_wallets
+                .get_mut(&self.wallet)
+                .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+            profile.agent_account_deployment_id = Some(hex::encode(init.deployment_id));
+            profile.agent_account_address = None;
+            save_config(&config, path)?;
+        }
         rpc_client.send_boc(&write_boc(&msg)?).await?;
         wait_for_deploy(
             rpc_client,
@@ -2351,6 +2428,7 @@ impl AgentAccountTaskSendCmd {
         let action_body_hash = *body.repr_hash().as_array();
         let payload = AgentAccountContract::build_task_send_payload(
             global_id,
+            data.controller_epoch,
             data.seqno,
             self.valid_until,
             &target,
@@ -2393,22 +2471,31 @@ impl AgentAccountTaskSendCmd {
         let claim = ControllerActionClaim {
             account: account.to_string(),
             network_global_id: global_id,
+            deployment_id: hex::encode(data.deployment_id),
+            controller_epoch: data.controller_epoch,
             seqno: data.seqno,
+            target: target.to_string(),
+            value_atomic: value,
             action_kind: "agent-task-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
             valid_until: self.valid_until,
         };
         let journal = open_controller_journal(Path::new(config_path))?;
-        journal.reconcile_finalized_seqno(&claim.account, data.seqno, time_format::now())?;
+        journal.reconcile_finalized_state(
+            &claim.account,
+            claim.network_global_id,
+            &claim.deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            time_format::now(),
+        )?;
         let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
         if record.status == ControllerActionStatus::Resolved {
-            println!(
-                "{} controller action {} was already resolved",
-                "OK".green().bold(),
-                self.action_id
+            anyhow::bail!(
+                "controller action {} sequence was consumed without a confirmed task dispatch; verify the target transaction/task state",
+                self.action_id,
             );
-            return Ok(());
         }
         if record.status == ControllerActionStatus::Broadcasting {
             anyhow::bail!(
@@ -2535,7 +2622,11 @@ impl AgentAccountNativePrepareCmd {
         let claim = ControllerActionClaim {
             account: account.to_string(),
             network_global_id: global_id,
+            deployment_id: hex::encode(data.deployment_id),
+            controller_epoch: data.controller_epoch,
             seqno: data.seqno,
+            target: target.to_string(),
+            value_atomic: self.amount_nanotos,
             action_kind: "agent-native-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -2550,16 +2641,26 @@ impl AgentAccountNativePrepareCmd {
             anyhow::bail!("owner declined Gift authorization");
         }
         let journal = open_controller_journal(path)?;
-        journal.reconcile_finalized_seqno(&claim.account, data.seqno, time_format::now())?;
+        journal.reconcile_finalized_state(
+            &claim.account,
+            claim.network_global_id,
+            &claim.deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            time_format::now(),
+        )?;
         let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
         if record.status == ControllerActionStatus::Resolved {
-            anyhow::bail!("controller action is already resolved");
+            anyhow::bail!(
+                "controller action sequence was consumed; verify the target transaction before treating the Gift as paid"
+            );
         }
         let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
             base64::engine::general_purpose::STANDARD.decode(encoded)?
         } else {
             let payload = AgentAccountContract::build_native_send_payload(
                 global_id,
+                data.controller_epoch,
                 data.seqno,
                 self.valid_until,
                 &target,
@@ -2593,6 +2694,8 @@ impl AgentAccountNativePrepareCmd {
                 "action_id": self.action_id,
                 "action": "agent-native-send",
                 "account": account.to_string(),
+                "deployment_id": format!("sha256:{}", hex::encode(data.deployment_id)),
+                "controller_epoch": data.controller_epoch,
                 "seqno": data.seqno,
                 "network_global_id": global_id,
                 "valid_until": self.valid_until,
@@ -2631,17 +2734,31 @@ impl AgentAccountCancelPrepareCmd {
             anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
         }
         let journal = open_controller_journal(path)?;
-        journal.reconcile_finalized_seqno(&account.to_string(), data.seqno, time_format::now())?;
-        let record = journal
-            .find_primary(&account.to_string(), &self.action_id)?
-            .context("primary controller action not found")?;
-        if record.status == ControllerActionStatus::Resolved || record.claim.seqno != data.seqno {
-            anyhow::bail!("primary action is no longer cancellable at the finalized sequence");
-        }
         let global_id = match rpc_client.get_config_param(19).await? {
             ConfigParamEnum::ConfigParam19(value) => value as i32,
             _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
         };
+        let deployment_id = hex::encode(data.deployment_id);
+        journal.reconcile_finalized_state(
+            &account.to_string(),
+            global_id,
+            &deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            time_format::now(),
+        )?;
+        let record = journal
+            .find_primary(
+                &account.to_string(),
+                global_id,
+                &deployment_id,
+                data.controller_epoch,
+                &self.action_id,
+            )?
+            .context("primary controller action not found")?;
+        if record.status == ControllerActionStatus::Resolved || record.claim.seqno != data.seqno {
+            anyhow::bail!("primary action is no longer cancellable at the finalized sequence");
+        }
         if global_id != record.claim.network_global_id {
             anyhow::bail!("primary action network no longer matches the connected chain");
         }
@@ -2680,6 +2797,7 @@ impl AgentAccountCancelPrepareCmd {
         } else {
             let payload = AgentAccountContract::build_cancel_seqno_payload(
                 global_id,
+                data.controller_epoch,
                 data.seqno,
                 self.valid_until,
             )?;
@@ -2710,6 +2828,8 @@ impl AgentAccountCancelPrepareCmd {
                 "action_id": self.action_id,
                 "action": "agent-cancel-seqno",
                 "account": account.to_string(),
+                "deployment_id": format!("sha256:{}", hex::encode(data.deployment_id)),
+                "controller_epoch": data.controller_epoch,
                 "seqno": data.seqno,
                 "network_global_id": global_id,
                 "valid_until": self.valid_until,
@@ -2747,11 +2867,18 @@ fn open_controller_journal(config_path: &Path) -> anyhow::Result<AgentAccountCus
         .parent()
         .context("tosctl config path has no parent")?
         .join(".tosctl-agent-controller-journal");
-    fs::create_dir_all(&directory)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        use std::os::unix::fs::DirBuilderExt;
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => anyhow::bail!("Agent Account custody journal path is not a real directory"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut builder = fs::DirBuilder::new();
+                builder.mode(0o700).create(&directory)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
     AgentAccountCustodyJournal::open(directory)
 }
@@ -3003,6 +3130,7 @@ async fn load_agent_account_chain_view(
         owner: data.as_ref().map(|data| data.owner.to_string()),
         controller_pubkey: data.as_ref().map(|data| hex::encode(data.controller_pubkey)),
         deployment_id: data.as_ref().map(|data| hex::encode(data.deployment_id)),
+        controller_epoch: data.as_ref().map(|data| data.controller_epoch),
         seqno: data.as_ref().map(|data| data.seqno),
         max_per_tx: data.as_ref().map(|data| data.max_per_tx),
         daily_limit: data.as_ref().map(|data| data.daily_limit),
@@ -3847,7 +3975,7 @@ async fn build_agent_account_init(
         .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
     let deployment_id = if let Some(value) = &agent_wallet.agent_account_deployment_id {
         parse_optional_hash("agent-account-deployment-id", &Some(value.clone()))?
-            .expect("present deployment ID")
+            .context("configured Agent Account deployment ID is missing")?
     } else {
         let mut generated = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut generated);

@@ -17,6 +17,7 @@ tl_api = { version = "0.4.32", path = "../../tl/api" }
 tracing = "0.1"
 chain-rpc-client = { path = "../chain-rpc-client" }
 fs2 = "0.4"
+libc = "0.2"
 
 [dev-dependencies]
 tokio = "1.48.0"

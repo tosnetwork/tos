@@ -853,6 +853,7 @@ dependencies = [
  "ed25519-dalek",
  "fs2",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

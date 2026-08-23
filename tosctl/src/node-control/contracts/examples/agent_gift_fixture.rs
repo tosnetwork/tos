@@ -1,7 +1,7 @@
 use chain_block::{MsgAddressInt, base64_encode, ed25519_create_private_key, write_boc};
 use contracts::{AgentAccountContract, AgentAccountInit};
 
-const EXPECTED_BOC_BASE64: &str = "te6ccgEBAgEAngABRYn+KilTiIOnywCgAoCoCN4Z7XsCssCJyXflkVH/tJT1qpgMAQDraBHWua8LFa3hp88GhvnJDugSt7nnpk8/Xdmt4rCU2q4Qt9iyCefqc46FM/rqhfM9wZ5YJtYcff4PfNl/2YxYAkFHUAQAAAAqAAAAAHc1lACABERERERERERERERERERERERERERERERERERERERERERIdzWUAQ==";
+const EXPECTED_BOC_BASE64: &str = "te6ccgEBAgEApgABRYn/gcFMuh/DSQZFasqNaT3ITOt7HHKnDMUAP9yhpWvoLEIMAQD7qWXpKJPScATturw4khEH749KXPRHgxeHEe/xQnydpujylIqd7JfcJr42YcyR+CxCy9kgme+pEhmIeRPzWqBYBUFHUAQAAAAqAAAAAAAAAAAAAAAAdzWUAIAEREREREREREREREREREREREREREREREREREREREREREh3NZQB";
 
 fn main() -> anyhow::Result<()> {
     let secret = [0x42; 32];
@@ -22,6 +22,7 @@ fn main() -> anyhow::Result<()> {
     let payload = AgentAccountContract::build_native_send_payload(
         42,
         0,
+        0,
         2_000_000_000,
         &target,
         1_000_000_000,
@@ -40,10 +41,12 @@ fn main() -> anyhow::Result<()> {
         "{}",
         serde_json::json!({
             "schema": "tos.agent-gift.rust-fixture.v1",
+            "code_hash": hex::encode(AgentAccountContract::code()?.hash(0)),
             "account": account.to_string(),
             "controller_public_key": hex::encode(key.verifying_key()),
             "target": target.to_string(),
             "global_id": 42,
+            "controller_epoch": 0,
             "seqno": 0,
             "valid_until": 2_000_000_000u32,
             "amount_atomic": "1000000000",

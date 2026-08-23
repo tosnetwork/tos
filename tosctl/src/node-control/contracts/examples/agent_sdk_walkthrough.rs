@@ -48,6 +48,7 @@ fn main() -> anyhow::Result<()> {
     let task_escrow_placeholder = MsgAddressInt::with_standart(None, -1, [0x22; 32].into())?;
     let payload = AgentAccountContract::build_task_send_payload(
         /* network_global_id */ 1,
+        /* controller_epoch */ 0,
         /* seqno */ 0,
         /* valid_until */ 1_900_000_000,
         &task_escrow_placeholder,

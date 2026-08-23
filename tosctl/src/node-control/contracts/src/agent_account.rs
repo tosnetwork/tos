@@ -6,6 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use anyhow::Context;
 use chain_block::{
     BuilderData, Coins, Deserializable, ExternalInboundMessageHeader, IBitstring, Message,
     MsgAddressExt, MsgAddressInt, Serializable, SliceData, StateInit, base64_decode,
@@ -14,13 +15,16 @@ use chain_block::{
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEwEABBYAART/APSkE/S88sgLAQIBIAIDAgFIBAUBzvKDCNcY7UTQ+kDT/9P/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQr0x8hghBBR1ADuiKCEEFHUAS6sQKCEEFHUAW6ErHy5qfSHzD4NVIQuvLmrCz5Afgo+kQOAsTQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkDNMf0z8xIYIQQUdQAbrjAjqCEEFHUAK64wJfDPLGpwYHAgEgCAkBZjFsMzMzUWXHBfLmpvoA+gDTP9MAAZPT/wGRf+IB0wABk9P/AZF/4gHR+AAQihB5EGgQVhIA1lGpxwXy5qYH0//R+AAHpBCKEHkQaFVgJMEA8talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAfPFhXL/xPL/8sfyx8B+gLMye1UAgFICgsCASAMDQBrtiW9qJofSBp/+n/6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvgbYawAGe3NL2omh9IGn/6f/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+FQAGO5rr7UTQ+kDT/9P/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABrueT+1E0PpA0//T/9Mf0x/6ANTR0PoA+gDTP38B0wABkzHT/95/AdMAAZMx0//e0VUkEJpfCoA/6C8O3nFamFL7uiw8I07Q0nMprjTWJjqCz7YhXah8kWg7RxyMv/UkDKHxLKB8v/y//J+QBUEOv5EPLmqAvTH9IfDrry5qwM0x/TH1EkuvLmqSD4I7zy5qr4Iyegu/LmqiyCEEFHUAW64wL6QPoAIcIA8uatbS+CEEFHUAO64wABDxARAMY8C9H4AKQQihB5EGgHVUAkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQB88WFcv/E8v/yx/LHwH6AszJ7VQABjDUAQG40VMZu/Lmq/gjggFRgKkEUwS9kzRwPpEw4lPRoCm78uar+ABwgBDIywVQBM8WIvoCE8tpDoIQQUdQA7qWcVAOywDMlXAyDcsA4slz+wABpFCroBCKEHkQaBBnVUASAKgkwQDy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQB88WFcv/E8v/yx/LHwH6AszJ7VQ=";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECEgEABFQAART/APSkE/S88sgLAQIBIAIDAgFIBAUB4PKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQOAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAICQFuMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdH4ABCbEIoQeRBoEGcQVhEA7lG6xwXy5qYI0//R+AAGpAikEJsQagcJVUAkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAgFICgsCASAMDQBvtiW9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BtiLAAa7c0vaiaH0gaf/p/+mf6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvhcABnua6+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABvueT+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQq18LgC/ILw7ecVqYUvu6LDwjTtDScymuNNYmOoLPtiFdqHyRaDtHHIy/9SQMofEsoHy//L/8n5AFQQ/PkQ8uaoDNMf0h8PuvLmrA3TP1EZuvLmrtMf0x9RJLry5qkg+CO88uaq+CMnoLvy5qotghBBR1AFuuMC+kD6ACHCAPLmrW1WEA8QANw9DNH4AKQQmxCKEHkQaFVgJMEA8talJIQvvPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVAHSghBBR1ADupMw1AHeAdFTGbvy5qv4I4IBUYCpBFMEvZM0cD+RMOJT4aApu/Lmq/gAcIAQyMsFUATPFiL6AhPLaQ+CEEFHUAO6lnFQD8sAzJVwMg7LAOLJc/sAAaRQvKAQmxCKEHkQaFVAEQC8JMEA8talJIQvvPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVA==";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
 pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
+/// Largest Coins value whose controller payload still fits beside the
+/// 512-bit signature in the frozen single-cell external-message layout.
+pub const AGENT_ACCOUNT_MAX_ACTION_VALUE: u64 = (1u64 << 48) - 1;
 pub const AGENT_CONTROLLER_SIGNATURE_DOMAIN: &str =
     "ede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471";
 
@@ -44,6 +48,7 @@ pub struct AgentAccountData {
     pub owner: MsgAddressInt,
     pub controller_pubkey: [u8; 32],
     pub deployment_id: [u8; 32],
+    pub controller_epoch: u64,
     pub seqno: u32,
     pub spend_day: u32,
     pub spent_today: u64,
@@ -70,6 +75,9 @@ impl AgentAccountContract {
 
     pub fn build_data(init: &AgentAccountInit) -> anyhow::Result<chain_block::Cell> {
         validate_policy(init.max_per_tx, init.daily_limit, init.default_task_timeout_secs)?;
+        if init.deployment_id == [0; 32] {
+            anyhow::bail!("Agent Account deployment_id must be nonzero");
+        }
 
         let mut policy = BuilderData::new();
         Coins::new(init.max_per_tx).write_to(&mut policy)?;
@@ -82,6 +90,7 @@ impl AgentAccountContract {
         init.owner.write_to(&mut data)?;
         data.append_raw(&init.controller_pubkey, 256)?;
         data.append_raw(&init.deployment_id, 256)?;
+        data.append_u64(0)?;
         data.append_u32(0)?;
         data.append_u32(0)?;
         Coins::new(0).write_to(&mut data)?;
@@ -118,14 +127,16 @@ impl AgentAccountContract {
             owner,
             controller_pubkey: parse_hash(&stack, 1)?,
             deployment_id: parse_hash(&stack, 2)?,
-            max_per_tx: stack.u64(3)?,
-            daily_limit: stack.u64(4)?,
-            default_task_timeout_secs: stack.u64(5)?,
-            metadata_hash: parse_maybe_hash(&stack, 6)?,
-            service_endpoint_hash: parse_maybe_hash(&stack, 7)?,
-            seqno: stack.u64(8)? as u32,
-            spend_day: stack.u64(9)? as u32,
-            spent_today: stack.u64(10)?,
+            controller_epoch: stack.u64(3)?,
+            max_per_tx: stack.u64(4)?,
+            daily_limit: stack.u64(5)?,
+            default_task_timeout_secs: stack.u64(6)?,
+            metadata_hash: parse_maybe_hash(&stack, 7)?,
+            service_endpoint_hash: parse_maybe_hash(&stack, 8)?,
+            seqno: u32::try_from(stack.u64(9)?).context("Agent Account seqno exceeds uint32")?,
+            spend_day: u32::try_from(stack.u64(10)?)
+                .context("Agent Account spend_day exceeds uint32")?,
+            spent_today: stack.u64(11)?,
         })
     }
 
@@ -159,16 +170,19 @@ impl AgentAccountContract {
     /// by [`Self::controller_hash_to_sign`], never this cell hash directly.
     pub fn build_task_send_payload(
         network_global_id: i32,
+        controller_epoch: u64,
         seqno: u32,
         valid_until: u32,
         target: &MsgAddressInt,
         value: u64,
         body: chain_block::Cell,
     ) -> anyhow::Result<chain_block::Cell> {
+        validate_action_value(value)?;
         let mut payload = BuilderData::new();
         payload
             .append_u32(AGENT_TASK_SEND_OPCODE)?
             .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
             .append_u32(seqno)?
             .append_u32(valid_until)?;
         target.write_to(&mut payload)?;
@@ -180,18 +194,18 @@ impl AgentAccountContract {
     /// Build a bodyless, single native-TOS transfer for the Agent Account.
     pub fn build_native_send_payload(
         network_global_id: i32,
+        controller_epoch: u64,
         seqno: u32,
         valid_until: u32,
         target: &MsgAddressInt,
         value: u64,
     ) -> anyhow::Result<chain_block::Cell> {
-        if value == 0 {
-            anyhow::bail!("Agent Account native send value must be positive");
-        }
+        validate_action_value(value)?;
         let mut payload = BuilderData::new();
         payload
             .append_u32(AGENT_NATIVE_SEND_OPCODE)?
             .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
             .append_u32(seqno)?
             .append_u32(valid_until)?;
         target.write_to(&mut payload)?;
@@ -202,6 +216,7 @@ impl AgentAccountContract {
     /// Build a generic sequence-consuming cancellation with no outbound action.
     pub fn build_cancel_seqno_payload(
         network_global_id: i32,
+        controller_epoch: u64,
         seqno: u32,
         valid_until: u32,
     ) -> anyhow::Result<chain_block::Cell> {
@@ -209,6 +224,7 @@ impl AgentAccountContract {
         payload
             .append_u32(AGENT_CANCEL_SEQNO_OPCODE)?
             .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
             .append_u32(seqno)?
             .append_u32(valid_until)?;
         Ok(payload.into_cell()?)
@@ -273,8 +289,24 @@ fn validate_policy(
     if daily_limit < max_per_tx {
         anyhow::bail!("daily_limit must be greater than or equal to max_per_tx");
     }
+    if max_per_tx > AGENT_ACCOUNT_MAX_ACTION_VALUE {
+        anyhow::bail!(
+            "max_per_tx exceeds the Agent Account signed-action wire limit of {}",
+            AGENT_ACCOUNT_MAX_ACTION_VALUE
+        );
+    }
     if default_task_timeout_secs == 0 {
         anyhow::bail!("default_task_timeout_secs must be greater than zero");
+    }
+    Ok(())
+}
+
+fn validate_action_value(value: u64) -> anyhow::Result<()> {
+    if value == 0 || value > AGENT_ACCOUNT_MAX_ACTION_VALUE {
+        anyhow::bail!(
+            "Agent Account action value must be between 1 and {}",
+            AGENT_ACCOUNT_MAX_ACTION_VALUE
+        );
     }
     Ok(())
 }
@@ -390,12 +422,51 @@ mod tests {
     }
 
     #[test]
+    fn enforces_signed_action_single_cell_value_limit_before_custody() {
+        let target = MsgAddressInt::with_standart(None, 0, [0x66; 32].into()).unwrap();
+        let payload = AgentAccountContract::build_native_send_payload(
+            -3,
+            0,
+            0,
+            2_000_000_000,
+            &target,
+            AGENT_ACCOUNT_MAX_ACTION_VALUE,
+        )
+        .unwrap();
+        AgentAccountContract::build_signed_controller_message(payload, &[0x77; 64]).unwrap();
+        assert!(
+            AgentAccountContract::build_native_send_payload(
+                -3,
+                0,
+                0,
+                2_000_000_000,
+                &target,
+                AGENT_ACCOUNT_MAX_ACTION_VALUE + 1,
+            )
+            .is_err()
+        );
+        let mut init = valid_init();
+        init.max_per_tx = AGENT_ACCOUNT_MAX_ACTION_VALUE + 1;
+        init.daily_limit = init.max_per_tx;
+        assert!(AgentAccountContract::build_data(&init).is_err());
+    }
+
+    #[test]
     fn rejects_zero_task_timeout() {
         let mut init = valid_init();
         init.default_task_timeout_secs = 0;
 
         let error = AgentAccountContract::build_data(&init).unwrap_err();
         assert!(error.to_string().contains("default_task_timeout_secs"));
+    }
+
+    #[test]
+    fn rejects_zero_deployment_generation() {
+        let mut init = valid_init();
+        init.deployment_id = [0; 32];
+
+        let error = AgentAccountContract::build_data(&init).unwrap_err();
+        assert!(error.to_string().contains("deployment_id"));
     }
 
     #[tokio::test]
@@ -410,6 +481,7 @@ mod tests {
                 }),
                 hash_number(init.controller_pubkey),
                 hash_number(init.deployment_id),
+                number("9"),
                 number(init.max_per_tx.to_string()),
                 number(init.daily_limit.to_string()),
                 number(init.default_task_timeout_secs.to_string()),
@@ -426,6 +498,7 @@ mod tests {
         assert_eq!(data.owner, init.owner);
         assert_eq!(data.controller_pubkey, init.controller_pubkey);
         assert_eq!(data.deployment_id, init.deployment_id);
+        assert_eq!(data.controller_epoch, 9);
         assert_eq!(data.seqno, 17);
         assert_eq!(data.spend_day, 20);
         assert_eq!(data.spent_today, 123_456_789);
@@ -476,6 +549,7 @@ mod tests {
         let task_body = BuilderData::new().into_cell().unwrap();
         let payload = AgentAccountContract::build_task_send_payload(
             1,
+            2,
             7,
             1_900_000_000,
             &target,

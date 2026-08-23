@@ -37,6 +37,7 @@
 #include "td/utils/tests.h"
 
 #include "../validator-engine/wallet-index.h"
+#include "../validator-engine/wallet-index-writer.h"
 
 #include <set>
 #include <string>
@@ -63,6 +64,43 @@ std::unique_ptr<tos_wallet_index::WalletIndexDb> open_fresh_db(const std::string
 }
 
 }  // namespace
+
+TEST(WalletIndex, HostileAcceptCannotRaiseGetMethodGasLimit) {
+  auto limits = tos_wallet_index::wallet_index_get_method_gas_limits();
+  ASSERT_EQ(limits.gas_limit, tos_wallet_index::kWalletIndexGetMethodGasLimit);
+  ASSERT_EQ(limits.gas_max, tos_wallet_index::kWalletIndexGetMethodGasLimit);
+  limits.change_limit(vm::GasLimits::infty);
+  ASSERT_EQ(limits.gas_limit, tos_wallet_index::kWalletIndexGetMethodGasLimit);
+}
+
+TEST(WalletIndex, AggregateGetMethodGasIsBoundedPerBlock) {
+  tos_wallet_index::WalletIndexVerificationBudget budget;
+  for (long long consumed = 0; consumed < tos_wallet_index::kWalletIndexBlockVerificationGasLimit;
+       consumed += tos_wallet_index::kWalletIndexGetMethodGasLimit) {
+    budget.begin_candidate((tos_wallet_index::kWalletIndexBlockVerificationGasLimit - consumed) /
+                           tos_wallet_index::kWalletIndexGetMethodGasLimit);
+    ASSERT_EQ(budget.acquire(), tos_wallet_index::kWalletIndexGetMethodGasLimit);
+  }
+  ASSERT_EQ(budget.acquire(), 0);
+}
+
+TEST(WalletIndex, VerificationBudgetIsFairAcrossCandidates) {
+  tos_wallet_index::WalletIndexVerificationBudget budget;
+  budget.begin_candidate(20);
+  ASSERT_EQ(budget.acquire(), tos_wallet_index::kWalletIndexBlockVerificationGasLimit / 20);
+  ASSERT_EQ(budget.acquire(), 0);
+  budget.begin_candidate(19);
+  ASSERT_TRUE(budget.acquire() > 0);
+}
+
+TEST(WalletIndex, ForeignShardAbsenceIsNotAuthoritative) {
+  auto left = tos::shard_child(tos::ShardIdFull{0}, true);
+  td::Bits256 low = td::Bits256::zero();
+  td::Bits256 high;
+  high.as_slice().fill(0xff);
+  ASSERT_TRUE(tos_wallet_index::wallet_index_state_contains(left, low));
+  ASSERT_TRUE(!tos_wallet_index::wallet_index_state_contains(left, high));
+}
 
 TEST(WalletIndex, AccountEventExactLookupAndCursorPagination) {
   auto path = std::string("test-wallet-index-db-events");
