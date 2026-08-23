@@ -27,7 +27,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 ## Mandatory pre-mainnet work
 
 - [ ] Two independent audits covering FunC/Fift, Solidity, deployment/config scripts, compiler output, and oracle protocol.
-- [ ] A dedicated review of the missing chain-ID domain separation above, with a decision to either enforce unique bridge addresses per network or upgrade the digest scheme before any deployment.
+- [ ] A dedicated review of the missing chain-ID domain separation above, with a decision to either enforce unique bridge addresses per network or upgrade the digest scheme before any deployment. A proposed fix (bind `block.chainid` into the vote digests), its cross-plane coordination, and a test plan are written up in [`docs/chain-id-domain-separation.md`](docs/chain-id-domain-separation.md); it awaits review and a decision.
 - [ ] Property/fuzz tests and adversarial cross-chain state-machine tests.
 - [ ] Formal or machine-checked supply-conservation and replay-safety properties.
 - [ ] Per-transaction, hourly, and daily exposure caps. The historical upstream contracts do not provide economic rate limiting by themselves.
