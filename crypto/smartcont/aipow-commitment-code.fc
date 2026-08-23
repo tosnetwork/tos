@@ -146,7 +146,7 @@ const int err::bond_not_escrowed = 2112;  ;; announce without the committer bond
   .end_cell(), mode);
 }
 
-;; The TON to keep back (raw_reserve mode 2) so this masterchain account can pay its own
+;; The TOS to keep back (raw_reserve mode 2) so this masterchain account can pay its own
 ;; storage rent for STORAGE_RESERVE_SECONDS and never freeze. Priced from the live config;
 ;; floored so it stays protective under a zero/low-price config.
 int storage_reserve() inline {

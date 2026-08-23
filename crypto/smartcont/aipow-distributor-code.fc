@@ -88,7 +88,7 @@ const int distributor_version = 1;
 ;; keeps gas bounded against a hostile deep proof chain.
 const int max_proof_depth = 60;
 
-;; Minimum value a `claim`/`payout` must carry. This floor is NOT a gas check -- TON
+;; Minimum value a `claim`/`payout` must carry. This floor is NOT a gas check -- TOS
 ;; already charges an underfunded message's compute from its own value. It exists because
 ;; a `claim` GROWS STATE: it inserts a per-identity record into the claims dict, which
 ;; this instance carries (and pays storage rent on) for the life of the distributor. The
@@ -114,7 +114,7 @@ const int STORAGE_RESERVE_BITS = 16000;
 const int STORAGE_RESERVE_CELLS = 32;
 const int STORAGE_RESERVE_FLOOR = 50000000;      ;; 0.05 TOS backstop
 
-;; The TON to keep back so this instance can pay its own storage rent on `workchain` (its
+;; The TOS to keep back so this instance can pay its own storage rent on `workchain` (its
 ;; earner workchain) for STORAGE_RESERVE_SECONDS. Priced from the live config; floored.
 int storage_reserve(int workchain) inline {
   int fee = get_storage_fee(workchain, STORAGE_RESERVE_SECONDS, STORAGE_RESERVE_BITS, STORAGE_RESERVE_CELLS);

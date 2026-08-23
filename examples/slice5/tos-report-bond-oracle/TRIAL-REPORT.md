@@ -12,7 +12,7 @@
 
 This is the second external production-intent trial of the Slice 5 stdlib on the
 `actor-layer` branch. The contract built is `TosReportBondOracle`, a bond-backed
-price oracle where reporters must lock 1 TON per report submission. The contract
+price oracle where reporters must lock 1 TOS per report submission. The contract
 deliberately exercises `in.senderAddress`, `in.valueCoins`, and `blockchain.now()` — 
 the three TVM context values that cannot be tested in tol-tester — and adds an
 emulator fixture to verify all three.
@@ -251,8 +251,8 @@ longer hard-codes `reporterSetHash`.
 
 After `round.finalize()` succeeds, the handler dispatches up to 3 bond refund messages
 in the same transaction (one per reporter that submitted). TOS contracts pay gas for
-each outgoing message. With 3 reporters all bonding 1 TON each and a contract balance
-of ~5 TON, the action phase could generate 3 SEND actions totaling 3 TON + ~3× gas.
+each outgoing message. With 3 reporters all bonding 1 TOS each and a contract balance
+of ~5 TOS, the action phase could generate 3 SEND actions totaling 3 TOS + ~3× gas.
 
 If the contract has insufficient balance to cover gas, the action phase may fail silently
 (with `SEND_MODE_REGULAR`, failed sends are ignored — the error is not propagated to the
@@ -280,7 +280,7 @@ with raw regular-mode sends.
 During implementation I attempted `bonds: map<uint256, coins>`. It is unclear from
 the documentation whether `coins` is a valid map value type. Existing stdlib maps use
 `map<uint256, bool>` and `map<uint256, uint64>` only. To be safe, the bond amount is
-stored as `uint64` (nanoTON), limiting the representable bond to ~18,446 TON.
+stored as `uint64` (nanoTOS), limiting the representable bond to ~18,446 TOS.
 
 **Friction:** The `map<K, V>` type section in `common.tol` does not list which value
 types are supported. A type error from using `coins` would appear at compile time, not
@@ -288,8 +288,8 @@ at write time — but it is not discoverable without running the compiler.
 
 **Post-trial disposition:** closed. `map<uint256, coins>` is covered by the
 compiler test suite (`maps-tests.tol` method 146) and documented in the Slice 5
-author guide. `TosReportBondOracle` may still use `uint64` nanoTON deliberately
-because it wants an explicit ~18,446 TON maximum.
+author guide. `TosReportBondOracle` may still use `uint64` nanoTOS deliberately
+because it wants an explicit ~18,446 TOS maximum.
 
 ---
 
@@ -419,7 +419,7 @@ the normal emulator gate.
 
 2. **`map<uint256, coins>` validity unknown** — closed. `map<uint256, coins>` is
    compiler-tested and documented as supported. This contract still uses `uint64`
-   nanoTON intentionally to cap bonds at ~18,446 TON.
+   nanoTOS intentionally to cap bonds at ~18,446 TOS.
 
 3. **Emulator storage initialization** — closed. The fixture sends the real deploy body
    and lets the Tol contract build `TosReportBondStorage`, avoiding manual nested-cell

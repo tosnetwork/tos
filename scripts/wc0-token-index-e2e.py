@@ -101,7 +101,7 @@ def mint_body(owner: Address, master: Address, jetton_amount: int, forward_ton: 
         .store_uint(OP_MINT, 32)
         .store_uint(0, 64)               # query_id
         .store_address(owner)            # to_address
-        .store_coins(forward_ton + 100_000_000)  # TON forwarded to the wallet
+        .store_coins(forward_ton + 100_000_000)  # TOS forwarded to the wallet
         .store_ref(master_msg)
         .end_cell()
     )
