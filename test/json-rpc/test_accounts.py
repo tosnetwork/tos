@@ -461,7 +461,13 @@ class TestGetTokenData:
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
-        assert data["result"]["@type"] == "ext.tokens.jettonMasterData"
+        result = data["result"]
+        assert result["@type"] == "ext.tokens.jettonMasterData"
+        assert result["jetton_name"] == "TOS Test Jetton"
+        assert result["jetton_symbol"] == "TTJ"
+        assert result["jetton_decimals"] == "9"
+        assert result["jetton_description"] == "Deterministic local TOS Jetton fixture"
+        assert result["jetton_image"] == "https://example.invalid/tos-test-jetton.png"
 
     def test_nft_collection_data(self, api_method_call):
         """Deployed NFT collection should return nftCollectionData."""
@@ -490,3 +496,6 @@ class TestGetTokenData:
         assert "collection_content" in result
         assert "owner_address" in result
         assert len(result["owner_address"]) > 0
+        assert result["collection_name"] == "TOS Test NFTs"
+        assert result["collection_description"] == "Deterministic local TOS NFT collection fixture"
+        assert result["collection_image"] == "https://example.invalid/tos-test-nft.png"

@@ -333,6 +333,16 @@ void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits
   td::Bits256 owner, collection;
   bool has_collection = false;
   if (!verify_nft_item(state, item, owner, has_collection, collection)) {
+    // A previously indexed NFT can become unowned, uninitialized, frozen, or
+    // deleted (DNS expiry/release is the important case). Its committed
+    // post-state no longer proves the old ownership claim, so remove both
+    // directions in the same batch.
+    td::Bits256 prev_owner;
+    auto prev_r = db->get_nft_owner(item, prev_owner);
+    if (prev_r.is_ok() && prev_r.ok()) {
+      db->erase_nft(prev_owner, item).ignore();
+      db->erase_nft_owner(item).ignore();
+    }
     return;
   }
   td::Bits256 prev_owner;
@@ -385,6 +395,32 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       auto status = db->put_event(account, static_cast<uint64_t>(trans.lt), tx_cell);
       if (status.is_error()) {
         LOG(WARNING) << "wc0-index: put_event failed: " << status.message();
+      }
+      // A freshly deployed token contract has no token operation in its first
+      // inbound message: StateInit plus an application-specific mint body
+      // activates it. Nominate every newly activated account for both probes;
+      // the post-state getters below are authoritative and reject ordinary
+      // contracts. This closes initial NFT/jetton mint indexing without
+      // trusting message shape or contract code hashes.
+      if (trans.orig_status != block::gen::AccountStatus::acc_state_active &&
+          trans.end_status == block::gen::AccountStatus::acc_state_active) {
+        if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
+          jettons.insert(account);
+        }
+        if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
+          nfts.insert(account);
+        }
+      }
+      // Once an account has been proven to be an NFT, every subsequent state
+      // transition can change or remove ownership even when the application
+      // uses a custom/empty opcode (for example DNS auction loss or release).
+      // Re-verify known items instead of trying to enumerate every contract's
+      // private operation vocabulary.
+      td::Bits256 previous_owner;
+      auto previous_owner_r = db->get_nft_owner(account, previous_owner);
+      if (previous_owner_r.is_ok() && previous_owner_r.ok() &&
+          jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
+        nfts.insert(account);
       }
       if (jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
         collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), jettons, nfts);
