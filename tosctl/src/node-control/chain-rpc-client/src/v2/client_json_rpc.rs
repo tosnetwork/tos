@@ -379,7 +379,7 @@ impl ClientJsonRpc {
             )
             .await
             .context("getTransactions")?;
-        Ok(serde_json::from_value(res)?)
+        normalize_get_transactions(res)
     }
 
     pub async fn get_address_balance(&self, address: &MsgAddressInt) -> anyhow::Result<String> {
@@ -651,6 +651,92 @@ impl ClientJsonRpc {
         })?;
         let wallet_info = serde_json::from_value::<GetWalletInformationRes>(res)?;
         Ok(wallet_info)
+    }
+}
+
+fn normalize_get_transactions(res: serde_json::Value) -> anyhow::Result<GetTransactionsRes> {
+    // The validator JSON-RPC surface returns the current toncenter-style array
+    // with nested `transaction_id`, while older deployments used
+    // `{transactions:[...]}` and top-level `lt`/`hash`.
+    let values = if let Some(array) = res.as_array() {
+        array.clone()
+    } else {
+        res.get("transactions").and_then(serde_json::Value::as_array).cloned().ok_or_else(|| {
+            anyhow::anyhow!("getTransactions returned neither an array nor a transactions object")
+        })?
+    };
+    let mut transactions = Vec::with_capacity(values.len());
+    for value in values {
+        if let Ok(transaction) =
+            serde_json::from_value::<crate::v2::data_models::RawTransaction>(value.clone())
+        {
+            // A current response also has defaults for the legacy top-level
+            // fields, so accept legacy only when those identity fields are
+            // actually present. Otherwise the nested transaction ID would be
+            // silently normalized to lt=0/hash="".
+            if value.get("lt").is_some() && value.get("hash").is_some() {
+                transactions.push(transaction);
+                continue;
+            }
+        }
+        #[derive(serde::Deserialize)]
+        struct CurrentRawTransaction {
+            #[serde(rename = "@type")]
+            r#type: Option<String>,
+            block_id: Option<crate::v2::data_models::BlockIdExt>,
+            #[serde(default)]
+            data: String,
+            #[serde(default)]
+            utime: u32,
+            transaction_id: crate::v2::data_models::TransactionId,
+        }
+        let current: CurrentRawTransaction =
+            serde_json::from_value(value).context("decode current getTransactions item")?;
+        transactions.push(crate::v2::data_models::RawTransaction {
+            r#type: current.r#type,
+            block_id: current.block_id,
+            data: current.data,
+            lt: current.transaction_id.lt,
+            utime: current.utime,
+            hash: base64::engine::general_purpose::STANDARD.encode(current.transaction_id.hash),
+        });
+    }
+    Ok(GetTransactionsRes { r#type: None, transactions })
+}
+
+#[cfg(test)]
+mod get_transactions_tests {
+    use super::normalize_get_transactions;
+
+    #[test]
+    fn normalizes_current_nested_transaction_identity() {
+        let value = serde_json::json!([{
+            "@type": "raw.transaction",
+            "data": "dHgtYm9j",
+            "utime": 2000000000,
+            "transaction_id": {"@type":"internal.transactionId", "lt":"123", "hash":"AQIDBA=="}
+        }]);
+        let result = normalize_get_transactions(value).expect("current response");
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.transactions[0].lt, 123);
+        assert_eq!(result.transactions[0].hash, "AQIDBA==");
+    }
+
+    #[test]
+    fn preserves_legacy_top_level_transaction_identity() {
+        let value = serde_json::json!({"transactions":[{
+            "@type":"raw.transaction", "data":"dHgtYm9j", "lt":"456", "utime":2000000001, "hash":"BQYHCA=="
+        }]});
+        let result = normalize_get_transactions(value).expect("legacy response");
+        assert_eq!(result.transactions.len(), 1);
+        assert_eq!(result.transactions[0].lt, 456);
+        assert_eq!(result.transactions[0].hash, "BQYHCA==");
+    }
+
+    #[test]
+    fn rejects_an_identity_free_transaction() {
+        let value = serde_json::json!([{"data":"dHgtYm9j"}]);
+        assert!(normalize_get_transactions(value).is_err());
     }
 }
 

@@ -345,6 +345,10 @@ pub struct WalletBroadcastPreparedCmd {
     message_boc: String,
     #[arg(long, help = "Acknowledge broadcasting the exact supplied message")]
     yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 impl WalletCmd {
@@ -399,7 +403,11 @@ impl WalletBroadcastPreparedCmd {
         }
         let message = read_single_root_boc(message_boc.clone())?;
         let message_hash = format!("tvm-cell-sha256:{:x}", message.repr_hash());
-        let (_, _, rpc_client) = load_config_vault_rpc_client(Path::new(config_path)).await?;
+        let (_, _, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(Path::new(config_path)).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be provided together"),
+        };
         rpc_client.send_boc(&message_boc).await?;
         println!(
             "{}",
@@ -1548,12 +1556,18 @@ mod wallet_send_cli_tests {
                 "--message-boc",
                 "te6ccgEBAQEAAgAAAA==",
                 "--yes",
+                "--config-fd",
+                "3",
+                "--config-format",
+                "json",
             ])
             .expect("prepared broadcast flags must parse");
         let parsed = WalletBroadcastPreparedCmd::from_arg_matches(&matches)
             .expect("parsed prepared broadcast args");
         assert_eq!(parsed.message_boc, "te6ccgEBAQEAAgAAAA==");
         assert!(parsed.yes);
+        assert_eq!(parsed.config_fd, Some(3));
+        assert_eq!(parsed.config_format.as_deref(), Some("json"));
     }
 
     #[test]

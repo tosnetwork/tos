@@ -356,6 +356,16 @@ pub struct AgentRuntimeBinding {
     /// Optional hash of runtime attestation or deployment evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attestation_hash: Option<String>,
+    /// Owner-pinned OpenFox Economic Action Authority identity and Ed25519 key.
+    /// Custody never accepts these values from a payment request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub economic_authority_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub economic_authority_public_key_hex: Option<String>,
+    /// Owner-pinned, rollback-resistant custody journal location. Economic
+    /// effect commands may not select another high-water domain at runtime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub economic_custody_journal_directory: Option<String>,
     /// Unix timestamp when this local runtime binding was recorded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bound_at: Option<u64>,

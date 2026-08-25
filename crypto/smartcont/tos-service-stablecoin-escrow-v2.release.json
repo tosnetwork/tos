@@ -1,0 +1,10 @@
+{
+  "schema": "tos.contract.release.v1",
+  "protocol": "tos_service_stablecoin_escrow_v2",
+  "source": "crypto/smartcont/tos-service-stablecoin-escrow-v2.fc",
+  "code_hash": "tvm-cell-sha256:889f7254f37c21735a4da33f902f70b08d01b9393e6b5bc4cf78d85406afd9ce",
+  "boc_sha256": "sha256:63f4fa1cedebcd20c99d340ebe451703001d612109dbaa5050e57f84d695aac7",
+  "boc_bytes": 2347,
+  "accepted_quote_schema": 2,
+  "initial_state": "pending_acceptance"
+}

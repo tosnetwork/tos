@@ -16,14 +16,14 @@ use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
     DEPLOY_TIMEOUT, SEND_TIMEOUT, calculate_wallet_address, get_wallet_config, load_config_vault,
-    load_config_vault_rpc_client, make_wallet, save_config, try_create_rpc_client, wait_for_deploy,
-    wait_for_seqno_change, wallet_info,
+    load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, save_config,
+    try_create_rpc_client, wait_for_deploy, wait_for_seqno_change, wallet_info,
 };
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{
-    BuilderData, Cell, ConfigParamEnum, IBitstring, MsgAddressInt, Serializable,
-    read_single_root_boc, write_boc,
+    BuilderData, Cell, ConfigParamEnum, Deserializable, IBitstring, MsgAddressInt, Serializable,
+    Transaction, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::data_models::AccountState;
 use clap::ValueEnum;
@@ -31,16 +31,17 @@ use colored::Colorize;
 use common::{
     WalletVersion,
     app_config::{
-        AgentRuntimeBinding, AgentTaskConfig, AgentWalletConfig, AgentWalletPolicy, KeyConfig,
-        WalletConfig,
+        AgentRuntimeBinding, AgentTaskConfig, AgentWalletConfig, AgentWalletPolicy, AppConfig,
+        KeyConfig, WalletConfig,
     },
     chain_utils::{display_tos, tos_to_nanotos},
     time_format,
 };
 use contracts::{
     AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentAccountInit,
-    AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionStatus, TaskEscrowContract,
-    TaskEscrowData, TaskEscrowInit, Wallet,
+    AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionStatus,
+    EconomicActionAuthorization, EconomicEffectAuthorization, TaskEscrowContract, TaskEscrowData,
+    TaskEscrowInit, Wallet,
 };
 use futures_util::{StreamExt, stream};
 use rand::RngCore;
@@ -49,7 +50,13 @@ use secrets_vault::types::{
 };
 use secrets_vault::vault::SecretVault;
 use sha2::{Digest, Sha256};
-use std::{fs, io::Write, path::Path, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -454,6 +461,16 @@ pub enum AgentAccountAction {
     TaskSend(AgentAccountTaskSendCmd),
     /// Prepare one owner-authorized, bodyless native TOS transfer without broadcasting it
     NativePrepare(AgentAccountNativePrepareCmd),
+    /// Prepare an Agreement-bound, writer-fenced native payment without broadcasting it
+    EconomicPaymentPrepare(AgentAccountEconomicPaymentPrepareCmd),
+    /// Broadcast the exact previously prepared Agreement payment BOC
+    EconomicPaymentBroadcast(AgentAccountEconomicPaymentBroadcastCmd),
+    /// Resolve an Agreement payment from a quorum of independent finalized RPC views
+    EconomicPaymentResolve(AgentAccountEconomicPaymentResolveCmd),
+    /// Prepare an owner-authorized Agreement contract effect with an exact body
+    EconomicEffectPrepare(AgentAccountEconomicEffectPrepareCmd),
+    /// Broadcast the exact previously prepared Agreement contract effect
+    EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
     /// Prepare one owner-authorized cancellation for an existing controller action
     CancelPrepare(AgentAccountCancelPrepareCmd),
 }
@@ -606,6 +623,101 @@ pub struct AgentAccountNativePrepareCmd {
     unsigned_transfer_digest: String,
     #[arg(long)]
     yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Prepare an exact Agreement-bound native payment BOC; never broadcasts")]
+pub struct AgentAccountEconomicPaymentPrepareCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long)]
+    target: String,
+    #[arg(long, help = "Exact native TOS amount in nanoTOS")]
+    amount_nanotos: u64,
+    #[arg(long)]
+    fee_reserve_nanotos: u64,
+    #[arg(long)]
+    valid_until: u32,
+    #[arg(
+        long = "authorization-file",
+        help = "Absolute path to the bounded EconomicActionAuthorization JSON"
+    )]
+    authorization_file: String,
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Broadcast an exact custody-journaled Agreement payment")]
+pub struct AgentAccountEconomicPaymentBroadcastCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Canonical sha256 stable economic action ID")]
+    stable_action_id: String,
+    #[arg(long)]
+    yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Prepare an exact Agreement-bound task-body effect; never broadcasts")]
+pub struct AgentAccountEconomicEffectPrepareCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long)]
+    target: String,
+    #[arg(long, help = "Native TOS attached to the contract call, in nanoTOS")]
+    amount_nanotos: u64,
+    #[arg(long)]
+    fee_reserve_nanotos: u64,
+    #[arg(long)]
+    valid_until: u32,
+    #[arg(long, help = "Exact task body BOC as canonical base64")]
+    body_boc: String,
+    #[arg(long = "authorization-file", help = "Absolute path to CustodyEffectAuthorization JSON")]
+    authorization_file: String,
+    #[arg(long)]
+    yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
+    #[arg(long, requires = "config_fd")]
+    journal_directory: Option<String>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Broadcast an exact custody-journaled Agreement contract effect")]
+pub struct AgentAccountEconomicEffectBroadcastCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long)]
+    stable_action_id: String,
+    #[arg(long)]
+    yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
+    #[arg(long, requires = "config_fd")]
+    journal_directory: Option<String>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Resolve an Agreement payment using at least three independent RPC configs")]
+pub struct AgentAccountEconomicPaymentResolveCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Canonical sha256 stable economic action ID")]
+    stable_action_id: String,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional tosctl config; together with --config at least three distinct RPC endpoints are required"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(long, default_value_t = 1000, help = "Maximum account transactions inspected per RPC")]
+    max_transactions: u32,
 }
 
 #[derive(clap::Args, Clone)]
@@ -840,6 +952,26 @@ pub struct AgentWalletBindRuntimeCmd {
 
     #[arg(long = "attestation-hash", help = "Optional runtime attestation hash")]
     attestation_hash: Option<String>,
+
+    #[arg(
+        long = "economic-authority-id",
+        requires_all = ["economic_authority_public_key", "economic_custody_journal_directory"]
+    )]
+    economic_authority_id: Option<String>,
+
+    #[arg(
+        long = "economic-authority-public-key",
+        requires = "economic_authority_id",
+        help = "Pinned 32-byte Ed25519 public key in lowercase hex"
+    )]
+    economic_authority_public_key: Option<String>,
+
+    #[arg(
+        long = "economic-custody-journal-directory",
+        requires = "economic_authority_id",
+        help = "Existing private absolute directory pinned as the economic custody high-water domain"
+    )]
+    economic_custody_journal_directory: Option<String>,
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -1097,6 +1229,11 @@ impl AgentAccountCmd {
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativePrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::EconomicPaymentPrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::EconomicPaymentBroadcast(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::EconomicPaymentResolve(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
             AgentAccountAction::CancelPrepare(cmd) => cmd.run(config_path).await,
         }
     }
@@ -2476,6 +2613,7 @@ impl AgentAccountTaskSendCmd {
             seqno: data.seqno,
             target: target.to_string(),
             value_atomic: value,
+            body_hash: Some(format!("tvm-cell-sha256:{}", hex::encode(action_body_hash))),
             action_kind: "agent-task-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -2627,6 +2765,7 @@ impl AgentAccountNativePrepareCmd {
             seqno: data.seqno,
             target: target.to_string(),
             value_atomic: self.amount_nanotos,
+            body_hash: None,
             action_kind: "agent-native-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -2701,6 +2840,914 @@ impl AgentAccountNativePrepareCmd {
                 "valid_until": self.valid_until,
                 "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
                 "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountEconomicPaymentPrepareCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        if self.amount_nanotos == 0 {
+            anyhow::bail!("amount_nanotos must be greater than zero");
+        }
+        let now = time_format::now();
+        if self.valid_until <= now as u32 {
+            anyhow::bail!("valid_until must be a future Unix timestamp");
+        }
+        let authorization_path = Path::new(&self.authorization_file);
+        if !authorization_path.is_absolute() {
+            anyhow::bail!("authorization-file must be absolute");
+        }
+        let metadata = fs::symlink_metadata(authorization_path)
+            .context("inspect economic authorization file")?;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() == 0
+            || metadata.len() > 64 << 10
+        {
+            anyhow::bail!("economic authorization must be a bounded regular file");
+        }
+        let authorization: EconomicActionAuthorization =
+            serde_json::from_slice(&fs::read(authorization_path)?)
+                .context("decode EconomicActionAuthorization")?;
+
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let expected_authority_id = runtime
+            .economic_authority_id
+            .as_deref()
+            .context("runtime has no economic_authority_id")?;
+        let expected_key_text = runtime
+            .economic_authority_public_key_hex
+            .as_deref()
+            .context("runtime has no economic_authority_public_key")?;
+        let expected_key: [u8; 32] = hex::decode(expected_key_text)
+            .context("decode pinned economic authority key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let target =
+            self.target.parse::<MsgAddressInt>().context("invalid payment target address")?;
+        if authorization.authority_id != expected_authority_id
+            || authorization.source_account != account.to_string()
+            || authorization.destination != target.to_string()
+            || authorization.amount_atomic != self.amount_nanotos
+            || authorization.expires_at_unix < u64::from(self.valid_until)
+        {
+            anyhow::bail!(
+                "command payment tuple differs from the owner-pinned economic authorization"
+            );
+        }
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        if u128::from(self.valid_until)
+            > u128::from(now) + u128::from(data.default_task_timeout_secs)
+        {
+            anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+        }
+        if self.amount_nanotos > data.max_per_tx
+            || data.spent_today.saturating_add(self.amount_nanotos) > data.daily_limit
+        {
+            anyhow::bail!("Agreement payment exceeds Agent Account policy limits");
+        }
+        let account_info = rpc_client.get_address_information(&account).await?;
+        if account_info.state != AccountState::Active
+            || account_info.balance < self.amount_nanotos.saturating_add(self.fee_reserve_nanotos)
+        {
+            anyhow::bail!("Agent Account is inactive or lacks payment principal plus fee reserve");
+        }
+        let deployed_code =
+            account_info.code.as_ref().context("Agent Account has no deployed code")?;
+        if read_single_root_boc(deployed_code)?.hash(0) != AgentAccountContract::code()?.hash(0) {
+            anyhow::bail!("Agent Account code does not match the supported final interface");
+        }
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        if authorization.network_global_id != global_id {
+            anyhow::bail!("economic authorization targets another TOS network");
+        }
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .context("controller secret has no public key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        if controller_pubkey != data.controller_pubkey {
+            anyhow::bail!("configured controller key does not match the Agent Account");
+        }
+        let stable_hex = authorization
+            .stable_action_id
+            .strip_prefix("sha256:")
+            .context("economic stable action ID is not canonical")?
+            .to_owned();
+        validate_controller_action_id(&stable_hex)?;
+        let claim = ControllerActionClaim {
+            account: account.to_string(),
+            network_global_id: global_id,
+            deployment_id: hex::encode(data.deployment_id),
+            controller_epoch: data.controller_epoch,
+            seqno: data.seqno,
+            target: target.to_string(),
+            value_atomic: self.amount_nanotos,
+            body_hash: None,
+            action_kind: "agent-native-send".to_owned(),
+            idempotency_key: stable_hex,
+            action_identity: authorization.stable_action_id.clone(),
+            valid_until: self.valid_until,
+        };
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize Agreement payment {} from {} to {} for {} nanoTOS?",
+                authorization.stable_action_id, account, target, self.amount_nanotos
+            ))?
+        {
+            anyhow::bail!("owner declined Agreement payment authorization");
+        }
+        let journal = open_economic_controller_journal(
+            path,
+            None,
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        journal.reconcile_finalized_state(
+            &claim.account,
+            claim.network_global_id,
+            &claim.deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            now,
+        )?;
+        let (record, _) = journal.claim_economic_payment(
+            claim.clone(),
+            authorization.clone(),
+            expected_authority_id,
+            expected_key,
+            now,
+        )?;
+        if record.status == ControllerActionStatus::Resolved {
+            anyhow::bail!(
+                "economic action sequence was consumed; resolve finalized evidence before any retry"
+            );
+        }
+        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let payload = AgentAccountContract::build_native_send_payload(
+                global_id,
+                data.controller_epoch,
+                data.seqno,
+                self.valid_until,
+                &target,
+                self.amount_nanotos,
+            )?;
+            let hash =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let signature: [u8; 64] = keypair
+                .sign(&hash)
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            journal.attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                now,
+            )?;
+            boc
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.agreement-payment-prepared.v1",
+                "stable_action_id": authorization.stable_action_id,
+                "agreement_body_digest": authorization.agreement_body_digest,
+                "obligation_instance_id": authorization.obligation_instance_id,
+                "account": account.to_string(), "target": target.to_string(), "amount_nanotos": self.amount_nanotos,
+                "controller_epoch": data.controller_epoch, "seqno": data.seqno, "network_global_id": global_id,
+                "valid_until": self.valid_until,
+                "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountEconomicEffectPrepareCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        if self.amount_nanotos == 0 || self.body_boc.is_empty() || self.body_boc.len() > 128 << 10 {
+            anyhow::bail!("economic effect amount and body must be bounded and non-empty");
+        }
+        let body_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.body_boc)
+            .context("decode economic effect body")?;
+        let body =
+            read_single_root_boc(body_bytes.clone()).context("parse economic effect body")?;
+        if write_boc(&body)? != body_bytes {
+            anyhow::bail!("economic effect body is not canonical BOC");
+        }
+        let body_hash = format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)));
+        let now = time_format::now();
+        if self.valid_until <= now as u32 {
+            anyhow::bail!("valid_until must be a future Unix timestamp");
+        }
+        let authorization_path = Path::new(&self.authorization_file);
+        if !authorization_path.is_absolute() {
+            anyhow::bail!("authorization-file must be absolute");
+        }
+        let metadata = fs::symlink_metadata(authorization_path)
+            .context("inspect economic effect authorization file")?;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() == 0
+            || metadata.len() > 64 << 10
+        {
+            anyhow::bail!("economic effect authorization must be a bounded regular file");
+        }
+        let authorization: EconomicEffectAuthorization =
+            serde_json::from_slice(&fs::read(authorization_path)?)
+                .context("decode CustodyEffectAuthorization")?;
+
+        let path = Path::new(config_path);
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let expected_authority_id = runtime
+            .economic_authority_id
+            .as_deref()
+            .context("runtime has no economic_authority_id")?;
+        let expected_key: [u8; 32] = hex::decode(
+            runtime
+                .economic_authority_public_key_hex
+                .as_deref()
+                .context("runtime has no economic_authority_public_key")?,
+        )?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let target =
+            self.target.parse::<MsgAddressInt>().context("invalid economic effect target")?;
+        if authorization.authority_id != expected_authority_id
+            || authorization.source_account != account.to_string()
+            || authorization.destination != target.to_string()
+            || authorization.amount_nanotos != self.amount_nanotos
+            || authorization.body_hash != body_hash
+            || authorization.expires_at_unix < u64::from(self.valid_until)
+        {
+            anyhow::bail!("command effect differs from the owner-pinned authorization");
+        }
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        if u128::from(self.valid_until)
+            > u128::from(now) + u128::from(data.default_task_timeout_secs)
+        {
+            anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+        }
+        if self.amount_nanotos > data.max_per_tx
+            || data.spent_today.saturating_add(self.amount_nanotos) > data.daily_limit
+        {
+            anyhow::bail!("Agreement effect exceeds Agent Account policy limits");
+        }
+        let account_info = rpc_client.get_address_information(&account).await?;
+        if account_info.state != AccountState::Active
+            || account_info.balance < self.amount_nanotos.saturating_add(self.fee_reserve_nanotos)
+        {
+            anyhow::bail!("Agent Account is inactive or lacks effect value plus fee reserve");
+        }
+        let deployed_code =
+            account_info.code.as_ref().context("Agent Account has no deployed code")?;
+        if read_single_root_boc(deployed_code)?.hash(0) != AgentAccountContract::code()?.hash(0) {
+            anyhow::bail!("Agent Account code does not match the supported final interface");
+        }
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        if authorization.network_global_id != global_id {
+            anyhow::bail!("economic effect targets another TOS network");
+        }
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .context("controller secret has no public key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        if controller_pubkey != data.controller_pubkey {
+            anyhow::bail!("configured controller key does not match the Agent Account");
+        }
+        let stable_hex = authorization
+            .stable_action_id
+            .strip_prefix("sha256:")
+            .context("economic effect action ID is not canonical")?
+            .to_owned();
+        validate_controller_action_id(&stable_hex)?;
+        let claim = ControllerActionClaim {
+            account: account.to_string(),
+            network_global_id: global_id,
+            deployment_id: hex::encode(data.deployment_id),
+            controller_epoch: data.controller_epoch,
+            seqno: data.seqno,
+            target: target.to_string(),
+            value_atomic: self.amount_nanotos,
+            body_hash: Some(body_hash.clone()),
+            action_kind: "agent-task-send".to_owned(),
+            idempotency_key: stable_hex,
+            action_identity: authorization.stable_action_id.clone(),
+            valid_until: self.valid_until,
+        };
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize Agreement effect {} ({}) from {} to {}?",
+                authorization.stable_action_id, authorization.action_kind, account, target
+            ))?
+        {
+            anyhow::bail!("owner declined Agreement effect authorization");
+        }
+        let journal = open_economic_controller_journal(
+            path,
+            self.journal_directory.as_deref(),
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        journal.reconcile_finalized_state(
+            &claim.account,
+            claim.network_global_id,
+            &claim.deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            now,
+        )?;
+        let (record, _) = journal.claim_economic_effect(
+            claim.clone(),
+            authorization.clone(),
+            expected_authority_id,
+            expected_key,
+            now,
+        )?;
+        if record.status == ControllerActionStatus::Resolved {
+            anyhow::bail!("economic effect sequence was consumed; resolve before retry");
+        }
+        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let payload = AgentAccountContract::build_task_send_payload(
+                record.claim.network_global_id,
+                record.claim.controller_epoch,
+                record.claim.seqno,
+                record.claim.valid_until,
+                &target,
+                record.claim.value_atomic,
+                body,
+            )?;
+            let hash =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let signature: [u8; 64] = keypair
+                .sign(&hash)
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            journal.attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                now,
+            )?;
+            boc
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.economic-effect-prepared.v1",
+                "stable_action_id": authorization.stable_action_id,
+                "action_kind": authorization.action_kind,
+                "agreement_body_digest": authorization.agreement_body_digest,
+                "obligation_id": authorization.obligation_id,
+                "account": record.claim.account, "target": record.claim.target,
+                "amount_nanotos": record.claim.value_atomic,
+                "body_hash": record.claim.body_hash, "controller_epoch": record.claim.controller_epoch,
+                "seqno": record.claim.seqno, "network_global_id": record.claim.network_global_id,
+                "valid_until": record.claim.valid_until,
+                "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountEconomicPaymentBroadcastCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
+        let idempotency = self.stable_action_id[7..].to_owned();
+        let path = Path::new(config_path);
+        let (config, _vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let expected_authority_id = runtime
+            .economic_authority_id
+            .as_deref()
+            .context("runtime has no economic_authority_id")?;
+        let expected_key = runtime
+            .economic_authority_public_key_hex
+            .as_deref()
+            .context("runtime has no economic_authority_public_key")?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let journal = open_economic_controller_journal(
+            path,
+            None,
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        journal.reconcile_finalized_state(
+            &account.to_string(),
+            global_id,
+            &hex::encode(data.deployment_id),
+            data.controller_epoch,
+            data.seqno,
+            time_format::now(),
+        )?;
+        let record = journal
+            .find_primary(
+                &account.to_string(),
+                global_id,
+                &hex::encode(data.deployment_id),
+                data.controller_epoch,
+                &idempotency,
+            )?
+            .context("prepared Agreement payment was not found")?;
+        let authorization = record
+            .economic_authorization
+            .as_ref()
+            .context("custody record is not an economic payment")?;
+        if authorization.stable_action_id != self.stable_action_id
+            || authorization.authority_id != expected_authority_id
+            || authorization.public_key != format!("ed25519:{expected_key}")
+        {
+            anyhow::bail!("prepared payment differs from the currently owner-pinned authority");
+        }
+        let encoded =
+            record.exact_signed_boc_base64.as_ref().context("Agreement payment is not signed")?;
+        let boc = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+            anyhow::bail!("custody BOC digest is inconsistent");
+        }
+        if !self.yes
+            && !confirm(&format!("Broadcast exact Agreement payment {}?", self.stable_action_id))?
+        {
+            anyhow::bail!("owner declined Agreement payment broadcast");
+        }
+        journal.begin_broadcast(&record.claim, time_format::now())?;
+        rpc_client.send_boc(&boc).await?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.agreement-payment-broadcast.v1",
+                "stable_action_id": self.stable_action_id,
+                "account": account.to_string(),
+                "exact_signed_boc_digest": digest,
+                "state": "broadcasting"
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountEconomicEffectBroadcastCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
+        let idempotency = self.stable_action_id[7..].to_owned();
+        let path = Path::new(config_path);
+        let (config, _vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let expected_authority_id = runtime
+            .economic_authority_id
+            .as_deref()
+            .context("runtime has no economic_authority_id")?;
+        let expected_key = runtime
+            .economic_authority_public_key_hex
+            .as_deref()
+            .context("runtime has no economic_authority_public_key")?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let provider = contracts::contract_provider!(rpc_client.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        let global_id = match rpc_client.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let journal = open_economic_controller_journal(
+            path,
+            self.journal_directory.as_deref(),
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        journal.reconcile_finalized_state(
+            &account.to_string(),
+            global_id,
+            &hex::encode(data.deployment_id),
+            data.controller_epoch,
+            data.seqno,
+            time_format::now(),
+        )?;
+        let record = journal
+            .find_primary(
+                &account.to_string(),
+                global_id,
+                &hex::encode(data.deployment_id),
+                data.controller_epoch,
+                &idempotency,
+            )?
+            .context("prepared Agreement effect was not found")?;
+        let authorization = record
+            .economic_effect_authorization
+            .as_ref()
+            .context("custody record is not an economic effect")?;
+        if authorization.stable_action_id != self.stable_action_id
+            || authorization.authority_id != expected_authority_id
+            || authorization.public_key != format!("ed25519:{expected_key}")
+        {
+            anyhow::bail!("prepared effect differs from the currently owner-pinned authority");
+        }
+        let encoded =
+            record.exact_signed_boc_base64.as_ref().context("Agreement effect is not signed")?;
+        let boc = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+            anyhow::bail!("custody effect BOC digest is inconsistent");
+        }
+        if !self.yes
+            && !confirm(&format!("Broadcast exact Agreement effect {}?", self.stable_action_id))?
+        {
+            anyhow::bail!("owner declined Agreement effect broadcast");
+        }
+        journal.begin_broadcast(&record.claim, time_format::now())?;
+        rpc_client.send_boc(&boc).await?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.economic-effect-broadcast.v1",
+                "stable_action_id": self.stable_action_id,
+                "action_kind": authorization.action_kind,
+                "account": account.to_string(),
+                "exact_signed_boc_digest": digest,
+                "state": "broadcasting"
+            })
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct EconomicPaymentObservation {
+    endpoint: String,
+    transaction_hash: String,
+    transaction_lt: u64,
+    transaction_utime: u32,
+    transaction_boc_digest: String,
+    block_workchain: i32,
+    block_shard: i64,
+    block_seqno: u32,
+    block_root_hash: String,
+    block_file_hash: String,
+    observed_masterchain_seqno: u32,
+}
+
+impl EconomicPaymentObservation {
+    fn quorum_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            self.transaction_hash,
+            self.transaction_lt,
+            self.block_workchain,
+            self.block_shard,
+            self.block_seqno,
+            self.block_root_hash
+        )
+    }
+}
+
+async fn observe_economic_payment(
+    config: &AppConfig,
+    endpoint: String,
+    account: &MsgAddressInt,
+    record: &contracts::ControllerActionRecord,
+    max_transactions: u32,
+) -> anyhow::Result<EconomicPaymentObservation> {
+    let rpc_client = try_create_rpc_client(config).await?;
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_ref()
+        .context("custody record no longer contains the submitted payment BOC")?;
+    let submitted_boc = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+    let submitted_root = read_single_root_boc(&submitted_boc)?;
+    let submitted_message_hash = submitted_root.hash(0);
+    let target = record.claim.target.parse::<MsgAddressInt>()?;
+    let expected_value = chain_block::CurrencyCollection::with_coins(record.claim.value_atomic);
+
+    let info = rpc_client.get_address_information(account).await?;
+    let mut cursor_lt = info.last_transaction_id.lt;
+    let mut cursor_hash =
+        base64::engine::general_purpose::STANDARD.encode(&info.last_transaction_id.hash);
+    let mut inspected = 0u32;
+    let bounded_max = max_transactions.clamp(1, 10_000);
+
+    while cursor_lt != 0 && inspected < bounded_max {
+        let page_limit = (bounded_max - inspected).min(100);
+        let page =
+            rpc_client.get_transactions(account, cursor_lt, &cursor_hash, page_limit).await?;
+        if page.transactions.is_empty() {
+            break;
+        }
+        let mut next_cursor = None;
+        for raw in page.transactions {
+            inspected = inspected.saturating_add(1);
+            next_cursor = Some((raw.lt, raw.hash.clone()));
+            if raw.data.is_empty() {
+                continue;
+            }
+            let transaction_boc = base64::engine::general_purpose::STANDARD
+                .decode(&raw.data)
+                .context("decode finalized transaction BOC")?;
+            let transaction_root = read_single_root_boc(&transaction_boc)
+                .context("parse finalized transaction BOC")?;
+            let transaction = Transaction::construct_from_cell(transaction_root.clone())
+                .context("decode finalized transaction")?;
+            let Some(in_cell) = transaction.in_msg_cell() else {
+                continue;
+            };
+            if in_cell.hash(0) != submitted_message_hash {
+                continue;
+            }
+            let mut exact_outputs = 0u32;
+            transaction.iterate_out_msgs(|message| {
+                if message.dst().as_ref() == Some(&target)
+                    && message.value() == Some(&expected_value)
+                {
+                    exact_outputs = exact_outputs.saturating_add(1);
+                }
+                Ok(true)
+            })?;
+            if exact_outputs != 1 {
+                anyhow::bail!(
+                    "finalized submitted transaction does not contain exactly one authorized output"
+                );
+            }
+            let block = raw.block_id.context("finalized transaction has no block identity")?;
+            let master = rpc_client.get_masterchain_info().await?;
+            return Ok(EconomicPaymentObservation {
+                endpoint,
+                transaction_hash: format!("sha256:{}", hex::encode(transaction_root.hash(0))),
+                transaction_lt: transaction.logical_time(),
+                transaction_utime: raw.utime,
+                transaction_boc_digest: format!(
+                    "sha256:{}",
+                    hex::encode(Sha256::digest(&transaction_boc))
+                ),
+                block_workchain: block.workchain,
+                block_shard: block.shard,
+                block_seqno: block.seqno,
+                block_root_hash: format!("sha256:{}", hex::encode(block.root_hash)),
+                block_file_hash: format!("sha256:{}", hex::encode(block.file_hash)),
+                observed_masterchain_seqno: master.last.seqno,
+            });
+        }
+        let Some((next_lt, next_hash)) = next_cursor else {
+            break;
+        };
+        if next_lt == cursor_lt && next_hash == cursor_hash {
+            break;
+        }
+        cursor_lt = next_lt;
+        cursor_hash = next_hash;
+    }
+    anyhow::bail!(
+        "submitted Agreement payment was not found in the bounded finalized account history"
+    )
+}
+
+impl AgentAccountEconomicPaymentResolveCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
+        if self.max_transactions == 0 || self.max_transactions > 10_000 {
+            anyhow::bail!("max_transactions must be between 1 and 10000");
+        }
+        let idempotency = self.stable_action_id[7..].to_owned();
+        let primary_path = Path::new(config_path);
+        let primary = AppConfig::load(primary_path)?;
+        let agent_wallet = primary
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let primary_rpc = try_create_rpc_client(&primary).await?;
+        let provider = contracts::contract_provider!(primary_rpc.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        let global_id = match primary_rpc.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let journal = open_economic_controller_journal(
+            primary_path,
+            None,
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        let record = journal
+            .find_primary(
+                &account.to_string(),
+                global_id,
+                &hex::encode(data.deployment_id),
+                data.controller_epoch,
+                &idempotency,
+            )?
+            .context("prepared Agreement payment was not found")?;
+        let authorization = record
+            .economic_authorization
+            .as_ref()
+            .context("custody record is not an economic payment")?;
+        if authorization.stable_action_id != self.stable_action_id {
+            anyhow::bail!("custody action identity mismatch");
+        }
+        if record.status != ControllerActionStatus::Broadcasting {
+            anyhow::bail!("only an ambiguously broadcast Agreement payment may be resolved");
+        }
+
+        let mut configs = Vec::with_capacity(self.quorum_configs.len() + 1);
+        configs.push(primary_path.to_path_buf());
+        for value in &self.quorum_configs {
+            let path = Path::new(value);
+            if !path.is_absolute() {
+                anyhow::bail!("every quorum-config must be an absolute path");
+            }
+            configs.push(path.to_path_buf());
+        }
+        if configs.len() < 3 {
+            anyhow::bail!("at least three RPC configurations are required");
+        }
+
+        let mut endpoints = BTreeMap::new();
+        let mut loaded = Vec::with_capacity(configs.len());
+        for path in configs {
+            let config = AppConfig::load(&path)?;
+            let configured = config.chain_rpc.endpoints();
+            if configured.len() != 1 {
+                anyhow::bail!(
+                    "quorum config {} must name exactly one RPC endpoint",
+                    path.display()
+                );
+            }
+            let endpoint = configured[0].clone();
+            if endpoints.insert(endpoint.clone(), path.clone()).is_some() {
+                anyhow::bail!("quorum RPC endpoints must be distinct");
+            }
+            loaded.push((config, endpoint));
+        }
+
+        let mut observations = Vec::with_capacity(loaded.len());
+        let mut failures = Vec::new();
+        for (config, endpoint) in &loaded {
+            match observe_economic_payment(
+                config,
+                endpoint.clone(),
+                &account,
+                &record,
+                self.max_transactions,
+            )
+            .await
+            {
+                Ok(observation) => observations.push(observation),
+                Err(error) => failures.push(format!("{endpoint}: {error:#}")),
+            }
+        }
+        let threshold = loaded.len() / 2 + 1;
+        let mut votes: BTreeMap<String, Vec<&EconomicPaymentObservation>> = BTreeMap::new();
+        for observation in &observations {
+            votes.entry(observation.quorum_key()).or_default().push(observation);
+        }
+        let winner = votes
+            .values()
+            .max_by_key(|group| group.len())
+            .filter(|group| group.len() >= threshold)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no strict majority agreed on the finalized payment transaction; observations={}; failures={}",
+                    serde_json::to_string(&observations).unwrap_or_else(|_| "[]".to_owned()),
+                    serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
+                )
+            })?;
+        let evidence = winner[0];
+
+        let finalized = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        if finalized.controller_epoch != record.claim.controller_epoch
+            || finalized.seqno <= record.claim.seqno
+        {
+            anyhow::bail!(
+                "primary finalized Agent Account state has not consumed the payment seqno"
+            );
+        }
+        journal.reconcile_finalized_state(
+            &account.to_string(),
+            global_id,
+            &hex::encode(finalized.deployment_id),
+            finalized.controller_epoch,
+            finalized.seqno,
+            time_format::now(),
+        )?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.agent-account.agreement-payment-finalized.v1",
+                "stable_action_id": self.stable_action_id,
+                "agreement_body_digest": authorization.agreement_body_digest,
+                "obligation_instance_id": authorization.obligation_instance_id,
+                "source_account": account.to_string(),
+                "destination": record.claim.target,
+                "amount_nanotos": record.claim.value_atomic,
+                "network_global_id": global_id,
+                "quorum": {"members": loaded.len(), "threshold": threshold, "agreeing": winner.len()},
+                "evidence": evidence,
+                "observations": observations,
+                "failures": failures,
+                "state": "finalized"
             })
         );
         Ok(())
@@ -2881,6 +3928,49 @@ fn open_controller_journal(config_path: &Path) -> anyhow::Result<AgentAccountCus
         }
     }
     AgentAccountCustodyJournal::open(directory)
+}
+
+fn open_economic_controller_journal(
+    _config_path: &Path,
+    explicit_directory: Option<&str>,
+    pinned_directory: Option<&str>,
+) -> anyhow::Result<AgentAccountCustodyJournal> {
+    let pinned = pinned_directory
+        .context("runtime has no owner-pinned economic_custody_journal_directory")?;
+    let pinned = canonical_private_journal_directory(pinned)?;
+    if let Some(explicit) = explicit_directory {
+        let explicit = canonical_private_journal_directory(explicit)?;
+        if explicit != pinned {
+            anyhow::bail!("economic effect journal differs from owner-pinned runtime binding");
+        }
+    }
+    AgentAccountCustodyJournal::open(pinned)
+}
+
+fn canonical_private_journal_directory(value: &str) -> anyhow::Result<PathBuf> {
+    let directory = Path::new(value);
+    if !directory.is_absolute() {
+        anyhow::bail!("economic effect journal directory must be absolute");
+    }
+    let metadata =
+        fs::symlink_metadata(directory).context("inspect economic effect journal directory")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        anyhow::bail!("economic effect journal path is not a real directory");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            anyhow::bail!("economic effect journal directory must be owner-private");
+        }
+    }
+    let canonical = fs::canonicalize(directory)?;
+    if !canonical.is_absolute() {
+        anyhow::bail!("economic effect journal canonical path is not absolute");
+    }
+    Ok(canonical)
 }
 
 async fn run_agent_account_owner_action(
@@ -3372,6 +4462,22 @@ impl AgentWalletBindRuntimeCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_non_empty("runner-id", &self.runner_id)?;
         validate_non_empty("endpoint", &self.endpoint)?;
+        if let Some(authority_id) = &self.economic_authority_id {
+            validate_non_empty("economic-authority-id", authority_id)?;
+        }
+        if let Some(key) = &self.economic_authority_public_key {
+            if key.len() != 64
+                || !key.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                anyhow::bail!("economic-authority-public-key must be 32 lowercase-hex bytes");
+            }
+        }
+        let economic_custody_journal_directory = self
+            .economic_custody_journal_directory
+            .as_deref()
+            .map(canonical_private_journal_directory)
+            .transpose()?
+            .map(|value| value.to_string_lossy().into_owned());
 
         let path = Path::new(config_path);
         let (mut config, vault) = load_config_vault(path).await?;
@@ -3384,6 +4490,9 @@ impl AgentWalletBindRuntimeCmd {
             runner_id: self.runner_id.clone(),
             endpoint: self.endpoint.clone(),
             attestation_hash: self.attestation_hash.clone(),
+            economic_authority_id: self.economic_authority_id.clone(),
+            economic_authority_public_key_hex: self.economic_authority_public_key.clone(),
+            economic_custody_journal_directory,
             bound_at: Some(time_format::now()),
         });
         let agent_wallet = agent_wallet.clone();
