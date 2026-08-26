@@ -398,7 +398,9 @@ pub struct ExactBocSubmissionResult {
     pub status: ExactBocSubmissionStatus,
     /// Hash of the exact root cell computed locally before any network I/O.
     pub cell_hash: String,
-    /// The sole endpoint against which this attempt was made.
+    /// Display-safe origin of the sole endpoint against which this attempt was
+    /// made. Paths, credentials, queries, and fragments are never exposed by
+    /// this public result.
     pub endpoint: String,
     /// Present only for the production relay API, after a primary-only
     /// preflight matched the explicit owner pin immediately before the write.

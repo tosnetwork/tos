@@ -313,8 +313,10 @@ struct RelayAbsenceProofBundleV1 {
     proof_profile_digest: String,
     proof_payload_digest: String,
     proof_payload: String,
-    sponsorship_absence_observations: Vec<RelayAbsenceObservationReferenceV1>,
-    transaction_absence_observations: Vec<RelayAbsenceObservationReferenceV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sponsorship_absence_observations: Option<Vec<RelayAbsenceObservationReferenceV1>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transaction_absence_observations: Option<Vec<RelayAbsenceObservationReferenceV1>>,
 }
 
 #[derive(Clone, Debug)]
@@ -328,6 +330,7 @@ struct ParsedNativeSend {
     value_atomic: u64,
     digest: String,
     cell_hash: String,
+    controller_authorization: ParsedControllerAuthorization,
 }
 
 #[derive(Clone, Debug)]
@@ -462,6 +465,52 @@ fn absence_proof_profile_digest() -> anyhow::Result<String> {
     Ok(digest)
 }
 
+fn validate_absence_wrapper_component_presence(
+    value: &serde_json::Value,
+    expected_scope: &str,
+) -> anyhow::Result<()> {
+    let wrapper = object(value, "generic relay absence proof wrapper")?;
+    let encoded_scope = wrapper
+        .get("proof_scope")
+        .context("generic relay absence proof wrapper.proof_scope is missing")?
+        .as_str()
+        .context("generic relay absence proof wrapper.proof_scope must be a string")?;
+    if encoded_scope != expected_scope {
+        anyhow::bail!(
+            "generic relay absence proof wrapper scope {encoded_scope:?} does not match expected scope {expected_scope:?}"
+        );
+    }
+
+    let (sponsorship_required, transaction_required) = match expected_scope {
+        "sponsorship_only" => (true, false),
+        "transaction_only" => (false, true),
+        "dual" => (true, true),
+        _ => anyhow::bail!("unsupported absence proof scope {expected_scope:?}"),
+    };
+    for (key, required) in [
+        ("sponsorship_absence_observations", sponsorship_required),
+        ("transaction_absence_observations", transaction_required),
+    ] {
+        match (required, wrapper.get(key)) {
+            (true, Some(serde_json::Value::Array(observations))) if !observations.is_empty() => {}
+            (true, Some(serde_json::Value::Array(_))) => anyhow::bail!(
+                "generic relay absence proof wrapper.{key} must be a non-empty array for scope {expected_scope:?}"
+            ),
+            (true, Some(_)) => anyhow::bail!(
+                "generic relay absence proof wrapper.{key} must be a non-empty array for scope {expected_scope:?}"
+            ),
+            (true, None) => anyhow::bail!(
+                "generic relay absence proof wrapper.{key} is required for scope {expected_scope:?}"
+            ),
+            (false, None) => {}
+            (false, Some(_)) => anyhow::bail!(
+                "generic relay absence proof wrapper.{key} must be absent for scope {expected_scope:?}"
+            ),
+        }
+    }
+    Ok(())
+}
+
 fn wrap_absence_proof_payload(
     proof_scope: &str,
     payload_cbor: &[u8],
@@ -479,10 +528,11 @@ fn wrap_absence_proof_payload(
         proof_profile_digest: absence_proof_profile_digest()?,
         proof_payload_digest: payload_digest,
         proof_payload: base64::engine::general_purpose::STANDARD.encode(payload_cbor),
-        sponsorship_absence_observations: sponsorship.to_vec(),
-        transaction_absence_observations: transaction.to_vec(),
+        sponsorship_absence_observations: (!sponsorship.is_empty()).then(|| sponsorship.to_vec()),
+        transaction_absence_observations: (!transaction.is_empty()).then(|| transaction.to_vec()),
     };
     let value = serde_json::to_value(&bundle)?;
+    validate_absence_wrapper_component_presence(&value, proof_scope)?;
     let mut cbor = Vec::new();
     encode_protocol_json_cbor(&value, &mut cbor, 0)?;
     if cbor.len() > 128 << 10 {
@@ -500,12 +550,15 @@ fn decode_absence_proof_bundle(
     if wrapper_cbor.len() > 128 << 10 {
         anyhow::bail!("absence proof wrapper exceeds the released 128 KiB bound");
     }
+    validate_absence_wrapper_component_presence(&wrapper_value, expected_scope)?;
     let wrapper: RelayAbsenceProofBundleV1 = serde_json::from_value(wrapper_value)
         .context("decode generic relay absence proof wrapper")?;
     if wrapper.schema_version != 1
         || wrapper.proof_scope != expected_scope
         || wrapper.proof_profile_uri != ABSENCE_PROOF_PROFILE_URI
         || wrapper.proof_profile_digest != absence_proof_profile_digest()?
+        || wrapper.sponsorship_absence_observations.as_ref().is_some_and(Vec::is_empty)
+        || wrapper.transaction_absence_observations.as_ref().is_some_and(Vec::is_empty)
     {
         anyhow::bail!("absence proof wrapper selects an unsupported profile or scope");
     }
@@ -522,8 +575,10 @@ fn decode_absence_proof_bundle(
     let payload: DualAbsenceProofBundleV1 = serde_json::from_value(payload_value)
         .context("decode exact tosctl absence proof payload")?;
     if payload.proof_scope != expected_scope
-        || wrapper.sponsorship_absence_observations != payload.sponsorship_absence_observations
-        || wrapper.transaction_absence_observations != payload.transaction_absence_observations
+        || wrapper.sponsorship_absence_observations.as_deref().unwrap_or_default()
+            != payload.sponsorship_absence_observations
+        || wrapper.transaction_absence_observations.as_deref().unwrap_or_default()
+            != payload.transaction_absence_observations
     {
         anyhow::bail!("absence proof wrapper conflicts with its exact typed payload");
     }
@@ -562,7 +617,15 @@ fn parse_agent_account_native_send(bytes: &[u8]) -> anyhow::Result<ParsedNativeS
         .context("signed client transaction is not an external inbound message")?;
     let source_account = header.dst.to_string();
     let mut body = message.body().cloned().context("signed client transaction has no body")?;
-    body.move_by(512).context("signed client transaction has a truncated controller signature")?;
+    let signature: [u8; 64] = body
+        .get_next_bytes(64)
+        .context("signed client transaction has a truncated controller signature")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("signed client transaction signature must be 64 bytes"))?;
+    if signature.iter().all(|byte| *byte == 0) {
+        anyhow::bail!("signed client transaction has an invalid zero signature");
+    }
+    let payload = body.clone().into_cell()?;
     let opcode = body.get_next_u32()?;
     let global_id = body.get_next_i32()?;
     let controller_epoch = body.get_next_u64()?;
@@ -583,6 +646,8 @@ fn parse_agent_account_native_send(bytes: &[u8]) -> anyhow::Result<ParsedNativeS
             "signed client transaction is not the released Agent Account native-send profile"
         );
     }
+    let hash_to_sign =
+        AgentAccountContract::controller_hash_to_sign(&header.dst, global_id, &payload)?;
     Ok(ParsedNativeSend {
         source_account,
         global_id,
@@ -593,6 +658,11 @@ fn parse_agent_account_native_send(bytes: &[u8]) -> anyhow::Result<ParsedNativeS
         value_atomic,
         digest: canonical_file_digest(bytes),
         cell_hash: format!("tvm-cell-sha256:{}", hex::encode(root.hash(0))),
+        controller_authorization: ParsedControllerAuthorization {
+            controller_epoch,
+            signature,
+            hash_to_sign,
+        },
     })
 }
 
@@ -990,17 +1060,21 @@ async fn common_checkpoint(
         let rpc = match try_create_rpc_client(&member.config).await {
             Ok(rpc) => rpc,
             Err(error) => {
-                temporary.push(format!("{}: {error:#}", member.endpoint));
+                temporary.push(rpc_failure_diagnostic(&member.endpoint, &error));
                 continue;
             }
         };
         if let Err(error) = rpc.verify_pinned_primary_network(network).await {
-            let rendered = format!("{}: {error:#}", member.endpoint);
-            if sponsorship_rpc_temporarily_unavailable(&rendered) {
-                temporary.push(rendered);
+            let category = rpc_failure_category(&error);
+            let diagnostic = rpc_failure_diagnostic(&member.endpoint, &error);
+            if category == "temporarily_unavailable" {
+                temporary.push(diagnostic);
                 continue;
             }
-            anyhow::bail!("frozen RPC member conflicts with the exact network domain: {rendered}");
+            anyhow::bail!(
+                "frozen RPC member {} conflicts with the exact network domain; rpc_failure_category={category}",
+                member.display_origin
+            );
         }
         match rpc.get_masterchain_info().await {
             Ok(head) => {
@@ -1014,7 +1088,7 @@ async fn common_checkpoint(
                 }
                 available.push((member.clone(), rpc, head.last));
             }
-            Err(error) => temporary.push(format!("{}: {error:#}", member.endpoint)),
+            Err(error) => temporary.push(rpc_failure_diagnostic(&member.endpoint, &error)),
         }
     }
     if available.len() < required {
@@ -1048,7 +1122,7 @@ async fn common_checkpoint(
                 value.id.context("getBlockTransactions omitted selected block identity")?
             }
             Err(error) => {
-                temporary.push(format!("{}: {error:#}", member.endpoint));
+                temporary.push(rpc_failure_diagnostic(&member.endpoint, &error));
                 continue;
             }
         };
@@ -1056,7 +1130,7 @@ async fn common_checkpoint(
             match rpc.get_block_header(-1, &selected_shard.to_string(), selected_seqno).await {
                 Ok(value) => value,
                 Err(error) => {
-                    temporary.push(format!("{}: {error:#}", member.endpoint));
+                    temporary.push(rpc_failure_diagnostic(&member.endpoint, &error));
                     continue;
                 }
             };
@@ -1219,6 +1293,19 @@ fn evidence_set_digest(reference_digests: &[String]) -> anyhow::Result<String> {
     exact_protocol_action_request_digest(&encoded)
 }
 
+fn require_absence_checkpoint_maturity(
+    observation_kind: &str,
+    checkpoint_unix: u64,
+    deadline: u64,
+) -> Result<(), String> {
+    if checkpoint_unix < deadline {
+        return Err(format!(
+            "{observation_kind} checkpoint {checkpoint_unix} predates expiry-plus-reorg {deadline}"
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn produce_absence_set(
     loaded: &[LoadedEconomicPaymentCorroborationMember],
@@ -1229,11 +1316,12 @@ async fn produce_absence_set(
     source_effect_digest: &str,
     source_effect_cell_hash: &str,
     source_account: &str,
-    signed_controller_epoch: u64,
+    controller_authorization: &ParsedControllerAuthorization,
     signed_source_sequence: u32,
     source_effect_valid_until_unix: u64,
     profile: &SponsorshipFinalityProfile,
 ) -> anyhow::Result<DualAbsenceQuery<AbsenceEvidenceSet>> {
+    let signed_controller_epoch = controller_authorization.controller_epoch;
     let required = snapshot_threshold.max(usize::from(profile.minimum_observers));
     let (checkpoint, members) = match common_checkpoint(loaded, &context.network, required).await? {
         DualAbsenceQuery::Terminal(value) => value,
@@ -1258,32 +1346,59 @@ async fn produce_absence_set(
     let mut temporary = Vec::new();
     let mut conclusions = BTreeSet::new();
     for checkpoint_member in members {
-        let state =
-            match checkpoint_agent_account_data(&checkpoint_member.rpc, &source, &checkpoint).await
-            {
-                Ok(state) => state,
-                Err(error) => {
-                    let rendered = format!("{}: {error:#}", checkpoint_member.member.endpoint);
-                    if sponsorship_rpc_temporarily_unavailable(&rendered) {
-                        temporary.push(rendered);
-                        continue;
-                    }
-                    anyhow::bail!("checkpoint Agent Account proof is malformed: {rendered}");
+        let state = match checkpoint_agent_account_data(
+            &checkpoint_member.rpc,
+            &source,
+            &checkpoint,
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                let category = rpc_failure_category(&error);
+                let diagnostic = rpc_failure_diagnostic(&checkpoint_member.member.endpoint, &error);
+                if category == "temporarily_unavailable" {
+                    temporary.push(diagnostic);
+                    continue;
                 }
-            };
+                anyhow::bail!(
+                    "checkpoint Agent Account proof from {} is malformed; rpc_failure_category={category}",
+                    checkpoint_member.member.display_origin
+                );
+            }
+        };
         let (conclusion, history_complete, history_transactions_inspected, invalidation_reason) =
             if state.controller_epoch < signed_controller_epoch {
                 anyhow::bail!(
                     "checkpoint Agent Account controller epoch rolled behind the signed action"
                 );
-            } else if state.controller_epoch == signed_controller_epoch
-                && state.seqno <= signed_source_sequence
-            {
-                if u64::from(checkpoint.unix) < deadline {
-                    return Ok(DualAbsenceQuery::NotMature(format!(
-                        "{observation_kind} checkpoint {} predates expiry-plus-reorg {}",
-                        checkpoint.unix, deadline
-                    )));
+            } else if state.controller_epoch > signed_controller_epoch {
+                // Current state cannot authenticate a signature from a retired
+                // controller. Sequence/epoch advancement only proves that the
+                // bytes are no longer executable, not that they were ever
+                // authorized. V1 has no historical controller-state proof.
+                return Ok(DualAbsenceQuery::TemporarilyUnavailable(format!(
+                    "{observation_kind} controller epoch advanced from {signed_controller_epoch} to {}; historical controller authorization proof is unavailable",
+                    state.controller_epoch
+                )));
+            } else if {
+                verify_parsed_controller_authorization(
+                    controller_authorization,
+                    &state.controller_pubkey,
+                )
+                .with_context(|| {
+                    format!(
+                        "checkpoint Agent Account does not authorize the exact signed {observation_kind}"
+                    )
+                })?;
+                state.seqno <= signed_source_sequence
+            } {
+                if let Err(reason) = require_absence_checkpoint_maturity(
+                    observation_kind,
+                    u64::from(checkpoint.unix),
+                    deadline,
+                ) {
+                    return Ok(DualAbsenceQuery::NotMature(reason));
                 }
                 (
                     "expired_without_inclusion".to_owned(),
@@ -1308,17 +1423,18 @@ async fn produce_absence_set(
                     Ok((HistoryConclusion::Incomplete, inspected)) => {
                         temporary.push(format!(
                             "{}: bounded source history ({inspected}) cannot exclude exact execution",
-                            checkpoint_member.member.endpoint
+                            checkpoint_member.member.display_origin
                         ));
                         continue;
                     }
                     Ok((HistoryConclusion::ExactAbsentComplete, inspected)) => {
                         if observation_kind == "sponsorship_action" {
-                            if u64::from(checkpoint.unix) < deadline {
-                                return Ok(DualAbsenceQuery::NotMature(format!(
-                                    "sponsorship checkpoint {} predates expiry-plus-reorg {}",
-                                    checkpoint.unix, deadline
-                                )));
+                            if let Err(reason) = require_absence_checkpoint_maturity(
+                                "sponsorship",
+                                u64::from(checkpoint.unix),
+                                deadline,
+                            ) {
+                                return Ok(DualAbsenceQuery::NotMature(reason));
                             }
                             (
                                 "expired_without_inclusion".to_owned(),
@@ -1338,12 +1454,17 @@ async fn produce_absence_set(
                         }
                     }
                     Err(error) => {
-                        let rendered = format!("{}: {error:#}", checkpoint_member.member.endpoint);
-                        if sponsorship_rpc_temporarily_unavailable(&rendered) {
-                            temporary.push(rendered);
+                        let category = rpc_failure_category(&error);
+                        let diagnostic =
+                            rpc_failure_diagnostic(&checkpoint_member.member.endpoint, &error);
+                        if category == "temporarily_unavailable" {
+                            temporary.push(diagnostic);
                             continue;
                         }
-                        anyhow::bail!("source-history absence proof is malformed: {rendered}");
+                        anyhow::bail!(
+                            "source-history absence proof from {} is malformed; rpc_failure_category={category}",
+                            checkpoint_member.member.display_origin
+                        );
                     }
                 }
             };
@@ -1409,11 +1530,10 @@ async fn produce_absence_set(
     }
     let conclusion =
         conclusions.into_iter().next().context("absence query produced no conclusion")?;
-    if conclusion != "invalidated_without_inclusion" && u64::from(checkpoint.unix) < deadline {
-        return Ok(DualAbsenceQuery::NotMature(format!(
-            "{observation_kind} checkpoint {} predates expiry-plus-reorg {}",
-            checkpoint.unix, deadline
-        )));
+    if let Err(reason) =
+        require_absence_checkpoint_maturity(observation_kind, u64::from(checkpoint.unix), deadline)
+    {
+        return Ok(DualAbsenceQuery::NotMature(reason));
     }
     let mut pairs = Vec::with_capacity(raw.len());
     for observation in raw {
@@ -1682,8 +1802,9 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd {
                     "stored absence resolution",
                 )?)?;
             let wrapper_value = decode_exact_protocol_cbor_bytes(&proof_bundle_cbor)?;
-            let wrapper: RelayAbsenceProofBundleV1 = serde_json::from_value(wrapper_value)?;
             let stored_scope = if proof_scope == "dual" { "sponsorship_only" } else { proof_scope };
+            validate_absence_wrapper_component_presence(&wrapper_value, stored_scope)?;
+            let wrapper: RelayAbsenceProofBundleV1 = serde_json::from_value(wrapper_value)?;
             if wrapper.proof_scope != stored_scope
                 || protocol_cbor_digest(ABSENCE_PROOF_BUNDLE_DOMAIN, &proof_bundle_cbor)?
                     != text_member(
@@ -1790,7 +1911,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd {
         let signed_top_up_cell_hash =
             format!("tvm-cell-sha256:{}", hex::encode(signed_top_up_root.hash(0)));
         let destination = record.claim.target.parse::<MsgAddressInt>()?;
-        let sponsor_controller_epoch = validate_exact_sponsorship_top_up_boc(
+        let sponsor_controller_authorization = validate_exact_sponsorship_top_up_boc(
             &signed_top_up,
             &signed_top_up_b64,
             &signed_top_up_digest,
@@ -1846,7 +1967,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd {
                 || prior.produced_at_unix > time_format::now().saturating_add(5 * 60)
                 || !prior.transaction_observations.is_empty()
                 || !prior.transaction_absence_observations.is_empty()
-                || wrapper.transaction_absence_observations.len() != 0
+                || wrapper.transaction_absence_observations.is_some()
             {
                 anyhow::bail!(
                     "existing sponsorship component proof conflicts with custody or exact relay inputs"
@@ -1890,7 +2011,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd {
             &signed_top_up_digest,
             &signed_top_up_cell_hash,
             &source.to_string(),
-            sponsor_controller_epoch,
+            &sponsor_controller_authorization,
             record.claim.seqno,
             u64::from(record.claim.valid_until),
             &context.sponsorship_terminal_profile,
@@ -1930,7 +2051,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd {
                     &context.signed_transaction.digest,
                     &context.signed_transaction.cell_hash,
                     &context.signed_transaction.source_account,
-                    context.signed_transaction.controller_epoch,
+                    &context.signed_transaction.controller_authorization,
                     context.signed_transaction.source_sequence,
                     u64::from(context.signed_transaction.valid_until),
                     transaction_profile,
@@ -2185,7 +2306,7 @@ impl AgentAccountEconomicPaymentRelayTransactionComponentAbsenceCmd {
             &context.signed_transaction.digest,
             &context.signed_transaction.cell_hash,
             &context.signed_transaction.source_account,
-            context.signed_transaction.controller_epoch,
+            &context.signed_transaction.controller_authorization,
             context.signed_transaction.source_sequence,
             u64::from(context.signed_transaction.valid_until),
             transaction_profile,
@@ -2370,8 +2491,7 @@ fn validate_bundled_absence_set(
             || raw.observed_at_unix == 0
             || raw.observed_at_unix > produced_at_unix.saturating_add(5 * 60)
             || raw.checkpoint_unix > raw.observed_at_unix.saturating_add(5 * 60)
-            || (expected_conclusion != "invalidated_without_inclusion"
-                && raw.checkpoint_unix < deadline)
+            || raw.checkpoint_unix < deadline
             || (expected_conclusion == "invalidated_without_inclusion"
                 && !raw.history_complete_when_required)
         {
@@ -2403,8 +2523,7 @@ fn validate_bundled_absence_set(
             || reference.observation_evidence_profile_digest != evidence_profile_digest
             || reference.observation_digest != raw_digest
             || reference.observed_at_unix != raw.observed_at_unix
-            || (expected_conclusion != "invalidated_without_inclusion"
-                && reference.finalized_checkpoint_unix < deadline)
+            || reference.finalized_checkpoint_unix < deadline
         {
             anyhow::bail!("bundled {kind} absence reference conflicts with its raw proof");
         }
@@ -2448,6 +2567,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
             anyhow::bail!("dual-absence proof bundle exceeds the released 128 KiB bound");
         }
         let bundle_digest = protocol_cbor_digest(ABSENCE_PROOF_BUNDLE_DOMAIN, &bundle_cbor)?;
+        validate_absence_wrapper_component_presence(&wrapper_value, proof_scope)?;
         let wrapper: RelayAbsenceProofBundleV1 = serde_json::from_value(wrapper_value)
             .context("decode generic relay absence proof wrapper")?;
         if wrapper.schema_version != 1
@@ -2470,8 +2590,10 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
         let bundle: DualAbsenceProofBundleV1 = serde_json::from_value(bundle_value.clone())
             .context("decode exact Provider dual-absence proof bundle")?;
         if bundle.proof_scope != proof_scope
-            || wrapper.sponsorship_absence_observations != bundle.sponsorship_absence_observations
-            || wrapper.transaction_absence_observations != bundle.transaction_absence_observations
+            || wrapper.sponsorship_absence_observations.as_deref().unwrap_or_default()
+                != bundle.sponsorship_absence_observations
+            || wrapper.transaction_absence_observations.as_deref().unwrap_or_default()
+                != bundle.transaction_absence_observations
             || (proof_scope == "sponsorship_only"
                 && (!bundle.transaction_observations.is_empty()
                     || !bundle.transaction_absence_observations.is_empty()))
@@ -2615,7 +2737,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
             let payment_destination = String::from_utf8(payment_destination)?;
             let payment_destination_address = payment_destination.parse::<MsgAddressInt>()?;
             let amount = payment.amount.amount_atomic.parse::<u64>()?;
-            let epoch = validate_exact_sponsorship_top_up_boc(
+            let authorization = validate_exact_sponsorship_top_up_boc(
                 &top_up,
                 &bundle.signed_top_up_transaction_boc,
                 &bundle.signed_top_up_transaction_digest,
@@ -2645,7 +2767,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
                 bundle.sponsorship_valid_until_unix,
                 bundle.produced_at_unix,
             )?);
-            Some(epoch)
+            Some(authorization)
         };
         if let Some(expected_conclusion) = expected_transaction_conclusion {
             merged.extend(validate_bundled_absence_set(
@@ -2689,7 +2811,8 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
                     &bundle.signed_top_up_transaction_cell_hash,
                     &bundle.provider_sponsor_source_account,
                     sponsor_epoch
-                        .context("verified sponsorship proof lost its controller epoch")?,
+                        .as_ref()
+                        .context("verified sponsorship proof lost its controller authorization")?,
                     u32::try_from(bundle.provider_sponsor_source_sequence)?,
                     bundle.sponsorship_valid_until_unix,
                     &context.sponsorship_terminal_profile,
@@ -2724,7 +2847,7 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd {
                     &context.signed_transaction.digest,
                     &context.signed_transaction.cell_hash,
                     &context.signed_transaction.source_account,
-                    context.signed_transaction.controller_epoch,
+                    &context.signed_transaction.controller_authorization,
                     context.signed_transaction.source_sequence,
                     u64::from(context.signed_transaction.valid_until),
                     transaction_profile,
@@ -2887,8 +3010,8 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCapabilityCmd {
         if let Err(error) =
             verify_economic_payment_corroboration_network(&loaded, &snapshot.network_domain).await
         {
-            let rendered = format!("{error:#}");
-            if sponsorship_rpc_temporarily_unavailable(&rendered) {
+            let category = rpc_failure_category(&error);
+            if category == "temporarily_unavailable" {
                 println!(
                     "{}",
                     serde_json::json!({
@@ -2907,7 +3030,9 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCapabilityCmd {
                 );
                 return Ok(());
             }
-            return Err(error.context("frozen RPC capability network mismatch"));
+            anyhow::bail!(
+                "frozen RPC capability network mismatch; rpc_failure_category={category}"
+            );
         }
         let network_digest = relay_network_domain_digest(&snapshot.network_domain)?;
         println!(
@@ -2951,8 +3076,217 @@ impl AgentAccountEconomicPaymentSponsorshipDualAbsenceCapabilityCmd {
 }
 
 #[cfg(test)]
+mod security_tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn future_valid_sequence_advance_is_not_mature_until_expiry_plus_reorg() {
+        let deadline = 1_800_000_100u64 + 120;
+        let reason =
+            require_absence_checkpoint_maturity("client_transaction", deadline - 1, deadline)
+                .expect_err("a future-valid transaction cannot terminalize on sequence advance");
+        assert!(reason.contains("predates expiry-plus-reorg"));
+        require_absence_checkpoint_maturity("client_transaction", deadline, deadline)
+            .expect("the exact expiry-plus-reorg checkpoint is mature");
+        require_absence_checkpoint_maturity("client_transaction", deadline + 1, deadline)
+            .expect("a later finalized checkpoint is mature");
+    }
+
+    #[test]
+    fn controller_authorization_requires_the_bound_ed25519_key() {
+        let signing_key = SigningKey::from_bytes(&[0x42; 32]);
+        let hash_to_sign = [0x24; 32];
+        let authorization = ParsedControllerAuthorization {
+            controller_epoch: 7,
+            signature: signing_key.sign(&hash_to_sign).to_bytes(),
+            hash_to_sign,
+        };
+        verify_parsed_controller_authorization(
+            &authorization,
+            signing_key.verifying_key().as_bytes(),
+        )
+        .expect("the exact controller signature must verify");
+
+        let wrong_key = SigningKey::from_bytes(&[0x43; 32]);
+        assert!(
+            verify_parsed_controller_authorization(
+                &authorization,
+                wrong_key.verifying_key().as_bytes(),
+            )
+            .is_err()
+        );
+        let mut zero = authorization;
+        zero.signature = [0; 64];
+        assert!(
+            verify_parsed_controller_authorization(&zero, signing_key.verifying_key().as_bytes(),)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn client_transaction_parser_rejects_zero_and_verifies_exact_signature() {
+        let source = format!("0:{}", "3".repeat(64)).parse::<MsgAddressInt>().unwrap();
+        let destination = format!("0:{}", "4".repeat(64)).parse::<MsgAddressInt>().unwrap();
+        let payload = AgentAccountContract::build_native_send_payload(
+            42,
+            7,
+            9,
+            1_800_000_100,
+            &destination,
+            50,
+        )
+        .unwrap();
+        let zero = AgentAccountContract::build_signed_controller_message(payload.clone(), &[0; 64])
+            .unwrap();
+        let zero_message =
+            AgentAccountContract::build_external_controller_message(source.clone(), zero).unwrap();
+        assert!(parse_agent_account_native_send(&write_boc(&zero_message).unwrap()).is_err());
+
+        let controller = SigningKey::from_bytes(&[0x44; 32]);
+        let hash = AgentAccountContract::controller_hash_to_sign(&source, 42, &payload).unwrap();
+        let signed = AgentAccountContract::build_signed_controller_message(
+            payload,
+            &controller.sign(&hash).to_bytes(),
+        )
+        .unwrap();
+        let message =
+            AgentAccountContract::build_external_controller_message(source, signed).unwrap();
+        let parsed = parse_agent_account_native_send(&write_boc(&message).unwrap())
+            .expect("valid exact native-send BOC");
+        verify_parsed_controller_authorization(
+            &parsed.controller_authorization,
+            controller.verifying_key().as_bytes(),
+        )
+        .expect("parsed client signature must verify under the finalized controller key");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wrapper_presence_value(
+        scope: &str,
+        sponsorship: Option<serde_json::Value>,
+        transaction: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let mut value = serde_json::json!({ "proof_scope": scope });
+        let object = value.as_object_mut().expect("test wrapper object");
+        if let Some(sponsorship) = sponsorship {
+            object.insert("sponsorship_absence_observations".to_owned(), sponsorship);
+        }
+        if let Some(transaction) = transaction {
+            object.insert("transaction_absence_observations".to_owned(), transaction);
+        }
+        value
+    }
+
+    #[test]
+    fn generic_absence_wrapper_requires_exact_scope_component_presence() {
+        let non_empty = || serde_json::json!([{}]);
+        for (scope, sponsorship, transaction) in [
+            ("sponsorship_only", Some(non_empty()), None),
+            ("transaction_only", None, Some(non_empty())),
+            ("dual", Some(non_empty()), Some(non_empty())),
+        ] {
+            let value = wrapper_presence_value(scope, sponsorship, transaction);
+            validate_absence_wrapper_component_presence(&value, scope)
+                .unwrap_or_else(|error| panic!("valid {scope} presence matrix: {error:#}"));
+        }
+    }
+
+    #[test]
+    fn generic_absence_wrapper_rejects_null_empty_and_wrong_typed_components() {
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!("observation"),
+        ] {
+            let sponsorship =
+                wrapper_presence_value("sponsorship_only", Some(invalid.clone()), None);
+            assert!(
+                validate_absence_wrapper_component_presence(&sponsorship, "sponsorship_only")
+                    .is_err(),
+                "applicable sponsorship component accepted {invalid}"
+            );
+            let transaction =
+                wrapper_presence_value("transaction_only", None, Some(invalid.clone()));
+            assert!(
+                validate_absence_wrapper_component_presence(&transaction, "transaction_only")
+                    .is_err(),
+                "applicable transaction component accepted {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_absence_wrapper_rejects_missing_and_inapplicable_components() {
+        let non_empty = || serde_json::json!([{}]);
+        for value in [
+            wrapper_presence_value("sponsorship_only", None, None),
+            wrapper_presence_value("transaction_only", None, None),
+            wrapper_presence_value("dual", Some(non_empty()), None),
+            wrapper_presence_value("dual", None, Some(non_empty())),
+            wrapper_presence_value("sponsorship_only", Some(non_empty()), Some(non_empty())),
+            wrapper_presence_value("transaction_only", Some(non_empty()), Some(non_empty())),
+        ] {
+            let scope = value["proof_scope"].as_str().expect("test scope");
+            assert!(
+                validate_absence_wrapper_component_presence(&value, scope).is_err(),
+                "invalid component presence was accepted for {scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_absence_wrapper_rejects_scope_mismatch_and_invalid_scope_type() {
+        let sponsorship =
+            wrapper_presence_value("sponsorship_only", Some(serde_json::json!([{}])), None);
+        assert!(
+            validate_absence_wrapper_component_presence(&sponsorship, "transaction_only").is_err()
+        );
+
+        let invalid = serde_json::json!({
+            "proof_scope": null,
+            "sponsorship_absence_observations": [{}],
+        });
+        assert!(validate_absence_wrapper_component_presence(&invalid, "sponsorship_only").is_err());
+    }
+
+    #[test]
+    fn canonical_cbor_decode_preserves_rejected_explicit_null_presence() {
+        let invalid =
+            wrapper_presence_value("sponsorship_only", Some(serde_json::Value::Null), None);
+        let mut encoded = Vec::new();
+        encode_protocol_json_cbor(&invalid, &mut encoded, 0).expect("encode canonical test CBOR");
+        let decoded =
+            decode_exact_protocol_cbor_bytes(&encoded).expect("decode canonical test CBOR");
+        assert_eq!(
+            decoded.get("sponsorship_absence_observations"),
+            Some(&serde_json::Value::Null),
+            "explicit CBOR null must remain distinguishable from an absent key before typed serde decoding"
+        );
+        assert!(validate_absence_wrapper_component_presence(&decoded, "sponsorship_only").is_err());
+    }
+
+    #[test]
+    fn generic_absence_wrapper_serializer_omits_none_components() {
+        let wrapper = RelayAbsenceProofBundleV1 {
+            schema_version: 1,
+            proof_scope: "sponsorship_only".to_owned(),
+            proof_profile_uri: ABSENCE_PROOF_PROFILE_URI.to_owned(),
+            proof_profile_digest: ABSENCE_PROOF_PROFILE_DIGEST.to_owned(),
+            proof_payload_digest: format!("sha256:{}", "1".repeat(64)),
+            proof_payload: "9g==".to_owned(),
+            sponsorship_absence_observations: None,
+            transaction_absence_observations: None,
+        };
+        let encoded = serde_json::to_value(wrapper).expect("serialize generic absence wrapper");
+        assert!(encoded.get("sponsorship_absence_observations").is_none());
+        assert!(encoded.get("transaction_absence_observations").is_none());
+    }
 
     #[test]
     fn stock_absence_proof_profile_matches_the_cross_language_vector() {

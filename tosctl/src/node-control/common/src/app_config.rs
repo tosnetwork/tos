@@ -96,9 +96,12 @@ impl ChainRpcConfig {
     /// (e.g. in [`AppConfig::load`]).
     fn normalize(&mut self) {
         if let Some(legacy) = self.url.take() {
-            let trimmed = legacy.trim().to_string();
-            if !trimmed.is_empty() && !self.urls.iter().any(|e| e.url() == trimmed) {
-                self.urls.insert(0, EndpointEntry::Url(trimmed));
+            // Preserve the exact configured bytes. Generic client resolution
+            // remains backwards-compatible and trims for ordinary use, while
+            // release-profile loaders can fail closed on parser aliases before
+            // deriving a cross-language locator identity.
+            if !legacy.trim().is_empty() && !self.urls.iter().any(|e| e.url() == legacy) {
+                self.urls.insert(0, EndpointEntry::Url(legacy));
             }
         }
     }
@@ -1424,6 +1427,16 @@ mod tests {
             serde_json::json!(["http://legacy/"]),
             "legacy url must be migrated into urls"
         );
+    }
+
+    #[test]
+    fn test_chain_rpc_legacy_url_migration_preserves_raw_alias_bytes() {
+        let json = r#"{"url": " https://rpc.example/jsonRPC ", "api_key": null}"#;
+        let mut cfg: ChainRpcConfig = serde_json::from_str(json).unwrap();
+        cfg.normalize();
+        assert_eq!(cfg.urls[0].url(), " https://rpc.example/jsonRPC ");
+        // Ordinary client resolution remains backwards compatible.
+        assert_eq!(cfg.endpoints(), vec!["https://rpc.example/jsonRPC"]);
     }
 
     #[test]

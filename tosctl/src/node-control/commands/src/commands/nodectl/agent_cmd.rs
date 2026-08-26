@@ -49,6 +49,7 @@ use contracts::{
     TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet,
     controller_resolution_evidence_digest,
 };
+use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey};
 use futures_util::{StreamExt, stream};
 use rand::RngCore;
 use secrets_vault::types::{
@@ -2075,7 +2076,9 @@ impl AgentTaskLsCmd {
                             data.assigned_agent.map(|address| address.to_string());
                         record.chain_permission_hash = Some(hex::encode(data.permission_hash));
                     }
-                    Err(error) => record.chain_error = Some(format!("{error:#}")),
+                    Err(error) => {
+                        record.chain_error = Some(chain_query_failure_diagnostic(&error));
+                    }
                 }
             }
         }
@@ -3794,6 +3797,7 @@ fn require_exact_submission_accepted(
 #[derive(Clone, Debug, serde::Serialize)]
 struct FinalizedEconomicPaymentObservation {
     endpoint: String,
+    locator_identity_digest: String,
     transaction_hash: String,
     transaction_lt: u64,
     transaction_utime: u32,
@@ -3824,6 +3828,7 @@ impl FinalizedEconomicPaymentObservation {
 async fn observe_finalized_economic_payment(
     config: &AppConfig,
     endpoint: String,
+    locator_identity_digest: String,
     expected_network: &RelayNetworkDomainPin,
     account: &MsgAddressInt,
     record: &contracts::ControllerActionRecord,
@@ -3894,6 +3899,7 @@ async fn observe_finalized_economic_payment(
             let master = rpc_client.get_masterchain_info().await?;
             return Ok(FinalizedEconomicPaymentObservation {
                 endpoint,
+                locator_identity_digest,
                 transaction_hash: format!("sha256:{}", hex::encode(transaction_root.hash(0))),
                 transaction_lt: transaction.logical_time(),
                 transaction_utime,
@@ -4007,27 +4013,31 @@ impl AgentAccountEconomicPaymentResolveCmd {
         let mut endpoints = BTreeMap::new();
         let mut loaded = Vec::with_capacity(configs.len());
         for path in configs {
-            let config = AppConfig::load(&path)?;
+            let bytes = fs::read(&path).context("read RPC quorum config")?;
+            let config = AppConfig::load_bytes(
+                &bytes,
+                config_format_from_path(&path)?,
+                "RPC quorum config",
+            )?;
             let configured = config.chain_rpc.endpoints();
             if configured.len() != 1 {
-                anyhow::bail!(
-                    "quorum config {} must name exactly one RPC endpoint",
-                    path.display()
-                );
+                anyhow::bail!("every quorum config must name exactly one RPC endpoint");
             }
-            let endpoint = configured[0].clone();
+            let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
             if endpoints.insert(endpoint.clone(), path.clone()).is_some() {
                 anyhow::bail!("quorum RPC endpoints must be distinct");
             }
-            loaded.push((config, endpoint));
+            let locator_identity_digest = rpc_locator_identity_digest(&endpoint)?;
+            loaded.push((config, endpoint, display_origin, locator_identity_digest));
         }
 
         let mut observations = Vec::with_capacity(loaded.len());
         let mut failures = Vec::new();
-        for (config, endpoint) in &loaded {
+        for (config, endpoint, display_origin, locator_identity_digest) in &loaded {
             match observe_finalized_economic_payment(
                 config,
-                endpoint.clone(),
+                display_origin.clone(),
+                locator_identity_digest.clone(),
                 expected_network,
                 &account,
                 &record,
@@ -4036,7 +4046,7 @@ impl AgentAccountEconomicPaymentResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(format!("{endpoint}: {error:#}")),
+                Err(error) => failures.push(rpc_failure_diagnostic(endpoint, &error)),
             }
         }
         let threshold = loaded.len() / 2 + 1;
@@ -4051,8 +4061,8 @@ impl AgentAccountEconomicPaymentResolveCmd {
             .filter(|group| group.len() >= threshold)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "no strict majority agreed on the finalized payment transaction; observations={}; failures={}",
-                    serde_json::to_string(&observations).unwrap_or_else(|_| "[]".to_owned()),
+                    "no strict majority agreed on the finalized payment transaction; observation_count={}; failures={}",
+                    observations.len(),
                     serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
                 )
             })?;
@@ -4116,6 +4126,7 @@ impl AgentAccountEconomicPaymentResolveCmd {
 #[serde(deny_unknown_fields)]
 struct EconomicPaymentObservation {
     endpoint: String,
+    locator_identity_digest: String,
     operator_provenance: String,
     transaction_hash: String,
     transaction_lt: u64,
@@ -4158,6 +4169,7 @@ struct EconomicPaymentObservation {
 }
 
 const ECONOMIC_PAYMENT_CORROBORATION_PROFILE_URI: &str = "agreement-payment-rpc-corroboration.v1";
+const RPC_LOCATOR_IDENTITY_DOMAIN: &[u8] = b"tosctl.agreement-payment-rpc-locator-identity.v1\0";
 const ECONOMIC_PAYMENT_FINALIZED_SCHEMA: &str =
     "tosctl.agent-account.agreement-payment-finalized.v1";
 const ECONOMIC_PAYMENT_CORROBORATION_SCHEMA: &str =
@@ -4630,6 +4642,8 @@ struct LoadedEconomicPaymentCorroborationMember {
     canonical_path: PathBuf,
     content_digest: String,
     endpoint: String,
+    display_origin: String,
+    locator_identity_digest: String,
     operator_provenance: String,
 }
 
@@ -4639,6 +4653,7 @@ struct EconomicPaymentCorroborationSnapshotMember {
     config_path: String,
     config_content_digest: String,
     endpoint: String,
+    locator_identity_digest: String,
     operator_provenance: String,
 }
 
@@ -4647,6 +4662,7 @@ struct EconomicPaymentCorroborationSnapshotMember {
 struct EconomicPaymentCorroborationSnapshot {
     schema: String,
     snapshot_identity: String,
+    snapshot_nonce: String,
     evidence_profile_uri: String,
     evidence_profile_digest: String,
     network_domain: RelayNetworkDomainPin,
@@ -4705,14 +4721,58 @@ fn exact_transaction_utime(transaction_utime: u32, rpc_wrapper_utime: u32) -> an
 }
 
 fn sponsorship_rpc_not_found(failure: &str) -> bool {
-    failure.contains("submitted Agreement payment was not found in the bounded RPC account history")
+    failure.contains("rpc_failure_category=not_found")
+        || failure.contains(
+            "submitted Agreement payment was not found in the bounded RPC account history",
+        )
+        || failure.contains(
+            "submitted Agreement payment was not found in the bounded finalized account history",
+        )
         || failure.contains(
             "authorized destination credit was not found in the bounded RPC account history",
         )
 }
 
 fn sponsorship_rpc_temporarily_unavailable(failure: &str) -> bool {
-    failure.contains("RPC temporarily unavailable:")
+    failure.contains("rpc_failure_category=temporarily_unavailable")
+        || failure.contains("RPC temporarily unavailable:")
+        || failure.contains("rpc_error_category=timeout")
+        || failure.contains("rpc_error_category=transport_unavailable")
+}
+
+fn rpc_failure_category(error: &anyhow::Error) -> &'static str {
+    let rendered = format!("{error:#}");
+    if sponsorship_rpc_not_found(&rendered) {
+        "not_found"
+    } else if sponsorship_rpc_temporarily_unavailable(&rendered) {
+        "temporarily_unavailable"
+    } else {
+        "invalid_or_conflicting_response"
+    }
+}
+
+fn rpc_display_origin(endpoint: &str) -> String {
+    const MAX_DISPLAY_ORIGIN_BYTES: usize = 256;
+    let Ok((_, origin)) = canonicalize_chain_rpc_endpoint(endpoint) else {
+        return "<invalid-rpc-origin>".to_owned();
+    };
+    if origin.len() > MAX_DISPLAY_ORIGIN_BYTES {
+        "<rpc-origin-too-long>".to_owned()
+    } else {
+        origin
+    }
+}
+
+fn rpc_failure_diagnostic(endpoint: &str, error: &anyhow::Error) -> String {
+    format!(
+        "{}: rpc_failure_category={}",
+        rpc_display_origin(endpoint),
+        rpc_failure_category(error)
+    )
+}
+
+fn chain_query_failure_diagnostic(error: &anyhow::Error) -> String {
+    format!("chain_query_failure_category={}", rpc_failure_category(error))
 }
 
 #[derive(Clone, Debug)]
@@ -4897,6 +4957,43 @@ fn sponsorship_chain_effect_key(observation: &EconomicPaymentObservation) -> Str
     .to_string()
 }
 
+#[derive(Clone, Debug)]
+struct ParsedControllerAuthorization {
+    controller_epoch: u64,
+    signature: [u8; 64],
+    hash_to_sign: [u8; 32],
+}
+
+fn verify_parsed_controller_authorization(
+    authorization: &ParsedControllerAuthorization,
+    controller_public_key: &[u8; 32],
+) -> anyhow::Result<()> {
+    let key = VerifyingKey::from_bytes(controller_public_key)
+        .context("Agent Account controller public key is invalid")?;
+    let signature = Ed25519Signature::from_slice(&authorization.signature)
+        .context("Agent Account controller signature is not 64 bytes")?;
+    key.verify_strict(&authorization.hash_to_sign, &signature)
+        .context("Agent Account controller signature is invalid")
+}
+
+fn verify_current_controller_authorization(
+    authorization: &ParsedControllerAuthorization,
+    current_controller_epoch: u64,
+    current_controller_public_key: &[u8; 32],
+) -> anyhow::Result<()> {
+    if current_controller_epoch < authorization.controller_epoch {
+        anyhow::bail!(
+            "current Agent Account controller epoch rolled behind the signed sponsorship action"
+        );
+    }
+    if current_controller_epoch > authorization.controller_epoch {
+        anyhow::bail!(
+            "cannot verify the signed sponsorship action after controller rotation: V1 has no bound historical controller-authority proof"
+        );
+    }
+    verify_parsed_controller_authorization(authorization, current_controller_public_key)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_exact_sponsorship_top_up_boc(
     bytes: &[u8],
@@ -4911,7 +5008,7 @@ fn validate_exact_sponsorship_top_up_boc(
     value_atomic: u64,
     agreement_payment_request_digest: &str,
     stable_action_id: &str,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<ParsedControllerAuthorization> {
     if base64::engine::general_purpose::STANDARD.encode(bytes) != encoded {
         anyhow::bail!("signed top-up transaction uses non-canonical base64");
     }
@@ -4935,7 +5032,15 @@ fn validate_exact_sponsorship_top_up_boc(
         anyhow::bail!("signed top-up transaction destination is not the provider source account");
     }
     let mut body = message.body().cloned().context("signed top-up transaction has no body")?;
-    body.move_by(512).context("signed top-up transaction has a truncated signature")?;
+    let signature: [u8; 64] = body
+        .get_next_bytes(64)
+        .context("signed top-up transaction has a truncated signature")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("signed top-up transaction signature must be 64 bytes"))?;
+    if signature.iter().all(|byte| *byte == 0) {
+        anyhow::bail!("signed top-up transaction has an invalid zero signature");
+    }
+    let payload = body.clone().into_cell()?;
     let opcode = body.get_next_u32()?;
     let message_global_id = body.get_next_i32()?;
     let controller_epoch = body.get_next_u64()?;
@@ -4972,7 +5077,51 @@ fn validate_exact_sponsorship_top_up_boc(
             "signed top-up transaction does not commit the exact AgreementPaymentRequest and stable action"
         );
     }
-    Ok(controller_epoch)
+    let hash_to_sign =
+        AgentAccountContract::controller_hash_to_sign(source, network_global_id, &payload)?;
+    Ok(ParsedControllerAuthorization { controller_epoch, signature, hash_to_sign })
+}
+
+async fn verify_sponsorship_controller_authorization_quorum(
+    loaded: &[LoadedEconomicPaymentCorroborationMember],
+    network: &RelayNetworkDomainPin,
+    source: &MsgAddressInt,
+    authorization: &ParsedControllerAuthorization,
+    threshold: usize,
+    minimum_operator_domains: usize,
+) -> anyhow::Result<()> {
+    let mut votes: BTreeMap<(u64, [u8; 32]), BTreeSet<String>> = BTreeMap::new();
+    let mut failures = Vec::new();
+    for member in loaded {
+        let result = async {
+            let rpc_client = try_create_rpc_client(&member.config).await?;
+            rpc_client.verify_pinned_primary_network(network).await?;
+            let provider = contracts::contract_provider!(rpc_client);
+            AgentAccountContract::get_data(provider.as_ref(), source).await
+        }
+        .await;
+        match result {
+            Ok(data) => {
+                votes
+                    .entry((data.controller_epoch, data.controller_pubkey))
+                    .or_default()
+                    .insert(member.operator_provenance.clone());
+            }
+            Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+        }
+    }
+    let ((controller_epoch, controller_public_key), operators) = votes
+        .into_iter()
+        .max_by_key(|(_, operators)| operators.len())
+        .context("RPC snapshot produced no Agent Account controller-authority observation")?;
+    if operators.len() < threshold || operators.len() < minimum_operator_domains {
+        anyhow::bail!(
+            "RPC snapshot has no strict controller-authority quorum; agreeing={}; threshold={threshold}; minimum_operator_domains={minimum_operator_domains}; failures={}",
+            operators.len(),
+            serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
+        );
+    }
+    verify_current_controller_authorization(authorization, controller_epoch, &controller_public_key)
 }
 
 fn economic_payment_observation_digest<T: serde::Serialize>(
@@ -4990,6 +5139,7 @@ fn economic_payment_observation_digest<T: serde::Serialize>(
 async fn corroborate_economic_payment(
     config: &AppConfig,
     endpoint: String,
+    locator_identity_digest: String,
     operator_provenance: String,
     expected_network: &RelayNetworkDomainPin,
     account: &MsgAddressInt,
@@ -5006,6 +5156,7 @@ async fn corroborate_economic_payment(
     corroborate_economic_payment_expected(
         config,
         endpoint,
+        locator_identity_digest,
         operator_provenance,
         expected_network,
         account,
@@ -5021,6 +5172,7 @@ async fn corroborate_economic_payment(
 async fn corroborate_economic_payment_expected(
     config: &AppConfig,
     endpoint: String,
+    locator_identity_digest: String,
     operator_provenance: String,
     expected_network: &RelayNetworkDomainPin,
     account: &MsgAddressInt,
@@ -5135,6 +5287,7 @@ async fn corroborate_economic_payment_expected(
             }
             return Ok(EconomicPaymentObservation {
                 endpoint,
+                locator_identity_digest,
                 operator_provenance,
                 transaction_hash: format!("sha256:{}", hex::encode(transaction_root.hash(0))),
                 transaction_lt: transaction.logical_time(),
@@ -5203,6 +5356,77 @@ fn canonical_file_digest(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
+/// Stable, credential-independent identity for one exact RPC locator.
+///
+/// Formula:
+/// SHA-256(domain || uint64be(len(canonical_locator_utf8)) ||
+///         canonical_locator_utf8)
+///
+/// The canonical locator includes its path but never an API key. Public
+/// evidence carries this digest and the origin-only `endpoint`; the full
+/// locator remains solely in the owner-private frozen config bytes.
+fn rpc_locator_identity_digest(locator: &str) -> anyhow::Result<String> {
+    let (canonical, _) = canonicalize_chain_rpc_endpoint(locator)?;
+    let bytes = canonical.as_bytes();
+    let mut hasher = Sha256::new();
+    hasher.update(RPC_LOCATOR_IDENTITY_DOMAIN);
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
+}
+
+fn validate_release_profile_rpc_locator(value: &str) -> anyhow::Result<(String, String)> {
+    let (canonical, display_origin) = canonicalize_chain_rpc_endpoint(value)?;
+    if value != canonical {
+        anyhow::bail!("release-profile RPC locator must already use its canonical byte form");
+    }
+    let path = canonical
+        .strip_prefix(&display_origin)
+        .context("canonical RPC locator does not begin with its display origin")?;
+    if value.contains('\\')
+        || path.contains("//")
+        || path.split('/').any(|segment| segment == "." || segment == "..")
+    {
+        anyhow::bail!("release-profile RPC locator path contains a forbidden alias");
+    }
+    Ok((canonical, display_origin))
+}
+
+fn corroboration_snapshot_handle(snapshot_identity: &str) -> anyhow::Result<String> {
+    validate_sha256_digest("corroboration_snapshot_identity", snapshot_identity)?;
+    Ok(format!("corroboration-{}/manifest.json", &snapshot_identity[7..]))
+}
+
+fn validate_snapshot_nonce(value: &str) -> anyhow::Result<()> {
+    if value.len() != 64
+        || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("corroboration snapshot nonce must be 32 bytes of lowercase hex");
+    }
+    Ok(())
+}
+
+fn validate_snapshot_member_basename(value: &str) -> anyhow::Result<&str> {
+    if value.is_empty()
+        || value.len() > 128
+        || value.contains('/')
+        || value.contains('\\')
+        || value == "."
+        || value == ".."
+    {
+        anyhow::bail!("corroboration snapshot member path must be one relative basename");
+    }
+    let path = Path::new(value);
+    let mut components = path.components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+        || path.file_name().and_then(|name| name.to_str()) != Some(value)
+    {
+        anyhow::bail!("corroboration snapshot member path must be one relative basename");
+    }
+    Ok(value)
+}
+
 fn recursively_sorted_json(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Array(values) => {
@@ -5239,17 +5463,33 @@ fn economic_payment_corroboration_profile(
     {
         anyhow::bail!("RPC corroboration profile is incomplete");
     }
+    if members.iter().map(|member| member.display_origin.as_str()).collect::<BTreeSet<_>>().len()
+        != members.len()
+    {
+        anyhow::bail!("RPC corroboration profile repeats a public display origin");
+    }
     let threshold = members.len() / 2 + 1;
     let mut descriptor_members = members
         .iter()
-        .map(|member| (member.endpoint.clone(), member.operator_provenance.clone()))
+        .map(|member| {
+            (
+                member.display_origin.clone(),
+                member.locator_identity_digest.clone(),
+                member.operator_provenance.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     descriptor_members.sort();
     let descriptor = recursively_sorted_json(serde_json::json!({
         "profile_uri": ECONOMIC_PAYMENT_CORROBORATION_PROFILE_URI,
         "network_domain": network,
-        "members": descriptor_members.iter().map(|(endpoint, operator)| serde_json::json!({
-            "endpoint": endpoint,
+        "members": descriptor_members.iter().map(|(display_origin, locator_identity_digest, operator)| serde_json::json!({
+            // `endpoint` is retained for the released cross-language shape,
+            // but its public value is deliberately origin-only. The exact
+            // capability path remains solely in the owner-private config,
+            // and is committed without credential/config disclosure.
+            "endpoint": display_origin,
+            "locator_identity_digest": locator_identity_digest,
             "operator_provenance": operator,
         })).collect::<Vec<_>>(),
         "threshold": threshold,
@@ -5283,23 +5523,27 @@ fn load_economic_payment_corroboration_members(
         anyhow::bail!("at least three RPC configurations are required");
     }
     let mut endpoints = BTreeMap::new();
+    let mut display_origins = BTreeMap::new();
     let mut operators = BTreeMap::new();
     let mut loaded = Vec::with_capacity(paths.len());
-    for path in paths {
-        let bytes = fs::read(&path)
-            .with_context(|| format!("read RPC config snapshot source {}", path.display()))?;
+    for (index, path) in paths.into_iter().enumerate() {
+        let bytes = fs::read(&path).context("read RPC config snapshot source")?;
         let config = AppConfig::load_bytes(
             &bytes,
             config_format_from_path(&path)?,
-            &path.display().to_string(),
+            "RPC config snapshot source",
         )?;
-        let configured = config.chain_rpc.endpoints();
-        if configured.len() != 1 {
-            anyhow::bail!("quorum config {} must name exactly one RPC endpoint", path.display());
+        if config.chain_rpc.urls.len() != 1 {
+            anyhow::bail!("RPC config snapshot member {index} must name exactly one endpoint");
         }
-        let (endpoint, _) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+        let configured_locator = config.chain_rpc.urls[0].url();
+        let (endpoint, display_origin) = validate_release_profile_rpc_locator(configured_locator)?;
+        let locator_identity_digest = rpc_locator_identity_digest(&endpoint)?;
         if endpoints.insert(endpoint.clone(), path.clone()).is_some() {
             anyhow::bail!("quorum RPC endpoints must be distinct");
+        }
+        if display_origins.insert(display_origin.clone(), path.clone()).is_some() {
+            anyhow::bail!("quorum RPC display origins must be distinct");
         }
         let operator_provenance = config
             .chain_rpc
@@ -5315,6 +5559,8 @@ fn load_economic_payment_corroboration_members(
             canonical_path: path,
             content_digest: canonical_file_digest(&bytes),
             endpoint,
+            display_origin,
+            locator_identity_digest,
             operator_provenance,
         });
     }
@@ -5326,11 +5572,18 @@ async fn verify_economic_payment_corroboration_network(
     network: &RelayNetworkDomainPin,
 ) -> anyhow::Result<()> {
     for member in members {
-        try_create_rpc_client(&member.config)
-            .await?
-            .verify_pinned_primary_network(network)
-            .await
-            .with_context(|| format!("verify frozen RPC member {}", member.endpoint))?;
+        let result = async {
+            let client = try_create_rpc_client(&member.config).await?;
+            client.verify_pinned_primary_network(network).await
+        }
+        .await;
+        if let Err(error) = result {
+            anyhow::bail!(
+                "frozen RPC member {} failed network verification; rpc_failure_category={}",
+                member.display_origin,
+                rpc_failure_category(&error)
+            );
+        }
     }
     Ok(())
 }
@@ -5368,9 +5621,12 @@ fn open_private_snapshot_file(path: &Path) -> anyhow::Result<Vec<u8>> {
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.nlink() != 1
             || metadata.permissions().mode() & 0o077 != 0
         {
-            anyhow::bail!("corroboration snapshot file must be owner-private");
+            anyhow::bail!(
+                "corroboration snapshot file must be owner-private with exactly one hard link"
+            );
         }
     }
     let mut bytes = Vec::new();
@@ -5434,11 +5690,15 @@ fn freeze_economic_payment_corroboration_snapshot(
     evidence_profile: serde_json::Value,
     evidence_profile_digest: String,
 ) -> anyhow::Result<(PathBuf, EconomicPaymentCorroborationSnapshot)> {
+    let mut snapshot_nonce_bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut snapshot_nonce_bytes);
+    let snapshot_nonce = hex::encode(snapshot_nonce_bytes);
     let snapshot_identity = economic_payment_observation_digest(
         b"tosctl.agreement-payment-rpc-corroboration-snapshot.v1\0",
         &serde_json::json!({
             "evidence_profile_digest": evidence_profile_digest,
             "config_content_digests": members.iter().map(|member| member.content_digest.clone()).collect::<Vec<_>>(),
+            "snapshot_nonce": snapshot_nonce.clone(),
         }),
     )?;
     let directory = create_private_snapshot_directory(
@@ -5447,8 +5707,7 @@ fn freeze_economic_payment_corroboration_snapshot(
     )?;
     let mut frozen = Vec::with_capacity(members.len());
     for (index, member) in members.iter().enumerate() {
-        let extension =
-            member.canonical_path.extension().and_then(|value| value.to_str()).unwrap_or("json");
+        let extension = config_format_from_path(&member.canonical_path)?;
         let destination = directory.join(format!("member-{index:03}.{extension}"));
         let bytes = fs::read(&member.canonical_path)?;
         if canonical_file_digest(&bytes) != member.content_digest {
@@ -5456,15 +5715,21 @@ fn freeze_economic_payment_corroboration_snapshot(
         }
         write_private_snapshot_file(&destination, &bytes)?;
         frozen.push(EconomicPaymentCorroborationSnapshotMember {
-            config_path: fs::canonicalize(&destination)?.display().to_string(),
+            config_path: destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("frozen RPC member basename is not UTF-8")?
+                .to_owned(),
             config_content_digest: member.content_digest.clone(),
-            endpoint: member.endpoint.clone(),
+            endpoint: member.display_origin.clone(),
+            locator_identity_digest: member.locator_identity_digest.clone(),
             operator_provenance: member.operator_provenance.clone(),
         });
     }
     let snapshot = EconomicPaymentCorroborationSnapshot {
         schema: "tosctl.agent-account.agreement-payment-rpc-corroboration-snapshot.v1".to_owned(),
         snapshot_identity,
+        snapshot_nonce,
         evidence_profile_uri: ECONOMIC_PAYMENT_CORROBORATION_PROFILE_URI.to_owned(),
         evidence_profile_digest,
         network_domain: network,
@@ -5508,18 +5773,32 @@ fn load_economic_payment_corroboration_snapshot(
         anyhow::bail!("corroboration snapshot conflicts with the signed release profile");
     }
     validate_sha256_digest("snapshot_identity", &snapshot.snapshot_identity)?;
+    validate_snapshot_nonce(&snapshot.snapshot_nonce)?;
+    let expected_handle = corroboration_snapshot_handle(&snapshot.snapshot_identity)?;
+    let expected_directory_name = expected_handle
+        .split('/')
+        .next()
+        .context("corroboration snapshot handle has no directory")?;
+    if manifest_path.file_name().and_then(|name| name.to_str()) != Some("manifest.json")
+        || directory.file_name().and_then(|name| name.to_str()) != Some(expected_directory_name)
+    {
+        anyhow::bail!("corroboration snapshot path conflicts with its opaque handle");
+    }
     let mut loaded = Vec::with_capacity(snapshot.members.len());
     let mut canonical_paths = BTreeMap::new();
     let mut endpoints = BTreeMap::new();
+    let mut display_origins = BTreeMap::new();
     let mut operators = BTreeMap::new();
     for frozen in &snapshot.members {
         validate_sha256_digest("config_content_digest", &frozen.config_content_digest)?;
+        validate_sha256_digest("locator_identity_digest", &frozen.locator_identity_digest)?;
         validate_sha256_digest("operator_provenance", &frozen.operator_provenance)?;
-        let supplied_path = Path::new(&frozen.config_path);
+        let basename = validate_snapshot_member_basename(&frozen.config_path)?;
+        let supplied_path = directory.join(basename);
         // Hash and parse one no-follow read. AppConfig::load(path) here would
         // permit config replacement between the digest check and use.
-        let bytes = open_private_snapshot_file(supplied_path)?;
-        let path = fs::canonicalize(supplied_path)?;
+        let bytes = open_private_snapshot_file(&supplied_path)?;
+        let path = fs::canonicalize(&supplied_path)?;
         if !path.starts_with(directory) {
             anyhow::bail!("corroboration snapshot member escapes its private directory");
         }
@@ -5529,26 +5808,30 @@ fn load_economic_payment_corroboration_snapshot(
         if canonical_file_digest(&bytes) != frozen.config_content_digest {
             anyhow::bail!("corroboration snapshot member bytes changed");
         }
-        let config = AppConfig::load_bytes(
-            &bytes,
-            config_format_from_path(&path)?,
-            &path.display().to_string(),
-        )?;
-        let member_endpoints = config.chain_rpc.endpoints();
-        if member_endpoints.len() != 1 {
+        let config =
+            AppConfig::load_bytes(&bytes, config_format_from_path(&path)?, "frozen RPC member")?;
+        if config.chain_rpc.urls.len() != 1 {
             anyhow::bail!("corroboration snapshot member no longer has one endpoint");
         }
-        let (endpoint, _) = canonicalize_chain_rpc_endpoint(&member_endpoints[0])?;
+        let configured_locator = config.chain_rpc.urls[0].url();
+        let (endpoint, display_origin) = validate_release_profile_rpc_locator(configured_locator)?;
+        let locator_identity_digest = rpc_locator_identity_digest(&endpoint)?;
         let operator = config
             .chain_rpc
             .operator_provenance
             .clone()
             .context("snapshot member has no operator provenance")?;
-        if endpoint != frozen.endpoint || operator != frozen.operator_provenance {
+        if display_origin != frozen.endpoint
+            || locator_identity_digest != frozen.locator_identity_digest
+            || operator != frozen.operator_provenance
+        {
             anyhow::bail!("corroboration snapshot member conflicts with its manifest");
         }
         if endpoints.insert(endpoint.clone(), ()).is_some() {
             anyhow::bail!("corroboration snapshot repeats an RPC endpoint");
+        }
+        if display_origins.insert(display_origin.clone(), ()).is_some() {
+            anyhow::bail!("corroboration snapshot repeats an RPC display origin");
         }
         if operators.insert(operator.clone(), ()).is_some() {
             anyhow::bail!("corroboration snapshot repeats an operator provenance");
@@ -5558,6 +5841,8 @@ fn load_economic_payment_corroboration_snapshot(
             canonical_path: path,
             content_digest: frozen.config_content_digest.clone(),
             endpoint,
+            display_origin,
+            locator_identity_digest,
             operator_provenance: operator,
         });
     }
@@ -5574,6 +5859,7 @@ fn load_economic_payment_corroboration_snapshot(
         &serde_json::json!({
             "evidence_profile_digest": snapshot.evidence_profile_digest,
             "config_content_digests": snapshot.members.iter().map(|member| member.config_content_digest.clone()).collect::<Vec<_>>(),
+            "snapshot_nonce": snapshot.snapshot_nonce.clone(),
         }),
     )?;
     if snapshot.snapshot_identity != expected_snapshot_identity {
@@ -5601,7 +5887,7 @@ impl AgentAccountEconomicPaymentCorroborationProfileCmd {
         verify_economic_payment_corroboration_network(&members, &network).await?;
         let (descriptor, digest, _) =
             economic_payment_corroboration_profile(&network, &members, self.max_transactions)?;
-        let (manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
+        let (_manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
             Path::new(&self.snapshot_directory),
             network,
             &members,
@@ -5609,6 +5895,7 @@ impl AgentAccountEconomicPaymentCorroborationProfileCmd {
             descriptor,
             digest,
         )?;
+        let snapshot_handle = corroboration_snapshot_handle(&snapshot.snapshot_identity)?;
         println!(
             "{}",
             serde_json::json!({
@@ -5617,7 +5904,7 @@ impl AgentAccountEconomicPaymentCorroborationProfileCmd {
                 "evidence_profile_uri": snapshot.evidence_profile_uri,
                 "evidence_profile_digest": snapshot.evidence_profile_digest,
                 "evidence_profile": snapshot.evidence_profile,
-                "corroboration_snapshot": manifest,
+                "corroboration_snapshot_handle": snapshot_handle,
                 "corroboration_snapshot_identity": snapshot.snapshot_identity,
                 "network_domain": snapshot.network_domain,
                 "maximum_history_transactions": snapshot.maximum_history_transactions,
@@ -5638,6 +5925,7 @@ impl AgentAccountEconomicPaymentCorroborateCmd {
             &self.sponsorship_release_profile_digest,
             &self.corroboration_snapshot_identity,
         )?;
+        let snapshot_handle = corroboration_snapshot_handle(&snapshot.snapshot_identity)?;
         let primary = &loaded[0].config;
         let agent_wallet = primary
             .agent_wallets
@@ -5698,7 +5986,8 @@ impl AgentAccountEconomicPaymentCorroborateCmd {
         for member in &loaded {
             match corroborate_economic_payment(
                 &member.config,
-                member.endpoint.clone(),
+                member.display_origin.clone(),
+                member.locator_identity_digest.clone(),
                 member.operator_provenance.clone(),
                 expected_network,
                 &account,
@@ -5708,7 +5997,7 @@ impl AgentAccountEconomicPaymentCorroborateCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(format!("{}: {error:#}", member.endpoint)),
+                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
             }
         }
         let mut votes: BTreeMap<String, Vec<&EconomicPaymentObservation>> = BTreeMap::new();
@@ -5721,8 +6010,8 @@ impl AgentAccountEconomicPaymentCorroborateCmd {
             .filter(|group| group.len() >= threshold)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "no strict majority corroborated the payment transaction and full block/network identity; observations={}; failures={}",
-                    serde_json::to_string(&observations).unwrap_or_else(|_| "[]".to_owned()),
+                    "no strict majority corroborated the payment transaction and full block/network identity; observation_count={}; failures={}",
+                    observations.len(),
                     serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
                 )
             })?;
@@ -5821,7 +6110,7 @@ impl AgentAccountEconomicPaymentCorroborateCmd {
                 "evidence_profile_uri": ECONOMIC_PAYMENT_CORROBORATION_PROFILE_URI,
                 "evidence_profile_digest": evidence_profile_digest,
                 "evidence_profile": evidence_profile_descriptor,
-                "corroboration_snapshot": self.corroboration_snapshot,
+                "corroboration_snapshot_handle": snapshot_handle,
                 "corroboration_snapshot_identity": snapshot.snapshot_identity,
                 "observed_checkpoint_id": observed_checkpoint_id,
                 "observed_checkpoint_sequence": evidence.observed_masterchain_seqno,
@@ -5875,6 +6164,7 @@ impl AgentAccountEconomicPaymentSponsorshipFinalityCmd {
             &self.sponsorship_release_profile_digest,
             &self.corroboration_snapshot_identity,
         )?;
+        let snapshot_handle = corroboration_snapshot_handle(&snapshot.snapshot_identity)?;
         let primary = &loaded[0].config;
         let agent_wallet = primary
             .agent_wallets
@@ -5977,7 +6267,8 @@ impl AgentAccountEconomicPaymentSponsorshipFinalityCmd {
         for member in &loaded {
             match corroborate_economic_payment(
                 &member.config,
-                member.endpoint.clone(),
+                member.display_origin.clone(),
+                member.locator_identity_digest.clone(),
                 member.operator_provenance.clone(),
                 expected_network,
                 &account,
@@ -5987,7 +6278,7 @@ impl AgentAccountEconomicPaymentSponsorshipFinalityCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(format!("{}: {error:#}", member.endpoint)),
+                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
             }
         }
         observations.sort_by(|left, right| {
@@ -6050,8 +6341,8 @@ impl AgentAccountEconomicPaymentSponsorshipFinalityCmd {
                 return Ok(());
             }
             anyhow::bail!(
-                "no strict majority corroborated the sponsorship transaction and full block/network identity; observations={}; failures={}",
-                serde_json::to_string(&observations).unwrap_or_else(|_| "[]".to_owned()),
+                "no strict majority corroborated the sponsorship transaction and full block/network identity; observation_count={}; failures={}",
+                observations.len(),
                 serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
             );
         };
@@ -6233,7 +6524,7 @@ impl AgentAccountEconomicPaymentSponsorshipFinalityCmd {
             "sponsorship_release_profile_uri": snapshot.evidence_profile_uri,
             "sponsorship_release_profile_digest": snapshot.evidence_profile_digest,
             "sponsorship_release_profile": snapshot.evidence_profile,
-            "corroboration_snapshot": self.corroboration_snapshot,
+            "corroboration_snapshot_handle": snapshot_handle,
             "corroboration_snapshot_identity": snapshot.snapshot_identity,
             "provider_snapshot_identity": snapshot.snapshot_identity,
             "operator_provenance": winner_operators,
@@ -6412,7 +6703,7 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
         }
         let valid_until = u32::try_from(payment.expires_at_unix)
             .context("AgreementPaymentRequestV3 expiry exceeds the TOS transaction field")?;
-        let provider_sponsor_controller_epoch = validate_exact_sponsorship_top_up_boc(
+        let provider_sponsor_controller_authorization = validate_exact_sponsorship_top_up_boc(
             &signed_boc,
             &proof_bundle.signed_top_up_transaction_boc,
             &proof_bundle.signed_top_up_transaction_digest,
@@ -6426,6 +6717,22 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
             &payment_request_digest,
             &payment.stable_action_id,
         )?;
+        // The exact successful chain effect is independently corroborated
+        // below, but the portable verifier must not rely on RPC execution as
+        // an implicit substitute for authenticating the signed bytes. Bind
+        // them to the controller authority observed by the same frozen quorum.
+        // A rotated epoch fails closed because V1 carries no historical key.
+        verify_sponsorship_controller_authorization_quorum(
+            &loaded,
+            &snapshot.network_domain,
+            &source,
+            &provider_sponsor_controller_authorization,
+            threshold,
+            usize::from(finality_profile.minimum_operator_domains),
+        )
+        .await?;
+        let provider_sponsor_controller_epoch =
+            provider_sponsor_controller_authorization.controller_epoch;
         let signed_boc_digest = proof_bundle.signed_top_up_transaction_digest.clone();
         let signed_cell_hash = proof_bundle.signed_top_up_transaction_cell_hash.clone();
 
@@ -6434,11 +6741,21 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
         }
         let allowed_members = loaded
             .iter()
-            .map(|member| (member.endpoint.clone(), member.operator_provenance.clone()))
+            .map(|member| {
+                (
+                    member.display_origin.clone(),
+                    member.locator_identity_digest.clone(),
+                    member.operator_provenance.clone(),
+                )
+            })
             .collect::<BTreeSet<_>>();
         let mut bundled_members = BTreeSet::new();
         for observation in &proof_bundle.observations {
-            let member = (observation.endpoint.clone(), observation.operator_provenance.clone());
+            let member = (
+                observation.endpoint.clone(),
+                observation.locator_identity_digest.clone(),
+                observation.operator_provenance.clone(),
+            );
             if !allowed_members.contains(&member)
                 || !bundled_members.insert(member)
                 || observation.finality_proven
@@ -6518,7 +6835,8 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
         for member in &loaded {
             match corroborate_economic_payment_expected(
                 &member.config,
-                member.endpoint.clone(),
+                member.display_origin.clone(),
+                member.locator_identity_digest.clone(),
                 member.operator_provenance.clone(),
                 &snapshot.network_domain,
                 &source,
@@ -6530,7 +6848,7 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(format!("{}: {error:#}", member.endpoint)),
+                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
             }
         }
         observations.sort_by(|left, right| {
@@ -6593,8 +6911,8 @@ impl AgentAccountEconomicPaymentSponsorshipProofVerifyCmd {
                 return Ok(());
             }
             anyhow::bail!(
-                "client RPC snapshot found no strict quorum for the exact sponsorship transaction; observations={}; failures={}",
-                serde_json::to_string(&observations).unwrap_or_else(|_| "[]".to_owned()),
+                "client RPC snapshot found no strict quorum for the exact sponsorship transaction; observation_count={}; failures={}",
+                observations.len(),
                 serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
             );
         };
@@ -8327,16 +8645,19 @@ mod tests {
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
         SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, SponsorshipAgreementPaymentRequestV3,
         SponsorshipFinalityProfile, canonical_file_digest, canonicalize_chain_rpc_endpoint,
-        decode_exact_protocol_cbor, economic_payment_corroboration_profile,
-        encode_protocol_json_cbor, exact_protocol_action_request_digest, exact_transaction_utime,
+        chain_query_failure_diagnostic, corroboration_snapshot_handle, decode_exact_protocol_cbor,
+        economic_payment_corroboration_profile, encode_protocol_json_cbor,
+        exact_protocol_action_request_digest, exact_transaction_utime,
         freeze_economic_payment_corroboration_snapshot,
-        load_economic_payment_corroboration_snapshot, permission_id_hash, protocol_cbor_digest,
-        relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
+        load_economic_payment_corroboration_members, load_economic_payment_corroboration_snapshot,
+        permission_id_hash, protocol_cbor_digest, relay_network_domain_digest, resolve_nanotos,
+        resolve_payout_nanotos, rpc_failure_diagnostic, rpc_locator_identity_digest,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
         validate_controller_task_action, validate_destination_credit_semantics,
-        validate_exact_sponsorship_top_up_boc, validate_sponsorship_custody_evidence_context,
-        validate_sponsorship_finality_profile, validate_sponsorship_payment_request,
-        write_private_snapshot_file,
+        validate_exact_sponsorship_top_up_boc, validate_release_profile_rpc_locator,
+        validate_sponsorship_custody_evidence_context, validate_sponsorship_finality_profile,
+        validate_sponsorship_payment_request, verify_current_controller_authorization,
+        verify_parsed_controller_authorization, write_private_snapshot_file,
     };
     use base64::Engine;
     use chain_block::{
@@ -8349,6 +8670,7 @@ mod tests {
         AgentAccountContract, ControllerActionClaim, ControllerActionRecord,
         ControllerActionStatus, EconomicActionAuthorization, TaskEscrowData,
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -8402,8 +8724,17 @@ mod tests {
         directory: &Path,
         index: usize,
     ) -> LoadedEconomicPaymentCorroborationMember {
-        let configured_endpoint = format!("http://127.0.0.1:{}/", 3400 + index);
-        let (endpoint, _) = canonicalize_chain_rpc_endpoint(&configured_endpoint).unwrap();
+        let configured_endpoint = format!("http://127.0.0.1:{}", 3400 + index);
+        test_corroboration_member_at(directory, index, &configured_endpoint)
+    }
+
+    fn test_corroboration_member_at(
+        directory: &Path,
+        index: usize,
+        configured_endpoint: &str,
+    ) -> LoadedEconomicPaymentCorroborationMember {
+        let (endpoint, display_origin) =
+            canonicalize_chain_rpc_endpoint(configured_endpoint).unwrap();
         let operator_provenance = format!("sha256:{:064x}", index + 1);
         let value = serde_json::json!({
             "nodes": {},
@@ -8424,7 +8755,9 @@ mod tests {
             config,
             canonical_path: fs::canonicalize(path).unwrap(),
             content_digest: canonical_file_digest(&bytes),
+            locator_identity_digest: rpc_locator_identity_digest(&endpoint).unwrap(),
             endpoint,
+            display_origin,
             operator_provenance,
         }
     }
@@ -8650,6 +8983,106 @@ mod tests {
     }
 
     #[test]
+    fn rpc_capability_paths_never_enter_public_profiles_snapshots_or_diagnostics() {
+        let directory = TemporaryDirectory::create("private-rpc-path-redaction");
+        let members = (0..3)
+            .map(|index| {
+                let secret = format!("secret-capability-token-{index}");
+                let endpoint = format!("https://rpc-{index}.example/tenant/{secret}/jsonRPC");
+                test_corroboration_member_at(&directory.0, index, &endpoint)
+            })
+            .collect::<Vec<_>>();
+        for (index, member) in members.iter().enumerate() {
+            assert_eq!(member.display_origin, format!("https://rpc-{index}.example"));
+        }
+
+        let (profile, profile_digest, _) =
+            economic_payment_corroboration_profile(&test_network(), &members, 500).unwrap();
+        let profile_json = serde_json::to_string(&profile).unwrap();
+        assert!(!profile_json.contains("secret-capability-token"));
+        assert!(!profile_json.contains("/tenant/"));
+        assert!(!profile_json.contains("config_content_digest"));
+        assert!(profile_json.contains("locator_identity_digest"));
+
+        let snapshot_parent = directory.0.join("snapshots");
+        fs::create_dir(&snapshot_parent).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&snapshot_parent, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let (manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
+            &snapshot_parent,
+            test_network(),
+            &members,
+            500,
+            profile,
+            profile_digest,
+        )
+        .unwrap();
+        let snapshot_json = serde_json::to_string(&snapshot).unwrap();
+        assert!(!snapshot_json.contains("secret-capability-token"));
+        assert!(!snapshot_json.contains("/tenant/"));
+        assert!(snapshot_json.contains("config_content_digest"));
+        let snapshot_handle = corroboration_snapshot_handle(&snapshot.snapshot_identity).unwrap();
+        let capability = serde_json::json!({
+            "schema": "tosctl.agent-account.agreement-payment-rpc-corroboration-capability.v1",
+            "evidence_profile": snapshot.evidence_profile.clone(),
+            "corroboration_snapshot_handle": snapshot_handle,
+            "corroboration_snapshot_identity": snapshot.snapshot_identity.clone(),
+        });
+        let capability_json = serde_json::to_string(&capability).unwrap();
+        assert!(!capability_json.contains(directory.0.to_str().unwrap()));
+        assert!(!capability_json.contains("snapshot_nonce"));
+        assert!(!capability_json.contains("config_content_digest"));
+        assert!(!capability_json.contains("secret-capability-token"));
+        assert!(
+            capability["corroboration_snapshot_handle"]
+                .as_str()
+                .unwrap()
+                .starts_with("corroboration-")
+        );
+        assert!(
+            capability["corroboration_snapshot_handle"]
+                .as_str()
+                .unwrap()
+                .ends_with("/manifest.json")
+        );
+        let (_, restored, _) = load_economic_payment_corroboration_snapshot(
+            &manifest,
+            &snapshot.evidence_profile_digest,
+            &snapshot.snapshot_identity,
+        )
+        .unwrap();
+        assert!(restored.iter().all(|member| member.endpoint.contains("/tenant/")));
+        assert!(
+            restored
+                .iter()
+                .all(|member| !member.display_origin.contains("secret-capability-token"))
+        );
+
+        let raw_error = anyhow::anyhow!(
+            "transport failed while requesting {} with secret-capability-token-0",
+            members[0].endpoint
+        );
+        let diagnostic = rpc_failure_diagnostic(&members[0].endpoint, &raw_error);
+        assert_eq!(
+            diagnostic,
+            "https://rpc-0.example: rpc_failure_category=invalid_or_conflicting_response"
+        );
+        assert!(!diagnostic.contains("secret-capability-token"));
+        assert!(!diagnostic.contains("/tenant/"));
+
+        let chain_diagnostic = chain_query_failure_diagnostic(&raw_error);
+        assert_eq!(
+            chain_diagnostic,
+            "chain_query_failure_category=invalid_or_conflicting_response"
+        );
+        assert!(!chain_diagnostic.contains("secret-capability-token"));
+        assert!(!chain_diagnostic.contains("/tenant/"));
+    }
+
+    #[test]
     fn sponsorship_signed_boc_commits_exact_payment_and_rejects_old_native_send() {
         let source = format!("0:{}", "3".repeat(64)).parse::<MsgAddressInt>().unwrap();
         let target = format!("0:{}", "4".repeat(64)).parse::<MsgAddressInt>().unwrap();
@@ -8672,8 +9105,13 @@ mod tests {
             commitment,
         )
         .unwrap();
+        let controller = SigningKey::from_bytes(&[0x42; 32]);
+        let hash_to_sign =
+            AgentAccountContract::controller_hash_to_sign(&source, 42, &payload).unwrap();
+        let signature = controller.sign(&hash_to_sign).to_bytes();
         let signed =
-            AgentAccountContract::build_signed_controller_message(payload, &[0; 64]).unwrap();
+            AgentAccountContract::build_signed_controller_message(payload.clone(), &signature)
+                .unwrap();
         let message =
             AgentAccountContract::build_external_controller_message(source.clone(), signed)
                 .unwrap();
@@ -8682,12 +9120,68 @@ mod tests {
         let digest = canonical_file_digest(&boc);
         let cell_hash =
             format!("tvm-cell-sha256:{}", hex::encode(read_single_root_boc(&boc).unwrap().hash(0)));
-        assert_eq!(
+        let parsed = validate_exact_sponsorship_top_up_boc(
+            &boc,
+            &encoded,
+            &digest,
+            &cell_hash,
+            &source,
+            42,
+            9,
+            1_800_000_100,
+            &target,
+            50,
+            &payment_digest,
+            &action_id,
+        )
+        .unwrap();
+        assert_eq!(parsed.controller_epoch, 7);
+        verify_parsed_controller_authorization(&parsed, controller.verifying_key().as_bytes())
+            .unwrap();
+        let wrong_controller = SigningKey::from_bytes(&[0x43; 32]);
+        assert!(
+            verify_parsed_controller_authorization(
+                &parsed,
+                wrong_controller.verifying_key().as_bytes(),
+            )
+            .is_err()
+        );
+        verify_current_controller_authorization(&parsed, 7, controller.verifying_key().as_bytes())
+            .expect("same-epoch finalized controller authority verifies the exact signature");
+        assert!(
+            verify_current_controller_authorization(
+                &parsed,
+                7,
+                wrong_controller.verifying_key().as_bytes(),
+            )
+            .is_err(),
+            "an arbitrary nonzero signature must not pass under the bound controller key"
+        );
+        assert!(
+            verify_current_controller_authorization(
+                &parsed,
+                8,
+                wrong_controller.verifying_key().as_bytes(),
+            )
+            .is_err(),
+            "the current key must not be substituted for a rotated-out signing epoch"
+        );
+
+        let zero_signed =
+            AgentAccountContract::build_signed_controller_message(payload, &[0; 64]).unwrap();
+        let zero_message =
+            AgentAccountContract::build_external_controller_message(source.clone(), zero_signed)
+                .unwrap();
+        let zero_boc = write_boc(&zero_message).unwrap();
+        assert!(
             validate_exact_sponsorship_top_up_boc(
-                &boc,
-                &encoded,
-                &digest,
-                &cell_hash,
+                &zero_boc,
+                &base64::engine::general_purpose::STANDARD.encode(&zero_boc),
+                &canonical_file_digest(&zero_boc),
+                &format!(
+                    "tvm-cell-sha256:{}",
+                    hex::encode(read_single_root_boc(&zero_boc).unwrap().hash(0))
+                ),
                 &source,
                 42,
                 9,
@@ -8697,8 +9191,7 @@ mod tests {
                 &payment_digest,
                 &action_id,
             )
-            .unwrap(),
-            7
+            .is_err()
         );
         assert!(
             validate_exact_sponsorship_top_up_boc(
@@ -8721,8 +9214,11 @@ mod tests {
         let old_payload =
             AgentAccountContract::build_native_send_payload(42, 7, 9, 1_800_000_100, &target, 50)
                 .unwrap();
-        let old_signed =
-            AgentAccountContract::build_signed_controller_message(old_payload, &[0; 64]).unwrap();
+        let old_signed = AgentAccountContract::build_signed_controller_message(
+            old_payload,
+            &controller.sign(&[0x33; 32]).to_bytes(),
+        )
+        .unwrap();
         let old_message =
             AgentAccountContract::build_external_controller_message(source.clone(), old_signed)
                 .unwrap();
@@ -8791,6 +9287,124 @@ mod tests {
     }
 
     #[test]
+    fn release_profile_rpc_locator_rejects_canonical_aliases() {
+        assert_eq!(
+            validate_release_profile_rpc_locator("https://rpc.example/jsonRPC").unwrap(),
+            ("https://rpc.example/jsonRPC".to_owned(), "https://rpc.example".to_owned())
+        );
+        assert_eq!(
+            validate_release_profile_rpc_locator("https://rpc.example").unwrap(),
+            ("https://rpc.example".to_owned(), "https://rpc.example".to_owned())
+        );
+        for alias in [
+            "HTTPS://rpc.example/jsonRPC",
+            "https://RPC.example/jsonRPC",
+            "https://rpc.example:443/jsonRPC",
+            "https://rpc.example/jsonRPC/",
+            "https://rpc.example/a//b",
+            "https://rpc.example/a/../b",
+            "https://rpc.example/a\\b",
+        ] {
+            assert!(
+                validate_release_profile_rpc_locator(alias).is_err(),
+                "release-profile locator alias was accepted: {alias}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_profile_member_loading_rejects_raw_locator_aliases() {
+        for (case, alias, legacy) in [
+            ("leading-space", " https://rpc-a.example/jsonRPC", false),
+            ("uppercase-host", "https://RPC-A.example/jsonRPC", false),
+            ("default-port", "https://rpc-a.example:443/jsonRPC", false),
+            ("trailing-slash", "https://rpc-a.example/jsonRPC/", false),
+            ("empty-segment", "https://rpc-a.example/a//b", false),
+            ("dot-segment", "https://rpc-a.example/a/../b", false),
+            ("legacy-leading-space", " https://rpc-a.example/jsonRPC", true),
+        ] {
+            let directory = TemporaryDirectory::create(&format!("profile-alias-{case}"));
+            let endpoints = [
+                alias.to_owned(),
+                "https://rpc-b.example/jsonRPC".to_owned(),
+                "https://rpc-c.example/jsonRPC".to_owned(),
+            ];
+            let mut paths = Vec::new();
+            for (index, endpoint) in endpoints.iter().enumerate() {
+                let chain_rpc = if index == 0 && legacy {
+                    serde_json::json!({
+                        "url": endpoint,
+                        "urls": [],
+                        "api_key": format!("private-key-{index}"),
+                        "operator_provenance": format!("sha256:{:064x}", index + 1),
+                    })
+                } else {
+                    serde_json::json!({
+                        "urls": [endpoint],
+                        "api_key": format!("private-key-{index}"),
+                        "operator_provenance": format!("sha256:{:064x}", index + 1),
+                    })
+                };
+                let value = serde_json::json!({
+                    "nodes": {},
+                    "chain_rpc": chain_rpc,
+                    "http": {},
+                    "master_wallet": null,
+                    "log": null,
+                });
+                let path = directory.0.join(format!("member-{index}.json"));
+                write_private_snapshot_file(&path, &serde_json::to_vec_pretty(&value).unwrap())
+                    .unwrap();
+                paths.push(path);
+            }
+            let quorum =
+                paths[1..].iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
+            assert!(
+                load_economic_payment_corroboration_members(&paths[0], &quorum).is_err(),
+                "release-profile member loader accepted {case} alias"
+            );
+        }
+    }
+
+    #[test]
+    fn rpc_locator_identity_matches_frozen_vectors_and_binds_path() {
+        assert_eq!(
+            rpc_locator_identity_digest("https://rpc-a.example/jsonRPC").unwrap(),
+            "sha256:7852a333f799e340dd1ca5f6080532fc4d78fc0decb0293569235f7c2d553e52"
+        );
+        assert_eq!(
+            rpc_locator_identity_digest("https://rpc-b.example/jsonRPC").unwrap(),
+            "sha256:ca6875601647a5c18d36f1e21597c1f25767ecc07bc460282a8d388d45487ee4"
+        );
+        assert_eq!(
+            rpc_locator_identity_digest("https://rpc-c.example/jsonRPC").unwrap(),
+            "sha256:d62360d879eecb5e45c4ced25d3c856b9090f54f92040e4807df4bfd6ce998e2"
+        );
+        assert_eq!(
+            rpc_locator_identity_digest("https://rpc-a.example/other").unwrap(),
+            "sha256:e31f790d1e9b90b1598aa914a6e8ac2ec40eb4de5afc3682495fdc3928377334"
+        );
+    }
+
+    #[test]
+    fn corroboration_profile_is_independent_of_private_config_bytes() {
+        let directory = TemporaryDirectory::create("profile-private-config");
+        let members =
+            (0..3).map(|index| test_corroboration_member(&directory.0, index)).collect::<Vec<_>>();
+        let (first, first_digest, _) =
+            economic_payment_corroboration_profile(&test_network(), &members, 500).unwrap();
+        let mut differently_encoded = members.clone();
+        for (index, member) in differently_encoded.iter_mut().enumerate() {
+            member.content_digest = format!("sha256:{:064x}", index + 100);
+        }
+        let (second, second_digest, _) =
+            economic_payment_corroboration_profile(&test_network(), &differently_encoded, 500)
+                .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first_digest, second_digest);
+    }
+
+    #[test]
     fn corroboration_profile_matches_cross_language_vector() {
         let directory = TemporaryDirectory::create("profile-vector");
         let mut members =
@@ -8798,6 +9412,8 @@ mod tests {
         for (index, member) in members.iter_mut().enumerate() {
             let label = char::from(b'a' + index as u8);
             member.endpoint = format!("https://rpc-{label}.example/jsonRPC");
+            member.display_origin = format!("https://rpc-{label}.example");
+            member.locator_identity_digest = rpc_locator_identity_digest(&member.endpoint).unwrap();
             member.operator_provenance = format!("sha256:{}", label.to_string().repeat(64));
         }
         let network = RelayNetworkDomainPin {
@@ -8809,11 +9425,11 @@ mod tests {
         };
         let (descriptor, digest, threshold) =
             economic_payment_corroboration_profile(&network, &members, 1000).unwrap();
-        assert_eq!(serde_json::to_vec(&descriptor).unwrap().len(), 933);
+        assert_eq!(serde_json::to_vec(&descriptor).unwrap().len(), 1209);
         assert_eq!(threshold, 2);
         assert_eq!(
             digest,
-            "sha256:4459ac77b6fc656fb34f44de3aaedf6ac6a4d717b725fb2f1ee56026786d6e89"
+            "sha256:bdc62291e5dde10074b58a5c5ba2c017fc2a4a89a51c8233d951105ff1d5c8f0"
         );
     }
 
@@ -8883,17 +9499,18 @@ mod tests {
             "sponsorship_stable_action_id": format!("sha256:{}", "2".repeat(64)),
             "confirmation_depth": 1,
             "observations": [{
-                "endpoint": "https://rpc-a.example/jsonRPC",
+                "endpoint": "https://rpc-a.example",
+                "locator_identity_digest": "sha256:7852a333f799e340dd1ca5f6080532fc4d78fc0decb0293569235f7c2d553e52",
                 "operator_provenance": format!("sha256:{}", "3".repeat(64)),
                 "transaction_hash": format!("sha256:{}", "4".repeat(64))
             }]
         });
         let mut canonical = Vec::new();
         encode_protocol_json_cbor(&bundle, &mut canonical, 0).unwrap();
-        assert_eq!(canonical.len(), 544);
+        assert_eq!(canonical.len(), 632);
         assert_eq!(
             protocol_cbor_digest(SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, &canonical).unwrap(),
-            "sha256:d9d2f6b7da5ab45c817a2296b2890b8cee44e0c18a39c556e2c0a4ad51e09da7"
+            "sha256:61280872b5cc6f30fabe301020d7a8f7c29e86a0c806bec61d3bb51bbb36414f"
         );
         let mut changed = bundle;
         changed["confirmation_depth"] = serde_json::Value::from(2);
@@ -9116,7 +9733,7 @@ mod tests {
 
         // Change only a credential, leaving endpoint and operator identity
         // untouched. The exact content binding must still reject the member.
-        let member_path = PathBuf::from(&snapshot.members[0].config_path);
+        let member_path = manifest.parent().unwrap().join(&snapshot.members[0].config_path);
         let mut member: serde_json::Value =
             serde_json::from_slice(&fs::read(&member_path).unwrap()).unwrap();
         member["chain_rpc"]["api_key"] = serde_json::json!("rotated-after-quote");
@@ -9129,6 +9746,100 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn frozen_corroboration_snapshot_nonce_randomizes_private_identity() {
+        let directory = TemporaryDirectory::create("snapshot-nonce");
+        let members =
+            (0..3).map(|index| test_corroboration_member(&directory.0, index)).collect::<Vec<_>>();
+        let network = test_network();
+        let (descriptor, digest, _) =
+            economic_payment_corroboration_profile(&network, &members, 500).unwrap();
+        let (first_manifest, first) = freeze_economic_payment_corroboration_snapshot(
+            &directory.0,
+            network.clone(),
+            &members,
+            500,
+            descriptor.clone(),
+            digest.clone(),
+        )
+        .unwrap();
+        let (second_manifest, second) = freeze_economic_payment_corroboration_snapshot(
+            &directory.0,
+            network,
+            &members,
+            500,
+            descriptor,
+            digest,
+        )
+        .unwrap();
+
+        for snapshot in [&first, &second] {
+            assert_eq!(snapshot.snapshot_nonce.len(), 64);
+            assert!(
+                snapshot
+                    .snapshot_nonce
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
+            assert!(snapshot.members.iter().all(|member| {
+                !Path::new(&member.config_path).is_absolute()
+                    && Path::new(&member.config_path).components().count() == 1
+            }));
+        }
+        assert_ne!(first.snapshot_nonce, second.snapshot_nonce);
+        assert_ne!(first.snapshot_identity, second.snapshot_identity);
+        assert_ne!(first_manifest, second_manifest);
+        assert_eq!(first.evidence_profile_digest, second.evidence_profile_digest);
+    }
+
+    #[test]
+    fn frozen_corroboration_snapshot_rejects_member_path_escape() {
+        let directory = TemporaryDirectory::create("snapshot-member-path");
+        let members =
+            (0..3).map(|index| test_corroboration_member(&directory.0, index)).collect::<Vec<_>>();
+        let network = test_network();
+        let (descriptor, digest, _) =
+            economic_payment_corroboration_profile(&network, &members, 500).unwrap();
+        let (manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
+            &directory.0,
+            network,
+            &members,
+            500,
+            descriptor,
+            digest.clone(),
+        )
+        .unwrap();
+        let original_manifest = fs::read(&manifest).unwrap();
+
+        for escaped in [
+            "../member-000.json",
+            "/tmp/member-000.json",
+            "nested/member-000.json",
+            "nested\\member-000.json",
+            ".",
+            "..",
+        ] {
+            let mut mutated = snapshot.clone();
+            mutated.members[0].config_path = escaped.to_owned();
+            fs::write(&manifest, serde_json::to_vec_pretty(&mutated).unwrap()).unwrap();
+            let error = load_economic_payment_corroboration_snapshot(
+                &manifest,
+                &digest,
+                &snapshot.snapshot_identity,
+            )
+            .err()
+            .expect("snapshot member path escape accepted");
+            assert!(error.to_string().contains("one relative basename"));
+        }
+        fs::write(&manifest, original_manifest).unwrap();
+        load_economic_payment_corroboration_snapshot(
+            &manifest,
+            &digest,
+            &snapshot.snapshot_identity,
+        )
+        .unwrap();
     }
 
     #[cfg(unix)]
@@ -9156,6 +9867,90 @@ mod tests {
         assert!(
             load_economic_payment_corroboration_snapshot(
                 &link,
+                &digest,
+                &snapshot.snapshot_identity,
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn frozen_corroboration_snapshot_rejects_symlink_member() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TemporaryDirectory::create("snapshot-member-symlink");
+        let members =
+            (0..3).map(|index| test_corroboration_member(&directory.0, index)).collect::<Vec<_>>();
+        let network = test_network();
+        let (descriptor, digest, _) =
+            economic_payment_corroboration_profile(&network, &members, 500).unwrap();
+        let (manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
+            &directory.0,
+            network,
+            &members,
+            500,
+            descriptor,
+            digest.clone(),
+        )
+        .unwrap();
+        let member = manifest.parent().unwrap().join(&snapshot.members[0].config_path);
+        let target = directory.0.join("source-0.json");
+        fs::remove_file(&member).unwrap();
+        symlink(target, member).unwrap();
+        assert!(
+            load_economic_payment_corroboration_snapshot(
+                &manifest,
+                &digest,
+                &snapshot.snapshot_identity,
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn frozen_corroboration_snapshot_rejects_hardlinked_manifest_and_member() {
+        let directory = TemporaryDirectory::create("snapshot-hardlinks");
+        let members =
+            (0..3).map(|index| test_corroboration_member(&directory.0, index)).collect::<Vec<_>>();
+        let network = test_network();
+        let (descriptor, digest, _) =
+            economic_payment_corroboration_profile(&network, &members, 500).unwrap();
+        let (manifest, snapshot) = freeze_economic_payment_corroboration_snapshot(
+            &directory.0,
+            network,
+            &members,
+            500,
+            descriptor,
+            digest.clone(),
+        )
+        .unwrap();
+
+        let member = manifest.parent().unwrap().join(&snapshot.members[0].config_path);
+        let member_alias = directory.0.join("member-hardlink-alias.json");
+        fs::hard_link(&member, &member_alias).unwrap();
+        assert!(
+            load_economic_payment_corroboration_snapshot(
+                &manifest,
+                &digest,
+                &snapshot.snapshot_identity,
+            )
+            .is_err()
+        );
+        fs::remove_file(member_alias).unwrap();
+        load_economic_payment_corroboration_snapshot(
+            &manifest,
+            &digest,
+            &snapshot.snapshot_identity,
+        )
+        .unwrap();
+
+        let manifest_alias = directory.0.join("manifest-hardlink-alias.json");
+        fs::hard_link(&manifest, manifest_alias).unwrap();
+        assert!(
+            load_economic_payment_corroboration_snapshot(
+                &manifest,
                 &digest,
                 &snapshot.snapshot_identity,
             )

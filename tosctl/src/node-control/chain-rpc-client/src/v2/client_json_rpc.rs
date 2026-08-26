@@ -32,6 +32,27 @@ struct EndpointClient {
     client: ApiClientV2,
 }
 
+/// Collapse an untrusted transport/protocol error into a bounded diagnostic
+/// category. HTTP client errors commonly retain the complete request URL,
+/// including deployment-specific capability paths. Those errors must never
+/// cross the chain-RPC client boundary or enter tracing fields verbatim.
+fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
+    let rendered = error.to_string().to_ascii_lowercase();
+    if rendered.contains("response id") || rendered.contains("request id") {
+        "response_id_mismatch"
+    } else if rendered.contains("timeout") || rendered.contains("timed out") {
+        "timeout"
+    } else if rendered.contains("connect")
+        || rendered.contains("dns")
+        || rendered.contains("request")
+        || rendered.contains("transport")
+    {
+        "transport_unavailable"
+    } else {
+        "remote_or_protocol_error"
+    }
+}
+
 pub struct ClientJsonRpc {
     api_key: Option<String>,
     endpoints: Vec<EndpointClient>,
@@ -48,8 +69,9 @@ impl ClientJsonRpc {
     /// Each entry is a `(url, per_endpoint_api_key)` pair. When the
     /// per-endpoint key is `None`, the `default_api_key` is used instead.
     ///
-    /// This constructor is defensive: it trims inputs, drops empty values and
-    /// deduplicates URLs while preserving order. Callers should normally pass
+    /// This constructor is defensive: it drops exactly empty values and
+    /// deduplicates URLs while preserving order. Whitespace and non-ASCII
+    /// aliases are rejected rather than normalized. Callers should normally pass
     /// pre-normalized values from `ChainRpcConfig::resolved_endpoints()`,
     /// but this method still tolerates duplicates for safety.
     pub fn connect_many(
@@ -59,11 +81,10 @@ impl ClientJsonRpc {
         let mut seen = HashSet::with_capacity(entries.len());
         let mut unique: Vec<(String, Option<String>)> = Vec::with_capacity(entries.len());
         for (url, key) in entries {
-            let url_trimmed = url.trim();
-            if url_trimmed.is_empty() {
+            if url.is_empty() {
                 continue;
             }
-            let (canonical_url, _) = canonicalize_chain_rpc_endpoint(url_trimmed)?;
+            let (canonical_url, _) = canonicalize_chain_rpc_endpoint(&url)?;
             if !seen.insert(canonical_url.clone()) {
                 continue;
             }
@@ -79,11 +100,18 @@ impl ClientJsonRpc {
             .map(|(url, per_key)| {
                 let effective_key = per_key.as_ref().or(default_api_key.as_ref());
                 let (_, display_origin) = canonicalize_chain_rpc_endpoint(&url)?;
+                let client = ApiClientV2::try_new_direct(
+                    Network::Custom(url.clone()),
+                    effective_key.map(|v| ApiKey::Header(v.to_string())),
+                )
+                .map_err(|error| {
+                    let category = bounded_rpc_error_category(&error);
+                    anyhow::anyhow!(
+                        "initialize chain-rpc client for {display_origin}; rpc_error_category={category}"
+                    )
+                })?;
                 Ok(EndpointClient {
-                    client: ApiClientV2::try_new_direct(
-                        Network::Custom(url.clone()),
-                        effective_key.map(|v| ApiKey::Header(v.to_string())),
-                    )?,
+                    client,
                     url,
                     display_origin,
                 })
@@ -113,7 +141,7 @@ impl ClientJsonRpc {
     /// 2. Starting from that endpoint, each endpoint is tried once in
     ///    cyclic order until one succeeds or all have been exhausted.
     /// 3. On success the response is returned immediately; on total failure
-    ///    the last error is propagated.
+    ///    only a bounded category for the last failure is propagated.
     async fn json_rpc_read(
         &self,
         method: &'static str,
@@ -122,7 +150,7 @@ impl ClientJsonRpc {
         let total = self.endpoints.len();
         let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
         let request_id = serde_json::json!(uuid::Uuid::new_v4().to_string());
-        let mut last_error: Option<anyhow::Error> = None;
+        let mut last_error_category: Option<&'static str> = None;
 
         for attempt in 0..total {
             let idx = (start + attempt) % total;
@@ -140,23 +168,26 @@ impl ClientJsonRpc {
                     return Ok(response);
                 }
                 Err(err) => {
+                    let error_category = bounded_rpc_error_category(&err);
                     tracing::debug!(
                         method,
                         endpoint = %endpoint.display_origin,
                         attempt = attempt + 1,
                         total_attempts = total,
-                        error = %err,
+                        error_category,
                         "chain-rpc request failed"
                     );
-                    last_error = Some(anyhow::Error::from(err));
+                    last_error_category = Some(error_category);
                 }
             }
         }
 
-        if let Some(err) = last_error {
-            Err(err.context(format!("all endpoints ({}) failed", total)))
+        if let Some(category) = last_error_category {
+            anyhow::bail!(
+                "all chain-rpc endpoints failed; endpoint_count={total}; rpc_error_category={category}"
+            )
         } else {
-            anyhow::bail!("request failed")
+            anyhow::bail!("chain-rpc request failed; rpc_error_category=internal")
         }
     }
 
@@ -174,14 +205,13 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<serde_json::Value> {
         let endpoint = &self.endpoints[0];
         let request_id = serde_json::json!(uuid::Uuid::new_v4().to_string());
-        endpoint
-            .client
-            .json_rpc(method, params, request_id)
-            .await
-            .map_err(anyhow::Error::from)
-            .with_context(|| {
-                format!("{} write attempt against {}", method, endpoint.display_origin)
-            })
+        endpoint.client.json_rpc(method, params, request_id).await.map_err(|error| {
+            let category = bounded_rpc_error_category(&error);
+            anyhow::anyhow!(
+                "{method} write attempt against {} failed; rpc_error_category={category}",
+                endpoint.display_origin
+            )
+        })
     }
 
     /// Executes a side-effect-free preflight against the primary endpoint.
@@ -194,12 +224,13 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<serde_json::Value> {
         let endpoint = &self.endpoints[0];
         let request_id = serde_json::json!(uuid::Uuid::new_v4().to_string());
-        endpoint
-            .client
-            .json_rpc(method, params, request_id)
-            .await
-            .map_err(anyhow::Error::from)
-            .with_context(|| format!("{} preflight against {}", method, endpoint.display_origin))
+        endpoint.client.json_rpc(method, params, request_id).await.map_err(|error| {
+            let category = bounded_rpc_error_category(&error);
+            anyhow::anyhow!(
+                "{method} preflight against {} failed; rpc_error_category={category}",
+                endpoint.display_origin
+            )
+        })
     }
 
     pub async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
@@ -335,7 +366,11 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<ExactBocSubmissionResult> {
         let local_hash = validated.root_hash;
         let cell_hash = validated.cell_hash;
-        let endpoint = self.endpoints[0].url.clone();
+        // Submission results cross the CLI/API trust boundary.  Keep the
+        // configured path private: it may contain a deployment-specific route
+        // or capability token even though queries and fragments are rejected
+        // by endpoint canonicalization.
+        let endpoint = self.endpoints[0].display_origin.clone();
         let params = serde_json::json!({
             "boc": base64::engine::general_purpose::STANDARD.encode(boc),
         });
@@ -343,6 +378,16 @@ impl ClientJsonRpc {
         let response = match self.json_rpc_write_once("sendBocReturnHash", params).await {
             Ok(response) => response,
             Err(err) => {
+                let error_chain = format!("{err:#}").to_ascii_lowercase();
+                let detail = if error_chain.contains("response_id_mismatch") {
+                    "RPC response id did not match the exact write request"
+                } else {
+                    "RPC write outcome is unknown after a transport or protocol error"
+                };
+                tracing::debug!(
+                    endpoint = %endpoint,
+                    "exact BOC write outcome is unknown"
+                );
                 return Ok(ExactBocSubmissionResult {
                     status: ExactBocSubmissionStatus::Unknown,
                     cell_hash,
@@ -350,7 +395,9 @@ impl ClientJsonRpc {
                     network_domain,
                     node_status: None,
                     node_cell_hash: None,
-                    detail: Some(bounded_detail(&format!("{err:#}"))),
+                    // Do not copy the transport error into a public result:
+                    // HTTP clients commonly include the full request URL.
+                    detail: Some(detail.to_owned()),
                 });
             }
         };
@@ -885,6 +932,17 @@ impl ClientJsonRpc {
 }
 
 pub fn canonicalize_chain_rpc_endpoint(value: &str) -> anyhow::Result<(String, String)> {
+    // The locator identity is reproduced by Go, Rust, and Python. Reject
+    // parser-specific trimming and IDNA behavior before URL parsing so all
+    // implementations hash the same ASCII byte string or fail closed.
+    if !value.is_ascii()
+        || value.trim() != value
+        || value.bytes().any(|byte| byte.is_ascii_control())
+    {
+        anyhow::bail!(
+            "chain-rpc endpoint must be strict printable ASCII without surrounding whitespace"
+        );
+    }
     let mut parsed = Url::parse(value).context("chain-rpc endpoint is not an absolute URL")?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         anyhow::bail!("chain-rpc endpoint must use HTTP or HTTPS");
@@ -1140,6 +1198,23 @@ mod tests {
                 .expect("remote HTTPS endpoint");
         assert_eq!(remote, "https://relay.example/private/path");
         assert_eq!(remote_display, "https://relay.example");
+    }
+
+    #[test]
+    fn chain_rpc_endpoint_policy_rejects_cross_language_parser_aliases() {
+        for endpoint in [
+            " https://relay.example/api",
+            "https://relay.example/api ",
+            "https://relay.example/api\n",
+            "https://rélay.example/api",
+        ] {
+            let error = canonicalize_chain_rpc_endpoint(endpoint)
+                .expect_err("non-ASCII or parser-trimmed endpoint accepted");
+            assert_eq!(
+                error.to_string(),
+                "chain-rpc endpoint must be strict printable ASCII without surrounding whitespace"
+            );
+        }
     }
 
     #[test]
@@ -1472,8 +1547,11 @@ mod tests {
 
     #[tokio::test]
     async fn json_rpc_read_all_endpoints_failed_returns_last_error_only() {
-        let (bad_1, bad_1_handle) = spawn_http_500_server().await;
-        let (bad_2, bad_2_handle) = spawn_http_500_server().await;
+        let (bad_1_origin, bad_1_handle) = spawn_http_500_server().await;
+        let (bad_2_origin, bad_2_handle) = spawn_http_500_server().await;
+        let private_path = "/tenant/secret-capability-token/jsonRPC";
+        let bad_1 = format!("{bad_1_origin}{private_path}");
+        let bad_2 = format!("{bad_2_origin}{private_path}");
 
         let client =
             ClientJsonRpc::connect_many(vec![(bad_1, None), (bad_2, None)], None).expect("client");
@@ -1484,6 +1562,9 @@ mod tests {
             .expect_err("json_rpc should fail when all endpoints are down");
         let err_text = err.to_string();
 
+        assert!(err_text.contains("rpc_error_category="));
+        assert!(!err_text.contains(private_path));
+        assert!(!err_text.contains("secret-capability-token"));
         assert!(
             !err_text.contains("failed on all chain-rpc endpoints"),
             "error should not contain aggregated wrapper message"
@@ -1522,6 +1603,27 @@ mod tests {
             "secondary endpoint must receive no implicit write"
         );
         first_handle.await.expect("dropped-response server task");
+    }
+
+    #[tokio::test]
+    async fn exact_boc_public_result_never_exposes_the_configured_rpc_path() {
+        let write_count = Arc::new(AtomicUsize::new(0));
+        let (origin, server) = spawn_drop_response_server(write_count.clone()).await;
+        let private_path = "/tenant/private-capability-token/jsonRPC";
+        let configured = format!("{origin}{private_path}");
+        let client = ClientJsonRpc::connect(configured, None).expect("path-bound client");
+        let (boc, _) = exact_boc();
+
+        let result =
+            client.submit_exact_boc_legacy_unpinned(&boc).await.expect("typed unknown result");
+        let public_json = serde_json::to_string(&result).expect("serialize public result");
+
+        assert_eq!(result.status, ExactBocSubmissionStatus::Unknown);
+        assert_eq!(result.endpoint, origin);
+        assert!(!public_json.contains(private_path));
+        assert!(!result.detail.as_deref().unwrap_or_default().contains(private_path));
+        assert_eq!(write_count.load(Ordering::SeqCst), 1);
+        server.await.expect("dropped-response server task");
     }
 
     #[tokio::test]

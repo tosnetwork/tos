@@ -1,5 +1,5 @@
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::fd::{AsRawFd, FromRawFd},
@@ -31,6 +31,15 @@ const ECONOMIC_ACTION_TOMBSTONE_SCHEMA: &str = "tos.agent-account.economic-actio
 const ECONOMIC_ACTION_TOMBSTONE_PREFIX: &str = "economic-action-";
 const MAX_JOURNAL_BYTES: u64 = 32 << 20;
 const MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES: u64 = 2 << 20;
+// This is an owner/custody-domain lifetime budget, not merely a hot-cache
+// threshold. Each admitted identity reserves the complete per-file maximum so
+// every exact retry and valid state transition retains space after admission.
+const MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES: u64 = 512 << 20;
+// One private custody directory is the rollback-resistant replay domain for
+// its owner. Permanent replay fences are never deleted merely to reclaim
+// space, so admission must stop before an unbounded number can be created.
+const MAX_ECONOMIC_ACTION_TOMBSTONES: usize = 65_536;
+const MAX_CUSTODY_DIRECTORY_ENTRIES: usize = MAX_ECONOMIC_ACTION_TOMBSTONES + 64;
 // Serialized bytes are the authoritative storage bound. This separate count
 // prevents a hostile file full of tiny records from making validation
 // unbounded without imposing a small global active-action cap across wallets.
@@ -214,7 +223,8 @@ struct EconomicAuthorityHighWater {
 /// Permanent owner/Agent semantic replay identity. The bounded hot controller
 /// journal may discard old terminal BOC material, but it may never discard the
 /// fact that this stable action already selected one exact source sequence and
-/// effect. One file per stable action avoids imposing a lifetime action count.
+/// effect. One file per stable action keeps exact retries independent, while a
+/// hard custody-domain ceiling prevents unbounded permanent-ledger growth.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EconomicActionTombstone {
@@ -224,6 +234,12 @@ struct EconomicActionTombstone {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_resolution_digest: Option<String>,
     record: ControllerActionRecord,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EconomicTombstoneUsage {
+    count: usize,
+    persistent_bytes: u64,
 }
 
 pub struct AgentAccountCustodyJournal {
@@ -1084,6 +1100,11 @@ impl AgentAccountCustodyJournal {
             if candidate == existing {
                 return Ok(());
             }
+        } else {
+            // Reserve capacity before the first durable representation of a
+            // new semantic action. Exact retries and transitions of an
+            // existing action remain available even when the ledger is full.
+            enforce_economic_tombstone_capacity(self.economic_action_tombstone_usage()?, true)?;
         }
         let raw = serde_json::to_vec(&candidate)?;
         if raw.is_empty() || raw.len() as u64 > MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES {
@@ -1129,6 +1150,124 @@ impl AgentAccountCustodyJournal {
         Ok(())
     }
 
+    fn economic_action_tombstone_usage(&self) -> anyhow::Result<EconomicTombstoneUsage> {
+        #[cfg(not(unix))]
+        anyhow::bail!("Agent Account custody tombstones require Unix openat semantics");
+        #[cfg(unix)]
+        {
+            struct DirectoryStream(*mut libc::DIR);
+            impl Drop for DirectoryStream {
+                fn drop(&mut self) {
+                    // SAFETY: fdopendir returned this unique DIR pointer and
+                    // ownership has not been transferred elsewhere.
+                    unsafe { libc::closedir(self.0) };
+                }
+            }
+
+            // Open "." relative to the pinned custody descriptor. This creates
+            // an independent directory stream for every scan without ever
+            // resolving the caller-supplied pathname again.
+            let dot = c_filename(".")?;
+            // SAFETY: the retained descriptor is open for the journal lifetime
+            // and `dot` is a validated, NUL-terminated relative name.
+            let scan_fd = unsafe {
+                libc::openat(
+                    self.directory_fd.as_raw_fd(),
+                    dot.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if scan_fd < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            // SAFETY: scan_fd is a newly opened directory descriptor. On
+            // success fdopendir owns it; on failure we close it below.
+            let stream = unsafe { libc::fdopendir(scan_fd) };
+            if stream.is_null() {
+                let error = std::io::Error::last_os_error();
+                // SAFETY: fdopendir did not take ownership on failure.
+                unsafe { libc::close(scan_fd) };
+                return Err(error.into());
+            }
+            let stream = DirectoryStream(stream);
+            let mut usage = EconomicTombstoneUsage::default();
+            let mut scanned = 0usize;
+            loop {
+                errno::set_errno(errno::Errno(0));
+                // SAFETY: the stream remains owned and open for this loop.
+                let entry = unsafe { libc::readdir(stream.0) };
+                if entry.is_null() {
+                    let error = errno::errno();
+                    if error.0 != 0 {
+                        anyhow::bail!("read pinned custody directory: {error}");
+                    }
+                    break;
+                }
+                // SAFETY: POSIX dirent::d_name is NUL-terminated for a
+                // successful readdir result and remains valid until the next
+                // call on this stream.
+                let name_bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                if name_bytes == b"." || name_bytes == b".." {
+                    continue;
+                }
+                scanned = scanned.checked_add(1).context("custody entry count overflows")?;
+                if scanned > MAX_CUSTODY_DIRECTORY_ENTRIES {
+                    anyhow::bail!("Agent Account custody directory entry capacity is exceeded");
+                }
+                let name = std::str::from_utf8(name_bytes)
+                    .context("custody directory contains a non-UTF-8 name")?;
+                if !name.starts_with(ECONOMIC_ACTION_TOMBSTONE_PREFIX) {
+                    continue;
+                }
+                let raw = name
+                    .strip_prefix(ECONOMIC_ACTION_TOMBSTONE_PREFIX)
+                    .and_then(|value| value.strip_suffix(".json"))
+                    .context("custody directory contains a malformed economic tombstone name")?;
+                if raw.len() != 64
+                    || !raw
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    anyhow::bail!("custody directory contains a malformed economic tombstone name");
+                }
+                let filename = c_filename(name)?;
+                // SAFETY: stat is initialized by a successful fstatat call;
+                // the pinned directory descriptor and filename remain valid.
+                let mut metadata = unsafe { std::mem::zeroed::<libc::stat>() };
+                if unsafe {
+                    libc::fstatat(
+                        self.directory_fd.as_raw_fd(),
+                        filename.as_ptr(),
+                        &mut metadata,
+                        libc::AT_SYMLINK_NOFOLLOW,
+                    )
+                } != 0
+                {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                let size = u64::try_from(metadata.st_size)
+                    .context("economic tombstone has a negative byte size")?;
+                if metadata.st_mode & libc::S_IFMT != libc::S_IFREG
+                    || metadata.st_mode & 0o777 != 0o600
+                    || metadata.st_uid != unsafe { libc::geteuid() }
+                    || metadata.st_nlink != 1
+                    || size == 0
+                    || size > MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES
+                {
+                    anyhow::bail!("invalid private economic stable-action tombstone file");
+                }
+                usage.count =
+                    usage.count.checked_add(1).context("economic tombstone count overflows")?;
+                usage.persistent_bytes = usage
+                    .persistent_bytes
+                    .checked_add(size)
+                    .context("economic tombstone byte count overflows")?;
+                enforce_economic_tombstone_capacity(usage, false)?;
+            }
+            Ok(usage)
+        }
+    }
+
     fn with_document<T>(
         &self,
         operation: impl FnOnce(&mut JournalDocument) -> anyhow::Result<T>,
@@ -1140,6 +1279,10 @@ impl AgentAccountCustodyJournal {
         )?;
         validate_private_regular_file(&lock, true, LOCK_FILE)?;
         lock.lock_exclusive()?;
+        // Reject an already-overfull permanent ledger before loading hot
+        // state or executing an operation. This is both a startup bound and a
+        // guard against out-of-band file injection.
+        enforce_economic_tombstone_capacity(self.economic_action_tombstone_usage()?, false)?;
         let mut document = match self.openat_file(
             JOURNAL_FILE,
             libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
@@ -1273,6 +1416,37 @@ fn economic_action_tombstone_filename(stable_action_id: &str) -> anyhow::Result<
         anyhow::bail!("economic stable action is not a canonical SHA-256 digest");
     }
     Ok(format!("{ECONOMIC_ACTION_TOMBSTONE_PREFIX}{raw}.json"))
+}
+
+fn enforce_economic_tombstone_capacity(
+    usage: EconomicTombstoneUsage,
+    creating_new: bool,
+) -> anyhow::Result<()> {
+    if usage.count > MAX_ECONOMIC_ACTION_TOMBSTONES
+        || usage.persistent_bytes > MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES
+    {
+        anyhow::bail!("Agent Account custody permanent replay ledger exceeds its hard capacity");
+    }
+    let reserved_count = usage
+        .count
+        .checked_add(usize::from(creating_new))
+        .context("economic tombstone reservation count overflows")?;
+    if reserved_count > MAX_ECONOMIC_ACTION_TOMBSTONES {
+        anyhow::bail!(
+            "Agent Account custody permanent replay ledger reached its {}-action capacity",
+            MAX_ECONOMIC_ACTION_TOMBSTONES
+        );
+    }
+    let worst_case_reserved_bytes = u64::try_from(reserved_count)?
+        .checked_mul(MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES)
+        .context("economic tombstone byte reservation overflows")?;
+    if worst_case_reserved_bytes > MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES {
+        anyhow::bail!(
+            "Agent Account custody permanent replay ledger reached its {}-byte aggregate capacity",
+            MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES
+        );
+    }
+    Ok(())
 }
 
 fn unlinkat_best_effort(directory: &File, filename: &str) {
@@ -2438,6 +2612,70 @@ mod tests {
             action_identity: format!("sha256:{}", marker.to_string().repeat(64)),
             valid_until: 2000,
         }
+    }
+
+    #[test]
+    fn permanent_replay_ledger_reserves_capacity_only_for_new_actions() {
+        let fully_reserved = usize::try_from(
+            MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES / MAX_ECONOMIC_ACTION_TOMBSTONE_BYTES,
+        )
+        .unwrap();
+        let usage = EconomicTombstoneUsage {
+            count: fully_reserved,
+            persistent_bytes: u64::try_from(fully_reserved).unwrap(),
+        };
+        enforce_economic_tombstone_capacity(usage, false)
+            .expect("existing actions remain readable and transitionable at reserved capacity");
+        assert!(
+            enforce_economic_tombstone_capacity(usage, true).is_err(),
+            "a new semantic action must reserve its worst-case bytes before side-effect state"
+        );
+        assert!(
+            enforce_economic_tombstone_capacity(
+                EconomicTombstoneUsage {
+                    count: 1,
+                    persistent_bytes: MAX_ECONOMIC_ACTION_TOMBSTONE_TOTAL_BYTES + 1,
+                },
+                false,
+            )
+            .is_err(),
+            "an aggregate-byte-overfull ledger must fail closed at load"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanent_replay_ledger_scan_stays_on_the_pinned_directory_after_path_swap() {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn write_private(path: &Path, bytes: &[u8]) {
+            fs::write(path, bytes).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let parent = tempfile::tempdir().unwrap();
+        let original = parent.path().join("custody");
+        fs::create_dir(&original).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
+        let journal = AgentAccountCustodyJournal::open(original.canonicalize().unwrap()).unwrap();
+
+        let pinned = parent.path().join("pinned-custody");
+        fs::rename(&original, &pinned).unwrap();
+        fs::create_dir(&original).unwrap();
+        fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
+        write_private(
+            &pinned.join(format!("{ECONOMIC_ACTION_TOMBSTONE_PREFIX}{}.json", "a".repeat(64))),
+            b"{}",
+        );
+        write_private(
+            &original.join(format!("{ECONOMIC_ACTION_TOMBSTONE_PREFIX}{}.json", "b".repeat(64))),
+            b"replacement-path-data-must-not-be-counted",
+        );
+
+        assert_eq!(
+            journal.economic_action_tombstone_usage().unwrap(),
+            EconomicTombstoneUsage { count: 1, persistent_bytes: 2 }
+        );
     }
 
     fn signed_boc(claim: &ControllerActionClaim, cancellation: bool) -> (String, String) {
