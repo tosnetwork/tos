@@ -20,6 +20,16 @@ impl ApiClientV2 {
         Self { base_client: BaseApiClient::new(api_key), base_url }
     }
 
+    /// Constructs the bounded, no-ambient-proxy client used for signed writes
+    /// and the reads which resolve their ambiguous outcomes.
+    pub fn try_new_direct(
+        network: Network,
+        api_key: Option<ApiKey>,
+    ) -> Result<Self, ToscenterError> {
+        let base_url = network.to_string();
+        Ok(Self { base_client: BaseApiClient::try_new_direct(api_key)?, base_url })
+    }
+
     /// Get basic information about the address: balance, code, data, last_transaction_id.
     ///
     /// # Parameters
@@ -604,9 +614,13 @@ impl ApiClientV2 {
         params: serde_json::Value,
         id: serde_json::Value,
     ) -> Result<serde_json::Value, ToscenterError> {
-        let request_body =
-            JsonRpcRequest { jsonrpc: "2.0".to_string(), method: method.to_string(), params, id };
+        let request_body = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params,
+            id: id.clone(),
+        };
 
-        self.base_client.post_rpc(&self.base_url, "jsonRPC", &request_body).await
+        self.base_client.post_rpc(&self.base_url, "jsonRPC", &request_body, &id).await
     }
 }

@@ -249,9 +249,168 @@ wallet broadcast-prepared Broadcast the exact BOC emitted by send --build-only
 Automation that needs a crash-safe broadcast boundary can first use
 `wallet send --build-only` to construct and sign an external message, validate
 the returned versioned JSON, then submit those exact bytes with
-`wallet broadcast-prepared --message-boc <BASE64> --yes`. The broadcast command
-does not rebuild or sign the transaction. Treat a transport error after calling
-it as ambiguous and reconcile against finalized chain state before any retry.
+`wallet broadcast-prepared --message-boc-stdin --yes
+--acknowledge-unpinned-manual-broadcast`, writing the standard
+Base64 bytes to stdin. This avoids exposing a bearer-executable BOC in process
+arguments; the legacy `--message-boc` form remains available for interactive
+use. The broadcast command does not rebuild or sign the transaction and sends
+to the configured primary RPC endpoint exactly once. The RPC client uses a
+bounded direct connection and ignores ambient proxy variables, so an
+unconfigured process-level proxy cannot receive the bearer BOC. A matching
+locally computed cell hash means only that the endpoint accepted the request, not that
+the transaction executed or finalized. Transport failure, malformed response,
+or hash mismatch produces a typed V2 `unknown` result; reconcile the exact
+transaction against finalized chain state before any byte-identical retry.
+This command is deliberately labelled and gated as a legacy/manual operation:
+it has no owner-pinned full network domain and no custody journal, so it must
+not be used as the production Agent relay service. The Agent economic custody
+path requires an authority-signed full network pin, persists that pin with the
+exact BOC, rechecks the configured primary immediately before the sole write,
+and fails closed when portable shard/masterchain finality proof is unavailable.
+
+For Agent gas sponsorship, `agent account economic-payment-corroborate` remains
+the nonterminal, lower-assurance observation command. It can prove that a
+strict majority of an owner-frozen RPC set saw the exact submitted message and
+the destination transaction that applied its exact credit. A source outbound
+message alone is not destination-credit evidence. This path cannot claim
+validator-authenticated portable finality. The distinct owner-policy terminal
+command is:
+
+```text
+tosctl agent account economic-payment-sponsorship-corroborated-terminal \
+  --wallet <provider-wallet> \
+  --stable-action-id sha256:<64-hex> \
+  --agreement-payment-request-cbor /absolute/private/payment.cbor \
+  --finality-profile-cbor /absolute/private/finality-profile.cbor \
+  --corroboration-snapshot /absolute/private/manifest.json \
+  --corroboration-snapshot-identity sha256:<64-hex> \
+  --sponsorship-release-profile-digest sha256:<64-hex> \
+  --config /absolute/tosctl-config.json
+```
+
+Both CBOR inputs must be owner-private exact RFC 8949 Core Deterministic
+protocol encodings. The Action Authority signature must bind the exact
+finality-profile CBOR digest, the release-profile digest, and the frozen
+snapshot identity.
+The selected profile URI must be
+`tos.sponsorship.client-corroborated-terminal.v1`. Sponsorship prepare uses the
+generic Agent Account task-send operation with an `SPN1` referenced commitment
+containing the exact PaymentRequestV3 digest and stable action ID; a legacy
+bodyless native send cannot be reused for another Agreement. Destination
+delivery requires the exact inbound message, an exact credit-first credit
+phase, and no bounce phase. Destination application compute may abort on the
+optional commitment body without undoing that already applied non-bounced
+credit; the evidence reports the abort separately and does not describe it as
+successful application execution.
+
+The command performs no signing or chain write. Once it independently finds
+the exact winner, it atomically stores bounded replayable evidence and advances
+the custody high-water mark before stdout; a crash can therefore replay the
+same result without another RPC query. Its terminal JSON therefore reports
+`chain_side_effect=false` and `custody_side_effect=true`; unknown results report
+both as false. This built-in Adapter proves only
+confirmation depth 1 and emits
+`terminal_evidence_class=client_corroborated`, state
+`corroborated_terminal`, and
+`validator_authenticated_portable_proof=false`. This is a selected local
+policy terminal, not validator or chain finality. It emits no portable proof
+locator and cannot satisfy `autonomous-decentralized` readiness. Expected
+nonterminal results return exit-zero JSON with state `unknown` and exactly one
+of `not_found`, `not_mature`, or `temporarily_unavailable`; binding, profile,
+snapshot, quorum-conflict, custody, and evidence-integrity failures remain hard
+errors.
+
+A requester can independently re-query the Provider proof using its own frozen
+RPC configuration without sharing RPC credentials or opening Provider custody:
+
+```text
+tosctl agent account economic-payment-sponsorship-proof-verify \
+  --proof-bundle-cbor /absolute/private/provider-proof.cbor \
+  --agreement-payment-request-cbor /absolute/private/payment.cbor \
+  --finality-profile-cbor /absolute/private/finality-profile.cbor \
+  --corroboration-snapshot /absolute/private/client-manifest.json \
+  --corroboration-snapshot-identity sha256:<64-hex> \
+  --sponsorship-release-profile-digest sha256:<64-hex>
+```
+
+The Provider and requester snapshot identities may differ because local paths
+and credentials differ. Their released profile descriptor, network, endpoints,
+and operator provenance must be identical. The verifier has no wallet,
+custody, signing, broadcast, or journal access.
+
+Terminal-negative sponsorship and relay components use a separate, bounded
+absence-proof profile. The stock lower-assurance profile is
+`tos.relay-absence.tosctl-rpc-snapshot.v1`; its released descriptor digest is
+`sha256:f13a22b086f91309ac9ea9abad1d9dcf005e2d7a8818637cb7350734af8c2216`.
+It is an owner-pinned RPC corroboration profile, not validator-authenticated
+portable finality. Its generic proof wrapper and adapter payload are Core
+Deterministic CBOR and are bounded to 128 KiB.
+
+The Provider first produces an exact sponsorship-component tombstone with:
+
+```text
+tosctl agent account economic-payment-sponsorship-component-absence \
+  --wallet <provider-wallet> \
+  --stable-action-id sha256:<64-hex> \
+  --agreement-payment-request-cbor /absolute/private/payment.cbor \
+  --relay-execution-request-cbor /absolute/private/execution.cbor \
+  --sponsorship-terminal-profile-cbor /absolute/private/sponsor-profile.cbor \
+  --relay-finality-profile-cbor /absolute/private/relay-profile.cbor \
+  --corroboration-snapshot /absolute/private/provider-manifest.json \
+  --corroboration-snapshot-identity sha256:<64-hex> \
+  --sponsorship-release-profile-digest sha256:<64-hex>
+```
+
+That command writes no chain transaction, but it atomically records the exact
+sponsorship-only proof in local custody before stdout
+(`chain_side_effect=false`, `custody_side_effect=true`). If the client relay
+transaction later also becomes terminal-negative, the exact prior wrapper is
+aggregated monotonically with:
+
+```text
+tosctl agent account economic-payment-sponsorship-dual-absence \
+  <the exact flags above> \
+  --existing-sponsorship-proof-bundle-cbor /absolute/private/prior-sponsor-proof.cbor
+```
+
+Dual aggregation requires byte-identical prior tombstone evidence, freshly
+rechecks its conclusion, preserves every sponsorship reference, and adds only
+the client-transaction absence set. It does not rewrite custody or the chain
+(`custody_side_effect=false`). The relay journal records the predecessor proof
+digest and the combined terminal object.
+
+When sponsorship succeeded but the client transaction did not, produce only
+the transaction component with the query-only command:
+
+```text
+tosctl agent account economic-payment-relay-transaction-component-absence \
+  --agreement-payment-request-cbor /absolute/private/payment.cbor \
+  --relay-execution-request-cbor /absolute/private/execution.cbor \
+  --sponsorship-terminal-profile-cbor /absolute/private/sponsor-profile.cbor \
+  --relay-finality-profile-cbor /absolute/private/relay-profile.cbor \
+  --corroboration-snapshot /absolute/private/provider-manifest.json \
+  --corroboration-snapshot-identity sha256:<64-hex> \
+  --sponsorship-release-profile-digest sha256:<64-hex>
+```
+
+Independent requester verification uses the corresponding
+`economic-payment-sponsorship-component-absence-proof-verify`,
+`economic-payment-sponsorship-dual-absence-proof-verify`, or
+`economic-payment-relay-transaction-component-absence-proof-verify` command
+with the Provider wrapper and the requester-owned frozen snapshot. Only
+`not_mature` and `temporarily_unavailable` produce exit-zero `state=unknown`;
+malformed, substituted, downgraded, disagreeing, or conflicting proofs remain
+hard errors. The query-only
+`economic-payment-sponsorship-dual-absence-capability` command checks the exact
+mode/profile/network/snapshot tuple directly. `sponsor_only` requires the
+sponsorship component; `sponsor_and_relay` requires sponsorship, transaction,
+and dual component support. None of these stock RPC commands makes an
+`autonomous_decentralized` sponsorship tuple ready.
+
+The existing `agent account economic-payment-resolve` command and its
+`tosctl.agent-account.agreement-payment-finalized.v1` output remain the
+ordinary-payment compatibility contract. They do not accept the sponsorship
+CBOR/snapshot flags.
 
 ### `tosctl pool` -- Staking pool management
 

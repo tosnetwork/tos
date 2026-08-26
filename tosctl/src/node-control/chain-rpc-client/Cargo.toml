@@ -8,9 +8,11 @@ license = 'GPL-3.0'
 serde = { version = "1.0" }
 serde_json = "1.0.145"
 base64 = "0.22"
+hex = "0.4"
 anyhow = "1.0"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+url = "2.5"
 chain_block = { path = "../../block" }
 tl_api = { path = "../../tl/api" }
 common = { path = "../common" }

@@ -20,7 +20,7 @@ use chain_block::{
     read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
-use chain_rpc_client::v2::data_models::AccountState;
+use chain_rpc_client::v2::data_models::{AccountState, ExactBocSubmissionStatus};
 use colored::Colorize;
 use common::{
     app_config::WalletConfig,
@@ -36,7 +36,7 @@ use secrets_vault::{
 use std::{
     borrow::Cow,
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -339,12 +339,28 @@ pub struct WalletSendCmd {
 }
 
 #[derive(clap::Args, Clone)]
-#[command(about = "Broadcast an exact prepared external message without rebuilding or signing it")]
+#[command(about = "Legacy/manual-only unpinned broadcast; not a production Agent relay")]
 pub struct WalletBroadcastPreparedCmd {
-    #[arg(long, help = "Exact external message BOC emitted by wallet send --build-only")]
-    message_boc: String,
+    #[arg(
+        long,
+        conflicts_with = "message_boc_stdin",
+        required_unless_present = "message_boc_stdin",
+        help = "Exact external message BOC emitted by wallet send --build-only; visible to local process inspection"
+    )]
+    message_boc: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "message_boc",
+        help = "Read the standard-base64 exact message BOC from stdin instead of process arguments"
+    )]
+    message_boc_stdin: bool,
     #[arg(long, help = "Acknowledge broadcasting the exact supplied message")]
     yes: bool,
+    #[arg(
+        long,
+        help = "Acknowledge that this command has no owner-pinned network domain or custody journal and is not a production Agent relay"
+    )]
+    acknowledge_unpinned_manual_broadcast: bool,
     #[arg(long, requires = "config_format")]
     config_fd: Option<i32>,
     #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
@@ -391,33 +407,83 @@ impl WalletBroadcastPreparedCmd {
         if !self.yes {
             anyhow::bail!("--yes is required to broadcast a prepared message");
         }
-        let encoded = self.message_boc.as_bytes();
-        if encoded.is_empty() || encoded.len() > 128 * 1024 {
+        if !self.acknowledge_unpinned_manual_broadcast {
+            anyhow::bail!(
+                "--acknowledge-unpinned-manual-broadcast is required; use the pinned custody relay path for autonomous operation"
+            );
+        }
+        const MAX_ENCODED_BOC_BYTES: usize = 128 * 1024;
+        let mut encoded = match (&self.message_boc, self.message_boc_stdin) {
+            (Some(value), false) => value.as_bytes().to_vec(),
+            (None, true) => {
+                let mut value = Vec::new();
+                std::io::stdin()
+                    .lock()
+                    .take((MAX_ENCODED_BOC_BYTES + 1) as u64)
+                    .read_to_end(&mut value)
+                    .context("Read prepared message BOC from stdin")?;
+                value
+            }
+            _ => anyhow::bail!("Provide exactly one of --message-boc or --message-boc-stdin"),
+        };
+        if encoded.is_empty() || encoded.len() > MAX_ENCODED_BOC_BYTES {
+            encoded.zeroize();
             anyhow::bail!("Prepared message BOC has an invalid size");
         }
         let message_boc = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .context("Invalid prepared message BOC base64")?;
+            .decode(&encoded)
+            .context("Invalid prepared message BOC base64");
+        encoded.zeroize();
+        let message_boc = message_boc?;
         if message_boc.is_empty() || message_boc.len() > 64 * 1024 {
             anyhow::bail!("Prepared message BOC has an invalid size");
         }
-        let message = read_single_root_boc(message_boc.clone())?;
-        let message_hash = format!("tvm-cell-sha256:{:x}", message.repr_hash());
+        read_single_root_boc(message_boc.clone())?;
         let (_, _, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
             (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
             (None, None) => load_config_vault_rpc_client(Path::new(config_path)).await?,
             _ => anyhow::bail!("--config-fd and --config-format must be provided together"),
         };
-        rpc_client.send_boc(&message_boc).await?;
+        let submission = rpc_client.submit_exact_boc_legacy_unpinned(&message_boc).await?;
+        if submission.status == ExactBocSubmissionStatus::Accepted {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "version": "tosctl.wallet-prepared-broadcast.v2",
+                    "message_hash": &submission.cell_hash,
+                    "status": "submitted",
+                    "safety_profile": "legacy-manual-unpinned",
+                    "production_agent_relay": false,
+                })
+            );
+            return Ok(());
+        }
         println!(
             "{}",
             serde_json::json!({
-                "version": "tosctl.wallet-prepared-broadcast.v1",
-                "message_hash": message_hash,
-                "status": "submitted",
+                "version": "tosctl.wallet-prepared-broadcast.v2",
+                "message_hash": &submission.cell_hash,
+                "endpoint": &submission.endpoint,
+                "status": submission.status,
+                "node_status": submission.node_status,
+                "detail": &submission.detail,
+                "safety_profile": "legacy-manual-unpinned",
+                "production_agent_relay": false,
             })
         );
-        Ok(())
+        match submission.status {
+            ExactBocSubmissionStatus::Accepted => Ok(()),
+            ExactBocSubmissionStatus::Rejected => anyhow::bail!(
+                "prepared message {} was rejected by {}",
+                submission.cell_hash,
+                submission.endpoint
+            ),
+            ExactBocSubmissionStatus::Unknown => anyhow::bail!(
+                "prepared message {} outcome is unknown at {}; resolve it before any retry",
+                submission.cell_hash,
+                submission.endpoint
+            ),
+        }
     }
 }
 
@@ -1556,6 +1622,7 @@ mod wallet_send_cli_tests {
                 "--message-boc",
                 "te6ccgEBAQEAAgAAAA==",
                 "--yes",
+                "--acknowledge-unpinned-manual-broadcast",
                 "--config-fd",
                 "3",
                 "--config-format",
@@ -1564,10 +1631,30 @@ mod wallet_send_cli_tests {
             .expect("prepared broadcast flags must parse");
         let parsed = WalletBroadcastPreparedCmd::from_arg_matches(&matches)
             .expect("parsed prepared broadcast args");
-        assert_eq!(parsed.message_boc, "te6ccgEBAQEAAgAAAA==");
+        assert_eq!(parsed.message_boc.as_deref(), Some("te6ccgEBAQEAAgAAAA=="));
+        assert!(!parsed.message_boc_stdin);
         assert!(parsed.yes);
+        assert!(parsed.acknowledge_unpinned_manual_broadcast);
         assert_eq!(parsed.config_fd, Some(3));
         assert_eq!(parsed.config_format.as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn parses_private_exact_prepared_broadcast_from_stdin() {
+        let command = WalletBroadcastPreparedCmd::augment_args(Command::new("broadcast-prepared"));
+        let matches = command
+            .try_get_matches_from([
+                "broadcast-prepared",
+                "--message-boc-stdin",
+                "--yes",
+                "--acknowledge-unpinned-manual-broadcast",
+            ])
+            .expect("stdin prepared broadcast flags must parse");
+        let parsed = WalletBroadcastPreparedCmd::from_arg_matches(&matches)
+            .expect("parsed stdin prepared broadcast args");
+        assert!(parsed.message_boc.is_none());
+        assert!(parsed.message_boc_stdin);
+        assert!(parsed.acknowledge_unpinned_manual_broadcast);
     }
 
     #[test]

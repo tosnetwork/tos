@@ -72,11 +72,21 @@ pub struct ChainRpcConfig {
     url: Option<String>,
     /// Global API key used for endpoints that don't specify their own.
     pub api_key: Option<String>,
+    /// Owner-pinned operator identity used only when a single-endpoint config
+    /// participates in independent evidence corroboration. An endpoint URL is
+    /// not proof of operational independence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_provenance: Option<String>,
 }
 
 impl Default for ChainRpcConfig {
     fn default() -> Self {
-        Self { urls: vec![EndpointEntry::Url(default_chain_rpc_url())], url: None, api_key: None }
+        Self {
+            urls: vec![EndpointEntry::Url(default_chain_rpc_url())],
+            url: None,
+            api_key: None,
+            operator_provenance: None,
+        }
     }
 }
 
@@ -1039,6 +1049,18 @@ impl AppConfig {
         Self::parse(&data, &format.to_ascii_lowercase(), &format!("fd {fd}"))
     }
 
+    /// Parses an exact configuration byte snapshot without reopening a path.
+    ///
+    /// Callers that bind a configuration content digest must hash and pass the
+    /// same byte slice here. Reopening a path after hashing it creates a
+    /// check-to-use race in which credentials or transport settings can change
+    /// while the endpoint identity remains unchanged.
+    pub fn load_bytes(data: &[u8], format: &str, source: &str) -> anyhow::Result<Self> {
+        let data = std::str::from_utf8(data)
+            .with_context(|| format!("Configuration '{}' is not valid UTF-8", source))?;
+        Self::parse(data, &format.to_ascii_lowercase(), source)
+    }
+
     fn parse(data: &str, format: &str, source: &str) -> anyhow::Result<Self> {
         let mut config = match format {
             "yaml" | "yml" => serde_yaml2::from_str::<Self>(&data).map_err(|e| {
@@ -1431,5 +1453,17 @@ mod tests {
         let parsed: ChainRpcConfig = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.endpoints(), vec!["http://a/", "http://b/"]);
         assert_eq!(parsed.resolved_endpoints()[1].1, Some("secret".to_string()));
+    }
+
+    #[test]
+    fn test_chain_rpc_operator_provenance_roundtrip() {
+        let provenance = format!("sha256:{}", "a".repeat(64));
+        let cfg =
+            ChainRpcConfig { operator_provenance: Some(provenance.clone()), ..Default::default() };
+
+        let parsed: ChainRpcConfig =
+            serde_json::from_value(serde_json::to_value(cfg).unwrap()).unwrap();
+
+        assert_eq!(parsed.operator_provenance.as_deref(), Some(provenance.as_str()));
     }
 }

@@ -10,8 +10,19 @@ pub enum ToscenterError {
     InvalidInput(InvalidInput),
     ProcessingError(ProcessingError),
     RateLimitExceeded,
-    HttpClientError { code: u32, message: String },
-    HttpServerError { code: u32, message: String },
+    HttpClientError {
+        code: u32,
+        message: String,
+    },
+    HttpServerError {
+        code: u32,
+        message: String,
+    },
+    /// The configured server returned a syntactically valid HTTP response
+    /// whose JSON-RPC envelope cannot be associated with the request.
+    ProtocolError {
+        message: String,
+    },
 }
 
 #[derive(Debug)]
@@ -37,6 +48,9 @@ impl fmt::Display for ToscenterError {
             }
             ToscenterError::HttpServerError { code, message } => {
                 write!(f, "Server error {}: {}", code, message)
+            }
+            ToscenterError::ProtocolError { message } => {
+                write!(f, "JSON-RPC protocol error: {}", message)
             }
         }
     }

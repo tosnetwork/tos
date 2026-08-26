@@ -22,6 +22,9 @@ pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
 pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
+/// Domain tag carried in the referenced body of a generic task-send when the
+/// transfer fulfills one exact sponsorship AgreementPaymentRequestV3.
+pub const AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG: u32 = 0x5350_4e31; // "SPN1"
 /// Largest Coins value whose controller payload still fits beside the
 /// 512-bit signature in the frozen single-cell external-message layout.
 pub const AGENT_ACCOUNT_MAX_ACTION_VALUE: u64 = (1u64 << 48) - 1;
@@ -211,6 +214,35 @@ impl AgentAccountContract {
         target.write_to(&mut payload)?;
         Coins::new(value).write_to(&mut payload)?;
         Ok(payload.into_cell()?)
+    }
+
+    /// Build the exact domain-separated body used by sponsorship payments.
+    /// The enclosing generic task-send signature thereby commits the chain
+    /// effect to one PaymentRequestV3 and one stable semantic action.
+    pub fn build_sponsorship_payment_commitment(
+        agreement_payment_request_digest: &str,
+        stable_action_id: &str,
+    ) -> anyhow::Result<chain_block::Cell> {
+        fn digest_bytes(name: &str, value: &str) -> anyhow::Result<[u8; 32]> {
+            let hex = value
+                .strip_prefix("sha256:")
+                .ok_or_else(|| anyhow::anyhow!("{name} is not a canonical sha256 digest"))?;
+            if hex.len() != 64
+                || !hex.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                anyhow::bail!("{name} is not a canonical sha256 digest");
+            }
+            hex::decode(hex)?.try_into().map_err(|_| anyhow::anyhow!("{name} is not 32 bytes"))
+        }
+
+        let request =
+            digest_bytes("agreement_payment_request_digest", agreement_payment_request_digest)?;
+        let action = digest_bytes("stable_action_id", stable_action_id)?;
+        let mut body = BuilderData::new();
+        body.append_u32(AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG)?
+            .append_raw(&request, 256)?
+            .append_raw(&action, 256)?;
+        Ok(body.into_cell()?)
     }
 
     /// Build a generic sequence-consuming cancellation with no outbound action.
@@ -467,6 +499,27 @@ mod tests {
 
         let error = AgentAccountContract::build_data(&init).unwrap_err();
         assert!(error.to_string().contains("deployment_id"));
+    }
+
+    #[test]
+    fn sponsorship_commitment_requires_canonical_lowercase_digests() {
+        let request = format!("sha256:{}", "a".repeat(64));
+        let action = format!("sha256:{}", "b".repeat(64));
+        AgentAccountContract::build_sponsorship_payment_commitment(&request, &action).unwrap();
+        assert!(
+            AgentAccountContract::build_sponsorship_payment_commitment(
+                &format!("sha256:{}", "A".repeat(64)),
+                &action,
+            )
+            .is_err()
+        );
+        assert!(
+            AgentAccountContract::build_sponsorship_payment_commitment(
+                &request,
+                &format!("sha256:{}", "B".repeat(64)),
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]

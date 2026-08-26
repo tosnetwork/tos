@@ -51,7 +51,8 @@ pub use agent_account::{
 };
 pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
-    ControllerActionStatus, EconomicActionAuthorization, EconomicEffectAuthorization,
+    ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
+    EconomicEffectAuthorization, controller_resolution_evidence_digest,
 };
 pub use aipow_commitment::{
     AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,

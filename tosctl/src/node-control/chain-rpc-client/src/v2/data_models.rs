@@ -363,6 +363,61 @@ pub struct SubmissionResultRes {
     pub authorization_roles: Option<serde_json::Value>,
 }
 
+/// Outcome of one exact-BOC submission attempt against one bound RPC endpoint.
+///
+/// `Unknown` is deliberately distinct from `Rejected`: a transport failure or
+/// malformed response may happen after the endpoint accepted the bytes.  A
+/// caller must resolve the locally computed `cell_hash` before deciding to
+/// submit those exact bytes again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactBocSubmissionStatus {
+    Accepted,
+    Rejected,
+    Unknown,
+}
+
+/// Explicit owner-pinned network domain for production exact relay writes.
+///
+/// `network_id` is the protocol-level owner label.  It is not learned from an
+/// RPC endpoint and therefore cannot be used by an endpoint to authorize
+/// itself.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct RelayNetworkDomainPin {
+    pub network_id: String,
+    pub global_id: i32,
+    pub zero_state_root_hash: String,
+    pub zero_state_file_hash: String,
+    /// Workchain containing the authorized source/economic action. This is
+    /// distinct from the masterchain coordinate of the zero-state BlockIdExt.
+    pub workchain_id: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ExactBocSubmissionResult {
+    pub status: ExactBocSubmissionStatus,
+    /// Hash of the exact root cell computed locally before any network I/O.
+    pub cell_hash: String,
+    /// The sole endpoint against which this attempt was made.
+    pub endpoint: String,
+    /// Present only for the production relay API, after a primary-only
+    /// preflight matched the explicit owner pin immediately before the write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_domain: Option<RelayNetworkDomainPin>,
+    /// Admission status returned by `sendBocReturnHash`; this is endpoint
+    /// acknowledgement metadata, never execution or finality evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_status: Option<i32>,
+    /// Endpoint-provided message hash, normalized to the same encoding as
+    /// `cell_hash`, when it was valid and matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_cell_hash: Option<String>,
+    /// Bounded diagnostic detail.  This is evidence about the attempt, not a
+    /// signal that retrying against another endpoint is safe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 // ─── getMasterchainInfo response ─────────────────────────────────────
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]

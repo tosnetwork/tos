@@ -561,12 +561,14 @@ dependencies = [
  "base64 0.22.1",
  "chain_block",
  "common",
+ "hex",
  "serde",
  "serde_json",
  "tl_api",
  "tokio",
  "toscenter-rs",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -777,6 +779,7 @@ dependencies = [
  "chain-rpc-client",
  "chain_block",
  "chain_block_json",
+ "ciborium",
  "clap 4.6.0",
  "colored",
  "common",
