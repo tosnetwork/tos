@@ -247,6 +247,33 @@ pub struct AgentAccountCustodyJournal {
 }
 
 impl AgentAccountCustodyJournal {
+    /// Return the one durable controller action selected by an idempotency key.
+    /// Resolution commands use this instead of reconstructing a claim from
+    /// mutable CLI inputs. Duplicate keys are corruption and fail closed.
+    pub fn action_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<ControllerActionRecord> {
+        if idempotency_key.len() != 64
+            || !idempotency_key
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            anyhow::bail!("invalid controller action idempotency key");
+        }
+        self.with_document(|document| {
+            let mut matching = document
+                .records
+                .iter()
+                .filter(|record| record.claim.idempotency_key == idempotency_key);
+            let record = matching.next().context("controller action was not found")?.clone();
+            if matching.next().is_some() {
+                anyhow::bail!("duplicate controller action idempotency key");
+            }
+            Ok(record)
+        })
+    }
+
     pub fn open(directory: impl AsRef<Path>) -> anyhow::Result<Self> {
         let directory = directory.as_ref();
         if !directory.is_absolute() {
@@ -3406,6 +3433,10 @@ mod tests {
         let (boc, boc_digest) = signed_boc(&payment, false);
         journal.attach_signed_boc(&payment, &boc, &boc_digest, 101).unwrap();
         journal.begin_broadcast(&payment, 102).unwrap();
+        let recovered = journal.action_by_idempotency_key(&payment.idempotency_key).unwrap();
+        assert_eq!(recovered.claim, payment);
+        assert_eq!(recovered.status, ControllerActionStatus::Broadcasting);
+        assert!(journal.action_by_idempotency_key("not-a-canonical-action-id").is_err());
 
         let evidence = serde_json::json!({
             "schema": "tosctl.agent-account.agreement-payment-finalized.v1",

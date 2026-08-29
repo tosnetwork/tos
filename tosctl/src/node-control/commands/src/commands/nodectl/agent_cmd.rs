@@ -187,6 +187,20 @@ pub struct AgentTaskSendCmd {
         help = "Stable 64-lowercase-hex idempotency ID for the controller action"
     )]
     controller_action_id: Option<String>,
+    #[arg(
+        long = "quorum-config",
+        requires = "via_agent_account",
+        num_args = 2..,
+        help = "Additional absolute single-endpoint configs used to resolve the exact Agent Account transaction"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        default_value_t = 1000,
+        help = "Maximum source-account transactions inspected per RPC during exact-action resolution"
+    )]
+    max_transactions: u32,
     #[arg(long, default_value_t = 0)]
     query_id: u64,
     #[arg(long)]
@@ -343,6 +357,35 @@ enum AgentTaskOperation {
     RevokeAttestor,
 }
 
+impl AgentTaskOperation {
+    fn resolved_status(&self) -> anyhow::Result<u8> {
+        match self {
+            Self::Accept | Self::Claim => Ok(1),
+            Self::Result => Ok(2),
+            Self::Reject => Ok(6),
+            _ => {
+                anyhow::bail!("this Task operation is not supported through Agent Account custody")
+            }
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Accept => "accept",
+            Self::Claim => "claim",
+            Self::Reject => "reject",
+            Self::Result => "result",
+            Self::Dispute => "dispute",
+            Self::Resolve => "resolve",
+            Self::Settle => "settle",
+            Self::Cancel => "cancel",
+            Self::Timeout => "timeout",
+            Self::RotateAttestorKey => "rotate-attestor-key",
+            Self::RevokeAttestor => "revoke-attestor",
+        }
+    }
+}
+
 #[derive(Clone, clap::ValueEnum)]
 enum AgentTaskStatusFilter {
     Open,
@@ -479,6 +522,8 @@ pub enum AgentAccountAction {
     TaskSend(AgentAccountTaskSendCmd),
     /// Prepare one owner-authorized, bodyless native TOS transfer without broadcasting it
     NativePrepare(AgentAccountNativePrepareCmd),
+    /// Resolve one exact native transfer from a strict majority of independent RPC views
+    NativeResolve(AgentAccountNativeResolveCmd),
     /// Prepare an Agreement-bound, writer-fenced native payment without broadcasting it
     EconomicPaymentPrepare(AgentAccountEconomicPaymentPrepareCmd),
     /// Broadcast the exact previously prepared Agreement payment BOC
@@ -590,6 +635,12 @@ pub struct AgentAccountStatusCmd {
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
+
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -676,6 +727,38 @@ pub struct AgentAccountNativePrepareCmd {
     unsigned_transfer_digest: String,
     #[arg(long)]
     yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Resolve an exact native Agent Account transfer using at least three independent RPC configs"
+)]
+pub struct AgentAccountNativeResolveCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Stable 64-lowercase-hex native action ID")]
+    action_id: String,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional absolute single-endpoint configs; with --config these form the strict-majority domain"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(
+        long,
+        default_value_t = 1000,
+        help = "Maximum source-account transactions inspected per RPC"
+    )]
+    max_transactions: u32,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -893,6 +976,10 @@ pub struct AgentAccountCancelPrepareCmd {
     valid_until: u32,
     #[arg(long)]
     yes: bool,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -1389,6 +1476,7 @@ impl AgentAccountCmd {
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativePrepare(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::NativeResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicPaymentPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicPaymentBroadcast(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicPaymentCorroborationProfile(cmd) => {
@@ -1676,6 +1764,11 @@ impl AgentTaskSendCmd {
         }
         let body = body.expect("body resolved for every operation");
         if let Some(agent_wallet) = &self.via_agent_account {
+            if self.quorum_configs.len() < 2 {
+                anyhow::bail!(
+                    "--via-agent-account requires at least two --quorum-config values before any Task side effect"
+                );
+            }
             let record = config
                 .agent_tasks
                 .values()
@@ -1697,6 +1790,31 @@ impl AgentTaskSendCmd {
                 })?
                 .parse::<MsgAddressInt>()
                 .context("Invalid persisted Agent Account address")?;
+            let action_id = self.controller_action_id.as_deref().context(
+                "--controller-action-id is required for crash-safe Agent Account actions",
+            )?;
+            let journal = open_controller_journal(path)?;
+            if let Ok(existing) = journal.action_by_idempotency_key(action_id) {
+                let retry_body_hash = format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)));
+                if existing.claim.target != destination.to_string()
+                    || existing.claim.value_atomic != amount_nanotos
+                    || existing.claim.body_hash.as_deref() != Some(retry_body_hash.as_str())
+                {
+                    anyhow::bail!("controller action id was reused for different Task semantics");
+                }
+                if existing.status == ControllerActionStatus::Broadcasting {
+                    return resolve_agent_account_task_action(
+                        config_path,
+                        agent_wallet,
+                        action_id,
+                        &self.operation,
+                        &destination,
+                        &self.quorum_configs,
+                        self.max_transactions,
+                    )
+                    .await;
+                }
+            }
             let provider = contracts::contract_provider!(rpc_client.clone());
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
@@ -1708,20 +1826,26 @@ impl AgentTaskSendCmd {
                 permission_id_hash(record.permission_id.as_deref()),
             )?;
             let body_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?);
-            return AgentAccountTaskSendCmd {
+            AgentAccountTaskSendCmd {
                 wallet: agent_wallet.clone(),
                 target: destination.to_string(),
                 value: nanotos_to_tos_f64(amount_nanotos)?,
                 body_boc: Some(body_boc),
                 valid_until: self.valid_until.unwrap_or_else(|| time_format::now() as u32 + 300),
-                action_id: self.controller_action_id.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "--controller-action-id is required for crash-safe Agent Account actions"
-                    )
-                })?,
+                action_id: action_id.to_owned(),
                 yes: self.yes,
             }
             .run(config_path)
+            .await?;
+            return resolve_agent_account_task_action(
+                config_path,
+                agent_wallet,
+                action_id,
+                &self.operation,
+                &destination,
+                &self.quorum_configs,
+                self.max_transactions,
+            )
             .await;
         }
         let from = self.from.as_deref().ok_or_else(|| {
@@ -2607,7 +2731,11 @@ impl AgentAccountShowCmd {
 impl AgentAccountStatusCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let path = Path::new(config_path);
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
         let agent_wallet = config
             .agent_wallets
             .get(&self.wallet)
@@ -2749,6 +2877,15 @@ impl AgentAccountTaskSendCmd {
             ConfigParamEnum::ConfigParam19(value) => value as i32,
             _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
         };
+        let master = rpc_client.get_masterchain_info().await?;
+        let zero_state = master.init.context("primary RPC omitted the zero-state identity")?;
+        let network_domain = RelayNetworkDomainPin {
+            network_id: format!("tos:global-id:{global_id}"),
+            global_id,
+            zero_state_root_hash: format!("sha256:{}", hex::encode(&zero_state.root_hash)),
+            zero_state_file_hash: format!("sha256:{}", hex::encode(&zero_state.file_hash)),
+            workchain_id: account.workchain_id(),
+        };
         let action_body_hash = *body.repr_hash().as_array();
         let payload = AgentAccountContract::build_task_send_payload(
             global_id,
@@ -2795,7 +2932,7 @@ impl AgentAccountTaskSendCmd {
         let claim = ControllerActionClaim {
             account: account.to_string(),
             network_global_id: global_id,
-            network_domain: None,
+            network_domain: Some(network_domain),
             deployment_id: hex::encode(data.deployment_id),
             controller_epoch: data.controller_epoch,
             seqno: data.seqno,
@@ -2877,7 +3014,11 @@ impl AgentAccountNativePrepareCmd {
         }
 
         let path = Path::new(config_path);
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
         let agent_wallet = config
             .agent_wallets
             .get(&self.wallet)
@@ -2916,6 +3057,15 @@ impl AgentAccountNativePrepareCmd {
             ConfigParamEnum::ConfigParam19(value) => value as i32,
             _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
         };
+        let master = rpc_client.get_masterchain_info().await?;
+        let zero_state = master.init.context("primary RPC omitted the zero-state identity")?;
+        let network_domain = RelayNetworkDomainPin {
+            network_id: format!("tos:global-id:{global_id}"),
+            global_id,
+            zero_state_root_hash: format!("sha256:{}", hex::encode(&zero_state.root_hash)),
+            zero_state_file_hash: format!("sha256:{}", hex::encode(&zero_state.file_hash)),
+            workchain_id: account.workchain_id(),
+        };
         let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
         let keypair = secret.as_keypair()?;
         let controller_pubkey: [u8; 32] = keypair
@@ -2949,7 +3099,7 @@ impl AgentAccountNativePrepareCmd {
         let claim = ControllerActionClaim {
             account: account.to_string(),
             network_global_id: global_id,
-            network_domain: None,
+            network_domain: Some(network_domain),
             deployment_id: hex::encode(data.deployment_id),
             controller_epoch: data.controller_epoch,
             seqno: data.seqno,
@@ -3016,6 +3166,11 @@ impl AgentAccountNativePrepareCmd {
             )?;
             boc
         };
+        // Once the exact signed BOC leaves custody through stdout, any holder
+        // can submit it. Persist the ambiguity before releasing those bytes so
+        // a crash or a remote recipient broadcast cannot leave a merely
+        // `signed` journal record behind an advanced on-chain seqno.
+        journal.begin_broadcast(&claim, time_format::now())?;
         println!(
             "{}",
             serde_json::json!({
@@ -3033,6 +3188,198 @@ impl AgentAccountNativePrepareCmd {
             })
         );
         Ok(())
+    }
+}
+
+impl AgentAccountNativeResolveCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_controller_action_id(&self.action_id)?;
+        if self.quorum_configs.len() < 2
+            || self.max_transactions == 0
+            || self.max_transactions > 10_000
+        {
+            anyhow::bail!(
+                "native action resolution requires two additional RPC configs and a bounded transaction history"
+            );
+        }
+        let primary_path = Path::new(config_path);
+        if !primary_path.is_absolute() {
+            anyhow::bail!("primary config must be an absolute path for native action resolution");
+        }
+        let (primary, primary_rpc) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => {
+                let (config, _vault, rpc) = load_config_vault_rpc_client_fd(fd, format).await?;
+                (config, rpc)
+            }
+            (None, None) => {
+                let primary_bytes = fs::read(primary_path).context("read primary RPC config")?;
+                let config = AppConfig::load_bytes(
+                    &primary_bytes,
+                    config_format_from_path(primary_path)?,
+                    "primary RPC config",
+                )?;
+                let rpc = try_create_rpc_client(&config).await?;
+                (config, rpc)
+            }
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
+        let agent_wallet = primary
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let journal = open_controller_journal(primary_path)?;
+        let record = journal.action_by_idempotency_key(&self.action_id)?;
+        if record.claim.action_kind != "agent-native-send"
+            || record.claim.account != account.to_string()
+        {
+            anyhow::bail!("native action ID belongs to a different custody effect");
+        }
+        if record.status == ControllerActionStatus::Resolved {
+            let resolution = record
+                .exact_winner_resolution
+                .as_ref()
+                .context("resolved native action has no replayable exact-winner evidence")?;
+            println!("{}", resolution.evidence);
+            return Ok(());
+        }
+        if record.status != ControllerActionStatus::Signed
+            && record.status != ControllerActionStatus::Broadcasting
+        {
+            anyhow::bail!("native action has no exact signed BOC that can be resolved");
+        }
+
+        let primary_master = primary_rpc.get_masterchain_info().await?;
+        let primary_zero_state =
+            primary_master.init.context("primary RPC omitted the zero-state identity")?;
+        let primary_global_id = match primary_rpc.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let expected_network =
+            record.claim.network_domain.clone().unwrap_or(RelayNetworkDomainPin {
+                network_id: format!("tos:global-id:{primary_global_id}"),
+                global_id: primary_global_id,
+                zero_state_root_hash: format!(
+                    "sha256:{}",
+                    hex::encode(&primary_zero_state.root_hash)
+                ),
+                zero_state_file_hash: format!(
+                    "sha256:{}",
+                    hex::encode(&primary_zero_state.file_hash)
+                ),
+                workchain_id: account.workchain_id(),
+            });
+
+        let mut paths = vec![primary_path.to_path_buf()];
+        paths.extend(self.quorum_configs.iter().map(PathBuf::from));
+        let mut endpoints = BTreeSet::new();
+        let mut members = Vec::with_capacity(paths.len());
+        for path in paths {
+            if !path.is_absolute() {
+                anyhow::bail!("every native-action quorum config must be absolute");
+            }
+            let bytes = fs::read(&path).context("read native-action quorum config")?;
+            let config = AppConfig::load_bytes(
+                &bytes,
+                config_format_from_path(&path)?,
+                "native-action quorum config",
+            )?;
+            let configured = config.chain_rpc.endpoints();
+            if configured.len() != 1 {
+                anyhow::bail!(
+                    "every native-action quorum config must name exactly one RPC endpoint"
+                );
+            }
+            let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+            if !endpoints.insert(endpoint.clone()) {
+                anyhow::bail!("native-action quorum RPC endpoints must be distinct");
+            }
+            members.push((
+                config,
+                endpoint.clone(),
+                display_origin,
+                rpc_locator_identity_digest(&endpoint)?,
+            ));
+        }
+        let threshold = members.len() / 2 + 1;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        loop {
+            let mut votes: BTreeMap<String, Vec<FinalizedEconomicPaymentObservation>> =
+                BTreeMap::new();
+            for (config, _endpoint, display_origin, locator_identity_digest) in &members {
+                if let Ok(observation) = observe_finalized_economic_payment(
+                    config,
+                    display_origin.clone(),
+                    locator_identity_digest.clone(),
+                    &expected_network,
+                    &account,
+                    &record,
+                    self.max_transactions,
+                )
+                .await
+                {
+                    votes.entry(observation.quorum_key()).or_default().push(observation);
+                }
+            }
+            if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {
+                let provider = contracts::contract_provider!(primary_rpc.clone());
+                let finalized = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+                if (finalized.controller_epoch, finalized.seqno)
+                    <= (record.claim.controller_epoch, record.claim.seqno)
+                {
+                    anyhow::bail!(
+                        "finalized Agent Account state has not consumed the native action sequence"
+                    );
+                }
+                let output = serde_json::json!({
+                    "schema": "tos.agent-account.native-action-finalized.v1",
+                    "wallet": self.wallet,
+                    "action_id": self.action_id,
+                    "source_account": account.to_string(),
+                    "destination": record.claim.target,
+                    "amount_nanotos": record.claim.value_atomic,
+                    "exact_signed_boc_digest": record.exact_signed_boc_digest.clone(),
+                    "network_domain": expected_network,
+                    "quorum": {"members": members.len(), "threshold": threshold, "agreeing": winner.len()},
+                    "transaction": winner[0],
+                    "state": "finalized"
+                });
+                let evidence_kind = "tos.agent-account.native-action-finalized.v1";
+                let resolution = ControllerActionResolutionEvidence {
+                    evidence_kind: evidence_kind.to_owned(),
+                    evidence_digest: controller_resolution_evidence_digest(evidence_kind, &output)?,
+                    evidence: output.clone(),
+                };
+                let exact_signed_boc_digest = record
+                    .exact_signed_boc_digest
+                    .as_deref()
+                    .context("native custody record has no exact signed BOC digest")?;
+                if record.status == ControllerActionStatus::Signed {
+                    journal.begin_broadcast(&record.claim, time_format::now())?;
+                }
+                journal.resolve_exact_winner(
+                    &record.claim,
+                    exact_signed_boc_digest,
+                    finalized.controller_epoch,
+                    finalized.seqno,
+                    resolution,
+                    time_format::now(),
+                )?;
+                println!("{}", output);
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "native action could not obtain a strict-majority exact transaction resolution"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     }
 }
 
@@ -3927,6 +4274,182 @@ async fn observe_finalized_economic_payment(
     anyhow::bail!(
         "submitted Agreement payment was not found in the bounded finalized account history"
     )
+}
+
+async fn resolve_agent_account_task_action(
+    config_path: &str,
+    wallet: &str,
+    action_id: &str,
+    operation: &AgentTaskOperation,
+    task_address: &MsgAddressInt,
+    quorum_configs: &[String],
+    max_transactions: u32,
+) -> anyhow::Result<()> {
+    if quorum_configs.len() < 2 || max_transactions == 0 || max_transactions > 10_000 {
+        anyhow::bail!(
+            "Agent Account Task resolution requires two additional RPC configs and a bounded transaction history"
+        );
+    }
+    let primary_path = Path::new(config_path);
+    if !primary_path.is_absolute() {
+        anyhow::bail!("primary config must be an absolute path for Task resolution");
+    }
+    let journal = open_controller_journal(primary_path)?;
+    let record = journal.action_by_idempotency_key(action_id)?;
+    if record.claim.action_kind != "agent-task-send"
+        || record.claim.target != task_address.to_string()
+        || record.status != ControllerActionStatus::Broadcasting
+    {
+        anyhow::bail!("Task action is not one unresolved exact broadcast");
+    }
+    let account = record.claim.account.parse::<MsgAddressInt>()?;
+    let expected_status = operation.resolved_status()?;
+
+    let primary_bytes = fs::read(primary_path).context("read primary RPC config")?;
+    let primary = AppConfig::load_bytes(
+        &primary_bytes,
+        config_format_from_path(primary_path)?,
+        "primary RPC config",
+    )?;
+    let primary_rpc = try_create_rpc_client(&primary).await?;
+    let primary_master = primary_rpc.get_masterchain_info().await?;
+    let primary_zero_state =
+        primary_master.init.context("primary RPC omitted the zero-state identity")?;
+    let primary_global_id = match primary_rpc.get_config_param(19).await? {
+        ConfigParamEnum::ConfigParam19(value) => value as i32,
+        _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+    };
+    let expected_network = record.claim.network_domain.clone().unwrap_or(RelayNetworkDomainPin {
+        network_id: format!("tos:global-id:{primary_global_id}"),
+        global_id: primary_global_id,
+        zero_state_root_hash: format!("sha256:{}", hex::encode(&primary_zero_state.root_hash)),
+        zero_state_file_hash: format!("sha256:{}", hex::encode(&primary_zero_state.file_hash)),
+        workchain_id: account.workchain_id(),
+    });
+
+    let mut paths = vec![primary_path.to_path_buf()];
+    paths.extend(quorum_configs.iter().map(PathBuf::from));
+    let mut endpoints = BTreeSet::new();
+    let mut members = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !path.is_absolute() {
+            anyhow::bail!("every Task quorum config must be absolute");
+        }
+        let bytes = fs::read(&path).context("read Task quorum config")?;
+        let config =
+            AppConfig::load_bytes(&bytes, config_format_from_path(&path)?, "Task quorum config")?;
+        let configured = config.chain_rpc.endpoints();
+        if configured.len() != 1 {
+            anyhow::bail!("every Task quorum config must name exactly one RPC endpoint");
+        }
+        let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+        if !endpoints.insert(endpoint.clone()) {
+            anyhow::bail!("Task quorum RPC endpoints must be distinct");
+        }
+        members.push((
+            config,
+            endpoint.clone(),
+            display_origin,
+            rpc_locator_identity_digest(&endpoint)?,
+        ));
+    }
+    let threshold = members.len() / 2 + 1;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    loop {
+        let mut votes: BTreeMap<
+            String,
+            Vec<(FinalizedEconomicPaymentObservation, u64, u32, [u8; 32], [u8; 32])>,
+        > = BTreeMap::new();
+        for (config, _endpoint, display_origin, locator_identity_digest) in &members {
+            let observation = observe_finalized_economic_payment(
+                config,
+                display_origin.clone(),
+                locator_identity_digest.clone(),
+                &expected_network,
+                &account,
+                &record,
+                max_transactions,
+            )
+            .await;
+            let Ok(observation) = observation else { continue };
+            let rpc = try_create_rpc_client(config).await?;
+            let provider = contracts::contract_provider!(rpc.clone());
+            let task = TaskEscrowContract::decode_data(
+                &provider.get_method(task_address.to_string(), "get_task_data", vec![]).await?,
+            )?;
+            let agent = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+            if task.status != expected_status
+                || (agent.controller_epoch, agent.seqno)
+                    <= (record.claim.controller_epoch, record.claim.seqno)
+            {
+                continue;
+            }
+            let key = format!(
+                "{}:{}:{}:{}:{}:{}",
+                observation.quorum_key(),
+                task.status,
+                hex::encode(task.result_hash),
+                hex::encode(task.evidence_hash),
+                agent.controller_epoch,
+                agent.seqno
+            );
+            votes.entry(key).or_default().push((
+                observation,
+                agent.controller_epoch,
+                agent.seqno,
+                task.result_hash,
+                task.evidence_hash,
+            ));
+        }
+        if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {
+            let (observation, controller_epoch, seqno, result_hash, evidence_hash) = &winner[0];
+            let output = serde_json::json!({
+                "schema": "tos.agent-account.task-action-finalized.v1",
+                "wallet": wallet,
+                "action_id": action_id,
+                "operation": operation.as_str(),
+                "source_account": account.to_string(),
+                "task_address": task_address.to_string(),
+                "task_status": task_status_name(expected_status),
+                "task_result_hash": format!("sha256:{}", hex::encode(result_hash)),
+                "task_evidence_hash": format!("sha256:{}", hex::encode(evidence_hash)),
+                "network_domain": expected_network,
+                "quorum": {"members": members.len(), "threshold": threshold, "agreeing": winner.len()},
+                "transaction": observation,
+            });
+            let evidence_kind = "tos.agent-account.task-action-finalized.v1";
+            let resolution = ControllerActionResolutionEvidence {
+                evidence_kind: evidence_kind.to_owned(),
+                evidence_digest: controller_resolution_evidence_digest(evidence_kind, &output)?,
+                evidence: output,
+            };
+            let boc_digest = record
+                .exact_signed_boc_digest
+                .as_deref()
+                .context("Task custody record has no exact signed BOC digest")?;
+            journal.resolve_exact_winner(
+                &record.claim,
+                boc_digest,
+                *controller_epoch,
+                *seqno,
+                resolution,
+                time_format::now(),
+            )?;
+            println!(
+                "{} exact controller Task action resolved by {}/{} RPC observations",
+                "OK".green().bold(),
+                winner.len(),
+                members.len()
+            );
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "Task action could not obtain a strict-majority exact transaction resolution"
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 }
 
 impl AgentAccountEconomicPaymentResolveCmd {
@@ -7020,7 +7543,11 @@ impl AgentAccountCancelPrepareCmd {
             anyhow::bail!("valid_until must be a future Unix timestamp");
         }
         let path = Path::new(config_path);
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let (config, vault, rpc_client) = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => load_config_vault_rpc_client_fd(fd, format).await?,
+            (None, None) => load_config_vault_rpc_client(path).await?,
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
         let agent_wallet = config
             .agent_wallets
             .get(&self.wallet)

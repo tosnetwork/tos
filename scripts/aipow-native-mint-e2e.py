@@ -29,6 +29,7 @@ Exit 0 iff every check passes. Run from the repo root:
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,14 +40,26 @@ from pathlib import Path
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from contract import tos
-from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
+from pytosiq_core import Address, Cell, CurrencyCollection, InternalMsgInfo, MessageAny, WalletMessage
+from pytosiq_core.boc import begin_cell
+from pytosiq_core.tlb.account import StateInit
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
-RPC = "127.0.0.1:19661"
-WORKDIR = REPO / "test/integration/.aipow-native-mint-e2e"
+RPC = os.environ.get("TOS_AIPOW_RPC", "127.0.0.1:19661")
+VALIDATOR_COUNT = int(os.environ.get("TOS_AIPOW_VALIDATORS", "3"))
+TARGET_EPOCH_OFFSET = int(os.environ.get("TOS_AIPOW_TARGET_EPOCH_OFFSET", "5"))
+BOOTSTRAP_ONLY = os.environ.get("TOS_AIPOW_BOOTSTRAP_ONLY") == "1"
+EARNER_WORKCHAIN = int(os.environ.get("TOS_AIPOW_EARNER_WORKCHAIN", "-1"))
+WORKDIR = Path(os.environ.get(
+    "TOS_AIPOW_WORKDIR", REPO / "test/integration/.aipow-native-mint-e2e"))
+BASE_PORT = int(os.environ.get("TOS_AIPOW_BASE_PORT", "25300"))
+ENABLE_LOCALNET_DNS = os.environ.get("TOS_AIPOW_ENABLE_LOCALNET_DNS") == "1"
+LOCALNET_DNS_AUCTION_START_TIME = int(os.environ.get(
+    "TOS_LOCALNET_DNS_AUCTION_START_TIME", "0"))
 CONFIG = WORKDIR / "tosctl-config.json"
+READY_FILE = WORKDIR / "aipow-localnet-ready.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 
 EPOCH_SECONDS = 65_536
@@ -56,6 +69,7 @@ WINDOW_MARGIN = 12          # extra seconds past the challenge window before fin
 NANO = 1_000_000_000
 ORGANIC = 1 * NANO         # committed organic value -> pool = min(cap, k*organic) = 1 TOS (k=1/1)
 EXPECTED_POOL = ORGANIC
+BOSS_FUND_TOS = int(os.environ.get("TOS_AIPOW_BOSS_FUND_TOS", "200"))
 TOTAL_SCORE = 1_000_000
 SCORE_ROOT = "5c" * 32
 METHODOLOGY_HASH = "11" * 32  # must match ConfigParam 93 methodology_hash (M2)
@@ -67,6 +81,109 @@ REVIEWER_HEX = "44" * 32
 REVIEWER_ADDR = f"-1:{REVIEWER_HEX}"
 
 failures: list[str] = []
+
+
+def localnet_dns_artifacts() -> dict | None:
+    """Build an explicitly non-production DNS artifact set for this localnet.
+
+    The canonical source and its 2027 launch gate remain untouched.  A copied
+    source tree is compiled with the operator-supplied past launch timestamp,
+    producing different code hashes and addresses that are recorded in the
+    ready manifest.  The timestamp must be old enough for the inherited auction
+    formula to reach its one-hour minimum; the auction itself is never shortened.
+    """
+    if not ENABLE_LOCALNET_DNS:
+        return None
+    now = int(time.time())
+    if LOCALNET_DNS_AUCTION_START_TIME <= 0 or LOCALNET_DNS_AUCTION_START_TIME > now - 22 * 2_592_000:
+        raise RuntimeError(
+            "TOS_LOCALNET_DNS_AUCTION_START_TIME must be at least 22 months in the past")
+    source = REPO / "crypto/smartcont/dns"
+    profile = WORKDIR / "dns-localnet-profile"
+    shutil.copytree(source, profile)
+    config_path = profile / "func/tos-config.fc"
+    body = config_path.read_text()
+    body, count = re.subn(
+        r"(?m)^\s*const int auction_start_time = \d+;.*$",
+        f"const int auction_start_time = {LOCALNET_DNS_AUCTION_START_TIME}; "
+        ";; explicit localnet-only time profile",
+        body,
+    )
+    if count != 1:
+        raise RuntimeError("could not replace copied DNS auction_start_time")
+    config_path.write_text(body)
+    env = dict(os.environ)
+    env["PATH"] = f"{BUILD_DIR}/crypto:{env['PATH']}"
+    env["FIFTPATH"] = str(REPO / "crypto/fift/lib")
+    subprocess.run(["sh", "compile.sh"], cwd=profile / "func", env=env, check=True)
+    output = subprocess.run(
+        ["fift", "-s", "deploy/gen-deploy.fif", "localnet://agentic-internet"],
+        cwd=profile, env=env, capture_output=True, text=True, check=True).stdout
+    addresses = {}
+    code_hashes = {}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("root:"):
+            code_hashes["root"] = stripped.split()[-1].lower()
+        elif stripped.startswith("collection:"):
+            code_hashes["collection"] = stripped.split()[-1].lower()
+        elif stripped.startswith("item:"):
+            code_hashes["item"] = stripped.split()[-1].lower()
+        elif line.startswith("collection address: "):
+            addresses["collection"] = line.split(": ", 1)[1].strip().lower()
+        elif line.startswith("root address (ConfigParam 4 value): "):
+            addresses["root"] = line.split(": ", 1)[1].strip().lower()
+    if set(addresses) != {"root", "collection"} or set(code_hashes) != {"root", "collection", "item"}:
+        raise RuntimeError(f"incomplete localnet DNS artifact output: {output}")
+    addresses.update({
+        "root_init": Cell.one_from_boc((profile / "func/build/root-state-init.boc").read_bytes()),
+        "collection_init": Cell.one_from_boc(
+            (profile / "func/build/collection-state-init.boc").read_bytes()),
+        "item_code_hash": code_hashes["item"],
+        "code_hashes": code_hashes,
+        "auction_start_time": LOCALNET_DNS_AUCTION_START_TIME,
+        "profile": "tos.dns.localnet-time-profile.v1",
+    })
+    return addresses
+
+
+def state_init_of(cell: Cell) -> StateInit:
+    if len(cell.refs) != 2:
+        raise RuntimeError("DNS StateInit must carry exactly code and data refs")
+    return StateInit(code=cell.refs[0], data=cell.refs[1])
+
+
+def deploy_message(faucet, dest: str, amount: int, init: StateInit, body: Cell) -> WalletMessage:
+    return WalletMessage(
+        send_mode=3,
+        message=MessageAny(
+            info=InternalMsgInfo(
+                ihr_disabled=True, bounce=False, bounced=False,
+                src=faucet.address, dest=Address(dest), value=CurrencyCollection(tomis=amount),
+                ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0),
+            init=init, body=body))
+
+
+def address_state(address: str) -> str:
+    return rpc_call("getAddressState", address=address).get("result", "")
+
+
+async def deploy_localnet_dns(faucet, artifacts: dict | None) -> None:
+    if artifacts is None:
+        return
+    print("\n=== DNS: deploy explicit localnet-time Root + Collection ===")
+    await faucet.send(deploy_message(
+        faucet, artifacts["root"], 2 * NANO,
+        state_init_of(artifacts["root_init"]), begin_cell().end_cell()))
+    if not check("localnet DNS Root active", await poll(
+            lambda: address_state(artifacts["root"]) == "active", timeout=120)):
+        return
+    fill_up = begin_cell().store_uint(0x370FEC51, 32).store_uint(0, 64).end_cell()
+    await faucet.send(deploy_message(
+        faucet, artifacts["collection"], 5 * NANO,
+        state_init_of(artifacts["collection_init"]), fill_up))
+    check("localnet DNS Collection active", await poll(
+        lambda: address_state(artifacts["collection"]) == "active", timeout=120))
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -110,7 +227,7 @@ async def settlement_address(next_epoch: int) -> tuple[str, int]:
         "agent", "aipow-settlement", "address",
         "--next-epoch", str(next_epoch), "--epoch-seconds", str(EPOCH_SECONDS),
         "--register-grace", str(REGISTER_GRACE), "--challenge-window", str(CHALLENGE_WINDOW),
-        "--earner-workchain=-1")
+        f"--earner-workchain={EARNER_WORKCHAIN}")
     return norm_addr(out["address"]), int(out["account_id_hex"], 16)
 
 
@@ -202,16 +319,21 @@ async def settlement_show(addr: str) -> dict:
     return await tosctl_json("agent", "aipow-settlement", "show", f"--address={addr}")
 
 
-async def run_checks(faucet) -> None:
+async def run_checks(faucet, dns_artifacts: dict | None = None) -> None:
     print("\n=== provision ===")
     if not check("json-rpc ready", await wait_rpc_ready()):
+        return
+    await deploy_localnet_dns(faucet, dns_artifacts)
+    if dns_artifacts is not None and address_state(dns_artifacts["collection"]) != "active":
         return
     for name in ("boss",):
         await tosctl("wallet", "create", "-n", name, "-v", "V3R2")
     boss = await wallet_address("boss")
     print(f"  boss (masterchain): {boss}")
-    await faucet.send(faucet_transfer(faucet, boss, 200))
-    if not check("boss funded", await wait_balance_at_least(boss, 190 * NANO)):
+    if BOSS_FUND_TOS < 20 or BOSS_FUND_TOS > 100_000:
+        raise RuntimeError("TOS_AIPOW_BOSS_FUND_TOS must be within 20..100000")
+    await faucet.send(faucet_transfer(faucet, boss, float(BOSS_FUND_TOS)))
+    if not check("boss funded", await wait_balance_at_least(boss, (BOSS_FUND_TOS - 10) * NANO)):
         return
     await tosctl("wallet", "activate", "-n", "boss")
     check("boss active", await poll(
@@ -221,7 +343,7 @@ async def run_checks(faucet) -> None:
     # in the future, so the epoch is never skip-eligible during the test and the mint
     # is driven purely by the challenge window. It is also the settlement cursor and
     # the commitment epoch.
-    epoch = int(time.time()) // EPOCH_SECONDS + 5
+    epoch = int(time.time()) // EPOCH_SECONDS + TARGET_EPOCH_OFFSET
     settle_addr, _settle_id = await settlement_address(epoch)
     print(f"  epoch={epoch}  settlement={settle_addr}")
     check("ConfigParam 93 settlement address matches the counterfactual",
@@ -232,7 +354,7 @@ async def run_checks(faucet) -> None:
         "agent", "aipow-settlement", "deploy",
         "--next-epoch", str(epoch), "--epoch-seconds", str(EPOCH_SECONDS),
         "--register-grace", str(REGISTER_GRACE), "--challenge-window", str(CHALLENGE_WINDOW),
-        "--earner-workchain=-1", "--from", "boss", "--amount", "5", "--yes")
+        f"--earner-workchain={EARNER_WORKCHAIN}", "--from", "boss", "--amount", "5", "--yes")
     if not check("settlement active", await poll(
             lambda: rpc_call("getAddressState", address=settle_addr).get("result") == "active")):
         return
@@ -240,6 +362,10 @@ async def run_checks(faucet) -> None:
     check("settlement cursor at the target epoch", data["next_epoch"] == epoch, str(data))
     check("settlement challenge_window stored", data["challenge_window"] == CHALLENGE_WINDOW, str(data))
     check("settlement minted_total starts at zero", int(data["minted_total"]) == 0, str(data))
+
+    if BOOTSTRAP_ONLY:
+        print("\n=== BOOTSTRAP: AIPoW is active and awaiting the campaign epoch ===")
+        return
 
     window_deadline = int(time.time()) + CHALLENGE_WINDOW + WINDOW_MARGIN
     deploy = await tosctl_json(
@@ -305,11 +431,19 @@ SETTLE_ADDR_BOOT = ""
 
 async def main() -> int:
     global SETTLE_ADDR_BOOT
+    if EARNER_WORKCHAIN not in (-1, 0):
+        print("FATAL: TOS_AIPOW_EARNER_WORKCHAIN must be -1 or 0", file=sys.stderr)
+        return 2
     if not Path(TOSCTL).exists():
         print(f"FATAL: tosctl not found at {TOSCTL}", file=sys.stderr)
         return 2
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    try:
+        dns_artifacts = localnet_dns_artifacts()
+    except Exception as exc:
+        print(f"FATAL: localnet DNS profile: {exc}", file=sys.stderr)
+        return 2
     subprocess.run([TOSCTL, "config", "generate", "-o", str(CONFIG), "--force"], check=True)
     cfg = json.loads(CONFIG.read_text())
     cfg["chain_rpc"] = {"urls": [f"http://{RPC}/"], "api_key": None}
@@ -320,11 +454,11 @@ async def main() -> int:
 
     # The settlement address depends on next_epoch; fix the epoch the same way
     # run_checks will, so ConfigParam 93 names exactly the settlement we deploy.
-    epoch = int(time.time()) // EPOCH_SECONDS + 5
+    epoch = int(time.time()) // EPOCH_SECONDS + TARGET_EPOCH_OFFSET
     out = subprocess.run(
         [TOSCTL, "agent", "aipow-settlement", "address", "--next-epoch", str(epoch),
          "--epoch-seconds", str(EPOCH_SECONDS), "--register-grace", str(REGISTER_GRACE),
-         "--challenge-window", str(CHALLENGE_WINDOW), "--earner-workchain=-1",
+         "--challenge-window", str(CHALLENGE_WINDOW), f"--earner-workchain={EARNER_WORKCHAIN}",
          "--format", "json", "-c", str(CONFIG)],
         capture_output=True, text=True, check=True)
     info = json.loads(out.stdout)
@@ -335,26 +469,68 @@ async def main() -> int:
     print(f"commitment code hash (ConfigParam 93): {info['commitment_code_hash']}")
 
     install = Install(BUILD_DIR, REPO)
-    async with Network(install, WORKDIR / "net", base_port=25300) as network:
+    install.toslibjson.client_set_verbosity_level(0)
+    async with Network(install, WORKDIR / "net", base_port=BASE_PORT) as network:
         network.config.enable_aipow = True
+        if dns_artifacts is not None:
+            network.config.dns_root_addr = int(dns_artifacts["root"].split(":", 1)[1], 16)
+        network.config.shard_validators = VALIDATOR_COUNT
         network.config.aipow_settlement_addr = settle_id
         network.config.aipow_commitment_code_hash = commitment_code_hash
         network.config.aipow_reviewer_addr = int(REVIEWER_HEX, 16)
         dht = network.create_dht_node()
-        node = network.create_full_node()
-        node.make_initial_validator()
-        node.announce_to(dht)
+        nodes = []
+        for _ in range(VALIDATOR_COUNT):
+            node = network.create_full_node()
+            node.make_initial_validator()
+            node.announce_to(dht)
+            nodes.append(node)
         dht_task = asyncio.create_task(dht.run())
-        node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        rpc_host, rpc_port = RPC.rsplit(":", 1)
+        node_tasks = [
+            asyncio.create_task(node.run(StartOptions(args=[
+                "--json-rpc-address", f"{rpc_host}:{int(rpc_port) + index}",
+            ])))
+            for index, node in enumerate(nodes)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
-            client = await node.toslib_client()
+            client = await nodes[0].toslib_client()
             faucet = network.zerostate.main_wallet(client)
-            await run_checks(faucet)
+            await run_checks(faucet, dns_artifacts)
+            if not failures and os.environ.get("TOS_AIPOW_KEEPALIVE") == "1":
+                ready = {
+                    "schema": "tos.aipow.localnet-ready.v1",
+                    "validators": VALIDATOR_COUNT,
+                    "rpc_urls": [
+                        f"http://{rpc_host}:{int(rpc_port) + index}/jsonRPC"
+                        for index in range(VALIDATOR_COUNT)
+                    ],
+                    "tosctl_config": str(CONFIG),
+                    "settlement": SETTLE_ADDR_BOOT,
+                    "next_epoch": epoch if BOOTSTRAP_ONLY else epoch + 1,
+                    "commitment_code_hash": info["commitment_code_hash"],
+                    "reviewer": REVIEWER_ADDR,
+                    "baseline_minted_nanotos": 0 if BOOTSTRAP_ONLY else EXPECTED_POOL,
+                    "ready_at": int(time.time()),
+                }
+                if dns_artifacts is not None:
+                    ready["dns"] = {
+                        "profile": dns_artifacts["profile"],
+                        "root": dns_artifacts["root"],
+                        "collection": dns_artifacts["collection"],
+                        "item_code_hash": dns_artifacts["item_code_hash"],
+                        "code_hashes": dns_artifacts["code_hashes"],
+                        "auction_start_time": dns_artifacts["auction_start_time"],
+                        "minimum_auction_seconds": 3600,
+                    }
+                READY_FILE.write_text(json.dumps(ready, indent=2) + "\n")
+                print(f"\nAIPoW localnet resident; ready file: {READY_FILE}")
+                await asyncio.Event().wait()
         finally:
-            for t in (node_task, dht_task):
+            for t in (*node_tasks, dht_task):
                 t.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            await asyncio.gather(*node_tasks, dht_task, return_exceptions=True)
 
     print("\n=== RESULT:", "ALL PASS" if not failures else f"{len(failures)} FAILURE(S)", "===")
     return 1 if failures else 0
