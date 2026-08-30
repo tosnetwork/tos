@@ -631,7 +631,11 @@ impl Fixture {
 
     // Jetton balances tolerate a not-yet-deployed wallet account (== 0 tokens).
     fn own_wallet_balance(&self) -> u64 {
-        self.bc.get_account(&self.own_wallet).and_then(|a| a.get_data()).map(wallet_balance).unwrap_or(0)
+        self.bc
+            .get_account(&self.own_wallet)
+            .and_then(|a| a.get_data())
+            .map(wallet_balance)
+            .unwrap_or(0)
     }
 
     fn provider_wallet_balance(&self) -> u64 {
@@ -825,7 +829,6 @@ fn funding_after_the_deadline_is_returned_not_orphaned() {
     assert_eq!(f.own_wallet_balance(), 0);
     assert_eq!(f.state(), (STATUS_AWAITING_FUNDING, accepted_at));
 }
-
 
 #[test]
 fn acceptance_replay_is_idempotent_after_late_but_valid_funding() {
@@ -1042,9 +1045,7 @@ fn refund_first_valid_transition_wins_and_query_number_is_not_priority() {
     f.send(&relayer, Fixture::refund_body(81)).expect_success();
     assert_eq!(f.runtime().4, 81); // pending_query recorded == winner
     assert_eq!(f.buyer_wallet_balance(), AMOUNT);
-    f.send(&relayer, Fixture::refund_body(80))
-        .expect_aborted()
-        .expect_exit_code(ERR_BAD_STATE);
+    f.send(&relayer, Fixture::refund_body(80)).expect_aborted().expect_exit_code(ERR_BAD_STATE);
     assert_eq!(f.buyer_wallet_balance(), AMOUNT);
 
     // Smaller query first also wins (a "largest query wins" bug would fail here).
