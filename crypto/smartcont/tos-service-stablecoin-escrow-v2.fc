@@ -39,8 +39,24 @@ const int err::bad_receipt = 2406;
 const int err::bad_signature = 2407;
 const int err::bad_confirmation = 2408;
 const int err::bad_acceptance = 2409;
+const int err::insufficient_gas = 2410;
 
-const int wallet_transfer_tos = 100000000;
+;; Fixed native-TON budget attached to a settlement's jetton transfer, sized
+;; (STON.fi dex-core-v2 common/gas.fc:32,39) to cover one external jetton-wallet
+;; hop (~0.07 TOS) plus the recipient wallet's storage (~0.01 TOS) with margin.
+;; A settlement pays this fixed amount from the escrow's own balance (mode 1),
+;; so the amount the recipient wallet receives does not depend on the settlement
+;; message's net-of-fees remainder — it never launches an underfunded second leg.
+const int wallet_transfer_tos = 100000000;        ;; 0.1 TOS
+;; Native balance the escrow always keeps for its own rent. A release/refund is
+;; refused unless the escrow balance covers the payout budget plus this floor,
+;; so a settlement is never launched underfunded and never self-drains below rent
+;; (STON.fi msgs/pool.fc reserve-before-send pattern).
+const int escrow_storage_floor = 50000000;        ;; 0.05 TOS
+
+;; Reason code carried inline on a funding returned to its sender
+;; (STON.fi router.func:95-97 transfer_bounce_* pattern).
+const int reason::invalid_request = 0xffffffa1;
 
 (int, int, int, int, cell, cell, cell, cell) load_escrow() inline {
   slice ds = get_data().begin_parse();
@@ -104,7 +120,7 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   repeat (bytes) {
     int digit = s~load_uint(8);
     throw_unless(err::bad_state, (digit >= 48) & (digit <= 57));
-    throw_unless(err::bad_state, (~ first) | (bytes == 1) | (digit != 48));
+    throw_unless(err::bad_state, (first == 0) | (bytes == 1) | (digit != 48));
     amount = amount * 10 + digit - 48;
     first = 0;
   }
@@ -261,8 +277,22 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
     .store_uint(cell_hash(init), 256).end_cell().begin_parse();
 }
 
+;; Settlement payout (release/refund). Pays a fixed, adequate wallet_transfer_tos
+;; from the escrow's own balance (mode 1 = fees separate), so the value the
+;; recipient wallet receives is a known constant and never the unbounded
+;; net-of-fees remainder of the settlement message. The caller pre-checks the
+;; escrow balance covers this plus the storage floor. Settlement is terminal and
+;; happens once per escrow, so paying from balance here is not a griefing vector
+;; (unlike the return path, which is caller-triggered and stays inbound-financed).
+;; Bounceable so a first-leg failure returns to the escrow and the bounce handler
+;; can restore funded state; query_id is preserved for that match.
 () send_stablecoin(slice wallet, slice destination_owner, int amount,
     int query_id) impure inline_ref {
+  ;; Reserve the escrow's storage floor first so the fixed payout below can never
+  ;; drain the account below rent, regardless of inbound value or fees
+  ;; (STON.fi msgs/pool.fc reserve-before-send). Exact reservation, not just the
+  ;; balance pre-check at the call site.
+  raw_reserve(escrow_storage_floor, 0);
   cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
     .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
     .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();
@@ -270,6 +300,22 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
     .store_tomis(wallet_transfer_tos).store_uint(0, 1 + 4 + 4 + 64 + 32)
     .store_uint(0, 1).store_uint(1, 1).store_ref(body).end_cell();
   send_raw_message(message, 1);
+}
+
+;; Return an unaccepted funding to its sender (STON.fi router.func:91-99). Uses
+;; query_id 0 so a bounce of this return can never equal a settlement's (always
+;; nonzero) pending_query and roll release/refund back to funded. Mode 64 funds
+;; it from the funder's own inbound value, never the escrow reserve. The reason
+;; code is carried inline in the transfer body's forward payload.
+() return_stablecoin(slice wallet, slice destination_owner, int amount,
+    int reason) impure inline_ref {
+  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(0, 64)
+    .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
+    .store_uint(0, 1).store_coins(0).store_uint(0, 1).store_uint(reason, 32).end_cell();
+  cell message = begin_cell().store_uint(0x18, 6).store_slice(wallet)
+    .store_tomis(0).store_uint(0, 1 + 4 + 4 + 64 + 32)
+    .store_uint(0, 1).store_uint(1, 1).store_ref(body).end_cell();
+  send_raw_message(message, 64);
 }
 
 (int, int, int) parse_receipt(cell receipt, int expected_quote,
@@ -332,7 +378,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     int quote_transport_hash, int quote_dispute_hash, int accept_by,
     int execution_deadline, int offer_digest) = parse_quote(quote, quote_hash);
   throw_unless(err::bad_state, (quote_terms_hash == terms_hash) &
-    (quote_auth_hash == auth_hash) & (execution_deadline < refund_at));
+    (quote_auth_hash == auth_hash) & (execution_deadline < refund_at) &
+    (accept_by <= funding_deadline) & (funding_deadline < execution_deadline));
   (int funded, int settled, int receipt_hash, int pending_query, int accepted_at,
     cell route, cell transport, cell dispute) = parse_runtime(runtime);
   validate_transport(transport, quote_transport_hash);
@@ -385,16 +432,34 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
   }
 
   if (op == op::transfer_notification) {
-    throw_unless(err::bad_state, status == status::awaiting_funding);
+    ;; Only our own jetton wallet can have credited us.
     throw_unless(err::wrong_wallet, equal_slice_bits(sender, own_wallet));
     int query_id = body~load_uint(64);
     int amount = body~load_coins();
     slice from = body~load_msg_addr();
-    throw_unless(err::wrong_buyer, equal_slice_bits(from, buyer));
-    throw_unless(err::deadline, now() <= funding_deadline);
-    throw_unless(err::wrong_amount, amount == quote_amount);
-    save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
-      authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
+    ;; The jettons are already credited to our wallet before this runs: a throw
+    ;; cannot un-credit them and would orphan them permanently (BUG-001). Accept
+    ;; a valid funding; on any mismatch return the jettons to the funder instead
+    ;; of throwing (STON.fi router.func:91-99 refund-with-reason pattern).
+    if ((status == status::awaiting_funding) & equal_slice_bits(from, buyer) &
+        (now() <= funding_deadline) & (amount == quote_amount)) {
+      save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
+        authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
+      return ();
+    }
+    ;; Return only to a real internal, non-anycast, workchain-0 owner the jetton
+    ;; wallet can actually pay; a malformed previous-owner is left untouched
+    ;; rather than emitting a doomed transfer.
+    slice from_check = from;
+    int returnable = 0;
+    if (from_check~load_uint(2) == 2) {
+      if (from_check~load_uint(1) == 0) {
+        returnable = (from_check~load_int(8) == 0);
+      }
+    }
+    if (returnable) {
+      return_stablecoin(own_wallet, from, amount, reason::invalid_request);
+    }
     return ();
   }
 
@@ -416,6 +481,14 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     }
     throw_unless(err::bad_state, status == status::funded);
     throw_unless(err::deadline, (now() <= execution_deadline) & (now() < refund_at));
+    ;; STON.fi router.func:44-45 pay_to gas pre-check, adapted: refuse to launch
+    ;; the two-leg transfer unless the escrow balance covers the fixed payout
+    ;; budget plus its own storage floor. The payout amount is a fixed constant
+    ;; from balance (see send_stablecoin), so the recipient wallet is always
+    ;; adequately funded — never an underfunded second leg that OOGs and strands
+    ;; funds (BUG-002 OOG variant).
+    throw_unless(err::insufficient_gas,
+      get_balance().pair_first() >= wallet_transfer_tos + escrow_storage_floor);
     save_escrow(status::release_pending, quote_hash, terms_hash, auth_hash, quote,
       terms, authorization, make_runtime(funded, charged, new_receipt_hash,
         query_id, accepted_at, route, transport, dispute));
@@ -433,6 +506,10 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     }
     throw_unless(err::bad_state, status == status::funded);
     throw_unless(err::deadline, now() >= refund_at);
+    ;; Same balance pre-check as release: never launch a refund transfer the
+    ;; escrow balance cannot fully fund at the fixed payout budget + storage floor.
+    throw_unless(err::insufficient_gas,
+      get_balance().pair_first() >= wallet_transfer_tos + escrow_storage_floor);
     save_escrow(status::refund_pending, quote_hash, terms_hash, auth_hash, quote,
       terms, authorization, make_runtime(funded, 0, 0, query_id, accepted_at,
         route, transport, dispute));

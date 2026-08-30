@@ -564,7 +564,11 @@ fn deployment_is_not_acceptance_and_only_the_buyer_can_advance_it() {
 
     let wallet = fixture.own_wallet.clone();
     let funding = fixture.fund_body();
-    fixture.send(&wallet, funding).expect_aborted().expect_exit_code(ERR_BAD_STATE);
+    // Funding before acceptance is not accepted, but the jettons the wallet
+    // already credited must be returned to the funder, never thrown away
+    // (throwing would orphan them permanently — BUG-001). The escrow stays in
+    // pending_acceptance and emits exactly one return transfer.
+    fixture.send(&wallet, funding).expect_success().expect_out_msgs(1);
     assert_eq!(fixture.state(), (STATUS_PENDING, 0));
 
     let attacker = fixture.relayer.address().clone();
@@ -582,6 +586,64 @@ fn deployment_is_not_acceptance_and_only_the_buyer_can_advance_it() {
     fixture.send(&buyer, acceptance).expect_success();
     assert_eq!(fixture.state(), (STATUS_AWAITING_FUNDING, accepted_at));
 }
+
+fn notification_body(query_id: u64, amount: u64, from: &MsgAddressInt) -> Cell {
+    let mut body = BuilderData::new();
+    body.append_u32(OP_TRANSFER_NOTIFICATION).unwrap().append_u64(query_id).unwrap();
+    Coins::new(amount).write_to(&mut body).unwrap();
+    from.write_to(&mut body).unwrap();
+    body.append_bit_zero().unwrap();
+    body.into_cell().unwrap()
+}
+
+#[test]
+fn rejected_funding_is_returned_to_sender_not_orphaned() {
+    // BUG-001 (STON.fi router.func:91-99 refund-with-reason pattern): jettons are
+    // credited to the escrow's own wallet before the escrow runs, and the
+    // notification is non-bounceable, so a throw on a mismatch cannot un-credit
+    // them and would orphan them permanently. Every funding the escrow does not
+    // accept must instead be returned to the funder (exactly one outbound
+    // transfer), leaving the escrow able to still accept a correct funding.
+    let mut fixture = Fixture::new();
+    let buyer = fixture.buyer.address().clone();
+    fixture.send(&buyer, fixture.accept_body(3)).expect_success();
+    assert_eq!(fixture.state().0, STATUS_AWAITING_FUNDING);
+    let accepted_at = fixture.state().1;
+    let wallet = fixture.own_wallet.clone();
+
+    // Wrong amount from the buyer's own wallet: returned, state unchanged.
+    let wrong_amount = notification_body(2, AMOUNT + 1, fixture.buyer.address());
+    fixture.send(&wallet, wrong_amount).expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.state(), (STATUS_AWAITING_FUNDING, accepted_at));
+
+    // Correct amount but the funder is not the buyer (e.g. an exchange
+    // withdrawal whose `from` is the exchange wallet): returned, state unchanged.
+    let wrong_from = notification_body(2, AMOUNT, fixture.relayer.address());
+    fixture.send(&wallet, wrong_from).expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.state(), (STATUS_AWAITING_FUNDING, accepted_at));
+
+    // A correct funding is still accepted and moves no funds out.
+    let funding = fixture.fund_body();
+    fixture.send(&wallet, funding).expect_success().expect_out_msgs(0);
+    assert_eq!(fixture.state(), (STATUS_FUNDED, accepted_at));
+}
+
+#[test]
+fn funding_after_the_deadline_is_returned_not_orphaned() {
+    // BUG-001 latency variant: a funding initiated in time can arrive after
+    // funding_deadline. It must be returned to the buyer, not orphaned, and must
+    // not consume the awaiting_funding state.
+    let mut fixture = Fixture::new();
+    let buyer = fixture.buyer.address().clone();
+    fixture.send(&buyer, fixture.accept_body(3)).expect_success();
+    let accepted_at = fixture.state().1;
+    fixture.bc.set_now((fixture.funding_deadline + 1) as u32);
+    let wallet = fixture.own_wallet.clone();
+    let late = fixture.fund_body();
+    fixture.send(&wallet, late).expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.state(), (STATUS_AWAITING_FUNDING, accepted_at));
+}
+
 
 #[test]
 fn acceptance_replay_is_idempotent_after_late_but_valid_funding() {
