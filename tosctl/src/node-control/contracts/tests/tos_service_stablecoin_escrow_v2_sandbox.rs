@@ -1222,32 +1222,88 @@ fn only_an_authentic_own_wallet_bounce_with_the_pending_query_clears_pending() {
 }
 
 #[test]
-fn settlement_is_refused_when_the_escrow_cannot_fund_the_transfer() {
-    // Item 10: the release/refund gas pre-check refuses to launch a settlement
-    // whose payout budget + storage floor the escrow balance cannot cover, so no
-    // underfunded second leg is ever emitted; state stays funded.
-    let mut f = Fixture::new();
-    f.fund();
-    let relayer = f.relayer.address().clone();
-    f.set_escrow_balance(0); // below wallet_transfer_tos + storage_floor (0.15 TOS)
-    let body = f.release_body(70, f.receipt(0xa3));
-    // Attach only 0.1 TOS: get_balance() ~= 0.1 < 0.15 -> refused before any send.
-    f.send_with_value(&relayer, body, TOS / 10)
-        .expect_aborted()
-        .expect_exit_code(ERR_INSUFFICIENT_GAS);
-    assert_eq!(f.state().0, STATUS_FUNDED);
-    assert_eq!(f.provider_wallet_balance(), 0);
+fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
+    // Item 10: locate the exact first balance admitted by the release guard. Every
+    // lower candidate must fail in compute with ERR_INSUFFICIENT_GAS (never pass
+    // compute and later abort action phase with result code 37), while the first
+    // admitted candidate must complete the two-leg transfer and retain the floor.
+    let try_release = |value: u64| -> bool {
+        let mut f = Fixture::new();
+        f.fund();
+        let relayer = f.relayer.address().clone();
+        f.set_escrow_balance(0);
+        let body = f.release_body(70, f.receipt(0xa3));
+        let result = f.send_with_value(&relayer, body, value);
+        if result.read_primary_description().aborted {
+            result.expect_exit_code(ERR_INSUFFICIENT_GAS).expect_out_msgs(0);
+            assert_eq!(f.state().0, STATUS_FUNDED);
+            assert_eq!(f.provider_wallet_balance(), 0);
+            false
+        } else {
+            result.expect_success();
+            assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
+            assert_eq!(f.provider_wallet_balance(), AMOUNT);
+            assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
+            true
+        }
+    };
 
-    let mut g = Fixture::new();
-    g.fund();
-    g.bc.set_now(g.refund_at as u32);
-    let r = g.relayer.address().clone();
-    g.set_escrow_balance(0);
-    g.send_with_value(&r, Fixture::refund_body(80), TOS / 10)
-        .expect_aborted()
-        .expect_exit_code(ERR_INSUFFICIENT_GAS);
-    assert_eq!(g.state().0, STATUS_FUNDED);
-    assert_eq!(g.buyer_wallet_balance(), 0);
+    // The old advertised 0.15-TOS threshold reproduced an action-phase no-funds
+    // abort. The new guard must reject it explicitly and admit a funded upper bound.
+    let mut rejected = 150_000_000;
+    let mut admitted = 250_000_000;
+    assert!(!try_release(rejected));
+    assert!(try_release(admitted));
+    while rejected + 1 < admitted {
+        let candidate = rejected + (admitted - rejected) / 2;
+        if try_release(candidate) {
+            admitted = candidate;
+        } else {
+            rejected = candidate;
+        }
+    }
+    assert_eq!(admitted, rejected + 1);
+    assert!(!try_release(rejected));
+    assert!(try_release(admitted));
+
+    // Refund has the same configured requirement, but its later timestamp may
+    // collect a small storage fee before credit. Locate its externally attached
+    // value boundary independently and prove it has the same no-gap property.
+    let try_refund = |value: u64| -> bool {
+        let mut g = Fixture::new();
+        g.fund();
+        g.bc.set_now(g.refund_at as u32);
+        let relayer = g.relayer.address().clone();
+        g.set_escrow_balance(0);
+        let result = g.send_with_value(&relayer, Fixture::refund_body(80), value);
+        if result.read_primary_description().aborted {
+            result.expect_exit_code(ERR_INSUFFICIENT_GAS).expect_out_msgs(0);
+            assert_eq!(g.state().0, STATUS_FUNDED);
+            assert_eq!(g.buyer_wallet_balance(), 0);
+            false
+        } else {
+            result.expect_success();
+            assert_eq!(g.state().0, STATUS_REFUND_PENDING);
+            assert_eq!(g.buyer_wallet_balance(), AMOUNT);
+            assert!(g.escrow_balance() >= ESCROW_STORAGE_FLOOR);
+            true
+        }
+    };
+    let mut refund_rejected = 150_000_000;
+    let mut refund_admitted = 250_000_000;
+    assert!(!try_refund(refund_rejected));
+    assert!(try_refund(refund_admitted));
+    while refund_rejected + 1 < refund_admitted {
+        let candidate = refund_rejected + (refund_admitted - refund_rejected) / 2;
+        if try_refund(candidate) {
+            refund_admitted = candidate;
+        } else {
+            refund_rejected = candidate;
+        }
+    }
+    assert_eq!(refund_admitted, refund_rejected + 1);
+    assert!(!try_refund(refund_rejected));
+    assert!(try_refund(refund_admitted));
 }
 
 #[test]

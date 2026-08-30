@@ -50,10 +50,18 @@ const int err::insufficient_gas = 2410;
 ;; message's net-of-fees remainder — it never launches an underfunded second leg.
 const int wallet_transfer_tos = 100000000;        ;; 0.1 TOS
 ;; Native balance the escrow always keeps for its own rent. A release/refund is
-;; refused unless the escrow balance covers the payout budget plus this floor,
-;; so a settlement is never launched underfunded and never self-drains below rent
-;; (reserve-before-send pattern from the vendored reference pool contract).
+;; refused unless the escrow balance covers the payout budget, the current
+;; config-derived compute/forward fees, and this floor, so a settlement is never
+;; launched underfunded and never self-drains below rent (reserve-before-send
+;; pattern from the vendored reference pool contract).
 const int escrow_storage_floor = 50000000;        ;; 0.05 TOS
+;; Upper bound for the escrow-side release/refund compute phase. The heavier
+;; release path consumed 31,131 gas before this guard was added; 50,000 leaves
+;; substantial headroom for the fee primitives and message-size calculation.
+;; Sandbox coverage asserts the configured budget admits the exact first
+;; successful balance with no action-phase no-funds gap.
+const int settlement_compute_gas_units = 50000;
+const int base_workchain = 0;
 
 ;; Reason code carried inline on a funding returned to its sender
 ;; (transfer_bounce reason-code pattern from the vendored reference router contract).
@@ -278,29 +286,44 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
     .store_uint(cell_hash(init), 256).end_cell().begin_parse();
 }
 
+;; Build a settlement payout and calculate its exact body forward fee from the
+;; active workchain configuration. The root message cell is covered by the lump
+;; price; the referenced body is what the action phase counts as cells/bits.
+(cell, int) make_stablecoin_message(slice wallet, slice destination_owner,
+    int amount, int query_id) impure inline_ref {
+  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
+    .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
+    .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();
+  (int body_cells, int body_bits, _) = compute_data_size(body, 4);
+  int forward_fee = get_forward_fee(base_workchain, body_bits, body_cells);
+  cell message = begin_cell().store_uint(0x18, 6).store_slice(wallet)
+    .store_tomis(wallet_transfer_tos).store_uint(0, 1 + 4 + 4 + 64 + 32)
+    .store_uint(0, 1).store_uint(1, 1).store_ref(body).end_cell();
+  return (message, forward_fee);
+}
+
+int settlement_required_balance(int forward_fee) inline {
+  return escrow_storage_floor + wallet_transfer_tos + forward_fee
+    + get_compute_fee(base_workchain, settlement_compute_gas_units);
+}
+
 ;; Settlement payout (release/refund). Pays a fixed, adequate wallet_transfer_tos
 ;; from the escrow's own balance (mode 1 = fees separate), so the value the
 ;; recipient wallet receives is a known constant and never the unbounded
 ;; net-of-fees remainder of the settlement message. The caller pre-checks the
-;; escrow balance covers this plus the storage floor. Settlement is terminal and
-;; happens once per escrow, so paying from balance here is not a griefing vector
-;; (unlike the return path, which is caller-triggered and stays inbound-financed).
-;; Bounceable so a first-leg failure returns to the escrow and the bounce handler
-;; can restore funded state; query_id is preserved for that match.
-() send_stablecoin(slice wallet, slice destination_owner, int amount,
-    int query_id) impure inline_ref {
+;; escrow balance covers the full configured compute/forward fee budget plus the
+;; storage floor. Settlement is terminal and happens once per escrow, so paying
+;; from balance here is not a griefing vector (unlike the return path, which is
+;; caller-triggered and stays inbound-financed). Bounceable so a first-leg failure
+;; returns to the escrow and the bounce handler can restore funded state; query_id
+;; is preserved for that match.
+() send_stablecoin(cell message) impure inline_ref {
   ;; Reserve the escrow's storage floor first so the fixed payout below can never
   ;; drain the account below rent, regardless of inbound value or fees
   ;; (reserve-before-send pattern from the vendored reference pool contract).
   ;; Exact reservation, not just the
   ;; balance pre-check at the call site.
   raw_reserve(escrow_storage_floor, 0);
-  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
-    .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
-    .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();
-  cell message = begin_cell().store_uint(0x18, 6).store_slice(wallet)
-    .store_tomis(wallet_transfer_tos).store_uint(0, 1 + 4 + 4 + 64 + 32)
-    .store_uint(0, 1).store_uint(1, 1).store_ref(body).end_cell();
   send_raw_message(message, 1);
 }
 
@@ -484,19 +507,18 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     }
     throw_unless(err::bad_state, status == status::funded);
     throw_unless(err::deadline, (now() <= execution_deadline) & (now() < refund_at));
-    ;; Gas pre-check adapted from the vendored reference router contract's payout
-    ;; path: refuse to launch
-    ;; the two-leg transfer unless the escrow balance covers the fixed payout
-    ;; budget plus its own storage floor. The payout amount is a fixed constant
-    ;; from balance (see send_stablecoin), so the recipient wallet is always
-    ;; adequately funded — never an underfunded second leg that OOGs and strands
-    ;; funds (BUG-002 OOG variant).
+    ;; Refuse to launch unless the balance covers the fixed payout, current
+    ;; config-derived compute/forward fees, and storage floor. get_balance() is
+    ;; observed before compute fees are finally debited, so omitting that budget
+    ;; would admit a transaction that later fails action phase with no funds.
+    (cell payout_message, int payout_forward_fee) = make_stablecoin_message(
+      own_wallet, provider, charged, query_id);
     throw_unless(err::insufficient_gas,
-      get_balance().pair_first() >= wallet_transfer_tos + escrow_storage_floor);
+      get_balance().pair_first() >= settlement_required_balance(payout_forward_fee));
     save_escrow(status::release_pending, quote_hash, terms_hash, auth_hash, quote,
       terms, authorization, make_runtime(funded, charged, new_receipt_hash,
         query_id, accepted_at, route, transport, dispute));
-    send_stablecoin(own_wallet, provider, charged, query_id);
+    send_stablecoin(payout_message);
     return ();
   }
 
@@ -510,14 +532,15 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     }
     throw_unless(err::bad_state, status == status::funded);
     throw_unless(err::deadline, now() >= refund_at);
-    ;; Same balance pre-check as release: never launch a refund transfer the
-    ;; escrow balance cannot fully fund at the fixed payout budget + storage floor.
+    ;; Same full fee-aware balance pre-check as release.
+    (cell payout_message, int payout_forward_fee) = make_stablecoin_message(
+      own_wallet, buyer, funded, query_id);
     throw_unless(err::insufficient_gas,
-      get_balance().pair_first() >= wallet_transfer_tos + escrow_storage_floor);
+      get_balance().pair_first() >= settlement_required_balance(payout_forward_fee));
     save_escrow(status::refund_pending, quote_hash, terms_hash, auth_hash, quote,
       terms, authorization, make_runtime(funded, 0, 0, query_id, accepted_at,
         route, transport, dispute));
-    send_stablecoin(own_wallet, buyer, funded, query_id);
+    send_stablecoin(payout_message);
     return ();
   }
 
