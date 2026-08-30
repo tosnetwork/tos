@@ -42,7 +42,8 @@ const int err::bad_acceptance = 2409;
 const int err::insufficient_gas = 2410;
 
 ;; Fixed native-TON budget attached to a settlement's jetton transfer, sized
-;; (STON.fi dex-core-v2 common/gas.fc:32,39) to cover one external jetton-wallet
+;; (per the vendored third-party DEX reference under crypto/smartcont/reference/)
+;; to cover one external jetton-wallet
 ;; hop (~0.07 TOS) plus the recipient wallet's storage (~0.01 TOS) with margin.
 ;; A settlement pays this fixed amount from the escrow's own balance (mode 1),
 ;; so the amount the recipient wallet receives does not depend on the settlement
@@ -51,11 +52,11 @@ const int wallet_transfer_tos = 100000000;        ;; 0.1 TOS
 ;; Native balance the escrow always keeps for its own rent. A release/refund is
 ;; refused unless the escrow balance covers the payout budget plus this floor,
 ;; so a settlement is never launched underfunded and never self-drains below rent
-;; (STON.fi msgs/pool.fc reserve-before-send pattern).
+;; (reserve-before-send pattern from the vendored reference pool contract).
 const int escrow_storage_floor = 50000000;        ;; 0.05 TOS
 
 ;; Reason code carried inline on a funding returned to its sender
-;; (STON.fi router.func:95-97 transfer_bounce_* pattern).
+;; (transfer_bounce reason-code pattern from the vendored reference router contract).
 const int reason::invalid_request = 0xffffffa1;
 
 (int, int, int, int, cell, cell, cell, cell) load_escrow() inline {
@@ -290,7 +291,8 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
     int query_id) impure inline_ref {
   ;; Reserve the escrow's storage floor first so the fixed payout below can never
   ;; drain the account below rent, regardless of inbound value or fees
-  ;; (STON.fi msgs/pool.fc reserve-before-send). Exact reservation, not just the
+  ;; (reserve-before-send pattern from the vendored reference pool contract).
+  ;; Exact reservation, not just the
   ;; balance pre-check at the call site.
   raw_reserve(escrow_storage_floor, 0);
   cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
@@ -302,7 +304,8 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
   send_raw_message(message, 1);
 }
 
-;; Return an unaccepted funding to its sender (STON.fi router.func:91-99). Uses
+;; Return an unaccepted funding to its sender (refund-with-reason pattern from the
+;; vendored reference router contract). Uses
 ;; query_id 0 so a bounce of this return can never equal a settlement's (always
 ;; nonzero) pending_query and roll release/refund back to funded. Mode 64 funds
 ;; it from the funder's own inbound value, never the escrow reserve. The reason
@@ -440,7 +443,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     ;; The jettons are already credited to our wallet before this runs: a throw
     ;; cannot un-credit them and would orphan them permanently (BUG-001). Accept
     ;; a valid funding; on any mismatch return the jettons to the funder instead
-    ;; of throwing (STON.fi router.func:91-99 refund-with-reason pattern).
+    ;; of throwing (refund-with-reason pattern from the vendored reference router contract).
     if ((status == status::awaiting_funding) & equal_slice_bits(from, buyer) &
         (now() <= funding_deadline) & (amount == quote_amount)) {
       save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
@@ -481,7 +484,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     }
     throw_unless(err::bad_state, status == status::funded);
     throw_unless(err::deadline, (now() <= execution_deadline) & (now() < refund_at));
-    ;; STON.fi router.func:44-45 pay_to gas pre-check, adapted: refuse to launch
+    ;; Gas pre-check adapted from the vendored reference router contract's payout
+    ;; path: refuse to launch
     ;; the two-leg transfer unless the escrow balance covers the fixed payout
     ;; budget plus its own storage floor. The payout amount is a fixed constant
     ;; from balance (see send_stablecoin), so the recipient wallet is always
