@@ -104,7 +104,7 @@ int parse_authorization(cell authorization, int expected_hash) inline {
   repeat (bytes) {
     int digit = s~load_uint(8);
     throw_unless(err::bad_state, (digit >= 48) & (digit <= 57));
-    throw_unless(err::bad_state, (~ first) | (bytes == 1) | (digit != 48));
+    throw_unless(err::bad_state, (first == 0) | (bytes == 1) | (digit != 48));
     amount = amount * 10 + digit - 48;
     first = 0;
   }
@@ -272,6 +272,22 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
   send_raw_message(message, 1);
 }
 
+;; Return an unaccepted funding to its sender. Uses query_id 0 so a bounce of
+;; this transfer can never alias a settlement's (always nonzero) pending_query
+;; and roll a release/refund back to funded. Uses mode 64 so the return is
+;; financed by the funder's own attached message value, never by the escrow's
+;; native reserve, so a rejected-funding flood cannot drain the balance the
+;; escrow needs for legitimate release/refund.
+() return_stablecoin(slice wallet, slice destination_owner, int amount) impure inline_ref {
+  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(0, 64)
+    .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
+    .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();
+  cell message = begin_cell().store_uint(0x18, 6).store_slice(wallet)
+    .store_tomis(0).store_uint(0, 1 + 4 + 4 + 64 + 32)
+    .store_uint(0, 1).store_uint(1, 1).store_ref(body).end_cell();
+  send_raw_message(message, 64);
+}
+
 (int, int, int) parse_receipt(cell receipt, int expected_quote,
     int expected_amount, int expected_provider, int execution_deadline) inline_ref {
   slice r = receipt.begin_parse();
@@ -332,7 +348,8 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     int quote_transport_hash, int quote_dispute_hash, int accept_by,
     int execution_deadline, int offer_digest) = parse_quote(quote, quote_hash);
   throw_unless(err::bad_state, (quote_terms_hash == terms_hash) &
-    (quote_auth_hash == auth_hash) & (execution_deadline < refund_at));
+    (quote_auth_hash == auth_hash) & (execution_deadline < refund_at) &
+    (accept_by <= funding_deadline) & (funding_deadline < execution_deadline));
   (int funded, int settled, int receipt_hash, int pending_query, int accepted_at,
     cell route, cell transport, cell dispute) = parse_runtime(runtime);
   validate_transport(transport, quote_transport_hash);
@@ -385,16 +402,36 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
   }
 
   if (op == op::transfer_notification) {
-    throw_unless(err::bad_state, status == status::awaiting_funding);
+    ;; Only our own jetton wallet can have credited us; anything else is not a
+    ;; real funding of this escrow and is rejected outright.
     throw_unless(err::wrong_wallet, equal_slice_bits(sender, own_wallet));
     int query_id = body~load_uint(64);
     int amount = body~load_coins();
     slice from = body~load_msg_addr();
-    throw_unless(err::wrong_buyer, equal_slice_bits(from, buyer));
-    throw_unless(err::deadline, now() <= funding_deadline);
-    throw_unless(err::wrong_amount, amount == quote_amount);
-    save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
-      authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
+    ;; The jettons are already credited to our wallet before this runs: a throw
+    ;; cannot un-credit them and would orphan them permanently. Accept a valid
+    ;; funding; on any mismatch return the received jettons to the funder rather
+    ;; than throwing.
+    if ((status == status::awaiting_funding) & equal_slice_bits(from, buyer) &
+        (now() <= funding_deadline) & (amount == quote_amount)) {
+      save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
+        authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
+      return ();
+    }
+    ;; Return the received jettons, but only to an address the committed jetton
+    ;; wallet can actually pay: a standard, non-anycast, workchain-0 owner. A
+    ;; malformed or off-workchain previous-owner cannot be repaid and is left
+    ;; untouched rather than emitting a doomed transfer.
+    slice from_check = from;
+    int returnable = 0;
+    if (from_check~load_uint(2) == 2) {
+      if (from_check~load_uint(1) == 0) {
+        returnable = (from_check~load_int(8) == 0);
+      }
+    }
+    if (returnable) {
+      return_stablecoin(own_wallet, from, amount);
+    }
     return ();
   }
 
