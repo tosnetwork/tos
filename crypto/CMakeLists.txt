@@ -561,42 +561,6 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_native_registry_code)
-  set(TOS_SERVICE_STABLECOIN_ESCROW_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v1.cpp")
-  add_custom_command(
-    COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-      ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
-    MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
-    DEPENDS func fift smartcont/stdlib.fc
-      smartcont/tos-service-stablecoin-escrow-v1.boc.base64
-      smartcont/tos-service-stablecoin-escrow-v1.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-    OUTPUT ${TOS_SERVICE_STABLECOIN_ESCROW_CPP}
-  )
-  add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1
-    DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_CPP})
-  add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1)
-  set(TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v2.cpp")
-  add_custom_command(
-    COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
-      ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
-    MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
-    DEPENDS func fift smartcont/stdlib.fc
-      smartcont/tos-service-stablecoin-escrow-v2.boc.base64
-      smartcont/tos-service-stablecoin-escrow-v2.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v2.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
-    OUTPUT ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP}
-  )
-  add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2
-    DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP})
-  add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
