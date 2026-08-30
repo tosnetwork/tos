@@ -55,12 +55,18 @@ const int wallet_transfer_tos = 100000000;        ;; 0.1 TOS
 ;; launched underfunded and never self-drains below rent (reserve-before-send
 ;; pattern from the vendored reference pool contract).
 const int escrow_storage_floor = 50000000;        ;; 0.05 TOS
-;; Upper bound for the escrow-side release/refund compute phase. The heavier
-;; release path consumed 31,131 gas before this guard was added; 50,000 leaves
-;; substantial headroom for the fee primitives and message-size calculation.
-;; Sandbox coverage asserts the configured budget admits the exact first
-;; successful balance with no action-phase no-funds gap.
-const int settlement_compute_gas_units = 50000;
+;; Upper bound for the escrow-side release/refund compute phase, used only to
+;; size the settlement balance guard. Over-estimating is the safe direction: it
+;; only requires the escrow to hold more native TOS before settling, and never
+;; admits an underfunded settlement. It must exceed the WORST-CASE compute at
+;; maximum valid state. The two attacker-sizeable pre-branch loops dominate:
+;; validate_transport walks up to a 120-byte endpoint and parse_amount_text walks
+;; up to a 37-digit (< 2^120) amount; at those maxima the release path reaches
+;; roughly 75k-85k gas including the fee primitives (the short-fixture path is
+;; only ~31k). 200,000 leaves more than 2x margin over that worst case. Sandbox
+;; coverage at maximum valid state asserts the guard-admitted balance fully funds
+;; release and refund with no action-phase no-funds gap.
+const int settlement_compute_gas_units = 200000;
 const int base_workchain = 0;
 
 ;; Reason code carried inline on a funding returned to its sender
@@ -291,6 +297,11 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
 ;; price; the referenced body is what the action phase counts as cells/bits.
 (cell, int) make_stablecoin_message(slice wallet, slice destination_owner,
     int amount, int query_id) impure inline_ref {
+  ;; The forward/compute fee helpers below price at base_workchain (0). That is
+  ;; only correct if this escrow itself lives on workchain 0, so assert it rather
+  ;; than silently mis-quote fees on another workchain and reopen the balance-guard gap.
+  (int self_wc, _) = parse_std_addr(my_address());
+  throw_unless(err::bad_state, self_wc == base_workchain);
   cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
     .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
     .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();

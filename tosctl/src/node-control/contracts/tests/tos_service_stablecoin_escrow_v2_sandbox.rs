@@ -154,10 +154,18 @@ struct Fixture {
     funding_deadline: u64,
     execution_deadline: u64,
     refund_at: u64,
+    amount: u128,
 }
 
 impl Fixture {
     fn new() -> Self {
+        // Default fixture: short endpoint + small amount. Max-valid-state variant
+        // (120-byte endpoint, 37-digit amount) is new_with(), used by the
+        // worst-case settlement-gas boundary tests.
+        Self::new_with(b"http://127.0.0.1:8080", AMOUNT as u128)
+    }
+
+    fn new_with(endpoint: &[u8], amount: u128) -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(14).unwrap();
         bc.set_workchain(0);
         let relayer = bc.treasury("tos-service-v2-relayer", 1_000 * TOS).unwrap();
@@ -199,7 +207,6 @@ impl Fixture {
             .unwrap();
         let mut version_name = BuilderData::new();
         version_name.append_raw(b"1.0.0", 40).unwrap();
-        let endpoint = b"http://127.0.0.1:8080";
         let mut endpoint_cell = BuilderData::new();
         endpoint_cell.append_raw(endpoint, endpoint.len() * 8).unwrap();
         let mut transport = BuilderData::new();
@@ -261,8 +268,10 @@ impl Fixture {
             .unwrap()
             .append_u8(6)
             .unwrap();
+        let amount_decimal = amount.to_string();
+        let amount_bytes = amount_decimal.as_bytes();
         let mut amount_text = BuilderData::new();
-        amount_text.append_raw(b"25000000", 64).unwrap();
+        amount_text.append_raw(amount_bytes, amount_bytes.len() * 8).unwrap();
         let mut economic = BuilderData::new();
         economic
             .append_raw(terms.hash(0).as_slice(), 256)
@@ -412,7 +421,7 @@ impl Fixture {
         .expect_success();
         let mut mint = BuilderData::new();
         mint.append_u32(OP_INTERNAL_TRANSFER).unwrap().append_u64(1).unwrap();
-        Coins::new(AMOUNT).write_to(&mut mint).unwrap();
+        amount_decimal.parse::<Coins>().unwrap().write_to(&mut mint).unwrap();
         buyer.address().write_to(&mut mint).unwrap();
         mint.append_bits(0, 2).unwrap();
         Coins::new(0).write_to(&mut mint).unwrap();
@@ -443,6 +452,7 @@ impl Fixture {
             funding_deadline,
             execution_deadline,
             refund_at,
+            amount,
         }
     }
 
@@ -468,7 +478,7 @@ impl Fixture {
     fn fund_body(&self) -> Cell {
         let mut body = BuilderData::new();
         body.append_u32(OP_TRANSFER_NOTIFICATION).unwrap().append_u64(2).unwrap();
-        Coins::new(AMOUNT).write_to(&mut body).unwrap();
+        self.amount.to_string().parse::<Coins>().unwrap().write_to(&mut body).unwrap();
         self.buyer.address().write_to(&mut body).unwrap();
         body.append_bit_zero().unwrap();
         body.into_cell().unwrap()
@@ -516,7 +526,7 @@ impl Fixture {
             .append_u256(&[0xa8; 32])
             .unwrap();
         let mut economic = BuilderData::new();
-        economic.append_u128(AMOUNT as u128).unwrap().append_u256(&[0x66; 32]).unwrap();
+        economic.append_u128(self.amount).unwrap().append_u256(&[0x66; 32]).unwrap();
         let mut receipt = BuilderData::new();
         receipt
             .append_u32(MAGIC_RECEIPT)
@@ -547,7 +557,7 @@ impl Fixture {
             .unwrap()
             .append_u64(query_id)
             .unwrap()
-            .append_u128(AMOUNT as u128)
+            .append_u128(self.amount)
             .unwrap();
         self.escrow.write_to(&mut intent).unwrap();
         intent
@@ -1251,7 +1261,7 @@ fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
     // The old advertised 0.15-TOS threshold reproduced an action-phase no-funds
     // abort. The new guard must reject it explicitly and admit a funded upper bound.
     let mut rejected = 150_000_000;
-    let mut admitted = 250_000_000;
+    let mut admitted = 1_000_000_000;
     assert!(!try_release(rejected));
     assert!(try_release(admitted));
     while rejected + 1 < admitted {
@@ -1290,7 +1300,7 @@ fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
         }
     };
     let mut refund_rejected = 150_000_000;
-    let mut refund_admitted = 250_000_000;
+    let mut refund_admitted = 1_000_000_000;
     assert!(!try_refund(refund_rejected));
     assert!(try_refund(refund_admitted));
     while refund_rejected + 1 < refund_admitted {
@@ -1304,6 +1314,88 @@ fn settlement_balance_guard_has_no_action_phase_no_funds_gap() {
     assert_eq!(refund_admitted, refund_rejected + 1);
     assert!(!try_refund(refund_rejected));
     assert!(try_refund(refund_admitted));
+}
+
+#[test]
+fn settlement_balance_guard_holds_at_maximum_valid_state() {
+    // Residual-P2 proof. Drive the two attacker-sizeable compute loops to their
+    // maxima: a 120-byte endpoint (validate_transport loop) and a 37-digit
+    // (< 2^120) amount (parse_amount_text loop) — the worst-case settlement
+    // compute. The balance guard must still admit ONLY balances that fully fund
+    // the two-leg transfer, with no compute-pass-then-action-phase-no-funds gap.
+    // If settlement_compute_gas_units under-bounded the real worst-case compute,
+    // an admitted balance would abort in the action phase (or emit no transfer),
+    // failing the admitted-branch assertions below.
+    let max_endpoint = [0x61u8; 120]; // 120 printable bytes = max valid endpoint
+    let max_amount = (1u128 << 120) - 1; // 37 digits, < 2^120 = max valid amount
+
+    let try_release = |value: u64| -> bool {
+        let mut f = Fixture::new_with(&max_endpoint, max_amount);
+        f.fund();
+        let relayer = f.relayer.address().clone();
+        f.set_escrow_balance(0);
+        let body = f.release_body(70, f.receipt(0xa3));
+        let result = f.send_with_value(&relayer, body, value);
+        if result.read_primary_description().aborted {
+            result.expect_exit_code(ERR_INSUFFICIENT_GAS).expect_out_msgs(0);
+            assert_eq!(f.state().0, STATUS_FUNDED);
+            false
+        } else {
+            result.expect_success().expect_out_msgs(1);
+            assert_eq!(f.state().0, STATUS_RELEASE_PENDING);
+            assert!(f.escrow_balance() >= ESCROW_STORAGE_FLOOR);
+            true
+        }
+    };
+    let mut rejected = 150_000_000;
+    let mut admitted = 1_000_000_000;
+    assert!(!try_release(rejected));
+    assert!(try_release(admitted));
+    while rejected + 1 < admitted {
+        let candidate = rejected + (admitted - rejected) / 2;
+        if try_release(candidate) {
+            admitted = candidate;
+        } else {
+            rejected = candidate;
+        }
+    }
+    assert_eq!(admitted, rejected + 1);
+    assert!(!try_release(rejected));
+    assert!(try_release(admitted));
+
+    let try_refund = |value: u64| -> bool {
+        let mut g = Fixture::new_with(&max_endpoint, max_amount);
+        g.fund();
+        g.bc.set_now(g.refund_at as u32);
+        let relayer = g.relayer.address().clone();
+        g.set_escrow_balance(0);
+        let result = g.send_with_value(&relayer, Fixture::refund_body(80), value);
+        if result.read_primary_description().aborted {
+            result.expect_exit_code(ERR_INSUFFICIENT_GAS).expect_out_msgs(0);
+            assert_eq!(g.state().0, STATUS_FUNDED);
+            false
+        } else {
+            result.expect_success().expect_out_msgs(1);
+            assert_eq!(g.state().0, STATUS_REFUND_PENDING);
+            assert!(g.escrow_balance() >= ESCROW_STORAGE_FLOOR);
+            true
+        }
+    };
+    let mut r_rejected = 150_000_000;
+    let mut r_admitted = 1_000_000_000;
+    assert!(!try_refund(r_rejected));
+    assert!(try_refund(r_admitted));
+    while r_rejected + 1 < r_admitted {
+        let candidate = r_rejected + (r_admitted - r_rejected) / 2;
+        if try_refund(candidate) {
+            r_admitted = candidate;
+        } else {
+            r_rejected = candidate;
+        }
+    }
+    assert_eq!(r_admitted, r_rejected + 1);
+    assert!(!try_refund(r_rejected));
+    assert!(try_refund(r_admitted));
 }
 
 #[test]
