@@ -51,8 +51,7 @@ class Collator final : public td::actor::Actor {
   }
   static constexpr long long supported_capabilities() {
     return tos::capCreateStatsEnabled | tos::capBounceMsgBody | tos::capReportVersion | tos::capShortDequeue |
-           tos::capStoreOutMsgQueueSize | tos::capMsgMetadata | tos::capDeferMessages | tos::capFullCollatedData |
-           tos::capAipow;
+           tos::capStoreOutMsgQueueSize | tos::capMsgMetadata | tos::capDeferMessages | tos::capFullCollatedData;
   }
 
  private:
@@ -202,14 +201,7 @@ class Collator final : public td::actor::Actor {
   tos::LogicalTime min_new_msg_lt{std::numeric_limits<td::uint64>::max()};
   block::CurrencyCollection total_balance_, old_total_balance_, total_validator_fees_;
   block::CurrencyCollection global_balance_, old_global_balance_, import_created_{0};
-  Ref<vm::Cell> recover_create_msg_, mint_msg_, aipow_mint_msg_;
-  // Phase C: the AIPoW aggregate epoch mint this masterchain block originates
-  // (base grams to the settlement account, carrying the winner id). Inactive
-  // (amount null) while capAipow is off, so the whole path is dark by default.
-  td::RefInt256 aipow_mint_amount_;
-  tos::Bits256 aipow_settlement_addr_;
-  tos::Bits256 aipow_mint_winner_id_;
-  td::uint32 aipow_mint_epoch_{0};  // the settlement cursor epoch the mint targets
+  Ref<vm::Cell> recover_create_msg_, mint_msg_;
   Ref<vm::Cell> new_block;
   block::ValueFlow value_flow_{block::ValueFlow::SetZero()};
   std::unique_ptr<vm::AugmentedDictionary> fees_import_dict_;
@@ -326,9 +318,6 @@ class Collator final : public td::actor::Actor {
   bool create_special_transactions();
   bool create_special_transaction(block::CurrencyCollection amount, Ref<vm::Cell> dest_addr_cell,
                                   Ref<vm::Cell>& in_msg);
-  bool compute_aipow_epoch_mint();
-  bool suppress_aipow_mint_if_preempted();
-  bool create_aipow_mint_transaction();
   bool create_ticktock_transactions(int mask);
   bool create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, tos::LogicalTime req_start_lt, int mask);
   Ref<vm::Cell> create_ordinary_transaction(Ref<vm::Cell> msg_root, td::optional<block::MsgMetadata> msg_metadata,

@@ -10,6 +10,6 @@ pub mod indexer_task;
 pub mod store;
 
 pub use store::{
-    AipowSettlementRecord, DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerIndexStats,
-    ExplorerTransactionRecord, IndexedRecord, IndexerCheckpoint, IndexerStore, ListFilters,
+    DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerIndexStats, ExplorerTransactionRecord,
+    IndexedRecord, IndexerCheckpoint, IndexerStore, ListFilters,
 };

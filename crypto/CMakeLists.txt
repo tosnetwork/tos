@@ -195,8 +195,6 @@ set(TLB_BLOCK_AUTO
 set(BLOCK_SOURCE
   block/Binlog.h
   block/Binlog.cpp
-  block/aipow.h
-  block/aipow.cpp
   block/block.cpp
   block/block-db.cpp
   block/block-parse.cpp
@@ -267,7 +265,6 @@ set(TOSDB_TEST_SOURCE
 
 set(CELLS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/test-cells.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/test/test-aipow.cpp
   PARENT_SCOPE
 )
 

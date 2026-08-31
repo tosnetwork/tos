@@ -875,27 +875,6 @@ _ JettonBridgeParams = ConfigParam 81; // BNB->TOS token bridge
 _ JettonBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
 _ JettonBridgeParams = ConfigParam 83; // Tron->TOS token bridge
 
-// AIPoW native issuance parameters (Phase C). Absent unless capAipow is
-// activated in ConfigParam 8; see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md. These are
-// governance-set immutable inputs -- the running supply ledger lives in the
-// AIPoW settlement contract's state, never in a ConfigParam.
-aipow_config#_ k_num:uint32 k_den:uint32 schedule_cap:Tomis cold_start_floor:Tomis
-  challenge_mult_num:uint32 challenge_mult_den:uint32 = AipowConfig;
-_ AipowConfig = ConfigParam 90; // emission schedule + cold-start floor + challenge multiplier
-
-aipow_maturation#_ immediate_bps:uint16 stream_epochs:uint16 epoch_seconds:uint32
-  maturation_version:uint16 = AipowMaturation;
-_ AipowMaturation = ConfigParam 91; // versioned maturation parameters
-
-aipow_limits#_ total_cap:Tomis = AipowLimits;
-_ AipowLimits = ConfigParam 92; // the AIPoW total supply cap (running total is in the settlement contract)
-
-aipow_registry#_ settlement_addr:bits256 methodology_hash:bits256 rate_card_hash:bits256
-  ^[ commitment_code_hash:bits256 reviewer_addr:bits256 ]
-  distributor_code_hashes:(HashmapE 256 True) = AipowRegistry;
-_ AipowRegistry = ConfigParam 93; // settlement address + frozen methodology/rate-card + the audited commitment code hash + audited distributor code hashes
-
-
 //
 //  PROOFS
 //

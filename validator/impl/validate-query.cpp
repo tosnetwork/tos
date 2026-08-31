@@ -20,7 +20,6 @@
 #include <ctime>
 
 #include "adnl/utils.hpp"
-#include "block/aipow.h"
 #include "block/block-auto.h"
 #include "block/block-db.h"
 #include "block/block-parse.h"
@@ -995,8 +994,6 @@ bool ValidateQuery::try_unpack_mc_state() {
     REJECT_UNLESS(config_);
     ihr_enabled_ = config_->ihr_enabled();
     create_stats_enabled_ = config_->create_stats_enabled();
-    static_assert((supported_capabilities() & capAipow) == capAipow,
-                  "ValidateQuery must declare capAipow support (Phase C dark scaffolding)");
     if (config_->has_capabilities() && (config_->get_capabilities() & ~supported_capabilities())) {
       LOG(ERROR) << "block generation capabilities " << config_->get_capabilities()
                  << " have been enabled in global configuration, but we support only " << supported_capabilities()
@@ -2887,11 +2884,6 @@ bool ValidateQuery::unpack_block_data() {
   if (!account_blocks_dict_->validate_all()) {
     return reject_query("ShardAccountBlocks dictionary is invalid");
   }
-  // Phase C: re-derive the AIPoW settle mint and locate its message in InMsgDescr
-  // BEFORE the value-flow check and the InMsg walk, so both see the expected mint.
-  if (!prepare_aipow_mint()) {
-    return false;
-  }
   return unpack_precheck_value_flow(std::move(blk.value_flow));
 }
 
@@ -2919,6 +2911,10 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
                         " is invalid (non-zero minted value in a non-masterchain block)");
   }
+  if (value_flow_.minted.tomis.not_null() && td::sgn(value_flow_.minted.tomis) != 0) {
+    return reject_query("ValueFlow of block "s + id_.to_str() +
+                        " is invalid (native TOS may only be issued through validator block rewards)");
+  }
   if (!is_masterchain() && !value_flow_.recovered.is_zero()) {
     LOG(INFO) << "invalid value flow: " << os.str();
     return reject_query("ValueFlow of block "s + id_.to_str() +
@@ -2937,29 +2933,13 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
                         " has a zero recovered fees value, but there is a recovery InMsg");
   }
-  // value_flow_.minted aggregates two disjoint mints by currency type: extra
-  // currencies (ConfigParam 2 minter) and the Phase C AIPoW base-gram mint (to the
-  // settlement). Each is carried by its own special message, so tie each part to
-  // its message separately. The extra part is value_flow_.minted with tomis zeroed;
-  // the base part is value_flow_.minted.tomis.
-  block::CurrencyCollection minted_extra = value_flow_.minted;
-  minted_extra.tomis = td::make_refint(0);
-  bool aipow_minted = value_flow_.minted.tomis.not_null() && value_flow_.minted.tomis->sgn() > 0;
-  if (!minted_extra.is_zero() && mint_msg_.is_null()) {
+  if (!value_flow_.minted.is_zero() && mint_msg_.is_null()) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a non-zero minted extra-currency value, but there is no mint InMsg");
+                        " has a non-zero minted value, but there is no mint InMsg");
   }
-  if (minted_extra.is_zero() && mint_msg_.not_null()) {
+  if (value_flow_.minted.is_zero() && mint_msg_.not_null()) {
     return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a zero minted extra-currency value, but there is a mint InMsg");
-  }
-  if (aipow_minted && aipow_mint_msg_.is_null()) {
-    return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a non-zero minted base-gram value, but there is no AIPoW settle InMsg");
-  }
-  if (!aipow_minted && aipow_mint_msg_.not_null()) {
-    return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a zero minted base-gram value, but there is an AIPoW settle InMsg");
+                        " has a zero minted value, but there is a mint InMsg");
   }
   if (is_masterchain()) {
     block::CurrencyCollection to_mint;
@@ -3043,247 +3023,11 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
  *
  * @returns True if the computation is successful, false otherwise.
  */
-/**
- * Re-derives the AIPoW aggregate epoch mint (Phase C, Model B) and locates the
- * settle message the block must carry. Dark while capAipow is off. The derivation
- * mirrors Collator::compute_aipow_epoch_mint exactly -- the SAME shared
- * build_masterchain_mint_context + derive_masterchain_epoch_mint over the block's
- * prev-state (ps_) resolver -- so validate-query independently computes the same
- * (amount, settlement, winner). It then rebuilds the canonical settle message from
- * the SAME shared builder and looks it up by message hash in InMsgDescr: finding it
- * proves the block emitted exactly that mint (the hash commits to every byte --
- * amount, destination, winner id); absence is a reject. The located InMsg is
- * remembered so is_special_in_msg exempts it from the "import needs an out-message"
- * rule, and the amount feeds compute_minted_amount so value-flow balances.
- *
- * @returns True on success (including the dark/no-mint case), false on reject.
- */
-bool ValidateQuery::prepare_aipow_mint() {
-  aipow_mint_amount_ = td::RefInt256{};
-  aipow_mint_msg_ = Ref<vm::Cell>{};
-  if (!is_masterchain()) {
-    return true;
-  }
-  block::aipow::MasterchainMintContext ctx;
-  if (!block::aipow::build_masterchain_mint_context(*config_, now_, ctx)) {
-    return true;  // capAipow off or config incomplete -> no mint (fail closed)
-  }
-  block::aipow::AccountResolver resolver =
-      [this](td::int32 workchain, const td::Bits256& account_id) -> block::aipow::ResolvedAccount {
-    block::aipow::ResolvedAccount out;
-    if (workchain != masterchainId) {
-      return out;  // AIPoW accounts are masterchain-only
-    }
-    auto entry = ps_.account_dict_->lookup_extra(account_id.bits(), 256);
-    if (entry.first.is_null()) {
-      return out;
-    }
-    block::Account acc(workchain, account_id.bits());
-    if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(account_id.bits()))) {
-      return out;
-    }
-    if (acc.status != block::Account::acc_active || acc.code.is_null() || acc.data.is_null()) {
-      return out;
-    }
-    out.exists = true;
-    out.code_hash = acc.code->get_hash().bits();
-    out.code = acc.code;
-    out.data = acc.data;
-    return out;
-  };
-  block::aipow::EpochSettlement decision = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
-  if (!decision.is_mint()) {
-    return true;
-  }
-  if (decision.amount.is_null() || !decision.amount->is_valid() || td::sgn(decision.amount) <= 0) {
-    return reject_query("AIPoW epoch mint re-derived an invalid amount");
-  }
-  aipow_settlement_addr_ = ctx.settlement_addr;
-  aipow_mint_winner_id_ = decision.winner_id;
-  // Read the settlement's cursor + minted_total from the previous and new state.
-  // Fail closed if either is unreadable.
-  td::uint32 epoch_pre = 0, epoch_post = 0;
-  td::RefInt256 minted_pre, minted_post;
-  if (!read_settlement_ledger_fields(ps_, aipow_settlement_addr_, epoch_pre, minted_pre)) {
-    return reject_query("cannot read the AIPoW settlement ledger from the previous state");
-  }
-  if (!read_settlement_ledger_fields(ns_, aipow_settlement_addr_, epoch_post, minted_post)) {
-    return reject_query("cannot read the AIPoW settlement ledger from the new state");
-  }
-  // The derivation settled the previous-state cursor epoch; the two reads must agree.
-  if (epoch_pre != decision.epoch) {
-    return reject_query(PSTRING() << "AIPoW derived epoch " << decision.epoch
-                                  << " does not match the previous-state settlement cursor " << epoch_pre);
-  }
-  // NB: RefInt256 arithmetic + td::cmp for value comparison -- operator!= compares
-  // Ref identity, not the numeric value.
-  td::RefInt256 recorded = minted_post - minted_pre;
-  if (recorded.is_null() || !recorded->is_valid()) {
-    return reject_query("cannot compute the AIPoW settlement minted_total delta");
-  }
-  // Rebuild the canonical settle message; whether the block contains it selects
-  // between the two legitimate outcomes of a due mint.
-  Ref<vm::Cell> expected_msg = block::aipow::build_settle_mint_message(
-      aipow_settlement_addr_, decision.winner_id, decision.amount, start_lt_, now_);
-  if (expected_msg.is_null()) {
-    return reject_query("cannot rebuild the expected AIPoW settle mint message");
-  }
-  Bits256 msg_hash = expected_msg->get_hash().bits();
-  auto in_msg_cs = in_msg_dict_->lookup(msg_hash);
-
-  if (in_msg_cs.not_null()) {
-    // MINT: the collator emitted the settle. Phase C atomicity guard -- the message
-    // being present only proves delivery, not that the settle RECORDED the mint. A
-    // settle that throws/out-of-gas/bounces advances nothing, yet value_flow already
-    // created the base grams (uncounted, cap-bypassing, re-mintable supply). Require
-    // the settlement's minted_total to have advanced by exactly the derived amount.
-    aipow_mint_amount_ = decision.amount;  // value-flow check now requires minted == amount
-    vm::CellBuilder cb;
-    if (!(cb.append_cellslice_bool(*in_msg_cs) && cb.finalize_to(aipow_mint_msg_))) {
-      return reject_query("cannot materialize the located AIPoW settle InMsg");
-    }
-    if (td::cmp(recorded, aipow_mint_amount_) != 0) {
-      return reject_query(PSTRING() << "AIPoW settle did not record the mint: settlement minted_total advanced by "
-                                    << td::dec_string(recorded) << ", but the block mints "
-                                    << td::dec_string(aipow_mint_amount_));
-    }
-    // The settle must also advance the cursor PAST the minted epoch (by at least one).
-    // Tying issuance to the minted_total delta alone is not enough: a settlement that
-    // recorded the amount but left next_epoch unchanged would let the SAME epoch be
-    // minted again in the next block (draining the cap onto one epoch). Requiring a
-    // strict advance forecloses that re-mint. It may advance FURTHER than one: the
-    // settle runs before this block's inbound messages, so a same-block permissionless
-    // `skip` (each gated by real time past that epoch's grace deadline) legitimately
-    // moves the cursor past additional past-due, candidate-less epochs. That is not
-    // over-issuance -- minted_total rose by exactly one derived amount (checked above)
-    // and the minted epoch can never be revisited -- so it must not reject an otherwise
-    // valid mint block. (Compare as 64-bit to avoid a uint32 wrap; both cursors come
-    // from the same monotonic ledger field.)
-    if ((td::uint64)epoch_post < (td::uint64)epoch_pre + 1) {
-      return reject_query(PSTRING() << "AIPoW settle minted epoch " << epoch_pre
-                                    << " but did not advance the cursor past it (cursor now "
-                                    << epoch_post << ")");
-    }
-    // A same-block `skip` runs after the settle, so the cursor may advance BEYOND
-    // epoch_pre+1 -- but only across epochs that were genuinely non-mintable. An epoch
-    // with ANY registered candidate in the previous state might have been a due mint;
-    // accepting its skip would let a queued `skip` censor that reward (advance the cursor
-    // past a valid finalized commitment that never got minted). Require every epoch
-    // skipped beyond the minted one to have had an EMPTY pre-state candidate bucket. A
-    // bogus-only bucket is conservatively rejected here too (it must be skipped in a
-    // no-mint block, never crossed in the same block as a mint), which is fail-safe.
-    if ((td::uint64)epoch_post > (td::uint64)epoch_pre + 1) {
-      td::Ref<vm::Cell> pre_regs;
-      if (!read_settlement_registrations(ps_, aipow_settlement_addr_, pre_regs)) {
-        return reject_query("cannot read the AIPoW settlement registrations from the previous state");
-      }
-      for (td::uint64 e = (td::uint64)epoch_pre + 1; e < (td::uint64)epoch_post; e++) {
-        if (!block::aipow::list_epoch_candidates(pre_regs, (td::uint32)e).empty()) {
-          return reject_query(PSTRING() << "AIPoW mint for epoch " << epoch_pre
-                                        << " advanced the cursor to " << epoch_post
-                                        << " but a same-block skip crossed epoch " << e
-                                        << ", which had registered candidates (a possibly censored mint)");
-        }
-      }
-    }
-    return true;
-  }
-
-  // SUPPRESSED (C2 liveness): no settle message. A mint was due from the previous
-  // state, but a same-block `skip` advanced the cursor past this epoch before the
-  // settle could run, so the collator legitimately dropped the mint instead of
-  // emitting a doomed settle that would then be rejected (stalling the chain). This
-  // is allowed ONLY if the cursor actually advanced past the epoch with NO change to
-  // minted_total; a cursor that did not move would be a causeless withhold of a due,
-  // mintable reward, so reject it (before the grace deadline no skip can advance the
-  // cursor, so the mint is forced -- the reward cannot be censored). aipow_mint_amount_
-  // stays null, so the value-flow check requires a zero base-gram mint and no InMsg.
-  if (epoch_post <= decision.epoch) {
-    return reject_query(PSTRING() << "AIPoW mint for epoch " << decision.epoch
-                                  << " is due but the block neither mints it nor advances the cursor past it (cursor now "
-                                  << epoch_post << ")");
-  }
-  if (td::sgn(recorded) != 0) {
-    return reject_query(PSTRING() << "AIPoW mint for epoch " << decision.epoch
-                                  << " was suppressed, but the settlement minted_total changed by "
-                                  << td::dec_string(recorded));
-  }
-  return true;
-}
-
-// Reads the AIPoW settlement account's cursor epoch + cumulative minted_total from
-// a given shard state (previous or new). Fail-closed: any missing/inactive account,
-// unpack failure, or ledger-parse failure returns false so the caller rejects.
-bool ValidateQuery::read_settlement_ledger_fields(block::ShardState& state, const tos::Bits256& addr,
-                                                  td::uint32& next_epoch, td::RefInt256& minted_total) {
-  next_epoch = 0;
-  minted_total = td::RefInt256{};
-  if (state.account_dict_ == nullptr) {
-    return false;
-  }
-  auto entry = state.account_dict_->lookup_extra(addr.bits(), 256);
-  if (entry.first.is_null()) {
-    return false;
-  }
-  block::Account acc(masterchainId, addr.bits());
-  if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(addr.bits()))) {
-    return false;
-  }
-  if (acc.status != block::Account::acc_active || acc.data.is_null()) {
-    return false;
-  }
-  block::aipow::SettlementLedger ledger;
-  if (!block::aipow::parse_settlement_ledger(acc.data, ledger)) {
-    return false;
-  }
-  if (ledger.minted_total.is_null() || !ledger.minted_total->is_valid()) {
-    return false;
-  }
-  next_epoch = ledger.next_epoch;
-  minted_total = ledger.minted_total;
-  return true;
-}
-
-// Reads the AIPoW settlement's candidate registrations dict from a shard state, for the
-// skipped-epoch censorship check. Fail-closed: any missing/inactive account, unpack, or
-// ledger-parse failure returns false so the caller rejects. An empty dict is a valid,
-// successful read (registrations left null).
-bool ValidateQuery::read_settlement_registrations(block::ShardState& state, const tos::Bits256& addr,
-                                                  td::Ref<vm::Cell>& registrations) {
-  registrations = td::Ref<vm::Cell>{};
-  if (state.account_dict_ == nullptr) {
-    return false;
-  }
-  auto entry = state.account_dict_->lookup_extra(addr.bits(), 256);
-  if (entry.first.is_null()) {
-    return false;
-  }
-  block::Account acc(masterchainId, addr.bits());
-  if (!acc.unpack(std::move(entry.first), now_, config_->is_special_smartcontract(addr.bits()))) {
-    return false;
-  }
-  if (acc.status != block::Account::acc_active || acc.data.is_null()) {
-    return false;
-  }
-  block::aipow::SettlementLedger ledger;
-  if (!block::aipow::parse_settlement_ledger(acc.data, ledger)) {
-    return false;
-  }
-  registrations = ledger.registrations;
-  return true;
-}
-
 bool ValidateQuery::compute_minted_amount(block::CurrencyCollection& to_mint) {
   if (!is_masterchain()) {
     return to_mint.set_zero();
   }
   to_mint.set_zero();
-  // Phase C: the AIPoW base-gram mint is independent of the extra-currency minter
-  // (ConfigParam 2); add it first so it counts even when no ConfigParam-2 minter
-  // is configured. Re-derived + located in prepare_aipow_mint().
-  if (aipow_mint_amount_.not_null()) {
-    to_mint.tomis += aipow_mint_amount_;
-  }
   if (config_->get_config_param(2, 0).is_null()) {
     return true;
   }
@@ -4222,10 +3966,7 @@ bool ValidateQuery::check_imported_message(Ref<vm::Cell> msg_env) {
  */
 bool ValidateQuery::is_special_in_msg(const vm::CellSlice& in_msg) const {
   return (recover_create_msg_.not_null() && vm::load_cell_slice(recover_create_msg_).contents_equal(in_msg)) ||
-         (mint_msg_.not_null() && vm::load_cell_slice(mint_msg_).contents_equal(in_msg)) ||
-         // Phase C: the re-derived + located AIPoW settle mint (base grams from the
-         // masterchain minter to the settlement). Exact-cell-match, as recover/mint.
-         (aipow_mint_msg_.not_null() && vm::load_cell_slice(aipow_mint_msg_).contents_equal(in_msg));
+         (mint_msg_.not_null() && vm::load_cell_slice(mint_msg_).contents_equal(in_msg));
 }
 
 /**
@@ -6985,18 +6726,8 @@ bool ValidateQuery::check_special_message(Ref<vm::Cell> in_msg_root, const block
  * @returns True if special messages are valid, false otherwise.
  */
 bool ValidateQuery::check_special_messages() {
-  // value_flow_.minted aggregates two disjoint mints by currency type (mirroring
-  // Collator::create_special_transactions): the ConfigParam-2 minter message carries
-  // only extra currencies (tomis zeroed), and the Phase C AIPoW base-gram mint is
-  // carried by its own message -- located + content-verified in prepare_aipow_mint,
-  // exempted from the out-message rule in is_special_in_msg, and its amount checked
-  // via compute_minted_amount + the minted<->message invariant. So the ConfigParam-2
-  // message is checked against the extra part only; passing the full minted here
-  // would (wrongly) require a ConfigParam-2 message to carry the AIPoW base grams.
-  block::CurrencyCollection minted_extra = value_flow_.minted;
-  minted_extra.tomis = td::make_refint(0);
   return check_special_message(recover_create_msg_, value_flow_.recovered, config_->get_config_param(3, 1)) &&
-         check_special_message(mint_msg_, minted_extra, config_->get_config_param(2, 0));
+         check_special_message(mint_msg_, value_flow_.minted, config_->get_config_param(2, 0));
 }
 
 /**
@@ -7219,27 +6950,6 @@ bool ValidateQuery::check_config_update(Ref<vm::CellSlice> old_conf_params, Ref<
     return reject_query(
         "new configuration parameters failed to pass per-parameter automated validity checks, or one of mandatory "
         "configuration parameters is missing");
-  }
-  // Consensus-safe activation (Phase C, F15): reject the candidate block itself
-  // if the configuration it installs enables capAipow without a complete,
-  // mutually consistent AIPoW parameter set. Checking the new configuration
-  // (not the reference state) makes activation atomic -- a half-activated
-  // config can never be installed. Dormant while capAipow is off.
-  {
-    auto new_config = block::Config::unpack_config(new_cfg_root, new_cfg_addr, block::ConfigInfo::needCapabilities);
-    if (new_config.is_error()) {
-      return reject_query("cannot unpack the new configuration to check AIPoW activation: "s +
-                          new_config.move_as_error().message().str());
-    }
-    auto cfg = new_config.move_as_ok();
-    if (cfg->aipow_enabled()) {
-      auto aipow_status = cfg->check_aipow_config();
-      if (aipow_status.is_error()) {
-        return reject_query(
-            "the new configuration enables capAipow but the AIPoW parameter set is incomplete or invalid: "s +
-            aipow_status.message().str());
-      }
-    }
   }
   auto ocfg_res = block::get_config_data_from_smc(ns_.account_dict_->lookup(old_cfg_addr));
   if (ocfg_res.is_error()) {

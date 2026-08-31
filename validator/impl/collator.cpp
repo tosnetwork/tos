@@ -22,7 +22,6 @@
 #include <ctime>
 
 #include "adnl/utils.hpp"
-#include "block/aipow.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -2387,16 +2386,6 @@ bool Collator::init_value_create() {
       LOG(WARNING) << "minting of " << value_flow_.minted.to_str() << " disabled: no minting smart contract defined";
       value_flow_.minted.set_zero();
     }
-    // Phase C: the AIPoW aggregate epoch mint is base coins to the settlement
-    // account (ConfigParam 93), NOT the extra-currency minter (ConfigParam 2), so
-    // it is added AFTER the minter-contract guard above and settled by its own
-    // special message. Dark (a no-op) while capAipow is off.
-    if (!compute_aipow_epoch_mint()) {
-      return fatal_error("cannot compute the AIPoW epoch mint");
-    }
-    if (aipow_mint_amount_.not_null()) {
-      value_flow_.minted.tomis += aipow_mint_amount_;
-    }
   } else if (workchain() == basechainId) {
     value_flow_.created = block::CurrencyCollection{basechain_create_fee_ >> tos::shard_prefix_length(shard_)};
   }
@@ -2461,12 +2450,6 @@ td::actor::Task<> Collator::do_collate_inner() {
   LOG(INFO) << "create tick transactions";
   if (!create_ticktock_transactions(2)) {
     co_return td::Status::Error("cannot generate tick transactions");
-  }
-  // Phase C: drop a derived AIPoW mint whose epoch a same-block skip already
-  // settled past, so create_special_transactions emits no doomed settle (must run
-  // after the dispatch queue + ticktock, before the special settle transaction).
-  if (is_masterchain() && !suppress_aipow_mint_if_preempted()) {
-    co_return td::Status::Error("cannot finalize the AIPoW epoch mint");
   }
   if (is_masterchain() && !create_special_transactions()) {
     co_return td::Status::Error("cannot generate special transactions");
@@ -3317,180 +3300,8 @@ bool Collator::create_special_transaction(block::CurrencyCollection amount, Ref<
  */
 bool Collator::create_special_transactions() {
   CHECK(is_masterchain());
-  // value_flow_.minted aggregates two disjoint mints by currency type: extra
-  // currencies (ConfigParam 7 vs global balance) go to the ConfigParam-2 minter,
-  // and the Phase C AIPoW base-coin mint goes to the settlement via its own
-  // message. Split them so each special message carries exactly its own value:
-  // the ConfigParam-2 message gets the extra part with tomis zeroed (unchanged
-  // from before AIPoW, since the extra-currency mint never mints base coins).
-  block::CurrencyCollection minter_minted = value_flow_.minted;
-  minter_minted.tomis = td::make_refint(0);
   return create_special_transaction(value_flow_.recovered, config_->get_config_param(3, 1), recover_create_msg_) &&
-         create_special_transaction(minter_minted, config_->get_config_param(2, 0), mint_msg_) &&
-         create_aipow_mint_transaction();
-}
-
-/**
- * Computes the AIPoW aggregate epoch mint this masterchain block originates
- * (Phase C, Model B). Dark while capAipow is off: build_masterchain_mint_context
- * fails closed and this is a no-op. When enabled, resolves the settlement + the
- * cursor epoch's candidate commitments from the PRE-BLOCK masterchain state (this
- * runs in init_value_create, before any transaction mutates an account, so the
- * resolver sees the deterministic block-start state that validate-query also
- * reads) and calls the single shared derivation. On a Mint decision it records
- * the amount, the settlement address, and the winning commitment id; the amount
- * is added to value_flow_.minted and the settle message is emitted later in
- * create_aipow_mint_transaction().
- *
- * @returns True on success (including the dark/no-mint case), false on a fatal
- *          error.
- */
-bool Collator::compute_aipow_epoch_mint() {
-  aipow_mint_amount_ = td::RefInt256{};
-  if (!is_masterchain()) {
-    return true;
-  }
-  block::aipow::MasterchainMintContext ctx;
-  if (!block::aipow::build_masterchain_mint_context(*config_, now_, ctx)) {
-    return true;  // capAipow off or config incomplete -> no mint (fail closed)
-  }
-  // Resolve an account from the pre-block masterchain state. AIPoW accounts are
-  // masterchain-only, so only workchain -1 is resolvable; anything else is
-  // treated as absent (deterministic).
-  block::aipow::AccountResolver resolver =
-      [this](td::int32 workchain, const td::Bits256& account_id) -> block::aipow::ResolvedAccount {
-    block::aipow::ResolvedAccount out;
-    if (workchain != tos::masterchainId) {
-      return out;
-    }
-    auto acc_res = make_account(account_id.bits(), false);
-    if (acc_res.is_error()) {
-      // A genuine state-access failure is deterministic; surface it as absent so
-      // derive stays total. (make_account only errors on a corrupt stored state,
-      // which would fail the block elsewhere too.)
-      return out;
-    }
-    block::Account* acc = acc_res.move_as_ok();
-    if (acc == nullptr || acc->status != block::Account::acc_active || acc->code.is_null() ||
-        acc->data.is_null()) {
-      return out;
-    }
-    out.exists = true;
-    out.code_hash = acc->code->get_hash().bits();
-    out.code = acc->code;
-    out.data = acc->data;
-    return out;
-  };
-  block::aipow::EpochSettlement decision = block::aipow::derive_masterchain_epoch_mint(ctx, resolver);
-  if (decision.is_mint()) {
-    if (decision.amount.is_null() || !decision.amount->is_valid() || td::sgn(decision.amount) <= 0) {
-      return fatal_error("AIPoW epoch mint derived an invalid amount");
-    }
-    aipow_mint_amount_ = decision.amount;
-    aipow_settlement_addr_ = ctx.settlement_addr;
-    aipow_mint_winner_id_ = decision.winner_id;
-    aipow_mint_epoch_ = decision.epoch;
-    LOG(INFO) << "AIPoW epoch mint: " << td::dec_string(aipow_mint_amount_) << " nanotomis to settlement "
-              << aipow_settlement_addr_.to_hex() << " for epoch " << decision.epoch;
-  }
-  return true;
-}
-
-/**
- * C2 liveness: suppress a derived AIPoW mint if a same-block `skip` already
- * advanced the settlement cursor past its epoch.
- *
- * The mint is derived from the pre-block state (so the winner selection matches
- * validate-query, which must derive from the same state). But a `skip` message in
- * the dispatch queue is processed BEFORE the special settle transaction, and past
- * the grace deadline it advances the cursor -- so the settle would then throw
- * (the winner is no longer a candidate for the advanced epoch), record nothing,
- * and the C2 atomicity guard in validate-query would reject the block, stalling
- * the chain. Called after process_dispatch_queue (+ ticktock), this re-reads the
- * LIVE settlement cursor; if it moved past the mint's epoch the mint is dropped
- * (the value-flow credit is undone and no settle message is emitted), so the block
- * carries a legitimate no-mint instead of a doomed one. Only the cursor is
- * re-read -- never the candidate set -- so the winner cannot change here.
- *
- * @returns True on success, false on a fatal error.
- */
-bool Collator::suppress_aipow_mint_if_preempted() {
-  CHECK(is_masterchain());
-  if (aipow_mint_amount_.is_null()) {
-    return true;  // no mint derived
-  }
-  // The live settlement MUST be readable to decide between the two legitimate outcomes
-  // (emit the settle, or drop the mint because a same-block skip already advanced the
-  // cursor). validate-query rejects any block whose settlement ledger is unreadable in
-  // the new state, so an unreadable/malformed/regressed settlement here is NOT a valid
-  // preemption -- silently suppressing would just produce a block every validator
-  // rejects (a produce/check divergence). Treat it as a collation error instead: fail
-  // closed and let collation retry rather than emit a doomed block.
-  auto acc_res = make_account(aipow_settlement_addr_.bits(), false);
-  if (acc_res.is_error()) {
-    LOG(ERROR) << "AIPoW: cannot read the settlement account to finalize the epoch mint for epoch "
-               << aipow_mint_epoch_;
-    return false;
-  }
-  block::Account* acc = acc_res.move_as_ok();
-  block::aipow::SettlementLedger led;
-  if (acc == nullptr || acc->status != block::Account::acc_active || acc->data.is_null() ||
-      !block::aipow::parse_settlement_ledger(acc->data, led)) {
-    LOG(ERROR) << "AIPoW: the settlement account is inactive or unparseable; cannot finalize the epoch mint for epoch "
-               << aipow_mint_epoch_;
-    return false;
-  }
-  if (led.next_epoch < aipow_mint_epoch_) {
-    // The cursor moved BACKWARD from the derived epoch -- impossible for a monotonic
-    // ledger. Fail closed rather than mint or suppress on a corrupt cursor.
-    LOG(ERROR) << "AIPoW: settlement cursor " << led.next_epoch << " regressed below the derived mint epoch "
-               << aipow_mint_epoch_;
-    return false;
-  }
-  if (led.next_epoch > aipow_mint_epoch_) {
-    // Legitimate preemption: a same-block skip (past grace) advanced the cursor past this
-    // epoch before the settle, so the settle would not record this epoch's mint. Drop the
-    // mint; validate-query's SUPPRESSED case accepts a strict cursor advance with no mint.
-    LOG(INFO) << "AIPoW epoch mint for epoch " << aipow_mint_epoch_
-              << " suppressed: the settlement cursor was advanced in-block (to " << led.next_epoch
-              << ") before the settle";
-    value_flow_.minted.tomis -= aipow_mint_amount_;
-    aipow_mint_amount_ = td::RefInt256{};
-  }
-  // led.next_epoch == aipow_mint_epoch_: the mint is still due; keep it and let
-  // create_special_transactions emit the settle.
-  return true;
-}
-
-/**
- * Emits the AIPoW settle message for the mint recorded by compute_aipow_epoch_mint.
- * A base-gram special mint from the masterchain minter (-1:00..00) to the
- * settlement account, whose body is the 256-bit winner id the settle path reads.
- * A no-op when no mint is due (dark, or nothing settled this block).
- *
- * @returns True on success, false on a fatal error.
- */
-bool Collator::create_aipow_mint_transaction() {
-  CHECK(is_masterchain());
-  if (aipow_mint_amount_.is_null()) {
-    return true;  // no AIPoW mint this block
-  }
-  CHECK(aipow_mint_msg_.is_null());
-  tos::LogicalTime lt = start_lt;
-  // The message bytes come from the shared builder so validate-query can rebuild
-  // them exactly and locate this message by hash in the block's InMsgDescr.
-  Ref<vm::Cell> msg =
-      block::aipow::build_settle_mint_message(aipow_settlement_addr_, aipow_mint_winner_id_, aipow_mint_amount_, lt, now_);
-  if (msg.is_null()) {
-    return fatal_error("cannot generate the AIPoW settle mint message");
-  }
-  CHECK(block::gen::t_Message_Any.validate_ref(msg));
-  CHECK(block::tlb::t_Message.validate_ref(msg));
-  if (process_one_new_message(block::NewOutMsg{lt, msg, Ref<vm::Cell>{}, 0}, false, &aipow_mint_msg_) != 1) {
-    return fatal_error("cannot generate the AIPoW settle transaction");
-  }
-  CHECK(aipow_mint_msg_.not_null());
-  return true;
+         create_special_transaction(value_flow_.minted, config_->get_config_param(2, 0), mint_msg_);
 }
 
 /**
@@ -5421,24 +5232,6 @@ bool Collator::create_mc_state_extra() {
   } else if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
              changed_cfg) {
     LOG(WARNING) << "global configuration changed, updating";
-    // Symmetric to validate-query's F15 check (Phase C): refuse to install a
-    // configuration that enables capAipow without a complete, mutually
-    // consistent AIPoW parameter set, so this node never produces a block that
-    // validators would reject. Dormant while capAipow is off.
-    {
-      auto new_config = block::Config::unpack_config(cfg_smc_config, config_addr, block::ConfigInfo::needCapabilities);
-      // Symmetric with validate-query: an unpack failure is fatal here too, so
-      // the collator never installs a configuration the validator would reject.
-      if (new_config.is_error()) {
-        return fatal_error("cannot unpack the new configuration to check AIPoW activation: "s +
-                           new_config.move_as_error().message().str());
-      }
-      auto cfg = new_config.move_as_ok();
-      if (cfg->aipow_enabled() && cfg->check_aipow_config().is_error()) {
-        return fatal_error(
-            "refusing to install a configuration that enables capAipow without a complete AIPoW parameter set");
-      }
-    }
     vm::CellBuilder cb;
     CHECK(cb.store_bits_bool(config_addr) && cb.store_ref_bool(cfg_smc_config));
     state_extra.config = vm::load_cell_slice_ref(cb.finalize());
@@ -6352,8 +6145,6 @@ bool Collator::create_block_info(Ref<vm::Cell>& block_info) {
  * @returns True if the version information was successfully stored, false otherwise.
  */
 bool Collator::store_version(vm::CellBuilder& cb) const {
-  static_assert((supported_capabilities() & tos::capAipow) == tos::capAipow,
-                "Collator must declare capAipow support (Phase C dark scaffolding)");
   return block::gen::t_GlobalVersion.pack_capabilities(cb, supported_version(), supported_capabilities());
 }
 

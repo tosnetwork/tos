@@ -14,7 +14,7 @@
 //! masterchain's; one `blockhash:<shard_key>` entry alongside it, so a reorg
 //! at or before the checkpoint can be detected -- see `indexer_task`'s
 //! reorg-rewind logic; and a `schema_version` entry, checked on every open)
-//! while the remaining tables store classified contracts, service/AIPoW
+//! while the remaining tables store classified contracts, service
 //! lifecycle evidence, and explorer block/transaction identities.
 //! Every account the indexer encounters gets a row -- including ones that
 //! turn out not to be one of the known contract types
@@ -71,7 +71,9 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
                 ON service_request_lifecycle(service_address, status);",
         )
     },
-    |conn| conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA),
+    // Keep the retired v2 -> v3 slot so later positional migrations retain
+    // their original schema-version mapping on existing databases.
+    |_conn| Ok(()),
     |conn| {
         conn.execute_batch(EXPLORER_SCHEMA)?;
         // v4 adds historical block/transaction identities and learns the
@@ -94,7 +96,6 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
              DELETE FROM explorer_blocks;
              DELETE FROM indexed_contracts;
              DELETE FROM service_request_lifecycle;
-             DELETE FROM aipow_settlement_events;
              DELETE FROM indexer_meta
                  WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%';",
         )
@@ -162,27 +163,6 @@ const NOMINATOR_LEDGER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS nominator_ledg
     CREATE INDEX IF NOT EXISTS idx_nominator_ledger_address
         ON nominator_ledger(nominator_address);";
 
-/// v3: settlement events for the AIPoW shadow-scoring data plane. One row
-/// per observed settlement (a Task Escrow reaching `settled`, or a
-/// Service Actor request answered within its deadline), keyed so
-/// re-observation is idempotent. `seqno` is the block in which the
-/// transition was *observed* by the scan -- an upper bound on, not
-/// necessarily equal to, the block that executed it.
-const AIPOW_SETTLEMENT_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS aipow_settlement_events (
-        address TEXT NOT NULL,
-        request_id TEXT NOT NULL DEFAULT '',
-        kind TEXT NOT NULL,
-        earner TEXT NOT NULL,
-        payer TEXT NOT NULL,
-        amount INTEGER NOT NULL,
-        attested INTEGER NOT NULL,
-        seqno INTEGER NOT NULL,
-        observed_at INTEGER NOT NULL,
-        PRIMARY KEY(address, request_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_aipow_settlement_seqno
-        ON aipow_settlement_events(seqno);";
-
 /// v4: the minimal durable, chain-wide index a read-only explorer needs.
 ///
 /// The node remains authoritative for full block/transaction bodies.  These
@@ -223,7 +203,7 @@ const EXPLORER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS explorer_blocks (
         ON explorer_transactions(seqno DESC, indexed_at DESC);";
 
 /// One indexed account: either a recognized contract (`kind` is one of the
-/// public explorer contract kinds, including Agent Account and AIPoW) or
+/// public explorer contract kinds, including Agent Account) or
 /// `unclassified` (seen on-chain, code hash didn't match any known contract).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexedRecord {
@@ -245,22 +225,6 @@ pub struct ServiceRequestRecord {
     pub status: String,
     pub updated_at: u64,
     pub dto_json: String,
-}
-
-/// One observed settlement, recorded for the AIPoW shadow-scoring data
-/// plane. `request_id` is empty for Task Escrow settlements and the
-/// request number for Service Actor responses.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AipowSettlementRecord {
-    pub address: String,
-    pub request_id: String,
-    pub kind: String,
-    pub earner: String,
-    pub payer: String,
-    pub amount: u64,
-    pub attested: bool,
-    pub seqno: u32,
-    pub observed_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -380,7 +344,6 @@ impl IndexerStore {
             CREATE INDEX IF NOT EXISTS idx_service_request_status
                 ON service_request_lifecycle(service_address, status);",
         )?;
-        conn.execute_batch(AIPOW_SETTLEMENT_SCHEMA)?;
         conn.execute_batch(EXPLORER_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
@@ -687,7 +650,6 @@ impl IndexerStore {
         tx.execute("DELETE FROM explorer_blocks", [])?;
         tx.execute("DELETE FROM indexed_contracts", [])?;
         tx.execute("DELETE FROM service_request_lifecycle", [])?;
-        tx.execute("DELETE FROM aipow_settlement_events", [])?;
         tx.execute("DELETE FROM dns_domain_history", [])?;
         tx.execute(
             "DELETE FROM indexer_meta
@@ -1070,70 +1032,6 @@ impl IndexerStore {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(bind.iter().map(|b| b.as_ref())), row_to_record)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((rows, total))
-    }
-
-    /// Records one settlement event. First observation wins (`INSERT OR
-    /// IGNORE`): a settlement is a terminal, once-only transition, so a
-    /// re-scan or a later re-observation of the same settled contract
-    /// must not move the event to a different seqno.
-    pub fn record_aipow_settlement(&self, record: &AipowSettlementRecord) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        conn.execute(
-            "INSERT OR IGNORE INTO aipow_settlement_events
-                (address, request_id, kind, earner, payer, amount, attested, seqno, observed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                record.address,
-                record.request_id,
-                record.kind,
-                record.earner,
-                record.payer,
-                record.amount as i64,
-                record.attested as i64,
-                record.seqno,
-                record.observed_at as i64,
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Lists settlement events with `from_seqno <= seqno <= to_seqno`,
-    /// ordered by `(seqno, address, request_id)` for stable pagination,
-    /// returning `(page, total_matching)`.
-    pub fn list_aipow_settlements(
-        &self,
-        from_seqno: u32,
-        to_seqno: u32,
-        offset: usize,
-        limit: usize,
-    ) -> anyhow::Result<(Vec<AipowSettlementRecord>, usize)> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let total: usize = conn.query_row(
-            "SELECT COUNT(*) FROM aipow_settlement_events WHERE seqno >= ?1 AND seqno <= ?2",
-            params![from_seqno, to_seqno],
-            |row| row.get::<_, i64>(0),
-        )? as usize;
-        let mut stmt = conn.prepare(
-            "SELECT address, request_id, kind, earner, payer, amount, attested, seqno, observed_at
-             FROM aipow_settlement_events WHERE seqno >= ?1 AND seqno <= ?2
-             ORDER BY seqno, address, request_id LIMIT ?3 OFFSET ?4",
-        )?;
-        let rows = stmt
-            .query_map(params![from_seqno, to_seqno, limit as i64, offset as i64], |row| {
-                Ok(AipowSettlementRecord {
-                    address: row.get(0)?,
-                    request_id: row.get(1)?,
-                    kind: row.get(2)?,
-                    earner: row.get(3)?,
-                    payer: row.get(4)?,
-                    amount: row.get::<_, i64>(5)? as u64,
-                    attested: row.get::<_, i64>(6)? != 0,
-                    seqno: row.get(7)?,
-                    observed_at: row.get::<_, i64>(8)? as u64,
-                })
-            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok((rows, total))
     }
@@ -1938,81 +1836,6 @@ mod tests {
         assert!(store.explorer_block_by_hash("root-2").unwrap().is_none());
         assert!(store.explorer_transaction("tx-3").unwrap().is_none());
         assert_eq!(store.explorer_stats().unwrap().blocks, 1);
-    }
-
-    fn settlement(
-        address: &str,
-        request_id: &str,
-        seqno: u32,
-        amount: u64,
-    ) -> AipowSettlementRecord {
-        AipowSettlementRecord {
-            address: address.to_owned(),
-            request_id: request_id.to_owned(),
-            kind: "task_escrow".to_owned(),
-            earner: "0:agent".to_owned(),
-            payer: "0:creator".to_owned(),
-            amount,
-            attested: false,
-            seqno,
-            observed_at: 1_000,
-        }
-    }
-
-    #[test]
-    fn aipow_settlement_first_observation_wins() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        let mut event = settlement("0:task", "", 7, 500);
-        event.attested = true;
-        store.record_aipow_settlement(&event).unwrap();
-
-        // A settlement is terminal; a replayed observation at a later
-        // seqno (e.g. after a rescan) must not move or change the event.
-        let mut replay = event.clone();
-        replay.seqno = 9;
-        replay.amount = 999;
-        store.record_aipow_settlement(&replay).unwrap();
-
-        let (rows, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(rows, vec![event]);
-    }
-
-    #[test]
-    fn aipow_settlements_filter_by_seqno_range_and_paginate() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        for i in 1..=5u32 {
-            store
-                .record_aipow_settlement(&settlement(&format!("0:t{i}"), "", i, i.into()))
-                .unwrap();
-        }
-        let (rows, total) = store.list_aipow_settlements(2, 4, 0, 10).unwrap();
-        assert_eq!(total, 3);
-        assert_eq!(rows.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![2, 3, 4]);
-
-        let (page, page_total) = store.list_aipow_settlements(2, 4, 1, 1).unwrap();
-        assert_eq!(page_total, 3);
-        assert_eq!(page.iter().map(|r| r.seqno).collect::<Vec<_>>(), vec![3]);
-
-        let (empty, none) = store.list_aipow_settlements(6, u32::MAX, 0, 10).unwrap();
-        assert_eq!(none, 0);
-        assert!(empty.is_empty());
-    }
-
-    #[test]
-    fn aipow_settlements_key_on_address_and_request_id() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        // One service actor answering two requests yields two distinct
-        // events; the same request re-observed stays one event.
-        store.record_aipow_settlement(&settlement("0:svc", "0", 3, 10)).unwrap();
-        store.record_aipow_settlement(&settlement("0:svc", "1", 4, 20)).unwrap();
-        store.record_aipow_settlement(&settlement("0:svc", "1", 8, 20)).unwrap();
-        let (rows, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
-        assert_eq!(total, 2);
-        assert_eq!(
-            rows.iter().map(|r| (r.request_id.as_str(), r.seqno)).collect::<Vec<_>>(),
-            vec![("0", 3), ("1", 4)]
-        );
     }
 }
 

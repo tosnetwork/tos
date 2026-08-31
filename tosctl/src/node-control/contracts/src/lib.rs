@@ -22,10 +22,6 @@
 //! end-to-end construction walkthrough that runs without `tosctl`.
 pub mod agent_account;
 pub mod agent_account_custody;
-pub mod aipow_commitment;
-pub mod aipow_distributor;
-pub mod aipow_merkle;
-pub mod aipow_settlement;
 pub mod attestation;
 pub mod capability_registry;
 pub mod chain_provider;
@@ -53,22 +49,6 @@ pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
     ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
     EconomicEffectAuthorization, controller_resolution_evidence_digest,
-};
-pub use aipow_commitment::{
-    AIPOW_COMMITMENT_STATUS_CHALLENGED, AIPOW_COMMITMENT_STATUS_COMMITTED,
-    AIPOW_COMMITMENT_STATUS_FINAL, AIPOW_COMMITMENT_STATUS_REJECTED, AIPOW_COMMITMENT_VERSION,
-    AipowCommitmentContract, AipowCommitmentData, AipowCommitmentInit,
-};
-pub use aipow_distributor::{
-    AIPOW_DISTRIBUTOR_CLAIM_OPCODE, AIPOW_DISTRIBUTOR_FORFEIT_OPCODE,
-    AIPOW_DISTRIBUTOR_PAYOUT_OPCODE, AIPOW_DISTRIBUTOR_VERSION, AIPOW_MATURATION_EPOCH_SECONDS,
-    AIPOW_MATURATION_IMMEDIATE_BPS, AIPOW_MATURATION_STREAM_EPOCHS, AIPOW_MIN_CLAIM_VALUE,
-    AipowClaim, AipowDistributorContract, AipowDistributorData, AipowDistributorInit,
-    AipowMaturation, compute_matured,
-};
-pub use aipow_settlement::{
-    AIPOW_SETTLEMENT_REGISTER_OPCODE, AIPOW_SETTLEMENT_SKIP_OPCODE, AIPOW_SETTLEMENT_VERSION,
-    AipowCandidate, AipowSettlementContract, AipowSettlementData, AipowSettlementInit,
 };
 pub use attestation::{
     domain_bound_hash, resolve_domain_hash, service_actor_terms_hash, service_respond_domain_hash,

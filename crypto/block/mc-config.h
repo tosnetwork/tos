@@ -413,41 +413,6 @@ struct SizeLimitsConfig {
   td::uint32 max_total_msg_cells = (1 << 13) * 5 / 2;  // enabled in global version 15
 };
 
-// AIPoW native-issuance configuration (Phase C, ConfigParams 90-93). These are
-// governance-set immutable inputs, parsed only for the capAipow mint path; the
-// running supply ledger is contract state, never a ConfigParam. All are absent
-// (and the mint path inert) until capAipow is activated.
-struct AipowConfig {  // ConfigParam 90
-  td::uint32 k_num{0}, k_den{0};       // emission coefficient k = k_num / k_den
-  td::RefInt256 schedule_cap;          // per-epoch pool ceiling (nanotomis)
-  td::RefInt256 cold_start_floor;      // per-epoch pool floor (nanotomis)
-  td::uint32 challenge_mult_num{0}, challenge_mult_den{0};  // challenge-budget multiplier
-};
-
-struct AipowMaturation {  // ConfigParam 91
-  td::uint32 immediate_bps{0};    // immediate fraction, basis points (<= 10000)
-  td::uint32 stream_epochs{0};    // epochs over which the remainder streams
-  td::uint32 epoch_seconds{0};    // seconds per maturation epoch
-  td::uint32 maturation_version{0};  // snapshotted per registered epoch
-};
-
-struct AipowLimits {  // ConfigParam 92
-  td::RefInt256 total_cap;  // AIPoW total supply cap (nanotomis)
-};
-
-struct AipowRegistry {  // ConfigParam 93
-  td::Bits256 settlement_addr;    // the AIPoW settlement contract (masterchain account id)
-  td::Bits256 methodology_hash;   // frozen scoring methodology hash
-  td::Bits256 rate_card_hash;     // frozen priced rate-card hash
-  td::Bits256 commitment_code_hash;  // the audited AIPoW commitment code cell hash; the native
-                                     // settle path pins a registered commitment's code to this
-  td::Bits256 reviewer_addr;   // the governance-approved reviewer (a masterchain M-of-N multisig
-                               // account id). The native path authorizes a commitment only if its
-                               // own `reviewer` equals this, so a committer cannot pick a reviewer
-                               // it controls to dismiss a challenge and force `final`.
-  td::Ref<vm::CellSlice> distributor_code_hashes;  // HashmapE 256 True: audited distributor code hashes
-};
-
 struct CatchainValidatorsConfig {
   td::uint32 mc_cc_lifetime, shard_cc_lifetime, shard_val_lifetime, shard_val_num;
   bool shuffle_mc_val;
@@ -663,11 +628,6 @@ class Config {
   bool create_stats_enabled() const {
     return has_capability(tos::capCreateStatsEnabled);
   }
-  // True once AIPoW native issuance is activated in ConfigParam 8. Off until a
-  // governance config vote sets capAipow; gates the entire Phase C mint path.
-  bool aipow_enabled() const {
-    return has_capability(tos::capAipow);
-  }
   std::unique_ptr<vm::Dictionary> get_param_dict(int idx) const;
   td::Result<std::vector<int>> unpack_param_list(int idx) const;
   std::unique_ptr<vm::Dictionary> get_mandatory_param_dict() const {
@@ -723,15 +683,6 @@ class Config {
   std::vector<tos::ValidatorDescr> compute_total_validator_set(int next) const;
   td::Result<SizeLimitsConfig> get_size_limits_config() const;
   static td::Result<SizeLimitsConfig> do_get_size_limits_config(td::Ref<vm::CellSlice> cs);
-  // AIPoW native-issuance parameters (ConfigParams 90-93). Each errors when the
-  // parameter is absent or malformed. `check_aipow_config` is the consensus-safe
-  // activation guard: with capAipow set, a block is valid only if the complete,
-  // mutually consistent AIPoW parameter set is present (no silent defaulting).
-  td::Result<AipowConfig> get_aipow_config() const;
-  td::Result<AipowMaturation> get_aipow_maturation() const;
-  td::Result<AipowLimits> get_aipow_limits() const;
-  td::Result<AipowRegistry> get_aipow_registry() const;
-  td::Status check_aipow_config() const;
   std::unique_ptr<vm::Dictionary> get_suspended_addresses(tos::UnixTime now) const;
   BurningConfig get_burning_config() const;
   td::Ref<vm::Tuple> get_unpacked_config_tuple(tos::UnixTime now) const;

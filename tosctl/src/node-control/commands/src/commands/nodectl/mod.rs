@@ -9,9 +9,6 @@
 pub(crate) mod account_cmd;
 pub(crate) mod admin_cmd;
 pub(crate) mod agent_cmd;
-pub(crate) mod aipow_cmd;
-pub(crate) mod aipow_dist_cmd;
-pub(crate) mod aipow_settlement_cmd;
 pub(crate) mod auth_cmd;
 pub(crate) mod backup_cmd;
 pub(crate) mod capability_registry_cmd;

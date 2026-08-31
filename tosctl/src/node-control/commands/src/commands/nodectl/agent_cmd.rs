@@ -7,8 +7,6 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 
-use super::aipow_cmd::AipowCmd;
-use super::aipow_dist_cmd::AipowDistCmd;
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
@@ -112,12 +110,6 @@ pub enum AgentAction {
     Service(ServiceActorCmd),
     /// Dispute case operations
     Dispute(DisputeCmd),
-    /// AIPoW score-commitment operations
-    Aipow(AipowCmd),
-    /// AIPoW reward distributor operations
-    AipowDist(AipowDistCmd),
-    /// AIPoW settlement account operations
-    AipowSettlement(super::aipow_settlement_cmd::AipowSettlementCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
     Attestation(ProofAttestationCmd),
 }
@@ -1456,9 +1448,6 @@ impl AgentCmd {
             AgentAction::Registry(cmd) => cmd.run(&self.config).await,
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
-            AgentAction::Aipow(cmd) => cmd.run(&self.config).await,
-            AgentAction::AipowDist(cmd) => cmd.run(&self.config).await,
-            AgentAction::AipowSettlement(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
         }
     }

@@ -15,8 +15,8 @@
 //! plus every other workchain's current shard(s), since that is where
 //! almost every contract actually lives -- and for every account it hasn't
 //! seen before, checks its code hash against the recognized contract codes
-//! (Agent Account, Task Escrow, Dispute, Service Actor, Capability Registry
-//! and AIPoW contracts). A match is
+//! (Agent Account, Task Escrow, Dispute, Service Actor and Capability Registry).
+//! A match is
 //! decoded via that contract's own `decode_data` -- no new decode logic --
 //! and stored in [`IndexerStore`]. Every block/transaction identity is also
 //! recorded for explorer search and pagination. An address already known to be one of
@@ -35,10 +35,9 @@ use chain_block::{
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
-    AgentAccountContract, AipowCommitmentContract, AipowDistributorContract,
-    CapabilityRegistryContract, ChainProvider, DisputeContract, MasterchainCheckpoint,
-    NominatorPoolWrapper, NominatorPoolWrapperImpl, ServiceActorContract, TaskEscrowContract,
-    contract_provider_from,
+    AgentAccountContract, CapabilityRegistryContract, ChainProvider, DisputeContract,
+    MasterchainCheckpoint, NominatorPoolWrapper, NominatorPoolWrapperImpl, ServiceActorContract,
+    TaskEscrowContract, contract_provider_from,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -47,8 +46,8 @@ const DNS_COLLECTION_ADDRESS: &str =
 const DNS_ITEM_CODE_DEPTH: u16 = 11;
 
 use crate::indexer::store::{
-    AipowSettlementRecord, DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord,
-    IndexedRecord, IndexerStore, ServiceRequestRecord,
+    DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
+    IndexerStore, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -107,8 +106,6 @@ impl KnownCodeHashes {
         by_hash.insert(DisputeContract::code()?.repr_hash(), "dispute");
         by_hash.insert(ServiceActorContract::code()?.repr_hash(), "service_actor");
         by_hash.insert(CapabilityRegistryContract::code()?.repr_hash(), "capability_registry");
-        by_hash.insert(AipowCommitmentContract::code()?.repr_hash(), "aipow_commitment");
-        by_hash.insert(AipowDistributorContract::code()?.repr_hash(), "aipow_distributor");
         by_hash.insert(UInt256::from_slice(&hex::decode(DNS_ITEM_CODE_HASH)?), "dns_domain");
         let nominator_pool_code = read_single_root_boc(hex::decode(NOMINATOR_POOL_CODE)?)?;
         by_hash.insert(nominator_pool_code.repr_hash(), "contract.pool.nominator");
@@ -565,41 +562,6 @@ async fn decode_and_store(
             let stack =
                 chain_provider.run_get_method(address.to_owned(), "get_task_data", vec![]).await?;
             let data = TaskEscrowContract::decode_data(&stack)?;
-            if task_status_name(data.status) == "settled" {
-                // Settlement drains the escrow, so the *current* budget
-                // field is already zero by the time the settled status is
-                // observable. The real budget comes from this indexer's
-                // own pre-settlement observation of the same contract
-                // (the not-yet-overwritten stored record). An indexer
-                // that first sees an escrow only after settlement has no
-                // such observation and records amount 0 -- the documented
-                // snapshot-diff limitation, resolved for good by the
-                // settlement-receipt schema.
-                let amount = if data.budget > 0 {
-                    data.budget
-                } else {
-                    store
-                        .get(address)?
-                        .and_then(|prior| {
-                            serde_json::from_str::<TaskEscrowRecordDto>(&prior.dto_json).ok()
-                        })
-                        .map(|dto| dto.budget)
-                        .unwrap_or(0)
-                };
-                // A settled escrow is terminal; `record_aipow_settlement`
-                // keeps the first observation, so re-visits are no-ops.
-                store.record_aipow_settlement(&AipowSettlementRecord {
-                    address: address.to_owned(),
-                    request_id: String::new(),
-                    kind: "task_escrow".to_owned(),
-                    earner: data.assigned_agent.as_ref().unwrap_or(&data.creator).to_string(),
-                    payer: data.creator.to_string(),
-                    amount,
-                    attested: data.attestor_pubkey.is_some(),
-                    seqno,
-                    observed_at: now,
-                })?;
-            }
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -634,8 +596,7 @@ async fn decode_and_store(
                 .run_get_method(address.to_owned(), "get_service_data", vec![])
                 .await?;
             let data = ServiceActorContract::decode_data(&stack)?;
-            refresh_service_request_lifecycle(chain_provider, store, address, &data, seqno, now)
-                .await?;
+            refresh_service_request_lifecycle(chain_provider, store, address, &data, now).await?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -663,43 +624,6 @@ async fn decode_and_store(
                 last_seqno: seqno,
                 updated_at: now,
                 dto_json: serde_json::to_string(&CapabilityRegistryRecordDto::from(&data))?,
-            })
-        }
-        "aipow_commitment" => {
-            let stack = chain_provider
-                .run_get_method(address.to_owned(), "get_aipow_commitment_data", vec![])
-                .await?;
-            let data = AipowCommitmentContract::decode_data(&stack)?;
-            store.upsert(&IndexedRecord {
-                address: address.to_owned(),
-                kind: kind.to_owned(),
-                creator: Some(data.committer.to_string()),
-                counterparty: Some(data.reviewer.to_string()),
-                status: Some(aipow_commitment_status_name(data.status).to_owned()),
-                deadline: Some(data.window_deadline),
-                last_seqno: seqno,
-                updated_at: now,
-                dto_json: serde_json::to_string(&AipowCommitmentRecordDto::from(&data))?,
-            })
-        }
-        "aipow_distributor" => {
-            let stack = chain_provider
-                .run_get_method(address.to_owned(), "get_aipow_distributor_data", vec![])
-                .await?;
-            let data = AipowDistributorContract::decode_data(&stack)?;
-            store.upsert(&IndexedRecord {
-                address: address.to_owned(),
-                kind: kind.to_owned(),
-                creator: Some(data.operator.to_string()),
-                counterparty: None,
-                // A distributor has no single lifecycle status; expose the
-                // running claimed count in the status column so the list
-                // endpoints have something to filter/show.
-                status: Some(format!("claimed:{}", data.claimed_count)),
-                deadline: None,
-                last_seqno: seqno,
-                updated_at: now,
-                dto_json: serde_json::to_string(&AipowDistributorRecordDto::from(&data))?,
             })
         }
         "contract.pool.nominator" => {
@@ -947,18 +871,6 @@ fn parse_optional_dns_address(mut value: SliceData) -> anyhow::Result<Option<Msg
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct AipowDistributorRecordDto {
-    operator: String,
-    epoch: u64,
-    total_score: String,
-    pool: u64,
-    claimed_count: u32,
-    claimed_score: String,
-    score_root: String,
-    commitment_ref: String,
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct DnsDomainRecordDto {
     name: String,
     label: String,
@@ -1043,70 +955,6 @@ fn deposit_depth_bound(nominators_count: u32) -> i32 {
     (bits * 2).max(5)
 }
 
-impl From<&contracts::AipowDistributorData> for AipowDistributorRecordDto {
-    fn from(data: &contracts::AipowDistributorData) -> Self {
-        Self {
-            operator: data.operator.to_string(),
-            epoch: data.epoch,
-            total_score: data.total_score.to_string(),
-            pool: data.pool,
-            claimed_count: data.claimed_count,
-            claimed_score: data.claimed_score.to_string(),
-            score_root: hex::encode(data.score_root),
-            commitment_ref: hex::encode(data.commitment_ref),
-        }
-    }
-}
-
-fn aipow_commitment_status_name(status: u8) -> &'static str {
-    match status {
-        0 => "committed",
-        1 => "challenged",
-        2 => "final",
-        3 => "rejected",
-        _ => "unknown",
-    }
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct AipowCommitmentRecordDto {
-    committer: String,
-    reviewer: String,
-    status: String,
-    epoch: u64,
-    window_deadline: u64,
-    review_deadline: u64,
-    commit_bond: u64,
-    challenge_bond: u64,
-    score_root: String,
-    methodology_hash: String,
-    total_score: String,
-    organic_settled_value: String,
-    challenger: String,
-    challenge_evidence_hash: String,
-}
-
-impl From<&contracts::AipowCommitmentData> for AipowCommitmentRecordDto {
-    fn from(data: &contracts::AipowCommitmentData) -> Self {
-        Self {
-            committer: data.committer.to_string(),
-            reviewer: data.reviewer.to_string(),
-            status: aipow_commitment_status_name(data.status).to_owned(),
-            epoch: data.epoch,
-            window_deadline: data.window_deadline,
-            review_deadline: data.review_deadline,
-            commit_bond: data.commit_bond,
-            challenge_bond: data.challenge_bond,
-            score_root: hex::encode(data.score_root),
-            methodology_hash: hex::encode(data.methodology_hash),
-            total_score: data.total_score.to_string(),
-            organic_settled_value: data.organic_settled_value.to_string(),
-            challenger: data.challenger.to_string(),
-            challenge_evidence_hash: hex::encode(data.challenge_evidence_hash),
-        }
-    }
-}
-
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ServiceRequestLifecycleRecordDto {
     service_address: String,
@@ -1128,7 +976,6 @@ async fn refresh_service_request_lifecycle(
     store: &IndexerStore,
     address: &str,
     data: &contracts::ServiceActorData,
-    seqno: u32,
     now: u64,
 ) -> anyhow::Result<()> {
     let (max_indexed, active) = store.service_requests_for_refresh(address)?;
@@ -1238,25 +1085,6 @@ async fn refresh_service_request_lifecycle(
                 terms_hash: None,
             }
         };
-        // A `responded` conclusion is the only one this snapshot diff can
-        // prove was a real, paid service completion (see the deadline
-        // reasoning above); it is the Service Actor analog of a settled
-        // Task Escrow for the AIPoW shadow-scoring data plane.
-        if let ("responded", Some(caller), Some(price)) =
-            (dto.status.as_str(), &dto.caller, dto.price)
-        {
-            store.record_aipow_settlement(&AipowSettlementRecord {
-                address: address.to_owned(),
-                request_id: request_id.to_string(),
-                kind: "service_request".to_owned(),
-                earner: data.owner.to_string(),
-                payer: caller.clone(),
-                amount: price,
-                attested: data.attestor_pubkey.is_some(),
-                seqno,
-                observed_at: now,
-            })?;
-        }
         store.upsert_service_request(&ServiceRequestRecord {
             service_address: address.to_owned(),
             request_id,
@@ -2292,22 +2120,6 @@ mod tests {
             record.status, "responded",
             "a request answered before its deadline must be classified responded, not swept"
         );
-
-        // A responded request is a real, paid service completion: exactly
-        // one AIPoW settlement event, attributed owner <- caller at the
-        // service's per-call price, unattested (this fixture deploys with
-        // no attestor key). A further refresh must not duplicate it.
-        let (events, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(events[0].kind, "service_request");
-        assert_eq!(events[0].request_id, "0");
-        assert_eq!(events[0].earner, f.owner.address().to_string());
-        assert_eq!(events[0].payer, caller.to_string());
-        assert_eq!(events[0].amount, 100_000_000);
-        assert!(!events[0].attested);
-        f.refresh(&store, f.base_now).await;
-        let (_, total_after) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
-        assert_eq!(total_after, 1);
     }
 
     #[tokio::test]
@@ -2333,11 +2145,6 @@ mod tests {
             record.status, "refunded",
             "a refund claimed before its claim window closes must be classified refunded, not swept"
         );
-
-        // A refunded request is not a completed service: no AIPoW
-        // settlement event may be recorded for it.
-        let (_, total) = store.list_aipow_settlements(0, u32::MAX, 0, 10).unwrap();
-        assert_eq!(total, 0);
     }
 
     #[tokio::test]
@@ -2444,162 +2251,6 @@ mod tests {
             "a genuinely responded request must not be mislabeled swept just because the only \
              observation after it disappeared happened past the deadline"
         );
-    }
-
-    // ─── AIPoW score-commitment classification (real sandbox contract) ───
-
-    #[tokio::test]
-    async fn indexer_decodes_a_aipow_commitment_through_its_lifecycle() {
-        use contracts::{AipowCommitmentContract, AipowCommitmentInit};
-
-        let tos: u64 = 1_000_000_000;
-        let mut bc = Blockchain::new().expect("blockchain");
-        bc.set_workchain(-1);
-        let base_now = time_format::now();
-        bc.set_now(base_now as u32);
-        let committer = bc.treasury("aipow-idx-committer", 1_000 * tos).expect("committer");
-        let reviewer = bc.treasury("aipow-idx-reviewer", 1_000 * tos).expect("reviewer");
-        let challenger = bc.treasury("aipow-idx-challenger", 1_000 * tos).expect("challenger");
-        let window_deadline = base_now + 3_600;
-        let init = AipowCommitmentInit {
-            committer: committer.address().clone(),
-            reviewer: reviewer.address().clone(),
-            epoch: 42,
-            window_deadline,
-            commit_bond: 5 * tos,
-            score_root: [0x33; 32],
-            methodology_hash: [0x44; 32],
-            rate_card_hash: [0x66; 32],
-            total_score: 1_000_000,
-            organic_settled_value: 42 * u128::from(tos),
-            settlement: None,
-        };
-        let commitment = AipowCommitmentContract::calculate_address(-1, &init).expect("address");
-        let deploy = MessageBuilder::internal(committer.address(), &commitment, 6 * tos)
-            .bounce(false)
-            .state_init(AipowCommitmentContract::build_state_init(&init).expect("state init"))
-            .body(chain_block::Cell::default())
-            .build();
-        bc.send_message(deploy).expect("deploy").expect_success();
-
-        let provider = Arc::new(SandboxChainProvider { bc: StdMutex::new(bc) });
-        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
-        let store = IndexerStore::open_in_memory().unwrap();
-        let address = commitment.to_string();
-
-        decode_and_store(&provider_dyn, &store, &address, "aipow_commitment", 1, base_now)
-            .await
-            .unwrap();
-        let record = store.get(&address).unwrap().unwrap();
-        assert_eq!(record.kind, "aipow_commitment");
-        assert_eq!(record.status.as_deref(), Some("committed"));
-        assert_eq!(record.creator.as_deref(), Some(committer.address().to_string().as_str()));
-        assert_eq!(record.counterparty.as_deref(), Some(reviewer.address().to_string().as_str()));
-        assert_eq!(record.deadline, Some(window_deadline));
-        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
-        assert_eq!(dto["epoch"], 42);
-        assert_eq!(dto["score_root"], hex::encode([0x33u8; 32]));
-        assert_eq!(dto["commit_bond"], 5 * tos);
-        // The committed economic tuple is surfaced by the indexer.
-        assert_eq!(dto["total_score"], "1000000");
-        assert_eq!(dto["organic_settled_value"], (42 * u128::from(tos)).to_string());
-
-        // Drive a real challenge through the contract, then re-decode: the
-        // stored record must follow the status transition.
-        let challenge = MessageBuilder::internal(challenger.address(), &commitment, 6 * tos)
-            .body(AipowCommitmentContract::challenge(1, [0xEE; 32]).unwrap())
-            .build();
-        provider.bc.lock().unwrap().send_message(challenge).unwrap().expect_success();
-        decode_and_store(&provider_dyn, &store, &address, "aipow_commitment", 2, base_now)
-            .await
-            .unwrap();
-        let record = store.get(&address).unwrap().unwrap();
-        assert_eq!(record.status.as_deref(), Some("challenged"));
-        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
-        assert_eq!(dto["challenger"], challenger.address().to_string());
-        assert_eq!(dto["challenge_evidence_hash"], hex::encode([0xEEu8; 32]));
-        // The bond is fixed at the commit bond; the 1 TOS overpayment is
-        // refunded rather than recorded as a larger bond.
-        assert_eq!(dto["challenge_bond"], 5 * tos);
-        // The review deadline is set to the challenge time plus the 7-day
-        // review window.
-        assert_eq!(dto["review_deadline"], base_now + 604_800);
-    }
-
-    #[tokio::test]
-    async fn indexer_decodes_an_aipow_distributor_and_follows_claims() {
-        use contracts::aipow_merkle::{ScoreEntry, inclusion_proof, score_root};
-        use contracts::{AipowDistributorContract, AipowDistributorInit};
-
-        let tos: u64 = 1_000_000_000;
-        let mut bc = Blockchain::new().expect("blockchain");
-        bc.set_workchain(-1);
-        let base_now = time_format::now();
-        bc.set_now(base_now as u32);
-        let operator = bc.treasury("aipow-dist-op", 1_000 * tos).expect("operator");
-        let caller = bc.treasury("aipow-dist-caller", 1_000 * tos).expect("caller");
-        let members = vec![
-            ScoreEntry { identity: [0x11; 32], score: 400_000 },
-            ScoreEntry { identity: [0x22; 32], score: 600_000 },
-        ];
-        let root = score_root(&members).unwrap();
-        let init = AipowDistributorInit {
-            operator: operator.address().clone(),
-            epoch: 42,
-            // Pay earners on the same (masterchain) workchain the distributor is
-            // deployed on so the immediate-tranche payment is delivered in the
-            // in-memory sandbox, which does not route cross-workchain messages.
-            earner_workchain: -1,
-            total_score: 1_000_000,
-            pool: 10 * tos,
-            maturation: contracts::AipowMaturation::methodology_v0(),
-            score_root: root,
-            commitment_ref: [0x99; 32],
-        };
-        let distributor = AipowDistributorContract::calculate_address(-1, &init).expect("address");
-        // Fund with the pool plus a reserve: a claim now pays the immediate
-        // tranche out of the instance balance.
-        let deploy = MessageBuilder::internal(operator.address(), &distributor, 13 * tos)
-            .bounce(false)
-            .state_init(AipowDistributorContract::build_state_init(&init).expect("state init"))
-            .body(chain_block::Cell::default())
-            .build();
-        bc.send_message(deploy).expect("deploy").expect_success();
-
-        let provider = Arc::new(SandboxChainProvider { bc: StdMutex::new(bc) });
-        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
-        let store = IndexerStore::open_in_memory().unwrap();
-        let address = distributor.to_string();
-
-        decode_and_store(&provider_dyn, &store, &address, "aipow_distributor", 1, base_now)
-            .await
-            .unwrap();
-        let record = store.get(&address).unwrap().unwrap();
-        assert_eq!(record.kind, "aipow_distributor");
-        assert_eq!(record.status.as_deref(), Some("claimed:0"));
-        assert_eq!(record.creator.as_deref(), Some(operator.address().to_string().as_str()));
-        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
-        assert_eq!(dto["epoch"], 42);
-        assert_eq!(dto["total_score"], "1000000");
-        assert_eq!(dto["pool"], 10 * tos);
-        assert_eq!(dto["score_root"], hex::encode(root));
-
-        // Drive a real claim through the contract, then re-decode: the
-        // claimed count in the stored record must advance.
-        let proof = inclusion_proof(&members, &[0x11; 32]).unwrap();
-        let claim = MessageBuilder::internal(caller.address(), &distributor, tos / 2)
-            .body(AipowDistributorContract::claim(1, [0x11; 32], 400_000, &proof).unwrap())
-            .build();
-        provider.bc.lock().unwrap().send_message(claim).unwrap().expect_success();
-        decode_and_store(&provider_dyn, &store, &address, "aipow_distributor", 2, base_now)
-            .await
-            .unwrap();
-        let record = store.get(&address).unwrap().unwrap();
-        assert_eq!(record.status.as_deref(), Some("claimed:1"));
-        let dto: serde_json::Value = serde_json::from_str(&record.dto_json).unwrap();
-        assert_eq!(dto["claimed_count"], 1);
-        // The running claimed_score advances by the claimed member's score.
-        assert_eq!(dto["claimed_score"], "400000");
     }
 }
 

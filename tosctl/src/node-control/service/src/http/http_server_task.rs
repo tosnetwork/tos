@@ -171,17 +171,6 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         )
         .route("/registry", axum::routing::get(agent_query_api::list_registry))
         .route("/registry/{address}", axum::routing::get(agent_query_api::get_registry))
-        .route("/aipow/settled-work", axum::routing::get(agent_query_api::list_aipow_settled_work))
-        .route("/aipow/commitments", axum::routing::get(agent_query_api::list_aipow_commitments))
-        .route(
-            "/aipow/commitments/{address}",
-            axum::routing::get(agent_query_api::get_aipow_commitment),
-        )
-        .route("/aipow/distributors", axum::routing::get(agent_query_api::list_aipow_distributors))
-        .route(
-            "/aipow/distributors/{address}",
-            axum::routing::get(agent_query_api::get_aipow_distributor),
-        )
         .route("/auth/me", axum::routing::get(me_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -974,11 +963,6 @@ impl utoipa::Modify for BearerAuthAddon {
         ,agent_query_api::get_service_request
         ,agent_query_api::list_registry
         ,agent_query_api::get_registry
-        ,agent_query_api::list_aipow_settled_work
-        ,agent_query_api::list_aipow_commitments
-        ,agent_query_api::get_aipow_commitment
-        ,agent_query_api::list_aipow_distributors
-        ,agent_query_api::get_aipow_distributor
         ,explorer_query_api::status
         ,explorer_query_api::staking
         ,explorer_query_api::nominator_positions
@@ -1031,14 +1015,6 @@ impl utoipa::Modify for BearerAuthAddon {
         agent_query_api::ServiceRequestLifecycleResponse,
         agent_query_api::RegistryDto,
         agent_query_api::RegistryResponse,
-        agent_query_api::AipowSettledWorkDto,
-        agent_query_api::AipowSettledWorkResponse,
-        agent_query_api::AipowCommitmentDto,
-        agent_query_api::AipowCommitmentListResponse,
-        agent_query_api::AipowCommitmentResponse,
-        agent_query_api::AipowDistributorDto,
-        agent_query_api::AipowDistributorListResponse,
-        agent_query_api::AipowDistributorResponse,
         agent_query_api::RegistryListResponse,
         explorer_query_api::ExplorerTransactionDto,
         explorer_query_api::ExplorerBlockDto,
@@ -1172,8 +1148,6 @@ mod tests {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
-            aipow_commitments: Default::default(),
-            aipow_distributors: Default::default(),
             alerts: Default::default(),
         })
     }
@@ -1198,8 +1172,6 @@ mod tests {
             service_actors: HashMap::new(),
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
-            aipow_commitments: Default::default(),
-            aipow_distributors: Default::default(),
             alerts: Default::default(),
         })
     }

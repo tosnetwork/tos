@@ -143,20 +143,6 @@ bool set_config_smc(const SmcDescr& smc) {
   THRERR("first reference in config smart contract data must point to initial configuration");
   PDO(block::valid_config_data(data, smc.addr));
   THRERR("invalid smart contract configuration data");
-  // Phase C: the normal capAipow activation guard lives on the block-transition
-  // path (check_config_update), which does not cover a zerostate. Enforce the
-  // same invariant at genesis-build time: a configuration that activates
-  // capAipow must ship a complete, mutually consistent AIPoW parameter set.
-  {
-    auto cfg_res = block::Config::unpack_config(data, smc.addr, block::Config::needCapabilities);
-    PDO(cfg_res.is_ok());
-    THRERR("cannot unpack configuration to check AIPoW activation");
-    auto aipow_cfg = cfg_res.move_as_ok();
-    if (aipow_cfg->aipow_enabled()) {
-      PDO(aipow_cfg->check_aipow_config().is_ok());
-      THRERR("configuration enables capAipow but the AIPoW parameter set is incomplete or invalid");
-    }
-  }
   config_addr = smc.addr;
   config_param_root = std::move(data);
   config_addr_set = true;

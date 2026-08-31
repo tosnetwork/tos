@@ -35,8 +35,6 @@ const CONTRACT_KINDS: &[&str] = &[
     "dispute",
     "service_actor",
     "capability_registry",
-    "aipow_commitment",
-    "aipow_distributor",
     "contract.pool.nominator",
     "dns_domain",
 ];

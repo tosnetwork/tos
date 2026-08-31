@@ -120,7 +120,7 @@ class ValidateQuery : public td::actor::Actor {
   }
   static constexpr long long supported_capabilities() {
     return capCreateStatsEnabled | capBounceMsgBody | capReportVersion | capShortDequeue | capStoreOutMsgQueueSize |
-           capMsgMetadata | capDeferMessages | capFullCollatedData | capAipow;
+           capMsgMetadata | capDeferMessages | capFullCollatedData;
   }
 
  public:
@@ -189,13 +189,6 @@ class ValidateQuery : public td::actor::Actor {
   Ref<vm::CellSlice> shard_hashes_;              // from McBlockExtra
   Ref<vm::CellSlice> blk_config_params_;         // from McBlockExtra
   Ref<vm::Cell> recover_create_msg_, mint_msg_;  // from McBlockExtra (UNCHECKED)
-  // Phase C: the AIPoW settle mint the block must carry, re-derived from consensus
-  // state (not read from the block). aipow_mint_msg_ is the InMsg located in the
-  // block's InMsgDescr by the re-derived message hash; null when no mint is due.
-  Ref<vm::Cell> aipow_mint_msg_;
-  td::RefInt256 aipow_mint_amount_;
-  tos::Bits256 aipow_settlement_addr_;
-  tos::Bits256 aipow_mint_winner_id_;
 
   std::unique_ptr<block::ConfigInfo> config_, new_config_;
   std::unique_ptr<block::ShardConfig> old_shard_conf_;  // from reference mc state
@@ -384,11 +377,6 @@ class ValidateQuery : public td::actor::Actor {
   bool add_trivial_neighbor();
   bool unpack_block_data();
   bool unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root);
-  bool prepare_aipow_mint();
-  bool read_settlement_ledger_fields(block::ShardState& state, const tos::Bits256& addr, td::uint32& next_epoch,
-                                     td::RefInt256& minted_total);
-  bool read_settlement_registrations(block::ShardState& state, const tos::Bits256& addr,
-                                     td::Ref<vm::Cell>& registrations);
   bool compute_minted_amount(block::CurrencyCollection& to_mint);
   bool precheck_one_account_update(td::ConstBitPtr acc_id, Ref<vm::CellSlice> old_value, Ref<vm::CellSlice> new_value);
   bool precheck_account_updates();

@@ -44,20 +44,6 @@ class NetworkConfig:
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
-    # Phase C: activate capAipow at genesis with a complete AIPoW ConfigParam set
-    # (90-93). Off by default so every existing profile stays dark. The settlement
-    # address in ConfigParam 93 is a counterfactual placeholder the caller may
-    # override (aipow_settlement_addr); until a settlement is deployed there the
-    # native mint path resolves NoSettlement and nothing mints.
-    enable_aipow: bool = False
-    aipow_settlement_addr: int = 0x5555555555555555555555555555555555555555555555555555555555555555
-    # The audited commitment code hash the native settle path pins (ConfigParam 93).
-    # Must be the real hash of the deployed commitment code for the native mint to
-    # authorize a commitment; default is a placeholder (dark boot / no real mint).
-    aipow_commitment_code_hash: int = 0x3333333333333333333333333333333333333333333333333333333333333333
-    # The governance-approved reviewer the native path pins (ConfigParam 93): a
-    # commitment mints only if its own reviewer equals this masterchain account id.
-    aipow_reviewer_addr: int = 0x4444444444444444444444444444444444444444444444444444444444444444
     # ConfigParam 4: masterchain account id of the .tos DNS root resolver.
     # None (default) leaves the parameter unset so resolvers fail closed; a
     # profile may pin the counterfactual address of a root deployed at runtime.
@@ -245,7 +231,7 @@ Masterchain swap
  *
  */
 // version capabilities (Native Registry SHA256C requires version 14)
-{global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or {aipow_capability} or config.version!
+{global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
@@ -302,10 +288,6 @@ untriple make-block-limits 23 config!
 {masterchain_block_reward} {basechain_block_reward} config.block_create_fees!
 // smc1_addr config.collector_smc!
 {minter_address} config.minter_smc!
-
-// Phase C AIPoW ConfigParams 90-93 (empty unless the profile enables capAipow;
-// activating capAipow requires the complete, valid set -- see check_aipow_config).
-{aipow_config_params}
 
 // ConfigParam 4 (dns_root_addr): empty unless the profile pins a DNS root.
 // The pinned address may be the counterfactual address of a root deployed at
@@ -517,34 +499,6 @@ def create_zerostate(
         else:
             new_consensus_config += "null\n"
 
-    if config.enable_aipow:
-        # capAipow (bit 10). Genesis (create-state.cpp) rejects it unless the
-        # complete, mutually consistent ConfigParam 90-93 set is present, so both
-        # are emitted together. Values are valid per check_aipow_config; the
-        # settlement address is a placeholder until a settlement is deployed there.
-        aipow_capability = "1024"
-        settlement_hex = f"0x{config.aipow_settlement_addr:064x}"
-        commitment_code_hash_hex = f"0x{config.aipow_commitment_code_hash:064x}"
-        reviewer_hex = f"0x{config.aipow_reviewer_addr:064x}"
-        aipow_config_params = (
-            # 90 AipowConfig: k = 1/1, schedule_cap = 1000 TOS, no floor, mult 1/1.
-            "<b 1 32 u, 1 32 u, 1000000000000 Tomi, 0 Tomi, 1 32 u, 1 32 u, b> 90 config!\n"
-            # 91 AipowMaturation: 25% immediate, 8 stream epochs, 65536s, version 1.
-            "<b 2500 16 u, 8 16 u, 65536 32 u, 1 16 u, b> 91 config!\n"
-            # 92 AipowLimits: 4.5e18 nanotomis total cap.
-            "<b 4500000000000000000 Tomi, b> 92 config!\n"
-            # 93 AipowRegistry: settlement addr + non-zero methodology/rate-card and
-            # ^[commitment_code_hash], empty distributor-code-hash set.
-            f"<b {settlement_hex} 256 u, "
-            "0x1111111111111111111111111111111111111111111111111111111111111111 256 u, "
-            "0x2222222222222222222222222222222222222222222222222222222222222222 256 u, "
-            f"<b {commitment_code_hash_hex} 256 u, {reviewer_hex} 256 u, b> ref, "
-            "dictnew dict, b> 93 config!\n"
-        )
-    else:
-        aipow_capability = "0"  # ORing 0 is a no-op: capAipow stays off
-        aipow_config_params = ""
-
     if config.dns_root_addr is not None:
         dns_config_param = f"<b 0x{config.dns_root_addr:064x} 256 u, b> 4 config!\n"
     else:
@@ -573,8 +527,6 @@ def create_zerostate(
             validators="\n".join(keys),
             mc_validators=len(keys),
             new_consensus_config=new_consensus_config,
-            aipow_capability=aipow_capability,
-            aipow_config_params=aipow_config_params,
             dns_config_param=dns_config_param,
             voting_config_param=voting_config_param,
             **profile,

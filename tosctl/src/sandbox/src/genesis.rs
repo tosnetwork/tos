@@ -160,7 +160,7 @@ mod tests {
     /// each for the elector and config contracts (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Currency.md,
     /// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Zerostate.md). No premine, treasury, or team allocation exists;
     /// the long-run 5 B TOS figure is a creation target reached through
-    /// block rewards and AIPoW minting, not a genesis balance.
+    /// validator block rewards, not a genesis balance.
     #[test]
     fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
