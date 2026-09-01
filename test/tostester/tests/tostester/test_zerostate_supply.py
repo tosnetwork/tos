@@ -1,5 +1,6 @@
 """Regression tests for the development and validator-economics zerostates."""
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import (
     ConfigParam0,
     ConfigParam2,
+    ConfigParam4,
     ConfigParam10,
     ConfigParam14,
     ConfigParam15,
@@ -35,6 +37,11 @@ EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS = 101_000
 EXPECTED_VALIDATOR_COUNT = 4
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
 EXPECTED_SIMPLEX_PROTOCOL_VERSION = 2
+EXPECTED_MAINNET_GENESIS_UTIME = 1_789_434_000
+DNS_VECTORS = json.loads(
+    (REPO / "domains/packages/protocol/test/vectors.json").read_text()
+)
+EXPECTED_DNS_ROOT_ID = DNS_VECTORS["root_address"].removeprefix("-1:")
 
 
 def _load_masterchain_state(path: Path) -> ShardStateUnsplit:
@@ -69,6 +76,12 @@ def _create_state_command(script: Path) -> list[str]:
         "-s",
         str(script),
     ]
+
+
+def _mainnet_genesis_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["SOURCE_DATE_EPOCH"] = str(EXPECTED_MAINNET_GENESIS_UTIME)
+    return env
 
 
 def test_genesis_simplex_parameters_use_v2_with_ton_mainnet_pacing():
@@ -300,7 +313,10 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
         b"".join(Key().public_key.key for _ in range(EXPECTED_VALIDATOR_COUNT))
     )
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
-    subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
+    )
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
     punishment = _punishment_config(state)
@@ -370,9 +386,13 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     )
 
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
-    subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
+    )
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    assert state.gen_utime == EXPECTED_MAINNET_GENESIS_UTIME
     assert (
         state.total_balance.tomis
         == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
@@ -385,6 +405,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert _config(state, 2, ConfigParam2).minter_addr == _config(
         state, 0, ConfigParam0
     ).config_addr
+    assert _config(state, 4, ConfigParam4).dns_root_addr_hex == EXPECTED_DNS_ROOT_ID
     assert 3 not in state.custom.config.config
     canonical_rewards = _config(state, 14, ConfigParam14)
     assert canonical_rewards.masterchain_block_fee == 569_879_384
@@ -409,7 +430,8 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         b"".join(key.public_key.key for key in keys[:3])
     )
     failed = subprocess.run(
-        command, cwd=tmp_path, check=False, capture_output=True, text=True
+        command, cwd=tmp_path, check=False, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
     assert "exactly four 32-byte public keys" in failed.stderr + failed.stdout
@@ -418,10 +440,27 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         b"".join([keys[0].public_key.key] * EXPECTED_VALIDATOR_COUNT)
     )
     failed = subprocess.run(
-        command, cwd=tmp_path, check=False, capture_output=True, text=True
+        command, cwd=tmp_path, check=False, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
     assert "genesis validator public keys must be unique" in (
+        failed.stderr + failed.stdout
+    )
+
+
+def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(Key().public_key.key for _ in range(EXPECTED_VALIDATOR_COUNT))
+    )
+    env = _mainnet_genesis_env()
+    env["SOURCE_DATE_EPOCH"] = str(EXPECTED_MAINNET_GENESIS_UTIME + 1)
+    failed = subprocess.run(
+        _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
+        cwd=tmp_path, check=False, capture_output=True, text=True, env=env,
+    )
+    assert failed.returncode != 0
+    assert "SOURCE_DATE_EPOCH must be 1789434000" in (
         failed.stderr + failed.stdout
     )
 
@@ -432,7 +471,10 @@ def test_validator_rewards_are_the_only_native_tos_issuance_path(tmp_path):
         b"".join(key.public_key.key for key in keys)
     )
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
-    subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
+    )
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
     rewards = _config(state, 14, ConfigParam14)

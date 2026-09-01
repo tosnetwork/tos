@@ -24,6 +24,23 @@ wc_master setworkchain
 1 setglobalid   // TOS mainnet global_id
 0x544F5301 default-subwallet-id!  // TOS-specific default subwallet id
 
+// Canonical mainnet genesis: 2026-09-15 10:00:00 JST
+//                         == 2026-09-15 01:00:00 UTC.
+// create-state and Fift both honor SOURCE_DATE_EPOCH. Refuse to emit a
+// production zero-state with a build-machine wall clock or a different epoch:
+//   SOURCE_DATE_EPOCH=1789434000 build/crypto/create-state ...
+1789434000 constant mainnet_genesis_utime
+now mainnet_genesis_utime = not abort"SOURCE_DATE_EPOCH must be 1789434000 for TOS mainnet genesis"
+
+// TIP-1 immutable .tos Root StateInit address. This must equal the reproducible
+// root_address in domains/packages/protocol/test/vectors.json. ConfigParam 4
+// stores only these 256 account-id bits; clients supply masterchain wc=-1.
+// Pinning the counterfactual address does not deploy the Root or open auctions:
+// the audited Root/Collection StateInit must still be deployed after genesis,
+// and the Collection independently enforces the TIP-1 activation timestamp.
+0x280e2d46c2bea67664609ad2df6db55ef92dd257ff5b16c3317eed59fa649a32
+constant dns_root_addr
+
 // Initial state of Workchain 0 (Basic workchain)
 
 0 mkemptyShardState
@@ -201,11 +218,11 @@ TM$0.569879384 TM$0.335223167 config.block_create_fees!
 // extra-currency mint power.
 config_addr config.minter_smc!
 
-// ConfigParam 4 (masterchain root DNS resolver) is deliberately not set at
-// genesis: clients treat an absent parameter 4 as "DNS unavailable" and fail
-// closed. To activate TOS DNS from genesis, generate the root resolver
-// StateInit (see tosnetwork/dns-contract deploy/gen-deploy.fif), then set:
-// 0x<root-resolver-account-hash> config.dns_root_smc!
+// ConfigParam 4 pins the counterfactual masterchain Root address in the
+// canonical zero-state. Resolution still fails closed until the exact audited
+// StateInit is deployed at that address. Replacing it after launch is a
+// critical Config Contract proposal because parameter 4 is in ConfigParam 10.
+dns_root_addr config.dns_root_smc!
 
 // ConfigParam 7 governs extra currencies only and is intentionally omitted, so
 // genesis mints no extra currency. Native TOS creation is separate: each

@@ -73,7 +73,9 @@ std::string load_source(std::string name) {
 
 namespace {
 
-constexpr td::uint32 kDeterministicZerostateNow = 1700000000;
+// The canonical mainnet template refuses every other timestamp. Keep the C++
+// byte-regression fixture aligned with 2026-09-15 10:00:00 JST.
+constexpr td::uint32 kDeterministicZerostateNow = 1789434000;
 constexpr td::Slice kMainWalletPkHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 constexpr td::Slice kConfigMasterPkHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
 constexpr td::Slice kGenesisValidatorPkHex[] = {

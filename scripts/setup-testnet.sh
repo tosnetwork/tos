@@ -5,6 +5,10 @@
 # Usage:
 #   sudo VALIDATORS=3 GENESIS_VALIDATORS=4 \
 #     VALIDATOR_ECONOMICS_PROFILE=1 ./scripts/setup-testnet.sh [--clean]
+#
+# The zero-state pins the canonical TIP-1 DNS Root from the shared vectors by
+# default. Set DNS_ROOT_ADDR=-1:<64-hex-id> for a reviewed local DNS profile,
+# or DNS_ROOT_ADDR=none only when explicitly rehearsing fail-closed absence.
 
 set -euo pipefail
 
@@ -86,6 +90,7 @@ UV_CACHE_DIR="$UV_HOME/.cache/uv" \
 VALIDATORS="${VALIDATORS:-1}" \
 GENESIS_VALIDATORS="${GENESIS_VALIDATORS:-${VALIDATORS:-1}}" \
 VALIDATOR_ECONOMICS_PROFILE="${VALIDATOR_ECONOMICS_PROFILE:-0}" \
+DNS_ROOT_ADDR="${DNS_ROOT_ADDR:-}" \
 "$UV" run python3 <<'PYEOF'
 import asyncio, json, os, sys, base64, hashlib
 from pathlib import Path
@@ -103,6 +108,14 @@ GENESIS_VALIDATORS = int(os.environ.get("GENESIS_VALIDATORS", str(VALIDATORS)))
 VALIDATOR_ECONOMICS_PROFILE = os.environ.get(
     "VALIDATOR_ECONOMICS_PROFILE", "0"
 ) == "1"
+DNS_ROOT_ADDR = os.environ.get("DNS_ROOT_ADDR", "").strip().lower()
+if not DNS_ROOT_ADDR:
+    vectors = json.loads(
+        (REPO / "domains/packages/protocol/test/vectors.json").read_text()
+    )
+    DNS_ROOT_ADDR = vectors["root_address"].strip().lower()
+elif DNS_ROOT_ADDR == "none":
+    DNS_ROOT_ADDR = ""
 if VALIDATORS < 1:
     raise SystemExit("VALIDATORS must be >= 1")
 if GENESIS_VALIDATORS < VALIDATORS:
@@ -111,6 +124,11 @@ if VALIDATOR_ECONOMICS_PROFILE and GENESIS_VALIDATORS != 4:
     raise SystemExit(
         "VALIDATOR_ECONOMICS_PROFILE=1 requires GENESIS_VALIDATORS=4"
     )
+if DNS_ROOT_ADDR:
+    if DNS_ROOT_ADDR.startswith("-1:"):
+        DNS_ROOT_ADDR = DNS_ROOT_ADDR[3:]
+    if len(DNS_ROOT_ADDR) != 64 or any(c not in "0123456789abcdef" for c in DNS_ROOT_ADDR):
+        raise SystemExit("DNS_ROOT_ADDR must be a 64-character hex account id")
 
 install = Install(BUILD, REPO)
 
@@ -118,6 +136,8 @@ async def setup():
     async with Network(install, TESTNET) as network:
         network.config.shard_validators = GENESIS_VALIDATORS
         network.config.validator_economics_profile = VALIDATOR_ECONOMICS_PROFILE
+        if DNS_ROOT_ADDR:
+            network.config.dns_root_addr = int(DNS_ROOT_ADDR, 16)
         # Create DHT node
         dht = network.create_dht_node()
 
@@ -220,6 +240,7 @@ async def setup():
         print(f"\n  Running validators: {VALIDATORS}")
         print(f"  Genesis validators: {GENESIS_VALIDATORS}")
         print(f"  Validator economics profile: {VALIDATOR_ECONOMICS_PROFILE}")
+        print(f"  DNS root ConfigParam 4: {DNS_ROOT_ADDR or 'absent'}")
         print(f"  Global config: {gc_path}")
         print(f"  DHT config: {dht_dir / 'config.json'}")
 

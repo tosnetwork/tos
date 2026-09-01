@@ -18,6 +18,9 @@ use chain_block::{read_single_root_boc, CurrencyCollection, Deserializable, Shar
 
 use crate::error::{SandboxError, SandboxResult};
 
+/// 2026-09-15 10:00:00 JST (2026-09-15 01:00:00 UTC).
+const MAINNET_GENESIS_UNIX: &str = "1789434000";
+
 /// Locate the TOS repository root by checking common paths.
 fn find_tos_root() -> Option<PathBuf> {
     if let Ok(root) = env::var("TOS_ROOT") {
@@ -114,6 +117,7 @@ pub fn generate_zerostate_total_balance(
 
     let output = Command::new(&create_state_bin)
         .current_dir(tmp.path())
+        .env("SOURCE_DATE_EPOCH", MAINNET_GENESIS_UNIX)
         .arg("-I")
         .arg(&fift_lib)
         .arg("-I")
