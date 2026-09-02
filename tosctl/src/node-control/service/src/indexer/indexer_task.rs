@@ -64,6 +64,30 @@ const TRANSACTIONS_PAGE_SIZE: u32 = 256;
 /// whole id range in a single tick. Later visits resume from the stored
 /// high-water mark, so progress stays monotonic while per-tick work is bounded.
 const MAX_SERVICE_REQUEST_IDS_PER_TICK: u64 = 4096;
+
+/// Hard bound on how many request rows one service contract may ever occupy
+/// in the index. The per-tick cap alone only bounds each visit: a contract
+/// reporting an absurd `next_request_id` would still grow the database by one
+/// capped batch of not-found rows per visit, forever. Beyond this bound the
+/// indexer stops extending into new ids for the service (already-stored rows
+/// keep refreshing) and says so once per visit; a legitimate service that
+/// outgrows it needs an operator decision, not silent unbounded disk growth.
+const MAX_TRACKED_REQUESTS_PER_SERVICE: u64 = 65_536;
+
+/// Pure range computation for the new-id scan, so the bounds are unit
+/// testable: resumes after the stored high-water mark, takes at most one
+/// per-tick batch, and never extends past the per-service row budget.
+fn new_service_request_id_range(
+    max_indexed: Option<u64>,
+    stored_rows: u64,
+    claimed_next_request_id: u64,
+) -> std::ops::Range<u64> {
+    let first_new = max_indexed.map_or(0, |id| id.saturating_add(1));
+    let remaining_budget = MAX_TRACKED_REQUESTS_PER_SERVICE.saturating_sub(stored_rows);
+    let batch = MAX_SERVICE_REQUEST_IDS_PER_TICK.min(remaining_budget);
+    let new_end = claimed_next_request_id.min(first_new.saturating_add(batch));
+    first_new..new_end
+}
 /// How far back to rewind and rescan when a reorg is detected at the
 /// checkpoint boundary. Reorgs are a real, documented hazard on this chain
 /// (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
@@ -985,17 +1009,27 @@ async fn refresh_service_request_lifecycle(
     data: &contracts::ServiceActorData,
     now: u64,
 ) -> anyhow::Result<()> {
-    let (max_indexed, active) = store.service_requests_for_refresh(address)?;
+    let (max_indexed, stored_rows, active) = store.service_requests_for_refresh(address)?;
     // `active` is bounded by rows this indexer itself stored (non-terminal
     // statuses only); the contract cannot inflate it. The *new* id range, by
     // contrast, comes straight from the contract's own counter, so it is
-    // capped per visit -- the stored high-water mark advances with each
-    // stored batch and the next visit resumes from there.
+    // capped per visit AND by a per-service row budget -- otherwise a
+    // fabricated counter would still grow the database by one capped batch
+    // of not-found rows per visit, forever.
     let mut ids: HashSet<u64> = active.into_iter().map(|r| r.request_id).collect();
-    let first_new = max_indexed.map_or(0, |id| id.saturating_add(1));
-    let new_end =
-        data.next_request_id.min(first_new.saturating_add(MAX_SERVICE_REQUEST_IDS_PER_TICK));
-    ids.extend(first_new..new_end);
+    let new_range = new_service_request_id_range(max_indexed, stored_rows, data.next_request_id);
+    if new_range.is_empty()
+        && stored_rows >= MAX_TRACKED_REQUESTS_PER_SERVICE
+        && data.next_request_id > max_indexed.map_or(0, |id| id.saturating_add(1))
+    {
+        tracing::warn!(
+            service = %address,
+            stored_rows,
+            claimed_next_request_id = data.next_request_id,
+            "service request index is at its per-service budget; not extending into new ids"
+        );
+    }
+    ids.extend(new_range);
     for request_id in ids {
         let old = store.service_request(address, request_id)?;
         let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
@@ -1108,6 +1142,48 @@ async fn refresh_service_request_lifecycle(
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod new_id_range_tests {
+    use super::*;
+
+    #[test]
+    fn resumes_after_the_high_water_mark_in_per_tick_batches() {
+        assert_eq!(new_service_request_id_range(None, 0, 10), 0..10);
+        assert_eq!(
+            new_service_request_id_range(None, 0, u64::MAX),
+            0..MAX_SERVICE_REQUEST_IDS_PER_TICK
+        );
+        assert_eq!(
+            new_service_request_id_range(Some(4095), 4096, u64::MAX),
+            4096..4096 + MAX_SERVICE_REQUEST_IDS_PER_TICK
+        );
+    }
+
+    #[test]
+    fn a_fabricated_counter_cannot_grow_the_index_past_the_service_budget() {
+        // At the budget: no new ids at all, however large the claim.
+        let r = new_service_request_id_range(
+            Some(MAX_TRACKED_REQUESTS_PER_SERVICE - 1),
+            MAX_TRACKED_REQUESTS_PER_SERVICE,
+            u64::MAX,
+        );
+        assert!(r.is_empty());
+        // Near the budget: only the remainder is scanned.
+        let r = new_service_request_id_range(
+            Some(MAX_TRACKED_REQUESTS_PER_SERVICE - 11),
+            MAX_TRACKED_REQUESTS_PER_SERVICE - 10,
+            u64::MAX,
+        );
+        assert_eq!(r.end - r.start, 10);
+    }
+
+    #[test]
+    fn high_water_at_max_yields_an_empty_range_instead_of_wrapping() {
+        let r = new_service_request_id_range(Some(u64::MAX), 100, u64::MAX);
+        assert!(r.is_empty());
+    }
 }
 
 fn task_status_name(status: u8) -> &'static str {
@@ -2404,7 +2480,8 @@ mod tests {
             "each id in the capped batch is probed once with get_request and once with \
              get_refund; nothing beyond the cap may be touched"
         );
-        let (max_indexed, active) = store.service_requests_for_refresh("-1:service").unwrap();
+        let (max_indexed, _stored, active) =
+            store.service_requests_for_refresh("-1:service").unwrap();
         assert_eq!(
             max_indexed,
             Some(MAX_SERVICE_REQUEST_IDS_PER_TICK - 1),
@@ -2417,7 +2494,7 @@ mod tests {
         refresh_service_request_lifecycle(&provider_dyn, &store, "-1:service", &data, 1_001)
             .await
             .unwrap();
-        let (max_indexed, _) = store.service_requests_for_refresh("-1:service").unwrap();
+        let (max_indexed, _stored, _) = store.service_requests_for_refresh("-1:service").unwrap();
         assert_eq!(max_indexed, Some(2 * MAX_SERVICE_REQUEST_IDS_PER_TICK - 1));
         assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
     }

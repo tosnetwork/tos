@@ -1258,7 +1258,7 @@ impl IndexerStore {
     pub fn service_requests_for_refresh(
         &self,
         service_address: &str,
-    ) -> anyhow::Result<(Option<u64>, Vec<ServiceRequestRecord>)> {
+    ) -> anyhow::Result<(Option<u64>, u64, Vec<ServiceRequestRecord>)> {
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let mut stmt = conn.prepare(
             "SELECT service_address, request_id, status, updated_at, dto_json
@@ -1284,11 +1284,12 @@ impl IndexerStore {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let max_id = rows.iter().map(|r| r.request_id).max();
+        let stored = rows.len() as u64;
         let active = rows
             .into_iter()
             .filter(|r| matches!(r.status.as_str(), "pending" | "refundable"))
             .collect();
-        Ok((max_id, active))
+        Ok((max_id, stored, active))
     }
 }
 
