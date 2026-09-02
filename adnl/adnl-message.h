@@ -28,6 +28,20 @@ namespace adnl {
 
 namespace adnlmessage {
 
+namespace detail {
+inline td::uint32 bytes_serialized_size(size_t size) {
+  // TlStorerCalcLength::store_string
+  if (size < 254) {
+    size += 1;
+  } else if (size < (1 << 24)) {
+    size += 4;
+  } else {
+    size += 8;
+  }
+  return static_cast<td::uint32>((size + 3) & -4);
+}
+}  // namespace detail
+
 class AdnlMessageCreateChannel {
  public:
   AdnlMessageCreateChannel(pubkeys::Ed25519 key, td::int32 date) : key_(key), date_(date) {
@@ -85,7 +99,7 @@ class AdnlMessageCustom {
     return data_.clone();
   }
   td::uint32 size() const {
-    return static_cast<td::uint32>(data_.size()) + 12;
+    return 4 + detail::bytes_serialized_size(data_.size());
   }
   tl_object_ptr<tos_api::adnl_Message> tl() const {
     return create_tl_object<tos_api::adnl_message_custom>(data_.clone());
@@ -138,7 +152,7 @@ class AdnlMessageQuery {
     return data_.clone();
   }
   td::uint32 size() const {
-    return static_cast<td::uint32>(data_.size()) + 44;
+    return 36 + detail::bytes_serialized_size(data_.size());
   }
   tl_object_ptr<tos_api::adnl_Message> tl() const {
     return create_tl_object<tos_api::adnl_message_query>(query_id_, data_.clone());
@@ -160,7 +174,7 @@ class AdnlMessageAnswer {
     return data_.clone();
   }
   td::uint32 size() const {
-    return static_cast<td::uint32>(data_.size()) + 44;
+    return 36 + detail::bytes_serialized_size(data_.size());
   }
   tl_object_ptr<tos_api::adnl_Message> tl() const {
     return create_tl_object<tos_api::adnl_message_answer>(query_id_, data_.clone());
@@ -189,7 +203,7 @@ class AdnlMessagePart {
     return data_.clone();
   }
   td::uint32 size() const {
-    return static_cast<td::uint32>(data_.size()) + 48;
+    return 44 + detail::bytes_serialized_size(data_.size());
   }
   tl_object_ptr<tos_api::adnl_Message> tl() const {
     return create_tl_object<tos_api::adnl_message_part>(hash_, total_size_, offset_, data_.clone());

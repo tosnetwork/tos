@@ -100,6 +100,32 @@ TEST(SharedFuture, ConcurrentWaitersShareFailureAndRetry) {
   });
 }
 
+TEST(SharedFuture, AwaitWithTimeoutSimultaneousCompletion) {
+  TestScheduler ts;
+  ts.run([&]() -> Task<Unit> {
+    // The task finishes at exactly the moment the timeout fires, so both
+    // detached workers race to resolve the shared promise. Whatever the
+    // outcome, it must be resolved exactly once.
+    for (int i = 0; i < 100; ++i) {
+      auto work = []() -> Task<int> {
+        co_await coro_sleep(Timestamp::in(1.0));
+        co_return 7;
+      };
+      auto waiter = await_with_timeout(work().start(), Timestamp::in(1.0)).start();
+      co_await ts.wait_sync_work();
+      ts.advance_time(1.0);
+      co_await ts.wait_sync_work();
+      auto result = co_await std::move(waiter).wrap();
+      if (result.is_error()) {
+        EXPECT_EQ(result.error().code(), AWAIT_TIMEOUT_CODE);
+      } else {
+        EXPECT_EQ(result.ok(), 7);
+      }
+    }
+    co_return td::Unit{};
+  });
+}
+
 TEST(TestScheduler, BasicActorStartUp) {
   static bool started = false;
   started = false;
