@@ -3384,6 +3384,18 @@ impl AgentAccountTaskSendResolveCmd {
                     AgentAccountContract::get_data(provider.as_ref(), &account).await
                 }
                 .await;
+                if let Err(error) = &finalized {
+                    // A member that found the transaction but cannot answer the
+                    // account-state query would otherwise time the resolution
+                    // out with no diagnostic at all, hiding the difference
+                    // between "no finalized transaction" and "state
+                    // unavailable".
+                    failures.push(format!(
+                        "{}: {}",
+                        display_origin,
+                        chain_query_failure_diagnostic(error)
+                    ));
+                }
                 record_task_send_resolution_vote(&mut votes, observation, finalized, &record);
             }
             if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {

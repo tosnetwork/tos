@@ -771,6 +771,7 @@ def _task_send_resolution_fixture():
         },
         "quorum": {"members": 3, "threshold": 2, "agreeing": 3},
         "process_view_scope": lifecycle.TASK_SEND_PROCESS_VIEW_SCOPE,
+        "block_reference_scope": lifecycle.TASK_SEND_BLOCK_REFERENCE_SCOPE,
         "independent_operator_domains_proven": False,
         "transaction": transaction,
         "observations": observations,
@@ -1018,6 +1019,10 @@ async def test_integrated_deposit_journal_resolves_before_withdrawal_task_send(
                 "process_view_scope": (
                     "distinct RPC process views; no independent-operator or "
                     "Byzantine-finality claim"
+                ),
+                "block_reference_scope": (
+                    "RPC-asserted transaction and block identifiers; "
+                    "no inclusion proof was verified"
                 ),
                 "independent_operator_domains_proven": False,
                 "transaction": transaction_evidence,

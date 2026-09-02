@@ -132,6 +132,10 @@ TASK_SEND_FINALIZED_SCHEMA = "tos.agent-account.task-send-finalized.v1"
 TASK_SEND_PROCESS_VIEW_SCOPE = (
     "distinct RPC process views; no independent-operator or Byzantine-finality claim"
 )
+TASK_SEND_BLOCK_REFERENCE_SCOPE = (
+    "RPC-asserted transaction and block identifiers; "
+    "no inclusion proof was verified"
+)
 SIDECAR_NETWORK = "tos:local-accelerated-nominator-pool-sidecar"
 SIDECAR_EVIDENCE_CLASS = "IDENTITY_BOUND_SIMULATION"
 INTEGRATED_OPERATOR_ACTION_LIMIT = (
@@ -1222,6 +1226,10 @@ def task_send_resolution_mismatches(
     check(
         "process_view_scope",
         resolution.get("process_view_scope") == TASK_SEND_PROCESS_VIEW_SCOPE,
+    )
+    check(
+        "block_reference_scope",
+        resolution.get("block_reference_scope") == TASK_SEND_BLOCK_REFERENCE_SCOPE,
     )
     check(
         "independent_operator_domains_proven",
