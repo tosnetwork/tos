@@ -118,6 +118,33 @@ contract("WrappedTOS", ([oracle1, not_oracle, user, user2, user3, oracle2, oracl
       let finalBalance = await token.balanceOf(user);
       (initialBalance-finalBalance).toString().should.be.equal("1100");
     });
+
+    it("burn rejects out-of-range amounts and zero destinations", async () => {
+      // Burn stays enabled from the previous vote. The TOS-side release
+      // reads the amount as uint64 and a zero destination hash is
+      // unspendable there, so all of these must revert without burning.
+      const zeroHash = "0x" + "00".repeat(32);
+      const goodAddr = {workchain: utils.TOS_WORKCHAIN, address_hash: utils.TOS_ADDRESS_HASH};
+      let before = await token.balanceOf(user);
+
+      await token.burn("0", goodAddr, { from: user }).should.be.rejected;
+      await token.burn("18446744073709551616", goodAddr, { from: user }).should.be.rejected; // 2^64
+      await token.burn("1000", {workchain: utils.TOS_WORKCHAIN, address_hash: zeroHash}, { from: user }).should.be.rejected;
+
+      await token.approve(user2, "1000", { from: user });
+      await token.burnFrom(user, "0", goodAddr, { from: user2 }).should.be.rejected;
+      await token.burnFrom(user, "18446744073709551616", goodAddr, { from: user2 }).should.be.rejected;
+      await token.burnFrom(user, "500", {workchain: utils.TOS_WORKCHAIN, address_hash: zeroHash}, { from: user2 }).should.be.rejected;
+
+      let after = await token.balanceOf(user);
+      after.toString().should.be.equal(before.toString(), "rejected burns must not move tokens");
+
+      // The boundary and a normal destination still work.
+      await token.burn("100", goodAddr, { from: user }).should.be.fulfilled;
+      await token.burnFrom(user, "500", goodAddr, { from: user2 }).should.be.fulfilled;
+      let final = await token.balanceOf(user);
+      (before - final).toString().should.be.equal("600");
+    });
   });
 
 });
