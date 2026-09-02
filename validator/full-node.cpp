@@ -287,8 +287,14 @@ void FullNodeImpl::on_new_masterchain_block(td::Ref<MasterchainState> state, std
 void FullNodeImpl::update_shard_actor(ShardIdFull shard, bool active, bool enable_plumtree_broadcast) {
   ShardInfo &info = shards_[shard];
   if (info.actor.empty()) {
+    if (info.local_id.is_zero()) {
+      auto private_key = tos::PrivateKey{tos::privkeys::Ed25519::random()};
+      info.local_id = private_key.compute_short_id();
+      td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(private_key), true,
+                              [](td::Result<>) {});
+    }
     info.actor =
-        FullNodeShard::create(shard, local_id_, adnl_id_, zero_state_file_hash_, opts_, limiter_, keyring_, adnl_,
+        FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_, keyring_, adnl_,
                               rldp2_, quic_, overlays_, validator_manager_, client_, actor_id(this), active,
                               enable_plumtree_broadcast);
     if (!all_validators_.empty()) {
@@ -717,16 +723,6 @@ void FullNodeImpl::update_validator_telemetry_collector() {
 
 void FullNodeImpl::start_up() {
   update_shard_actor(ShardIdFull{masterchainId}, true, false);
-  if (local_id_.is_zero()) {
-    if (adnl_id_.is_zero()) {
-      auto pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};
-      local_id_ = pk.compute_short_id();
-
-      td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(pk), true, [](td::Result<>) {});
-    } else {
-      local_id_ = adnl_id_.pubkey_hash();
-    }
-  }
   class Callback : public ValidatorManagerInterface::Callback {
    public:
     void initial_read_complete(BlockHandle handle) override {
@@ -932,16 +928,15 @@ void FullNodeImpl::send_shard_block_info_to_custom_overlays(BlockIdExt block_id,
   }
 }
 
-FullNodeImpl::FullNodeImpl(PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-                           FullNodeOptions opts, td::actor::ActorId<keyring::Keyring> keyring,
-                           td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp::Rldp>,
-                           td::actor::ActorId<rldp2::Rldp> rldp2, td::actor::ActorId<quic::QuicSender> quic,
-                           td::actor::ActorId<dht::Dht> dht, td::actor::ActorId<overlay::Overlays> overlays,
+FullNodeImpl::FullNodeImpl(adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
+                           td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
+                           td::actor::ActorId<rldp::Rldp>, td::actor::ActorId<rldp2::Rldp> rldp2,
+                           td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<dht::Dht> dht,
+                           td::actor::ActorId<overlay::Overlays> overlays,
                            td::actor::ActorId<ValidatorManagerInterface> validator_manager,
                            td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root,
                            td::Promise<td::Unit> started_promise)
-    : local_id_(local_id)
-    , adnl_id_(adnl_id)
+    : adnl_id_(adnl_id)
     , zero_state_file_hash_(zero_state_file_hash)
     , keyring_(keyring)
     , adnl_(adnl)
@@ -958,14 +953,14 @@ FullNodeImpl::FullNodeImpl(PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id
 }
 
 td::actor::ActorOwn<FullNode> FullNode::create(
-    tos::PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
+    adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
     td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<dht::Dht> dht,
     td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<ValidatorManagerInterface> validator_manager,
     td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root, td::Promise<td::Unit> started_promise) {
-  return td::actor::create_actor<FullNodeImpl>("fullnode", local_id, adnl_id, zero_state_file_hash, opts, keyring, adnl,
-                                               rldp, rldp2, quic, dht, overlays, validator_manager, client, db_root,
+  return td::actor::create_actor<FullNodeImpl>("fullnode", adnl_id, zero_state_file_hash, opts, keyring, adnl, rldp,
+                                               rldp2, quic, dht, overlays, validator_manager, client, db_root,
                                                std::move(started_promise));
 }
 
