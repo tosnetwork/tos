@@ -3006,18 +3006,23 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   auto adnl_id = adnl::AdnlNodeIdShort{
       descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
   auto new_consensus_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-  if (new_consensus_config) {
-    auto config = new_consensus_config.value();
-    return IValidatorGroup::create_bridge(
-        PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
-        keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
-        actor_id(this), get_collation_manager(adnl_id), init_session,
-        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-        opts_->need_monitor(shard, last_masterchain_state_));
+  if (!new_consensus_config) {
+    // Fail closed. A missing or unrecognized consensus config (absent
+    // parameter, unpack failure, reserved flag bits from a newer protocol
+    // version) must stop this node from validating the shard, not silently
+    // select a different consensus implementation: nodes that do understand
+    // the config would run the new protocol while this one runs another,
+    // splitting the network between binary versions. Refusing to sign keeps
+    // the node a safe full node until it is upgraded or the config is fixed.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": consensus config is missing or not recognized by this version; validation for this shard is "
+                  "disabled until the node is upgraded or the config is fixed";
+    return {};
   }
-  return IValidatorGroup::create_catchain(
-      PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, opts,
-      keyring_, adnl_, opts.use_quic ? td::actor::ActorId<adnl::AdnlSenderEx>{quic_} : rldp2_, overlays_, db_root_,
+  auto config = new_consensus_config.value();
+  return IValidatorGroup::create_bridge(
+      PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
+      keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
       actor_id(this), get_collation_manager(adnl_id), init_session,
       opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
       opts_->need_monitor(shard, last_masterchain_state_));
