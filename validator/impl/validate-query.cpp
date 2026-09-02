@@ -2507,6 +2507,16 @@ bool ValidateQuery::check_utime_lt() {
                                     << now_ms_.value());
     }
   }
+  // Wall-clock bound on gen_utime. This is intentionally a LOCAL predicate,
+  // which makes this one rejection non-deterministic across validators; that
+  // is acceptable because a rejection here only withholds this validator's
+  // vote and files a report — finality still propagates through certificates,
+  // which rejecters follow without re-running this check, so no fork can
+  // result. The bound is load-bearing: an accepted future-dated candidate is
+  // parked in a sleeping wait until ok_from_utime, and without a cap a
+  // malicious leader could pin unbounded fully-validated candidates in such
+  // waits. Because the verdict depends on the local clock, a rejection for
+  // this reason must never be usable as slashing evidence.
   if (now_ > (UnixTime)td::Clocks::system() + 30) {
     return reject_query(PSTRING() << "gen_utime " << now_ << " is too far in the future");
   }
