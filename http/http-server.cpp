@@ -64,7 +64,8 @@ void HttpServer::accepted(td::SocketFd fd) {
     return;
   }
   td::actor::create_actor<HttpInboundConnection>(td::actor::ActorOptions().with_name("inhttpconn").with_poll(),
-                                                 std::move(fd), callback_, metrics_, limits_.request_header_timeout)
+                                                 std::move(fd), callback_, metrics_, limits_.request_header_timeout,
+                                                 limits_.request_body_timeout)
       .release();
 }
 

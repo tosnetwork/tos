@@ -250,6 +250,7 @@ TEST(HttpServerLimits, request_header_deadline_closes_silent_and_partial_connect
   tos::http::HttpServer::Limits limits;
   limits.max_connections = 0;
   limits.request_header_timeout = 0.3;
+  limits.request_body_timeout = 0.4;
   with_server(limits, [](int port) {
     Client silent(port);
     ASSERT_TRUE(silent.connect_with_retries());

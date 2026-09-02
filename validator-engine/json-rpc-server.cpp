@@ -282,6 +282,7 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   http::HttpServer::Limits limits;
   limits.max_connections = opts_.max_connections;
   limits.request_header_timeout = opts_.request_header_timeout;
+  limits.request_body_timeout = opts_.request_body_timeout;
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
   LOG(WARNING) << "JSON-RPC server listening on " << addr;

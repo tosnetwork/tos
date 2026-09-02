@@ -148,6 +148,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
     double request_header_timeout = 30.0;  // seconds to deliver request headers (0 = no deadline)
+    double request_body_timeout = 120.0;   // seconds to deliver a declared request body
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;

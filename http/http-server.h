@@ -52,6 +52,12 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // and headers (from accept, and again after each response) before it
     // is closed. 0 disables the deadline.
     double request_header_timeout = 30.0;
+    // Seconds a client has to deliver a declared request body once the
+    // headers are complete. Larger than the header window so a legitimate
+    // slow uploader is not cut off, yet bounded so a withheld body cannot
+    // pin the connection. 0 falls back to the header deadline. Only applies
+    // while the header deadline machinery is enabled.
+    double request_body_timeout = 120.0;
   };
 
   HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);

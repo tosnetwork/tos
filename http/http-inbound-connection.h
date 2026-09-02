@@ -33,11 +33,13 @@ namespace http {
 class HttpInboundConnection : public HttpConnection {
  public:
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
-                        HttpServer::AllMetrics metrics, double request_header_timeout = 0)
+                        HttpServer::AllMetrics metrics, double request_header_timeout = 0,
+                        double request_body_timeout = 0)
       : HttpConnection(std::move(fd), nullptr, false)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
-      , request_header_timeout_(request_header_timeout) {
+      , request_header_timeout_(request_header_timeout)
+      , request_body_timeout_(request_body_timeout) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -165,6 +167,22 @@ class HttpInboundConnection : public HttpConnection {
     alarm_timestamp() = request_header_deadline_;
   }
 
+ public:
+  // Called when the headers of a request completed and a definite-end body
+  // is about to be read: the body gets its own, typically longer, window so
+  // a legitimate slow uploader is not held to the header deadline while a
+  // withheld body still cannot pin the connection.
+  void arm_request_body_deadline() {
+    if (request_header_timeout_ <= 0) {
+      return;
+    }
+    double timeout = request_body_timeout_ > 0 ? request_body_timeout_ : request_header_timeout_;
+    request_header_deadline_ = td::Timestamp::in(timeout);
+    alarm_timestamp() = request_header_deadline_;
+  }
+
+ private:
+
   bool read_next_request_ = true;
 
   std::shared_ptr<HttpServer::Callback> http_callback_;
@@ -178,6 +196,7 @@ class HttpInboundConnection : public HttpConnection {
 
   HttpServer::AllMetrics metrics_;
   double request_header_timeout_ = 0;
+  double request_body_timeout_ = 0;
   td::Timestamp request_header_deadline_;
 };
 

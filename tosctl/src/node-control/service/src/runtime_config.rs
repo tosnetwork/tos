@@ -354,6 +354,15 @@ impl RuntimeConfigStore {
     /// which is fsynced and then renamed over the target, so a crash mid-write
     /// leaves either the old or the new content, never a truncated mix.
     pub fn save_to_file(&self) {
+        // One save at a time, and the lock covers the snapshot as well as
+        // the write and the hash update: with a narrower lock, a save that
+        // snapshotted an older configuration could overwrite a newer file
+        // and then stamp the stale content as current. The temporary-file
+        // name in write_private_atomic is also per-process, so unserialized
+        // saves would clobber each other's in-flight file.
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let path = Path::new(&self.config_path);
         let config = self.get();
         let json = match serde_json::to_string_pretty(&*config) {
@@ -383,12 +392,6 @@ impl RuntimeConfigStore {
     fn write_private_atomic(path: &Path, data: &[u8]) -> anyhow::Result<()> {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-        // The temporary name below is per-process, so two concurrent saves
-        // in this process would delete or rename each other's in-flight
-        // file. Saves are rare; serialize them.
-        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = SAVE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let dir = match path.parent() {
             Some(p) if !p.as_os_str().is_empty() => p,

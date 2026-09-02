@@ -113,6 +113,7 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   // as the request headers left the connection open waiting for
   // more bytes — the round-154 receive_payload propagation only
   // covered the second-and-subsequent reads.
+  arm_request_body_deadline();
   return read_payload(std::move(payload));
 }
 
