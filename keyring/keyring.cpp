@@ -194,8 +194,14 @@ void KeyringImpl::add_key_short(PublicKeyHash key_hash, td::Promise<PublicKey> p
 }
 
 void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) {
-  map_.erase(key_hash);
-  if (db_root_.size() == 0) {
+  auto it = map_.find(key_hash);
+  bool is_temp = it != map_.end() && it->second->is_temp;
+  if (it != map_.end()) {
+    map_.erase(it);
+  }
+  // A temporary key was never written to disk; wiping a file for it would
+  // create and destroy one, and turn a read-only key directory into an abort.
+  if (db_root_.size() == 0 || is_temp) {
     return promise.set_value(td::Unit());
   }
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
