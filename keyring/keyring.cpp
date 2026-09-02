@@ -195,21 +195,18 @@ void KeyringImpl::add_key_short(PublicKeyHash key_hash, td::Promise<PublicKey> p
 }
 
 void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) {
-  auto it = map_.find(key_hash);
-  bool is_temp = it != map_.end() && it->second->is_temp;
-  if (it != map_.end()) {
-    map_.erase(it);
-  }
-  // A temporary key was never written to disk; wiping a file for it would
-  // create and destroy one, and turn a read-only key directory into an abort.
-  if (db_root_.size() == 0 || is_temp) {
+  map_.erase(key_hash);
+  if (db_root_.size() == 0) {
     return promise.set_value(td::Unit());
   }
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
-  // A key that was already deleted (or was temporary and is no longer in the
-  // map) has nothing on disk to wipe. Only genuine absence counts: any other
-  // stat failure falls through to the wipe, whose own failure stops the
-  // process rather than reporting a deletion that left the file behind.
+  // The disk is the authority on what needs wiping: a temporary key, an
+  // already-deleted key, or a key that was never stored has no file, and
+  // wiping one anyway would create and destroy it — and turn a read-only key
+  // directory into an abort. Only genuine absence counts: any other stat
+  // failure falls through to the wipe, whose own failure stops the process
+  // rather than reporting a deletion that left the file behind. This also
+  // wipes the persisted file of a key later re-added as temporary.
   auto stat_result = td::stat(name);
   if (stat_result.is_error() &&
       (stat_result.error().code() == ENOENT || stat_result.error().code() == ENOTDIR)) {
