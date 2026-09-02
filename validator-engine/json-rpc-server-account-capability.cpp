@@ -411,19 +411,7 @@ static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddr
                     td::Status::Error(PSTRING() << "runSmcMethod exit_code=" << f->exit_code_));
                 return;
               }
-              auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-              if (cell_r.is_error()) {
-                promise_inner.set_error(td::Status::Error("result BOC parse error"));
-                return;
-              }
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (!stk.write().deserialize(cs)) {
-                promise_inner.set_error(td::Status::Error("result stack deserialize error"));
-                return;
-              }
-              promise_inner.set_value(std::move(stk));
+              promise_inner.set_result(parse_get_method_result_stack(f->result_.as_slice()));
             }));
   };
 
@@ -469,15 +457,15 @@ static void fetch_multisig_agent_view(SendQueryFn&& send_query, const AccountCap
               return;
             }
             auto dict_root = public_keys_stack.write().pop_cell();
-            vm::Dictionary dict(std::move(dict_root), 8);
-
+            // The dictionary comes from whatever data the account holds;
+            // anyone can deploy the multisig code with arbitrary data.
+            auto principals_r = parse_multisig_public_keys(std::move(dict_root));
+            if (principals_r.is_error()) {
+              promise.set_error(principals_r.move_as_error_prefix("get_public_keys returned invalid dictionary: "));
+              return;
+            }
             MultisigAgentView view;
-            dict.check_for_each([&](auto cs, auto, auto) {
-              td::SecureString key(32);
-              cs->prefetch_bytes(key.as_mutable_slice().ubegin(), td::narrow_cast<int>(key.size()));
-              view.principals.push_back(PSTRING() << "ed25519:" << td::hex_encode(key.as_slice()));
-              return true;
-            });
+            view.principals = principals_r.move_as_ok();
 
             run_get_method_latest(
                 send_query, addr, "get_n_k",
@@ -569,16 +557,11 @@ template <class SendQueryFn>
 static void fetch_restricted_delegation_view_with_start(SendQueryFn&& send_query,
                                                         const AccountCapabilityContext& ctx,
                                                         td::Promise<RestrictedDelegationView> promise) {
-  // Parse start_at from the data cell: seqno(32) + subwallet_id(32) + public_key(256) + start_at(32)
-  td::uint32 start_at = 0;
-  if (ctx.parsed.data_cell.not_null()) {
-    auto cs = vm::load_cell_slice(ctx.parsed.data_cell);
-    // Skip seqno(32) + subwallet_id(32) + public_key(256) = 320 bits, then read start_at(32)
-    if (cs.have(352)) {
-      cs.advance(320);
-      start_at = static_cast<td::uint32>(cs.fetch_ulong(32));
-    }
-  }
+  // Parse start_at from the data cell: seqno(32) + subwallet_id(32) + public_key(256) + start_at(32).
+  // The data cell is attacker-controlled (the code hash alone selected this
+  // account model), so the parse must not throw on an exotic root.
+  auto start_at_r = parse_restricted_wallet_start_at(ctx.parsed.data_cell);
+  td::uint32 start_at = start_at_r.is_ok() ? start_at_r.move_as_ok() : 0;
 
   fetch_restricted_delegation_view(
       std::forward<SendQueryFn>(send_query), ctx,
@@ -2212,12 +2195,10 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
           if (rr.is_ok()) {
             auto rr_val = rr.move_as_ok();
             if (rr_val->exit_code_ == 0 && !rr_val->result_.empty()) {
-              auto cell = vm::std_boc_deserialize(rr_val->result_.as_slice());
-              if (cell.is_ok()) {
-                auto stk = td::make_ref<vm::Stack>();
-                auto result_cell = cell.move_as_ok();
-                vm::CellSlice cs = vm::load_cell_slice(result_cell);
-                if (stk.write().deserialize(cs) && stk->depth() > 0 && stk->at(0).is_int()) {
+              auto stk_r = parse_get_method_result_stack(rr_val->result_.as_slice());
+              if (stk_r.is_ok()) {
+                auto stk = stk_r.move_as_ok();
+                if (stk->depth() > 0 && stk->at(0).is_int()) {
                   seqno = static_cast<td::int32>(stk->at(0).as_int()->to_long());
                 }
               }

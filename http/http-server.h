@@ -41,10 +41,29 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
         td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) = 0;
   };
 
-  HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback);
+  // Limits applied to every inbound connection, so that a client which
+  // opens many sockets or trickles request headers cannot pin file
+  // descriptors and connection actors in the serving process indefinitely.
+  struct Limits {
+    // Maximum number of simultaneously open inbound connections; further
+    // accepted sockets are closed immediately. 0 means unlimited.
+    size_t max_connections = 0;
+    // Seconds a connection may spend waiting for a complete request line
+    // and headers (from accept, and again after each response) before it
+    // is closed. 0 disables the deadline.
+    double request_header_timeout = 30.0;
+  };
 
+  HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);
+  HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback)
+      : HttpServer(address, std::move(callback), Limits()) {
+  }
+
+  HttpServer(td::uint16 port, std::shared_ptr<Callback> callback, Limits limits)
+      : HttpServer(make_any_address(port), std::move(callback), limits) {
+  }
   HttpServer(td::uint16 port, std::shared_ptr<Callback> callback)
-      : HttpServer(make_any_address(port), std::move(callback)) {
+      : HttpServer(make_any_address(port), std::move(callback), Limits()) {
   }
 
   void start_up() override;
@@ -52,6 +71,10 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
 
   static td::actor::ActorOwn<HttpServer> create(td::uint16 port, std::shared_ptr<Callback> callback) {
     return td::actor::create_actor<HttpServer>("httpserver", port, std::move(callback));
+  }
+  static td::actor::ActorOwn<HttpServer> create(td::uint16 port, std::shared_ptr<Callback> callback,
+                                                Limits limits) {
+    return td::actor::create_actor<HttpServer>("httpserver", port, std::move(callback), limits);
   }
 
   struct AllMetrics {
@@ -69,6 +92,7 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
  private:
   td::IPAddress address_;
   std::shared_ptr<Callback> callback_;
+  Limits limits_;
 
   td::actor::ActorOwn<td::TcpInfiniteListener> listener_;
 

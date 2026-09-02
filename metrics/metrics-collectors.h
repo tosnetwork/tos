@@ -118,6 +118,9 @@ class AtomicGauge : public Instrument<AtomicGauge<ValueType>> {
   void set(ValueType value);
   void add(ValueType value);
   void sub(ValueType value);
+  ValueType get() const {
+    return value_.load(std::memory_order_relaxed);
+  }
 
  private:
   const std::string name_;

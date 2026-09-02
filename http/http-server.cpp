@@ -24,8 +24,8 @@ namespace tos {
 
 namespace http {
 
-HttpServer::HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback)
-    : address_(address), callback_(std::move(callback)) {
+HttpServer::HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits)
+    : address_(address), callback_(std::move(callback)), limits_(limits) {
   add_collector(collector_.get());
 }
 
@@ -54,24 +54,17 @@ void HttpServer::start_up() {
 }
 
 void HttpServer::accepted(td::SocketFd fd) {
-  // Round 153 HIGH (deferred): no connection cap or header read
-  // deadline.  An attacker can connect, send headers slowly (or
-  // a never-terminated header block within max_one_header_size
-  // per line), and pin a connection / actor indefinitely.  The
-  // round-152 Content-Length gate handles oversize bodies but
-  // not slow-start / never-finishing headers (slow loris).
-  // Closing this requires (a) a max-concurrent-connections cap
-  // here, (b) a deadline timer on the inbound connection that
-  // expires if the request line + headers don't complete within
-  // a few seconds.  Both are larger surgical changes than the
-  // single-line gates added in round 152; tracked as a
-  // dedicated follow-up.  Mitigating context: nodes typically
-  // sit behind operator-deployed reverse proxies (nginx /
-  // envoy) that already enforce these limits at the edge, so
-  // the exposure boundary is "directly-internet-exposed
-  // validator-engine without a proxy".
+  // The connection gauge counts live HttpInboundConnection actors; refusing
+  // the socket here (it is closed when `fd` goes out of scope) keeps a
+  // client that opens sockets and never speaks from exhausting descriptors
+  // and connection actors. Slow or silent headers on accepted connections
+  // are bounded by the per-connection request-header deadline.
+  if (limits_.max_connections != 0 && metrics_.connections->get() >= limits_.max_connections) {
+    LOG(WARNING) << "HTTP connection limit of " << limits_.max_connections << " reached, refusing new connection";
+    return;
+  }
   td::actor::create_actor<HttpInboundConnection>(td::actor::ActorOptions().with_name("inhttpconn").with_poll(),
-                                                 std::move(fd), callback_, metrics_)
+                                                 std::move(fd), callback_, metrics_, limits_.request_header_timeout)
       .release();
 }
 

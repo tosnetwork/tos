@@ -182,6 +182,7 @@ class VmState final : public VmStateInterface {
   }
   VmState(const VmState&) = delete;
   VmState(VmState&&) = default;
+  ~VmState() override;
   VmState& operator=(const VmState&) = delete;
   VmState& operator=(VmState&&) = default;
   bool set_gas_limits(long long _max, long long _limit, long long _credit = 0);

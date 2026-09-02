@@ -221,12 +221,10 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             if (F.is_ok()) {
               auto f = F.move_as_ok();
               if (f->exit_code_ == 0 && !f->result_.empty()) {
-                auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-                if (cell_r.is_ok()) {
-                  auto stk = td::make_ref<vm::Stack>();
-                  auto result_cell = cell_r.move_as_ok();
-                  vm::CellSlice cs = vm::load_cell_slice(result_cell);
-                  if (stk.write().deserialize(cs) && stk->depth() >= 5) {
+                auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
+                if (stk_r.is_ok()) {
+                  auto stk = stk_r.move_as_ok();
+                  if (stk->depth() >= 5) {
                     auto& wallet_code_e = stk->at(0);
                     auto& content_e = stk->at(1);
                     auto& admin_addr_e = stk->at(2);
@@ -322,20 +320,13 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                       "Smart contract is not a Jetton or NFT", req_id));
                   return;
                 }
-                auto cell_r = vm::std_boc_deserialize(f3->result_.as_slice());
-                if (cell_r.is_error()) {
+                auto stk_r = parse_get_method_result_stack(f3->result_.as_slice());
+                if (stk_r.is_error() || stk_r.ok()->depth() < 3) {
                   promise.set_value(make_json_error(409,
                       "Smart contract is not a Jetton or NFT", req_id));
                   return;
                 }
-                auto stk = td::make_ref<vm::Stack>();
-                auto result_cell = cell_r.move_as_ok();
-                vm::CellSlice cs = vm::load_cell_slice(result_cell);
-                if (!stk.write().deserialize(cs) || stk->depth() < 3) {
-                  promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id));
-                  return;
-                }
+                auto stk = stk_r.move_as_ok();
 
                 auto& owner_e = stk->at(0);
                 auto& content_e = stk->at(1);
@@ -377,18 +368,12 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
               return;
             }
 
-            auto cell_r = vm::std_boc_deserialize(f2->result_.as_slice());
-            if (cell_r.is_error()) {
+            auto stk_r = parse_get_method_result_stack(f2->result_.as_slice());
+            if (stk_r.is_error() || stk_r.ok()->depth() < 5) {
               try_collection(std::move(req_id), std::move(promise));
               return;
             }
-            auto stk = td::make_ref<vm::Stack>();
-            auto result_cell = cell_r.move_as_ok();
-            vm::CellSlice cs = vm::load_cell_slice(result_cell);
-            if (!stk.write().deserialize(cs) || stk->depth() < 5) {
-              try_collection(std::move(req_id), std::move(promise));
-              return;
-            }
+            auto stk = stk_r.move_as_ok();
 
             auto& content_e = stk->at(0);
             auto& owner_e = stk->at(1);

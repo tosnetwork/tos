@@ -365,12 +365,10 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           // Parse result stack
           std::string stack_json = "[]";
           if (!f->result_.empty()) {
-            auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-            if (cell_r.is_ok()) {
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (stk.write().deserialize(cs)) {
+            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
+            if (stk_r.is_ok()) {
+              auto stk = stk_r.move_as_ok();
+              {
                 // Convert stack to JSON array of ["type", value] entries
                 td::StringBuilder sb;
                 sb << "[";
@@ -640,12 +638,10 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
           // Parse result stack into standardized typed format
           std::string stack_json = "[]";
           if (!f->result_.empty()) {
-            auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-            if (cell_r.is_ok()) {
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (stk.write().deserialize(cs)) {
+            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
+            if (stk_r.is_ok()) {
+              auto stk = stk_r.move_as_ok();
+              {
                 // Convert stack to standardized TVM stack entries
                 td::StringBuilder sb;
                 sb << "[";

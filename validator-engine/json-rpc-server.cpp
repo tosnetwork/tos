@@ -279,8 +279,11 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       break;
   }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
+  http::HttpServer::Limits limits;
+  limits.max_connections = opts_.max_connections;
+  limits.request_header_timeout = opts_.request_header_timeout;
   http_ = td::actor::create_actor<http::HttpServer>(
-      PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
+      PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
   if (!is_loopback && opts_.cors_origin == "*" && !opts_.readonly) {
@@ -1271,6 +1274,38 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
 
 void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
                                           td::Promise<td::BufferSlice> promise) {
+  // Innermost layer: translate liteserver errors and run the handler's
+  // continuation. The continuation parses data that ultimately comes from
+  // the chain (account data, get-method results, proofs), and the cell and
+  // stack loaders throw vm::VmError / vm::VmVirtError on malformed or
+  // exotic cells. Actor event loops do not catch exceptions, so an escaping
+  // one would terminate the validator process. Catch here so a hostile
+  // contract can only fail its own request: the continuation's response
+  // promise is destroyed unfulfilled, which surfaces as an HTTP error.
+  promise = td::PromiseCreator::lambda(
+      [promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+        try {
+          if (result.is_error()) {
+            promise.set_error(result.move_as_error());
+            return;
+          }
+          auto data = result.move_as_ok();
+          auto err_r = tos::fetch_tl_object<tos::lite_api::liteServer_error>(data.clone(), true);
+          if (err_r.is_ok()) {
+            auto err = err_r.move_as_ok();
+            promise.set_error(td::Status::Error(err->code_, err->message_));
+            return;
+          }
+          promise.set_value(std::move(data));
+        } catch (vm::VmError& err) {
+          LOG(WARNING) << "json-rpc: handler raised VM error while processing liteserver reply: " << err.get_msg();
+        } catch (vm::VmVirtError& err) {
+          LOG(WARNING) << "json-rpc: handler raised VM virtualization error while processing liteserver reply: "
+                       << err.get_msg();
+        } catch (std::exception& err) {
+          LOG(WARNING) << "json-rpc: handler raised exception while processing liteserver reply: " << err.what();
+        }
+      });
   if (opts_.request_timeout > 0) {
     auto guard = td::actor::create_actor<QueryTimeoutGuard>(
         "rpc-timeout", std::move(promise), opts_.request_timeout);
@@ -1282,21 +1317,6 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
           td::actor::send_closure(guard_id, &QueryTimeoutGuard::deliver, std::move(result));
         });
   }
-  promise = td::PromiseCreator::lambda(
-      [promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
-        if (result.is_error()) {
-          promise.set_error(result.move_as_error());
-          return;
-        }
-        auto data = result.move_as_ok();
-        auto err_r = tos::fetch_tl_object<tos::lite_api::liteServer_error>(data.clone(), true);
-        if (err_r.is_ok()) {
-          auto err = err_r.move_as_ok();
-          promise.set_error(td::Status::Error(err->code_, err->message_));
-          return;
-        }
-        promise.set_value(std::move(data));
-      });
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
                           std::move(query), std::move(promise));

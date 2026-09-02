@@ -420,6 +420,13 @@ void GasLimits::change_limit(long long _limit) {
   change_base(_limit);
 }
 
+VmState::~VmState() {
+  // Remove parent states one-by-one to avoid recursive destructor calls
+  while (parent) {
+    parent = std::move(parent->state.parent);
+  }
+}
+
 bool VmState::set_gas_limits(long long _max, long long _limit, long long _credit) {
   gas.set_limits(_max, _limit, _credit);
   return true;

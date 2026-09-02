@@ -716,6 +716,13 @@ bool valid_library_collection(Ref<vm::Cell> cell, bool catch_errors = true);
 bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool catch_errors = true,
                        bool relax_par0 = false, Ref<vm::Cell> old_mparams = {});
 bool config_params_present(vm::Dictionary& dict, Ref<vm::Cell> param_dict_root);
+// Checks the rules that constrain how a configuration may change from one
+// key block to the next (currently: workchain execution descriptors in
+// ConfigParam 12 cannot change their execution key, version, vm_mode,
+// address-length shape, or zerostate hashes, and cannot disappear).
+// Both the collator and the validator must consult this predicate so that a
+// block producer never installs a configuration that every validator rejects.
+td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new_cfg_root);
 
 bool add_extra_currency(Ref<vm::Cell> extra1, Ref<vm::Cell> extra2, Ref<vm::Cell>& res);
 bool sub_extra_currency(Ref<vm::Cell> extra1, Ref<vm::Cell> extra2, Ref<vm::Cell>& res);

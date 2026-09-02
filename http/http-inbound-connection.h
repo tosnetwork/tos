@@ -23,6 +23,7 @@
 #include "http-server.h"
 #include "http.h"
 
+#include "td/utils/Time.h"
 #include "td/utils/port/IPAddress.h"
 
 namespace tos {
@@ -32,10 +33,11 @@ namespace http {
 class HttpInboundConnection : public HttpConnection {
  public:
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
-                        HttpServer::AllMetrics metrics)
+                        HttpServer::AllMetrics metrics, double request_header_timeout = 0)
       : HttpConnection(std::move(fd), nullptr, false)
       , http_callback_(std::move(http_callback))
-      , metrics_(std::move(metrics)) {
+      , metrics_(std::move(metrics))
+      , request_header_timeout_(request_header_timeout) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -57,6 +59,28 @@ class HttpInboundConnection : public HttpConnection {
 
   ~HttpInboundConnection() override {
     metrics_.connections->sub(1);
+  }
+
+  void start_up() override {
+    HttpConnection::start_up();
+    arm_request_header_deadline();
+  }
+
+  // A connection that has not delivered a complete request line and
+  // headers by the deadline is closed, so that a client trickling bytes
+  // (or sending nothing at all) cannot hold the connection open forever.
+  // Reading a request body and writing a response are not subject to it;
+  // those are bounded by the payload size caps.
+  void alarm() override {
+    if (request_header_timeout_ <= 0) {
+      return;
+    }
+    if (waiting_for_request_headers() && request_header_deadline_.is_in_past()) {
+      stop();
+      return;
+    }
+    alarm_timestamp() = waiting_for_request_headers() ? request_header_deadline_
+                                                      : td::Timestamp::in(request_header_timeout_);
   }
 
   td::Status receive_eof() override {
@@ -94,6 +118,7 @@ class HttpInboundConnection : public HttpConnection {
         stop();
         return;
       }
+      arm_request_header_deadline();
     }
   }
   void payload_read() override {
@@ -109,6 +134,19 @@ class HttpInboundConnection : public HttpConnection {
     return 1 << 14;
   }
 
+  bool waiting_for_request_headers() const {
+    return read_next_request_ && !reading_payload_ &&
+           (!cur_request_ || !cur_request_->check_parse_header_completed());
+  }
+
+  void arm_request_header_deadline() {
+    if (request_header_timeout_ <= 0) {
+      return;
+    }
+    request_header_deadline_ = td::Timestamp::in(request_header_timeout_);
+    alarm_timestamp() = request_header_deadline_;
+  }
+
   bool read_next_request_ = true;
 
   std::shared_ptr<HttpServer::Callback> http_callback_;
@@ -121,6 +159,8 @@ class HttpInboundConnection : public HttpConnection {
   std::string peer_ip_;
 
   HttpServer::AllMetrics metrics_;
+  double request_header_timeout_ = 0;
+  td::Timestamp request_header_deadline_;
 };
 
 }  // namespace http

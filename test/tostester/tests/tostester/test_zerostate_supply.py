@@ -12,6 +12,7 @@ from pytosiq_core.tlb.config import (
     ConfigParam0,
     ConfigParam2,
     ConfigParam4,
+    ConfigParam9,
     ConfigParam10,
     ConfigParam14,
     ConfigParam15,
@@ -274,6 +275,15 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     param10 = _config(state, 10, ConfigParam10)
     assert 3 in param10.critical_params
     assert 4 in param10.critical_params
+
+    # Every wallet contract compares the signed global_id against
+    # ConfigParam 19 and fails closed when it is absent, so no configuration
+    # without it may ever be installed (mandatory) and changing it must take
+    # a critical-proposal vote.
+    param9 = _config(state, 9, ConfigParam9)
+    assert 19 in param9.mandatory_params
+    assert 19 in param10.critical_params
+    assert 19 in state.custom.config.config
 
     param14 = _config(state, 14, ConfigParam14)
     assert param14.masterchain_block_fee == 569_879_384
@@ -553,6 +563,26 @@ def test_validator_rewards_are_the_only_native_tos_issuance_path(tmp_path):
     assert "if (s == 1 && curr_id)" in validator
     assert "value_flow_.minted != to_mint" in validator
     assert "native TOS may only be issued through validator block rewards" in validator
+
+
+def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
+    """GLOBALID (used by every wallet's anti-replay check) throws when ConfigParam 19
+    is absent, so the canonical genesis must forbid installing a configuration
+    without it and must require a critical vote to change it."""
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    (tmp_path / "validator-keys.pub").write_bytes(
+        b"".join(key.public_key.key for key in keys)
+    )
+    command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
+    subprocess.run(
+        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        env=_mainnet_genesis_env(),
+    )
+
+    state = _load_masterchain_state(tmp_path / "zerostate.boc")
+    assert 19 in state.custom.config.config
+    assert 19 in _config(state, 9, ConfigParam9).mandatory_params
+    assert 19 in _config(state, 10, ConfigParam10).critical_params
 
 
 def test_validator_key_helper_defaults_to_four_keys(tmp_path):
