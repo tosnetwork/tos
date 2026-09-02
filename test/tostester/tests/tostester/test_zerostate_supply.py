@@ -34,6 +34,7 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 NANOTOS_PER_TOS = 1_000_000_000
 EXPECTED_TOTAL_SUPPLY_TOS = 5_000_000_000
 EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS = 101_000
+EXPECTED_VALIDATOR_EXPERIMENT_FAUCET_TOS = 136_120
 EXPECTED_VALIDATOR_COUNT = 4
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
 EXPECTED_SIMPLEX_PROTOCOL_VERSION = 2
@@ -151,6 +152,16 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     zerostate = create_zerostate(install, stage_a_dir, config, keys)
     state = _load_masterchain_state(zerostate.masterchain.file)
 
+    assert (
+        state.total_balance.tomis
+        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    )
+    assert _positive_account_balances(state) == [
+        500 * NANOTOS_PER_TOS,
+        500 * NANOTOS_PER_TOS,
+        100_000 * NANOTOS_PER_TOS,
+    ]
+
     param15 = _config(state, 15, ConfigParam15)
     assert (
         param15.validators_elected_for,
@@ -181,6 +192,58 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
         catchain.shard_validators_lifetime,
         catchain.shard_validators_num,
     ) == (250, 250, 1000, 23)
+
+
+def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    experiment_balance = EXPECTED_VALIDATOR_EXPERIMENT_FAUCET_TOS * NANOTOS_PER_TOS
+
+    with pytest.raises(ValueError, match="requires the Stage A profile"):
+        create_zerostate(
+            install,
+            tmp_path / "not-stage-a",
+            NetworkConfig(
+                validator_economics_profile=True,
+                validator_election_experiment_faucet_balance_nanotos=(
+                    experiment_balance
+                ),
+            ),
+            keys,
+        )
+    with pytest.raises(ValueError, match="faucet balance must be positive"):
+        create_zerostate(
+            install,
+            tmp_path / "invalid-balance",
+            NetworkConfig(
+                validator_economics_profile=True,
+                validator_election_stage_a_profile=True,
+                validator_election_experiment_faucet_balance_nanotos=0,
+            ),
+            keys,
+        )
+
+    experiment_dir = tmp_path / "experiment"
+    experiment_dir.mkdir()
+    zerostate = create_zerostate(
+        install,
+        experiment_dir,
+        NetworkConfig(
+            shard_validators=EXPECTED_VALIDATOR_COUNT,
+            validator_economics_profile=True,
+            validator_election_stage_a_profile=True,
+            validator_election_experiment_faucet_balance_nanotos=experiment_balance,
+        ),
+        keys,
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+
+    assert state.total_balance.tomis == experiment_balance + 1_000 * NANOTOS_PER_TOS
+    assert _positive_account_balances(state) == [
+        500 * NANOTOS_PER_TOS,
+        500 * NANOTOS_PER_TOS,
+        experiment_balance,
+    ]
 
 
 def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):

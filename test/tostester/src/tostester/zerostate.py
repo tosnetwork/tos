@@ -9,6 +9,8 @@ from tosapi import tos_api
 from .install import Install, run_fift
 from .key import Key
 
+NANOTOS_PER_TOS = 1_000_000_000
+
 
 def _shard_json_repr(shard: int):
     if shard >= (1 << 63):
@@ -44,6 +46,10 @@ class NetworkConfig:
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
+    # TEST-ONLY: an accelerated validator-election application experiment may
+    # need a larger local faucet than the canonical 100,000-TOS validator
+    # bootstrap.  None preserves the canonical/default zerostate exactly.
+    validator_election_experiment_faucet_balance_nanotos: int | None = None
     # ConfigParam 4: masterchain account id of the .tos DNS root resolver.
     # None (default) leaves the parameter unset so resolvers fail closed; a
     # profile may pin the counterfactual address of a root deployed at runtime.
@@ -401,6 +407,22 @@ def create_zerostate(
         raise ValueError(
             "validator election Stage A profile requires validator economics profile"
         )
+    experiment_faucet_balance = (
+        config.validator_election_experiment_faucet_balance_nanotos
+    )
+    if experiment_faucet_balance is not None:
+        if not config.validator_election_stage_a_profile:
+            raise ValueError(
+                "validator election experiment faucet override requires the Stage A profile"
+            )
+        if (
+            isinstance(experiment_faucet_balance, bool)
+            or not isinstance(experiment_faucet_balance, int)
+            or experiment_faucet_balance <= 0
+        ):
+            raise ValueError(
+                "validator election experiment faucet balance must be positive integer nanotos"
+            )
     if config.validator_economics_profile and len(validator_keys) != 4:
         raise ValueError(
             "validator economics profile requires exactly four genesis validators"
@@ -450,6 +472,13 @@ def create_zerostate(
             # this profile to generate a production zerostate.
             profile["election_params"] = "300 180 60 180"
             profile["original_vset_valid_for"] = 600
+            if experiment_faucet_balance is not None:
+                profile["main_wallet_genesis_balance"] = str(
+                    experiment_faucet_balance
+                )
+                profile["expected_genesis_supply"] = str(
+                    experiment_faucet_balance + 1_000 * NANOTOS_PER_TOS
+                )
     else:
         profile = {
             "smc3_genesis_balance": "TM$1",
