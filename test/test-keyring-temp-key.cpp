@@ -69,6 +69,32 @@ int main() {
     LOG(FATAL) << "deleting a temporary key recreated the key directory path";
   }
 
+  // Deletion must actually remove the key, and deleting it again must be a
+  // harmless no-op rather than a filesystem wipe of a nonexistent file.
+  std::atomic<bool> checked{false};
+  std::atomic<bool> deleted_again{false};
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(keyring, &tos::keyring::Keyring::check_key, key_id,
+                            [&](td::Result<td::Unit> R) {
+                              LOG_CHECK(R.is_error()) << "a deleted temporary key still resolves";
+                              checked.store(true, std::memory_order_release);
+                            });
+    td::actor::send_closure(keyring, &tos::keyring::Keyring::del_key, key_id,
+                            [&](td::Result<td::Unit> R) {
+                              R.ensure();
+                              deleted_again.store(true, std::memory_order_release);
+                            });
+  });
+
+  deadline = td::Timestamp::in(10.0);
+  while (!checked.load(std::memory_order_acquire) || !deleted_again.load(std::memory_order_acquire)) {
+    scheduler.run(0.1);
+    LOG_CHECK(!deadline.is_in_past()) << "timed out re-checking the deleted key";
+  }
+  if (td::stat(db_root).is_ok()) {
+    LOG(FATAL) << "repeated deletion recreated the key directory path";
+  }
+
   scheduler.run_in_context([&] {
     keyring.reset();
     td::actor::SchedulerContext::get().stop();

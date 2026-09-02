@@ -23,6 +23,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 
 #include "keyring.hpp"
 
@@ -205,6 +206,11 @@ void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise)
     return promise.set_value(td::Unit());
   }
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
+  // Secure-wipe only a file that exists; a key that was already deleted (or
+  // was temporary and is no longer in the map) has nothing on disk to wipe.
+  if (td::stat(name).is_error()) {
+    return promise.set_value(td::Unit());
+  }
   td::BufferSlice d{256};
   td::Random::secure_bytes(d.as_slice());
   td::write_file(name, d.as_slice()).ensure();

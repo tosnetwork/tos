@@ -50,6 +50,7 @@ class AsyncStateSerializer : public td::actor::Actor {
   td::CancellationTokenSource cancellation_token_source_;
   BlockIdExt last_known_key_block_;
   UnixTime last_known_key_block_ts_ = 0;
+  td::Timestamp uninited_handle_escape_at_ = td::Timestamp::never();
 
   td::actor::ActorId<ValidatorManager> manager_;
 

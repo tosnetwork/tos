@@ -157,14 +157,30 @@ void AsyncStateSerializer::next_iteration() {
   }
   if (!masterchain_handle_->inited_unix_time() || !masterchain_handle_->inited_is_key_block() ||
       !masterchain_handle_->is_applied()) {
+    bool escape = false;
     if (last_known_key_block_.is_valid() && masterchain_handle_->inited_unix_time() &&
         masterchain_handle_->unix_time() + 86400 < last_known_key_block_ts_) {
+      escape = true;
+    } else if (last_known_key_block_.is_valid() && !masterchain_handle_->inited_unix_time() &&
+               last_known_key_block_.id.seqno > last_block_id_.id.seqno) {
+      // Without a chain timestamp there is nothing to age-gate against, so a
+      // handle for a block the database no longer knows would hold the
+      // serializer forever. Fall back to process time: escape after a full
+      // day of zero progress while a strictly newer key block is known.
+      if (!uninited_handle_escape_at_) {
+        uninited_handle_escape_at_ = td::Timestamp::in(86400.0);
+      } else if (uninited_handle_escape_at_.is_in_past()) {
+        escape = true;
+      }
+    }
+    if (escape) {
       LOG(ERROR) << "corrupted masterchain handle " << last_block_id_.id.to_str()
                  << ", advancing to last known key block " << last_known_key_block_.id.to_str();
       last_block_id_ = last_known_key_block_;
       have_masterchain_state_ = false;
       stored_persistent_state_description_ = false;
       masterchain_handle_ = nullptr;
+      uninited_handle_escape_at_ = td::Timestamp::never();
       saved_to_db_ = false;
       shards_.clear();
       next_idx_ = 0;
@@ -172,6 +188,7 @@ void AsyncStateSerializer::next_iteration() {
     }
     return;
   }
+  uninited_handle_escape_at_ = td::Timestamp::never();
   CHECK(masterchain_handle_->id() == last_block_id_);
   if (attempt_ < max_attempt() && last_key_block_id_.id.seqno < last_block_id_.id.seqno &&
       need_serialize(masterchain_handle_)) {
