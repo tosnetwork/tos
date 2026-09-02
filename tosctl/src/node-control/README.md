@@ -969,11 +969,14 @@ The HTTP server is configured in the `http` section of the config:
 ```json
 {
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",
     "enable_swagger": true
   }
 }
 ```
+
+To serve on a non-loopback address, `http.auth` must also be configured; the
+service refuses to start otherwise.
 
 ### OpenAPI / Swagger
 
@@ -1285,9 +1288,9 @@ Configuration is specified in JSON format.
     "api_key": "<OPTIONAL_API_KEY>" | null
   },
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",   // non-loopback binds require "auth"
     "enable_swagger": true,
-    "api_key": null
+    "auth": { ... }             // see the Security Guide
   },
   // optional
   "master_wallet": {
@@ -1451,7 +1454,7 @@ Logging configuration:
     "tick_interval": 40
   },
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",
     "enable_swagger": true
   },
   "master_wallet": {

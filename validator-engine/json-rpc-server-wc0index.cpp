@@ -77,7 +77,19 @@ std::string extract_text_comment(td::Ref<vm::CellSlice> body) {
     if (cs.size_refs() < 1) {
       return {};
     }
-    cs = vm::load_cell_slice(cs.prefetch_ref());
+    // The body comes from a finalized transaction's message, and a message
+    // body may legally reference an exotic cell; the bare loader would throw
+    // out of this synchronous handler and terminate the process. Treat an
+    // exotic ref as "no comment" instead.
+    bool special = false;
+    try {
+      cs = vm::load_cell_slice_special(cs.prefetch_ref(), special);
+    } catch (vm::VmError &) {
+      return {};
+    }
+    if (special) {
+      return {};
+    }
   }
   if (cs.size() < 32 || cs.fetch_ulong(32) != 0 || cs.size() % 8 != 0 || cs.size() > 8 * 1024) {
     return {};
