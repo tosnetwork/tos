@@ -206,9 +206,13 @@ void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise)
     return promise.set_value(td::Unit());
   }
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
-  // Secure-wipe only a file that exists; a key that was already deleted (or
-  // was temporary and is no longer in the map) has nothing on disk to wipe.
-  if (td::stat(name).is_error()) {
+  // A key that was already deleted (or was temporary and is no longer in the
+  // map) has nothing on disk to wipe. Only genuine absence counts: any other
+  // stat failure falls through to the wipe, whose own failure stops the
+  // process rather than reporting a deletion that left the file behind.
+  auto stat_result = td::stat(name);
+  if (stat_result.is_error() &&
+      (stat_result.error().code() == ENOENT || stat_result.error().code() == ENOTDIR)) {
     return promise.set_value(td::Unit());
   }
   td::BufferSlice d{256};
