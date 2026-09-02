@@ -49,12 +49,27 @@ async fn require_role_impl(
     next: Next,
     min_role: Role,
 ) -> Response {
-    // Check live config: when auth is not configured, pass through.
-    // This allows auth to be enabled/disabled at runtime via config reload.
+    // Check live config: when auth is not configured, pass through — but
+    // only where unauthenticated serving was acceptable at bind time
+    // (loopback, or the explorer-only router). The startup guard refuses a
+    // non-loopback bind without auth; if a later config reload removes the
+    // auth block while a public listener stays bound, requests must fail
+    // closed here rather than silently become unauthenticated.
     {
         let cfg = state.runtime_cfg.get();
         if cfg.http.auth.is_none() {
-            return next.run(req).await;
+            if state.unauthenticated_serving_allowed {
+                return next.run(req).await;
+            }
+            tracing::error!(
+                target: "auth",
+                event = "auth_removed_on_public_bind",
+                "http.auth was removed by a config reload while the listener is bound to a \
+                 non-loopback address; refusing unauthenticated requests"
+            );
+            return unauthorized_response(
+                "authentication is not configured on a non-loopback listener",
+            );
         }
     }
 

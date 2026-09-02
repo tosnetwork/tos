@@ -384,6 +384,12 @@ impl RuntimeConfigStore {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+        // The temporary name below is per-process, so two concurrent saves
+        // in this process would delete or rename each other's in-flight
+        // file. Saves are rare; serialize them.
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let dir = match path.parent() {
             Some(p) if !p.as_os_str().is_empty() => p,
             _ => Path::new("."),
@@ -808,6 +814,39 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&data).expect("saved config is JSON");
         assert_eq!(value["tick_interval"], 60);
 
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .map(|e| e.expect("dir entry").file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("config.json")]);
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_clobber_each_other() {
+        // The temporary name is per-process, so unserialized concurrent saves
+        // could unlink or rename each other's in-flight file. With the save
+        // lock, every interleaving leaves a valid, private target and no
+        // temporary residue.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        let store = std::sync::Arc::new(RuntimeConfigStore::from_app_config_at_path(
+            test_app_config(),
+            path.display().to_string(),
+        ));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..25 {
+                        store.save_to_file();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("saver thread");
+        }
+        assert_saved_config_is_private_and_valid(&path);
         let entries: Vec<_> = std::fs::read_dir(dir.path())
             .expect("read dir")
             .map(|e| e.expect("dir entry").file_name())

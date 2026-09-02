@@ -956,6 +956,7 @@ mod tests {
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
             indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            unauthenticated_serving_allowed: true,
         }
     }
 

@@ -154,6 +154,7 @@ async fn state_with_auth_and_proxies(trusted_proxies: Vec<std::net::IpAddr>) -> 
         user_store: Arc::new(UserStore::new(rt as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
         indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        unauthenticated_serving_allowed: true,
     }
 }
 
@@ -167,6 +168,7 @@ async fn state_no_auth() -> AppState {
         user_store: Arc::new(UserStore::new(rt.clone() as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
         indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        unauthenticated_serving_allowed: true,
     }
 }
 
@@ -658,6 +660,18 @@ async fn auth_disabled_operator_routes_open() {
     let body = StakePolicyRequest { policy: StakePolicy::Fixed(100), node: None };
     let resp = app(st).oneshot(post_json("/v1/stake_strategy", &body)).await.unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn auth_removed_by_reload_on_public_bind_fails_closed() {
+    // A config reload that drops http.auth while the listener is bound to a
+    // non-loopback address must not silently open the API: the middleware
+    // refuses requests instead of passing them through.
+    let mut st = state_no_auth().await;
+    st.unauthenticated_serving_allowed = false;
+    let body = StakePolicyRequest { policy: StakePolicy::Fixed(100), node: None };
+    let resp = app(st).oneshot(post_json("/v1/stake_strategy", &body)).await.unwrap();
+    assert_eq!(resp.status(), 401);
 }
 
 #[tokio::test]

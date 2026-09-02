@@ -247,11 +247,13 @@ impl ClientJsonRpc {
     }
 
     /// Reads the network identity (ConfigParam 19) that wallet contracts
-    /// bind into every signed message. A signer must obtain it from the
-    /// chain it is about to write to; a value carried over from another
-    /// network produces messages that network rejects.
+    /// bind into every signed message. Signed writes go exclusively to the
+    /// primary endpoint, so the identity is read from the primary as well:
+    /// with a failover read, a misconfigured secondary on another network
+    /// could hand back its own id, and the signature would then be valid on
+    /// that other network instead of the one being written to.
     pub async fn get_global_id(&self) -> anyhow::Result<i32> {
-        match self.get_config_param(19).await? {
+        match self.get_primary_config_param(19).await? {
             ConfigParamEnum::ConfigParam19(value) => Ok(value as i32),
             other => anyhow::bail!("config parameter 19 is not a global ID: {other:?}"),
         }

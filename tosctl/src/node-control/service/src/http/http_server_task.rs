@@ -40,6 +40,13 @@ pub struct AppState {
     pub user_store: Arc<UserStore>,
     pub(crate) login_rate_limiter: Arc<tokio::sync::Mutex<LoginRateLimiter>>,
     pub indexer_store: Arc<crate::indexer::IndexerStore>,
+    /// Whether serving without authentication is acceptable for the address
+    /// this listener is actually bound to, decided once at bind time
+    /// (loopback bind, or the explorer-only read router). The startup guard
+    /// refuses a non-loopback bind without auth; this flag lets the
+    /// middleware keep refusing when a config reload later removes the auth
+    /// block while the public listener stays bound.
+    pub unauthenticated_serving_allowed: bool,
 }
 
 pub async fn run(
@@ -152,6 +159,7 @@ pub async fn run(
         user_store,
         login_rate_limiter,
         indexer_store,
+        unauthenticated_serving_allowed: explorer_only || bind_addr.ip().is_loopback(),
     };
     let app =
         if explorer_only { explorer_only_routes(state) } else { routes(enable_swagger, state) };
@@ -1195,6 +1203,7 @@ mod tests {
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
             indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            unauthenticated_serving_allowed: true,
         }
     }
 
