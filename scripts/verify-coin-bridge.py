@@ -115,6 +115,8 @@ def verify_tvm_sources() -> None:
             # receiving bridge, not left as sweepable plain balance.
             "if (op == 0xf00d) {",
             "total_locked += msg_value;",
+            "store_coins(total_locked); ;; echoed back in a bounce, for exact restoration",
+            "total_locked += restored;",
             # The migrating bridge stops backing funds that left it.
             "total_locked = 0;",
         ])

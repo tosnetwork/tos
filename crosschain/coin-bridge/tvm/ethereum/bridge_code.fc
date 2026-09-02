@@ -125,7 +125,8 @@ int calculate_fee(int msg_value, fees) impure {
       .store_uint(4, 3).store_int(-1, 8).store_uint(bridge_address, 256)
       .store_coins(total_locked)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-      .store_uint(0xf00d, 32); ;; new bridge contract should recognize this opcode
+      .store_uint(0xf00d, 32) ;; new bridge contract should recognize this opcode
+      .store_coins(total_locked); ;; echoed back in a bounce, for exact restoration
     send_raw_message(msg.end_cell(), 1);
     ;; The funds are no longer backed by this contract's balance. Zeroing the
     ;; counter keeps the invariant balance >= total_locked and stops a later
@@ -173,7 +174,14 @@ int calculate_fee(int msg_value, fees) impure {
       in_msg~load_uint(32); ;; bounce marker 0xffffffff
       if (in_msg~load_uint(32) == 0xf00d) {
         (int state_flags, int total_locked, slice collector_address, var fees) = load_data();
-        total_locked += msg_value;
+        ;; The bounced value is the sent amount minus the bounce forwarding
+        ;; fee, so crediting msg_value would understate the liability a
+        ;; little more on every failed migration. The migrate body carries
+        ;; the exact amount, the bounce echoes the body, and a bounced flag
+        ;; cannot be forged, so the echoed amount is this contract's own
+        ;; record and is restored exactly.
+        int restored = in_msg.slice_bits() >= 4 ? in_msg~load_coins() : msg_value;
+        total_locked += restored;
         save_data(state_flags, total_locked, collector_address, fees);
       }
     }

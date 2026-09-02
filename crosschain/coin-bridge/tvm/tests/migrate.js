@@ -53,7 +53,8 @@ funcer({},{
                     "amount": lockedAmount,
                     "sendMode": 1,
                     "body": [
-                        'uint32', '0xf00d'
+                        'uint32', '0xf00d',
+                        'coins', lockedAmount
                     ],
                 },
             ]
@@ -68,14 +69,17 @@ funcer({},{
             ],
             "exit_code": 305
         },
-        { // a rejected migration bounces back and is locked again
+        { // a rejected migration bounces back and is locked again, exactly:
+          // the bounced value is net of the bounce forwarding fee, but the
+          // body echoes the recorded amount and that amount is restored
             "sender": `-1:${bridgeAddress.slice(2)}`,
             "bounced": true,
-            "amount": lockedAmount,
+            "amount": lockedAmount - 0.007e9,
             "contract_balance": 11*1e9,
             "body": [
                 "uint32", "0xffffffff", // bounce marker
                 "uint32", "0xf00d",
+                "coins", lockedAmount,
             ],
             "new_data": makeStorage(lockedAmount),
             "out_msgs": []
@@ -108,7 +112,8 @@ funcer({},{
                     "amount": lockedAmount,
                     "sendMode": 1,
                     "body": [
-                        'uint32', '0xf00d'
+                        'uint32', '0xf00d',
+                        'coins', lockedAmount
                     ],
                 },
             ]
