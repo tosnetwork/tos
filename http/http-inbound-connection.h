@@ -66,21 +66,22 @@ class HttpInboundConnection : public HttpConnection {
     arm_request_header_deadline();
   }
 
-  // A connection that has not delivered a complete request line and
-  // headers by the deadline is closed, so that a client trickling bytes
-  // (or sending nothing at all) cannot hold the connection open forever.
-  // Reading a request body and writing a response are not subject to it;
-  // those are bounded by the payload size caps.
+  // A connection that has not delivered a complete request by the
+  // deadline is closed, so that a client trickling bytes (or sending
+  // nothing at all) cannot hold the connection open forever — neither in
+  // the header phase nor by declaring a body and then withholding it.
+  // Bodies with no definite end (tunnels, read-until-close streams) are
+  // exempt, as is writing the response; the payload size caps bound those.
   void alarm() override {
     if (request_header_timeout_ <= 0) {
       return;
     }
-    if (waiting_for_request_headers() && request_header_deadline_.is_in_past()) {
+    if (waiting_for_client_request_data() && request_header_deadline_.is_in_past()) {
       stop();
       return;
     }
-    alarm_timestamp() = waiting_for_request_headers() ? request_header_deadline_
-                                                      : td::Timestamp::in(request_header_timeout_);
+    alarm_timestamp() = waiting_for_client_request_data() ? request_header_deadline_
+                                                          : td::Timestamp::in(request_header_timeout_);
   }
 
   td::Status receive_eof() override {
@@ -137,6 +138,23 @@ class HttpInboundConnection : public HttpConnection {
   bool waiting_for_request_headers() const {
     return read_next_request_ && !reading_payload_ &&
            (!cur_request_ || !cur_request_->check_parse_header_completed());
+  }
+
+  // True while progress depends on the client sending more of its request:
+  // the header phase, and a request body whose end is defined (empty,
+  // content-length or chunked). Tunnels and read-until-close bodies have no
+  // deadline by design.
+  bool waiting_for_client_request_data() const {
+    if (waiting_for_request_headers()) {
+      return true;
+    }
+    if (reading_payload_) {
+      auto type = reading_payload_->payload_type();
+      return type == HttpPayload::PayloadType::pt_empty ||
+             type == HttpPayload::PayloadType::pt_content_length ||
+             type == HttpPayload::PayloadType::pt_chunked;
+    }
+    return false;
   }
 
   void arm_request_header_deadline() {

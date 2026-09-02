@@ -260,6 +260,14 @@ TEST(HttpServerLimits, request_header_deadline_closes_silent_and_partial_connect
     ASSERT_TRUE(partial.send_all("GET / HTTP/1.1\r\nHost: localhost\r\n"));
     ASSERT_TRUE(partial.wait_for_eof(5000));
 
+    // Completing the headers but withholding a declared body must not keep
+    // the connection alive either: the deadline covers the whole request.
+    Client body_stall(port);
+    ASSERT_TRUE(body_stall.connect_with_retries());
+    ASSERT_TRUE(body_stall.send_all(
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial"));
+    ASSERT_TRUE(body_stall.wait_for_eof(5000));
+
     // A complete request is served, and the idle keep-alive connection is
     // then closed once the next request's headers fail to arrive in time.
     Client served(port);
