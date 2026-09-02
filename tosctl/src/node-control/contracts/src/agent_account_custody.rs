@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context;
 use chain_block::{
-    Coins, Deserializable, Message, MsgAddressInt, base64_decode, base64_encode,
+    Cell, Coins, Deserializable, Message, MsgAddressInt, base64_decode, base64_encode,
     read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{
@@ -2342,6 +2342,13 @@ enum ExpectedAction {
     Cancellation,
 }
 
+/// Canonical task-body identity used by claims, signed-BOC custody, and
+/// finalized-effect reconciliation. Representation hash is intentional: it
+/// commits to the complete TVM cell including its level/exotic semantics.
+pub fn agent_account_task_body_hash(body: &Cell) -> String {
+    format!("tvm-cell-sha256:{}", hex::encode(body.repr_hash()))
+}
+
 fn validate_signed_boc(
     claim: &ControllerActionClaim,
     encoded: &str,
@@ -2406,7 +2413,7 @@ fn validate_signed_boc(
         }
         if claim.action_kind == "agent-task-send" {
             let task_body = body.checked_drain_reference()?;
-            let actual = format!("tvm-cell-sha256:{}", hex::encode(task_body.hash(0)));
+            let actual = agent_account_task_body_hash(&task_body);
             if claim.body_hash.as_deref() != Some(actual.as_str()) {
                 anyhow::bail!("stored Agent Account task body differs from custody claim");
             }
@@ -2616,6 +2623,16 @@ mod tests {
     use super::*;
     use chain_block::{Cell, MsgAddressInt, base64_encode, write_boc};
     use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn task_body_identity_uses_representation_hash_for_ordinary_and_exotic_cells() {
+        for body in [Cell::default(), Cell::default().as_library_cell()] {
+            assert_eq!(
+                agent_account_task_body_hash(&body),
+                format!("tvm-cell-sha256:{}", hex::encode(body.repr_hash()))
+            );
+        }
+    }
 
     fn claim(seqno: u32, marker: char) -> ControllerActionClaim {
         ControllerActionClaim {

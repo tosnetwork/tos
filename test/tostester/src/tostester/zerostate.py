@@ -30,6 +30,10 @@ class SimplexConsensusConfig:
 
 @dataclass
 class NetworkConfig:
+    # TEST-HARNESS chain discriminator.  Three preserves the historical local
+    # genesis byte-for-byte; isolated same-key multi-genesis experiments must
+    # choose another int32 so controller signatures cannot cross replay.
+    global_id: int = 3
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 14
@@ -102,7 +106,7 @@ _TEMPLATE = """
 256 1<<1- 15 / constant AllOnes
 
 wc_master setworkchain
-3 setglobalid   // TOS dev global_id
+{global_id} setglobalid   // TOS dev global_id
 
 // Initial state of Workchain 0 (Basic workchain)
 
@@ -391,25 +395,15 @@ def _punishment_params(election_params: str) -> str:
             f"punishment interval {long} does not fit the uint16 field; "
             "the profile's validation round is too long to scale from"
         )
-    return (
-        "TM$62.5 16777216 640 1024 "
-        f"{unpunishable} {long} 4096 4096 {medium} 1024 1024"
-    )
+    return f"TM$62.5 16777216 640 1024 {unpunishable} {long} 4096 4096 {medium} 1024 1024"
 
 
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
-    if (
-        config.validator_election_stage_a_profile
-        and not config.validator_economics_profile
-    ):
-        raise ValueError(
-            "validator election Stage A profile requires validator economics profile"
-        )
-    experiment_faucet_balance = (
-        config.validator_election_experiment_faucet_balance_nanotos
-    )
+    if config.validator_election_stage_a_profile and not config.validator_economics_profile:
+        raise ValueError("validator election Stage A profile requires validator economics profile")
+    experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
     if experiment_faucet_balance is not None:
         if not config.validator_election_stage_a_profile:
             raise ValueError(
@@ -424,21 +418,16 @@ def create_zerostate(
                 "validator election experiment faucet balance must be positive integer nanotos"
             )
     if config.validator_economics_profile and len(validator_keys) != 4:
-        raise ValueError(
-            "validator economics profile requires exactly four genesis validators"
-        )
+        raise ValueError("validator economics profile requires exactly four genesis validators")
     if config.validator_economics_profile and len(
         {key.public_key.key for key in validator_keys}
     ) != len(validator_keys):
-        raise ValueError(
-            "validator economics profile requires unique genesis validator keys"
-        )
+        raise ValueError("validator economics profile requires unique genesis validator keys")
 
     keys: list[str] = []
     for key in validator_keys:
         keys.append(
-            f"B{{{key.public_key.key.hex()}}} "
-            f"B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
+            f"B{{{key.public_key.key.hex()}}} B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
         )
 
     if config.validator_economics_profile:
@@ -473,9 +462,7 @@ def create_zerostate(
             profile["election_params"] = "300 180 60 180"
             profile["original_vset_valid_for"] = 600
             if experiment_faucet_balance is not None:
-                profile["main_wallet_genesis_balance"] = str(
-                    experiment_faucet_balance
-                )
+                profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
                 profile["expected_genesis_supply"] = str(
                     experiment_faucet_balance + 1_000 * NANOTOS_PER_TOS
                 )
@@ -491,9 +478,7 @@ def create_zerostate(
             "expected_genesis_supply": "TM$5000000000",
             "max_validators": 40,
             "max_main_validators": 20,
-            "min_validators": max(
-                1, min(len(keys), config.shard_validators)
-            ),
+            "min_validators": max(1, min(len(keys), config.shard_validators)),
             "min_stake": "TM$10000",
             "max_stake": "TM$100000",
             "min_total_stake": "TM$10000",
@@ -539,18 +524,21 @@ def create_zerostate(
         # min_store_sec max_store_sec bit_price cell_price). min_wins = 1 lets
         # a single validator's vote accept an ordinary proposal in one round.
         prop_setup = (
-            "<b x{36} s, 1 8 u, 8 8 u, 1 8 u, 8 8 u,"
-            " 60 32 u, 31622400 32 u, 1 32 u, 500 32 u, b>"
+            "<b x{36} s, 1 8 u, 8 8 u, 1 8 u, 8 8 u, 60 32 u, 31622400 32 u, 1 32 u, 500 32 u, b>"
         )
         voting_config_param = f"<b x{{91}} s, {prop_setup} ref, {prop_setup} ref, b> 11 config!\n"
     else:
         voting_config_param = ""
+
+    if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
+        raise ValueError("global_id must fit a signed int32")
 
     run_fift(
         install,
         _TEMPLATE.format(
             monitor_min_split=config.monitor_min_split,
             split=config.split,
+            global_id=config.global_id,
             global_version=config.global_version,
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),

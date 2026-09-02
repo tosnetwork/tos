@@ -44,7 +44,7 @@ use contracts::{
     AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentAccountInit,
     AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionResolutionEvidence,
     ControllerActionStatus, EconomicActionAuthorization, EconomicEffectAuthorization,
-    TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet,
+    TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet, agent_account_task_body_hash,
     controller_resolution_evidence_digest,
 };
 use ed25519_dalek::{Signature as Ed25519Signature, VerifyingKey};
@@ -77,6 +77,7 @@ use dual_absence::{
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_ACTION_GAS: u64 = 1_000_000; // 0.001 TOS
+const TASK_SEND_FINALIZED_SCHEMA: &str = "tos.agent-account.task-send-finalized.v1";
 
 /// Top-level `tosctl agent` command.
 #[derive(clap::Args, Clone)]
@@ -512,6 +513,8 @@ pub enum AgentAccountAction {
     RotateController(AgentAccountRotateControllerCmd),
     /// Send a controller-signed transfer from a deployed Agent Account
     TaskSend(AgentAccountTaskSendCmd),
+    /// Resolve one already-broadcast task-send from exact transaction evidence
+    TaskSendResolve(AgentAccountTaskSendResolveCmd),
     /// Prepare one owner-authorized, bodyless native TOS transfer without broadcasting it
     NativePrepare(AgentAccountNativePrepareCmd),
     /// Resolve one exact native transfer from a strict majority of independent RPC views
@@ -692,6 +695,30 @@ pub struct AgentAccountTaskSendCmd {
     action_id: String,
     #[arg(long, help = "Skip confirmation prompt")]
     yes: bool,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Resolve an exact body-bearing Agent Account task-send using three distinct RPC process views; never signs or broadcasts"
+)]
+pub struct AgentAccountTaskSendResolveCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Stable 64-lowercase-hex task-send action ID")]
+    action_id: String,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Two additional absolute single-endpoint configs; with --config these form three distinct RPC process views"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(
+        long,
+        default_value_t = 1000,
+        help = "Maximum source-account transactions inspected per RPC process view"
+    )]
+    max_transactions: u32,
 }
 
 #[derive(clap::Args, Clone)]
@@ -1464,6 +1491,7 @@ impl AgentAccountCmd {
             AgentAccountAction::UpdatePolicy(cmd) => cmd.run(config_path).await,
             AgentAccountAction::RotateController(cmd) => cmd.run(config_path).await,
             AgentAccountAction::TaskSend(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::TaskSendResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativePrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::NativeResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicPaymentPrepare(cmd) => cmd.run(config_path).await,
@@ -1784,7 +1812,7 @@ impl AgentTaskSendCmd {
             )?;
             let journal = open_controller_journal(path)?;
             if let Ok(existing) = journal.action_by_idempotency_key(action_id) {
-                let retry_body_hash = format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)));
+                let retry_body_hash = agent_account_task_body_hash(&body);
                 if existing.claim.target != destination.to_string()
                     || existing.claim.value_atomic != amount_nanotos
                     || existing.claim.body_hash.as_deref() != Some(retry_body_hash.as_str())
@@ -2876,6 +2904,7 @@ impl AgentAccountTaskSendCmd {
             workchain_id: account.workchain_id(),
         };
         let action_body_hash = *body.repr_hash().as_array();
+        let action_body_identity = agent_account_task_body_hash(&body);
         let payload = AgentAccountContract::build_task_send_payload(
             global_id,
             data.controller_epoch,
@@ -2927,7 +2956,7 @@ impl AgentAccountTaskSendCmd {
             seqno: data.seqno,
             target: target.to_string(),
             value_atomic: value,
-            body_hash: Some(format!("tvm-cell-sha256:{}", hex::encode(action_body_hash))),
+            body_hash: Some(action_body_identity),
             action_kind: "agent-task-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -2980,6 +3009,445 @@ impl AgentAccountTaskSendCmd {
         rpc_client.send_boc(&boc).await?;
         println!("{} controller task action sent from {}", "OK".green().bold(), account);
         Ok(())
+    }
+}
+
+fn validate_tvm_cell_digest(name: &str, value: &str) -> anyhow::Result<()> {
+    let digest = value
+        .strip_prefix("tvm-cell-sha256:")
+        .with_context(|| format!("{name} has the wrong domain"))?;
+    if digest.len() != 64
+        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        anyhow::bail!("{name} is not a canonical TVM cell digest");
+    }
+    Ok(())
+}
+
+fn validate_task_send_resolution_claim(
+    record: &contracts::ControllerActionRecord,
+    account: &MsgAddressInt,
+) -> anyhow::Result<RelayNetworkDomainPin> {
+    validate_controller_action_id(&record.claim.idempotency_key)?;
+    if record.claim.action_kind != "agent-task-send"
+        || record.claim.account != account.to_string()
+        || record.claim.value_atomic == 0
+    {
+        anyhow::bail!("task-send action ID belongs to a different custody effect");
+    }
+    if record.claim.deployment_id.len() != 64
+        || !record
+            .claim
+            .deployment_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        anyhow::bail!("task-send custody deployment ID is not canonical");
+    }
+    let body_hash = record
+        .claim
+        .body_hash
+        .as_deref()
+        .context("task-send custody claim has no exact body hash")?;
+    validate_tvm_cell_digest("task-send custody body hash", body_hash)?;
+    record.claim.target.parse::<MsgAddressInt>().context("task-send custody target is invalid")?;
+    let signed_digest = record
+        .exact_signed_boc_digest
+        .as_deref()
+        .context("task-send custody record has no exact signed BOC digest")?;
+    validate_sha256_digest("exact_signed_boc_digest", signed_digest)?;
+    let network = record
+        .claim
+        .network_domain
+        .clone()
+        .context("task-send custody claim has no complete network domain")?;
+    if network.global_id != record.claim.network_global_id
+        || network.workchain_id != account.workchain_id()
+    {
+        anyhow::bail!("task-send custody network domain conflicts with its claim");
+    }
+    validate_sha256_digest("zero_state_root_hash", &network.zero_state_root_hash)?;
+    validate_sha256_digest("zero_state_file_hash", &network.zero_state_file_hash)?;
+    Ok(network)
+}
+
+fn validate_unresolved_task_send_boc(
+    record: &contracts::ControllerActionRecord,
+) -> anyhow::Result<String> {
+    // `action_by_idempotency_key` loads the journal through its fail-closed
+    // document validator. That validator semantically decodes this exact BOC
+    // and binds opcode/global ID/epoch/seqno/expiry/target/value/body to the
+    // claim. Recheck canonical bytes and digest here before using its message
+    // cell hash as the finalized transaction's exact inbound identity.
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_deref()
+        .context("unresolved task-send custody record has no exact signed BOC")?;
+    let boc = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("decode unresolved task-send signed BOC")?;
+    validate_exact_boc_before_broadcast(&boc)
+        .context("unresolved task-send signed BOC failed the exact-BOC gate")?;
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+    if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+        anyhow::bail!("unresolved task-send signed BOC digest does not match custody");
+    }
+    let root = read_single_root_boc(&boc)?;
+    Ok(format!("tvm-cell-sha256:{}", hex::encode(root.hash(0))))
+}
+
+fn validate_task_send_resolution_evidence(
+    record: &contracts::ControllerActionRecord,
+    resolution: &ControllerActionResolutionEvidence,
+) -> anyhow::Result<()> {
+    if resolution.evidence_kind != TASK_SEND_FINALIZED_SCHEMA
+        || resolution.evidence_digest
+            != controller_resolution_evidence_digest(
+                TASK_SEND_FINALIZED_SCHEMA,
+                &resolution.evidence,
+            )?
+    {
+        anyhow::bail!("resolved task-send has invalid exact-winner evidence identity");
+    }
+    let evidence = &resolution.evidence;
+    let expected_network = serde_json::to_value(
+        record
+            .claim
+            .network_domain
+            .as_ref()
+            .context("resolved task-send claim lost its network domain")?,
+    )?;
+    let quorum = evidence
+        .get("quorum")
+        .and_then(serde_json::Value::as_object)
+        .context("resolved task-send evidence has no quorum")?;
+    let transaction: FinalizedTaskSendObservation = serde_json::from_value(
+        evidence
+            .get("transaction")
+            .cloned()
+            .context("resolved task-send evidence has no transaction")?,
+    )
+    .context("resolved task-send transaction evidence is malformed")?;
+    let observations: Vec<FinalizedTaskSendObservation> = serde_json::from_value(
+        evidence
+            .get("observations")
+            .cloned()
+            .context("resolved task-send evidence has no observations")?,
+    )
+    .context("resolved task-send process-view observations are malformed")?;
+    let finalized_controller_epoch = evidence
+        .get("finalized_controller_epoch")
+        .and_then(serde_json::Value::as_u64)
+        .context("resolved task-send evidence has no finalized controller epoch")?;
+    let finalized_seqno = u32::try_from(
+        evidence
+            .get("finalized_seqno")
+            .and_then(serde_json::Value::as_u64)
+            .context("resolved task-send evidence has no finalized seqno")?,
+    )
+    .context("resolved task-send finalized seqno exceeds uint32")?;
+    let controller_state_advanced = finalized_controller_epoch > record.claim.controller_epoch
+        || (finalized_controller_epoch == record.claim.controller_epoch
+            && finalized_seqno > record.claim.seqno);
+    let distinct_endpoints =
+        observations.iter().map(|item| &item.transaction.endpoint).collect::<BTreeSet<_>>();
+    let distinct_locators = observations
+        .iter()
+        .map(|item| &item.transaction.locator_identity_digest)
+        .collect::<BTreeSet<_>>();
+    let exact_observations =
+        observations.iter().all(|item| item.quorum_key() == transaction.quorum_key());
+    validate_sha256_digest(
+        "task-send transaction hash",
+        &transaction.transaction.transaction_hash,
+    )?;
+    validate_sha256_digest(
+        "task-send transaction BOC digest",
+        &transaction.transaction.transaction_boc_digest,
+    )?;
+    validate_tvm_cell_digest(
+        "task-send outbound message hash",
+        &transaction.outbound_message_cell_hash,
+    )?;
+    validate_tvm_cell_digest("task-send outbound body hash", &transaction.outbound_body_hash)?;
+    validate_sha256_digest("task-send block root hash", &transaction.transaction.block_root_hash)?;
+    validate_sha256_digest("task-send block file hash", &transaction.transaction.block_file_hash)?;
+    for observation in &observations {
+        validate_sha256_digest(
+            "task-send RPC locator identity",
+            &observation.transaction.locator_identity_digest,
+        )?;
+    }
+    validate_tvm_cell_digest(
+        "task-send submitted message hash",
+        evidence
+            .get("submitted_message_cell_hash")
+            .and_then(serde_json::Value::as_str)
+            .context("resolved task-send has no submitted message hash")?,
+    )?;
+    if evidence.get("schema").and_then(serde_json::Value::as_str)
+        != Some(TASK_SEND_FINALIZED_SCHEMA)
+        || evidence.get("action_id").and_then(serde_json::Value::as_str)
+            != Some(record.claim.idempotency_key.as_str())
+        || evidence.get("source_account").and_then(serde_json::Value::as_str)
+            != Some(record.claim.account.as_str())
+        || evidence.get("deployment_id").and_then(serde_json::Value::as_str)
+            != Some(record.claim.deployment_id.as_str())
+        || evidence.get("controller_epoch").and_then(serde_json::Value::as_u64)
+            != Some(record.claim.controller_epoch)
+        || evidence.get("seqno").and_then(serde_json::Value::as_u64)
+            != Some(u64::from(record.claim.seqno))
+        || !controller_state_advanced
+        || evidence.get("destination").and_then(serde_json::Value::as_str)
+            != Some(record.claim.target.as_str())
+        || evidence.get("amount_nanotos").and_then(serde_json::Value::as_u64)
+            != Some(record.claim.value_atomic)
+        || evidence.get("body_hash").and_then(serde_json::Value::as_str)
+            != record.claim.body_hash.as_deref()
+        || evidence.get("exact_signed_boc_digest").and_then(serde_json::Value::as_str)
+            != record.exact_signed_boc_digest.as_deref()
+        || evidence.get("network_domain") != Some(&expected_network)
+        || evidence.get("state").and_then(serde_json::Value::as_str) != Some("resolved")
+        || evidence.get("independent_operator_domains_proven").and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || evidence.get("process_view_scope").and_then(serde_json::Value::as_str)
+            != Some(
+                "distinct RPC process views; no independent-operator or Byzantine-finality claim",
+            )
+        || quorum.get("members").and_then(serde_json::Value::as_u64) != Some(3)
+        || quorum.get("threshold").and_then(serde_json::Value::as_u64) != Some(2)
+        || quorum.get("agreeing").and_then(serde_json::Value::as_u64)
+            != Some(observations.len() as u64)
+        || !(2..=3).contains(&observations.len())
+        || distinct_endpoints.len() != observations.len()
+        || distinct_locators.len() != observations.len()
+        || observations.iter().any(|item| item.transaction.endpoint.is_empty())
+        || !exact_observations
+        || !observations.contains(&transaction)
+        || transaction.finalized_controller_epoch != finalized_controller_epoch
+        || transaction.finalized_seqno != finalized_seqno
+        || observations.iter().any(|item| {
+            item.finalized_controller_epoch != finalized_controller_epoch
+                || item.finalized_seqno != finalized_seqno
+        })
+        || Some(transaction.outbound_body_hash.as_str()) != record.claim.body_hash.as_deref()
+    {
+        anyhow::bail!("resolved task-send exact-winner evidence conflicts with its custody claim");
+    }
+    Ok(())
+}
+
+type TaskSendResolutionVote = FinalizedTaskSendObservation;
+
+fn record_task_send_resolution_vote(
+    votes: &mut BTreeMap<String, Vec<TaskSendResolutionVote>>,
+    observation: FinalizedEconomicPaymentMatch,
+    finalized: anyhow::Result<AgentAccountData>,
+    record: &contracts::ControllerActionRecord,
+) {
+    let Ok(finalized) = finalized else {
+        return;
+    };
+    let controller_state_advanced = finalized.controller_epoch > record.claim.controller_epoch
+        || (finalized.controller_epoch == record.claim.controller_epoch
+            && finalized.seqno > record.claim.seqno);
+    if hex::encode(finalized.deployment_id) != record.claim.deployment_id
+        || !controller_state_advanced
+    {
+        return;
+    }
+    let Some(outbound_body_hash) = observation.outbound_body_hash else {
+        return;
+    };
+    let vote = FinalizedTaskSendObservation {
+        transaction: observation.observation,
+        outbound_message_cell_hash: observation.outbound_message_cell_hash,
+        outbound_body_hash,
+        finalized_controller_epoch: finalized.controller_epoch,
+        finalized_seqno: finalized.seqno,
+    };
+    votes.entry(vote.quorum_key()).or_default().push(vote);
+}
+
+impl AgentAccountTaskSendResolveCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_controller_action_id(&self.action_id)?;
+        if self.quorum_configs.len() != 2
+            || self.max_transactions == 0
+            || self.max_transactions > 10_000
+        {
+            anyhow::bail!(
+                "task-send resolution requires exactly two additional RPC configs and a bounded transaction history"
+            );
+        }
+        let primary_path = Path::new(config_path);
+        if !primary_path.is_absolute() {
+            anyhow::bail!("primary config must be absolute for task-send resolution");
+        }
+        let primary_bytes = fs::read(primary_path).context("read primary task-send RPC config")?;
+        let primary = AppConfig::load_bytes(
+            &primary_bytes,
+            config_format_from_path(primary_path)?,
+            "primary task-send RPC config",
+        )?;
+        let agent_wallet = primary
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let journal = open_controller_journal(primary_path)?;
+        let record = journal.action_by_idempotency_key(&self.action_id)?;
+        let expected_network = validate_task_send_resolution_claim(&record, &account)?;
+
+        if record.status == ControllerActionStatus::Resolved {
+            let resolution = record
+                .exact_winner_resolution
+                .as_ref()
+                .context("resolved task-send has no replayable exact-winner evidence")?;
+            validate_task_send_resolution_evidence(&record, resolution)?;
+            println!("{}", resolution.evidence);
+            return Ok(());
+        }
+        if record.status != ControllerActionStatus::Broadcasting {
+            anyhow::bail!("only an ambiguously broadcast exact task-send may be resolved");
+        }
+        let submitted_message_cell_hash = validate_unresolved_task_send_boc(&record)?;
+
+        let mut paths = vec![primary_path.to_path_buf()];
+        paths.extend(self.quorum_configs.iter().map(PathBuf::from));
+        let mut endpoints = BTreeSet::new();
+        let mut members = Vec::with_capacity(3);
+        for path in paths {
+            if !path.is_absolute() {
+                anyhow::bail!("every task-send quorum config must be absolute");
+            }
+            let bytes = fs::read(&path).context("read task-send quorum config")?;
+            let config = AppConfig::load_bytes(
+                &bytes,
+                config_format_from_path(&path)?,
+                "task-send quorum config",
+            )?;
+            let configured = config.chain_rpc.endpoints();
+            if configured.len() != 1 {
+                anyhow::bail!("every task-send quorum config must name exactly one RPC endpoint");
+            }
+            let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+            if !endpoints.insert(endpoint.clone()) {
+                anyhow::bail!("task-send quorum RPC endpoints must be distinct");
+            }
+            members.push((
+                config,
+                endpoint.clone(),
+                display_origin,
+                rpc_locator_identity_digest(&endpoint)?,
+            ));
+        }
+        let threshold = 2;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        loop {
+            let mut votes: BTreeMap<String, Vec<TaskSendResolutionVote>> = BTreeMap::new();
+            for (config, _endpoint, display_origin, locator_identity_digest) in &members {
+                let observation = observe_finalized_economic_payment(
+                    config,
+                    display_origin.clone(),
+                    locator_identity_digest.clone(),
+                    &expected_network,
+                    &account,
+                    &record,
+                    self.max_transactions,
+                )
+                .await;
+                let Ok(observation) = observation else {
+                    continue;
+                };
+                let finalized: anyhow::Result<AgentAccountData> = async {
+                    let rpc = try_create_rpc_client(config).await?;
+                    let provider = contracts::contract_provider!(rpc);
+                    AgentAccountContract::get_data(provider.as_ref(), &account).await
+                }
+                .await;
+                record_task_send_resolution_vote(&mut votes, observation, finalized, &record);
+            }
+            if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {
+                let finalized_controller_epoch = winner[0].finalized_controller_epoch;
+                let finalized_seqno = winner[0].finalized_seqno;
+                let output = serde_json::json!({
+                    "schema": TASK_SEND_FINALIZED_SCHEMA,
+                    "wallet": self.wallet,
+                    "action_id": self.action_id,
+                    "source_account": record.claim.account,
+                    "deployment_id": record.claim.deployment_id,
+                    "controller_epoch": record.claim.controller_epoch,
+                    "seqno": record.claim.seqno,
+                    "finalized_controller_epoch": finalized_controller_epoch,
+                    "finalized_seqno": finalized_seqno,
+                    "destination": record.claim.target,
+                    "amount_nanotos": record.claim.value_atomic,
+                    "body_hash": record.claim.body_hash,
+                    "exact_signed_boc_digest": record.exact_signed_boc_digest,
+                    "submitted_message_cell_hash": submitted_message_cell_hash,
+                    "network_domain": expected_network,
+                    "quorum": {"members": 3, "threshold": threshold, "agreeing": winner.len()},
+                    "process_view_scope": "distinct RPC process views; no independent-operator or Byzantine-finality claim",
+                    "independent_operator_domains_proven": false,
+                    "transaction": &winner[0],
+                    "observations": winner,
+                    "state": "resolved"
+                });
+                let resolution = ControllerActionResolutionEvidence {
+                    evidence_kind: TASK_SEND_FINALIZED_SCHEMA.to_owned(),
+                    evidence_digest: controller_resolution_evidence_digest(
+                        TASK_SEND_FINALIZED_SCHEMA,
+                        &output,
+                    )?,
+                    evidence: output.clone(),
+                };
+                validate_task_send_resolution_evidence(&record, &resolution)?;
+                let exact_signed_boc_digest = record
+                    .exact_signed_boc_digest
+                    .as_deref()
+                    .context("task-send custody record lost its exact signed BOC digest")?;
+                let resolved = match journal.resolve_exact_winner(
+                    &record.claim,
+                    exact_signed_boc_digest,
+                    finalized_controller_epoch,
+                    finalized_seqno,
+                    resolution,
+                    time_format::now(),
+                ) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        let replay = journal.action_by_idempotency_key(&self.action_id)?;
+                        if replay.status != ControllerActionStatus::Resolved {
+                            return Err(error);
+                        }
+                        let stored = replay.exact_winner_resolution.as_ref().context(
+                            "concurrently resolved task-send lost exact-winner evidence",
+                        )?;
+                        validate_task_send_resolution_evidence(&replay, stored)?;
+                        println!("{}", stored.evidence);
+                        return Ok(());
+                    }
+                };
+                let stored = resolved
+                    .exact_winner_resolution
+                    .as_ref()
+                    .context("resolved task-send lost its exact-winner evidence")?;
+                validate_task_send_resolution_evidence(&resolved, stored)?;
+                println!("{}", stored.evidence);
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "task-send could not obtain a strict-majority exact transaction resolution"
+                );
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
     }
 }
 
@@ -3312,6 +3780,7 @@ impl AgentAccountNativeResolveCmd {
                 )
                 .await
                 {
+                    let observation = observation.observation;
                     votes.entry(observation.quorum_key()).or_default().push(observation);
                 }
             }
@@ -4130,7 +4599,7 @@ fn require_exact_submission_accepted(
 // It deliberately remains separate from sponsorship RPC corroboration: the
 // latter is nonterminal and must never change the established finalized-v1
 // command contract consumed by existing callers.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct FinalizedEconomicPaymentObservation {
     endpoint: String,
     locator_identity_digest: String,
@@ -4149,16 +4618,99 @@ struct FinalizedEconomicPaymentObservation {
 impl FinalizedEconomicPaymentObservation {
     fn quorum_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.transaction_hash,
             self.transaction_lt,
             self.transaction_utime,
+            self.transaction_boc_digest,
             self.block_workchain,
             self.block_shard,
             self.block_seqno,
-            self.block_root_hash
+            self.block_root_hash,
+            self.block_file_hash
         )
     }
+}
+
+#[derive(Clone, Debug)]
+struct FinalizedEconomicPaymentMatch {
+    observation: FinalizedEconomicPaymentObservation,
+    outbound_message_cell_hash: String,
+    outbound_body_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct FinalizedTaskSendObservation {
+    #[serde(flatten)]
+    transaction: FinalizedEconomicPaymentObservation,
+    outbound_message_cell_hash: String,
+    outbound_body_hash: String,
+    finalized_controller_epoch: u64,
+    finalized_seqno: u32,
+}
+
+impl FinalizedTaskSendObservation {
+    fn quorum_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.transaction.quorum_key(),
+            self.outbound_message_cell_hash,
+            self.outbound_body_hash,
+            self.finalized_controller_epoch,
+            self.finalized_seqno,
+        )
+    }
+}
+
+fn finalized_output_matches_claim(
+    message: &Message,
+    target: &MsgAddressInt,
+    expected_value: &chain_block::CurrencyCollection,
+    expected_body_hash: Option<&str>,
+) -> anyhow::Result<Option<(String, Option<String>)>> {
+    if message.dst().as_ref() != Some(target) || message.value() != Some(expected_value) {
+        return Ok(None);
+    }
+    let body_hash = message
+        .body()
+        .cloned()
+        .map(|body| {
+            body.into_cell()
+                .context("construct finalized output body cell")
+                .map(|body| agent_account_task_body_hash(&body))
+        })
+        .transpose()?;
+    if expected_body_hash.is_some_and(|expected| body_hash.as_deref() != Some(expected)) {
+        return Ok(None);
+    }
+    let message_hash = format!("tvm-cell-sha256:{}", hex::encode(message.serialize()?.hash(0)));
+    Ok(Some((message_hash, body_hash)))
+}
+
+fn select_exact_finalized_output(
+    messages: &[Message],
+    target: &MsgAddressInt,
+    expected_value: &chain_block::CurrencyCollection,
+    expected_body_hash: Option<&str>,
+) -> anyhow::Result<(String, Option<String>)> {
+    let mut target_value_candidates = 0usize;
+    let mut exact = Vec::new();
+    for message in messages {
+        if message.dst().as_ref() == Some(target) && message.value() == Some(expected_value) {
+            target_value_candidates += 1;
+            if let Some(identity) =
+                finalized_output_matches_claim(message, target, expected_value, expected_body_hash)?
+            {
+                exact.push(identity);
+            }
+        }
+    }
+    if target_value_candidates != 1 || exact.len() != 1 {
+        anyhow::bail!(
+            "finalized submitted transaction does not contain exactly one authorized target/value/body output"
+        );
+    }
+    exact.pop().context("authorized finalized output identity is absent")
 }
 
 async fn observe_finalized_economic_payment(
@@ -4169,7 +4721,7 @@ async fn observe_finalized_economic_payment(
     account: &MsgAddressInt,
     record: &contracts::ControllerActionRecord,
     max_transactions: u32,
-) -> anyhow::Result<FinalizedEconomicPaymentObservation> {
+) -> anyhow::Result<FinalizedEconomicPaymentMatch> {
     let rpc_client = try_create_rpc_client(config).await?;
     rpc_client.verify_pinned_primary_network(expected_network).await?;
     let encoded = record
@@ -4217,38 +4769,39 @@ async fn observe_finalized_economic_payment(
             if in_cell.hash(0) != submitted_message_hash {
                 continue;
             }
-            let mut exact_outputs = 0u32;
+            let mut outputs = Vec::new();
             transaction.iterate_out_msgs(|message| {
-                if message.dst().as_ref() == Some(&target)
-                    && message.value() == Some(&expected_value)
-                {
-                    exact_outputs = exact_outputs.saturating_add(1);
-                }
+                outputs.push(message);
                 Ok(true)
             })?;
-            if exact_outputs != 1 {
-                anyhow::bail!(
-                    "finalized submitted transaction does not contain exactly one authorized output"
-                );
-            }
+            let (outbound_message_cell_hash, outbound_body_hash) = select_exact_finalized_output(
+                &outputs,
+                &target,
+                &expected_value,
+                record.claim.body_hash.as_deref(),
+            )?;
             let block = raw.block_id.context("finalized transaction has no block identity")?;
             let master = rpc_client.get_masterchain_info().await?;
-            return Ok(FinalizedEconomicPaymentObservation {
-                endpoint,
-                locator_identity_digest,
-                transaction_hash: format!("sha256:{}", hex::encode(transaction_root.hash(0))),
-                transaction_lt: transaction.logical_time(),
-                transaction_utime,
-                transaction_boc_digest: format!(
-                    "sha256:{}",
-                    hex::encode(Sha256::digest(&transaction_boc))
-                ),
-                block_workchain: block.workchain,
-                block_shard: block.shard,
-                block_seqno: block.seqno,
-                block_root_hash: format!("sha256:{}", hex::encode(block.root_hash)),
-                block_file_hash: format!("sha256:{}", hex::encode(block.file_hash)),
-                observed_masterchain_seqno: master.last.seqno,
+            return Ok(FinalizedEconomicPaymentMatch {
+                outbound_message_cell_hash,
+                outbound_body_hash,
+                observation: FinalizedEconomicPaymentObservation {
+                    endpoint,
+                    locator_identity_digest,
+                    transaction_hash: format!("sha256:{}", hex::encode(transaction_root.hash(0))),
+                    transaction_lt: transaction.logical_time(),
+                    transaction_utime,
+                    transaction_boc_digest: format!(
+                        "sha256:{}",
+                        hex::encode(Sha256::digest(&transaction_boc))
+                    ),
+                    block_workchain: block.workchain,
+                    block_shard: block.shard,
+                    block_seqno: block.seqno,
+                    block_root_hash: format!("sha256:{}", hex::encode(block.root_hash)),
+                    block_file_hash: format!("sha256:{}", hex::encode(block.file_hash)),
+                    observed_masterchain_seqno: master.last.seqno,
+                },
             });
         }
         let Some((next_lt, next_hash)) = next_cursor else {
@@ -4361,6 +4914,7 @@ async fn resolve_agent_account_task_action(
             )
             .await;
             let Ok(observation) = observation else { continue };
+            let observation = observation.observation;
             let rpc = try_create_rpc_client(config).await?;
             let provider = contracts::contract_provider!(rpc.clone());
             let task = TaskEscrowContract::decode_data(
@@ -4557,7 +5111,7 @@ impl AgentAccountEconomicPaymentResolveCmd {
             )
             .await
             {
-                Ok(observation) => observations.push(observation),
+                Ok(observation) => observations.push(observation.observation),
                 Err(error) => failures.push(rpc_failure_diagnostic(endpoint, &error)),
             }
         }
@@ -9157,37 +9711,43 @@ mod tests {
     use super::{
         AgentAccountAction, AgentTaskOperation, ECONOMIC_PAYMENT_CORROBORATION_SCHEMA,
         ECONOMIC_PAYMENT_FINALIZED_SCHEMA, ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
-        ECONOMIC_PAYMENT_SPONSORSHIP_PROOF_VERIFICATION_SCHEMA,
+        ECONOMIC_PAYMENT_SPONSORSHIP_PROOF_VERIFICATION_SCHEMA, FinalizedEconomicPaymentMatch,
+        FinalizedEconomicPaymentObservation, FinalizedTaskSendObservation,
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
         SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, SponsorshipAgreementPaymentRequestV3,
-        SponsorshipFinalityProfile, canonical_file_digest, canonicalize_chain_rpc_endpoint,
-        chain_query_failure_diagnostic, corroboration_snapshot_handle, decode_exact_protocol_cbor,
+        SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, canonical_file_digest,
+        canonicalize_chain_rpc_endpoint, chain_query_failure_diagnostic,
+        corroboration_snapshot_handle, decode_exact_protocol_cbor,
         economic_payment_corroboration_profile, encode_protocol_json_cbor,
         exact_protocol_action_request_digest, exact_transaction_utime,
-        freeze_economic_payment_corroboration_snapshot,
+        finalized_output_matches_claim, freeze_economic_payment_corroboration_snapshot,
         load_economic_payment_corroboration_members, load_economic_payment_corroboration_snapshot,
-        permission_id_hash, protocol_cbor_digest, relay_network_domain_digest, resolve_nanotos,
-        resolve_payout_nanotos, rpc_failure_diagnostic, rpc_locator_identity_digest,
+        permission_id_hash, protocol_cbor_digest, record_task_send_resolution_vote,
+        relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
+        rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
         validate_controller_task_action, validate_destination_credit_semantics,
         validate_exact_sponsorship_top_up_boc, validate_release_profile_rpc_locator,
         validate_sponsorship_custody_evidence_context, validate_sponsorship_finality_profile,
-        validate_sponsorship_payment_request, verify_current_controller_authorization,
+        validate_sponsorship_payment_request, validate_task_send_resolution_claim,
+        validate_task_send_resolution_evidence, verify_current_controller_authorization,
         verify_parsed_controller_authorization, write_private_snapshot_file,
     };
     use base64::Engine;
     use chain_block::{
-        CurrencyCollection, MsgAddressInt, TrCreditPhase, TransactionDescrOrdinary,
-        read_single_root_boc, write_boc,
+        BuilderData, CurrencyCollection, InternalMessageHeader, Message, MsgAddressInt, SliceData,
+        TrCreditPhase, TransactionDescrOrdinary, read_single_root_boc, write_boc,
     };
     use chain_rpc_client::v2::data_models::RelayNetworkDomainPin;
     use common::app_config::AppConfig;
     use contracts::{
-        AgentAccountContract, ControllerActionClaim, ControllerActionRecord,
-        ControllerActionStatus, EconomicActionAuthorization, TaskEscrowData,
+        AgentAccountContract, AgentAccountData, ControllerActionClaim, ControllerActionRecord,
+        ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
+        TaskEscrowData, agent_account_task_body_hash, controller_resolution_evidence_digest,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::{
+        collections::BTreeMap,
         fs,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
@@ -9282,6 +9842,139 @@ mod tests {
         MsgAddressInt::with_standart(None, 0, [byte; 32].into()).unwrap()
     }
 
+    fn masterchain_address(byte: u8) -> MsgAddressInt {
+        MsgAddressInt::with_standart(None, -1, [byte; 32].into()).unwrap()
+    }
+
+    fn task_send_resolution_record() -> ControllerActionRecord {
+        ControllerActionRecord {
+            claim: ControllerActionClaim {
+                account: address(2).to_string(),
+                network_global_id: test_network().global_id,
+                network_domain: Some(test_network()),
+                deployment_id: "3".repeat(64),
+                controller_epoch: 7,
+                seqno: 11,
+                target: masterchain_address(4).to_string(),
+                value_atomic: 5_000_000_000,
+                body_hash: Some(format!("tvm-cell-sha256:{}", "5".repeat(64))),
+                action_kind: "agent-task-send".into(),
+                idempotency_key: "6".repeat(64),
+                action_identity: format!("sha256:{}", "7".repeat(64)),
+                valid_until: 1_900_000_000,
+            },
+            status: ControllerActionStatus::Broadcasting,
+            exact_signed_boc_base64: None,
+            exact_signed_boc_digest: Some(format!("sha256:{}", "8".repeat(64))),
+            cancellation_identity: None,
+            cancellation_boc_base64: None,
+            economic_authorization: None,
+            economic_effect_authorization: None,
+            exact_winner_resolution: None,
+            created_at_unix: 1,
+            updated_at_unix: 2,
+        }
+    }
+
+    fn economic_payment_observation(index: u32) -> FinalizedEconomicPaymentObservation {
+        FinalizedEconomicPaymentObservation {
+            endpoint: format!("http://127.0.0.1:{}/", 23000 + index),
+            locator_identity_digest: format!("sha256:{:064x}", index),
+            transaction_hash: format!("sha256:{}", "a".repeat(64)),
+            transaction_lt: 1234,
+            transaction_utime: 1_800_000_000,
+            transaction_boc_digest: format!("sha256:{}", "b".repeat(64)),
+            block_workchain: 0,
+            block_shard: i64::MIN,
+            block_seqno: 77,
+            block_root_hash: format!("sha256:{}", "d".repeat(64)),
+            block_file_hash: format!("sha256:{}", "e".repeat(64)),
+            observed_masterchain_seqno: 80 + index,
+        }
+    }
+
+    fn task_send_match(
+        record: &ControllerActionRecord,
+        index: u32,
+    ) -> FinalizedEconomicPaymentMatch {
+        FinalizedEconomicPaymentMatch {
+            observation: economic_payment_observation(index),
+            outbound_message_cell_hash: format!("tvm-cell-sha256:{}", "c".repeat(64)),
+            outbound_body_hash: record.claim.body_hash.clone(),
+        }
+    }
+
+    fn task_send_observation(
+        record: &ControllerActionRecord,
+        index: u32,
+        finalized_controller_epoch: u64,
+        finalized_seqno: u32,
+    ) -> FinalizedTaskSendObservation {
+        FinalizedTaskSendObservation {
+            transaction: economic_payment_observation(index),
+            outbound_message_cell_hash: format!("tvm-cell-sha256:{}", "c".repeat(64)),
+            outbound_body_hash: record.claim.body_hash.clone().unwrap(),
+            finalized_controller_epoch,
+            finalized_seqno,
+        }
+    }
+
+    fn task_send_account_data(epoch: u64, seqno: u32) -> AgentAccountData {
+        AgentAccountData {
+            owner: address(1),
+            controller_pubkey: [2; 32],
+            deployment_id: [0x33; 32],
+            controller_epoch: epoch,
+            seqno,
+            spend_day: 0,
+            spent_today: 0,
+            max_per_tx: 10_000_000_000,
+            daily_limit: 100_000_000_000,
+            default_task_timeout_secs: 600,
+            metadata_hash: None,
+            service_endpoint_hash: None,
+        }
+    }
+
+    fn task_send_resolution_evidence(
+        record: &ControllerActionRecord,
+    ) -> ControllerActionResolutionEvidence {
+        let first_observation = task_send_observation(record, 1, 7, 12);
+        let second_observation = task_send_observation(record, 2, 7, 12);
+        let evidence = serde_json::json!({
+            "schema": TASK_SEND_FINALIZED_SCHEMA,
+            "wallet": "campaign-agent-0",
+            "action_id": record.claim.idempotency_key,
+            "source_account": record.claim.account,
+            "deployment_id": record.claim.deployment_id,
+            "controller_epoch": record.claim.controller_epoch,
+            "seqno": record.claim.seqno,
+            "finalized_controller_epoch": record.claim.controller_epoch,
+            "finalized_seqno": record.claim.seqno + 1,
+            "destination": record.claim.target,
+            "amount_nanotos": record.claim.value_atomic,
+            "body_hash": record.claim.body_hash,
+            "exact_signed_boc_digest": record.exact_signed_boc_digest,
+            "submitted_message_cell_hash": format!("tvm-cell-sha256:{}", "9".repeat(64)),
+            "network_domain": record.claim.network_domain,
+            "quorum": {"members": 3, "threshold": 2, "agreeing": 2},
+            "process_view_scope": "distinct RPC process views; no independent-operator or Byzantine-finality claim",
+            "independent_operator_domains_proven": false,
+            "transaction": first_observation.clone(),
+            "observations": [first_observation, second_observation],
+            "state": "resolved",
+        });
+        ControllerActionResolutionEvidence {
+            evidence_kind: TASK_SEND_FINALIZED_SCHEMA.into(),
+            evidence_digest: controller_resolution_evidence_digest(
+                TASK_SEND_FINALIZED_SCHEMA,
+                &evidence,
+            )
+            .unwrap(),
+            evidence,
+        }
+    }
+
     fn controller_task(status: u8) -> TaskEscrowData {
         TaskEscrowData {
             creator: address(1),
@@ -9322,6 +10015,274 @@ mod tests {
         assert_eq!(resolve_payout_nanotos(None, Some(0)).unwrap(), 0);
         assert!(resolve_payout_nanotos(Some(0.0), None).is_err());
         assert!(resolve_nanotos("amount", None, Some(0), None).is_err());
+    }
+
+    #[test]
+    fn task_send_resolve_cli_is_resolution_only_and_uses_three_process_views() {
+        use clap::Parser;
+
+        let action_id = "a".repeat(64);
+        let parsed = AccountActionParser::try_parse_from([
+            "agent-account",
+            "task-send-resolve",
+            "--wallet=campaign-agent-0",
+            &format!("--action-id={action_id}"),
+            "--quorum-config",
+            "/private/view-2.json",
+            "/private/view-3.json",
+            "--max-transactions=321",
+        ])
+        .unwrap();
+        match parsed.action {
+            AgentAccountAction::TaskSendResolve(command) => {
+                assert_eq!(command.wallet, "campaign-agent-0");
+                assert_eq!(command.action_id, action_id);
+                assert_eq!(
+                    command.quorum_configs,
+                    ["/private/view-2.json", "/private/view-3.json"]
+                );
+                assert_eq!(command.max_transactions, 321);
+            }
+            _ => panic!("task-send-resolve parsed as another command"),
+        }
+
+        assert!(
+            AccountActionParser::try_parse_from([
+                "agent-account",
+                "task-send-resolve",
+                "--wallet=campaign-agent-0",
+                &format!("--action-id={action_id}"),
+                "--quorum-config",
+                "/private/view-2.json",
+            ])
+            .is_err()
+        );
+        for forbidden in [
+            format!("--target={}", masterchain_address(4)),
+            "--body-boc=te6ccgEBAQEAAgAAAA==".to_owned(),
+            "--yes".to_owned(),
+        ] {
+            assert!(
+                AccountActionParser::try_parse_from([
+                    "agent-account",
+                    "task-send-resolve",
+                    "--wallet=campaign-agent-0",
+                    &format!("--action-id={action_id}"),
+                    "--quorum-config",
+                    "/private/view-2.json",
+                    "/private/view-3.json",
+                    &forbidden,
+                ])
+                .is_err(),
+                "resolver unexpectedly accepted broadcast/signing option {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn task_send_resolution_binds_masterchain_body_effect_and_replay_evidence() {
+        let record = task_send_resolution_record();
+        let domain = validate_task_send_resolution_claim(&record, &address(2)).unwrap();
+        assert_eq!(domain, test_network());
+        assert_eq!(record.claim.target, masterchain_address(4).to_string());
+
+        let resolution = task_send_resolution_evidence(&record);
+        validate_task_send_resolution_evidence(&record, &resolution).unwrap();
+        let mut resolved = record.clone();
+        resolved.status = ControllerActionStatus::Resolved;
+        resolved.exact_winner_resolution = Some(resolution.clone());
+        validate_task_send_resolution_evidence(
+            &resolved,
+            resolved.exact_winner_resolution.as_ref().unwrap(),
+        )
+        .unwrap();
+
+        let mut wrong_body = resolution.clone();
+        wrong_body.evidence["body_hash"] =
+            serde_json::json!(format!("tvm-cell-sha256:{}", "f".repeat(64)));
+        wrong_body.evidence_digest =
+            controller_resolution_evidence_digest(TASK_SEND_FINALIZED_SCHEMA, &wrong_body.evidence)
+                .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &wrong_body).is_err());
+
+        let mut wrong_observation = resolution.clone();
+        wrong_observation.evidence["observations"][1]["outbound_body_hash"] =
+            serde_json::json!(format!("tvm-cell-sha256:{}", "f".repeat(64)));
+        wrong_observation.evidence_digest = controller_resolution_evidence_digest(
+            TASK_SEND_FINALIZED_SCHEMA,
+            &wrong_observation.evidence,
+        )
+        .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &wrong_observation).is_err());
+
+        let mut duplicate_view = resolution.clone();
+        duplicate_view.evidence["observations"][1]["endpoint"] =
+            duplicate_view.evidence["observations"][0]["endpoint"].clone();
+        duplicate_view.evidence_digest = controller_resolution_evidence_digest(
+            TASK_SEND_FINALIZED_SCHEMA,
+            &duplicate_view.evidence,
+        )
+        .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &duplicate_view).is_err());
+
+        let mut forged_state_view = resolution.clone();
+        forged_state_view.evidence["observations"][1]["finalized_seqno"] = serde_json::json!(13);
+        forged_state_view.evidence_digest = controller_resolution_evidence_digest(
+            TASK_SEND_FINALIZED_SCHEMA,
+            &forged_state_view.evidence,
+        )
+        .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &forged_state_view).is_err());
+
+        let mut rotation = resolution.clone();
+        rotation.evidence["finalized_controller_epoch"] = serde_json::json!(8);
+        rotation.evidence["finalized_seqno"] = serde_json::json!(0);
+        rotation.evidence["transaction"]["finalized_controller_epoch"] = serde_json::json!(8);
+        rotation.evidence["transaction"]["finalized_seqno"] = serde_json::json!(0);
+        for observation in rotation.evidence["observations"].as_array_mut().unwrap() {
+            observation["finalized_controller_epoch"] = serde_json::json!(8);
+            observation["finalized_seqno"] = serde_json::json!(0);
+        }
+        rotation.evidence_digest =
+            controller_resolution_evidence_digest(TASK_SEND_FINALIZED_SCHEMA, &rotation.evidence)
+                .unwrap();
+        validate_task_send_resolution_evidence(&record, &rotation).unwrap();
+
+        let mut wrong_action = record.clone();
+        wrong_action.claim.action_kind = "agent-native-send".into();
+        assert!(validate_task_send_resolution_claim(&wrong_action, &address(2)).is_err());
+        assert!(validate_task_send_resolution_claim(&record, &address(3)).is_err());
+    }
+
+    #[test]
+    fn finalized_task_send_output_rejects_same_target_and_value_with_wrong_body() {
+        let source = address(2);
+        let target = masterchain_address(4);
+        let value = CurrencyCollection::with_coins(5_000_000_000);
+        let body = BuilderData::with_raw(vec![0xab], 8).unwrap().into_cell().unwrap();
+        let message = Message::with_int_header_and_body(
+            InternalMessageHeader::with_addresses(source, target.clone(), value.clone()),
+            SliceData::load_cell(body.clone()).unwrap(),
+        );
+        let expected_body_hash = agent_account_task_body_hash(&body);
+
+        assert!(
+            finalized_output_matches_claim(&message, &target, &value, Some(&expected_body_hash),)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            finalized_output_matches_claim(
+                &message,
+                &target,
+                &value,
+                Some(&format!("tvm-cell-sha256:{}", "f".repeat(64))),
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(finalized_output_matches_claim(&message, &target, &value, None).unwrap().is_some());
+
+        let wrong_body = BuilderData::with_raw(vec![0xcd], 8).unwrap().into_cell().unwrap();
+        let duplicate = Message::with_int_header_and_body(
+            InternalMessageHeader::with_addresses(address(2), target.clone(), value.clone()),
+            SliceData::load_cell(wrong_body).unwrap(),
+        );
+        assert!(
+            select_exact_finalized_output(
+                &[message.clone(), duplicate],
+                &target,
+                &value,
+                Some(&expected_body_hash),
+            )
+            .is_err()
+        );
+
+        let absent_body = Message::with_int_header(InternalMessageHeader::with_addresses(
+            address(2),
+            target.clone(),
+            value.clone(),
+        ));
+        assert!(
+            finalized_output_matches_claim(
+                &absent_body,
+                &target,
+                &value,
+                Some(&expected_body_hash),
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            select_exact_finalized_output(
+                &[absent_body],
+                &target,
+                &value,
+                Some(&expected_body_hash),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn task_send_quorum_tolerates_one_state_error_and_accepts_controller_rotation() {
+        let record = task_send_resolution_record();
+        let mut votes = BTreeMap::new();
+        record_task_send_resolution_vote(
+            &mut votes,
+            task_send_match(&record, 1),
+            Err(anyhow::anyhow!("one RPC process view timed out")),
+            &record,
+        );
+        record_task_send_resolution_vote(
+            &mut votes,
+            task_send_match(&record, 2),
+            Ok(task_send_account_data(7, 12)),
+            &record,
+        );
+        record_task_send_resolution_vote(
+            &mut votes,
+            task_send_match(&record, 3),
+            Ok(task_send_account_data(7, 12)),
+            &record,
+        );
+        assert_eq!(votes.values().next().unwrap().len(), 2);
+
+        let mut rotated = BTreeMap::new();
+        record_task_send_resolution_vote(
+            &mut rotated,
+            task_send_match(&record, 1),
+            Ok(task_send_account_data(8, 0)),
+            &record,
+        );
+        assert_eq!(rotated.values().next().unwrap()[0].finalized_controller_epoch, 8);
+        assert_eq!(rotated.values().next().unwrap()[0].finalized_seqno, 0);
+    }
+
+    #[test]
+    fn legacy_finalized_payment_observation_json_shape_is_unchanged() {
+        let encoded = serde_json::to_string(&economic_payment_observation(1)).unwrap();
+        let expected = format!(
+            concat!(
+                "{{\"endpoint\":\"http://127.0.0.1:23001/\",",
+                "\"locator_identity_digest\":\"sha256:{locator}\",",
+                "\"transaction_hash\":\"sha256:{transaction}\",",
+                "\"transaction_lt\":1234,\"transaction_utime\":1800000000,",
+                "\"transaction_boc_digest\":\"sha256:{boc}\",",
+                "\"block_workchain\":0,\"block_shard\":-9223372036854775808,",
+                "\"block_seqno\":77,\"block_root_hash\":\"sha256:{root}\",",
+                "\"block_file_hash\":\"sha256:{file}\",",
+                "\"observed_masterchain_seqno\":81}}"
+            ),
+            locator = format!("{:064x}", 1),
+            transaction = "a".repeat(64),
+            boc = "b".repeat(64),
+            root = "d".repeat(64),
+            file = "e".repeat(64),
+        );
+        assert_eq!(encoded, expected);
+        assert!(!encoded.contains("outbound_body_hash"));
+        assert!(!encoded.contains("finalized_controller_epoch"));
     }
 
     #[test]

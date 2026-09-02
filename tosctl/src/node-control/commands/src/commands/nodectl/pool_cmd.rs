@@ -149,6 +149,11 @@ pub struct PoolNominatorUpdateValidatorSetCmd {
 pub struct PoolNominatorDepositCmd {
     #[arg(short = 'n', long = "name", help = "Pool name from config")]
     name: String,
+    #[arg(
+        long,
+        help = "Wallet name from config to use as the nominator (defaults to the pool owner or binding wallet)"
+    )]
+    wallet: Option<String>,
     #[arg(long, help = "Amount in TOS to deposit")]
     amount: f64,
 }
@@ -158,6 +163,62 @@ pub struct PoolNominatorDepositCmd {
 pub struct PoolNominatorWithdrawCmd {
     #[arg(short = 'n', long = "name", help = "Pool name from config")]
     name: String,
+    #[arg(
+        long,
+        help = "Wallet name from config to use as the nominator (defaults to the pool owner or binding wallet)"
+    )]
+    wallet: Option<String>,
+}
+
+fn select_nominator_wallet_name<'a>(
+    requested_wallet: Option<&'a str>,
+    configured_owner: Option<&'a str>,
+    binding_wallet: Option<&'a str>,
+    pool_name: &str,
+) -> anyhow::Result<&'a str> {
+    requested_wallet.or(configured_owner).or(binding_wallet).ok_or_else(|| {
+        anyhow::anyhow!(
+            "No binding or owner found for pool '{}'. Configure an owner or binding, or pass --wallet.",
+            pool_name
+        )
+    })
+}
+
+fn nominator_pool_chain_json(
+    data: &contracts::NominatorPoolData,
+    positions: &[contracts::NominatorPosition],
+) -> serde_json::Value {
+    let positions = positions
+        .iter()
+        .map(|position| {
+            serde_json::json!({
+                "address": position.address,
+                "amount": position.amount.to_string(),
+                "pending_deposit": position.pending_deposit.to_string(),
+                "withdraw_requested": position.withdraw_requested,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "pool_data": {
+            "state": data.state,
+            "nominators_count": data.nominators_count,
+            "stake_amount_sent": data.stake_amount_sent.to_string(),
+            "validator_amount": data.validator_amount.to_string(),
+            "validator_address": format!("0:{}", hex::encode(data.validator_address)),
+            "validator_reward_share_bps": data.validator_reward_share,
+            "max_nominators_count": data.max_nominators_count,
+            "min_validator_stake": data.min_validator_stake.to_string(),
+            "min_nominator_stake": data.min_nominator_stake.to_string(),
+            "stake_at": data.stake_at,
+            "saved_validator_set_hash": hex::encode(data.saved_validator_set_hash),
+            "validator_set_changes_count": data.validator_set_changes_count,
+            "validator_set_change_time": data.validator_set_change_time,
+            "stake_held_for": data.stake_held_for,
+        },
+        "nominator_positions": positions,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -568,11 +629,13 @@ impl PoolImportCmd {
 impl PoolGetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use chain_block::MsgAddressInt;
+        use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
         use common::{
             app_config::{AppConfig, PoolConfig},
             chain_utils::display_tos,
         };
+        use contracts::{NominatorPoolWrapper, NominatorPoolWrapperImpl};
         use std::path::Path;
         use std::str::FromStr;
 
@@ -650,6 +713,15 @@ impl PoolGetCmd {
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
                             obj["balance"] = serde_json::json!(display_tos(info.balance));
                             obj["state"] = serde_json::json!(info.state.to_string());
+                            if info.state == AccountState::Active {
+                                let provider = contracts::contract_provider!(rpc_client.clone());
+                                let wrapper = NominatorPoolWrapperImpl::new(provider, addr);
+                                let data = wrapper.get_pool_data().await?;
+                                let positions = wrapper.list_nominators().await?;
+                                let chain = nominator_pool_chain_json(&data, &positions);
+                                obj["pool_data"] = chain["pool_data"].clone();
+                                obj["nominator_positions"] = chain["nominator_positions"].clone();
+                            }
                         }
                     }
                     if let Some(owner_str) = owner {
@@ -1245,23 +1317,20 @@ impl PoolNominatorDepositCmd {
         let pool_addr = MsgAddressInt::from_str(&pool_addr_str)
             .map_err(|_| anyhow::anyhow!("Invalid pool address: {}", pool_addr_str))?;
 
-        // Find the owner wallet. If owner is set in pool config, use it; otherwise use
-        // the first binding's wallet as the depositor.
-        let wallet_name = if let Some(ref name) = owner_name {
-            name.clone()
-        } else {
-            let binding = config
-                .bindings
-                .iter()
-                .find(|(_, b)| b.pool.as_deref() == Some(&self.name))
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No binding or owner found for pool '{}'. Configure an owner or binding.",
-                        self.name
-                    )
-                })?;
-            binding.1.wallet.clone()
-        };
+        // An explicit wallet lets any configured account act as a nominator. Without
+        // it, preserve the historical owner-then-binding resolution order.
+        let binding_wallet = config
+            .bindings
+            .iter()
+            .find(|(_, binding)| binding.pool.as_deref() == Some(&self.name))
+            .map(|(_, binding)| binding.wallet.as_str());
+        let wallet_name = select_nominator_wallet_name(
+            self.wallet.as_deref(),
+            owner_name.as_deref(),
+            binding_wallet,
+            &self.name,
+        )?
+        .to_owned();
 
         let wallet_cfg = config
             .wallets
@@ -1360,22 +1429,20 @@ impl PoolNominatorWithdrawCmd {
         let pool_addr = MsgAddressInt::from_str(&pool_addr_str)
             .map_err(|_| anyhow::anyhow!("Invalid pool address: {}", pool_addr_str))?;
 
-        // Find the owner wallet
-        let wallet_name = if let Some(ref name) = owner_name {
-            name.clone()
-        } else {
-            let binding = config
-                .bindings
-                .iter()
-                .find(|(_, b)| b.pool.as_deref() == Some(&self.name))
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No binding or owner found for pool '{}'. Configure an owner or binding.",
-                        self.name
-                    )
-                })?;
-            binding.1.wallet.clone()
-        };
+        // An explicit wallet lets the matching nominator request its own withdrawal.
+        // Without it, preserve the historical owner-then-binding resolution order.
+        let binding_wallet = config
+            .bindings
+            .iter()
+            .find(|(_, binding)| binding.pool.as_deref() == Some(&self.name))
+            .map(|(_, binding)| binding.wallet.as_str());
+        let wallet_name = select_nominator_wallet_name(
+            self.wallet.as_deref(),
+            owner_name.as_deref(),
+            binding_wallet,
+            &self.name,
+        )?
+        .to_owned();
 
         let wallet_cfg = config
             .wallets
@@ -3468,5 +3535,149 @@ impl PoolLiquidControllerTestLoanCmd {
 
         println!();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct PoolTestCli {
+        #[command(subcommand)]
+        action: PoolAction,
+    }
+
+    #[test]
+    fn parses_optional_nominator_wallet_for_deposit_and_withdraw() {
+        let deposit = PoolTestCli::try_parse_from([
+            "tosctl",
+            "nominator",
+            "deposit",
+            "--name",
+            "shared-pool",
+            "--wallet",
+            "nominator-a",
+            "--amount",
+            "12.5",
+        ])
+        .unwrap();
+        match deposit.action {
+            PoolAction::Nominator(PoolNominatorCmd {
+                action: PoolNominatorAction::Deposit(command),
+            }) => {
+                assert_eq!(command.name, "shared-pool");
+                assert_eq!(command.wallet.as_deref(), Some("nominator-a"));
+                assert_eq!(command.amount, 12.5);
+            }
+            _ => panic!("deposit command parsed as another pool action"),
+        }
+
+        let withdraw = PoolTestCli::try_parse_from([
+            "tosctl",
+            "nominator",
+            "withdraw",
+            "--name",
+            "shared-pool",
+            "--wallet",
+            "nominator-b",
+        ])
+        .unwrap();
+        match withdraw.action {
+            PoolAction::Nominator(PoolNominatorCmd {
+                action: PoolNominatorAction::Withdraw(command),
+            }) => {
+                assert_eq!(command.name, "shared-pool");
+                assert_eq!(command.wallet.as_deref(), Some("nominator-b"));
+            }
+            _ => panic!("withdraw command parsed as another pool action"),
+        }
+    }
+
+    #[test]
+    fn omitted_nominator_wallet_preserves_owner_then_binding_fallback() {
+        let parsed = PoolTestCli::try_parse_from([
+            "tosctl",
+            "nominator",
+            "deposit",
+            "--name",
+            "shared-pool",
+            "--amount",
+            "1",
+        ])
+        .unwrap();
+        match parsed.action {
+            PoolAction::Nominator(PoolNominatorCmd {
+                action: PoolNominatorAction::Deposit(command),
+            }) => assert!(command.wallet.is_none()),
+            _ => panic!("deposit command parsed as another pool action"),
+        }
+
+        assert_eq!(
+            select_nominator_wallet_name(
+                Some("explicit"),
+                Some("owner"),
+                Some("binding"),
+                "shared-pool"
+            )
+            .unwrap(),
+            "explicit"
+        );
+        assert_eq!(
+            select_nominator_wallet_name(None, Some("owner"), Some("binding"), "shared-pool")
+                .unwrap(),
+            "owner"
+        );
+        assert_eq!(
+            select_nominator_wallet_name(None, None, Some("binding"), "shared-pool").unwrap(),
+            "binding"
+        );
+        assert!(
+            select_nominator_wallet_name(None, None, None, "shared-pool")
+                .unwrap_err()
+                .to_string()
+                .contains("--wallet")
+        );
+    }
+
+    #[test]
+    fn serializes_exact_multi_nominator_chain_view() {
+        let data = contracts::NominatorPoolData {
+            state: 2,
+            nominators_count: 1,
+            stake_amount_sent: 9_007_199_254_740_993,
+            validator_amount: 4_000_000_000,
+            validator_address: [0x11; 32],
+            validator_reward_share: 4000,
+            max_nominators_count: 40,
+            min_validator_stake: 10_000_000_000_000,
+            min_nominator_stake: 100_000_000_000,
+            stake_at: 123,
+            saved_validator_set_hash: [0x22; 32],
+            validator_set_changes_count: 2,
+            validator_set_change_time: 456,
+            stake_held_for: 65_536,
+        };
+        let positions = vec![contracts::NominatorPosition {
+            address: format!("0:{}", "33".repeat(32)),
+            amount: 9_007_199_254_740_993,
+            pending_deposit: 500_000_000,
+            withdraw_requested: true,
+        }];
+
+        let encoded = serde_json::to_string(&nominator_pool_chain_json(&data, &positions)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(parsed["pool_data"]["state"], 2);
+        assert_eq!(parsed["pool_data"]["nominators_count"], 1);
+        assert_eq!(parsed["pool_data"]["stake_amount_sent"], "9007199254740993");
+        assert_eq!(parsed["pool_data"]["validator_address"], format!("0:{}", "11".repeat(32)));
+        assert_eq!(parsed["pool_data"]["validator_reward_share_bps"], 4000);
+        assert_eq!(parsed["pool_data"]["max_nominators_count"], 40);
+        assert_eq!(parsed["pool_data"]["saved_validator_set_hash"], "22".repeat(32));
+        assert_eq!(parsed["nominator_positions"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["nominator_positions"][0]["amount"], "9007199254740993");
+        assert_eq!(parsed["nominator_positions"][0]["pending_deposit"], "500000000");
+        assert_eq!(parsed["nominator_positions"][0]["withdraw_requested"], true);
     }
 }

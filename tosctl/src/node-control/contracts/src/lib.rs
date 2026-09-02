@@ -48,7 +48,8 @@ pub use agent_account::{
 pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
     ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
-    EconomicEffectAuthorization, controller_resolution_evidence_digest,
+    EconomicEffectAuthorization, agent_account_task_body_hash,
+    controller_resolution_evidence_digest,
 };
 pub use attestation::{
     domain_bound_hash, resolve_domain_hash, service_actor_terms_hash, service_respond_domain_hash,

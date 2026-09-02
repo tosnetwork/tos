@@ -138,10 +138,15 @@ class MessageAny(TlbScheme):
     body:(Either X ^X) = Message X;
     """
     def __init__(self, info: typing.Union["InternalMsgInfo", "ExternalMsgInfo", "ExternalOutMsgInfo"],
-                 init: typing.Optional[StateInit], body: Cell):
+                 init: typing.Optional[StateInit], body: Cell, cell: typing.Optional[Cell] = None):
         self.info = info
         self.init = init
         self.body = body
+        # Deserialization must retain the representation-level identity.  A
+        # message body may be encoded as Either-left or Either-right even when
+        # both layouts fit; reserialization is semantic, not identity
+        # preserving, and therefore cannot recover the original cell hash.
+        self.cell = cell.copy() if cell is not None else None
 
     @property
     def is_external(self):
@@ -177,6 +182,7 @@ class MessageAny(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
+        cell = cell_slice.copy().to_cell()
         info = CommonMsgInfo.deserialize(cell_slice)
         init = None
         maybe = cell_slice.load_bit()
@@ -191,7 +197,7 @@ class MessageAny(TlbScheme):
             body = cell_slice.load_ref()
         else:  # left
             body = cell_slice.to_cell()
-        return cls(info, init, body)
+        return cls(info, init, body, cell=cell)
 
 
 class CommonMsgInfo(TlbScheme):
