@@ -663,6 +663,36 @@ impl IndexerStore {
     /// A full replay is intentionally conservative: contract snapshots and
     /// lifecycle evidence may also have originated on a retired branch and
     /// cannot be repaired safely from a short explorer-only rewind.
+    /// The highest new-request id ever scanned for a service, kept as one
+    /// meta row per service. Ids probed and found absent are deliberately
+    /// NOT stored as lifecycle rows -- a contract reporting a fabricated
+    /// counter would otherwise grow the table by one batch of dead rows per
+    /// visit -- so the scan position must survive on its own.
+    pub fn service_scan_high_water(&self, service_address: &str) -> anyhow::Result<Option<u64>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT value FROM indexer_meta WHERE key = ?1",
+                params![format!("svc-scan:{service_address}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value.and_then(|v| v.parse().ok()))
+    }
+
+    pub fn set_service_scan_high_water(
+        &self,
+        service_address: &str,
+        high_water: u64,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.execute(
+            "INSERT OR REPLACE INTO indexer_meta (key, value) VALUES (?1, ?2)",
+            params![format!("svc-scan:{service_address}"), high_water.to_string()],
+        )?;
+        Ok(())
+    }
+
     pub fn reset_canonical_index(&self) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().expect("indexer store lock poisoned");
         let tx = conn.transaction()?;
@@ -673,7 +703,7 @@ impl IndexerStore {
         tx.execute("DELETE FROM dns_domain_history", [])?;
         tx.execute(
             "DELETE FROM indexer_meta
-             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%'",
+             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'svc-scan:%'",
             [],
         )?;
         tx.commit()?;
@@ -1283,7 +1313,14 @@ impl IndexerStore {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        let max_id = rows.iter().map(|r| r.request_id).max();
+        let max_row_id = rows.iter().map(|r| r.request_id).max();
+        drop(stmt);
+        drop(conn);
+        let scan_high_water = self.service_scan_high_water(service_address)?;
+        let max_id = match (max_row_id, scan_high_water) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
         let stored = rows.len() as u64;
         let active = rows
             .into_iter()
