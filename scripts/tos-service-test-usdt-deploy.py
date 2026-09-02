@@ -271,6 +271,13 @@ def main() -> int:
         "--test-identities",
         default=str(REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"),
     )
+    parser.add_argument(
+        "--buyer-address",
+        help=(
+            "active current-network buyer account that will own the initial test Jetton "
+            "supply; when omitted, deploy the deterministic test-usdt-buyer WalletV1"
+        ),
+    )
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
     if not 0 < args.target_supply < 1 << 120 or len(args.metadata_uri.encode()) > 512:
@@ -284,29 +291,39 @@ def main() -> int:
         (int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32])
     )
     buyer_key_path = Path(args.test_identities)
-    buyer_key = load_test_identity(buyer_key_path, "test-usdt-buyer")
-    buyer_blueprint = WalletV1Blueprint(workchain=0, private_key=buyer_key)
-    buyer = buyer_blueprint.address
-
     buyer_deployed_now = False
-    try:
+    if args.buyer_address:
+        buyer = Address(args.buyer_address)
+        if buyer.wc != 0:
+            raise RuntimeError("external test buyer must be a workchain-0 account")
         buyer_code = account_cell(config, buyer.to_str(), "code")
-        if buyer_code.hash != buyer_blueprint.CODE_BOC.hash:
-            raise RuntimeError("deterministic test buyer address contains unexpected code")
-    except RuntimeError as error:
-        if "unavailable" not in str(error):
-            raise
-        send_wallet_message(
-            config,
-            private_key,
-            admin,
-            buyer,
-            5 * NANO,
-            Cell.empty(),
-            buyer_blueprint.state_init,
-        )
-        wait_view(config, buyer, wallet_v1_view, lambda view: view["sequence"] == 0)
-        buyer_deployed_now = True
+        buyer_source = "external-active-account"
+        buyer_key_file = None
+    else:
+        buyer_key = load_test_identity(buyer_key_path, "test-usdt-buyer")
+        buyer_blueprint = WalletV1Blueprint(workchain=0, private_key=buyer_key)
+        buyer = buyer_blueprint.address
+        buyer_source = "deterministic-test-identity"
+        buyer_key_file = str(buyer_key_path)
+        try:
+            buyer_code = account_cell(config, buyer.to_str(), "code")
+            if buyer_code.hash != buyer_blueprint.CODE_BOC.hash:
+                raise RuntimeError("deterministic test buyer address contains unexpected code")
+        except RuntimeError as error:
+            if "unavailable" not in str(error):
+                raise
+            send_wallet_message(
+                config,
+                private_key,
+                admin,
+                buyer,
+                5 * NANO,
+                Cell.empty(),
+                buyer_blueprint.state_init,
+            )
+            wait_view(config, buyer, wallet_v1_view, lambda view: view["sequence"] == 0)
+            buyer_code = account_cell(config, buyer.to_str(), "code")
+            buyer_deployed_now = True
 
     with tempfile.TemporaryDirectory() as temporary:
         minter_boc, wallet_boc = reproducible_contracts(Path(temporary))
@@ -476,7 +493,10 @@ def main() -> int:
             "metadata_uri": args.metadata_uri,
             "total_supply_atomic": str(args.target_supply),
             "test_buyer_wallet": buyer.to_str(),
-            "test_buyer_wallet_key_file": str(buyer_key_path),
+            "test_buyer_wallet_raw": f"{buyer.wc}:{buyer.hash_part.hex()}",
+            "test_buyer_wallet_source": buyer_source,
+            "test_buyer_wallet_code_hash": "tvm-cell-sha256:" + buyer_code.hash.hex(),
+            "test_buyer_wallet_key_file": buyer_key_file,
             "test_buyer_jetton_wallet_contract": wallet.to_str(),
         },
         "release": {
@@ -487,6 +507,16 @@ def main() -> int:
                 text=True,
                 capture_output=True,
             ).stdout.strip(),
+            "source_tree_clean": not bool(
+                subprocess.run(
+                    ["git", "-C", str(REPO), "status", "--porcelain"],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                ).stdout.strip()
+            ),
+            "deployment_script_sha256": "sha256:"
+            + hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "license": "MIT",
             "minter_code_hash": "tvm-cell-sha256:" + minter_code.hash.hex(),
             "minter_boc_sha256": "sha256:" + hashlib.sha256(minter_boc).hexdigest(),
