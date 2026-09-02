@@ -719,6 +719,12 @@ pub struct AgentAccountTaskSendResolveCmd {
         help = "Maximum source-account transactions inspected per RPC process view"
     )]
     max_transactions: u32,
+    #[arg(long, requires = "config_fd")]
+    journal_directory: Option<String>,
+    #[arg(long, requires = "config_format")]
+    config_fd: Option<i32>,
+    #[arg(long, value_parser = ["json", "yaml", "yml"], requires = "config_fd")]
+    config_format: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -3288,12 +3294,22 @@ impl AgentAccountTaskSendResolveCmd {
         if !primary_path.is_absolute() {
             anyhow::bail!("primary config must be absolute for task-send resolution");
         }
-        let primary_bytes = fs::read(primary_path).context("read primary task-send RPC config")?;
-        let primary = AppConfig::load_bytes(
-            &primary_bytes,
-            config_format_from_path(primary_path)?,
-            "primary task-send RPC config",
-        )?;
+        let primary = match (self.config_fd, self.config_format.as_deref()) {
+            (Some(fd), Some(format)) => {
+                let (config, _vault, _rpc) = load_config_vault_rpc_client_fd(fd, format).await?;
+                config
+            }
+            (None, None) => {
+                let primary_bytes =
+                    fs::read(primary_path).context("read primary task-send RPC config")?;
+                AppConfig::load_bytes(
+                    &primary_bytes,
+                    config_format_from_path(primary_path)?,
+                    "primary task-send RPC config",
+                )?
+            }
+            _ => anyhow::bail!("--config-fd and --config-format must be used together"),
+        };
         let agent_wallet = primary
             .agent_wallets
             .get(&self.wallet)
@@ -3303,7 +3319,19 @@ impl AgentAccountTaskSendResolveCmd {
             .as_ref()
             .context("Agent Account is not deployed for this wallet")?
             .parse::<MsgAddressInt>()?;
-        let journal = open_controller_journal(primary_path)?;
+        let journal = if self.journal_directory.is_some() {
+            let runtime = agent_wallet
+                .runtime
+                .as_ref()
+                .context("Agent Wallet has no owner-pinned runtime authority")?;
+            open_economic_controller_journal(
+                primary_path,
+                self.journal_directory.as_deref(),
+                runtime.economic_custody_journal_directory.as_deref(),
+            )?
+        } else {
+            open_controller_journal(primary_path)?
+        };
         let record = journal.action_by_idempotency_key(&self.action_id)?;
         let expected_network = validate_task_send_resolution_claim(&record, &account)?;
 
@@ -3321,20 +3349,22 @@ impl AgentAccountTaskSendResolveCmd {
         }
         let submitted_message_cell_hash = validate_unresolved_task_send_boc(&record)?;
 
-        let mut paths = vec![primary_path.to_path_buf()];
-        paths.extend(self.quorum_configs.iter().map(PathBuf::from));
-        let mut endpoints = BTreeSet::new();
-        let mut members = Vec::with_capacity(3);
-        for path in paths {
+        let mut configurations = vec![primary];
+        for value in &self.quorum_configs {
+            let path = Path::new(value);
             if !path.is_absolute() {
                 anyhow::bail!("every task-send quorum config must be absolute");
             }
-            let bytes = fs::read(&path).context("read task-send quorum config")?;
-            let config = AppConfig::load_bytes(
+            let bytes = fs::read(path).context("read task-send quorum config")?;
+            configurations.push(AppConfig::load_bytes(
                 &bytes,
-                config_format_from_path(&path)?,
+                config_format_from_path(path)?,
                 "task-send quorum config",
-            )?;
+            )?);
+        }
+        let mut endpoints = BTreeSet::new();
+        let mut members = Vec::with_capacity(3);
+        for config in configurations {
             let configured = config.chain_rpc.endpoints();
             if configured.len() != 1 {
                 anyhow::bail!("every task-send quorum config must name exactly one RPC endpoint");
@@ -4359,6 +4389,7 @@ impl AgentAccountEconomicEffectPrepareCmd {
                 "account": record.claim.account, "target": record.claim.target,
                 "amount_nanotos": record.claim.value_atomic,
                 "body_hash": record.claim.body_hash, "controller_epoch": record.claim.controller_epoch,
+                "deployment_id": record.claim.deployment_id,
                 "seqno": record.claim.seqno, "network_global_id": record.claim.network_global_id,
                 "network_domain": record.claim.network_domain,
                 "valid_until": record.claim.valid_until,
@@ -10078,8 +10109,33 @@ mod tests {
                     ["/private/view-2.json", "/private/view-3.json"]
                 );
                 assert_eq!(command.max_transactions, 321);
+                assert!(command.journal_directory.is_none());
+                assert!(command.config_fd.is_none());
+                assert!(command.config_format.is_none());
             }
             _ => panic!("task-send-resolve parsed as another command"),
+        }
+
+        let economic = AccountActionParser::try_parse_from([
+            "agent-account",
+            "task-send-resolve",
+            "--wallet=campaign-agent-0",
+            &format!("--action-id={action_id}"),
+            "--quorum-config",
+            "/private/view-2.json",
+            "/private/view-3.json",
+            "--journal-directory=/private/economic-custody",
+            "--config-fd=3",
+            "--config-format=json",
+        ])
+        .unwrap();
+        match economic.action {
+            AgentAccountAction::TaskSendResolve(command) => {
+                assert_eq!(command.journal_directory.as_deref(), Some("/private/economic-custody"));
+                assert_eq!(command.config_fd, Some(3));
+                assert_eq!(command.config_format.as_deref(), Some("json"));
+            }
+            _ => panic!("economic task-send resolution parsed as another command"),
         }
 
         assert!(
