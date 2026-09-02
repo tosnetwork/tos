@@ -15,6 +15,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pytosiq_core import Address, Builder, Cell, CurrencyCollection, InternalMsgInfo, MessageAny
@@ -482,7 +483,12 @@ def test_integrated_working_configs_reuse_references_but_clear_addresses(tmp_pat
     for index, config in enumerate(configs):
         assert config.path.stat().st_mode & 0o777 == 0o600
         document = json.loads(config.path.read_text())
-        assert document["chain_rpc"]["urls"] == [f"http://127.0.0.1:{23000 + index}/"]
+        rpc_origin = f"http://127.0.0.1:{23000 + index}"
+        rpc_locator = f"{rpc_origin}/jsonRPC"
+        assert document["chain_rpc"]["urls"] == [rpc_locator]
+        assert config.rpc_url == rpc_locator
+        assert config.rpc_url not in {rpc_origin, f"{rpc_origin}/"}
+        assert not config.rpc_url.endswith("/")
         assert document["agent_tasks"] == {}
         for profile_index, profile in enumerate(profiles):
             copied = document["agent_wallets"][profile.profile_name]
@@ -494,6 +500,76 @@ def test_integrated_working_configs_reuse_references_but_clear_addresses(tmp_pat
             )
             custody_paths.add(copied["runtime"]["economic_custody_journal_directory"])
     assert len(custody_paths) == 3 * lifecycle.OPENFOX_AGENT_COUNT
+
+
+@pytest.mark.asyncio
+async def test_integrated_ready_rpc_views_match_exact_config_locators(tmp_path, monkeypatch):
+    bindings, source = _integrated_fixture()
+    _, configs = lifecycle.prepare_integrated_working_configs(
+        source,
+        bindings,
+        tmp_path / "working",
+        ["127.0.0.1:23000", "127.0.0.1:23001", "127.0.0.1:23002"],
+        "round5-integrated-ready-rpc-test",
+    )
+    evidence = tmp_path / "evidence.json"
+    attempt = lifecycle.begin_evidence_attempt(evidence, "round5-integrated-ready-rpc-test")
+    runner = lifecycle.PoolLifecycle(
+        None,
+        tmp_path,
+        0,
+        campaign_run_id="round5-integrated-ready-rpc-test",
+        evidence_out=evidence,
+        evidence_attempt=attempt,
+        integrated_source_config=tmp_path / "source.json",
+        tosctl_path=tmp_path / "tosctl",
+        rpc_base_port=23000,
+        ready_out=tmp_path / "ready.json",
+    )
+    root_hash = bytes.fromhex("11" * 32)
+    file_hash = bytes.fromhex("22" * 32)
+    runner.network = SimpleNamespace(
+        zerostate=SimpleNamespace(
+            masterchain=SimpleNamespace(root_hash=root_hash, file_hash=file_hash)
+        )
+    )
+    runner.working_configs = configs
+
+    def fake_json_rpc_call(address, method, params=None):
+        assert address in {config.rpc_address for config in configs}
+        if method == "getMasterchainInfo":
+            return {
+                "result": {
+                    "init": {
+                        "root_hash": base64.b64encode(root_hash).decode(),
+                        "file_hash": base64.b64encode(file_hash).decode(),
+                    }
+                }
+            }
+        assert method == "getConfigParam"
+        assert params == {"param": 19}
+        return {"result": {"config": {"bytes": "unused-by-test"}}}
+
+    monkeypatch.setattr(lifecycle, "json_rpc_call", fake_json_rpc_call)
+    monkeypatch.setattr(
+        runner, "config_global_id_from_rpc", lambda _response: runner.network_global_id
+    )
+
+    await runner.wait_integrated_rpc_readiness()
+
+    configured_locators = [
+        json.loads(config.path.read_text())["chain_rpc"]["urls"][0] for config in configs
+    ]
+    ready_locators = [view["url"] for view in runner.rpc_readiness]
+    assert len(configured_locators) == lifecycle.INTEGRATED_RPC_COUNT
+    assert ready_locators == configured_locators
+    assert all(locator.endswith("/jsonRPC") for locator in ready_locators)
+    assert all(not locator.endswith("/") for locator in ready_locators)
+    assert all(
+        locator not in {f"http://{config.rpc_address}", f"http://{config.rpc_address}/"}
+        for locator, config in zip(ready_locators, configs, strict=True)
+    )
+    lifecycle.release_evidence_attempt_lock(attempt)
 
 
 def test_integrated_working_config_rejects_manifest_target_mismatch(tmp_path):
@@ -638,12 +714,7 @@ def _task_send_resolution_fixture():
         456,
     )
     original_message = (
-        Builder()
-        .store_cell(info.serialize())
-        .store_bit(0)
-        .store_bit(1)
-        .store_ref(body)
-        .end_cell()
+        Builder().store_cell(info.serialize()).store_bit(0).store_bit(1).store_ref(body).end_cell()
     )
     parsed_message = MessageAny.deserialize(original_message.begin_parse())
     exact_outbound_hash = "tvm-cell-sha256:" + original_message.hash.hex()
@@ -780,9 +851,7 @@ def test_task_send_resolution_reports_exact_mismatch_field(mutation, expected_fi
         for observation in resolution["observations"]:
             observation["transaction_hash"] = "sha256:" + "e" * 64
     elif mutation == "wrong_outbound_cell":
-        resolution["transaction"]["outbound_message_cell_hash"] = (
-            "tvm-cell-sha256:" + "e" * 64
-        )
+        resolution["transaction"]["outbound_message_cell_hash"] = "tvm-cell-sha256:" + "e" * 64
         for observation in resolution["observations"]:
             observation["outbound_message_cell_hash"] = "tvm-cell-sha256:" + "e" * 64
     else:  # pragma: no cover - the parametrization above is exhaustive

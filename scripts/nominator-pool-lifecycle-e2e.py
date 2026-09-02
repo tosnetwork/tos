@@ -912,7 +912,7 @@ def prepare_integrated_working_configs(
         for key in ("agent_tasks", "aipow_commitments", "pools", "bindings"):
             if key in document:
                 document[key] = {}
-        rpc_url = f"http://{rpc_address}/"
+        rpc_url = f"http://{rpc_address}/jsonRPC"
         provenance = integrated_operator_provenance(campaign_run_id, rpc_url, index)
         document["chain_rpc"] = {
             "urls": [rpc_url],
@@ -925,7 +925,7 @@ def prepare_integrated_working_configs(
             IntegratedWorkingConfig(
                 path=path,
                 rpc_address=rpc_address,
-                rpc_url=f"http://{rpc_address}/jsonRPC",
+                rpc_url=rpc_url,
                 operator_provenance=provenance,
             )
         )
@@ -1270,10 +1270,7 @@ def task_send_resolution_mismatches(
         )
         check(
             "observations.distinct_locators",
-            all(
-                digest(item.get("locator_identity_digest"), "sha256:")
-                for item in observations
-            )
+            all(digest(item.get("locator_identity_digest"), "sha256:") for item in observations)
             and len({item["locator_identity_digest"] for item in observations})
             == len(observations),
         )
@@ -1370,7 +1367,10 @@ def task_send_resolution_mismatches(
     check("effect.account", finalized_transaction.get("account") == expected_source_account)
     check("effect.source", finalized_transaction.get("source") == expected_source_account)
     check("effect.destination", finalized_transaction.get("target") == expected_destination)
-    check("effect.amount_nanotos", finalized_transaction.get("value_nanotos") == expected_amount_nanotos)
+    check(
+        "effect.amount_nanotos",
+        finalized_transaction.get("value_nanotos") == expected_amount_nanotos,
+    )
     check("effect.body_hash", finalized_transaction.get("body_hash") == expected_body_hash)
     check("effect.transaction_cell_hash", expected_transaction_hash is not None)
     check(
@@ -1404,14 +1404,23 @@ def task_send_resolution_mismatches(
     check("effect.block_checkpoint", isinstance(checkpoint, dict))
     if transaction_is_object and isinstance(checkpoint, dict):
         assert isinstance(transaction, dict)
-        check("effect.block_workchain", transaction.get("block_workchain") == checkpoint.get("workchain"))
+        check(
+            "effect.block_workchain",
+            transaction.get("block_workchain") == checkpoint.get("workchain"),
+        )
         check(
             "effect.block_shard",
             str(transaction.get("block_shard")) == str(checkpoint.get("shard")),
         )
         check("effect.block_seqno", transaction.get("block_seqno") == checkpoint.get("seqno"))
-        check("effect.block_root_hash", transaction.get("block_root_hash") == checkpoint.get("root_hash"))
-        check("effect.block_file_hash", transaction.get("block_file_hash") == checkpoint.get("file_hash"))
+        check(
+            "effect.block_root_hash",
+            transaction.get("block_root_hash") == checkpoint.get("root_hash"),
+        )
+        check(
+            "effect.block_file_hash",
+            transaction.get("block_file_hash") == checkpoint.get("file_hash"),
+        )
     return mismatches
 
 
