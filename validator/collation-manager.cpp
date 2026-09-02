@@ -203,6 +203,15 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
       P.set_error(td::Status::Error("collate query: block id mismatch"));
       return;
     }
+    // The collator claims this block's file hash; the requester broadcasts the
+    // candidate to the overlays and proposes it under its own identity before
+    // full validation runs. Verify the claim against the actual bytes now
+    // (cheap) so a compromised collator cannot make this node relay data whose
+    // hash does not match the id it is announced under.
+    if (candidate.id.file_hash != td::sha256_bits256(candidate.data.as_slice())) {
+      P.set_error(td::Status::Error("collate query: block file hash does not match data"));
+      return;
+    }
     LOG(INFO) << "got collated block " << next_block_id.to_str() << " from #" << selected_idx << " ("
               << selected_collator << ") in " << timer.elapsed() << "s";
     P.set_result(std::move(candidate));

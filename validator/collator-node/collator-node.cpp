@@ -408,9 +408,22 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
     promise.set_error(td::Status::Error(ErrorCode::timeout));
     return;
   }
+  // Refuse to collate against a stale view of the chain. Candidates built on
+  // an out-of-sync masterchain state fail validation anyway; gating here (the
+  // ping path already does) stops a stale node from spending collation CPU
+  // and from parking unbounded future-group requests while desynced.
+  TRY_STATUS_PROMISE(promise, check_out_of_sync());
   auto it = validator_groups_.find(shard);
   if (it == validator_groups_.end() || it->second.cc_seqno != cc_seqno) {
     TRY_RESULT_PROMISE(promise, future_validator_group, get_future_validator_group(shard, cc_seqno));
+    // Bound the parked-request queue. These closures each retain a prev_blocks
+    // vector and the reply state, and are only drained when a masterchain
+    // block for this future group arrives; without a cap a peer can pile them
+    // up while the group stays in the future.
+    if (future_validator_group->promises.size() >= MAX_FUTURE_GROUP_PROMISES) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "too many pending requests for a future group"));
+      return;
+    }
     future_validator_group->promises.push_back([=, SelfId = actor_id(this), prev_blocks = std::move(prev_blocks),
                                                 promise = std::move(promise)](td::Result<td::Unit> R) mutable {
       TRY_STATUS_PROMISE(promise, R.move_as_status());

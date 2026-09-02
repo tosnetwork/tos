@@ -195,6 +195,33 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
     };
     return;
   }
+
+  // Bound concurrent collations. Each distinct prev_blocks vector starts its
+  // own Collator, and for block_seqno in next_block_seqno_+1..+10 the prev
+  // hashes need not match any real block, so a single authorized requester
+  // can mint unlimited distinct cache keys and spawn a Collator per key. Cap
+  // the number of in-flight collations; requests beyond the cap are refused
+  // (the requester retries) rather than allowed to exhaust CPU and memory.
+  // Identical requests still coalesce onto the started entry above.
+  size_t in_flight = 0;
+  for (const auto& [_, entry] : cache_) {
+    if (entry->started && !entry->result) {
+      ++in_flight;
+    }
+  }
+  if (in_flight >= MAX_CONCURRENT_COLLATIONS) {
+    FLOG(INFO) {
+      prefix(sb);
+      sb << ": refusing collation, " << in_flight << " already in flight";
+    };
+    auto promises = std::move(cache_entry->promises);
+    cache_.erase(prev_blocks);
+    for (auto& p : promises) {
+      p.set_error(td::Status::Error(ErrorCode::notready, "collator busy: too many concurrent collations"));
+    }
+    return;
+  }
+
   FLOG(INFO) {
     prefix(sb);
     sb << ": starting collation";

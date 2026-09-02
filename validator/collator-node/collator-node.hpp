@@ -74,6 +74,11 @@ class CollatorNode : public td::actor::Actor {
   std::map<ShardIdFull, ValidatorGroupInfo> validator_groups_;
   std::map<std::pair<ShardIdFull, CatchainSeqno>, FutureValidatorGroup> future_validator_groups_;
 
+  // Upper bound on requests parked waiting for a not-yet-active future
+  // validator group. Well above the number of distinct validators that could
+  // legitimately probe ahead of a group, small enough to bound memory.
+  static constexpr size_t MAX_FUTURE_GROUP_PROMISES = 256;
+
   td::Ref<MasterchainState> last_masterchain_state_;
   BlockHandle shard_client_handle_;
 

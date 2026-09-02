@@ -76,6 +76,12 @@ class CollatorNodeSession : public td::actor::Actor {
   BlockSeqno next_block_seqno_;
   std::map<std::vector<BlockIdExt>, std::shared_ptr<CacheEntry>> cache_;
 
+  // Upper bound on Collator actors running at once for this shard session.
+  // Honest collation needs only a couple (the current block and maybe one
+  // optimistic lookahead); the rest of the +10 seqno window exists for
+  // reordering tolerance, not concurrency.
+  static constexpr size_t MAX_CONCURRENT_COLLATIONS = 4;
+
   td::uint32 proto_version_ = 0;
   td::uint32 max_candidate_size_ = 0;
 
