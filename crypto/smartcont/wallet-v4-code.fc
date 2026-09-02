@@ -43,15 +43,23 @@ slice pack_plugin_key(int wc, int addr_hash) inline {
   var (_, found?) = plugins.dict_get?(264, key);
 
   if (found?) {
+    ;; request body: op:uint32 query_id:uint64 amount:Coins
+    ;; Pay exactly the requested amount (plus the value the plugin attached,
+    ;; mode 64) and never more than the wallet holds beyond this message, so
+    ;; a plugin can only ever draw what it asks for.
+    int query_id = in_msg_body~load_uint(64);
     int tos_amount = in_msg_body~load_tomis();
-    raw_reserve(tos_amount, 2);
+    var [my_balance, _] = get_balance();
+    throw_unless(80, my_balance - msg_value >= tos_amount);
     var msg = begin_cell()
       .store_uint(0x18, 6)
       .store_slice(sender)
-      .store_tomis(0)
+      .store_tomis(tos_amount)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .store_uint(0x706c7567 | 0x80000000, 32)
+      .store_uint(query_id, 64)
       .end_cell();
-    send_raw_message(msg, 128);
+    send_raw_message(msg, 64);
   }
 }
 

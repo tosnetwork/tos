@@ -1201,6 +1201,120 @@ TEST(Toslib, WalletV4) {
   ASSERT_EQ(2u, wallet->get_seqno().ok());  // seqno unchanged
 }
 
+namespace {
+
+// Signs and wraps a wallet-v4 external message body that has already been
+// prefixed with global_id, wallet_id, valid_until and seqno.
+td::Ref<vm::Cell> sign_wallet_v4_body(const td::Ed25519::PrivateKey& priv_key, vm::CellBuilder& body) {
+  auto inner = body.finalize();
+  auto signature = priv_key.sign(inner->get_hash().as_slice()).move_as_ok();
+  return vm::CellBuilder().store_bytes(signature).append_cellslice(vm::load_cell_slice(inner)).finalize();
+}
+
+struct SentMessage {
+  td::RefInt256 value;
+  td::uint32 body_op = 0;
+};
+
+// Walks the action list produced by a transaction and returns every
+// outbound internal message with its declared value and body opcode.
+std::vector<SentMessage> collect_sent_messages(td::Ref<vm::Cell> actions) {
+  std::vector<SentMessage> result;
+  while (actions.not_null()) {
+    auto cs = vm::load_cell_slice(actions);
+    if (cs.size_refs() < 1) {
+      break;
+    }
+    auto prev = cs.fetch_ref();
+    if (cs.size() >= 32 && cs.prefetch_ulong(32) == 0x0ec3c86d) {
+      cs.advance(32);
+      cs.advance(8);  // mode
+      auto msg_cs = vm::load_cell_slice(cs.fetch_ref());
+      block::gen::CommonMsgInfoRelaxed::Record_int_msg_info info;
+      CHECK(tlb::unpack(msg_cs, info));
+      SentMessage sent;
+      sent.value = block::tlb::t_CurrencyCollection.as_integer(info.value);
+      CHECK(msg_cs.fetch_ulong(1) == 0);  // no init
+      CHECK(msg_cs.fetch_ulong(1) == 0);  // body inline
+      if (msg_cs.size() >= 32) {
+        sent.body_op = static_cast<td::uint32>(msg_cs.fetch_ulong(32));
+      }
+      result.push_back(std::move(sent));
+    }
+    actions = std::move(prev);
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST(Toslib, WalletV4PluginFundRequest) {
+  // A plugin may draw exactly what it asks for, never the rest of the
+  // wallet's balance, and only if the wallet can afford it.
+  auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
+  auto pub_key = priv_key.get_public_key().move_as_ok();
+
+  tos::WalletV4::InitData init_data;
+  init_data.public_key = pub_key.as_octet_string();
+  init_data.wallet_id = 42;
+  init_data.seqno = 0;
+  auto wallet = tos::WalletV4::create(init_data, 0);
+  wallet.write().set_global_id(1);
+  CHECK(wallet.write().send_external_message(wallet->get_init_message(priv_key).move_as_ok()).success);
+  ASSERT_EQ(1u, wallet->get_seqno().ok());
+
+  block::StdAddress plugin{0, td::Bits256::ones(), true};
+  block::StdAddress stranger{0, td::Bits256::zero(), true};
+
+  // Install the plugin through the owner's signed message (op 1).
+  {
+    vm::CellBuilder body;
+    body.store_long(1, 32).store_long(42, 32).store_long(20000, 32).store_long(1, 32);
+    body.store_long(1, 8).store_long(plugin.workchain, 8).store_bits(plugin.addr.cbits(), 256);
+    auto msg = sign_wallet_v4_body(priv_key, body);
+    CHECK(wallet.write().send_external_message(msg, tos::SmartContract::Args().set_now(10000)).success);
+    ASSERT_EQ(2u, wallet->get_seqno().ok());
+  }
+
+  const td::uint64 balance = 100'000'000'000ull;  // 100 TOS held by the wallet
+  const td::uint64 attached = 1'000'000'000ull;   // 1 TOS attached by the plugin
+  auto request_coins = [&](td::uint64 amount) {
+    vm::CellBuilder cb;
+    cb.store_long(0x706c7567, 32).store_long(7, 64);
+    CHECK(block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(static_cast<long long>(amount))));
+    return cb.finalize();
+  };
+
+  // An installed plugin asking for 1 TOS receives exactly 1 TOS.
+  {
+    auto ans = wallet.write().send_internal_message(
+        request_coins(1'000'000'000ull),
+        tos::SmartContract::Args().set_balance(balance + attached).set_amount(attached).set_sender_address(plugin));
+    CHECK(ans.success);
+    auto sent = collect_sent_messages(ans.actions);
+    ASSERT_EQ(1u, sent.size());
+    ASSERT_EQ(td::make_refint(1'000'000'000ull)->to_dec_string(), sent[0].value->to_dec_string());
+    ASSERT_EQ(0x706c7567u | 0x80000000u, sent[0].body_op);
+  }
+
+  // Asking for more than the wallet holds (beyond the attached value) fails.
+  {
+    auto ans = wallet.write().send_internal_message(
+        request_coins(balance + 1),
+        tos::SmartContract::Args().set_balance(balance + attached).set_amount(attached).set_sender_address(plugin));
+    CHECK(!ans.success);
+  }
+
+  // A sender that is not an installed plugin gets nothing.
+  {
+    auto ans = wallet.write().send_internal_message(
+        request_coins(1'000'000'000ull),
+        tos::SmartContract::Args().set_balance(balance + attached).set_amount(attached).set_sender_address(stranger));
+    CHECK(ans.success);
+    ASSERT_EQ(0u, collect_sent_messages(ans.actions).size());
+  }
+}
+
 TEST(Toslib, WalletV5) {
   // Test V5 using direct contract interaction (no C++ wrapper class)
   auto priv_key = td::Ed25519::generate_private_key().move_as_ok();

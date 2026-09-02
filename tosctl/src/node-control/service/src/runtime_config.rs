@@ -565,11 +565,15 @@ async fn open_wallet(
     };
 
     let wallet_signer = VaultSigner::new(master_secret).await?;
+    // The wallet binds the network identity into every signature, so it is
+    // read from the chain this client talks to rather than from local config.
+    let global_id = rpc_client.get_global_id().await.context("read network global_id")?;
     let wallet = WalletContract::new(
         Box::new(wallet_signer),
         wallet_config.version,
         wallet_config.subwallet_id,
         wallet_config.workchain,
+        global_id,
         contract_provider!(rpc_client),
     )
     .await?;

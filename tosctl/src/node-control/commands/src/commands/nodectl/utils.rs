@@ -166,11 +166,19 @@ pub async fn make_wallet(
         .await
         .with_context(|| format!("[{label}] create wallet signer"))?;
 
+    // The wallet binds the network identity into every signature, so it is
+    // read from the chain this client talks to rather than from local config.
+    let global_id = rpc_client
+        .get_global_id()
+        .await
+        .with_context(|| format!("[{label}] read network global_id"))?;
+
     let wallet = WalletContract::new(
         Box::new(wallet_signer),
         wallet_cfg.version,
         wallet_cfg.subwallet_id,
         wallet_cfg.workchain,
+        global_id,
         contract_provider!(rpc_client.clone()),
     )
     .await

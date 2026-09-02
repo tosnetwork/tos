@@ -246,6 +246,17 @@ impl ClientJsonRpc {
         decode_config_param(config_info, param_id)
     }
 
+    /// Reads the network identity (ConfigParam 19) that wallet contracts
+    /// bind into every signed message. A signer must obtain it from the
+    /// chain it is about to write to; a value carried over from another
+    /// network produces messages that network rejects.
+    pub async fn get_global_id(&self) -> anyhow::Result<i32> {
+        match self.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => Ok(value as i32),
+            other => anyhow::bail!("config parameter 19 is not a global ID: {other:?}"),
+        }
+    }
+
     async fn get_primary_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
         let config_info = self
             .json_rpc_primary_read("getConfigParam", serde_json::json!({"config_id": param_id}))
