@@ -37,10 +37,15 @@ def vote_digest(contract: str, chain_id: int, kind: str, payload: bytes) -> byte
     ).digest()
 
 
-def tvm_query_digest(wallet_id: int, destination: str, payload: bytes) -> bytes:
-    """Model the TVM multisig query hash's deployment and destination binding."""
+def tvm_query_digest(
+    wallet_id: int, global_id: int, destination: str, payload: bytes
+) -> bytes:
+    """Model the TVM multisig query hash's deployment, network, and destination binding."""
     return hashlib.sha3_256(
-        wallet_id.to_bytes(4, "big") + destination.encode() + payload
+        wallet_id.to_bytes(4, "big")
+        + global_id.to_bytes(4, "big", signed=True)
+        + destination.encode()
+        + payload
     ).digest()
 
 
@@ -143,15 +148,33 @@ class DomainSeparationTest(unittest.TestCase):
         legacy = hashlib.sha3_256(b"TOS_COIN_BRIDGE" + b"bridge" + b"swap" + b"tx1").digest()
         self.assertNotEqual(legacy, vote_digest("bridge", CHAIN_ID, "swap", b"tx1"))
 
-    def test_tvm_wallet_and_destination_are_both_bound(self) -> None:
+    def test_tvm_wallet_network_and_destination_are_all_bound(self) -> None:
         eth_wallet_id = 0x45544831
         bsc_wallet_id = 0x42534331
-        base = tvm_query_digest(eth_wallet_id, "ethereum-bridge", b"unlock")
-        self.assertNotEqual(
-            base, tvm_query_digest(bsc_wallet_id, "ethereum-bridge", b"unlock")
+        mainnet_global_id = 7001
+        rehearsal_global_id = 7002
+        base = tvm_query_digest(
+            eth_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock"
         )
         self.assertNotEqual(
-            base, tvm_query_digest(eth_wallet_id, "bsc-bridge", b"unlock")
+            base,
+            tvm_query_digest(
+                bsc_wallet_id, mainnet_global_id, "ethereum-bridge", b"unlock"
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            tvm_query_digest(
+                eth_wallet_id, mainnet_global_id, "bsc-bridge", b"unlock"
+            ),
+        )
+        # Two networks bootstrapped from one StateInit share the wallet id and
+        # every address; only the network's own id separates their queries.
+        self.assertNotEqual(
+            base,
+            tvm_query_digest(
+                eth_wallet_id, rehearsal_global_id, "ethereum-bridge", b"unlock"
+            ),
         )
 
 

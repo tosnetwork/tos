@@ -9,7 +9,7 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 ### TOS/TVM side (per network under `tvm/ethereum/` and `tvm/bsc/`)
 
 - `bridge_code.fc`: accepts native coins, deducts flat/network/percentage fees, tracks `total_locked`, emits swap logs, and pays out on oracle-approved unlocks.
-- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs.
+- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for the reverse direction.
 - Shared configuration, message/text utilities, and Fift deployment sources.
 - `tvm/tests/`: TVM-level execution tests that compile the real contracts and drive them through the TOS TVM via a Fift harness.

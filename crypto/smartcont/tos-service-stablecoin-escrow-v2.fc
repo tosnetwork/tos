@@ -72,6 +72,10 @@ const int base_workchain = 0;
 ;; Reason code carried inline on a funding returned to its sender
 ;; (transfer_bounce reason-code pattern from the vendored reference router contract).
 const int reason::invalid_request = 0xffffffa1;
+;; Reason code for a notification from a wallet other than the derived own
+;; wallet: those jettons sit in a wallet this escrow owns but never addresses,
+;; so they must be sent back through the notifying wallet, never kept or thrown.
+const int reason::wrong_wallet = 0xffffffa2;
 
 (int, int, int, int, cell, cell, cell, cell) load_escrow() inline {
   slice ds = get_data().begin_parse();
@@ -469,21 +473,14 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
   }
 
   if (op == op::transfer_notification) {
-    ;; Only our own jetton wallet can have credited us.
-    throw_unless(err::wrong_wallet, equal_slice_bits(sender, own_wallet));
     int query_id = body~load_uint(64);
     int amount = body~load_coins();
     slice from = body~load_msg_addr();
-    ;; The jettons are already credited to our wallet before this runs: a throw
-    ;; cannot un-credit them and would orphan them permanently (BUG-001). Accept
-    ;; a valid funding; on any mismatch return the jettons to the funder instead
-    ;; of throwing (refund-with-reason pattern from the vendored reference router contract).
-    if ((status == status::awaiting_funding) & equal_slice_bits(from, buyer) &
-        (now() <= funding_deadline) & (amount == quote_amount)) {
-      save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
-        authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
-      return ();
-    }
+    ;; The jettons are already credited to some wallet the escrow owns before
+    ;; this runs: a throw cannot un-credit them and would orphan them
+    ;; permanently. Accept a valid funding; on any mismatch return the jettons
+    ;; to the funder instead of throwing (refund-with-reason pattern from the
+    ;; vendored reference router contract).
     ;; Return only to a real internal, non-anycast, workchain-0 owner the jetton
     ;; wallet can actually pay; a malformed previous-owner is left untouched
     ;; rather than emitting a doomed transfer.
@@ -493,6 +490,26 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
       if (from_check~load_uint(1) == 0) {
         returnable = (from_check~load_int(8) == 0);
       }
+    }
+    ifnot (equal_slice_bits(sender, own_wallet)) {
+      ;; A committed jetton whose wallet code uses a different data layout puts
+      ;; the credit in a wallet the escrow owns but never derives an address
+      ;; for; no op can move those funds later. Never credit state from such a
+      ;; notification, and never throw: ask the notifying wallet (whatever it
+      ;; is, the escrow is its owner if the credit was real) to send the amount
+      ;; back to the funder. A forged notification from an arbitrary contract
+      ;; only receives its own attached value back (mode 64, zero from our
+      ;; balance), so this return path grants an attacker nothing.
+      if (returnable) {
+        return_stablecoin(sender, from, amount, reason::wrong_wallet);
+      }
+      return ();
+    }
+    if ((status == status::awaiting_funding) & equal_slice_bits(from, buyer) &
+        (now() <= funding_deadline) & (amount == quote_amount)) {
+      save_escrow(status::funded, quote_hash, terms_hash, auth_hash, quote, terms,
+        authorization, make_runtime(amount, 0, 0, 0, accepted_at, route, transport, dispute));
+      return ();
     }
     if (returnable) {
       return_stablecoin(own_wallet, from, amount, reason::invalid_request);

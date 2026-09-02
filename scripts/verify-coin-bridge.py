@@ -25,6 +25,7 @@ REQUIRED_SOURCES = [
     "tvm/bsc/bridge-config.fc",
     "tvm/bsc/stdlib.fc",
     "tvm/tests/eth2tos.js",
+    "tvm/tests/replay-wrong-global-id.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
@@ -106,9 +107,12 @@ def verify_tvm_sources() -> None:
         require_text(c / "multisig-code.fc", [
             "check_signature",
             "recv_external",
+            'int get_global_id() asm "GLOBALID";',
             "var hash = slice_hash(in_msg);",
             "int query_wallet_id = in_msg~load_uint(32);",
             "throw_unless(42, query_wallet_id == wallet_id);",
+            "int query_global_id = in_msg~load_int(32);",
+            "throw_unless(44, query_global_id == get_global_id());",
             "throw_unless(36, slice_hash(msg) == slice_hash(in_msg));",
         ])
         require_text(c / "votes-collector.fc", ["get_bridge_config"])

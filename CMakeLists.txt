@@ -760,6 +760,9 @@ target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdut
 add_executable(test-http-server-limits test/test-td-main.cpp test/test-http-server-limits.cpp)
 target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 
+add_executable(test-wallet-message-processor test/test-td-main.cpp test/test-wallet-message-processor.cpp)
+target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-envelope tos_crypto tdutils)
+
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
@@ -1074,6 +1077,7 @@ tos_test(test-msg-envelope)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-http-server-limits)
+tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)

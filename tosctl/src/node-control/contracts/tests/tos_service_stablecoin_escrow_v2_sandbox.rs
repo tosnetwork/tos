@@ -822,6 +822,66 @@ fn rejected_funding_is_returned_to_sender_not_orphaned() {
 }
 
 #[test]
+fn notification_from_a_foreign_jetton_wallet_returns_the_funds_and_changes_nothing() {
+    // A committed jetton whose wallet code uses a different data layout derives
+    // a wallet address the escrow never computes. Its real notification used to
+    // throw on the sender check, permanently orphaning jettons already credited
+    // to a wallet the escrow owns but never addresses. The escrow must instead
+    // ask the notifying wallet (which it owns, if the credit was real) to send
+    // the amount back to the funder, crediting no state and never throwing.
+    let mut f = Fixture::new();
+    let buyer = f.buyer.address().clone();
+    f.send(&buyer, f.accept_body(3)).expect_success();
+    assert_eq!(f.state().0, STATUS_AWAITING_FUNDING);
+    let before = f.data_hash();
+
+    // An address that is provably not the derived own wallet.
+    let mut seed = BuilderData::new();
+    seed.append_raw(b"foreign-layout-jetton-wallet", 28 * 8).unwrap();
+    let foreign_wallet = MsgAddressInt::with_params(0, seed.into_cell().unwrap().hash(0)).unwrap();
+    assert_ne!(foreign_wallet, f.own_wallet);
+
+    let note = notification_body(2, AMOUNT, &buyer);
+    let result = f.send(&foreign_wallet, note);
+    // No throw, exactly one outbound message, and the escrow data cell held:
+    // still awaiting_funding with zero funded amount.
+    result.expect_success().expect_out_msgs(1);
+    let (st, funded, settled, _, pq, _) = f.runtime();
+    assert_eq!((st, funded, settled, pq), (STATUS_AWAITING_FUNDING, 0, 0, 0));
+    assert_eq!(f.data_hash(), before);
+    // The one outbound message is a jetton transfer addressed to the notifying
+    // wallet, asking it to send the exact amount back to the funder, financed
+    // only by the inbound value (nothing of the escrow's own balance attached).
+    let tx = result.first_transaction().expect("escrow transaction");
+    let mut returns = Vec::new();
+    tx.iterate_out_msgs(|m| {
+        returns.push(m);
+        Ok(true)
+    })
+    .unwrap();
+    assert_eq!(returns.len(), 1);
+    let ret = &returns[0];
+    assert_eq!(ret.dst().expect("internal destination"), foreign_wallet);
+    let mut body = ret.body().expect("transfer body").clone();
+    assert_eq!(body.get_next_u32().unwrap(), OP_JETTON_TRANSFER);
+    assert_eq!(body.get_next_u64().unwrap(), 0); // return query id, never a settlement's
+    assert_eq!(Coins::construct_from(&mut body).unwrap().as_u128(), AMOUNT as u128);
+    assert_eq!(MsgAddressInt::construct_from(&mut body).unwrap(), buyer);
+
+    // A forged notification whose previous owner is not a returnable address
+    // (addr_none) must produce no outbound message and no state change: there
+    // is no one the notifying wallet could pay, so the escrow stays silent.
+    let mut forged = BuilderData::new();
+    forged.append_u32(OP_TRANSFER_NOTIFICATION).unwrap().append_u64(2).unwrap();
+    Coins::new(AMOUNT).write_to(&mut forged).unwrap();
+    forged.append_bits(0, 2).unwrap(); // from = addr_none
+    forged.append_bit_zero().unwrap();
+    f.send(&foreign_wallet, forged.into_cell().unwrap()).expect_success().expect_out_msgs(0);
+    assert_eq!(f.data_hash(), before);
+    assert_eq!(f.state().0, STATUS_AWAITING_FUNDING);
+}
+
+#[test]
 fn funding_after_the_deadline_is_returned_not_orphaned() {
     // BUG-001 latency variant: a funding initiated in time can arrive after
     // funding_deadline. It must be returned to the buyer, not orphaned, and must

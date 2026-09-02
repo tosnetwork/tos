@@ -958,7 +958,7 @@ tosctl config-param -c config.json 34
 
 ## REST API Endpoints
 
-When running in service mode, tosctl exposes a REST API for monitoring and management. By default, the HTTP server listens on all interfaces (`0.0.0.0:8080`) with authentication enabled and no users — all protected endpoints return `401` until at least one user is created via `tosctl auth add`. Protected endpoints require a JWT token in the `Authorization: Bearer <token>` header. See the **[Security Guide](./docs/tosctl-security.md)** for full details on roles, rate limiting, and token revocation.
+When running in service mode, tosctl exposes a REST API for monitoring and management. By default, the HTTP server listens on loopback only (`127.0.0.1:8080`); binding a non-loopback address requires `http.auth` to be configured, and the service refuses to start otherwise. Authentication starts enabled with no users — all protected endpoints return `401` until at least one user is created via `tosctl auth add`. Protected endpoints require a JWT token in the `Authorization: Bearer <token>` header. See the **[Security Guide](./docs/tosctl-security.md)** for full details on roles, rate limiting, and token revocation.
 
 > **Warning:** tosctl serves plain HTTP. If the API is reachable outside your trusted network, terminate TLS at a reverse proxy or load balancer — otherwise passwords (`/auth/login`) and JWT tokens (`Authorization` header) travel in plain text.
 
@@ -1377,7 +1377,8 @@ Chain RPC endpoint configuration:
 
 HTTP REST API server configuration:
 
-- `bind` — address and port to bind (default: `0.0.0.0:8080`)
+- `bind` — address and port to bind (default: `127.0.0.1:8080`; a non-loopback bind requires `auth` to be configured)
+- `trusted_proxies` — list of proxy IPs whose `x-forwarded-for` is honored for login rate limiting (default: empty; the TCP peer address is used otherwise)
 - `enable_swagger` — enable Swagger UI at `/swagger` (default: `true`)
 - `auth` — JWT authentication configuration (see below)
 

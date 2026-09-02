@@ -6,13 +6,20 @@ repository verification, and the reviewed-delta record. The production oracle
 signer is outside this repository and must adopt the pinned wire format before
 deployment. The deployment and independent-audit gates in §6 remain open.
 
-Scope: the `coin-bridge` EVM/Solidity plane **only**. The newer `token-bridge`
-is **not** affected — its `evm/contracts/SignatureChecker.sol` already binds
-`block.chainid` in all four of its digests (`abi.encode(<magic>, address(this),
-block.chainid, …)`), inherited from its own, newer upstream. token-bridge is
-therefore the in-repo reference for the layout this implementation adopts, not a
-second thing to fix. This matches `SECURITY.md`'s wording that the affected
-plane is "the historical Solidity plane [that] predates the token bridge."
+Scope: the EVM part covers the `coin-bridge` EVM/Solidity plane **only**. The
+newer `token-bridge` is **not** affected there — its
+`evm/contracts/SignatureChecker.sol` already binds `block.chainid` in all four
+of its digests (`abi.encode(<magic>, address(this), block.chainid, …)`),
+inherited from its own, newer upstream. token-bridge is therefore the in-repo
+reference for the layout this implementation adopts, not a second thing to fix.
+This matches `SECURITY.md`'s wording that the affected plane is "the historical
+Solidity plane [that] predates the token bridge."
+
+The TVM part (§3) is wider: the symmetric network binding described there
+applies to **all three** TVM multisigs — coin-bridge's
+`tvm/{ethereum,bsc}/multisig-code.fc` *and* token-bridge's
+`tvm/contracts/multisig.fc` — because all three inherited the same query
+layout, which separated deployments but not networks.
 
 ## 1. The problem
 
@@ -182,20 +189,51 @@ change atomically or the bridge stops verifying its own oracles:
 ### TVM symmetric analysis
 
 The EVM→TOS direction has oracles signing messages consumed by the TOS-side
-multisig (`tvm/{ethereum,bsc}/multisig-code.fc`). Both copies compute
-`hash = slice_hash(in_msg)` before consuming `query_wallet_id`, `query_id`, or
-the referenced outbound message. The hash therefore commits to the 32-bit
+multisig (`tvm/{ethereum,bsc}/multisig-code.fc`, and the token bridge's
+`tvm/contracts/multisig.fc`). All copies compute `hash = slice_hash(in_msg)`
+before consuming any query field. The hash therefore commits to the 32-bit
 `wallet_id` and the complete destination message, including its destination.
-The contract then independently enforces
-`query_wallet_id == wallet_id`; pending-query continuations also require the
-stored message hash to equal the submitted message hash.
+The contract then independently enforces `query_wallet_id == wallet_id`;
+pending-query continuations also require the stored message hash to equal the
+submitted message hash.
 
-No symmetric TVM code change is required on this evidence. Repository
-verification pins those source invariants, and the protocol model checks that
-changing either `wallet_id` or the destination changes the signed domain.
-Deployment manifests must still assign pairwise-distinct `wallet_id` values and
-StateInit/address identities to the Ethereum and BSC multisigs. Reusing a
-`wallet_id` is prohibited even though the destination is also signed.
+An earlier revision of this document concluded that no symmetric TVM change was
+needed because the query binds `wallet_id` and the destination. That reasoning
+holds between two multisigs *deployed differently*, and no further. `wallet_id`
+and the destination address are both **address-scoped, not network-scoped**
+values: two TOS networks bootstrapped from the same StateInit (a testnet and
+mainnet, or a rehearsal chain) carry the same `wallet_id`, the same multisig
+address, and the same bridge addresses on both networks. If the oracle set also
+reuses its signing keys across those networks — the same operational reality §1
+documents for the EVM side — a query signed on one network (for example a
+release of TOS after a burn on a test EVM bridge) verifies **verbatim** on the
+other and releases real funds there.
+
+The TVM side therefore now binds each signed query to the network itself. The
+signed body carries a 32-bit signed `global_id` immediately after `wallet_id`,
+and every multisig compares it against the network's own identity — the value
+of `ConfigParam 19`, read with the `GLOBALID` instruction, exactly as the
+repository's wallet contracts do — rejecting a mismatch with **exit code 44**:
+
+```
+int query_global_id = in_msg~load_int(32);
+throw_unless(44, query_global_id == get_global_id());
+```
+
+Both `slice_hash` computations (the root-signature hash and the co-signature
+hash) are taken before any field is parsed, so every oracle signature already
+covers the new field; no re-serialisation path (pending-query storage,
+`unpack_query_data`, the get methods) depends on field offsets and none needed
+adjustment beyond the body carrying 32 more bits. The message-size bound is
+computed on the referenced message after the fixed header and is unchanged.
+
+Every builder of signed queries must insert the target network's `global_id`
+after `wallet_id`, and the value must come from pinned deployment
+configuration verified against the target network — never from an arbitrary
+RPC at signing time. Deployment manifests must still assign pairwise-distinct
+`wallet_id` values and StateInit/address identities to the Ethereum and BSC
+multisigs; the network binding is defense in depth for the deployments where
+those identities coincide by construction.
 
 ## 4. Upstream-parity impact
 
@@ -243,11 +281,16 @@ these updates.
    future production relayer must satisfy.
 
 **TVM plane:**
-6. The symmetric analysis in §3 found the TVM query already binds both
-   `wallet_id` and the complete destination message. The verifier pins the
-   relevant source order and equality checks; the protocol model asserts that
-   changing either field changes the signed domain. No TVM signed-payload change
-   was necessary.
+6. The signed multisig query now carries the network's 32-bit signed
+   `global_id` (ConfigParam 19, read with `GLOBALID`) directly after
+   `wallet_id`, and all three TVM multisigs reject a mismatch with exit
+   code 44. `tvm/tests/replay-wrong-global-id.js` (one copy per bridge, run
+   by `scripts/test-coin-bridge-tvm.sh` and `scripts/test-token-bridge-tvm.sh`
+   for every configured network) signs a real query with the wrong network id
+   and asserts exit 44, then proves the identical query signed for the staged
+   network executes and cannot be executed twice. The verifier pins the source
+   invariants, and the protocol model asserts that changing `wallet_id`, the
+   network id, or the destination changes the signed domain.
 
 **Parity:**
 7. `scripts/verify-coin-bridge.py` requires the exact EVM digest prefix order,
@@ -308,6 +351,6 @@ The implementation follows the owner-reviewed decisions below.
 | Field order | `magic, address(this), chainId, fields…` — align with token-bridge. |
 | Move to EIP-712 now | **Defer** — it changes the signing envelope too and widens the audit surface; adopt later if the signer is rewritten. |
 | Change token-bridge | **Reject** — it already binds the chain ID. |
-| Change TVM code now | **No code change**: both multisigs already sign `wallet_id` plus the full destination message. Source invariants and the protocol model cover that result; distinct deployments must use unique `wallet_id`/StateInit. |
+| Change TVM code now | **Implemented**: `wallet_id` and the destination are address-scoped and do not separate two networks sharing a StateInit and oracle keys, so every signed query now also carries the network's `global_id` (ConfigParam 19, `GLOBALID`, exit code 44 on mismatch) in all three multisigs. Query builders must insert it after `wallet_id`; distinct deployments must still use unique `wallet_id`/StateInit. |
 | Merge this PR | Merge only after code review and CI pass. It intentionally contains the implementation, tests, vectors, and reviewed-delta record together. |
 | First value-bearing deployment | **Blocked** until the external signer adopts and verifies the golden vectors, independent audits pass, live on-chain pre-deployment evidence is attached, and every other `SECURITY.md` gate is satisfied. |

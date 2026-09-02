@@ -724,7 +724,7 @@ Alerts cover validator efficiency drops, missed elections, node sync issues, and
 
 When running in daemon mode (`tosctl service`), an HTTP REST API is exposed for monitoring and automation.
 
-Default bind: `0.0.0.0:8080`. Swagger UI available at `/swagger` when `enable_swagger` is true.
+Default bind: `127.0.0.1:8080`. Binding a non-loopback address requires `http.auth` to be configured; the service refuses to start otherwise. Swagger UI available at `/swagger` when `enable_swagger` is true.
 
 ### Authentication
 

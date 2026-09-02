@@ -197,7 +197,9 @@ impl KeyConfig {
 }
 
 fn default_http_bind() -> String {
-    "0.0.0.0:8080".to_owned()
+    // Loopback by default: exposing the API on all interfaces is an explicit
+    // operator decision and requires authentication to be configured.
+    "127.0.0.1:8080".to_owned()
 }
 
 fn default_http_enable_swagger() -> bool {
@@ -299,13 +301,23 @@ impl Default for AuthConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct HttpConfig {
-    /// HTTP bind address, e.g. "127.0.0.1:8080" or "0.0.0.0:8080".
+    /// HTTP bind address, e.g. "127.0.0.1:8080" (the default) or "0.0.0.0:8080".
+    /// Binding to a non-loopback address requires `auth` to be configured;
+    /// the service refuses to start the HTTP server otherwise.
     #[serde(default = "default_http_bind")]
     pub bind: String,
 
     /// Expose Swagger UI endpoints.
     #[serde(default = "default_http_enable_swagger")]
     pub enable_swagger: bool,
+
+    /// Peer IP addresses of trusted reverse proxies. Only when a request's
+    /// TCP peer address is in this list is its `x-forwarded-for` header
+    /// honored for client identification (e.g. login rate limiting). A direct
+    /// client can put arbitrary text in that header, so it is ignored from
+    /// any other peer. Default: empty (never trust `x-forwarded-for`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 
     /// Authentication and authorization configuration.
     /// When `Some`, all protected routes require a valid JWT token.
@@ -321,6 +333,7 @@ impl Default for HttpConfig {
         Self {
             bind: default_http_bind(),
             enable_swagger: default_http_enable_swagger(),
+            trusted_proxies: Vec::new(),
             auth: Some(AuthConfig::default()),
         }
     }

@@ -11,7 +11,7 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 - `jetton-bridge.fc`: accepts exact mint-fee payments, validates oracle multisig execution, deploys deterministic wrapped-token minters, emits paid-swap and burn logs.
 - `jetton-minter.fc`: bridge-only minting, deterministic wallet deployment, supply accounting, burn forwarding.
 - `jetton-wallet.fc`: TEP-74-style transfers plus EVM destination payload on burn.
-- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages.
+- `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for burn/unlock.
 - Shared configuration, message, opcode, error, utility, and Fift deployment sources.
 
