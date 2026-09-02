@@ -751,6 +751,10 @@ target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tda
 add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
 target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
+add_executable(test-rate-limiter test/test-td-main.cpp test/test-rate-limiter.cpp)
+target_link_libraries(test-rate-limiter PRIVATE tdutils)
+target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
 target_link_libraries(test-config-transition PRIVATE tos_block tos_crypto tdutils)
 
@@ -1074,6 +1078,7 @@ tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
+tos_test(test-rate-limiter)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-http-server-limits)

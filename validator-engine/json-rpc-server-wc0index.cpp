@@ -212,11 +212,18 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
   auto addr = addr_r.move_as_ok();
   auto limit = parse_limit_param(params);
 
+  auto *db = tos_wallet_index::wallet_index_db();
+  if (db == nullptr) {
+    // No index DB on this node (JSON-RPC-less nodes never open one, and an
+    // open failure leaves it null). An explicit error beats silently empty
+    // results that look like "this account holds nothing".
+    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    return;
+  }
   td::StringBuilder sb;
   sb << "{\"@type\":\"wallet.accountJettons\",\"jettons\":[";
-  auto *db = tos_wallet_index::wallet_index_db();
   bool first = true;
-  if (db != nullptr && is_indexed_workchain(addr)) {
+  if (is_indexed_workchain(addr)) {
     // Entries are state-verified by the writer (master-acknowledged wallets only);
     // the client resolves the live balance via get_wallet_data (runGetMethod).
     auto status =
@@ -270,13 +277,17 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     has_before_lt = true;
   }
 
+  auto *db = tos_wallet_index::wallet_index_db();
+  if (db == nullptr) {
+    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    return;
+  }
   td::StringBuilder sb;
   sb << "{\"@type\":\"wallet.accountEvents\",\"events\":[";
-  auto *db = tos_wallet_index::wallet_index_db();
   bool first = true;
   size_t seen = 0;
   uint64_t last_lt = 0;
-  if (db != nullptr && is_indexed_workchain(addr)) {
+  if (is_indexed_workchain(addr)) {
     // Read one extra entry to determine whether the continuation cursor exists.
     auto append = [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
       ++seen;
@@ -323,12 +334,12 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
     return;
   }
   auto addr = addr_r.move_as_ok();
-  if (!is_indexed_workchain(addr)) {
-    promise.set_value(make_json_error(-32004, "Account event not found", req_id));
-    return;
-  }
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
+    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    return;
+  }
+  if (!is_indexed_workchain(addr)) {
     promise.set_value(make_json_error(-32004, "Account event not found", req_id));
     return;
   }
@@ -350,11 +361,15 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
   auto addr = addr_r.move_as_ok();
   auto limit = parse_limit_param(params);
 
+  auto *db = tos_wallet_index::wallet_index_db();
+  if (db == nullptr) {
+    promise.set_value(make_json_error(-32601, "wallet index disabled on this node", req_id));
+    return;
+  }
   td::StringBuilder sb;
   sb << "{\"@type\":\"wallet.accountNfts\",\"nfts\":[";
-  auto *db = tos_wallet_index::wallet_index_db();
   bool first = true;
-  if (db != nullptr && is_indexed_workchain(addr)) {
+  if (is_indexed_workchain(addr)) {
     auto status =
         db->for_each_nft(addr.addr, limit, [&](const td::Bits256 &nft, td::Ref<vm::Cell> value) -> td::Status {
           bool has_collection = false;

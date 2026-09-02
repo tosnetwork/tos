@@ -57,6 +57,13 @@ use crate::runtime_config::RuntimeConfig;
 const MAX_BLOCKS_PER_TICK: u32 = 200;
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
+/// Upper bound on how many *new* service-request ids one visit to a Service
+/// Actor may materialise. `next_request_id` is read from an arbitrary deployed
+/// contract's own state, so it is untrusted input: without a cap a contract
+/// reporting a huge counter would make the indexer allocate and probe the
+/// whole id range in a single tick. Later visits resume from the stored
+/// high-water mark, so progress stays monotonic while per-tick work is bounded.
+const MAX_SERVICE_REQUEST_IDS_PER_TICK: u64 = 4096;
 /// How far back to rewind and rescan when a reorg is detected at the
 /// checkpoint boundary. Reorgs are a real, documented hazard on this chain
 /// (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
@@ -720,7 +727,7 @@ async fn decode_and_store(
                 counterparty: None,
                 status: Some(status.to_owned()),
                 deadline: (data.stake_at > 0 && data.stake_held_for > 0)
-                    .then_some(data.stake_at as u64 + data.stake_held_for),
+                    .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
                 last_seqno: seqno,
                 updated_at: now,
                 dto_json: serde_json::to_string(&dto)?,
@@ -979,9 +986,16 @@ async fn refresh_service_request_lifecycle(
     now: u64,
 ) -> anyhow::Result<()> {
     let (max_indexed, active) = store.service_requests_for_refresh(address)?;
+    // `active` is bounded by rows this indexer itself stored (non-terminal
+    // statuses only); the contract cannot inflate it. The *new* id range, by
+    // contrast, comes straight from the contract's own counter, so it is
+    // capped per visit -- the stored high-water mark advances with each
+    // stored batch and the next visit resumes from there.
     let mut ids: HashSet<u64> = active.into_iter().map(|r| r.request_id).collect();
-    let first_new = max_indexed.and_then(|id| id.checked_add(1)).unwrap_or(0);
-    ids.extend(first_new..data.next_request_id);
+    let first_new = max_indexed.map_or(0, |id| id.saturating_add(1));
+    let new_end =
+        data.next_request_id.min(first_new.saturating_add(MAX_SERVICE_REQUEST_IDS_PER_TICK));
+    ids.extend(first_new..new_end);
     for request_id in ids {
         let old = store.service_request(address, request_id)?;
         let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
@@ -2251,6 +2265,161 @@ mod tests {
             "a genuinely responded request must not be mislabeled swept just because the only \
              observation after it disappeared happened past the deadline"
         );
+    }
+
+    // ─── Hostile contract state must not translate into unbounded work ─────
+
+    /// A [`ChainProvider`] whose `run_get_method` answers "not found" for
+    /// every `get_request`/`get_refund` probe, counting the calls. The
+    /// contract state itself (including `next_request_id`) is supplied
+    /// directly to `refresh_service_request_lifecycle`, so this is enough to
+    /// prove the refresh bounds its own work when the contract's counter is
+    /// arbitrary.
+    struct NotFoundLifecycleProvider {
+        get_method_calls: StdMutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for NotFoundLifecycleProvider {
+        async fn run_get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            anyhow::ensure!(
+                matches!(method, "get_request" | "get_refund"),
+                "unexpected get-method {method}"
+            );
+            *self.get_method_calls.lock().unwrap() += 1;
+            use tl_api::tos::tvm::{
+                Number, StackEntry, numberdecimal::NumberDecimal, stackentry::StackEntryNumber,
+            };
+            // `found = 0`: decode_request/decode_refund both stop at the flag.
+            Ok(TvmStackParser::new(vec![StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+                number: Number::Tvm_NumberDecimal(NumberDecimal { number: "0".to_owned() }),
+            })]))
+        }
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("not exercised")
+        }
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            anyhow::bail!("not exercised")
+        }
+    }
+
+    fn service_actor_data_with_next_request_id(
+        next_request_id: u64,
+    ) -> contracts::ServiceActorData {
+        contracts::ServiceActorData {
+            owner: addr(1),
+            active: true,
+            policy_version: 0,
+            price_per_call: 10,
+            storage_fee: 100_000_000,
+            cleanup_bounty: 100_000_000,
+            response_sla: 3_600,
+            refund_claim_window: 3_600,
+            open_access: true,
+            authorized_caller: None,
+            rate_limit_per_day: 0,
+            metadata_hash: [0; 32],
+            proof_scheme_hash: [0; 32],
+            attestor_pubkey: None,
+            next_request_id,
+            pending_count: 0,
+            live_count: 0,
+            withdrawable_revenue: 0,
+            locked_storage_fees: 0,
+            pending_liability: 0,
+            refundable_liability: 0,
+            call_day: 0,
+            calls_today: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hostile_next_request_id_only_materialises_a_bounded_batch_per_visit() {
+        let provider = Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
+        let store = IndexerStore::open_in_memory().unwrap();
+        // The counter is contract-controlled state: a deployer can report any
+        // value, so the largest possible one must still yield a bounded tick.
+        let data = service_actor_data_with_next_request_id(u64::MAX);
+
+        refresh_service_request_lifecycle(&provider_dyn, &store, "-1:service", &data, 1_000)
+            .await
+            .unwrap();
+
+        let cap = MAX_SERVICE_REQUEST_IDS_PER_TICK as usize;
+        assert_eq!(
+            *provider.get_method_calls.lock().unwrap(),
+            cap * 2,
+            "each id in the capped batch is probed once with get_request and once with \
+             get_refund; nothing beyond the cap may be touched"
+        );
+        let (max_indexed, active) = store.service_requests_for_refresh("-1:service").unwrap();
+        assert_eq!(
+            max_indexed,
+            Some(MAX_SERVICE_REQUEST_IDS_PER_TICK - 1),
+            "the stored high-water mark advances to the end of the capped batch"
+        );
+        assert!(active.is_empty(), "not-found probes are stored as terminal, not active");
+
+        // A later visit resumes from the stored high-water mark: progress
+        // stays monotonic across capped batches.
+        refresh_service_request_lifecycle(&provider_dyn, &store, "-1:service", &data, 1_001)
+            .await
+            .unwrap();
+        let (max_indexed, _) = store.service_requests_for_refresh("-1:service").unwrap();
+        assert_eq!(max_indexed, Some(2 * MAX_SERVICE_REQUEST_IDS_PER_TICK - 1));
+        assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
     }
 }
 

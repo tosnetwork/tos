@@ -1532,6 +1532,49 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::strin
   return {std::move(response), std::move(payload)};
 }
 
+// Const member overloads: same builders, origin taken from the server's
+// configuration so no call site can supply a wrong or defaulted value.
+JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::string& json_body) const {
+  return make_raw_json_response(json_body, opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, std::string id) const {
+  return make_json_ok(std::move(result_json), std::move(id), opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string message, std::string id) const {
+  return make_json_error(code, std::move(message), std::move(id), opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::string message, std::string id) const {
+  return make_json_rpc_error(code, std::move(message), std::move(id), opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_no_content() const {
+  return make_no_content(opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string body) const {
+  return make_json_array_response(std::move(body), opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok() const {
+  return make_health_ok(opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight() const {
+  return make_cors_preflight(opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code, std::string status_text,
+                                                            std::string body) const {
+  return make_text_response(status_code, std::move(status_text), std::move(body), opts_.cors_origin);
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized() const {
+  return make_json_unauthorized(opts_.cors_origin);
+}
+
 // ─── API key check ──────────────────────────────────────────────────────
 
 static bool constant_time_compare(const std::string &a, const std::string &b) {

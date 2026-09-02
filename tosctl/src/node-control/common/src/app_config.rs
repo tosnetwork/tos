@@ -206,12 +206,15 @@ fn default_http_enable_swagger() -> bool {
     true
 }
 
+/// Default operator token lifetime: 24 hours. A bearer token's threat model
+/// is theft, so the default stays short; a longer lifetime is an explicit
+/// operator decision made in the config, not a default.
 fn default_operator_ttl() -> u64 {
-    86400 * 30 // 30 days
+    86400 // 24 hours
 }
 
 fn default_nominator_ttl() -> u64 {
-    86400 // 1 day
+    86400 // 24 hours
 }
 
 fn default_min_password_length() -> usize {
@@ -1095,6 +1098,15 @@ mod tests {
     fn config_without_agent_tasks_loads_with_empty_map() {
         let config: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
         assert!(config.agent_tasks.is_empty());
+    }
+
+    #[test]
+    fn default_token_ttls_are_24_hours() {
+        // Bearer tokens are theft-prone: the defaults must stay short, and a
+        // longer lifetime must be an explicit configuration choice.
+        let auth = AuthConfig::default();
+        assert_eq!(auth.operator_token_ttl, 86400, "operator tokens default to 24 hours");
+        assert_eq!(auth.nominator_token_ttl, 86400, "nominator tokens default to 24 hours");
     }
 
     #[test]

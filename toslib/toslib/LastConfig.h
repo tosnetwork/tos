@@ -29,6 +29,10 @@ namespace toslib {
 struct LastConfigState {
   std::shared_ptr<const block::Config> config;
   td::Ref<vm::Tuple> prev_blocks_info;
+  // Network global_id extracted from the proof-checked masterchain state
+  // (the value wallet contracts compare signed message bodies against).
+  // Zero means "not known".
+  td::int32 global_id{0};
 };
 
 td::StringBuilder& operator<<(td::StringBuilder& sb, const LastConfigState& state);

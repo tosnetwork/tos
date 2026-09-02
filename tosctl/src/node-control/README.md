@@ -1019,7 +1019,7 @@ Authenticate and obtain a JWT token. Rate-limited: 5 failed attempts per 60s win
 {
   "ok": true,
   "token": "<JWT>",
-  "expires_in": 2592000,
+  "expires_in": 86400,
   "role": "operator"
 }
 ```
@@ -1393,8 +1393,8 @@ REST API authentication settings. **Authentication is enabled by default** — a
 >
 > **No restart required:** The service hot-reloads the configuration, so changes to users or auth settings take effect immediately.
 
-- `operator_token_ttl` — operator token TTL in seconds (default: `2592000` — 30 days)
-- `nominator_token_ttl` — nominator token TTL in seconds (default: `86400` — 1 day)
+- `operator_token_ttl` — operator token TTL in seconds (default: `86400` — 24 hours). Bearer tokens can be stolen and replayed until they expire, so the default is deliberately short; configuring a longer TTL is an explicit operator decision.
+- `nominator_token_ttl` — nominator token TTL in seconds (default: `86400` — 24 hours)
 - `min_password_length` — minimum password length (default: `8`)
 - `jwt_secret` — base64-encoded JWT signing key (optional; falls back to vault secret `auth.jwt-signing-key`)
 - `users` — list of user entries (managed via `tosctl auth` commands)

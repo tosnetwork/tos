@@ -14,7 +14,7 @@ const makeStorage = (totalLocked) => {
 }
 const bridgeAddress = "0x13dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
 const multisigAddress = "0x23dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8";
-const contractBalance = 10.2374e9;
+const lockedAmount = 10.2374e9;
 funcer({},{
     'path': './func/',
     'fc': [
@@ -35,9 +35,9 @@ funcer({},{
             ]
         ]
     },
-    'data': makeStorage(contractBalance),
+    'data': makeStorage(lockedAmount),
     'in_msgs': [
-        {
+        { // migrate vote: locked funds leave, and the counter must follow them
             "sender": `-1:${multisigAddress.slice(2)}`,
             "amount": 0.1*1e9,
             "contract_balance": 11*1e9,
@@ -45,12 +45,12 @@ funcer({},{
                 "uint32", 4, // execute_voting
                 "uint8", 4, // migrate
             ],
-            "new_data":makeStorage(contractBalance), //total_locked is not updated
+            "new_data": makeStorage(0), // total_locked is zeroed after the send
             "out_msgs": [
                 {
                     "type": "Internal",
                     "to": `-1:${bridgeAddress.slice(2)}`,
-                    "amount": contractBalance,
+                    "amount": lockedAmount,
                     "sendMode": 1,
                     "body": [
                         'uint32', '0xf00d'
@@ -58,7 +58,7 @@ funcer({},{
                 },
             ]
         },
-        {
+        { // migrate is an oracle-only vote
             "sender": `-1:0000000000000000000000000000000000000000000000000000000000000000`,
             "amount": 0.1*1e9,
             "contract_balance": 11*1e9,
@@ -67,6 +67,86 @@ funcer({},{
                 "uint8", 4, // migrate
             ],
             "exit_code": 305
+        },
+        { // a rejected migration bounces back and is locked again
+            "sender": `-1:${bridgeAddress.slice(2)}`,
+            "bounced": true,
+            "amount": lockedAmount,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", "0xffffffff", // bounce marker
+                "uint32", "0xf00d",
+            ],
+            "new_data": makeStorage(lockedAmount),
+            "out_msgs": []
+        },
+        { // any other bounce is still ignored
+            "sender": `-1:${bridgeAddress.slice(2)}`,
+            "bounced": true,
+            "amount": 5*1e9,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", "0xffffffff", // bounce marker
+                "uint32", 3,
+            ],
+            "new_data": makeStorage(lockedAmount),
+            "out_msgs": []
+        },
+        { // after the recovery the vote can migrate again
+            "sender": `-1:${multisigAddress.slice(2)}`,
+            "amount": 0.1*1e9,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", 4, // execute_voting
+                "uint8", 4, // migrate
+            ],
+            "new_data": makeStorage(0),
+            "out_msgs": [
+                {
+                    "type": "Internal",
+                    "to": `-1:${bridgeAddress.slice(2)}`,
+                    "amount": lockedAmount,
+                    "sendMode": 1,
+                    "body": [
+                        'uint32', '0xf00d'
+                    ],
+                },
+            ]
+        },
+        { // receiving side: the transfer credits the new bridge's counter
+            "sender": `-1:${bridgeAddress.slice(2)}`,
+            "amount": lockedAmount,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", "0xf00d",
+            ],
+            "new_data": makeStorage(lockedAmount),
+            "out_msgs": []
+        },
+        { // a reward sweep on the receiving bridge keeps the migrated funds reserved
+            "sender": `-1:${multisigAddress.slice(2)}`,
+            "amount": 0.1*1e9,
+            "contract_balance": 11*1e9,
+            "body": [
+                "uint32", 4, // execute_voting
+                "uint8", 5, // get reward
+            ],
+            "new_data": makeStorage(lockedAmount),
+            "out_msgs": [
+                {
+                    "type": "Reserve",
+                    "amount": `${lockedAmount + 100e9}`,
+                    "mode": 2
+                },
+                {
+                    "type": "Internal",
+                    "to": `-1:${multisigAddress.slice(2)}`,
+                    "amount": 0,
+                    "sendMode": 128,
+                    "body": [
+                    ],
+                },
+            ]
         },
     ]
 });

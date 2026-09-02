@@ -112,6 +112,9 @@ class ToslibClient : public td::actor::Actor {
   td::uint32 config_generation_{0};
   td::uint32 wallet_id_;
   td::int32 global_id_{0};
+  // True once global_id_ has been confirmed against the proof-checked
+  // masterchain state of the configured network.
+  bool chain_global_id_synced_{false};
   std::string rwallet_init_public_key_;
   std::string last_state_key_;
   bool use_callbacks_for_network_{false};
@@ -142,6 +145,10 @@ class ToslibClient : public td::actor::Actor {
   void init_ext_client();
   void init_last_block(LastBlockState state);
   void init_last_config();
+  // Wraps client_.with_last_config: caches the network global_id learned from
+  // the proof-checked masterchain state before delivering the config state.
+  void with_last_config(td::Promise<LastConfigState> promise);
+  void finish_get_account_state(int_api::GetAccountState request, td::Promise<td::unique_ptr<AccountState>> promise);
 
   bool is_closing_{false};
   td::uint32 ref_cnt_{1};

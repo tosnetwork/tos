@@ -23,6 +23,9 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - ECDSA signatures are checked for low-`s` and canonical `v` values.
 - Oracle-set updates reject sets shorter than three and duplicate members.
 - The TOS side tracks `total_locked`, applies flat/network/percentage fees, and supports suspending TOS→EVM transfers via state flags.
+- Swaps to the zero external address are refused on both sides: the TVM bridge rejects a zero destination (exit code 307) and `WrappedTOS` burns require a non-zero TOS address hash and an amount within the 64-bit release range.
+- A fee vote cannot install a network fee below the fixed 0.1 swap receipt plus headroom (exit code 392), so no configuration makes swaps drain the bridge balance backing `total_locked`.
+- Bridge migration conserves locked funds: the migrating bridge zeroes `total_locked` when the transfer leaves, the receiving bridge credits `total_locked` on the `0xf00d` transfer (so the funds are locked, not sweepable by a reward vote), and a rejected transfer bounces back and is re-credited on the old bridge.
 - The TOS multisig requires `k` of `n` oracle signatures, deduplicates signers via a signature bitmask, and tracks pending queries by expiring query IDs.
 - Every signed multisig query names both the deployment (`wallet_id`, exit code 42 on mismatch) and the network it was signed for (a 32-bit signed global id compared against ConfigParam 19 via `GLOBALID`, exit code 44 on mismatch), so a query signed on one TOS network cannot be replayed on another that shares the same StateInit, addresses, and oracle keys.
 

@@ -2,7 +2,13 @@ library Msg  // Shared message builders
 "Addr.fif" include
 "Currency.fif" include
 
-1 constant tos-global-id  // TOS mainnet global_id for anti-replay protection
+// Network global_id embedded into signed wallet message bodies (anti-replay).
+// It must equal ConfigParam 19 of the target network; wallet contracts reject
+// a mismatch with exit code 36. Defaults to the mainnet value. A test or
+// private network overrides it by defining the word before this file (or any
+// file that includes it, such as TosUtil.fif or WalletCommon.fif) is loaded:
+//   -3 constant tos-global-id
+def? tos-global-id { @' tos-global-id } { 1 } cond constant tos-global-id
 
 // serialize simple transfers with long comments
 // b B n -- b'

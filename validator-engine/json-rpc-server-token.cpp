@@ -145,7 +145,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
   auto promise_slot = std::make_shared<std::optional<td::Promise<HttpReturn>>>(std::move(promise));
   auto req_id_slot = std::make_shared<std::string>(std::move(req_id));
 
-  auto do_query_token = [addr, params_boc, promise_slot, req_id_slot,
+  auto do_query_token = [cors = opts_.cors_origin, addr, params_boc, promise_slot, req_id_slot,
                          self_id = actor_id(this)](
       td::int32 blk_wc, td::int64 blk_shard, td::int32 blk_seqno,
       td::Bits256 blk_root, td::Bits256 blk_file) mutable {
@@ -178,7 +178,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [addr, params_boc, self_id,
+                [cors, addr, params_boc, self_id,
                  saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
                  req_id = std::move(req_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
@@ -248,7 +248,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                       // TEP-64: append parsed on-chain metadata (name/symbol/decimals/...).
                       tep64_append_metadata(sb, content_e.as_cell(), "jetton_");
                       sb << "}";
-                      promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                      promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
                       return;
                     }
                   }
@@ -273,13 +273,13 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
           td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
               std::move(nft_query),
               td::PromiseCreator::lambda(
-                  [addr, params_boc, self_id,
+                  [cors, addr, params_boc, self_id,
                    saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
                    req_id = std::move(req_id), promise = std::move(promise),
                    parse_address_from_slice, cell_to_b64](
                       td::Result<td::BufferSlice> R2) mutable {
 
-            auto try_collection = [&addr, &params_boc, &self_id,
+            auto try_collection = [cors, &addr, &params_boc, &self_id,
                                    saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
                                    &parse_address_from_slice, &cell_to_b64](
                 std::string req_id, td::Promise<HttpReturn> promise) mutable {
@@ -299,31 +299,31 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
               td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
                   std::move(coll_query),
                   td::PromiseCreator::lambda(
-                      [req_id = std::move(req_id), promise = std::move(promise),
+                      [cors, req_id = std::move(req_id), promise = std::move(promise),
                        parse_address_from_slice, cell_to_b64](
                           td::Result<td::BufferSlice> R3) mutable {
                 if (R3.is_error()) {
                   promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id));
+                      "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto F3 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
                     R3.move_as_ok(), true);
                 if (F3.is_error()) {
                   promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id));
+                      "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto f3 = F3.move_as_ok();
                 if (f3->exit_code_ != 0 || f3->result_.empty()) {
                   promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id));
+                      "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto stk_r = parse_get_method_result_stack(f3->result_.as_slice());
                 if (stk_r.is_error() || stk_r.ok()->depth() < 3) {
                   promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id));
+                      "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto stk = stk_r.move_as_ok();
@@ -348,7 +348,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                    << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str));
                 tep64_append_metadata(sb, content_e.as_cell(), "collection_");
                 sb << "}";
-                promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
               }));
             };
 
@@ -398,18 +398,18 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                << ",\"individual_content\":" << td::JsonString(td::Slice(content_b64));
             tep64_append_metadata(sb, content_e.as_cell(), "nft_");
             sb << "}";
-            promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+            promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
           }));
         }));
   };
 
-  auto fail_block_lookup = [promise_slot, req_id_slot](td::Slice message) mutable {
+  auto fail_block_lookup = [cors = opts_.cors_origin, promise_slot, req_id_slot](td::Slice message) mutable {
     if (!promise_slot->has_value()) {
       return;
     }
     auto promise = std::move(promise_slot->value());
     promise_slot->reset();
-    promise.set_value(make_json_error(-32603, message.str(), *req_id_slot));
+    promise.set_value(make_json_error(-32603, message.str(), *req_id_slot, cors));
   };
 
   if (has_seqno) {

@@ -26,6 +26,9 @@ REQUIRED_SOURCES = [
     "tvm/bsc/stdlib.fc",
     "tvm/tests/eth2tos.js",
     "tvm/tests/replay-wrong-global-id.js",
+    "tvm/tests/migrate.js",
+    "tvm/tests/change-fee-floor.js",
+    "tvm/tests/tos2eth-zero-destination.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/WrappedTOS.sol",
     "evm/contracts/SignatureChecker.sol",
@@ -103,6 +106,17 @@ def verify_tvm_sources() -> None:
             "network_fee",
             "state_flags",
             "total_locked",
+            # The network fee must cover the fixed 0.1 receipt each swap pays
+            # from the bridge balance, or every swap drains the bridge.
+            "throw_unless(392, network_fee >= 110000000)",
+            # A zero external destination is unspendable; refuse the swap.
+            "throw_unless(307, destination_address != 0)",
+            # A migration transfer must be recognized and locked by the
+            # receiving bridge, not left as sweepable plain balance.
+            "if (op == 0xf00d) {",
+            "total_locked += msg_value;",
+            # The migrating bridge stops backing funds that left it.
+            "total_locked = 0;",
         ])
         require_text(c / "multisig-code.fc", [
             "check_signature",
@@ -137,6 +151,10 @@ def verify_evm_sources() -> None:
     require_text(c / "WrappedTOS.sol", [
         'require(allowBurn, "Burn is currently disabled")',
         "_burn(msg.sender, amount)",
+        # Burns outside the 64-bit release range or to the zero TOS address
+        # destroy wrapped coins with nothing unlocked on the other side.
+        'require(amount > 0 && amount <= type(uint64).max, "Burn amount out of range")',
+        'require(addr.address_hash != bytes32(0), "Burn to zero address")',
     ])
     signature_checker = c / "SignatureChecker.sol"
     require_text(signature_checker, [

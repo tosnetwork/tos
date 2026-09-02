@@ -390,8 +390,21 @@ fn index_error(error: anyhow::Error) -> AppError {
     AppError::internal("explorer index unavailable")
 }
 
-fn page(offset: Option<usize>, limit: Option<usize>) -> (usize, usize) {
-    (offset.unwrap_or(0), limit.unwrap_or(50).clamp(1, MAX_PAGE_SIZE))
+/// Largest accepted pagination offset. SQLite's OFFSET walks and discards
+/// every skipped row, so an arbitrarily large offset is a cheap way to make
+/// each request do unbounded work; deep history should be reached by
+/// narrowing filters, not by paging past this bound.
+const MAX_PAGE_OFFSET: usize = 100_000;
+
+fn page(offset: Option<usize>, limit: Option<usize>) -> Result<(usize, usize), AppError> {
+    let offset = offset.unwrap_or(0);
+    if offset > MAX_PAGE_OFFSET {
+        return Err(AppError::bad_request(format!(
+            "offset {offset} exceeds the maximum of {MAX_PAGE_OFFSET}; \
+             narrow the query with filters instead of paging deeper"
+        )));
+    }
+    Ok((offset, limit.unwrap_or(50).clamp(1, MAX_PAGE_SIZE)))
 }
 
 fn validate_kind(kind: &str) -> Result<(), AppError> {
@@ -678,7 +691,7 @@ pub async fn list_transactions(
         .transpose()
         .map_err(|_| AppError::bad_request("invalid TOS address"))?
         .map(|address| address.to_string());
-    let (offset, limit) = page(query.offset, query.limit);
+    let (offset, limit) = page(query.offset, query.limit)?;
     let block_filter = match (query.workchain, query.shard, query.seqno) {
         (None, None, None) => None,
         (Some(workchain), Some(shard), Some(seqno)) if account.is_none() => {
@@ -722,7 +735,7 @@ pub async fn list_blocks(
     State(state): State<AppState>,
     Query(query): Query<ExplorerPageQuery>,
 ) -> Result<axum::Json<ExplorerBlockListResponse>, AppError> {
-    let (offset, limit) = page(query.offset, query.limit);
+    let (offset, limit) = page(query.offset, query.limit)?;
     let (rows, total) =
         state.indexer_store.list_explorer_blocks(offset, limit).map_err(index_error)?;
     Ok(axum::Json(ExplorerBlockListResponse {
@@ -808,7 +821,7 @@ pub async fn list_contracts(
         .transpose()
         .map_err(|_| AppError::bad_request("invalid TOS address"))?
         .map(|address| address.to_string());
-    let (offset, limit) = page(query.offset, query.limit);
+    let (offset, limit) = page(query.offset, query.limit)?;
     let filters = ListFilters {
         creator: creator.as_deref(),
         status: query.status.as_deref(),
@@ -889,7 +902,19 @@ pub async fn search(
 
 #[cfg(test)]
 mod tests {
-    use super::make_json_browser_safe;
+    use super::{MAX_PAGE_OFFSET, MAX_PAGE_SIZE, make_json_browser_safe, page};
+
+    #[test]
+    fn page_accepts_offsets_up_to_the_cap_and_rejects_beyond_it() {
+        assert_eq!(page(None, None).unwrap(), (0, 50));
+        assert_eq!(page(Some(1), Some(2)).unwrap(), (1, 2));
+        assert_eq!(
+            page(Some(MAX_PAGE_OFFSET), Some(10_000)).unwrap(),
+            (MAX_PAGE_OFFSET, MAX_PAGE_SIZE)
+        );
+        assert!(page(Some(MAX_PAGE_OFFSET + 1), None).is_err());
+        assert!(page(Some(usize::MAX), None).is_err(), "huge offsets must not reach the store");
+    }
 
     #[test]
     fn converts_only_integers_that_javascript_cannot_represent_exactly() {

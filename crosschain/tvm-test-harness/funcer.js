@@ -117,7 +117,10 @@ ${makeCell(inMsg.body)} constant in_msg_body${i}
 // sender, which is all some contracts read — but a contract that reads
 // further, as jetton-wallet does to reach fwd_fee, hit a cell underflow and
 // failed with exit code 9 rather than with anything about its own logic.
-<b b{0110} s,
+// A test may set "bounced" to deliver the message with the bounced flag,
+// the way the chain returns a rejected bounceable transfer; on chain only
+// the network sets that flag, so a bounced segment models a genuine bounce.
+<b b{011${inMsg.bounced ? 1 : 0}} s,
    sender_address${i} Addr,
    contract_addr_pair Addr,                // dst: this contract
    msg_value${i} Tomi,                     // value

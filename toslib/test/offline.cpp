@@ -23,6 +23,7 @@
 #include "block/block-auto.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "smc-envelope/WalletV3.h"
 #include "td/utils/PathView.h"
 #include "td/utils/benchmark.h"
 #include "td/utils/filesystem.h"
@@ -602,6 +603,38 @@ TEST(Toslib, KeysApi) {
   downcast_call(*decrypted2,
                 td::overloaded([](auto &) { UNREACHABLE(); },
                                [&](toslib_api::msg_dataDecryptedText &decrypted) { CHECK(decrypted.text_ == text); }));
+}
+
+TEST(Toslib, WalletMessageGlobalId) {
+  // The signed body of a wallet message must begin with the global_id the
+  // wallet was configured with, not with a hard-coded mainnet constant.
+  // (ToslibClient wires this value from the proof-checked masterchain state
+  // via LastConfigState::global_id before handing out account states.)
+  auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
+  auto pub_key = priv_key.get_public_key().move_as_ok();
+  for (td::int32 configured_global_id : {1, -239}) {
+    for (td::uint32 seqno : {0u, 1u}) {
+      tos::WalletV3::InitData init_data;
+      init_data.public_key = pub_key.as_octet_string();
+      init_data.wallet_id = 0x544F5301;
+      init_data.seqno = seqno;
+      auto wallet = tos::WalletV3::create(init_data, -1);
+      wallet.write().set_global_id(configured_global_id);
+      td::Ref<vm::Cell> message;
+      if (seqno == 0) {
+        message = wallet->get_init_message(priv_key).move_as_ok();
+      } else {
+        tos::WalletV3::Gift gift;
+        gift.destination = block::StdAddress::parse("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX").move_as_ok();
+        gift.gramms = 1;
+        message = wallet->make_a_gift_message(priv_key, 60, {gift}).move_as_ok();
+      }
+      auto cs = vm::load_cell_slice(message);
+      CHECK(cs.skip_first(512));  // ed25519 signature
+      auto signed_global_id = static_cast<td::int32>(cs.fetch_long(32));
+      ASSERT_EQ(configured_global_id, signed_global_id);
+    }
+  }
 }
 
 TEST(Toslib, ConfigCache) {

@@ -149,7 +149,7 @@ tosctl reads its config from `tosctl-config.json` by default. Override the path 
     "bind": "0.0.0.0:8080",
     "enable_swagger": true,
     "auth": {
-      "operator_token_ttl": 2592000,
+      "operator_token_ttl": 86400,
       "nominator_token_ttl": 86400,
       "min_password_length": 8
     }

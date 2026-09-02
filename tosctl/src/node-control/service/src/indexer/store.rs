@@ -30,7 +30,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -103,6 +103,17 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     |conn| conn.execute_batch(NOMINATOR_LEDGER_SCHEMA),
     |conn| conn.execute_batch(DNS_HISTORY_SCHEMA),
     migrate_dns_checkpoint_hashes,
+    // v9 adds ordering indexes so the hot explorer list sorts are
+    // index-served instead of sorting the whole table per request. The
+    // network-wide transaction feed's ORDER BY was changed at the same time
+    // from `COALESCE(b.gen_utime, 0) DESC` (an expression over a join, which
+    // no index can serve) to `t.seqno DESC` -- an observable ordering change
+    // only where shards interleave (blocks at the same seqno in different
+    // shards now group by seqno rather than by block time) and for
+    // transactions whose block row is missing (previously forced last via
+    // gen_utime 0, now ordered by their own seqno). Within any single shard
+    // chain the order is unchanged.
+    |conn| conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA),
 ];
 
 fn migrate_dns_checkpoint_hashes(conn: &Connection) -> rusqlite::Result<()> {
@@ -201,6 +212,14 @@ const EXPLORER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS explorer_blocks (
         ON explorer_transactions(workchain, shard, seqno);
     CREATE INDEX IF NOT EXISTS idx_explorer_transactions_recent
         ON explorer_transactions(seqno DESC, indexed_at DESC);";
+
+/// v9: indexes matching the explorer list queries' ORDER BY clauses exactly,
+/// so those sorts are served by an index walk instead of materialising and
+/// sorting every row on each request.
+const EXPLORER_ORDER_INDEX_SCHEMA: &str = "CREATE INDEX IF NOT EXISTS idx_explorer_blocks_gen_utime
+        ON explorer_blocks(gen_utime DESC, seqno DESC, workchain, shard);
+    CREATE INDEX IF NOT EXISTS idx_explorer_transactions_order
+        ON explorer_transactions(seqno DESC, length(lt) DESC, lt DESC, hash);";
 
 /// One indexed account: either a recognized contract (`kind` is one of the
 /// public explorer contract kinds, including Agent Account) or
@@ -345,6 +364,7 @@ impl IndexerStore {
                 ON service_request_lifecycle(service_address, status);",
         )?;
         conn.execute_batch(EXPLORER_SCHEMA)?;
+        conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         Ok(())
@@ -784,10 +804,14 @@ impl IndexerStore {
         offset: usize,
         limit: usize,
     ) -> anyhow::Result<(Vec<ExplorerBlockRecord>, usize)> {
+        let offset = i64::try_from(offset)?;
+        let limit = i64::try_from(limit)?;
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let total = conn
             .query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get::<_, i64>(0))?
             as usize;
+        // The ORDER BY matches `idx_explorer_blocks_gen_utime` exactly so the
+        // sort is an index walk, not a full-table sort per request.
         let mut stmt = conn.prepare(
             "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
                     (SELECT COUNT(*) FROM explorer_transactions t
@@ -798,7 +822,7 @@ impl IndexerStore {
              LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt
-            .query_map(params![limit as i64, offset as i64], row_to_explorer_block)?
+            .query_map(params![limit, offset], row_to_explorer_block)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok((rows, total))
     }
@@ -812,6 +836,8 @@ impl IndexerStore {
         offset: usize,
         limit: usize,
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
+        let offset = i64::try_from(offset)?;
+        let limit = i64::try_from(limit)?;
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let (where_sql, account_param) =
             if account.is_some() { (" WHERE account = ?1", account) } else { ("", None) };
@@ -826,26 +852,31 @@ impl IndexerStore {
                 row.get::<_, i64>(0)
             })? as usize
         };
+        // Sorted on the transaction's own columns (matching
+        // `idx_explorer_transactions_order` exactly for the network-wide
+        // feed, and the `account` index's `seqno DESC` prefix for account
+        // history) rather than the joined block's `gen_utime`, which no index
+        // can serve. Observable ordering difference versus the older
+        // gen_utime sort: same-seqno blocks in different shards group by
+        // seqno instead of block time, and a transaction whose block row is
+        // missing sorts by its own seqno instead of being forced last.
         let sql = format!(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
                     COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
              FROM explorer_transactions t
              LEFT JOIN explorer_blocks b
                ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno{where_sql}
-             ORDER BY COALESCE(b.gen_utime, 0) DESC, length(t.lt) DESC, t.lt DESC, t.hash
+             ORDER BY t.seqno DESC, length(t.lt) DESC, t.lt DESC, t.hash
              LIMIT ?{} OFFSET ?{}",
             if account.is_some() { 2 } else { 1 },
             if account.is_some() { 3 } else { 2 },
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = if let Some(account) = account {
-            stmt.query_map(
-                params![account, limit as i64, offset as i64],
-                row_to_explorer_transaction,
-            )?
-            .collect::<Result<Vec<_>, _>>()?
+            stmt.query_map(params![account, limit, offset], row_to_explorer_transaction)?
+                .collect::<Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map(params![limit as i64, offset as i64], row_to_explorer_transaction)?
+            stmt.query_map(params![limit, offset], row_to_explorer_transaction)?
                 .collect::<Result<Vec<_>, _>>()?
         };
         Ok((rows, total))
@@ -862,6 +893,8 @@ impl IndexerStore {
         offset: usize,
         limit: usize,
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
+        let offset = i64::try_from(offset)?;
+        let limit = i64::try_from(limit)?;
         let conn = self.conn.lock().expect("indexer store lock poisoned");
         let total = conn.query_row(
             "SELECT COUNT(*) FROM explorer_transactions
@@ -881,7 +914,7 @@ impl IndexerStore {
         )?;
         let rows = stmt
             .query_map(
-                params![workchain, shard, seqno, limit as i64, offset as i64],
+                params![workchain, shard, seqno, limit, offset],
                 row_to_explorer_transaction,
             )?
             .collect::<Result<Vec<_>, _>>()?;
@@ -990,6 +1023,8 @@ impl IndexerStore {
         offset: usize,
         limit: usize,
     ) -> anyhow::Result<(Vec<IndexedRecord>, usize)> {
+        let offset = i64::try_from(offset)?;
+        let limit = i64::try_from(limit)?;
         let conn = self.conn.lock().expect("indexer store lock poisoned");
 
         let mut where_clauses = vec!["kind = ?1".to_owned()];
@@ -1019,9 +1054,9 @@ impl IndexerStore {
             |row| row.get::<_, i64>(0),
         )? as usize;
 
-        bind.push(Box::new(limit as i64));
+        bind.push(Box::new(limit));
         let limit_idx = bind.len();
-        bind.push(Box::new(offset as i64));
+        bind.push(Box::new(offset));
         let offset_idx = bind.len();
 
         let sql = format!(
@@ -1101,11 +1136,13 @@ impl IndexerStore {
                     // put there before anyone was watching, so it is a
                     // deposit only in the sense that it is not a reward this
                     // ledger observed.
-                    deposited = *amount as i64 + *pending as i64;
+                    deposited = (*amount as i64).saturating_add(*pending as i64);
                 }
                 Some((last_amount, last_pending, last_state)) => {
-                    let amount_delta = *amount as i64 - last_amount;
-                    let pending_delta = *pending as i64 - last_pending;
+                    // Chain-controlled values: keep the delta math saturating
+                    // so a hostile or corrupt observation cannot overflow.
+                    let amount_delta = (*amount as i64).saturating_sub(last_amount);
+                    let pending_delta = (*pending as i64).saturating_sub(last_pending);
                     let distribution_happened = last_state != POOL_STATE_IDLE
                         && i64::from(pool_state) == POOL_STATE_IDLE
                         && *pending == 0;
@@ -1113,7 +1150,7 @@ impl IndexerStore {
                     if distribution_happened {
                         // amount grew by the pending deposit plus this
                         // round's share of the reward.
-                        let reward = amount_delta - last_pending;
+                        let reward = amount_delta.saturating_sub(last_pending);
                         if reward >= 0 {
                             rewarded = reward;
                         } else {
@@ -1129,7 +1166,7 @@ impl IndexerStore {
                     } else if amount_delta > 0 && last_state == POOL_STATE_IDLE {
                         deposited = amount_delta;
                     } else if amount_delta != 0 || pending_delta != 0 {
-                        unattributed = amount_delta + pending_delta;
+                        unattributed = amount_delta.saturating_add(pending_delta);
                     }
                 }
             }
@@ -1425,6 +1462,40 @@ mod tests {
             .unwrap();
         assert!(columns.iter().any(|name| name == "root_hash"));
         assert!(columns.iter().any(|name| name == "file_hash"));
+    }
+
+    #[test]
+    fn ordering_index_migration_applies_from_the_previous_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        // Simulate a database written at the previous schema version, before
+        // the ordering indexes existed.
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_explorer_blocks_gen_utime;
+             DROP INDEX IF EXISTS idx_explorer_transactions_order;",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '8')", [])
+            .unwrap();
+
+        IndexerStore::ensure_schema_version(&conn).unwrap();
+
+        let version: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
+        for index in ["idx_explorer_blocks_gen_utime", "idx_explorer_transactions_order"] {
+            let found: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    params![index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(found, 1, "migration must create {index}");
+        }
     }
 
     #[test]

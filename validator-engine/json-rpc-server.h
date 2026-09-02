@@ -427,47 +427,66 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void send_liteserver_query(td::BufferSlice query,
                              td::Promise<td::BufferSlice> promise);
 
-  // Utility: build JSON-RPC response
+  // Utility: build JSON-RPC responses.
   //
-  // Every call site that omits the
-  // explicit `cors_origin` argument silently falls back to "*", which
-  // bypasses an operator-configured restrictive CORS origin. Of the 478
-  // response sites in `json-rpc-server*.cpp`, 474 currently omit the
-  // argument. Threading `opts_.cors_origin` through them all is purely
-  // mechanical and should be handled as a focused follow-up;
-  // until that migration lands, deployments that depend on a restrictive
-  // `cors_origin` setting MUST treat this server's responses as
-  // potentially world-readable from any browser origin. Track the
-  // migration as a follow-up rather than relying on these defaults.
+  // Every response header set (including Access-Control-Allow-Origin) is
+  // built here. Two overload families exist for each helper:
+  //
+  //  * const member functions WITHOUT a `cors_origin` parameter — they read
+  //    `opts_.cors_origin` directly. This is the default for code running
+  //    with the server object in scope; no call site can pick a wrong or
+  //    stale origin.
+  //  * static overloads WITH an explicit `cors_origin` parameter and NO
+  //    default — for detached contexts (value-capturing promise callbacks
+  //    that may run after leaving the actor's stack frame). The caller must
+  //    capture the configured origin by value at lambda-creation time.
+  //
+  // There is deliberately no defaulted "*" anywhere: a default that
+  // silently bypassed the configured origin was a lying control. The only
+  // way to emit "*" now is for the operator to configure it.
+  HttpReturn make_raw_json_response(const std::string& json_body) const;
   static HttpReturn make_raw_json_response(const std::string& json_body,
-                                            const std::string& cors_origin = "*");
+                                           const std::string& cors_origin);
+  HttpReturn make_json_ok(std::string result_json, std::string id) const;
   static HttpReturn make_json_ok(std::string result_json, std::string id,
-                                 const std::string& cors_origin = "*");
+                                 const std::string& cors_origin);
+  HttpReturn make_json_error(int code, std::string message, std::string id) const;
   static HttpReturn make_json_error(int code, std::string message, std::string id,
-                                    const std::string& cors_origin = "*");
+                                    const std::string& cors_origin);
   // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
   // HTTP 200). `make_json_error` is retained for TVM JSON-RPC methods
   // whose existing tests depend on `{ok, error:<string>, code}` at
   // top level and on mapped HTTP status codes.
+  HttpReturn make_json_rpc_error(int code, std::string message, std::string id) const;
   static HttpReturn make_json_rpc_error(int code, std::string message, std::string id,
-                                        const std::string& cors_origin = "*");
+                                        const std::string& cors_origin);
   // HTTP 204 No Content with CORS — used for batch-of-only-notifications.
-  static HttpReturn make_no_content(const std::string& cors_origin = "*");
+  HttpReturn make_no_content() const;
+  static HttpReturn make_no_content(const std::string& cors_origin);
   // HTTP 200 wrapping a literal JSON body (e.g. a JSON array of batch
   // element responses).  Identical to make_raw_json_response but with an
   // explicit name to clarify intent at call sites.
+  HttpReturn make_json_array_response(std::string body) const;
   static HttpReturn make_json_array_response(std::string body,
-                                              const std::string& cors_origin = "*");
+                                             const std::string& cors_origin);
   // Extract the response body bytes from an HttpReturn.  Consumes the
   // payload — caller must not use `ret.second` afterwards.
   static std::string extract_response_body(HttpReturn& ret);
-  static HttpReturn make_health_ok(const std::string& cors_origin = "*");
-  static HttpReturn make_cors_preflight(const std::string& cors_origin = "*");
+  HttpReturn make_health_ok() const;
+  static HttpReturn make_health_ok(const std::string& cors_origin);
+  // CORS preflight response. Echoes the configured origin like every other
+  // response — a preflight that answered "*" while the actual response
+  // carried a restrictive origin would only mislead.
+  HttpReturn make_cors_preflight() const;
+  static HttpReturn make_cors_preflight(const std::string& cors_origin);
+  HttpReturn make_text_response(int status_code, std::string status_text,
+                                std::string body) const;
   static HttpReturn make_text_response(int status_code, std::string status_text,
                                        std::string body,
-                                       const std::string& cors_origin = "*");
+                                       const std::string& cors_origin);
   // Return HTTP 401 with JSON-RPC error body
-  static HttpReturn make_json_unauthorized(const std::string& cors_origin = "*");
+  HttpReturn make_json_unauthorized() const;
+  static HttpReturn make_json_unauthorized(const std::string& cors_origin);
 
   // API key authentication helper — returns true if request is authorized.
   // When false is returned, a 401 response has already been sent via promise.
