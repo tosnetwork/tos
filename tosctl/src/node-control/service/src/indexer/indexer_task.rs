@@ -88,34 +88,37 @@ const PROBE_BUDGET_REFILL_SECS: u64 = 60;
 /// down the scan call chain (tests construct their own, so nothing is
 /// process-global).
 pub(crate) struct ProbeBudget {
-    remaining: std::sync::atomic::AtomicU64,
-    window_start: std::sync::atomic::AtomicU64,
+    // One lock holds both the window stamp and the remaining tokens: with
+    // two separate atomics, a concurrent taker between the window publish
+    // and the refill store could drain leftover tokens that the refill then
+    // overwrote, over-granting across the boundary. take() runs at most
+    // once per service visit, so contention is irrelevant.
+    state: std::sync::Mutex<ProbeBudgetState>,
+}
+
+struct ProbeBudgetState {
+    remaining: u64,
+    window_start: u64,
 }
 
 impl ProbeBudget {
     pub(crate) fn new() -> Self {
         Self {
-            remaining: std::sync::atomic::AtomicU64::new(GLOBAL_SERVICE_PROBE_BUDGET),
-            window_start: std::sync::atomic::AtomicU64::new(0),
+            state: std::sync::Mutex::new(ProbeBudgetState {
+                remaining: GLOBAL_SERVICE_PROBE_BUDGET,
+                window_start: 0,
+            }),
         }
     }
 
     fn take(&self, want: u64, now: u64) -> u64 {
-        use std::sync::atomic::Ordering;
-        let window = self.window_start.load(Ordering::Relaxed);
-        if now.saturating_sub(window) >= PROBE_BUDGET_REFILL_SECS
-            && self
-                .window_start
-                .compare_exchange(window, now, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-        {
-            self.remaining.store(GLOBAL_SERVICE_PROBE_BUDGET, Ordering::Relaxed);
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if now.saturating_sub(state.window_start) >= PROBE_BUDGET_REFILL_SECS {
+            state.window_start = now;
+            state.remaining = GLOBAL_SERVICE_PROBE_BUDGET;
         }
-        let mut granted = 0;
-        let _ = self.remaining.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
-            granted = left.min(want);
-            Some(left - granted)
-        });
+        let granted = state.remaining.min(want);
+        state.remaining -= granted;
         granted
     }
 }
