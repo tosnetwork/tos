@@ -17,10 +17,13 @@ double ActorStats::estimate_inv_ticks_per_second() {
   auto now = td::Timestamp::now();
   auto elapsed_seconds = now.at() - begin_ts_.at();
   auto now_ticks = td::Clocks::rdtsc();
-  auto elapsed_ticks = now_ticks - begin_ticks_;
-  auto estimated_inv_ticks_per_second =
-      elapsed_seconds > 0.1 ? elapsed_seconds / double(elapsed_ticks) : Clocks::inv_ticks_per_second();
-  return estimated_inv_ticks_per_second;
+  // The tick counter is not guaranteed to be monotonic across cores; an empty
+  // or backwards interval cannot be used for calibration.
+  auto elapsed_ticks = now_ticks > begin_ticks_ ? now_ticks - begin_ticks_ : 0;
+  if (elapsed_seconds <= 0.1 || elapsed_ticks == 0) {
+    return Clocks::inv_ticks_per_second();
+  }
+  return elapsed_seconds / double(elapsed_ticks);
 }
 
 std::string ActorStats::prepare_stats() {
@@ -140,10 +143,10 @@ std::string ActorStats::prepare_stats() {
     sb() << "created_per_second:\t" << stat_10s.created << " " << stat_10m.created << " " << stat_forever.created
          << "\n";
 
-    auto executing_for =
-        stat_forever.executing_start > 1e15
-            ? 0
-            : double(td::Clocks::rdtsc()) * estimated_inv_ticks_per_second - stat_forever.executing_start;
+    auto executing_for = stat_forever.executing_start > 1e15
+                             ? 0
+                             : std::max(0.0, double(td::Clocks::rdtsc()) * estimated_inv_ticks_per_second -
+                                                 stat_forever.executing_start);
     sb() << "max_delay:\t" << stat_forever.max_delay_seconds.value_10s << "s "
          << stat_forever.max_delay_seconds.value_10m << "s " << stat_forever.max_delay_seconds.value_forever << "s\n";
     sb() << ""
@@ -192,7 +195,7 @@ std::string ActorStats::prepare_stats() {
     if (x.second.executing_start > 1e15) {
       return 0.0;
     }
-    return rdtsc_seconds - x.second.executing_start;
+    return std::max(0.0, rdtsc_seconds - x.second.executing_start);
   });
   top_k_by(stats_forever, 10, "max_execute_messages_10m",
            [](Entry &x) { return cutoff(x.second.max_execute_messages.value_10m, 10u); });
@@ -208,8 +211,11 @@ std::string ActorStats::prepare_stats() {
   };
   std::sort(stats.begin(), stats.end(),
             [&](auto &left, auto &right) { return main_key(left.first) > main_key(right.first); });
-  auto debug = Debug(SchedulerContext::get().scheduler_group());
-  debug.dump(sb);
+  if (auto *context = SchedulerContext::get_ptr()) {
+    if (auto *group = context->scheduler_group()) {
+      Debug(group).dump(sb);
+    }
+  }
   sb << "All actors:\n";
   for (auto &it : stats) {
     sb << "\t" << ActorTypeStatManager::get_class_name(it.first.name()) << "\n";

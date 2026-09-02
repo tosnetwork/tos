@@ -80,7 +80,7 @@ class AdnlAddressUdp6 : public AdnlAddressImpl {
     return true;
   }
   td::uint32 serialized_size() const override {
-    return 12;
+    return 24;
   }
 
   tl_object_ptr<tos_api::adnl_Address> tl() const override {

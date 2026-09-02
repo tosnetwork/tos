@@ -56,6 +56,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 from contract import WalletV1, WalletV1Blueprint  # noqa: E402
+from pytosiq_core.boc.deserialize import BocError  # noqa: E402
+from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -129,6 +131,10 @@ INTEGRATED_READY_SCHEMA = "tos.openfox.same-genesis-campaign-network-ready.v1"
 TASK_SEND_FINALIZED_SCHEMA = "tos.agent-account.task-send-finalized.v1"
 TASK_SEND_PROCESS_VIEW_SCOPE = (
     "distinct RPC process views; no independent-operator or Byzantine-finality claim"
+)
+TASK_SEND_BLOCK_REFERENCE_SCOPE = (
+    "RPC-asserted transaction and block identifiers; "
+    "no inclusion proof was verified"
 )
 SIDECAR_NETWORK = "tos:local-accelerated-nominator-pool-sidecar"
 SIDECAR_EVIDENCE_CLASS = "IDENTITY_BOUND_SIMULATION"
@@ -1120,7 +1126,7 @@ def match_agent_pool_transaction(
         boc = base64.b64decode(encoded, validate=True)
         transaction_cell = Cell.one_from_boc(boc)
         transaction = Transaction.deserialize(transaction_cell.begin_parse())
-    except TypeError, ValueError:
+    except (TypeError, ValueError, TlbError, BocError, IndexError):
         return None
     if transaction.account_addr != sender.hash_part or getattr(
         transaction.description, "aborted", True
@@ -1220,6 +1226,10 @@ def task_send_resolution_mismatches(
     check(
         "process_view_scope",
         resolution.get("process_view_scope") == TASK_SEND_PROCESS_VIEW_SCOPE,
+    )
+    check(
+        "block_reference_scope",
+        resolution.get("block_reference_scope") == TASK_SEND_BLOCK_REFERENCE_SCOPE,
     )
     check(
         "independent_operator_domains_proven",

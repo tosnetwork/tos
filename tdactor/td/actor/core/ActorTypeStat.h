@@ -164,7 +164,9 @@ struct ActorTypeStatImpl {
     auto execute_start_copy = load(execute_start_);
     auto actual_total_ticks = load(total_ticks_);
     auto ts = Clocks::rdtsc();
-    if (execute_start_copy != 0) {
+    // execute_start_ may be written concurrently; a start timestamp read after
+    // our tick sample would make the delta wrap, so only count forward time.
+    if (execute_start_copy != 0 && ts > execute_start_copy) {
       actual_total_ticks += ts - execute_start_copy;
     }
     auto execute_start = ticks_to_seconds(load(execute_start_), inv_ticks_per_second);
