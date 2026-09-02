@@ -113,11 +113,22 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   // as the request headers left the connection open waiting for
   // more bytes — the round-154 receive_payload propagation only
   // covered the second-and-subsequent reads.
+  arm_request_body_deadline();
   return read_payload(std::move(payload));
 }
 
 void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
   CHECK(payload);
+  // A CONNECT is only a tunnel once the handler accepts it; any other
+  // answer must terminate the connection, since the client will never send
+  // a well-formed next request on a half-negotiated tunnel.
+  if (reading_payload_ && reading_payload_->payload_type() == HttpPayload::PayloadType::pt_tunnel) {
+    if (response->code() / 100 == 2) {
+      tunnel_established_ = true;
+    } else {
+      close_after_write_ = true;
+    }
+  }
   response->store_http(buffered_fd_.output_buffer());
 
   metrics_.responses_total->label(response->code())->add(1);

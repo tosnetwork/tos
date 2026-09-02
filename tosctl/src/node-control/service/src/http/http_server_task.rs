@@ -8,7 +8,7 @@
  */
 use super::{
     agent_query_api, explorer_query_api,
-    login_rate_limiter::{LoginRateLimiter, login_limiter_key},
+    login_rate_limiter::{LoginRateLimiter, client_ip},
 };
 use crate::{
     auth::{
@@ -40,6 +40,13 @@ pub struct AppState {
     pub user_store: Arc<UserStore>,
     pub(crate) login_rate_limiter: Arc<tokio::sync::Mutex<LoginRateLimiter>>,
     pub indexer_store: Arc<crate::indexer::IndexerStore>,
+    /// Whether serving without authentication is acceptable for the address
+    /// this listener is actually bound to, decided once at bind time
+    /// (loopback bind, or the explorer-only read router). The startup guard
+    /// refuses a non-loopback bind without auth; this flag lets the
+    /// middleware keep refusing when a config reload later removes the auth
+    /// block while the public listener stays bound.
+    pub unauthenticated_serving_allowed: bool,
 }
 
 pub async fn run(
@@ -55,7 +62,36 @@ pub async fn run(
     let cfg = runtime_cfg.get();
     let bind = cfg.http.bind.clone();
     let enable_swagger = cfg.http.enable_swagger;
+    let auth_configured = cfg.http.auth.is_some();
     let user_store = Arc::new(UserStore::new(runtime_cfg.clone() as Arc<dyn RuntimeConfig>));
+
+    let bind_addr: SocketAddr = match bind.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            // Intentionally fall back to localhost (not 0.0.0.0) to avoid
+            // accidentally exposing the API when the configured address is invalid.
+            tracing::error!("invalid http.bind '{}': {} (fallback to 127.0.0.1:8080)", &bind, e);
+            "127.0.0.1:8080".parse().expect("static bind must parse")
+        }
+    };
+
+    if let Err(e) = ensure_bind_allowed(&bind_addr, auth_configured, explorer_only) {
+        tracing::error!(
+            target: "auth",
+            event = "auth_bind_refused",
+            "{e}",
+        );
+        return;
+    }
+    if !explorer_only && !auth_configured {
+        tracing::warn!(
+            target: "auth",
+            event = "auth_disabled",
+            "http.auth is not configured: all API routes on {} are served WITHOUT \
+             authentication; configure http.auth before exposing this service beyond loopback",
+            bind_addr,
+        );
+    }
 
     // Always create JwtAuth so that auth can be enabled at runtime via config
     // reload.
@@ -70,12 +106,32 @@ pub async fn run(
     } else {
         cfg.http.auth.as_ref().and_then(|a| a.jwt_secret.clone())
     };
+    // With authentication disabled no tokens are issued or verified, but
+    // JwtAuth is still constructed so auth can be enabled at runtime. When no
+    // vault is available in that state, fall back to a random process-local
+    // key instead of refusing to start: it is inert while auth is off, and
+    // unforgeable if auth is enabled later through a config reload.
+    let jwt_secret = match jwt_secret {
+        None if !auth_configured && vault.is_none() => match random_inert_jwt_secret() {
+            Ok(secret) => Some(secret),
+            Err(e) => {
+                tracing::error!(
+                    target: "auth",
+                    event = "auth_setup_failed",
+                    error = ?e,
+                    "authentication setup failed",
+                );
+                return;
+            }
+        },
+        other => other,
+    };
     let jwt_auth = match JwtAuth::new(vault, jwt_secret.as_deref()).await {
         Ok(m) => {
             tracing::info!(
                 target: "auth",
                 event = "auth_jwt_key_ready",
-                auth_configured = cfg.http.auth.is_some(),
+                auth_configured = auth_configured,
                 "JWT signing key loaded",
             );
             Arc::new(m)
@@ -92,16 +148,6 @@ pub async fn run(
     };
     drop(cfg);
 
-    let bind_addr: SocketAddr = match bind.parse() {
-        Ok(a) => a,
-        Err(e) => {
-            // Intentionally fall back to localhost (not 0.0.0.0) to avoid
-            // accidentally exposing the API when the configured address is invalid.
-            tracing::error!("invalid http.bind '{}': {} (fallback to 127.0.0.1:8080)", &bind, e);
-            "127.0.0.1:8080".parse().expect("static bind must parse")
-        }
-    };
-
     let elections_task = tasks.get("elections").cloned().expect("elections task is not registered");
 
     let login_rate_limiter = Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default()));
@@ -113,6 +159,7 @@ pub async fn run(
         user_store,
         login_rate_limiter,
         indexer_store,
+        unauthenticated_serving_allowed: explorer_only || bind_addr.ip().is_loopback(),
     };
     let app =
         if explorer_only { explorer_only_routes(state) } else { routes(enable_swagger, state) };
@@ -128,7 +175,9 @@ pub async fn run(
     tracing::info!("http server listening on {}", bind_addr);
 
     let mut cancellation_rx = cancellation_ctx.subscribe();
-    if let Err(e) = axum::serve(listener, app)
+    // Connect info exposes the real TCP peer address to handlers; the login
+    // rate limiter keys on it rather than on client-supplied headers.
+    if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move {
             let _ = cancellation_rx.changed().await;
         })
@@ -138,6 +187,37 @@ pub async fn run(
     }
 
     tracing::info!("http-server task stopped");
+}
+
+/// Refuses a start that would expose unauthenticated control routes beyond
+/// this host: a config that omits `http.auth` disables all authentication,
+/// which is acceptable only on loopback (development use). The explorer-only
+/// router serves exclusively public read-only routes and is exempt.
+pub(crate) fn ensure_bind_allowed(
+    bind: &SocketAddr,
+    auth_configured: bool,
+    explorer_only: bool,
+) -> Result<(), String> {
+    if explorer_only || auth_configured || bind.ip().is_loopback() {
+        return Ok(());
+    }
+    Err(format!(
+        "refusing to start the HTTP server: http.auth is not configured and http.bind '{bind}' \
+         is not a loopback address, so every control route would be reachable from the network \
+         without authentication; configure http.auth or set http.bind to 127.0.0.1"
+    ))
+}
+
+/// Generates a random base64-encoded 32-byte key for a [`JwtAuth`] instance
+/// that has no configured signing material and no authenticated surface yet.
+fn random_inert_jwt_secret() -> anyhow::Result<String> {
+    use base64::Engine;
+    use std::io::Read;
+    let mut key = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut key))
+        .map_err(|e| anyhow::anyhow!("failed to read random bytes for the JWT key: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(key))
 }
 
 pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
@@ -767,17 +847,22 @@ async fn swagger_ui_handler() -> axum::response::Html<String> {
 )]
 pub async fn login_handler(
     state: axum::extract::State<AppState>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     req: axum::Json<LoginRequest>,
 ) -> Result<axum::Json<LoginResponse>, AppError> {
-    let (operator_ttl, nominator_ttl) = {
+    let (operator_ttl, nominator_ttl, trusted_proxies) = {
         let cfg_snapshot = state.runtime_cfg.get();
         let auth_cfg = cfg_snapshot
             .http
             .auth
             .as_ref()
             .ok_or_else(|| AppError::bad_request("authentication is not configured"))?;
-        (auth_cfg.operator_token_ttl, auth_cfg.nominator_token_ttl)
+        (
+            auth_cfg.operator_token_ttl,
+            auth_cfg.nominator_token_ttl,
+            cfg_snapshot.http.trusted_proxies.clone(),
+        )
     };
 
     validate_username(&req.username).map_err(|e| AppError::bad_request(&e.to_string()))?;
@@ -785,18 +870,18 @@ pub async fn login_handler(
     let jwt_auth = &state.jwt_auth;
     let user_store = state.user_store.as_ref();
     let now = time_format::now();
-    let limiter_key = login_limiter_key(&headers, &req.username);
+    let client = client_ip(peer.ip(), &headers, &trusted_proxies);
 
     {
         let mut limiter = state.login_rate_limiter.lock().await;
-        if limiter.is_blocked(&limiter_key, now) {
+        if limiter.is_blocked(client, &req.username, now) {
             tracing::warn!(
                 target: "auth",
                 event = "auth_login_rejected",
                 status = 429,
                 reason = "rate_limited",
                 user = %req.username,
-                rate_limit_key = %limiter_key,
+                client = %client,
                 "login rejected"
             );
             return Err(AppError::too_many_requests("too many login attempts, try again later"));
@@ -818,22 +903,22 @@ pub async fn login_handler(
     let role = match role {
         Some(role) => {
             let mut limiter = state.login_rate_limiter.lock().await;
-            limiter.record_success(&limiter_key);
+            limiter.record_success(client, &req.username);
             role
         }
         None => {
             let mut limiter = state.login_rate_limiter.lock().await;
-            if limiter.record_failure(&limiter_key, now).is_err() {
+            if limiter.record_failure(client, &req.username, now).is_err() {
                 return Err(AppError::too_many_requests("too many login attempts"));
             }
-            if limiter.is_blocked(&limiter_key, now) {
+            if limiter.is_blocked(client, &req.username, now) {
                 tracing::warn!(
                     target: "auth",
                     event = "auth_login_rejected",
                     status = 429,
                     reason = "rate_limit_threshold_reached",
                     user = %req.username,
-                    rate_limit_key = %limiter_key,
+                    client = %client,
                     "login rejected"
                 );
                 return Err(AppError::too_many_requests(
@@ -846,7 +931,7 @@ pub async fn login_handler(
                 status = 401,
                 reason = "invalid_credentials",
                 user = %req.username,
-                rate_limit_key = %limiter_key,
+                client = %client,
                 "login rejected"
             );
             return Err(AppError::unauthorized("invalid username or password"));
@@ -1118,11 +1203,18 @@ mod tests {
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
             indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            unauthenticated_serving_allowed: true,
         }
     }
 
     fn test_app_config(policy: StakePolicy) -> Arc<AppConfig> {
         test_app_config_with_bindings(policy, HashMap::new())
+    }
+
+    fn test_app_config_with_http(http: HttpConfig) -> Arc<AppConfig> {
+        let mut cfg = (*test_app_config(StakePolicy::Minimum)).clone();
+        cfg.http = http;
+        Arc::new(cfg)
     }
 
     fn test_app_config_with_bindings(
@@ -1213,6 +1305,93 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn bind_guard_refuses_non_loopback_without_auth() {
+        for bind in ["0.0.0.0:8080", "192.0.2.1:8080", "[::]:8080"] {
+            let addr: SocketAddr = bind.parse().unwrap();
+            assert!(
+                ensure_bind_allowed(&addr, false, false).is_err(),
+                "{bind} without auth must be refused"
+            );
+            // With auth configured the same bind is allowed.
+            assert!(ensure_bind_allowed(&addr, true, false).is_ok());
+            // The explorer-only router has only public read-only routes.
+            assert!(ensure_bind_allowed(&addr, false, true).is_ok());
+        }
+    }
+
+    #[test]
+    fn bind_guard_allows_loopback_without_auth() {
+        for bind in ["127.0.0.1:8080", "127.1.2.3:8080", "[::1]:8080"] {
+            let addr: SocketAddr = bind.parse().unwrap();
+            assert!(
+                ensure_bind_allowed(&addr, false, false).is_ok(),
+                "{bind} without auth must stay usable for development"
+            );
+        }
+    }
+
+    async fn run_with_http(http: HttpConfig, ctx: CancellationCtx) {
+        let store = Arc::new(SnapshotStore::new());
+        let runtime_cfg =
+            Arc::new(RuntimeConfigStore::from_app_config(test_app_config_with_http(http)));
+        let mut tasks: HashMap<&'static str, Arc<TaskController>> = HashMap::new();
+        tasks.insert("elections", test_elections_task());
+        let indexer_store = Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap());
+        run(ctx, store, runtime_cfg, tasks, indexer_store, false).await;
+    }
+
+    #[tokio::test]
+    async fn run_refuses_non_loopback_bind_without_auth() {
+        // The task must refuse to serve and return promptly instead of
+        // listening on all interfaces without authentication.
+        let http = HttpConfig { auth: None, bind: "0.0.0.0:0".to_owned(), ..Default::default() };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_with_http(http, CancellationCtx::new()),
+        )
+        .await
+        .expect("run must refuse the non-loopback no-auth bind and return");
+    }
+
+    #[tokio::test]
+    async fn run_serves_on_loopback_without_auth() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Reserve a free loopback port, then hand it to the server.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let http =
+            HttpConfig { auth: None, bind: format!("127.0.0.1:{port}"), ..Default::default() };
+        let mut ctx = CancellationCtx::new();
+        let server = tokio::spawn(run_with_http(http, ctx.clone()));
+
+        let mut served = false;
+        for _ in 0..100 {
+            if let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                stream
+                    .write_all(
+                        b"GET /health HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).await.unwrap();
+                if String::from_utf8_lossy(&buf).starts_with("HTTP/1.1 200") {
+                    served = true;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(served, "loopback bind without auth must keep serving");
+
+        ctx.cancel(common::task_cancellation::CancellationReason::GracefullyShutdown());
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), server).await;
     }
 
     #[tokio::test]

@@ -132,15 +132,19 @@ template <class ValueT, class FunctionT>
 class LambdaPromise : public PromiseInterface<ValueT> {
  public:
   using ArgT = ValueT;
+  // The callback runs at most once. The flag is cleared before the call so
+  // that a callback which throws is not invoked a second time (with a "Lost
+  // promise" error) from the destructor while the stack is still unwinding;
+  // a nested exception there would terminate the process.
   void set_value(ValueT &&value) override {
     CHECK(has_lambda_.get());
-    ok_(Result<ValueT>{std::move(value)});
     has_lambda_ = false;
+    ok_(Result<ValueT>{std::move(value)});
   }
   void set_error(Status &&error) override {
     CHECK(has_lambda_.get());
-    ok_(Result<ValueT>{std::move(error)});
     has_lambda_ = false;
+    ok_(Result<ValueT>{std::move(error)});
   }
 
   LambdaPromise(const LambdaPromise &other) = delete;

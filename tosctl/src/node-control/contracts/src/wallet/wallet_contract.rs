@@ -15,37 +15,40 @@ use chain_block::{
 use common::{WalletVersion, signer::Signer, time_format};
 use std::sync::Arc;
 
-// TOS compatibility: needs verification — wallet code cells must be validated against TOS network
+// The v1 wallet has no network-bound variant: its signed body carries no
+// global_id, so a message signed for one network replays on any other network
+// where the same key deployed the same code. Only kept for reading legacy
+// accounts; new operator wallets must use v3, v4 or v5.
 pub const V1R3_CODE: &str = "b5ee9c7241010101005f0000baff0020dd2082014c97ba218201339cbab19c71b0ed44d0d31fd70bffe304e0a4f260810200d71820d70b1fed44d0d31fd3ffd15112baf2a122f901541044f910f2a2f80001d31f3120d74a96d307d402fb00ded1a4c8cb1fcbffc9ed54b5b86e42";
-// TOS compatibility: needs verification — wallet code cells must be validated against TOS network
-pub const V3R2_CODE: &str = "b5ee9c724101010100710000deff0020dd2082014c97ba218201339cbab19f71b0ed44d0d31fd31f31d70bffe304e0a4f2608308d71820d31fd31fd31ff82313bbf263ed44d0d31fd31fd3ffd15132baf2a15144baf2a204f901541055f910f2a3f8009320d74a96d307d402fb00e8d101a4c8cb1fcb1fcbffc9ed5410bd6dad";
-// TOS compatibility: needs verification — wallet code cells must be validated against TOS network
-pub const V4R2_CODE_B64: &str = "te6cckECFAEAAtQAART/APSkE/S88sgLAQIBIAIDAgFIBAUE+PKDCNcYINMf0x/THwL4I7vyZO\
-    1E0NMf0x/T//QE0VFDuvKhUVG68qIF+QFUEGT5EPKj+AAkpMjLH1JAyx9SMMv/UhD0AMntVPgPA\
-    dMHIcAAn2xRkyDXSpbTB9QC+wDoMOAhwAHjACHAAuMAAcADkTDjDQOkyMsfEssfy/8QERITAubQ\
-    AdDTAyFxsJJfBOAi10nBIJJfBOAC0x8hghBwbHVnvSKCEGRzdHK9sJJfBeAD+kAwIPpEAcjKB8v\
-    /ydDtRNCBAUDXIfQEMFyBAQj0Cm+hMbOSXwfgBdM/yCWCEHBsdWe6kjgw4w0DghBkc3RyupJfBu\
-    MNBgcCASAICQB4AfoA9AQw+CdvIjBQCqEhvvLgUIIQcGx1Z4MesXCAGFAEywUmzxZY+gIZ9ADLa\
-    RfLH1Jgyz8gyYBA+wAGAIpQBIEBCPRZMO1E0IEBQNcgyAHPFvQAye1UAXKwjiOCEGRzdHKDHrFw\
-    gBhQBcsFUAPPFiP6AhPLassfyz/JgED7AJJfA+ICASAKCwBZvSQrb2omhAgKBrkPoCGEcNQICEe\
-    kk30pkQzmkD6f+YN4EoAbeBAUiYcVnzGEAgFYDA0AEbjJftRNDXCx+AA9sp37UTQgQFA1yH0BDA\
-    CyMoHy//J0AGBAQj0Cm+hMYAIBIA4PABmtznaiaEAga5Drhf/AABmvHfaiaEAQa5DrhY/AAG7SB\
-    /oA1NQi+QAFyMoHFcv/ydB3dIAYyMsFywIizxZQBfoCFMtrEszMyXP7AMhAFIEBCPRR8qcCAHCB\
-    AQjXGPoA0z/IVCBHgQEI9FHyp4IQbm90ZXB0gBjIywXLAlAGzxZQBPoCFMtqEssfyz/Jc/sAAgB\
-    sgQEI1xj6ANM/MFIkgQEI9Fnyp4IQZHN0cnB0gBjIywXLAlAFzxZQA/oCE8tqyx8Syz/Jc/sAAAr0AMntVGliJeU=";
-// TOS compatibility: needs verification — wallet code cells must be validated against TOS network
-pub const V5R1_CODE_B64: &str = "te6cckECFAEAAoEAART/APSkE/S88sgLAQIBIAIDAgFIBAUBAvIOAtzQINdJwSCRW49jINcLHy\
-    CCEGV4dG69IYIQc2ludL2wkl8D4IIQZXh0brqOtIAg1yEB0HTXIfpAMPpE+Cj6RDBYvZFb4O1E0\
-    IEBQdch9AWDB/QOb6ExkTDhgEDXIXB/2zzgMSDXSYECgLmRMOBw4hAPAgEgBgcCASAICQAZvl8P\
-    aiaECAoOuQ+gLAIBbgoLAgFIDA0AGa3OdqJoQCDrkOuF/8AAGa8d9qJoQBDrkOuFj8AAF7Ml+1E\
-    0HHXIdcLH4AARsmL7UTQ1woAgAR4g1wsfghBzaWduuvLgin8PAeaO8O2i7fshgwjXIgKDCNcjII\
-    Ag1yHTH9Mf0x/tRNDSANMfINMf0//XCgAK+QFAzPkQmiiUXwrbMeHywIffArNQB7Dy0IRRJbry4\
-    IVQNrry4Ib4I7vy0IgikvgA3gGkf8jKAMsfAc8Wye1UIJL4D95w2zzYEAP27aLt+wL0BCFukmwh\
-    jkwCIdc5MHCUIccAs44tAdcoIHYeQ2wg10nACPLgkyDXSsAC8uCTINcdBscSwgBSMLDy0InXTNc\
-    5MAGk6GwShAe78uCT10rAAPLgk+1V4tIAAcAAkVvg69csCBQgkXCWAdcsCBwS4lIQseMPINdKER\
-    ITAJYB+kAB+kT4KPpEMFi68uCR7UTQgQFB1xj0BQSdf8jKAEAEgwf0U/Lgi44UA4MH9Fvy4Iwi1\
-    woAIW4Bs7Dy0JDiyFADzxYS9ADJ7VQAcjDXLAgkji0h8uCS0gDtRNDSAFETuvLQj1RQMJExnAGB\
-    AUDXIdcKAPLgjuLIygBYzxbJ7VST8sCN4gAQk1vbMeHXTNCon9ZI";
+
+// The three network-bound wallets below are compiled from
+// crypto/smartcont/{wallet3-code,wallet-v4-code,wallet-v5-code}.fc. Each one
+// reads the network's global_id (ConfigParam 19, GLOBALID opcode) and rejects
+// a signed body whose leading int32 does not match it, so a transfer signed
+// for one network cannot be replayed on another. The sandbox test
+// `source_compiles_to_the_embedded_wallet_code` fails whenever these constants
+// drift from the FunC sources.
+pub const V3R2_CODE: &str = "b5ee9c7241010801008e000114ff00f4a413f4bcf2c80b010201200203020148040500a6f28308d71820d21ff83512baf2a4d31fd31fd31f02f823bbf263ed44d0d31fd31fd3ffd15132baf2a15144baf2a204f901541055f910f2a3f8009320d74a96d307d402fb00e83001a4c8cb1fcb1fcbffc9ed540004d03002014806070017bb39ced44d0d33f31d70bff80011b8c97ed44d0d70b1f82805832c";
+pub const V4R2_CODE_B64: &str = "te6cckECDwEAAZoAART/APSkE/S88sgLAQIBIAIDAgFIBAUC7vKDCNcYINIf+DUSuvKk0x/TH9\
+    Mf0wcD+CO78mPtRNDTH9Mf0//0BDBRU7ryoVFhuvKiBvkBVBB1+RDyo/gAIMAAngKTINdKltMH1\
+    AL7AOgC3iDAAY4XAtIH0/9ZAcjKB8v/ydDIQBOBAQj0QVjewAKRMeMNA6QDDQ4BnNAg10nBIJJf\
+    A+AB0NMDAXGwkl8D4PpAMAHTHwGCEHBsdWe9kl8D4O1E0NMf0x/T//QEMGwxIvpEAcjKB8v/ydA\
+    BgQEI9ApvoTGSXwPjDQYCAUgHCABm0z/6ADD4J28iMFAEoSO+8uBQghDwbHVncIAYyMsFUATPFl\
+    AE+gISy2oSyx/LP8mAQPsAAgFYCQoAEbjJftRNDXCx+ABFsp37UTQ0x/TH9P/9AQwbDFZAcjKB8\
+    v/ydABgQEI9ApvoTGACASALDAAXrc52omhpn5jrhf/AABevHfaiaGmPmOuFj8AAKgHSB9P/MAHI\
+    ygfL/8nQAYEBCPRZMAAcA8jLHxLLH8v/9ADJ7VSSOBf9";
+pub const V5R1_CODE_B64: &str = "te6cckECFAEAAo4AART/APSkE/S88sgLAQIBIAIDAgFIBAUBJPIg1wsfghBzaWduuvLgin/bPA\
+    4C4NAg10nBIJFbj2Ug1wsfIIIQZXh0br0hghBzaW50vbCSXwPgghBleHRuuo60gCDXIQHQdNch+\
+    kAw+kT4KPpEMFi9kVvg7UTQgQFB1yH0BYMH9A5voTGRMOGAQNchcH/bPOAxINdJgQKguZEw4HDb\
+    POIPDgIBIAYHAgEgCAkAGb5fD2omhAgKDrkPoCwCAW4KCwIBSAwNABmtznaiaEAg65Drhf/AABm\
+    vHfaiaEAQ65DrhY/AABezJftRNBx1yHXCx+AAEbJi+1E0NcKAIAL2jvntou37IYMI1yICgwjXIy\
+    CAINch0h/4NRK68uCU0x/TH9Mf7UTQ0gDTHyDTH9P/1woACvkBQMz5EJoolF8K2zHh8sCH3wKzU\
+    Aew8tCEUSW68uCFUDa68uCG+CO78tCIIpL4AN4BpH/IygDLHwHPFsntVCCS+A/ecNs8DxAD9u2i\
+    7fsC9AQhbpJsIY5MAiHXOTBwlCHHALOOLQHXKCB2HkNsINdJwAjy4JMg10rAAvLgkyDXHQbHEsI\
+    AUjCw8tCJ10zXOTABpOhsEoQHu/Lgk9dKwADy4JPtVeLSAAHAAJFb4OvXLAgUIJFwlgHXLAgcEu\
+    JSELHjDyDXShESEwAC2ACWAfpAAfpE+Cj6RDBYuvLgke1E0IEBQdcY9AUEnX/IygBABIMH9FPy4\
+    IuOFAODB/Rb8uCMItcKACFuAbOw8tCQ4shQA88WEvQAye1UAHIw1ywIJI4tIfLgktIA7UTQ0gBR\
+    E7ry0I9UUDCRMZwBgQFA1yHXCgDy4I7iyMoAWM8Wye1Uk/LAjeIAEJNb2zHh10zQNLcyQw==";
 
 const SEND_MODE: u8 = 3;
 const V4_OP_SIMPLE_SEND: u8 = 0;
@@ -56,17 +59,26 @@ pub struct WalletContract {
     provider: Arc<dyn ContractProvider>,
     address: MsgAddressInt,
     version: WalletVersion,
+    /// Network identity (ConfigParam 19) bound into every signed body. The
+    /// wallet code compares it with the GLOBALID opcode, so a body signed
+    /// with the wrong value is rejected on-chain rather than replayed.
+    global_id: i32,
 }
 
 impl WalletContract {
     const LIFETIME: u32 = 120; // 2 minutes
     const V5_PREFIX_SIGNED_EXTERNAL: u32 = 0x7369_676e;
 
+    /// `global_id` must be the value the target chain publishes in
+    /// ConfigParam 19; there is deliberately no default, because a wallet
+    /// signing for the wrong network produces messages that either fail
+    /// on-chain or, worse, are accepted by a different network.
     pub async fn new(
         signer: Box<dyn Signer>,
         version: WalletVersion,
         subwallet_id: u32,
         workchain_id: i32,
+        global_id: i32,
         provider: Arc<dyn ContractProvider>,
     ) -> anyhow::Result<Self> {
         let address = WalletContract::calculate_address(
@@ -75,7 +87,11 @@ impl WalletContract {
             subwallet_id,
             &signer.public_key().await?,
         )?;
-        Ok(Self { signer, address, subwallet_id, provider, version })
+        Ok(Self { signer, address, subwallet_id, provider, version, global_id })
+    }
+
+    pub fn global_id(&self) -> i32 {
+        self.global_id
     }
 
     pub fn calculate_address(
@@ -165,17 +181,22 @@ impl WalletContract {
                             .and_then(|b| b.checked_append_reference(message_cell))?;
                     }
                     WalletVersion::V3R2 => {
-                        // V3R2 body layout: subwallet_id(32) + expire(32) + seqno(32) + [ref: msg] + mode(8)
+                        // V3R2 body layout: global_id(int32) + subwallet_id(32) + expire(32)
+                        // + seqno(32) + mode(8) + [ref: msg]
                         builder
-                            .append_u32(self.subwallet_id)
+                            .append_i32(self.global_id)
+                            .and_then(|b| b.append_u32(self.subwallet_id))
                             .and_then(|b| b.append_u32(expire))
                             .and_then(|b| b.append_u32(seqno))
-                            .and_then(|b| b.checked_append_reference(message_cell))
-                            .and_then(|b| b.append_u8(SEND_MODE))?;
+                            .and_then(|b| b.append_u8(SEND_MODE))
+                            .and_then(|b| b.checked_append_reference(message_cell))?;
                     }
                     WalletVersion::V4R2 => {
+                        // V4R2 body layout: global_id(int32) + subwallet_id(32) + expire(32)
+                        // + seqno(32) + op(8) + mode(8) + [ref: msg]
                         builder
-                            .append_u32(self.subwallet_id)
+                            .append_i32(self.global_id)
+                            .and_then(|b| b.append_u32(self.subwallet_id))
                             .and_then(|b| b.append_u32(expire))
                             .and_then(|b| b.append_u32(seqno))
                             .and_then(|b| b.append_u8(V4_OP_SIMPLE_SEND)) // wallet-v4 simple transfer opcode
@@ -197,8 +218,11 @@ impl WalletContract {
     fn signing_body_v5(&self, seqno: u32, actions: Cell) -> anyhow::Result<Cell> {
         let wallet_id = self.subwallet_id;
         let mut builder = BuilderData::new();
+        // V5R1 signed layout: prefix(32) + global_id(int32) + wallet_id(32)
+        // + valid_until(32) + seqno(32) + actions
         builder
             .append_u32(Self::V5_PREFIX_SIGNED_EXTERNAL)?
+            .append_i32(self.global_id)?
             .append_u32(wallet_id)?
             .append_u32(time_format::now() as u32 + Self::LIFETIME)?
             .append_u32(seqno)?
@@ -394,9 +418,9 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    /// Verify wallet code hashes match official contracts
-    /// Wallet contract code hashes
-    /// TOS compatibility: these hashes must be re-verified against TOS-deployed wallet contracts
+    /// Pins the embedded wallet code to the hashes of the network-bound
+    /// contracts compiled from crypto/smartcont. The node's account
+    /// recognition table carries the same values.
     #[test]
     fn test_wallet_code_hashes() {
         let v3r2 = read_single_root_boc(hex::decode(V3R2_CODE).unwrap()).unwrap();
@@ -405,33 +429,34 @@ mod tests {
 
         assert_eq!(
             format!("{:x}", v3r2.repr_hash()),
-            "84dafa449f98a6987789ba232358072bc0f76dc4524002a5d0918b9a75d2d599"
+            "6c6caaf194af3660e7ae4c584785c1bda0d85fafd80e947d725105947cd11d7d"
         );
         assert_eq!(
             format!("{:x}", v4r2.repr_hash()),
-            "feb5ff6820e2ff0d9483e7e0d62c817d846789fb4ae580c878866d959dabd5c0"
+            "f15bc24cbc229a1b72cab39345db191e761ef913e6d066e76d3836cf1600cb47"
         );
         assert_eq!(
             format!("{:x}", v5r1.repr_hash()),
-            "20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f"
+            "e6c006f19fbabccd0d4852c1cc4ca3c6410914dc86f6611ccf8165cdcaafc6e0"
         );
     }
 
-    /// Verify address calculation against real mainnet wallet
+    /// Pins address derivation for a fixed key: the address depends only on
+    /// code and initial data, not on global_id, so it is stable across
+    /// networks while signed messages are not.
     #[test]
     fn test_address_calculation() {
         let public_key =
             hex::decode("72c9ed6b62a6e2eba14a93b90462e7a367777beb8a38fb15b9f33844d22ce2ff")
                 .unwrap();
 
-        // real wallet EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N
         let v3r2 =
             WalletContract::calculate_address(WalletVersion::V3R2, 0, 698983191, &public_key)
                 .unwrap();
         assert_eq!(
             v3r2,
             MsgAddressInt::from_str(
-                "0:83dfd552e63729b472fcbcc8c45ebcc6691702558b68ec7527e1ba403a0f31a8"
+                "0:771555ef9b48db2f8c269ab3ad2d30b36360681f4dc1fefc03142564813fae8f"
             )
             .unwrap()
         );
@@ -442,7 +467,7 @@ mod tests {
         assert_eq!(
             v4r2,
             MsgAddressInt::from_str(
-                "0:1195e0aa861dee81216752efbcf2425ebbd7e846987b5fab01e9bc5303fdd1b0"
+                "0:89664bd10cff3d946e3a54f6319542488740eda2102fd1173e83b716d1c75c9d"
             )
             .unwrap()
         );
@@ -453,7 +478,7 @@ mod tests {
         assert_eq!(
             v5r1,
             MsgAddressInt::from_str(
-                "0:b3f77c0448a5b1c15112a7fcda3007cc6ba473565a7b6c4968aa0c6de23c525b"
+                "0:008d8e5221f7983fca6259ad68388e9201672254ac8944d35d8a616c1863aa3d"
             )
             .unwrap()
         );

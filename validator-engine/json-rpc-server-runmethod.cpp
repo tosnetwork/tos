@@ -319,20 +319,22 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
   struct Slot {
     td::Promise<HttpReturn> promise;
     std::string req_id;
+    std::string cors;
     bool settled{false};
     void settle_error(int code, const std::string& msg) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id));
+      promise.set_value(make_json_error(code, msg, req_id, cors));
     }
   };
   auto slot = std::make_shared<Slot>();
   slot->promise = std::move(promise);
   slot->req_id = std::move(req_id);
+  slot->cors = opts_.cors_origin;
 
   // Step 2 lambda: runSmcMethod at a resolved block. Now captures `slot`
   // (shared) instead of consuming promise/req_id.
-  auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
+  auto do_run_method = [cors = opts_.cors_origin, addr, method_id, params_boc = std::move(params_boc),
                         slot, self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
@@ -348,7 +350,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [slot](td::Result<td::BufferSlice> R) mutable {
+                [cors, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
             return;
@@ -365,12 +367,10 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           // Parse result stack
           std::string stack_json = "[]";
           if (!f->result_.empty()) {
-            auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-            if (cell_r.is_ok()) {
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (stk.write().deserialize(cs)) {
+            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
+            if (stk_r.is_ok()) {
+              auto stk = stk_r.move_as_ok();
+              {
                 // Convert stack to JSON array of ["type", value] entries
                 td::StringBuilder sb;
                 sb << "[";
@@ -408,7 +408,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
 
           if (!slot->settled) {
             slot->settled = true;
-            slot->promise.set_value(make_json_ok(result, slot->req_id));
+            slot->promise.set_value(make_json_ok(result, slot->req_id, cors));
           }
         }));
   };  // end of do_run_method
@@ -595,19 +595,21 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
   struct Slot {
     td::Promise<HttpReturn> promise;
     std::string req_id;
+    std::string cors;
     bool settled{false};
     void settle_error(int code, const std::string& msg) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id));
+      promise.set_value(make_json_error(code, msg, req_id, cors));
     }
   };
   auto slot = std::make_shared<Slot>();
   slot->promise = std::move(promise);
   slot->req_id = std::move(req_id);
+  slot->cors = opts_.cors_origin;
 
   // Step 2 lambda: runSmcMethod at a resolved block
-  auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
+  auto do_run_method = [cors = opts_.cors_origin, addr, method_id, params_boc = std::move(params_boc),
                         slot, self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
@@ -623,7 +625,7 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [slot](td::Result<td::BufferSlice> R) mutable {
+                [cors, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
             return;
@@ -640,12 +642,10 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
           // Parse result stack into standardized typed format
           std::string stack_json = "[]";
           if (!f->result_.empty()) {
-            auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-            if (cell_r.is_ok()) {
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (stk.write().deserialize(cs)) {
+            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
+            if (stk_r.is_ok()) {
+              auto stk = stk_r.move_as_ok();
+              {
                 // Convert stack to standardized TVM stack entries
                 td::StringBuilder sb;
                 sb << "[";
@@ -670,7 +670,7 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
 
           if (!slot->settled) {
             slot->settled = true;
-            slot->promise.set_value(make_json_ok(result, slot->req_id));
+            slot->promise.set_value(make_json_ok(result, slot->req_id, cors));
           }
         }));
   };  // end of do_run_method

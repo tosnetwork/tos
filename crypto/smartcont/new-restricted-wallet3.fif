@@ -9,7 +9,7 @@
 null =: subwallet-id
 86400 =: expires-in
 now =: start-at
-// 0x11EF55AA =: subwallet-base
+0x544F5301 =: subwallet-base  // TOS default subwallet id base (see CreateState.fif)
 
 begin-options
      " <creator-filename-base> <public-key> <amount> [-w<workchain>][-r<restrict-mode>][-i<subwallet-id>][-t<start-at>] [<savefile>]" +cr +tab
@@ -104,7 +104,7 @@ dup =: StateInit hashu wc swap 2dup 2constant wallet_addr
 ."Non-bounceable address (for init): " 2dup 7 .Addr cr
 ."Bounceable address (for later access): " 6 .Addr cr
 
-<b subwallet-id 32 u, expires-at 32 u, 0 32 u, start-at 32 u, rdict dict, b>
+<b tos-global-id 32 i, subwallet-id 32 u, expires-at 32 u, 0 32 u, start-at 32 u, rdict dict, b>
 dup ."signing message: " <s csr. cr
 dup hashu init_pk ed25519_sign_uint
 

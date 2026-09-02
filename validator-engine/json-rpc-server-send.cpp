@@ -69,19 +69,21 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+      [cors = opts_.cors_origin, req_id = std::move(req_id),
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32603, PSTRING() << "sendBoc failed: " << R.error(), req_id));
+          promise.set_value(make_json_error(-32603, PSTRING() << "sendBoc failed: " << R.error(), req_id, cors));
           return;
         }
         auto data = R.move_as_ok();
         auto status_r = tos::fetch_tl_object<tos::lite_api::liteServer_sendMsgStatus>(std::move(data), true);
         if (status_r.is_error()) {
-          promise.set_value(make_json_error(-32603, PSTRING() << "sendBoc parse error: " << status_r.error(), req_id));
+          promise.set_value(
+              make_json_error(-32603, PSTRING() << "sendBoc parse error: " << status_r.error(), req_id, cors));
           return;
         }
         auto status = status_r.move_as_ok();
-        promise.set_value(make_json_ok(PSTRING() << "{\"status\":" << status->status_ << "}", req_id));
+        promise.set_value(make_json_ok(PSTRING() << "{\"status\":" << status->status_ << "}", req_id, cors));
       });
 }
 
@@ -154,11 +156,22 @@ static td::RefInt256 estimate_compute_gas_price(td::uint64 gas_used, const block
              : td::rshift(gas_price256 * (gas_used - cfg.flat_gas_limit), 16, 1) + cfg.flat_gas_price;
 }
 
+// Upper bound on gas granted to an in-process estimation run. Without a
+// cap, gas_max scales with the TARGET account's balance, and the VM runs
+// on the RPC actor thread uninterruptibly — pointing the request at a
+// rich account with looping code would burn unbounded CPU per request.
+// Estimation must complete in bounded time regardless of the target's
+// balance; 1M gas covers any realistic wallet/contract flow and matches
+// the interactive character of the endpoint.
+static constexpr td::uint64 max_estimation_gas = 1'000'000;
+
 static vm::GasLimits estimate_compute_gas_limits(td::RefInt256 balance, const block::GasLimitsPrices& cfg) {
   vm::GasLimits res;
-  res.gas_max = estimate_gas_bought_for(balance, estimate_compute_threshold(cfg), cfg);
+  res.gas_max = std::min<td::uint64>(estimate_gas_bought_for(balance, estimate_compute_threshold(cfg), cfg),
+                                     max_estimation_gas);
   res.gas_credit = 0;
-  res.gas_limit = estimate_gas_bought_for(td::make_refint(0), estimate_compute_threshold(cfg), cfg);
+  res.gas_limit = std::min<td::uint64>(
+      estimate_gas_bought_for(td::make_refint(0), estimate_compute_threshold(cfg), cfg), max_estimation_gas);
   res.gas_credit = std::min(static_cast<td::int64>(cfg.gas_credit), static_cast<td::int64>(res.gas_max));
   return res;
 }
@@ -651,11 +664,11 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
+      [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "sendBoc failed: " << R.error(), req_id));
+              PSTRING() << "sendBoc failed: " << R.error(), req_id, cors));
           return;
         }
         auto data = R.move_as_ok();
@@ -663,14 +676,14 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
             std::move(data), true);
         if (status_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "sendBoc parse error: " << status_r.error(), req_id));
+              PSTRING() << "sendBoc parse error: " << status_r.error(), req_id, cors));
           return;
         }
         auto status = status_r.move_as_ok();
         promise.set_value(make_json_ok(
             PSTRING() << "{\"status\":" << status->status_
                       << ",\"hash\":" << td::JsonString(td::Slice(msg_hash_b64)) << "}",
-            req_id));
+            req_id, cors));
       });
 }
 
@@ -732,17 +745,17 @@ void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::s
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
     send_liteserver_query(std::move(mc_query),
-        [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+        [cors = opts_.cors_origin, self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
          req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getMasterchainInfo: " << R.error(), req_id));
+                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getMasterchainInfo: " << R.error(), req_id, cors));
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse mcInfo: " << mc_r.error(), req_id));
+                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse mcInfo: " << mc_r.error(), req_id, cors));
             return;
           }
           auto block_id = tos::create_block_id(mc_r.ok()->last_);
@@ -756,26 +769,29 @@ void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::s
 
           td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
               td::PromiseCreator::lambda(
-                  [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+                  [cors, self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
                    req_id = std::move(req_id), promise = std::move(promise)](
                       td::Result<td::BufferSlice> account_res) mutable {
                     if (account_res.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getAccountState: " << account_res.error(), req_id));
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getAccountState: " << account_res.error(),
+                          req_id, cors));
                       return;
                     }
                     auto account_r = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
                         account_res.move_as_ok(), true);
                     if (account_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse accountState: " << account_r.error(), req_id));
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse accountState: " << account_r.error(),
+                          req_id, cors));
                       return;
                     }
                     auto account = account_r.move_as_ok();
                     auto parsed_r = ParsedAccountState::parse(account, addr);
                     if (parsed_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse account: " << parsed_r.error(), req_id));
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse account: " << parsed_r.error(), req_id,
+                          cors));
                       return;
                     }
                     auto parsed = parsed_r.move_as_ok();
@@ -817,7 +833,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
   // Continuation: build and return the signing payload.  Extracted as a
   // shared lambda so both the sync and async-discovery paths converge here.
   auto self_id = actor_id(this);
-  auto do_finish = [this, self_id](InitialIntentInput input, std::string req_id,
+  auto do_finish = [cors = opts_.cors_origin, this, self_id](InitialIntentInput input, std::string req_id,
                                    td::Promise<HttpReturn> promise) mutable {
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
@@ -871,17 +887,17 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
     send_liteserver_query(std::move(mc_query),
-        [self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
+        [cors, self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
          req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << R.error(), req_id));
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << R.error(), req_id, cors));
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << mc_r.error(), req_id));
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << mc_r.error(), req_id, cors));
             return;
           }
           auto block_id = tos::create_block_id(mc_r.ok()->last_);
@@ -894,18 +910,18 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
 
           td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
               td::PromiseCreator::lambda(
-                  [input = std::move(input), payload_b64 = std::move(payload_b64),
+                  [cors, input = std::move(input), payload_b64 = std::move(payload_b64),
                    req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> cfg_res) mutable {
                     if (cfg_res.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_res.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_res.error(), req_id, cors));
                       return;
                     }
                     auto cfg_info_r =
                         tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(cfg_res.move_as_ok(), true);
                     if (cfg_info_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_info_r.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_info_r.error(), req_id, cors));
                       return;
                     }
                     auto cfg_info = cfg_info_r.move_as_ok();
@@ -914,14 +930,14 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
                         blk_id, cfg_info->state_proof_.as_slice(), cfg_info->config_proof_.as_slice());
                     if (state_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << state_r.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << state_r.error(), req_id, cors));
                       return;
                     }
                     auto cfg_r = block::ConfigInfo::extract_config(
                         state_r.move_as_ok(), blk_id, block::ConfigInfo::needPrevBlocks);
                     if (cfg_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_r.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_r.error(), req_id, cors));
                       return;
                     }
                     auto cfg = cfg_r.move_as_ok();
@@ -935,7 +951,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
                         << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
                         << ",\"mode\":\"contract_defined\"}"
                         << "}";
-                    promise.set_value(make_json_ok(result_json, req_id));
+                    promise.set_value(make_json_ok(result_json, req_id, cors));
                   }));
         });
   };
@@ -955,17 +971,17 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
     send_liteserver_query(std::move(mc_query),
-        [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+        [cors = opts_.cors_origin, self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
          req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getMasterchainInfo: " << R.error(), req_id));
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getMasterchainInfo: " << R.error(), req_id, cors));
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse mcInfo: " << mc_r.error(), req_id));
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse mcInfo: " << mc_r.error(), req_id, cors));
             return;
           }
           auto block_id = tos::create_block_id(mc_r.ok()->last_);
@@ -979,26 +995,29 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
 
           td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
               td::PromiseCreator::lambda(
-                  [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+                  [cors, self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
                    req_id = std::move(req_id), promise = std::move(promise)](
                       td::Result<td::BufferSlice> account_res) mutable {
                     if (account_res.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getAccountState: " << account_res.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getAccountState: " << account_res.error(), req_id,
+                          cors));
                       return;
                     }
                     auto account_r = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
                         account_res.move_as_ok(), true);
                     if (account_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse accountState: " << account_r.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse accountState: " << account_r.error(), req_id,
+                          cors));
                       return;
                     }
                     auto account = account_r.move_as_ok();
                     auto parsed_r = ParsedAccountState::parse(account, addr);
                     if (parsed_r.is_error()) {
                       promise.set_value(make_json_error(-32603,
-                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse account: " << parsed_r.error(), req_id));
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse account: " << parsed_r.error(), req_id,
+                          cors));
                       return;
                     }
                     auto parsed = parsed_r.move_as_ok();
@@ -1067,26 +1086,26 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), hash_b64 = std::move(hash_b64), signer = std::move(signer),
+      [cors = opts_.cors_origin, req_id = std::move(req_id), hash_b64 = std::move(hash_b64), signer = std::move(signer),
        submitter = std::move(submitter), fee_payer = std::move(fee_payer),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << R.error(), req_id));
+              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << R.error(), req_id, cors));
           return;
         }
         auto status_r = tos::fetch_tl_object<tos::lite_api::liteServer_sendMsgStatus>(
             R.move_as_ok(), true);
         if (status_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << status_r.error(), req_id));
+              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << status_r.error(), req_id, cors));
           return;
         }
         auto status = status_r.move_as_ok();
         promise.set_value(make_json_ok(
             build_submission_result_json(true, hash_b64, status->status_,
                                          signer, submitter, fee_payer),
-            req_id));
+            req_id, cors));
       });
 }
 
@@ -1165,25 +1184,25 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
+      [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "sendMessage failed: " << R.error(), req_id));
+              PSTRING() << "sendMessage failed: " << R.error(), req_id, cors));
           return;
         }
         auto status_r = tos::fetch_tl_object<tos::lite_api::liteServer_sendMsgStatus>(
             R.move_as_ok(), true);
         if (status_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse sendMsgStatus: " << status_r.error(), req_id));
+              PSTRING() << "parse sendMsgStatus: " << status_r.error(), req_id, cors));
           return;
         }
         auto status = status_r.move_as_ok();
         promise.set_value(make_json_ok(
             PSTRING() << "{\"status\":" << status->status_
                       << ",\"hash\":" << td::JsonString(td::Slice(msg_hash_b64)) << "}",
-            req_id));
+            req_id, cors));
       });
 }
 
@@ -1246,18 +1265,18 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 
   auto self_id = actor_id(this);
   send_liteserver_query(std::move(mc_query),
-      [self_id, addr, body_cell = std::move(body_cell), init_code = std::move(init_code),
+      [cors = opts_.cors_origin, self_id, addr, body_cell = std::move(body_cell), init_code = std::move(init_code),
        init_data = std::move(init_data), ignore_chksig, req_id = std::move(req_id),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id));
+              PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id, cors));
           return;
         }
         auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
         if (mc_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id));
+              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id, cors));
           return;
         }
         auto mc = mc_r.move_as_ok();
@@ -1272,27 +1291,27 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
             td::PromiseCreator::lambda(
-                [self_id, addr, block_id = std::move(block_id), body_cell = std::move(body_cell),
+                [cors, self_id, addr, block_id = std::move(block_id), body_cell = std::move(body_cell),
                  init_code = std::move(init_code), init_data = std::move(init_data), ignore_chksig,
                  req_id = std::move(req_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> account_res) mutable {
                   if (account_res.is_error()) {
                     promise.set_value(make_json_error(-32603,
-                        PSTRING() << "getAccountState failed: " << account_res.error(), req_id));
+                        PSTRING() << "getAccountState failed: " << account_res.error(), req_id, cors));
                     return;
                   }
                   auto account_r =
                       tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(account_res.move_as_ok(), true);
                   if (account_r.is_error()) {
                     promise.set_value(make_json_error(-32603,
-                        PSTRING() << "parse accountState: " << account_r.error(), req_id));
+                        PSTRING() << "parse accountState: " << account_r.error(), req_id, cors));
                     return;
                   }
                   auto account = account_r.move_as_ok();
                   auto parsed_r = ParsedAccountState::parse(account, addr);
                   if (parsed_r.is_error()) {
                     promise.set_value(make_json_error(-32603,
-                        PSTRING() << "parse account proof: " << parsed_r.error(), req_id));
+                        PSTRING() << "parse account proof: " << parsed_r.error(), req_id, cors));
                     return;
                   }
                   auto parsed = parsed_r.move_as_ok();
@@ -1301,7 +1320,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   td::Ref<vm::Cell> effective_data = init_data.not_null() ? init_data : parsed.data_cell;
                   if (effective_code.is_null()) {
                     promise.set_value(make_json_error(-32603,
-                        "estimateFee requires deploy init_code/init_data or an active account state", req_id));
+                        "estimateFee requires deploy init_code/init_data or an active account state", req_id, cors));
                     return;
                   }
 
@@ -1315,20 +1334,20 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   td::actor::send_closure(
                       self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
                       td::PromiseCreator::lambda(
-                          [addr, body_cell = std::move(body_cell), effective_code = std::move(effective_code),
+                          [cors, addr, body_cell = std::move(body_cell), effective_code = std::move(effective_code),
                            effective_data = std::move(effective_data), parsed = std::move(parsed), ignore_chksig,
                            req_id = std::move(req_id),
                            promise = std::move(promise)](td::Result<td::BufferSlice> config_res) mutable {
                             if (config_res.is_error()) {
                               promise.set_value(make_json_error(-32603,
-                                  PSTRING() << "getConfigAll failed: " << config_res.error(), req_id));
+                                  PSTRING() << "getConfigAll failed: " << config_res.error(), req_id, cors));
                               return;
                             }
                             auto config_r =
                                 tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(config_res.move_as_ok(), true);
                             if (config_r.is_error()) {
                               promise.set_value(make_json_error(-32603,
-                                  PSTRING() << "parse configInfo: " << config_r.error(), req_id));
+                                  PSTRING() << "parse configInfo: " << config_r.error(), req_id, cors));
                               return;
                             }
                             auto config_info = config_r.move_as_ok();
@@ -1338,7 +1357,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                                 config_info->config_proof_.as_slice());
                             if (state_root_r.is_error()) {
                               promise.set_value(make_json_error(-32603,
-                                  PSTRING() << "config proof error: " << state_root_r.error(), req_id));
+                                  PSTRING() << "config proof error: " << state_root_r.error(), req_id, cors));
                               return;
                             }
                             auto cfg_r = block::ConfigInfo::extract_config(
@@ -1347,14 +1366,14 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                                     block::ConfigInfo::needLibraries);
                             if (cfg_r.is_error()) {
                               promise.set_value(make_json_error(-32603,
-                                  PSTRING() << "config extract error: " << cfg_r.error(), req_id));
+                                  PSTRING() << "config extract error: " << cfg_r.error(), req_id, cors));
                               return;
                             }
                             auto cfg = cfg_r.move_as_ok();
                             auto prev_blocks_r = cfg->get_prev_blocks_info();
                             if (prev_blocks_r.is_error()) {
                               promise.set_value(make_json_error(-32603,
-                                  PSTRING() << "prev_blocks_info error: " << prev_blocks_r.error(), req_id));
+                                  PSTRING() << "prev_blocks_info error: " << prev_blocks_r.error(), req_id, cors));
                               return;
                             }
 
@@ -1365,7 +1384,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                             auto basechain_msg_prices_r = cfg->get_msg_prices(false);
                             if (gas_limits_prices_r.is_error() || storage_prices_r.is_error() ||
                                 masterchain_msg_prices_r.is_error() || basechain_msg_prices_r.is_error()) {
-                              promise.set_value(make_json_error(-32603, "fee config unavailable", req_id));
+                              promise.set_value(make_json_error(-32603, "fee config unavailable", req_id, cors));
                               return;
                             }
                             auto gas_limits_prices = gas_limits_prices_r.move_as_ok();
@@ -1384,7 +1403,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                             if (message_r.is_error()) {
                               promise.set_value(make_json_error(
                                   -32602, PSTRING() << "Failed to build external message: " << message_r.error(),
-                                  req_id));
+                                  req_id, cors));
                               return;
                             }
                             auto message = message_r.move_as_ok();
@@ -1421,7 +1440,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                               auto fwd_fee_r = estimate_calc_fwd_fees(run_res.actions, msg_prices, is_masterchain);
                               if (fwd_fee_r.is_error()) {
                                 promise.set_value(make_json_error(-32603,
-                                    PSTRING() << "forward fee error: " << fwd_fee_r.error(), req_id));
+                                    PSTRING() << "forward fee error: " << fwd_fee_r.error(), req_id, cors));
                                 return;
                               }
                               fwd_fee = fwd_fee_r.move_as_ok();
@@ -1431,7 +1450,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                                                ? estimate_compute_gas_price(run_res.gas_used, gas_limits_prices)->to_long()
                                                : 0;
                             promise.set_value(make_json_ok(
-                                build_estimate_fee_json(in_fwd_fee, storage_fee, gas_fee, fwd_fee), req_id));
+                                build_estimate_fee_json(in_fwd_fee, storage_fee, gas_fee, fwd_fee), req_id, cors));
                           }));
                 }));
       });
@@ -1480,14 +1499,14 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
+      [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           // NoError semantics: normalize errors to code -32600 with the
           // original error message. The hash is still returned in the
           // error message so clients can track the message.
           promise.set_value(make_json_error(-32600,
-              PSTRING() << "sendBoc failed: " << R.error(), req_id));
+              PSTRING() << "sendBoc failed: " << R.error(), req_id, cors));
           return;
         }
         auto data = R.move_as_ok();
@@ -1496,14 +1515,14 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
         if (status_r.is_error()) {
           // Even parse failures are normalized for NoError
           promise.set_value(make_json_error(-32600,
-              PSTRING() << "sendBoc parse error: " << status_r.error(), req_id));
+              PSTRING() << "sendBoc parse error: " << status_r.error(), req_id, cors));
           return;
         }
         auto status = status_r.move_as_ok();
         promise.set_value(make_json_ok(
             PSTRING() << "{\"@type\":\"raw.extMessageInfo\""
                       << ",\"hash\":" << td::JsonString(td::Slice(msg_hash_b64)) << "}",
-            req_id));
+            req_id, cors));
       });
 }
 

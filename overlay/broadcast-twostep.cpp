@@ -368,6 +368,9 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
   adnl::AdnlNodeIdShort bcast_src_adnl_id{broadcast->src_adnl_id_};
   size_t data_size = static_cast<td::uint32>(broadcast->data_size_);
   size_t part_size = broadcast->part_.size();
+  if (part_size >= data_size) {
+    co_return td::Status::Error(ErrorCode::protoviolation, "too big part size");
+  }
   td::uint32 seqno = static_cast<td::uint32>(broadcast->seqno_);
   if (seqno >= overlay->persistent_node_count()) {
     co_return td::Status::Error(ErrorCode::protoviolation, "too big seqno");

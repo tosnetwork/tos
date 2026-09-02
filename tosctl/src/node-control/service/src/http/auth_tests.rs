@@ -45,14 +45,21 @@ fn hash_test_password(password: &[u8]) -> String {
     argon2::Argon2::default().hash_password(password, &salt).unwrap().to_string()
 }
 
-fn app_cfg_with_auth(auth: AuthConfig) -> Arc<common::app_config::AppConfig> {
+fn app_cfg_with_auth_and_proxies(
+    auth: AuthConfig,
+    trusted_proxies: Vec<std::net::IpAddr>,
+) -> Arc<common::app_config::AppConfig> {
     Arc::new(common::app_config::AppConfig {
         nodes: HashMap::new(),
         wallets: HashMap::new(),
         pools: HashMap::new(),
         bindings: HashMap::new(),
         chain_rpc: Default::default(),
-        http: common::app_config::HttpConfig { auth: Some(auth), ..Default::default() },
+        http: common::app_config::HttpConfig {
+            auth: Some(auth),
+            trusted_proxies,
+            ..Default::default()
+        },
         elections: Some(Default::default()),
         voting: None,
         master_wallet: None,
@@ -130,8 +137,15 @@ async fn test_jwt_auth() -> Arc<JwtAuth> {
 }
 
 async fn state_with_auth() -> AppState {
+    state_with_auth_and_proxies(Vec::new()).await
+}
+
+async fn state_with_auth_and_proxies(trusted_proxies: Vec<std::net::IpAddr>) -> AppState {
     let cfg = auth_config();
-    let rt = Arc::new(RuntimeConfigStore::from_app_config(app_cfg_with_auth(cfg.clone())));
+    let rt = Arc::new(RuntimeConfigStore::from_app_config(app_cfg_with_auth_and_proxies(
+        cfg.clone(),
+        trusted_proxies,
+    )));
     AppState {
         store: Arc::new(SnapshotStore::new()),
         runtime_cfg: rt.clone(),
@@ -140,6 +154,7 @@ async fn state_with_auth() -> AppState {
         user_store: Arc::new(UserStore::new(rt as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
         indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        unauthenticated_serving_allowed: true,
     }
 }
 
@@ -153,6 +168,7 @@ async fn state_no_auth() -> AppState {
         user_store: Arc::new(UserStore::new(rt.clone() as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
         indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        unauthenticated_serving_allowed: true,
     }
 }
 
@@ -177,13 +193,44 @@ fn get_bearer(uri: &str, token: &str) -> axum::http::Request<Body> {
         .unwrap()
 }
 
+/// `tower::ServiceExt::oneshot` has no TCP connection behind it, so the peer
+/// address the router would normally learn from connect info is supplied as a
+/// request extension, the same way axum's connect-info fallback reads it.
+const TEST_PEER: &str = "127.0.0.1:40001";
+
+fn set_peer(req: &mut axum::http::Request<Body>, peer: &str) {
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer.parse::<std::net::SocketAddr>().unwrap()));
+}
+
 fn post_json(uri: &str, body: &impl serde::Serialize) -> axum::http::Request<Body> {
-    axum::http::Request::builder()
+    let mut req = axum::http::Request::builder()
         .method("POST")
         .uri(uri)
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_string(body).unwrap()))
-        .unwrap()
+        .unwrap();
+    set_peer(&mut req, TEST_PEER);
+    req
+}
+
+fn login_req(
+    peer: &str,
+    xff: Option<&str>,
+    username: &str,
+    password: &str,
+) -> axum::http::Request<Body> {
+    let mut builder = axum::http::Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header("content-type", "application/json");
+    if let Some(xff) = xff {
+        builder = builder.header("x-forwarded-for", xff);
+    }
+    let body = LoginRequest { username: username.into(), password: password.into() };
+    let mut req = builder.body(Body::from(serde_json::to_string(&body).unwrap())).unwrap();
+    set_peer(&mut req, peer);
+    req
 }
 
 fn post_bearer(uri: &str, body: &impl serde::Serialize, token: &str) -> axum::http::Request<Body> {
@@ -288,6 +335,92 @@ async fn login_rate_limit_after_repeated_failures() {
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], 429);
     assert_eq!(v["error"]["message"], "too many login attempts, try again later");
+}
+
+#[tokio::test]
+async fn login_rate_limit_ignores_fabricated_xff_from_untrusted_peer() {
+    let st = state_with_auth().await;
+    let app = app(st);
+
+    // Same TCP peer, a fresh fabricated x-forwarded-for on every request:
+    // all attempts must land in the single peer-address bucket.
+    for i in 0..4 {
+        let resp = app
+            .clone()
+            .oneshot(login_req("203.0.113.9:31337", Some(&format!("10.9.9.{i}")), "op", "wrong"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    let resp = app
+        .oneshot(login_req("203.0.113.9:31337", Some("10.9.9.99"), "op", "wrong"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429);
+}
+
+#[tokio::test]
+async fn login_rate_limit_honors_xff_from_trusted_proxy() {
+    let proxy: std::net::IpAddr = "192.0.2.1".parse().unwrap();
+    let st = state_with_auth_and_proxies(vec![proxy]).await;
+    let app = app(st);
+
+    // Distinct forwarded clients behind the trusted proxy get distinct
+    // buckets: more failures than one bucket allows, all still 401.
+    for i in 0..6 {
+        let resp = app
+            .clone()
+            .oneshot(login_req("192.0.2.1:2000", Some(&format!("198.51.100.{i}")), "op", "wrong"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401, "distinct forwarded clients must not share a bucket");
+    }
+
+    // One forwarded client hammering is still limited.
+    for _ in 0..4 {
+        let resp = app
+            .clone()
+            .oneshot(login_req("192.0.2.1:2000", Some("198.51.100.200"), "op", "wrong"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+    let resp = app
+        .oneshot(login_req("192.0.2.1:2000", Some("198.51.100.200"), "op", "wrong"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429);
+}
+
+#[tokio::test]
+async fn login_rate_limit_username_budget_spans_addresses() {
+    let st = state_with_auth().await;
+    let app = app(st);
+
+    // 20 failures for one username spread over 5 peers, 4 per peer so no
+    // per-address bucket ever blocks. The request that exhausts the
+    // username budget is rejected.
+    let mut responses = Vec::new();
+    for peer_octet in 1..=5u8 {
+        for _ in 0..4 {
+            let resp = app
+                .clone()
+                .oneshot(login_req(&format!("203.0.113.{peer_octet}:1000"), None, "op", "wrong"))
+                .await
+                .unwrap();
+            responses.push(resp.status());
+        }
+    }
+    assert!(responses[..19].iter().all(|s| *s == 401), "under-budget attempts must be 401");
+    assert_eq!(responses[19], 429, "the attempt exhausting the username budget must be 429");
+
+    // A brand-new address is blocked for this username, other usernames work.
+    let resp =
+        app.clone().oneshot(login_req("203.0.113.99:1000", None, "op", "wrong")).await.unwrap();
+    assert_eq!(resp.status(), 429);
+    let resp = app.oneshot(login_req("203.0.113.99:1000", None, "nom", "pass1")).await.unwrap();
+    assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]
@@ -527,6 +660,18 @@ async fn auth_disabled_operator_routes_open() {
     let body = StakePolicyRequest { policy: StakePolicy::Fixed(100), node: None };
     let resp = app(st).oneshot(post_json("/v1/stake_strategy", &body)).await.unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn auth_removed_by_reload_on_public_bind_fails_closed() {
+    // A config reload that drops http.auth while the listener is bound to a
+    // non-loopback address must not silently open the API: the middleware
+    // refuses requests instead of passing them through.
+    let mut st = state_no_auth().await;
+    st.unauthenticated_serving_allowed = false;
+    let body = StakePolicyRequest { policy: StakePolicy::Fixed(100), node: None };
+    let resp = app(st).oneshot(post_json("/v1/stake_strategy", &body)).await.unwrap();
+    assert_eq!(resp.status(), 401);
 }
 
 #[tokio::test]

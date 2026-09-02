@@ -39,18 +39,18 @@ void JsonRpcServer::handle_getMasterchainInfo(td::JsonObject &params, std::strin
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+              PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
           return;
         }
         auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
             R.move_as_ok(), true);
         if (mc_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id));
+              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id, cors));
           return;
         }
         auto mc = mc_r.move_as_ok();
@@ -60,7 +60,7 @@ void JsonRpcServer::handle_getMasterchainInfo(td::JsonObject &params, std::strin
             << ",\"state_root_hash\":\"" << td::base64_encode(mc->state_root_hash_.as_slice()) << "\""
             << ",\"init\":" << format_zero_state_json(*mc->init_)
             << "}";
-        promise.set_value(make_json_ok(result, req_id));
+        promise.set_value(make_json_ok(result, req_id, cors));
       });
 }
 
@@ -130,22 +130,22 @@ void JsonRpcServer::handle_lookupBlock(td::JsonObject &params, std::string req_i
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id));
+              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
         auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
-        promise.set_value(make_json_ok(format_block_id_json(*lb->id_), req_id));
+        promise.set_value(make_json_ok(format_block_id_json(*lb->id_), req_id, cors));
       });
 }
 
@@ -199,19 +199,21 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
   struct Slot {
     td::Promise<HttpReturn> promise;
     std::string req_id;
+    std::string cors;
     bool settled{false};
     void settle_error(int code, const std::string& msg) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id));
+      promise.set_value(make_json_error(code, msg, req_id, cors));
     }
   };
   auto slot = std::make_shared<Slot>();
   slot->promise = std::move(promise);
   slot->req_id = std::move(req_id);
+  slot->cors = opts_.cors_origin;
 
   // Step 2 lambda: given a resolved block ID, fetch shard hashes
-  auto do_get_shards = [self_id, slot](
+  auto do_get_shards = [cors = opts_.cors_origin, self_id, slot](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> resolved_block_id) mutable {
         // Fetch a block header proof that includes BlockExtra and
         // ShardHashes (mode = 16 | 32 = 48). This avoids total-state download
@@ -227,7 +229,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
         td::actor::send_closure(
             self_id, &JsonRpcServer::send_liteserver_query, std::move(header_query),
             td::PromiseCreator::lambda(
-                [slot](td::Result<td::BufferSlice> R) mutable {
+                [cors, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             slot->settle_error(-32603, PSTRING() << "getBlockHeader: " << R.error());
             return;
@@ -294,7 +296,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
           sb << "]}";
           if (!slot->settled) {
             slot->settled = true;
-            slot->promise.set_value(make_json_ok(sb.as_cslice().str(), slot->req_id));
+            slot->promise.set_value(make_json_ok(sb.as_cslice().str(), slot->req_id, cors));
           }
         }));
   };  // end of do_get_shards
@@ -372,18 +374,18 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
 
   auto self_id = actor_id(this);
   send_liteserver_query(std::move(lookup_query),
-      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), self_id, promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id));
+              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
         auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
@@ -401,19 +403,19 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [req_id = std::move(req_id), id_json = std::move(resolved_id_json),
+                [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
                  promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getBlockHeader: " << R.error(), req_id));
+                PSTRING() << "getBlockHeader: " << R.error(), req_id, cors));
             return;
           }
           auto hdr_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (hdr_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse blockHeader: " << hdr_r.error(), req_id));
+                PSTRING() << "parse blockHeader: " << hdr_r.error(), req_id, cors));
             return;
           }
           auto hdr = hdr_r.move_as_ok();
@@ -425,7 +427,7 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
             auto result = PSTRING()
                 << "{\"@type\":\"blocks.header\",\"id\":" << id_json
                 << ",\"header_proof\":\"" << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
-            promise.set_value(make_json_ok(result, req_id));
+            promise.set_value(make_json_ok(result, req_id, cors));
             return;
           }
 
@@ -434,7 +436,7 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
             auto result = PSTRING()
                 << "{\"@type\":\"blocks.header\",\"id\":" << id_json
                 << ",\"header_proof\":\"" << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
-            promise.set_value(make_json_ok(result, req_id));
+            promise.set_value(make_json_ok(result, req_id, cors));
             return;
           }
           auto virt_root = virt_r.move_as_ok();
@@ -465,7 +467,7 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
                << ",\"gen_utime\":" << info.gen_utime;
           }
           sb << "}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
         }));
       });
 }
@@ -493,18 +495,18 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
 
   auto self_id = actor_id(this);
   send_liteserver_query(std::move(lookup_query),
-      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), self_id, promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id));
+              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
         auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
@@ -522,19 +524,19 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [req_id = std::move(req_id), id_json = std::move(resolved_id_json),
+                [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
                  promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getBlockProof: " << R.error(), req_id));
+                PSTRING() << "getBlockProof: " << R.error(), req_id, cors));
             return;
           }
           auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(
               R.move_as_ok(), true);
           if (proof_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse blockProof: " << proof_r.error(), req_id));
+                PSTRING() << "parse blockProof: " << proof_r.error(), req_id, cors));
             return;
           }
           auto proof = proof_r.move_as_ok();
@@ -567,7 +569,7 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
             }
           }
           sb << "]}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
         }));
       });
 }
@@ -599,18 +601,18 @@ void JsonRpcServer::handle_getShardBlockProof(td::JsonObject &params, std::strin
 
   auto self_id = actor_id(this);
   send_liteserver_query(std::move(lookup_query),
-      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), self_id, promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id));
+              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
         auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
@@ -626,18 +628,18 @@ void JsonRpcServer::handle_getShardBlockProof(td::JsonObject &params, std::strin
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [req_id = std::move(req_id), promise = std::move(promise)](
+                [cors, req_id = std::move(req_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getShardBlockProof: " << R.error(), req_id));
+                PSTRING() << "getShardBlockProof: " << R.error(), req_id, cors));
             return;
           }
           auto sbp_r = tos::fetch_tl_object<tos::lite_api::liteServer_shardBlockProof>(
               R.move_as_ok(), true);
           if (sbp_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse shardBlockProof: " << sbp_r.error(), req_id));
+                PSTRING() << "parse shardBlockProof: " << sbp_r.error(), req_id, cors));
             return;
           }
           auto sbp = sbp_r.move_as_ok();
@@ -655,7 +657,7 @@ void JsonRpcServer::handle_getShardBlockProof(td::JsonObject &params, std::strin
                << "}";
           }
           sb << "]}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
         }));
       });
 }
@@ -673,18 +675,18 @@ void JsonRpcServer::handle_getOutMsgQueueSize(td::JsonObject &params, std::strin
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
   send_liteserver_query(std::move(query),
-      [req_id = std::move(req_id), promise = std::move(promise)](
+      [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "getOutMsgQueueSizes: " << R.error(), req_id));
+              PSTRING() << "getOutMsgQueueSizes: " << R.error(), req_id, cors));
           return;
         }
         auto qs_r = tos::fetch_tl_object<tos::lite_api::liteServer_outMsgQueueSizes>(
             R.move_as_ok(), true);
         if (qs_r.is_error()) {
           promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse outMsgQueueSizes: " << qs_r.error(), req_id));
+              PSTRING() << "parse outMsgQueueSizes: " << qs_r.error(), req_id, cors));
           return;
         }
         auto qs = qs_r.move_as_ok();
@@ -703,7 +705,7 @@ void JsonRpcServer::handle_getOutMsgQueueSize(td::JsonObject &params, std::strin
         sb << "]"
            << ",\"ext_msg_queue_size_limit\":" << qs->ext_msg_queue_size_limit_
            << "}";
-        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
       });
 }
 

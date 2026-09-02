@@ -385,6 +385,53 @@ class WalletV5 : public WalletMessageProcessorImpl {
   }
 };
 
+// The wallets shipped with this chain prefix every signed body with the
+// network's global_id (int32), so their valid_until/seqno sit 32 bits later
+// than in the layouts above.
+
+class NetworkBoundWalletV3 : public WalletV3 {
+ public:
+  std::string name() const override {
+    return "wallet-v3-network-bound";
+  }
+
+  td::Result<std::pair<td::uint32, UnixTime>> parse_message_body(vm::CellSlice body) const override {
+    // signature, global_id, subwallet_id, valid_until, msg_seqno
+    if (body.size() < 512 + 32 + 32 + 32 + 32) {
+      return td::Status::Error("invalid message body");
+    }
+    body.skip_first(512 + 32 + 32);
+    auto valid_until = (UnixTime)body.fetch_ulong(32);
+    auto msg_seqno = (td::uint32)body.fetch_ulong(32);
+    return std::make_pair(msg_seqno, valid_until);
+  }
+};
+
+class NetworkBoundWalletV4 : public NetworkBoundWalletV3 {
+ public:
+  std::string name() const override {
+    return "wallet-v4-network-bound";
+  }
+};
+
+class NetworkBoundWalletV5 : public WalletV5 {
+ public:
+  std::string name() const override {
+    return "wallet-v5-network-bound";
+  }
+
+  td::Result<std::pair<td::uint32, UnixTime>> parse_message_body(vm::CellSlice body) const override {
+    // tag, global_id, wallet_id, valid_until, msg_seqno
+    if (body.size() < 32 + 32 + 32 + 32 + 32) {
+      return td::Status::Error("invalid message body");
+    }
+    body.skip_first(32 + 32 + 32);
+    auto valid_until = (UnixTime)body.fetch_ulong(32);
+    auto msg_seqno = (td::uint32)body.fetch_ulong(32);
+    return std::make_pair(msg_seqno, valid_until);
+  }
+};
+
 }  // namespace
 
 const WalletMessageProcessor* WalletMessageProcessor::get(td::Bits256 code_hash) {
@@ -416,6 +463,15 @@ const WalletMessageProcessor* WalletMessageProcessor::get(td::Bits256 code_hash)
     add_wallet("FEB5FF6820E2FF0D9483E7E0D62C817D846789FB4AE580C878866D959DABD5C0", std::make_shared<WalletV4>());
 
     add_wallet("20834B7B72B112147E1B2FB457B84E74D1A30F04F737D4F62A668E9552D2B72F", std::make_shared<WalletV5>());
+
+    // Wallets compiled from this repository's sources: their signed bodies
+    // carry the network's global_id before subwallet_id/valid_until/seqno.
+    add_wallet("6C6CAAF194AF3660E7AE4C584785C1BDA0D85FAFD80E947D725105947CD11D7D",
+               std::make_shared<NetworkBoundWalletV3>());
+    add_wallet("F15BC24CBC229A1B72CAB39345DB191E761EF913E6D066E76D3836CF1600CB47",
+               std::make_shared<NetworkBoundWalletV4>());
+    add_wallet("E6C006F19FBABCCD0D4852C1CC4CA3C6410914DC86F6611CCF8165CDCAAFC6E0",
+               std::make_shared<NetworkBoundWalletV5>());
 
     return wallets;
   }();

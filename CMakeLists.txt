@@ -751,6 +751,22 @@ target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tda
 add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
 target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
 
+add_executable(test-rate-limiter test/test-td-main.cpp test/test-rate-limiter.cpp)
+target_link_libraries(test-rate-limiter PRIVATE tdutils)
+target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
+target_link_libraries(test-config-transition PRIVATE tos_block tos_crypto tdutils)
+
+add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
+target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
+
+add_executable(test-http-server-limits test/test-td-main.cpp test/test-http-server-limits.cpp)
+target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
+
+add_executable(test-wallet-message-processor test/test-td-main.cpp test/test-wallet-message-processor.cpp)
+target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-envelope tos_crypto tdutils)
+
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
@@ -1062,6 +1078,11 @@ tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
+tos_test(test-rate-limiter)
+tos_test(test-config-transition)
+tos_test(test-json-rpc-parse)
+tos_test(test-http-server-limits)
+tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)

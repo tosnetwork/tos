@@ -2231,6 +2231,19 @@ bool ValidateQuery::check_one_shard(const block::McShardHash& info, const block:
           "before_merge set for shard "s + shard.to_str() +
           " in shard configuration, but it has not been announced in future split/merge for this shard");
     }
+    if (info.fsm_utime() > now_) {
+      return reject_query("before_merge set for shard "s + shard.to_str() +
+                          " in shard configuration, but fsm_utime is in the future");
+    }
+    if (!sibling->is_fsm_merge()) {
+      return reject_query(
+          "before_merge set for shard "s + shard.to_str() +
+          " in shard configuration, but it has not been announced in future split/merge for this shard's sibling");
+    }
+    if (sibling->fsm_utime() > now_) {
+      return reject_query("before_merge set for shard "s + shard.to_str() +
+                          " in shard configuration, fsm_utime in shard's sibling is in the future");
+    }
     if (!merge_cond) {
       return reject_query("before_merge set for shard "s + shard.to_str() +
                           " in shard configuration, but merge conditions are not met");
@@ -2278,12 +2291,9 @@ bool ValidateQuery::check_shard_layout() {
   }
   auto ccvc = new_config_->get_catchain_validators_config();
   const auto& wc_set = new_config_->get_workchain_list();
-  auto execution_transition_status = block::validate_workchain_execution_descriptor_transitions(
-      config_->get_workchain_list(), wc_set);
-  if (execution_transition_status.is_error()) {
-    return reject_query(execution_transition_status.move_as_error_prefix(
-        "invalid workchain execution descriptor transition: ").to_string());
-  }
+  // The old -> new workchain descriptor transition rules are checked in
+  // check_config_update() through block::valid_config_transition(), the same
+  // predicate the collator applies before installing a configuration.
   REJECT_UNLESS_MSG(ccvc.shard_cc_lifetime != 0, "shard_cc_lifetime in the new config is zero");
   REJECT_UNLESS_MSG(ccvc.mc_cc_lifetime != 0, "mc_cc_lifetime in the new config is zero");
   update_shard_cc_ = is_key_block_ || (now_ / ccvc.shard_cc_lifetime > prev_now_ / ccvc.shard_cc_lifetime);
@@ -2496,6 +2506,19 @@ bool ValidateQuery::check_utime_lt() {
       return reject_query(PSTRING() << "gen_utime is " << now_ << ", but gen_utime_ms in ConsensusExtraData is "
                                     << now_ms_.value());
     }
+  }
+  // Wall-clock bound on gen_utime. This is intentionally a LOCAL predicate,
+  // which makes this one rejection non-deterministic across validators; that
+  // is acceptable because a rejection here only withholds this validator's
+  // vote and files a report — finality still propagates through certificates,
+  // which rejecters follow without re-running this check, so no fork can
+  // result. The bound is load-bearing: an accepted future-dated candidate is
+  // parked in a sleeping wait until ok_from_utime, and without a cap a
+  // malicious leader could pin unbounded fully-validated candidates in such
+  // waits. Because the verdict depends on the local clock, a rejection for
+  // this reason must never be usable as slashing evidence.
+  if (now_ > (UnixTime)td::Clocks::system() + 30) {
+    return reject_query(PSTRING() << "gen_utime " << now_ << " is too far in the future");
   }
   return true;
 }
@@ -6039,10 +6062,13 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "storage transaction " << lt << " of account " << addr.to_hex()
                                       << " has at least one outbound message");
       }
-      // V-001: storage transaction re-execution — fall through to the
-      // shared re-execution path below (storage phase only, no
-      // compute/credit/action phases).
-      break;
+      // The collator never produces storage-only transactions, so the set of
+      // valid blocks must not contain them either: accepting a transaction
+      // kind that honest block producers cannot emit would let a Byzantine
+      // producer collect storage fees (and freeze or delete accounts) at
+      // moments of its choosing without any validator noticing.
+      return reject_query(PSTRING() << "unable to verify storage transaction " << lt << " of account "
+                                    << addr.to_hex());
     }
     case block::gen::TransactionDescr::trans_tick_tock: {
       bool is_tock = (td_cs.prefetch_ulong(4) & 1);
@@ -6131,58 +6157,48 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                     << addr.to_hex());
     }
   }
-  if (trans_type == block::transaction::Transaction::tr_storage) {
-    // Storage transactions have only a storage phase; there is no
-    // compute, credit, action, or bounce phase to re-execute.
+  if (trs->bounce_enabled) {
     if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true)) {
-      return reject_query(PSTRING() << "cannot re-create storage phase of storage transaction " << lt
-                                    << " for smart contract " << addr.to_hex());
-    }
-  } else {
-    if (trs->bounce_enabled) {
-      if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true)) {
-        return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt
-                                      << " for smart contract " << addr.to_hex());
-      }
-      if (need_credit_phase && !trs->prepare_credit_phase()) {
-        return reject_query(PSTRING() << "cannot create re-credit phase of transaction " << lt
-                                      << " for smart contract " << addr.to_hex());
-      }
-    } else {
-      if (need_credit_phase && !trs->prepare_credit_phase()) {
-        return reject_query(PSTRING() << "cannot re-create credit phase of transaction " << lt
-                                      << " for smart contract " << addr.to_hex());
-      }
-      if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true, need_credit_phase)) {
-        return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt
-                                      << " for smart contract " << addr.to_hex());
-      }
-    }
-    if (!trs->prepare_compute_phase(vq_.compute_phase_cfg_)) {
-      return reject_query(PSTRING() << "cannot re-create compute phase of transaction " << lt
-                                    << " for smart contract " << addr.to_hex());
-    }
-    if (!trs->compute_phase->accepted) {
-      if (external) {
-        return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction "
-                                      << lt << " of account " << addr.to_hex()
-                                      << " was in fact rejected (such transaction cannot appear in valid blocks)");
-      } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
-        return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
-                                      << " of account " << addr.to_hex()
-                                      << " was not processed without any reason");
-      }
-    }
-    if (trs->compute_phase->success && !trs->prepare_action_phase(vq_.action_phase_cfg_)) {
-      return reject_query(PSTRING() << "cannot re-create action phase of transaction " << lt << " for smart contract "
+      return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt << " for smart contract "
                                     << addr.to_hex());
     }
-    if (trs->bounce_enabled &&
-        (!trs->compute_phase->success || trs->action_phase->state_exceeds_limits || trs->action_phase->bounce) &&
-        !trs->prepare_bounce_phase(vq_.action_phase_cfg_)) {
-      return reject_query(PSTRING() << "cannot re-create bounce phase of  transaction " << lt
-                                    << " for smart contract " << addr.to_hex());
+    if (need_credit_phase && !trs->prepare_credit_phase()) {
+      return reject_query(PSTRING() << "cannot create re-credit phase of transaction " << lt << " for smart contract "
+                                    << addr.to_hex());
     }
+  } else {
+    if (need_credit_phase && !trs->prepare_credit_phase()) {
+      return reject_query(PSTRING() << "cannot re-create credit phase of transaction " << lt << " for smart contract "
+                                    << addr.to_hex());
+    }
+    if (!trs->prepare_storage_phase(vq_.storage_phase_cfg_, true, need_credit_phase)) {
+      return reject_query(PSTRING() << "cannot re-create storage phase of transaction " << lt << " for smart contract "
+                                    << addr.to_hex());
+    }
+  }
+  if (!trs->prepare_compute_phase(vq_.compute_phase_cfg_)) {
+    return reject_query(PSTRING() << "cannot re-create compute phase of transaction " << lt << " for smart contract "
+                                  << addr.to_hex());
+  }
+  if (!trs->compute_phase->accepted) {
+    if (external) {
+      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction "
+                                    << lt << " of account " << addr.to_hex()
+                                    << " was in fact rejected (such transaction cannot appear in valid blocks)");
+    } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
+      return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
+                                    << " of account " << addr.to_hex() << " was not processed without any reason");
+    }
+  }
+  if (trs->compute_phase->success && !trs->prepare_action_phase(vq_.action_phase_cfg_)) {
+    return reject_query(PSTRING() << "cannot re-create action phase of transaction " << lt << " for smart contract "
+                                  << addr.to_hex());
+  }
+  if (trs->bounce_enabled &&
+      (!trs->compute_phase->success || trs->action_phase->state_exceeds_limits || trs->action_phase->bounce) &&
+      !trs->prepare_bounce_phase(vq_.action_phase_cfg_)) {
+    return reject_query(PSTRING() << "cannot re-create bounce phase of  transaction " << lt << " for smart contract "
+                                  << addr.to_hex());
   }
   if (!trs->serialize(vq_.serialize_cfg_)) {
     return reject_query(PSTRING() << "cannot re-create the serialization of  transaction " << lt
@@ -6974,6 +6990,12 @@ bool ValidateQuery::check_config_update(Ref<vm::CellSlice> old_conf_params, Ref<
   if (!block::valid_config_data(ocfg_root, old_cfg_addr, true, true, old_mparams_)) {
     return reject_query("configuration extracted from (old) configuration smart contract "s + old_cfg_addr.to_hex() +
                         " failed to pass per-parameter validity checks, or one of mandatory parameters is missing");
+  }
+  // same predicate as in Collator::create_mc_state_extra(): a configuration
+  // that fails the transition rules is never installed by an honest collator
+  auto transition_status = block::valid_config_transition(old_cfg_root, new_cfg_root);
+  if (transition_status.is_error()) {
+    return reject_query(transition_status.move_as_error_prefix("invalid configuration transition: ").to_string());
   }
   if (block::important_config_parameters_changed(new_cfg_root, old_cfg_root)) {
     // same as the check in Collator::create_mc_state_extra()

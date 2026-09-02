@@ -8,8 +8,8 @@ The TOS coin bridge carries native TOS to external EVM chains. Coins locked in t
 
 ### TOS/TVM side (per network under `tvm/ethereum/` and `tvm/bsc/`)
 
-- `bridge_code.fc`: accepts native coins, deducts flat/network/percentage fees, tracks `total_locked`, emits swap logs, and pays out on oracle-approved unlocks.
-- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs.
+- `bridge_code.fc`: accepts native coins, deducts flat/network/percentage fees, tracks `total_locked`, emits swap logs, and pays out on oracle-approved unlocks. Swaps to the zero external address are refused, the voted network fee has a floor covering the fixed swap receipt, and the oracle-voted migration operation is a closed loop: the old bridge zeroes its counter when the locked funds leave, the new bridge credits its counter when the `0xf00d` transfer arrives, and a rejected transfer bounces back and is locked again.
+- `multisig-code.fc`: `k`-of-`n` oracle voting with signer dedup bitmasks and expiring query IDs; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for the reverse direction.
 - Shared configuration, message/text utilities, and Fift deployment sources.
 - `tvm/tests/`: TVM-level execution tests that compile the real contracts and drive them through the TOS TVM via a Fift harness.
@@ -37,7 +37,7 @@ With `func`/`fift` built (`cmake --build build --target func fift`):
 
 ```bash
 scripts/build-coin-bridge.sh          # double-compile both networks, assemble, hash
-scripts/test-coin-bridge-tvm.sh       # run the 22 TVM-level tests via TOS func/fift
+scripts/test-coin-bridge-tvm.sh       # run the 28 TVM-level tests via TOS func/fift
 python3 scripts/verify-coin-bridge.py # invariants + protocol model tests + naming gate
 ```
 

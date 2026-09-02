@@ -21,6 +21,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/bigexp.h"
 #include "common/util.h"
 #include "td/utils/Random.h"
@@ -806,8 +807,11 @@ td::Status ShardState::unpack_state(tos::BlockIdExt blkid, Ref<vm::Cell> prev_st
   root_ = std::move(prev_state_root);
   vert_seqno_ = state.vert_seq_no;
   before_split_ = state.before_split;
-  account_dict_ = std::make_unique<vm::AugmentedDictionary>(
-      vm::load_cell_slice(std::move(state.accounts)).prefetch_ref(), 256, block::tlb::aug_ShardAccounts);
+  account_dict_ = std::make_unique<vm::AugmentedDictionary>(vm::load_cell_slice_ref(std::move(state.accounts)), 256,
+                                                            block::tlb::aug_ShardAccounts, false);
+  if (!account_dict_->validate()) {
+    return td::Status::Error(-666, "account dictionary of state "s + id_.to_str() + " is invalid");
+  }
   // check that all keys in account_dict have correct prefixes
   td::BitArray<64> acc_pfx{(long long)shard1.shard};
   int acc_pfx_len = shard_prefix_length(shard1);
@@ -1909,6 +1913,27 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
   }
   return config_params_present(dict, dict.lookup_ref(td::BitArray<32>{9})) &&
          config_params_present(dict, std::move(old_mparams));
+}
+
+td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new_cfg_root) {
+  if (old_cfg_root.is_null() || new_cfg_root.is_null()) {
+    return td::Status::Error("configuration root is missing");
+  }
+  try {
+    vm::Dictionary old_dict{std::move(old_cfg_root), 32};
+    vm::Dictionary new_dict{std::move(new_cfg_root), 32};
+    TRY_RESULT_PREFIX(old_workchains, Config::unpack_workchain_list(old_dict.lookup_ref(td::BitArray<32>{12})),
+                      "cannot unpack old workchain list (ConfigParam 12): ");
+    TRY_RESULT_PREFIX(new_workchains, Config::unpack_workchain_list(new_dict.lookup_ref(td::BitArray<32>{12})),
+                      "cannot unpack new workchain list (ConfigParam 12): ");
+    TRY_STATUS_PREFIX(validate_workchain_execution_descriptor_transitions(old_workchains, new_workchains),
+                      "invalid workchain execution descriptor transition: ");
+  } catch (vm::VmError& err) {
+    return td::Status::Error(PSTRING() << "cannot check configuration transition: " << err.get_msg());
+  } catch (vm::VmVirtError& err) {
+    return td::Status::Error(PSTRING() << "cannot check configuration transition: " << err.get_msg());
+  }
+  return td::Status::OK();
 }
 
 bool config_params_present(vm::Dictionary& dict, Ref<vm::Cell> param_dict_root) {

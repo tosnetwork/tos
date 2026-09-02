@@ -333,6 +333,37 @@ fn ignored_native_send_action_still_consumes_seqno_and_daily_budget() {
 }
 
 #[test]
+fn underfunded_action_is_rejected_preserving_seqno_and_succeeds_after_top_up() {
+    // Policy allows more than the account holds: 50 TOS per tx, 20 TOS funded.
+    let mut fixture = Fixture::with_controller_and_limit([0x47; 32], 50 * TOS);
+    let target = fixture.target.address().clone();
+    let action = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        30 * TOS,
+    );
+
+    // The balance cannot cover the value plus fee headroom: the action is
+    // rejected in the compute phase, before accept_message, so the seqno and
+    // the daily budget are untouched and the signed bytes stay submittable.
+    fixture.expect_external_exit(action.clone(), 1711);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
+
+    // Top up the account, then resubmit the very same signed message.
+    let top_up = MessageBuilder::internal(fixture.owner.address(), &fixture.account, 20 * TOS)
+        .bounce(false)
+        .body(Cell::default())
+        .build();
+    fixture.bc.send_message(top_up).expect("top up").expect_success();
+    fixture.send_external(action).expect("funded resend").expect_success();
+    assert_eq!(fixture.seqno(), 1);
+}
+
+#[test]
 fn controller_signed_action_transfers_value_and_advances_seqno() {
     let mut fixture = Fixture::new();
     let before = fixture

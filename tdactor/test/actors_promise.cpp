@@ -23,6 +23,8 @@
 #include "td/utils/MovableValue.h"
 #include "td/utils/tests.h"
 
+#include <stdexcept>
+
 template <class T>
 class X {
  public:
@@ -33,6 +35,44 @@ class X {
   }
   T t;
 };
+
+TEST(Actor, promise_callback_runs_at_most_once_when_it_throws) {
+  // A callback that throws must not be re-entered from the promise
+  // destructor with a "Lost promise" error while the stack is unwinding: a
+  // second exception there would terminate the process instead of
+  // propagating the first one to whoever can handle it.
+  int calls = 0;
+  bool caught = false;
+  {
+    td::Promise<int> promise = [&calls](td::Result<int>) {
+      calls++;
+      throw std::runtime_error("callback failed");
+    };
+    try {
+      promise.set_value(1);
+    } catch (std::runtime_error &) {
+      caught = true;
+    }
+  }
+  ASSERT_TRUE(caught);
+  ASSERT_EQ(1, calls);
+
+  calls = 0;
+  caught = false;
+  {
+    td::Promise<int> promise = [&calls](td::Result<int>) {
+      calls++;
+      throw std::runtime_error("callback failed");
+    };
+    try {
+      promise.set_error(td::Status::Error("boom"));
+    } catch (std::runtime_error &) {
+      caught = true;
+    }
+  }
+  ASSERT_TRUE(caught);
+  ASSERT_EQ(1, calls);
+}
 
 TEST(Actor, promise) {
   using Int = td::MovableValue<int>;

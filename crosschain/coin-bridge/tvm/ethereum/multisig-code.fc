@@ -1,5 +1,8 @@
 ;; Simple wallet smart contract
 
+;; The network's own 32-bit signed identity, from its global configuration.
+int get_global_id() asm "GLOBALID";
+
 _ unpack_state() inline_ref {
   var ds = begin_parse(get_data());
   var res = (ds~load_uint(32), ds~load_uint(8), ds~load_uint(8), ds~load_uint(64), ds~load_dict(), ds~load_dict(), ds~load_uint(32));
@@ -152,6 +155,16 @@ _ unpack_owner_info(slice cs) inline_ref {
   var hash = slice_hash(in_msg);
   int query_wallet_id = in_msg~load_uint(32);
   throw_unless(42, query_wallet_id == wallet_id);
+
+  ;; The wallet id only separates deployments that chose different ids. Two
+  ;; networks bootstrapped from the same StateInit share this contract's
+  ;; address and wallet id, and oracles that reuse signing keys would make a
+  ;; query signed on one network verify verbatim on the other. The signed
+  ;; body therefore also names the network it was signed for, and any other
+  ;; network refuses it here. Both hashes above are taken before any field
+  ;; is consumed, so every signature already covers this field.
+  int query_global_id = in_msg~load_int(32);
+  throw_unless(44, query_global_id == get_global_id());
 
   int query_id = in_msg~load_uint(64);
 

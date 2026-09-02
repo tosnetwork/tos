@@ -391,9 +391,12 @@ struct MsgPrices {
 struct SizeLimitsConfig {
   // Default values are used when not present in global config
   struct ExtMsgLimits {
-    // 2 MiB default. Legacy deployments that want the historical 64 KiB cap
-    // can still override via ConfigParam 43.
-    td::uint32 max_size = 2u << 20;
+    // 64 KiB default, applied whenever ConfigParam 43 is absent. Every
+    // external message up to this size is broadcast to, parsed by, and
+    // pre-checked on every validator before any gas is paid, so the default
+    // must stay small; a chain that needs larger external messages raises it
+    // explicitly through ConfigParam 43.
+    td::uint32 max_size = 65535;
     td::uint16 max_depth = 512;
   };
   td::uint32 max_msg_bits = 1 << 21;

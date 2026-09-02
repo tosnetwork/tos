@@ -21,6 +21,12 @@ abstract contract WrappedTOS is ERC20, TosUtils {
      */
     function burn(uint256 amount, TosAddress memory addr) external {
       require(allowBurn, "Burn is currently disabled");
+      // The TOS-side release reads the amount as a 64-bit integer; a burn
+      // outside that range could never be released and the tokens would be
+      // destroyed with nothing unlocked.
+      require(amount > 0 && amount <= type(uint64).max, "Burn amount out of range");
+      // A zero destination hash is unspendable on the TOS side.
+      require(addr.address_hash != bytes32(0), "Burn to zero address");
       _burn(msg.sender, amount);
       emit SwapEthToTos(msg.sender, addr.workchain, addr.address_hash, amount);
     }
@@ -38,6 +44,9 @@ abstract contract WrappedTOS is ERC20, TosUtils {
      */
     function burnFrom(address account, uint256 amount, TosAddress memory addr) external {
         require(allowBurn, "Burn is currently disabled");
+        // Same range and destination rules as burn().
+        require(amount > 0 && amount <= type(uint64).max, "Burn amount out of range");
+        require(addr.address_hash != bytes32(0), "Burn to zero address");
         uint256 currentAllowance = allowance(account,msg.sender);
         require(currentAllowance >= amount, "ERC20: transfer amount exceeds allowance");
         _approve(account, msg.sender, currentAllowance - amount);

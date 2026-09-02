@@ -57,6 +57,88 @@ use crate::runtime_config::RuntimeConfig;
 const MAX_BLOCKS_PER_TICK: u32 = 200;
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
+/// Upper bound on how many *new* service-request ids one visit to a Service
+/// Actor may materialise. `next_request_id` is read from an arbitrary deployed
+/// contract's own state, so it is untrusted input: without a cap a contract
+/// reporting a huge counter would make the indexer allocate and probe the
+/// whole id range in a single tick. Later visits resume from the stored
+/// high-water mark, so progress stays monotonic while per-tick work is bounded.
+const MAX_SERVICE_REQUEST_IDS_PER_TICK: u64 = 4096;
+
+/// Hard bound on how many request rows one service contract may ever occupy
+/// in the index. The per-tick cap alone only bounds each visit: a contract
+/// reporting an absurd `next_request_id` would still grow the database by one
+/// capped batch of not-found rows per visit, forever. Beyond this bound the
+/// indexer stops extending into new ids for the service (already-stored rows
+/// keep refreshing) and says so once per visit; a legitimate service that
+/// outgrows it needs an operator decision, not silent unbounded disk growth.
+const MAX_TRACKED_REQUESTS_PER_SERVICE: u64 = 65_536;
+
+/// Process-wide budget for probing NEW service-request ids, refilled on a
+/// time basis. Per-service and per-visit caps alone still let a third party
+/// multiply the work by deploying many service contracts with fabricated
+/// counters; every not-found probe costs two chain reads, so the total
+/// probe rate must be bounded no matter how many contracts exist. Real,
+/// already-stored requests are refreshed outside this budget: each of those
+/// rows corresponds to a request somebody paid chain fees to create.
+const GLOBAL_SERVICE_PROBE_BUDGET: u64 = 16_384;
+const PROBE_BUDGET_REFILL_SECS: u64 = 60;
+
+/// Token bucket for new-id probes, owned by the indexer run loop and passed
+/// down the scan call chain (tests construct their own, so nothing is
+/// process-global).
+pub(crate) struct ProbeBudget {
+    // One lock holds both the window stamp and the remaining tokens: with
+    // two separate atomics, a concurrent taker between the window publish
+    // and the refill store could drain leftover tokens that the refill then
+    // overwrote, over-granting across the boundary. take() runs at most
+    // once per service visit, so contention is irrelevant.
+    state: std::sync::Mutex<ProbeBudgetState>,
+}
+
+struct ProbeBudgetState {
+    remaining: u64,
+    window_start: u64,
+}
+
+impl ProbeBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(ProbeBudgetState {
+                remaining: GLOBAL_SERVICE_PROBE_BUDGET,
+                window_start: 0,
+            }),
+        }
+    }
+
+    fn take(&self, want: u64, now: u64) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if now.saturating_sub(state.window_start) >= PROBE_BUDGET_REFILL_SECS {
+            state.window_start = now;
+            state.remaining = GLOBAL_SERVICE_PROBE_BUDGET;
+        }
+        let granted = state.remaining.min(want);
+        state.remaining -= granted;
+        granted
+    }
+}
+
+/// Pure range computation for the new-id scan, so the bounds are unit
+/// testable: resumes after the scanned high-water mark, takes at most one
+/// per-visit batch, and never extends past the per-service row budget or
+/// the granted share of the global probe budget.
+fn new_service_request_id_range(
+    max_indexed: Option<u64>,
+    stored_rows: u64,
+    claimed_next_request_id: u64,
+    granted_probes: u64,
+) -> std::ops::Range<u64> {
+    let first_new = max_indexed.map_or(0, |id| id.saturating_add(1));
+    let remaining_budget = MAX_TRACKED_REQUESTS_PER_SERVICE.saturating_sub(stored_rows);
+    let batch = MAX_SERVICE_REQUEST_IDS_PER_TICK.min(remaining_budget).min(granted_probes);
+    let new_end = claimed_next_request_id.min(first_new.saturating_add(batch));
+    first_new..new_end
+}
 /// How far back to rewind and rescan when a reorg is detected at the
 /// checkpoint boundary. Reorgs are a real, documented hazard on this chain
 /// (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
@@ -74,12 +156,13 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let chain_provider = runtime_cfg.chain_provider();
     let known = KnownCodeHashes::compute()?;
+    let probe_budget = ProbeBudget::new();
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
     let mut cancel = cancellation_ctx.subscribe();
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(e) = scan_new_blocks(&chain_provider, &indexer_store, &known).await {
+                if let Err(e) = scan_new_blocks(&chain_provider, &indexer_store, &known, &probe_budget).await {
                     tracing::error!(target: "indexer", "scan error: {:#}", e);
                 }
             }
@@ -121,11 +204,20 @@ async fn scan_new_blocks(
     chain_provider: &Arc<dyn ChainProvider>,
     store: &IndexerStore,
     known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
     let mc_info = chain_provider.get_masterchain_info().await?;
     let mc_target = mc_info.last.seqno;
 
-    scan_masterchain_history(chain_provider, store, known, mc_info.last.shard, mc_target).await
+    scan_masterchain_history(
+        chain_provider,
+        store,
+        known,
+        mc_info.last.shard,
+        mc_target,
+        probe_budget,
+    )
+    .await
 }
 
 /// Advances the index from the masterchain timeline. For every masterchain
@@ -139,6 +231,7 @@ async fn scan_masterchain_history(
     known: &KnownCodeHashes,
     master_shard: i64,
     target_seqno: u32,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
     let master_key = format!("-1:{master_shard}");
     let mut next = store.checkpoint(&master_key)?.saturating_add(1).max(1);
@@ -167,8 +260,17 @@ async fn scan_masterchain_history(
     }
     let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
     while next <= end {
-        let block_hash =
-            scan_one_seqno(chain_provider, store, known, -1, master_shard, next, next).await?;
+        let block_hash = scan_one_seqno(
+            chain_provider,
+            store,
+            known,
+            -1,
+            master_shard,
+            next,
+            next,
+            probe_budget,
+        )
+        .await?;
 
         // Anchor non-masterchain history to this exact masterchain block.
         // Repeated descriptors are skipped by root hash; newly split shards
@@ -191,6 +293,7 @@ async fn scan_masterchain_history(
                     shard.shard,
                     shard.seqno,
                     next,
+                    probe_budget,
                 )
                 .await?;
             }
@@ -220,6 +323,7 @@ async fn scan_shard(
     workchain: i32,
     shard: i64,
     target_seqno: u32,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
     let shard_key = format!("{workchain}:{shard}");
     let mut next = store.checkpoint(&shard_key)?.saturating_add(1).max(1);
@@ -256,8 +360,17 @@ async fn scan_shard(
     let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
 
     while next <= end {
-        let block_hash =
-            scan_one_seqno(chain_provider, store, known, workchain, shard, next, next).await?;
+        let block_hash = scan_one_seqno(
+            chain_provider,
+            store,
+            known,
+            workchain,
+            shard,
+            next,
+            next,
+            probe_budget,
+        )
+        .await?;
         store.set_checkpoint(&shard_key, next)?;
         if let Some(hash) = block_hash {
             store.set_checkpoint_block_hash(&shard_key, &hash)?;
@@ -289,6 +402,7 @@ async fn scan_one_seqno(
     shard: i64,
     seqno: u32,
     observed_mc_seqno: u32,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<Option<String>> {
     let mut addresses: HashSet<String> = HashSet::new();
     let mut block_hash: Option<String> = None;
@@ -447,6 +561,7 @@ async fn scan_one_seqno(
             observed_mc_seqno,
             u64::from(block_gen_utime),
             dns_checkpoint.as_ref(),
+            probe_budget,
         )
         .await
         {
@@ -465,6 +580,7 @@ async fn visit_address(
     observed_mc_seqno: u32,
     block_time: u64,
     dns_checkpoint: Option<&MasterchainCheckpoint>,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
     let existing_kind = store.kind_of(address)?;
     let kind = match existing_kind {
@@ -512,7 +628,8 @@ async fn visit_address(
         )
         .await;
     }
-    decode_and_store(chain_provider, store, address, &kind, seqno, time_format::now()).await
+    decode_and_store(chain_provider, store, address, &kind, seqno, time_format::now(), probe_budget)
+        .await
 }
 
 async fn classify_address(
@@ -539,6 +656,7 @@ async fn decode_and_store(
     kind: &str,
     seqno: u32,
     now: u64,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
     match kind {
         "agent_account" => {
@@ -596,7 +714,15 @@ async fn decode_and_store(
                 .run_get_method(address.to_owned(), "get_service_data", vec![])
                 .await?;
             let data = ServiceActorContract::decode_data(&stack)?;
-            refresh_service_request_lifecycle(chain_provider, store, address, &data, now).await?;
+            refresh_service_request_lifecycle(
+                chain_provider,
+                store,
+                address,
+                &data,
+                now,
+                probe_budget,
+            )
+            .await?;
             store.upsert(&IndexedRecord {
                 address: address.to_owned(),
                 kind: kind.to_owned(),
@@ -720,7 +846,7 @@ async fn decode_and_store(
                 counterparty: None,
                 status: Some(status.to_owned()),
                 deadline: (data.stake_at > 0 && data.stake_held_for > 0)
-                    .then_some(data.stake_at as u64 + data.stake_held_for),
+                    .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
                 last_seqno: seqno,
                 updated_at: now,
                 dto_json: serde_json::to_string(&dto)?,
@@ -977,11 +1103,33 @@ async fn refresh_service_request_lifecycle(
     address: &str,
     data: &contracts::ServiceActorData,
     now: u64,
+    probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
-    let (max_indexed, active) = store.service_requests_for_refresh(address)?;
+    let (max_indexed, stored_rows, active) = store.service_requests_for_refresh(address)?;
+    // `active` is bounded by rows this indexer itself stored (non-terminal
+    // statuses only); the contract cannot inflate it. The *new* id range, by
+    // contrast, comes straight from the contract's own counter, so it is
+    // capped per visit AND by a per-service row budget -- otherwise a
+    // fabricated counter would still grow the database by one capped batch
+    // of not-found rows per visit, forever.
     let mut ids: HashSet<u64> = active.into_iter().map(|r| r.request_id).collect();
-    let first_new = max_indexed.and_then(|id| id.checked_add(1)).unwrap_or(0);
-    ids.extend(first_new..data.next_request_id);
+    let first_new = max_indexed.map_or(0, |id| id.saturating_add(1));
+    let want = MAX_SERVICE_REQUEST_IDS_PER_TICK
+        .min(data.next_request_id.saturating_sub(first_new))
+        .min(MAX_TRACKED_REQUESTS_PER_SERVICE.saturating_sub(stored_rows));
+    let granted = if want > 0 { probe_budget.take(want, now) } else { 0 };
+    let new_range =
+        new_service_request_id_range(max_indexed, stored_rows, data.next_request_id, granted);
+    if want > 0 && new_range.is_empty() {
+        tracing::debug!(
+            service = %address,
+            stored_rows,
+            claimed_next_request_id = data.next_request_id,
+            "service request scan deferred: per-service or global probe budget exhausted"
+        );
+    }
+    let scanned_high_water = if new_range.is_empty() { None } else { Some(new_range.end - 1) };
+    ids.extend(new_range);
     for request_id in ids {
         let old = store.service_request(address, request_id)?;
         let arg = vec![contracts::stack_utils::u64_to_stack_entry(request_id)];
@@ -1070,20 +1218,13 @@ async fn refresh_service_request_lifecycle(
             .into();
             prior
         } else {
-            ServiceRequestLifecycleRecordDto {
-                service_address: address.to_owned(),
-                request_id,
-                status: "resolved_unknown".into(),
-                caller: None,
-                price: None,
-                storage_fee: None,
-                cleanup_bounty: None,
-                response_deadline: None,
-                refund_claim_deadline: None,
-                policy_version: None,
-                request_hash: None,
-                terms_hash: None,
-            }
+            // Never seen before and absent on chain: either it resolved
+            // before we ever observed it, or the contract's counter is
+            // fabricated. Either way a durable row records nothing useful,
+            // and storing one per probed id would let a fabricated counter
+            // grow the table without limit; the scan high-water mark alone
+            // carries the resume position.
+            continue;
         };
         store.upsert_service_request(&ServiceRequestRecord {
             service_address: address.to_owned(),
@@ -1093,7 +1234,76 @@ async fn refresh_service_request_lifecycle(
             dto_json: serde_json::to_string(&dto)?,
         })?;
     }
+    if let Some(high_water) = scanned_high_water {
+        store.set_service_scan_high_water(address, high_water)?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod new_id_range_tests {
+    use super::*;
+
+    #[test]
+    fn resumes_after_the_high_water_mark_in_per_tick_batches() {
+        assert_eq!(new_service_request_id_range(None, 0, 10, u64::MAX), 0..10);
+        assert_eq!(
+            new_service_request_id_range(None, 0, u64::MAX, u64::MAX),
+            0..MAX_SERVICE_REQUEST_IDS_PER_TICK
+        );
+        assert_eq!(
+            new_service_request_id_range(Some(4095), 4096, u64::MAX, u64::MAX),
+            4096..4096 + MAX_SERVICE_REQUEST_IDS_PER_TICK
+        );
+    }
+
+    #[test]
+    fn a_fabricated_counter_cannot_grow_the_index_past_the_service_budget() {
+        // At the budget: no new ids at all, however large the claim.
+        let r = new_service_request_id_range(
+            Some(MAX_TRACKED_REQUESTS_PER_SERVICE - 1),
+            MAX_TRACKED_REQUESTS_PER_SERVICE,
+            u64::MAX,
+            u64::MAX,
+        );
+        assert!(r.is_empty());
+        // Near the budget: only the remainder is scanned.
+        let r = new_service_request_id_range(
+            Some(MAX_TRACKED_REQUESTS_PER_SERVICE - 11),
+            MAX_TRACKED_REQUESTS_PER_SERVICE - 10,
+            u64::MAX,
+            u64::MAX,
+        );
+        assert_eq!(r.end - r.start, 10);
+    }
+
+    #[test]
+    fn the_granted_probe_share_caps_the_batch() {
+        let r = new_service_request_id_range(None, 0, u64::MAX, 7);
+        assert_eq!(r, 0..7);
+        let r = new_service_request_id_range(None, 0, u64::MAX, 0);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn the_global_probe_bucket_grants_at_most_its_refill_per_window() {
+        let bucket = ProbeBudget::new();
+        let a = bucket.take(GLOBAL_SERVICE_PROBE_BUDGET - 100, 1_000_000);
+        assert_eq!(a, GLOBAL_SERVICE_PROBE_BUDGET - 100);
+        let b = bucket.take(4_096, 1_000_000);
+        assert_eq!(b, 100);
+        let c = bucket.take(4_096, 1_000_000);
+        assert_eq!(c, 0);
+        // A later window refills.
+        let d = bucket.take(4_096, 1_000_000 + PROBE_BUDGET_REFILL_SECS);
+        assert_eq!(d, 4_096);
+    }
+
+    #[test]
+    fn high_water_at_max_yields_an_empty_range_instead_of_wrapping() {
+        let r = new_service_request_id_range(Some(u64::MAX), 100, u64::MAX, u64::MAX);
+        assert!(r.is_empty());
+    }
 }
 
 fn task_status_name(status: u8) -> &'static str {
@@ -1655,7 +1865,9 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
+            .await
+            .unwrap();
 
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
         assert_eq!(
@@ -1673,7 +1885,9 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
+            .await
+            .unwrap();
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
         assert_eq!(
             store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
@@ -1685,7 +1899,9 @@ mod tests {
         provider.set(2, &"99".repeat(32));
         provider.set(3, &"33".repeat(32));
 
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 3).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 3, &ProbeBudget::new())
+            .await
+            .unwrap();
 
         // The checkpoint must reflect the corrected chain: re-scanned
         // through the reorged block up to the new head, with the *new*
@@ -1708,7 +1924,16 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        let result = scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5).await;
+        let result = scan_shard(
+            &dyn_provider,
+            &store,
+            &known,
+            0,
+            -9223372036854775808,
+            5,
+            &ProbeBudget::new(),
+        )
+        .await;
         assert!(result.is_err(), "the simulated RPC disruption must propagate as an error");
         assert_eq!(
             store.checkpoint("0:-9223372036854775808").unwrap(),
@@ -1720,7 +1945,9 @@ mod tests {
         // re-scan 1-3 or skip ahead.
         let calls_before_retry = provider.calls_made();
         provider.clear_failure();
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5, &ProbeBudget::new())
+            .await
+            .unwrap();
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 5);
         assert_eq!(
             provider.calls_made() - calls_before_retry,
@@ -1739,7 +1966,9 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
+            .await
+            .unwrap();
         let calls_after_first_scan = provider.calls_made();
 
         // Nothing changed on chain. Re-running against the same target
@@ -1747,7 +1976,9 @@ mod tests {
         // re-checks the checkpoint's block hash still matches -- not a
         // full rescan, and not zero calls either (skipping verification
         // once "done" would miss a reorg that happens afterward).
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2).await.unwrap();
+        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
+            .await
+            .unwrap();
         assert_eq!(provider.calls_made(), calls_after_first_scan + 1);
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
         assert_eq!(
@@ -1769,12 +2000,32 @@ mod tests {
         // Far behind (250 available, checkpoint at 0): must cap at
         // MAX_BLOCKS_PER_TICK in a single call, not consume everything at
         // once and stall the tick loop.
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 250).await.unwrap();
+        scan_shard(
+            &dyn_provider,
+            &store,
+            &known,
+            0,
+            -9223372036854775808,
+            250,
+            &ProbeBudget::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), MAX_BLOCKS_PER_TICK);
 
         // A second call continues from exactly where it left off, without
         // gaps or re-scanning, until the real head is reached.
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 250).await.unwrap();
+        scan_shard(
+            &dyn_provider,
+            &store,
+            &known,
+            0,
+            -9223372036854775808,
+            250,
+            &ProbeBudget::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 250);
     }
 
@@ -1794,7 +2045,7 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
         assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
 
@@ -1806,7 +2057,7 @@ mod tests {
         provider.set_on(0, shard_b, 1, &"dd".repeat(32));
         provider.set_shards(&[(0, shard_b, 1)]);
 
-        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
 
         // The new shard is scanned from its own reported head with no
         // prior checkpoint -- it starts fresh, exactly as a genuinely new
@@ -1833,7 +2084,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
 
         assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 900);
         assert!(store.explorer_block_root(0, child_shard, 900).unwrap().is_some());
@@ -1855,7 +2106,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known).await.unwrap();
+        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
 
         assert_eq!(provider.calls_made(), 1, "only the masterchain block is queryable");
         assert_eq!(store.checkpoint(&format!("0:{}", i64::MIN)).unwrap(), 0);
@@ -2095,6 +2346,7 @@ mod tests {
                 "service_actor",
                 1,
                 now,
+                &ProbeBudget::new(),
             )
             .await
             .unwrap();
@@ -2251,6 +2503,198 @@ mod tests {
             "a genuinely responded request must not be mislabeled swept just because the only \
              observation after it disappeared happened past the deadline"
         );
+    }
+
+    // ─── Hostile contract state must not translate into unbounded work ─────
+
+    /// A [`ChainProvider`] whose `run_get_method` answers "not found" for
+    /// every `get_request`/`get_refund` probe, counting the calls. The
+    /// contract state itself (including `next_request_id`) is supplied
+    /// directly to `refresh_service_request_lifecycle`, so this is enough to
+    /// prove the refresh bounds its own work when the contract's counter is
+    /// arbitrary.
+    struct NotFoundLifecycleProvider {
+        get_method_calls: StdMutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for NotFoundLifecycleProvider {
+        async fn run_get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            anyhow::ensure!(
+                matches!(method, "get_request" | "get_refund"),
+                "unexpected get-method {method}"
+            );
+            *self.get_method_calls.lock().unwrap() += 1;
+            use tl_api::tos::tvm::{
+                Number, StackEntry, numberdecimal::NumberDecimal, stackentry::StackEntryNumber,
+            };
+            // `found = 0`: decode_request/decode_refund both stop at the flag.
+            Ok(TvmStackParser::new(vec![StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+                number: Number::Tvm_NumberDecimal(NumberDecimal { number: "0".to_owned() }),
+            })]))
+        }
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("not exercised")
+        }
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            anyhow::bail!("not exercised")
+        }
+    }
+
+    fn service_actor_data_with_next_request_id(
+        next_request_id: u64,
+    ) -> contracts::ServiceActorData {
+        contracts::ServiceActorData {
+            owner: addr(1),
+            active: true,
+            policy_version: 0,
+            price_per_call: 10,
+            storage_fee: 100_000_000,
+            cleanup_bounty: 100_000_000,
+            response_sla: 3_600,
+            refund_claim_window: 3_600,
+            open_access: true,
+            authorized_caller: None,
+            rate_limit_per_day: 0,
+            metadata_hash: [0; 32],
+            proof_scheme_hash: [0; 32],
+            attestor_pubkey: None,
+            next_request_id,
+            pending_count: 0,
+            live_count: 0,
+            withdrawable_revenue: 0,
+            locked_storage_fees: 0,
+            pending_liability: 0,
+            refundable_liability: 0,
+            call_day: 0,
+            calls_today: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hostile_next_request_id_only_materialises_a_bounded_batch_per_visit() {
+        let provider = Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
+        let store = IndexerStore::open_in_memory().unwrap();
+        // The counter is contract-controlled state: a deployer can report any
+        // value, so the largest possible one must still yield a bounded tick.
+        let data = service_actor_data_with_next_request_id(u64::MAX);
+
+        let probe_budget = ProbeBudget::new();
+        refresh_service_request_lifecycle(
+            &provider_dyn,
+            &store,
+            "-1:service",
+            &data,
+            1_000,
+            &probe_budget,
+        )
+        .await
+        .unwrap();
+
+        let cap = MAX_SERVICE_REQUEST_IDS_PER_TICK as usize;
+        assert_eq!(
+            *provider.get_method_calls.lock().unwrap(),
+            cap * 2,
+            "each id in the capped batch is probed once with get_request and once with \
+             get_refund; nothing beyond the cap may be touched"
+        );
+        let (max_indexed, stored, active) =
+            store.service_requests_for_refresh("-1:service").unwrap();
+        assert_eq!(
+            max_indexed,
+            Some(MAX_SERVICE_REQUEST_IDS_PER_TICK - 1),
+            "the scan high-water mark advances to the end of the capped batch"
+        );
+        assert_eq!(
+            stored, 0,
+            "ids probed and found absent must not become durable rows: a fabricated \
+             counter would otherwise grow the table by one batch per visit forever"
+        );
+        assert!(active.is_empty());
+
+        // A later visit resumes from the persisted high-water mark: progress
+        // stays monotonic across capped batches, still without storing rows.
+        refresh_service_request_lifecycle(
+            &provider_dyn,
+            &store,
+            "-1:service",
+            &data,
+            1_001,
+            &probe_budget,
+        )
+        .await
+        .unwrap();
+        let (max_indexed, stored, _) = store.service_requests_for_refresh("-1:service").unwrap();
+        assert_eq!(max_indexed, Some(2 * MAX_SERVICE_REQUEST_IDS_PER_TICK - 1));
+        assert_eq!(stored, 0);
+        assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
+
+        // Once the global probe bucket is drained, further visits do no
+        // chain reads at all until the next refill window.
+        let _ = probe_budget.take(u64::MAX, 1_001);
+        refresh_service_request_lifecycle(
+            &provider_dyn,
+            &store,
+            "-1:service",
+            &data,
+            1_002,
+            &probe_budget,
+        )
+        .await
+        .unwrap();
+        assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
     }
 }
 

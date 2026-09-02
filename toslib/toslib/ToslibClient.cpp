@@ -436,6 +436,10 @@ class AccountState {
     guess_type();
   }
 
+  void set_chain_global_id(td::int32 global_id) {
+    global_id_ = global_id;
+  }
+
   auto to_uninited_accountState() const {
     return toslib_api::make_object<toslib_api::uninited_accountState>(raw().frozen_hash);
   }
@@ -3297,7 +3301,10 @@ td::Result<ToslibClient::FullConfig> ToslibClient::validate_config(toslib_api::o
   res.config = std::move(new_config);
   res.use_callbacks_for_network = config->use_callbacks_for_network_;
   res.wallet_id = td::as<td::uint32>(res.config.zero_state_id.root_hash.as_slice().data());
-  res.global_id = 1;  // TOS mainnet global_id; overridden by actual chain config at runtime
+  // Seed with the mainnet global_id: the global config JSON carries no global
+  // id, so the real value is learned from the proof-checked masterchain state
+  // (see with_last_config) before wallet states are handed out for signing.
+  res.global_id = 1;
   res.rwallet_init_public_key = "Puasxr0QfFZZnYISRphVse7XHKfW7pZU5SJarVHXvQ+rpzkD";
   res.last_state_key = std::move(last_state_key);
   res.last_state = std::move(state);
@@ -3310,6 +3317,7 @@ void ToslibClient::set_config(FullConfig full_config) {
   config_generation_++;
   wallet_id_ = full_config.wallet_id;
   global_id_ = full_config.global_id;
+  chain_global_id_synced_ = false;
   rwallet_init_public_key_ = full_config.rwallet_init_public_key;
   last_state_key_ = full_config.last_state_key;
 
@@ -3318,6 +3326,23 @@ void ToslibClient::set_config(FullConfig full_config) {
   init_last_block(std::move(full_config.last_state));
   init_last_config();
   client_.set_client(get_client_ref());
+}
+
+void ToslibClient::with_last_config(td::Promise<LastConfigState> promise) {
+  client_.with_last_config([this, promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
+    if (r_state.is_ok()) {
+      auto chain_global_id = r_state.ok().global_id;
+      if (chain_global_id != 0) {
+        if (chain_global_id != global_id_) {
+          LOG(WARNING) << "Network global_id from chain state (" << chain_global_id
+                       << ") differs from configured default (" << global_id_ << "); using the chain value";
+          global_id_ = chain_global_id;
+        }
+        chain_global_id_synced_ = true;
+      }
+    }
+    promise.set_result(std::move(r_state));
+  });
 }
 
 td::Status ToslibClient::do_request(const toslib_api::close& request,
@@ -4750,8 +4775,8 @@ td::Status ToslibClient::do_request(const toslib_api::query_estimateFees& reques
     return ToslibError::InvalidQueryId();
   }
 
-  client_.with_last_config([this, id = request.id_, ignore_chksig = request.ignore_chksig_,
-                            promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
+  with_last_config([this, id = request.id_, ignore_chksig = request.ignore_chksig_,
+                    promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
     this->query_estimate_fees(id, ignore_chksig, std::move(r_state), std::move(promise));
   });
   return td::Status::OK();
@@ -5295,8 +5320,8 @@ td::Status ToslibClient::do_request(const toslib_api::smc_runGetMethod& request,
   args.set_now(it->second->get_sync_time());
   args.set_address(it->second->get_address());
 
-  client_.with_last_config([self = this, smc = std::move(smc), args = std::move(args),
-                            promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
+  with_last_config([self = this, smc = std::move(smc), args = std::move(args),
+                    promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
     TRY_RESULT_PROMISE(promise, state, std::move(r_state));
     args.set_config(state.config);
     args.set_prev_blocks_info(state.prev_blocks_info);
@@ -5948,6 +5973,26 @@ toslib_api::object_ptr<toslib_api::Object> ToslibClient::do_static_request(
 
 td::Status ToslibClient::do_request(int_api::GetAccountState request,
                                     td::Promise<td::unique_ptr<AccountState>>&& promise) {
+  if (chain_global_id_synced_) {
+    finish_get_account_state(std::move(request), std::move(promise));
+    return td::Status::OK();
+  }
+  // Account states seed wallet signing with the network global_id, so confirm
+  // it against the proof-checked masterchain state before building the first
+  // one. On failure keep the configured default rather than blocking reads.
+  with_last_config(
+      [this, request = std::move(request), promise = std::move(promise)](td::Result<LastConfigState> r_state) mutable {
+        if (r_state.is_error()) {
+          LOG(WARNING) << "cannot confirm network global_id against chain state, keeping configured value "
+                       << global_id_ << ": " << r_state.error();
+        }
+        finish_get_account_state(std::move(request), std::move(promise));
+      });
+  return td::Status::OK();
+}
+
+void ToslibClient::finish_get_account_state(int_api::GetAccountState request,
+                                            td::Promise<td::unique_ptr<AccountState>> promise) {
   auto actor_id = actor_id_++;
   actors_[actor_id] = td::actor::create_actor<GetRawAccountState>(
       "GetAccountState", client_.get_client(), request.address, std::move(request.block_id),
@@ -5960,7 +6005,6 @@ td::Status ToslibClient::do_request(int_api::GetAccountState request,
         }
         return res;
       }));
-  return td::Status::OK();
 }
 
 td::Status ToslibClient::do_request(int_api::GetAccountStateByTransaction request,
@@ -5968,7 +6012,12 @@ td::Status ToslibClient::do_request(int_api::GetAccountStateByTransaction reques
   auto actor_id = actor_id_++;
   actors_[actor_id] =
       td::actor::create_actor<RunEmulator>("RunEmulator", client_.get_client(), request, actor_shared(this, actor_id),
-                                           promise.wrap([](auto&& state) { return std::move(state); }));
+                                           promise.wrap([global_id = global_id_](auto&& state) {
+                                             // The emulator builds the state without client context;
+                                             // stamp the cached network global_id for wallet signing.
+                                             state->set_chain_global_id(global_id);
+                                             return std::move(state);
+                                           }));
   return td::Status::OK();
 }
 
@@ -5987,7 +6036,7 @@ td::Status ToslibClient::do_request(int_api::GetPrivateKey request, td::Promise<
 }
 
 td::Status ToslibClient::do_request(int_api::GetDnsResolver request, td::Promise<block::StdAddress>&& promise) {
-  client_.with_last_config(promise.wrap([](auto&& state) mutable -> td::Result<block::StdAddress> {
+  with_last_config(promise.wrap([](auto&& state) mutable -> td::Result<block::StdAddress> {
     TRY_RESULT_PREFIX(addr, TRY_VM(state.config->get_dns_root_addr()),
                       ToslibError::Internal("get dns root addr from config: "));
     return block::StdAddress(tos::masterchainId, addr);

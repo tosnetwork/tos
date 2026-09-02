@@ -1,3 +1,13 @@
+# Pure, actor-free parsers for chain data served through JSON-RPC. Kept in a
+# separate library so they can be unit tested with hostile inputs
+# (see test/test-json-rpc-parse.cpp).
+add_library(json-rpc-parse STATIC
+  json-rpc-server-parse.h
+  json-rpc-server-parse.cpp
+)
+target_include_directories(json-rpc-parse PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils)
+
 set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server.h
   json-rpc-server-internal.h
@@ -34,7 +44,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
-target_link_libraries(validator-engine smc-envelope)
+target_link_libraries(validator-engine smc-envelope json-rpc-parse)
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)

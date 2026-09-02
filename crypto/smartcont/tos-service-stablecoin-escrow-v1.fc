@@ -1,5 +1,12 @@
 ;; TOS Service Protocol fixed-price stablecoin escrow v1.
 ;;
+;; DEPRECATED — superseded by tos-service-stablecoin-escrow-v2. This version
+;; throws on a transfer notification whose sender is not the derived own
+;; wallet, AFTER the jettons were credited: a jetton whose wallet-data layout
+;; differs from the assumed one permanently orphans the funding. v2 returns
+;; the funds instead. Do not commit new quotes to this code hash; the source
+;; and frozen artifact remain only so historical deployments stay auditable.
+;;
 ;; One finalized escrow account is the canonical Accepted Quote, custody and
 ;; settlement authority. It supports exactly one stablecoin transfer per
 ;; terminal transition: full release or full timeout refund.

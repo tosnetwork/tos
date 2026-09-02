@@ -31,7 +31,7 @@ The generated config contains the `http.auth` section but no users:
     "bind": "0.0.0.0:8080",
     "enable_swagger": true,
     "auth": {
-      "operator_token_ttl": 2592000,
+      "operator_token_ttl": 86400,
       "nominator_token_ttl": 86400,
       "min_password_length": 8
     }
@@ -134,8 +134,10 @@ Each role has an independent token lifetime. The TTL determines how long a JWT r
 
 | Role | Default TTL | Seconds |
 |------|-------------|---------|
-| `operator` | 30 days | 2 592 000 |
-| `nominator` | 1 day | 86 400 |
+| `operator` | 24 hours | 86 400 |
+| `nominator` | 24 hours | 86 400 |
+
+A stolen bearer token can be replayed until it expires, so the defaults are deliberately short. Configuring a longer TTL is possible (see below) but should be an explicit, considered decision.
 
 ### View current TTLs
 
@@ -145,7 +147,7 @@ The values are stored in `http.auth` inside `config.json`:
 {
   "http": {
     "auth": {
-      "operator_token_ttl": 2592000,
+      "operator_token_ttl": 86400,
       "nominator_token_ttl": 86400
     }
   }

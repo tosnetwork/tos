@@ -6,6 +6,12 @@
 builder store_fees(builder b, (int, int, int) fees) inline {
   (int flat_reward, int network_fee, int factor) = fees;
   throw_if(391, factor > 10000);
+  ;; Every accepted swap pays a fixed 0.1 receipt out of the bridge balance
+  ;; (see create_swap_from_tos). The network fee must cover that receipt plus
+  ;; headroom for forwarding costs, or every swap would drain the bridge by
+  ;; the shortfall. Rejecting such a configuration here means no vote can
+  ;; ever install a fee schedule that makes swaps lossy for the bridge.
+  throw_unless(392, network_fee >= 110000000); ;; 0.1 receipt + 0.01 headroom
   return b.store_coins(flat_reward).store_coins(network_fee).store_uint(factor, 14);
 }
 
@@ -35,12 +41,20 @@ int calculate_fee(int msg_value, fees) impure {
 () create_swap_from_tos(int destination_address, int amount, slice s_addr, int query_id, int is_text) impure {
     (int state_flags, int total_locked, slice collector_address, var fees) = load_data();
     throw_if(339, state_flags & 1);
+    ;; A zero destination is unspendable on the external chain: wrapped coins
+    ;; minted to it are burned forever while the native coins stay locked.
+    throw_unless(307, destination_address != 0);
     int fee = calculate_fee(amount, fees);
     amount -= fee;
     throw_unless(306, amount > 0);
     total_locked += amount;
     emit_log_simple(0xc0470ccf, begin_cell().store_uint(destination_address, 160).store_uint(amount, 64).end_cell().begin_parse());
     save_data(state_flags, total_locked, collector_address, fees);
+    ;; The 0.1 receipt below is paid from the bridge balance (mode 3). It is
+    ;; funded by the fee retained above: store_fees guarantees
+    ;; network_fee >= 110000000, and calculate_fee charges at least
+    ;; network_fee, so every accepted swap leaves the bridge with more than
+    ;; the receipt costs and the balance backing total_locked never shrinks.
     if(is_text) {
       return send_text_receipt_message(s_addr, 100000000, 3);
     } else {
@@ -96,13 +110,28 @@ int calculate_fee(int msg_value, fees) impure {
 
   } elseif (operation == 4) { ;; migrate
 
+    ;; Move the locked funds to the bridge address currently named by the
+    ;; network configuration. The message is bounceable and carries exactly
+    ;; total_locked (mode 1: fees are paid on top, from the bridge's own
+    ;; balance). The receiving bridge credits its total_locked in its 0xf00d
+    ;; branch; if the destination rejects the message, the bounce handler in
+    ;; recv_internal re-credits the returned value here, so a failed migrate
+    ;; leaves the funds locked instead of stranding them as sweepable
+    ;; balance. A destination that accepts the message but does not
+    ;; implement 0xf00d still keeps the coins, so pointing the configuration
+    ;; at a wrong contract remains an oracle-quorum responsibility.
     var msg = begin_cell()
       .store_uint(0x18, 6) ;; bounceable
       .store_uint(4, 3).store_int(-1, 8).store_uint(bridge_address, 256)
       .store_coins(total_locked)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-      .store_uint(0xf00d, 32); ;; new bridge contract should recognize this opcode
+      .store_uint(0xf00d, 32) ;; new bridge contract should recognize this opcode
+      .store_coins(total_locked); ;; echoed back in a bounce, for exact restoration
     send_raw_message(msg.end_cell(), 1);
+    ;; The funds are no longer backed by this contract's balance. Zeroing the
+    ;; counter keeps the invariant balance >= total_locked and stops a later
+    ;; reward sweep (operation 5) from reserving coins that already left.
+    total_locked = 0;
 
   } elseif (operation == 5) { ;; get reward
 
@@ -132,13 +161,50 @@ int calculate_fee(int msg_value, fees) impure {
   var cs = in_msg_cell.begin_parse();
   var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   if (flags & 1) {
-    ;; ignore all bounced messages
+    ;; Bounced messages are ignored, with one exception: a bounced migration
+    ;; transfer. When the migrate operation's 0xf00d message is rejected by
+    ;; its destination, the value comes back here and must be locked again —
+    ;; otherwise it would sit in the plain balance where a reward sweep
+    ;; (operation 5) could move it to the collector. Crediting msg_value is
+    ;; safe from any source: the balance and total_locked rise by the same
+    ;; amount, so the coins are genuinely locked. (The returned value is the
+    ;; sent amount net of forwarding fees, which only lowers total_locked
+    ;; relative to the balance, never above it.)
+    if (in_msg.slice_bits() >= 64) {
+      in_msg~load_uint(32); ;; bounce marker 0xffffffff
+      if (in_msg~load_uint(32) == 0xf00d) {
+        (int state_flags, int total_locked, slice collector_address, var fees) = load_data();
+        ;; The bounced value is the sent amount minus the bounce forwarding
+        ;; fee, so crediting msg_value would understate the liability a
+        ;; little more on every failed migration. The migrate body carries
+        ;; the exact amount, the bounce echoes the body, and a bounced flag
+        ;; cannot be forged, so the echoed amount is this contract's own
+        ;; record and is restored exactly.
+        int restored = in_msg.slice_bits() >= 4 ? in_msg~load_coins() : msg_value;
+        total_locked += restored;
+        save_data(state_flags, total_locked, collector_address, fees);
+      }
+    }
     return ();
   }
   slice s_addr = cs~load_msg_addr();
   throw_if(299, in_msg.slice_empty?()); ;; inbound message has empty body
-  
+
   int op = in_msg~load_uint(32);
+  if (op == 0xf00d) {
+    ;; Migration credit sent by a previous bridge instance (migrate
+    ;; operation). The attached value becomes locked liquidity backing swaps
+    ;; that were recorded before the migration. Accepting it from any sender
+    ;; is safe: the balance and total_locked rise by the same amount, so
+    ;; nothing becomes spendable that was not paid in, and no other handler
+    ;; keys off this opcode. Without this branch the migrated funds would
+    ;; land as plain balance — sweepable by a reward vote — while the new
+    ;; bridge's total_locked stayed zero and every release failed.
+    (int state_flags, int total_locked, slice collector_address, var fees) = load_data();
+    total_locked += msg_value;
+    save_data(state_flags, total_locked, collector_address, fees);
+    return ();
+  }
   (int bridge_address, int oracles_address, _) = get_bridge_config();
   (int wc, int addr) = parse_std_addr(s_addr);
   var is_oracles = (wc == -1) & (oracles_address == addr);

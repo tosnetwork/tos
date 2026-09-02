@@ -22,6 +22,7 @@ A source fork does **not** inherit an upstream deployment's audit, operational c
 - Wrapped supply is bounded by `2^120 - 1` token units.
 - Oracle signatures must meet the upstream quorum formula, be authorized, and be strictly sorted (preventing duplicates).
 - EVM vote digests include `address(this)` and `block.chainid`.
+- Every signed TOS multisig query names both the deployment (`wallet_id`, exit code 42 on mismatch) and the network it was signed for (a 32-bit signed global id compared against ConfigParam 19 via `GLOBALID`, exit code 44 on mismatch), so a query signed on one TOS network cannot be replayed on another that shares the same StateInit, addresses, and oracle keys.
 - Completed EVM votes cannot be replayed, and an uncompleted governance vote cannot be held back and used later: rotations are bound to the set they replace, and lock/disable nonces must strictly increase.
 - Oracle-set updates reject zero and duplicate members.
 - TOS mint and burn require exact configured fees.

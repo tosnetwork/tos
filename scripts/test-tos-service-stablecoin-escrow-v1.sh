@@ -29,6 +29,8 @@ assert manifest["protocol"] == "tos_service_stablecoin_escrow_v1"
 assert manifest["code_hash"] == "tvm-cell-sha256:c9df2f743534978ad5b521aab8c09c081ff56769769c00ee9e68eac7c681a685"
 assert manifest["boc_sha256"] == "sha256:fdbb52a25b9e43f50cd27e03bbd2020245e2d8b31b76b5ff203454bfbc645048"
 assert manifest["boc_bytes"] == 2020
+assert manifest["status"] == "deprecated"
+assert manifest["superseded_by"] == "tos_service_stablecoin_escrow_v2"
 PY
 
 printf 'TOS Service Protocol stablecoin escrow v1 reproducible build: PASS\n'

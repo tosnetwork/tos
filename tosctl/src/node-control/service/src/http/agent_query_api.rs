@@ -498,6 +498,23 @@ fn validate_indexed_query(query: &IndexedListQuery) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Largest accepted pagination offset. SQLite's OFFSET walks and discards
+/// every skipped row, so an arbitrarily large offset is a cheap way to make
+/// each request do unbounded work; deep history should be reached by
+/// narrowing filters, not by paging past this bound.
+const MAX_PAGE_OFFSET: usize = 100_000;
+
+fn indexed_page(query: &IndexedListQuery) -> Result<(usize, usize), AppError> {
+    let offset = query.offset.unwrap_or(0);
+    if offset > MAX_PAGE_OFFSET {
+        return Err(AppError::bad_request(format!(
+            "offset {offset} exceeds the maximum of {MAX_PAGE_OFFSET}; \
+             narrow the query with filters instead of paging deeper"
+        )));
+    }
+    Ok((offset, query.limit.unwrap_or(100).clamp(1, 1000)))
+}
+
 fn indexed_list_filters(query: &IndexedListQuery) -> crate::indexer::ListFilters<'_> {
     crate::indexer::ListFilters {
         creator: query.creator.as_deref(),
@@ -543,8 +560,7 @@ pub async fn list_disputes(
     Query(query): Query<IndexedListQuery>,
 ) -> Result<axum::Json<DisputeListResponse>, AppError> {
     validate_indexed_query(&query)?;
-    let offset = query.offset.unwrap_or(0);
-    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
         .indexer_store
         .list("dispute", &indexed_list_filters(&query), offset, limit)
@@ -645,8 +661,7 @@ pub async fn list_services(
     Query(query): Query<IndexedListQuery>,
 ) -> Result<axum::Json<ServiceActorListResponse>, AppError> {
     validate_indexed_query(&query)?;
-    let offset = query.offset.unwrap_or(0);
-    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
         .indexer_store
         .list("service_actor", &indexed_list_filters(&query), offset, limit)
@@ -803,8 +818,7 @@ pub async fn list_registry(
     Query(query): Query<IndexedListQuery>,
 ) -> Result<axum::Json<RegistryListResponse>, AppError> {
     validate_indexed_query(&query)?;
-    let offset = query.offset.unwrap_or(0);
-    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
         .indexer_store
         .list("capability_registry", &indexed_list_filters(&query), offset, limit)
@@ -868,6 +882,18 @@ mod tests {
     use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
     use tower::ServiceExt;
 
+    #[test]
+    fn indexed_page_accepts_offsets_up_to_the_cap_and_rejects_beyond_it() {
+        let query = |offset| IndexedListQuery { offset, ..Default::default() };
+        assert_eq!(indexed_page(&query(None)).unwrap(), (0, 100));
+        assert_eq!(indexed_page(&query(Some(MAX_PAGE_OFFSET))).unwrap(), (MAX_PAGE_OFFSET, 100));
+        assert!(indexed_page(&query(Some(MAX_PAGE_OFFSET + 1))).is_err());
+        assert!(
+            indexed_page(&query(Some(usize::MAX))).is_err(),
+            "huge offsets must not reach the store"
+        );
+    }
+
     struct NoopTask;
 
     #[async_trait::async_trait]
@@ -930,6 +956,7 @@ mod tests {
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
             indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            unauthenticated_serving_allowed: true,
         }
     }
 

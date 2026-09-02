@@ -587,8 +587,7 @@ void AdnlPeerPairImpl::create_channel(pubkeys::Ed25519 pub, td::uint32 date) {
     channel_ = R.move_as_ok();
     channel_inited_ = true;
 
-    td::actor::send_closure_later(peer_table_, &AdnlPeerTable::register_channel, channel_in_id_, local_id_,
-                                  channel_.get());
+    td::actor::send_closure(peer_table_, &AdnlPeerTable::register_channel, channel_in_id_, local_id_, channel_.get());
   } else {
     VLOG(ADNL_WARNING) << this << ": failed to create channel: " << R.move_as_error();
   }
@@ -846,6 +845,21 @@ void AdnlPeerPairImpl::update_addr_list(AdnlAddressList addr_list) {
   has_reverse_addr_ = addr_list.has_reverse();
   if (has_reverse_addr_ && addrs.empty()) {
     return;
+  }
+  for (const auto &addr : addrs) {
+    auto r_ip = addr->to_ip_address();
+    if (r_ip.is_error()) {
+      VLOG(ADNL_INFO) << this << ": dropping addr list: unsupported address: " << r_ip.move_as_error();
+      return;
+    }
+    if (r_ip.ok().is_ipv6()) {
+      VLOG(ADNL_INFO) << this << ": dropping addr list: unsupported address: ipv6";
+      return;
+    }
+    if (r_ip.ok().get_port() == 0) {
+      VLOG(ADNL_INFO) << this << ": dropping addr list: unsupported address: port is 0";
+      return;
+    }
   }
   std::vector<Conn> conns;
   auto &old_conns = priority ? priority_conns_ : conns_;

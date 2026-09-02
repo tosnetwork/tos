@@ -246,6 +246,19 @@ impl ClientJsonRpc {
         decode_config_param(config_info, param_id)
     }
 
+    /// Reads the network identity (ConfigParam 19) that wallet contracts
+    /// bind into every signed message. Signed writes go exclusively to the
+    /// primary endpoint, so the identity is read from the primary as well:
+    /// with a failover read, a misconfigured secondary on another network
+    /// could hand back its own id, and the signature would then be valid on
+    /// that other network instead of the one being written to.
+    pub async fn get_global_id(&self) -> anyhow::Result<i32> {
+        match self.get_primary_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => Ok(value as i32),
+            other => anyhow::bail!("config parameter 19 is not a global ID: {other:?}"),
+        }
+    }
+
     async fn get_primary_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
         let config_info = self
             .json_rpc_primary_read("getConfigParam", serde_json::json!({"config_id": param_id}))

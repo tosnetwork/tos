@@ -81,12 +81,12 @@ std::string detect_wallet_type(const vm::CellHash& code_hash) {
     // this entry has to stay reproducible from crypto/smartcont/nominator-pool.
     // scripts/check-nominator-pool-code-lock.sh enforces that.
     {"9A3EC14BC098F6B44064C305222CAEA2800F17DDA85EE6A8198A7095EDE10DCF", "nominator pool v1"},
-    {"84DAFA449F98A6987789BA232358072BC0F76DC4524002A5D0918B9A75D2D599", "wallet v3 r2"},
-    {"FEB5FF6820E2FF0D9483E7E0D62C817D846789FB4AE580C878866D959DABD5C0", "wallet v4 r2"},
-    {"20834B7B72B112147E1B2FB457B84E74D1A30F04F737D4F62A668E9552D2B72F", "wallet v5 r1"},
     {"BCD75D29A1D932013CF31300C5D924A5F02EAA92CD830EC0330104FFBAD07928", "wallet v1 r1"},
+    // Network-bound wallets compiled from crypto/smartcont: each signed body
+    // starts with the network global_id and the code rejects any other value,
+    // so a message signed for one network cannot be replayed on another.
     {"6C6CAAF194AF3660E7AE4C584785C1BDA0D85FAFD80E947D725105947CD11D7D", "wallet v3 r2"},
-    {"E56EFC6C2C9E1DA65C36008E78BAEB9974D2779C05F29EDF4ADF39B4DBABD994", "wallet v4 r2"},
+    {"F15BC24CBC229A1B72CAB39345DB191E761EF913E6D066E76D3836CF1600CB47", "wallet v4 r2"},
     {"E6C006F19FBABCCD0D4852C1CC4CA3C6410914DC86F6611CCF8165CDCAAFC6E0", "wallet v5 r1"},
     {"9CEC5155DCB2B37716C032C5EF85947C01E32C4405A2611EE8D1122AFFF0E0C1", "highload v1"},
     {"DE7D8832DDC838811F940EF0CECBBC95C6CD2CEF83E9D22ABCE5E1A1DBA5638A", "highload v2"},
@@ -411,19 +411,7 @@ static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddr
                     td::Status::Error(PSTRING() << "runSmcMethod exit_code=" << f->exit_code_));
                 return;
               }
-              auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
-              if (cell_r.is_error()) {
-                promise_inner.set_error(td::Status::Error("result BOC parse error"));
-                return;
-              }
-              auto stk = td::make_ref<vm::Stack>();
-              auto result_cell = cell_r.move_as_ok();
-              vm::CellSlice cs = vm::load_cell_slice(result_cell);
-              if (!stk.write().deserialize(cs)) {
-                promise_inner.set_error(td::Status::Error("result stack deserialize error"));
-                return;
-              }
-              promise_inner.set_value(std::move(stk));
+              promise_inner.set_result(parse_get_method_result_stack(f->result_.as_slice()));
             }));
   };
 
@@ -469,15 +457,15 @@ static void fetch_multisig_agent_view(SendQueryFn&& send_query, const AccountCap
               return;
             }
             auto dict_root = public_keys_stack.write().pop_cell();
-            vm::Dictionary dict(std::move(dict_root), 8);
-
+            // The dictionary comes from whatever data the account holds;
+            // anyone can deploy the multisig code with arbitrary data.
+            auto principals_r = parse_multisig_public_keys(std::move(dict_root));
+            if (principals_r.is_error()) {
+              promise.set_error(principals_r.move_as_error_prefix("get_public_keys returned invalid dictionary: "));
+              return;
+            }
             MultisigAgentView view;
-            dict.check_for_each([&](auto cs, auto, auto) {
-              td::SecureString key(32);
-              cs->prefetch_bytes(key.as_mutable_slice().ubegin(), td::narrow_cast<int>(key.size()));
-              view.principals.push_back(PSTRING() << "ed25519:" << td::hex_encode(key.as_slice()));
-              return true;
-            });
+            view.principals = principals_r.move_as_ok();
 
             run_get_method_latest(
                 send_query, addr, "get_n_k",
@@ -569,16 +557,11 @@ template <class SendQueryFn>
 static void fetch_restricted_delegation_view_with_start(SendQueryFn&& send_query,
                                                         const AccountCapabilityContext& ctx,
                                                         td::Promise<RestrictedDelegationView> promise) {
-  // Parse start_at from the data cell: seqno(32) + subwallet_id(32) + public_key(256) + start_at(32)
-  td::uint32 start_at = 0;
-  if (ctx.parsed.data_cell.not_null()) {
-    auto cs = vm::load_cell_slice(ctx.parsed.data_cell);
-    // Skip seqno(32) + subwallet_id(32) + public_key(256) = 320 bits, then read start_at(32)
-    if (cs.have(352)) {
-      cs.advance(320);
-      start_at = static_cast<td::uint32>(cs.fetch_ulong(32));
-    }
-  }
+  // Parse start_at from the data cell: seqno(32) + subwallet_id(32) + public_key(256) + start_at(32).
+  // The data cell is attacker-controlled (the code hash alone selected this
+  // account model), so the parse must not throw on an exotic root.
+  auto start_at_r = parse_restricted_wallet_start_at(ctx.parsed.data_cell);
+  td::uint32 start_at = start_at_r.is_ok() ? start_at_r.move_as_ok() : 0;
 
   fetch_restricted_delegation_view(
       std::forward<SendQueryFn>(send_query), ctx,
@@ -989,10 +972,10 @@ void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::str
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), has_seqno, seqno,
       td::PromiseCreator::lambda(
-          [include_experimental, req_id = std::move(req_id),
+          [cors = opts_.cors_origin, include_experimental, req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
@@ -1000,7 +983,7 @@ void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::str
                 build_account_capability_json(ctx.addr_str, ctx.parsed, ctx.account_model,
                                               ctx.authorization_version, false,
                                               include_experimental),
-                req_id));
+                req_id, cors));
           }));
 }
 
@@ -1027,10 +1010,11 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
       td::PromiseCreator::lambda(
-          [self_id, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+          [cors = opts_.cors_origin, self_id, query_opts = std::move(query_opts), req_id = std::move(req_id),
+           promise = std::move(promise)](
               td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
@@ -1041,7 +1025,7 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                 promise.set_value(make_json_error(
                     -32603,
                     forced_source_error_message(PermissionKind::Delegation, query_opts.source_tier, ctx),
-                    req_id));
+                    req_id, cors));
                 return;
               }
 
@@ -1055,12 +1039,12 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                 fetch_nominator_pool_delegation_view(
                     send_query, ctx,
                     td::PromiseCreator::lambda(
-                        [ctx = std::move(ctx), query_opts = std::move(query_opts),
+                        [cors, ctx = std::move(ctx), query_opts = std::move(query_opts),
                          req_id = std::move(req_id), promise = std::move(promise)](
                             td::Result<NominatorPoolDelegationView> R2) mutable {
                           if (R2.is_error()) {
                             promise.set_value(make_json_error(
-                                -32603, PSTRING() << "getAccountDelegations: " << R2.error().message(), req_id));
+                                -32603, PSTRING() << "getAccountDelegations: " << R2.error().message(), req_id, cors));
                             return;
                           }
                           auto view = R2.move_as_ok();
@@ -1108,7 +1092,7 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                                 status);
                           }
                           sb << "]";
-                          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
                         }));
                 return;
               }
@@ -1116,12 +1100,12 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
               fetch_restricted_delegation_view_with_start(
                   send_query, ctx,
                   td::PromiseCreator::lambda(
-                      [ctx = std::move(ctx), query_opts = std::move(query_opts),
+                      [cors, ctx = std::move(ctx), query_opts = std::move(query_opts),
                        req_id = std::move(req_id), promise = std::move(promise)](
                           td::Result<RestrictedDelegationView> R2) mutable {
                         if (R2.is_error()) {
                           promise.set_value(make_json_error(
-                              -32603, PSTRING() << "getAccountDelegations: " << R2.error().message(), req_id));
+                              -32603, PSTRING() << "getAccountDelegations: " << R2.error().message(), req_id, cors));
                           return;
                         }
                         auto view = R2.move_as_ok();
@@ -1140,12 +1124,12 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                         }
                         if (query_opts.status_filter) {
                           if (query_opts.status_filter.value() != materialized_status) {
-                            promise.set_value(make_json_ok("[]", req_id));
+                            promise.set_value(make_json_ok("[]", req_id, cors));
                             return;
                           }
                         } else if (!query_opts.include_inactive &&
                                    (materialized_status == "expired" || materialized_status == "revoked")) {
-                          promise.set_value(make_json_ok("[]", req_id));
+                          promise.set_value(make_json_ok("[]", req_id, cors));
                           return;
                         }
 
@@ -1175,7 +1159,7 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                             false, 0,
                             false,
                             materialized_status);
-                        promise.set_value(make_json_ok(PSTRING() << "[" << grant << "]", req_id));
+                        promise.set_value(make_json_ok(PSTRING() << "[" << grant << "]", req_id, cors));
                       }));
               return;
             }
@@ -1183,11 +1167,11 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
               promise.set_value(make_json_error(
                   -32603,
                   forced_source_error_message(PermissionKind::Delegation, query_opts.source_tier, ctx),
-                  req_id));
+                  req_id, cors));
               return;
             }
             promise.set_value(make_json_error(
-                -32603, permission_source_error_message("getAccountDelegations", ctx), req_id));
+                -32603, permission_source_error_message("getAccountDelegations", ctx), req_id, cors));
           }));
 }
 
@@ -1214,10 +1198,11 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
       td::PromiseCreator::lambda(
-          [self_id, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+          [cors = opts_.cors_origin, self_id, query_opts = std::move(query_opts), req_id = std::move(req_id),
+           promise = std::move(promise)](
               td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
@@ -1228,7 +1213,7 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
                 promise.set_value(make_json_error(
                     -32603,
                     forced_source_error_message(PermissionKind::Session, query_opts.source_tier, ctx),
-                    req_id));
+                    req_id, cors));
                 return;
               }
 
@@ -1241,12 +1226,12 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
               fetch_session_wallet_view(
                   send_query, ctx,
                   td::PromiseCreator::lambda(
-                      [ctx = std::move(ctx), query_opts = std::move(query_opts),
+                      [cors, ctx = std::move(ctx), query_opts = std::move(query_opts),
                        req_id = std::move(req_id), promise = std::move(promise)](
                           td::Result<SessionWalletView> R2) mutable {
                         if (R2.is_error()) {
                           promise.set_value(make_json_error(
-                              -32603, PSTRING() << "getAccountSessions: " << R2.error().message(), req_id));
+                              -32603, PSTRING() << "getAccountSessions: " << R2.error().message(), req_id, cors));
                           return;
                         }
                         auto view = R2.move_as_ok();
@@ -1300,7 +1285,7 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
                               status);
                         }
                         sb << "]";
-                        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
                       }));
               return;
             }
@@ -1308,11 +1293,11 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
               promise.set_value(make_json_error(
                   -32603,
                   forced_source_error_message(PermissionKind::Session, query_opts.source_tier, ctx),
-                  req_id));
+                  req_id, cors));
               return;
             }
             promise.set_value(make_json_error(
-                -32603, permission_source_error_message("getAccountSessions", ctx), req_id));
+                -32603, permission_source_error_message("getAccountSessions", ctx), req_id, cors));
           }));
 }
 
@@ -1339,10 +1324,11 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
       td::PromiseCreator::lambda(
-          [self_id, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+          [cors = opts_.cors_origin, self_id, query_opts = std::move(query_opts), req_id = std::move(req_id),
+           promise = std::move(promise)](
               td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
@@ -1353,7 +1339,7 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                 promise.set_value(make_json_error(
                     -32603,
                     forced_source_error_message(PermissionKind::Agent, query_opts.source_tier, ctx),
-                    req_id));
+                    req_id, cors));
                 return;
               }
 
@@ -1365,12 +1351,12 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
               fetch_multisig_agent_view(
                   send_query, ctx,
                   td::PromiseCreator::lambda(
-                      [ctx = std::move(ctx), query_opts = std::move(query_opts),
+                      [cors, ctx = std::move(ctx), query_opts = std::move(query_opts),
                        req_id = std::move(req_id), promise = std::move(promise)](
                           td::Result<MultisigAgentView> R2) mutable {
                         if (R2.is_error()) {
                           promise.set_value(make_json_error(
-                              -32603, PSTRING() << "getAccountAgents: " << R2.error().message(), req_id));
+                              -32603, PSTRING() << "getAccountAgents: " << R2.error().message(), req_id, cors));
                           return;
                         }
                         auto view = R2.move_as_ok();
@@ -1381,12 +1367,12 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                         std::string materialized_status = "active";
                         if (query_opts.status_filter) {
                           if (query_opts.status_filter.value() != materialized_status) {
-                            promise.set_value(make_json_ok("[]", req_id));
+                            promise.set_value(make_json_ok("[]", req_id, cors));
                             return;
                           }
                         } else if (!query_opts.include_inactive &&
                                    (materialized_status == "expired" || materialized_status == "revoked")) {
-                          promise.set_value(make_json_ok("[]", req_id));
+                          promise.set_value(make_json_ok("[]", req_id, cors));
                           return;
                         }
                         td::StringBuilder sb;
@@ -1415,7 +1401,7 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                               materialized_status);
                         }
                         sb << "]";
-                        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
                       }));
               return;
             }
@@ -1423,11 +1409,11 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
               promise.set_value(make_json_error(
                   -32603,
                   forced_source_error_message(PermissionKind::Agent, query_opts.source_tier, ctx),
-                  req_id));
+                  req_id, cors));
               return;
             }
             promise.set_value(make_json_error(
-                -32603, permission_source_error_message("getAccountAgents", ctx), req_id));
+                -32603, permission_source_error_message("getAccountAgents", ctx), req_id, cors));
           }));
 }
 
@@ -1446,19 +1432,19 @@ void JsonRpcServer::validate_delegation_and_return_intent(
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
       td::PromiseCreator::lambda(
-          [self_id, delegation_ref = std::move(delegation_ref),
+          [cors = opts_.cors_origin, self_id, delegation_ref = std::move(delegation_ref),
            intent_json = std::move(intent_json),
            req_id = std::move(req_id), promise = std::move(promise)](
               td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             if (!supports_account_standard_delegations(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
                   PSTRING() << "DELEGATION_UNAVAILABLE: account_model=" << ctx.account_model
-                      << " does not support delegation inspection", req_id));
+                      << " does not support delegation inspection", req_id, cors));
               return;
             }
 
@@ -1472,13 +1458,13 @@ void JsonRpcServer::validate_delegation_and_return_intent(
               fetch_restricted_delegation_view_with_start(
                   send_query, ctx,
                   td::PromiseCreator::lambda(
-                      [ctx = std::move(ctx), delegation_ref = std::move(delegation_ref),
+                      [cors, ctx = std::move(ctx), delegation_ref = std::move(delegation_ref),
                        intent_json = std::move(intent_json),
                        req_id = std::move(req_id), promise = std::move(promise)](
                           td::Result<RestrictedDelegationView> R2) mutable {
                         if (R2.is_error()) {
                           promise.set_value(make_json_error(-32603,
-                              PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id));
+                              PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id, cors));
                           return;
                         }
                         auto view = R2.move_as_ok();
@@ -1486,12 +1472,12 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                         if (delegation_ref != expected_id) {
                           promise.set_value(make_json_error(-32603,
                               PSTRING() << "DELEGATION_UNAVAILABLE: delegation_ref=" << delegation_ref
-                                  << " does not match the restricted delegation id", req_id));
+                                  << " does not match the restricted delegation id", req_id, cors));
                           return;
                         }
                         if (view.available_balance >= view.full_balance) {
                           promise.set_value(make_json_error(-32603,
-                              "DELEGATION_EXPIRED: the restricted wallet vesting has fully released", req_id));
+                              "DELEGATION_EXPIRED: the restricted wallet vesting has fully released", req_id, cors));
                           return;
                         }
                         // Validate not_before: if start_at > 0 and sync_utime < start_at
@@ -1499,11 +1485,11 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                           promise.set_value(make_json_error(-32603,
                               PSTRING() << "DELEGATION_SCOPE_VIOLATION: not_before constraint not met"
                                   << " (vesting_start=" << view.start_at
-                                  << ", current_time=" << ctx.parsed.sync_utime << ")", req_id));
+                                  << ", current_time=" << ctx.parsed.sync_utime << ")", req_id, cors));
                           return;
                         }
                         // Delegation is active and constraints are met
-                        promise.set_value(make_json_ok(intent_json, req_id));
+                        promise.set_value(make_json_ok(intent_json, req_id, cors));
                       }));
               return;
             }
@@ -1512,13 +1498,13 @@ void JsonRpcServer::validate_delegation_and_return_intent(
               fetch_nominator_pool_delegation_view(
                   send_query, ctx,
                   td::PromiseCreator::lambda(
-                      [ctx = std::move(ctx), delegation_ref = std::move(delegation_ref),
+                      [cors, ctx = std::move(ctx), delegation_ref = std::move(delegation_ref),
                        intent_json = std::move(intent_json),
                        req_id = std::move(req_id), promise = std::move(promise)](
                           td::Result<NominatorPoolDelegationView> R2) mutable {
                         if (R2.is_error()) {
                           promise.set_value(make_json_error(-32603,
-                              PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id));
+                              PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id, cors));
                           return;
                         }
                         auto view = R2.move_as_ok();
@@ -1530,7 +1516,7 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                             found = true;
                             if (view.nominators[i].withdraw_requested) {
                               promise.set_value(make_json_error(-32603,
-                                  "DELEGATION_REVOKED: the nominator has submitted a withdraw request", req_id));
+                                  "DELEGATION_REVOKED: the nominator has submitted a withdraw request", req_id, cors));
                               return;
                             }
                             break;
@@ -1539,17 +1525,17 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                         if (!found) {
                           promise.set_value(make_json_error(-32603,
                               PSTRING() << "DELEGATION_UNAVAILABLE: delegation_ref=" << delegation_ref
-                                  << " not found in pool", req_id));
+                                  << " not found in pool", req_id, cors));
                           return;
                         }
-                        promise.set_value(make_json_ok(intent_json, req_id));
+                        promise.set_value(make_json_ok(intent_json, req_id, cors));
                       }));
               return;
             }
 
             // Shouldn't reach here if supports_account_standard_delegations is correct
             promise.set_value(make_json_error(-32603,
-                "DELEGATION_UNAVAILABLE: unhandled account model", req_id));
+                "DELEGATION_UNAVAILABLE: unhandled account model", req_id, cors));
           }));
 }
 
@@ -1786,27 +1772,27 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
       td::PromiseCreator::lambda(
-          [grant = std::move(grant), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, grant = std::move(grant), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             if (account_model_has_immutable_delegations(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_immutable_message("grantAccountDelegation", ctx), req_id));
+                  lifecycle_immutable_message("grantAccountDelegation", ctx), req_id, cors));
               return;
             }
             if (!account_model_supports_delegation_lifecycle(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_unsupported_message("grantAccountDelegation", ctx), req_id));
+                  lifecycle_unsupported_message("grantAccountDelegation", ctx), req_id, cors));
               return;
             }
             auto validation_r = validate_nominator_lifecycle_grant(grant);
             if (validation_r.is_error()) {
               promise.set_value(make_json_error(
-                  -32602, validation_r.move_as_error().message().str(), req_id));
+                  -32602, validation_r.move_as_error().message().str(), req_id, cors));
               return;
             }
 
@@ -1835,7 +1821,7 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
                 "grantAccountDelegation", ctx.account_model,
                 intent_json, preview,
                 "projected: principal is derived from request grantee, not from on-chain state");
-            promise.set_value(make_json_ok(result, req_id));
+            promise.set_value(make_json_ok(result, req_id, cors));
           }));
 }
 
@@ -1860,21 +1846,21 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,
       td::PromiseCreator::lambda(
-          [self_id, revoke = std::move(revoke), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, self_id, revoke = std::move(revoke), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             if (account_model_has_immutable_delegations(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_immutable_message("revokeAccountDelegation", ctx), req_id));
+                  lifecycle_immutable_message("revokeAccountDelegation", ctx), req_id, cors));
               return;
             }
             if (!account_model_supports_delegation_lifecycle(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_unsupported_message("revokeAccountDelegation", ctx), req_id));
+                  lifecycle_unsupported_message("revokeAccountDelegation", ctx), req_id, cors));
               return;
             }
             auto send_query2 = [self_id](td::BufferSlice query, td::Promise<td::BufferSlice> p) mutable {
@@ -1884,12 +1870,12 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
             fetch_nominator_pool_delegation_view(
                 send_query2, ctx,
                 td::PromiseCreator::lambda(
-                    [ctx = std::move(ctx), revoke = std::move(revoke),
+                    [cors, ctx = std::move(ctx), revoke = std::move(revoke),
                      req_id = std::move(req_id), promise = std::move(promise)](
                         td::Result<NominatorPoolDelegationView> R2) mutable {
                       if (R2.is_error()) {
                         promise.set_value(make_json_error(
-                            -32603, PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id));
+                            -32603, PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id, cors));
                         return;
                       }
                       auto view = R2.move_as_ok();
@@ -1906,14 +1892,14 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
                             -32603,
                             PSTRING() << "DELEGATION_UNAVAILABLE: permission_id=" << revoke.permission_id
                                       << " not found in pool",
-                            req_id));
+                            req_id, cors));
                         return;
                       }
                       if (matched->withdraw_requested) {
                         promise.set_value(make_json_error(
                             -32603,
                             "DELEGATION_REVOKED: the nominator has already submitted a withdraw request",
-                            req_id));
+                            req_id, cors));
                         return;
                       }
 
@@ -1944,7 +1930,7 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
                       auto result = build_mutation_result_json(
                           "revokeAccountDelegation", ctx.account_model,
                           intent_json, preview);
-                      promise.set_value(make_json_ok(result, req_id));
+                      promise.set_value(make_json_ok(result, req_id, cors));
                     }));
           }));
 }
@@ -1970,16 +1956,16 @@ void JsonRpcServer::handle_grantAccountSession(td::JsonObject &params, std::stri
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
       td::PromiseCreator::lambda(
-          [grant = std::move(grant), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, grant = std::move(grant), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             // No account model currently supports session lifecycle
             promise.set_value(make_json_error(-32603,
-                lifecycle_unsupported_message("grantAccountSession", ctx), req_id));
+                lifecycle_unsupported_message("grantAccountSession", ctx), req_id, cors));
           }));
 }
 
@@ -2004,16 +1990,16 @@ void JsonRpcServer::handle_revokeAccountSession(td::JsonObject &params, std::str
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,
       td::PromiseCreator::lambda(
-          [revoke = std::move(revoke), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, revoke = std::move(revoke), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             // No account model currently supports session lifecycle
             promise.set_value(make_json_error(-32603,
-                lifecycle_unsupported_message("revokeAccountSession", ctx), req_id));
+                lifecycle_unsupported_message("revokeAccountSession", ctx), req_id, cors));
           }));
 }
 
@@ -2038,21 +2024,21 @@ void JsonRpcServer::handle_grantAccountAgent(td::JsonObject &params, std::string
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
       td::PromiseCreator::lambda(
-          [grant = std::move(grant), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, grant = std::move(grant), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             if (account_model_has_immutable_agents(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_immutable_message("grantAccountAgent", ctx), req_id));
+                  lifecycle_immutable_message("grantAccountAgent", ctx), req_id, cors));
               return;
             }
             // No account model currently supports agent lifecycle beyond immutable
             promise.set_value(make_json_error(-32603,
-                lifecycle_unsupported_message("grantAccountAgent", ctx), req_id));
+                lifecycle_unsupported_message("grantAccountAgent", ctx), req_id, cors));
           }));
 }
 
@@ -2077,21 +2063,21 @@ void JsonRpcServer::handle_revokeAccountAgent(td::JsonObject &params, std::strin
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,
       td::PromiseCreator::lambda(
-          [revoke = std::move(revoke), req_id = std::move(req_id),
+          [cors = opts_.cors_origin, revoke = std::move(revoke), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id, cors));
               return;
             }
             auto ctx = R.move_as_ok();
             if (account_model_has_immutable_agents(ctx.account_model)) {
               promise.set_value(make_json_error(-32603,
-                  lifecycle_immutable_message("revokeAccountAgent", ctx), req_id));
+                  lifecycle_immutable_message("revokeAccountAgent", ctx), req_id, cors));
               return;
             }
             // No account model currently supports agent lifecycle beyond immutable
             promise.set_value(make_json_error(-32603,
-                lifecycle_unsupported_message("revokeAccountAgent", ctx), req_id));
+                lifecycle_unsupported_message("revokeAccountAgent", ctx), req_id, cors));
           }));
 }
 
@@ -2109,7 +2095,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
   td::int32 req_seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
   auto self_id = actor_id(this);
-  auto do_get_account = [addr, self_id](
+  auto do_get_account = [cors = opts_.cors_origin, addr, self_id](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
       std::string req_id_inner, td::Promise<HttpReturn> promise_inner) mutable {
     auto saved_wc = block_id->workchain_;
@@ -2130,7 +2116,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
     td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
         std::move(query),
         td::PromiseCreator::lambda(
-            [addr, block_id_wc = saved_wc, block_id_shard = saved_shard,
+            [cors, addr, block_id_wc = saved_wc, block_id_shard = saved_shard,
              block_id_seqno = saved_seqno, block_id_root = saved_root,
              block_id_file = saved_file,
              req_id_inner = std::move(req_id_inner), self_id,
@@ -2138,7 +2124,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
                 td::Result<td::BufferSlice> R) mutable {
       if (R.is_error()) {
         promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "getAccountState: " << R.error(), req_id_inner));
+            PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors));
         return;
       }
 
@@ -2146,14 +2132,14 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
           R.move_as_ok(), true);
       if (F.is_error()) {
         promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse accountState: " << F.error(), req_id_inner));
+            PSTRING() << "parse accountState: " << F.error(), req_id_inner, cors));
         return;
       }
       auto f = F.move_as_ok();
       auto parsed_r = ParsedAccountState::parse(f, addr);
       if (parsed_r.is_error()) {
         promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse account: " << parsed_r.error(), req_id_inner));
+            PSTRING() << "parse account: " << parsed_r.error(), req_id_inner, cors));
         return;
       }
       auto parsed = parsed_r.move_as_ok();
@@ -2168,7 +2154,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         promise_inner.set_value(make_json_ok(
             build_wallet_json(false, parsed.balance, parsed.state_str, "",
                               -1, parsed.last_trans_lt, parsed.last_trans_hash_b64),
-            req_id_inner));
+            req_id_inner, cors));
         return;
       }
 
@@ -2181,7 +2167,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         promise_inner.set_value(make_json_ok(
             build_wallet_json(true, parsed.balance, parsed.state_str, wallet_type,
                               -1, parsed.last_trans_lt, parsed.last_trans_hash_b64),
-            req_id_inner));
+            req_id_inner, cors));
         return;
       }
 
@@ -2200,7 +2186,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
           std::move(run_query),
           td::PromiseCreator::lambda(
-              [balance = parsed.balance, account_state = parsed.state_str,
+              [cors, balance = parsed.balance, account_state = parsed.state_str,
                last_lt = parsed.last_trans_lt, last_hash = parsed.last_trans_hash_b64,
                wallet_type = std::move(wallet_type),
                req_id_inner = std::move(req_id_inner), promise_inner = std::move(promise_inner)](
@@ -2212,12 +2198,10 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
           if (rr.is_ok()) {
             auto rr_val = rr.move_as_ok();
             if (rr_val->exit_code_ == 0 && !rr_val->result_.empty()) {
-              auto cell = vm::std_boc_deserialize(rr_val->result_.as_slice());
-              if (cell.is_ok()) {
-                auto stk = td::make_ref<vm::Stack>();
-                auto result_cell = cell.move_as_ok();
-                vm::CellSlice cs = vm::load_cell_slice(result_cell);
-                if (stk.write().deserialize(cs) && stk->depth() > 0 && stk->at(0).is_int()) {
+              auto stk_r = parse_get_method_result_stack(rr_val->result_.as_slice());
+              if (stk_r.is_ok()) {
+                auto stk = stk_r.move_as_ok();
+                if (stk->depth() > 0 && stk->at(0).is_int()) {
                   seqno = static_cast<td::int32>(stk->at(0).as_int()->to_long());
                 }
               }
@@ -2227,7 +2211,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         promise_inner.set_value(make_json_ok(
             build_wallet_json(true, balance, account_state, wallet_type,
                               seqno, last_lt, last_hash),
-            req_id_inner));
+            req_id_inner, cors));
       }));
     }));
   };
@@ -2243,19 +2227,19 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
 
     send_liteserver_query(std::move(lookup_query),
-        [req_id = std::move(req_id), promise = std::move(promise),
+        [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise),
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id));
+                PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (lb_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -2268,19 +2252,19 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
     send_liteserver_query(std::move(mc_query),
-        [req_id = std::move(req_id), promise = std::move(promise),
+        [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise),
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+                PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
             return;
           }
           auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
               R.move_as_ok(), true);
           if (mc.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc.error(), req_id));
+                PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors));
             return;
           }
           do_get_account(std::move(mc.ok()->last_), std::move(req_id), std::move(promise));

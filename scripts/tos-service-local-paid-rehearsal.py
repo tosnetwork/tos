@@ -6,6 +6,10 @@ the deployed Native Capability, Accepted Quote, stablecoin escrow, buyer
 funding, deterministic work, Receipt signature, and provider settlement on a
 local TOS chain, but it does not claim independent organizations or public
 infrastructure.
+
+NOTE: this rehearsal still deploys the DEPRECATED escrow v1 (see its release
+manifest). Production quotes must use escrow v2; migrating this rehearsal to
+the v2 schema is tracked with the service protocol specification.
 """
 
 import argparse

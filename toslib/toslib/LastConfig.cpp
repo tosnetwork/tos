@@ -122,6 +122,7 @@ td::Status LastConfig::process_config_proof(const tos::BlockIdExt& requested_blo
     }
   }
   TRY_RESULT_ASSIGN(state_.prev_blocks_info, config->get_prev_blocks_info());
+  state_.global_id = config->get_global_blockchain_id();
   state_.config.reset(config.release());
   return td::Status::OK();
 }

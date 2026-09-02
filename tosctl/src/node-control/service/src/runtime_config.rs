@@ -273,6 +273,13 @@ impl RuntimeConfigStore {
         }
     }
 
+    /// Like [`Self::from_app_config`], but with a real config path so tests
+    /// can exercise [`Self::save_to_file`].
+    #[cfg(test)]
+    pub fn from_app_config_at_path(app_config: Arc<AppConfig>, config_path: String) -> Self {
+        Self { config_path, ..Self::from_app_config(app_config) }
+    }
+
     /// Like [`Self::from_app_config`], but with a caller-supplied
     /// [`ChainProvider`] instead of a real `ClientJsonRpc`-backed one.
     ///
@@ -338,29 +345,96 @@ impl RuntimeConfigStore {
     }
 
     /// Save the current in-memory config to the config file if it has changed.
-    /// Only saves the `bindings` `enable` field and `elections` section.
+    ///
+    /// The serialized config can carry inline secrets (private keys, JWT
+    /// signing key, password hashes) when they are configured inline rather
+    /// than as vault references — vault references are the preferred form.
+    /// The file is therefore written with owner-only permissions (0600), and
+    /// atomically: the content goes to a temporary file in the same directory
+    /// which is fsynced and then renamed over the target, so a crash mid-write
+    /// leaves either the old or the new content, never a truncated mix.
     pub fn save_to_file(&self) {
+        // One save at a time, and the lock covers the snapshot as well as
+        // the write and the hash update: with a narrower lock, a save that
+        // snapshotted an older configuration could overwrite a newer file
+        // and then stamp the stale content as current. The temporary-file
+        // name in write_private_atomic is also per-process, so unserialized
+        // saves would clobber each other's in-flight file.
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let path = Path::new(&self.config_path);
         let config = self.get();
-        match serde_json::to_string_pretty(&*config) {
-            Ok(json) => {
-                let current_hash = Self::hash_bytes(&json.as_bytes());
-                let last_hash = *self.last_file_hash.lock().expect("last_file_hash lock");
-                if Some(current_hash) == last_hash {
-                    return;
-                }
-                if let Err(e) = std::fs::write(path, &json) {
-                    tracing::error!("save config error: path='{}' error={}", path.display(), e);
-                } else {
-                    tracing::debug!("config saved to '{}'", path.display());
-                    // Update the file hash so we don't treat our own write as an external change.
-                    *self.last_file_hash.lock().expect("last_file_hash lock") = Some(current_hash);
-                }
-            }
+        let json = match serde_json::to_string_pretty(&*config) {
+            Ok(json) => json,
             Err(e) => {
                 tracing::error!("serialize config error: {}", e);
+                return;
             }
+        };
+
+        let current_hash = Self::hash_bytes(json.as_bytes());
+        let last_hash = *self.last_file_hash.lock().expect("last_file_hash lock");
+        if Some(current_hash) == last_hash {
+            return;
         }
+        if let Err(e) = Self::write_private_atomic(path, json.as_bytes()) {
+            tracing::error!("save config error: path='{}' error={:#}", path.display(), e);
+        } else {
+            tracing::debug!("config saved to '{}'", path.display());
+            // Update the file hash so we don't treat our own write as an external change.
+            *self.last_file_hash.lock().expect("last_file_hash lock") = Some(current_hash);
+        }
+    }
+
+    /// Writes `data` to `path` with mode 0600 via a same-directory temporary
+    /// file, fsync and rename.
+    fn write_private_atomic(path: &Path, data: &[u8]) -> anyhow::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("config path has no file name"))?;
+        // The pid keeps concurrent processes pointed at the same config from
+        // clobbering each other's in-flight temporary file.
+        let tmp_path = dir.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+        let result = (|| -> anyhow::Result<()> {
+            // Remove any stale leftover from a previous crash so create_new
+            // below both applies the restrictive mode and never reuses a
+            // file with looser permissions.
+            match std::fs::remove_file(&tmp_path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).context("remove stale temporary config file"),
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+                .context("create temporary config file")?;
+            file.write_all(data).context("write temporary config file")?;
+            file.sync_all().context("sync temporary config file")?;
+            drop(file);
+            std::fs::rename(&tmp_path, path).context("rename config file into place")?;
+            // The creation mode is subject to the process umask; make the
+            // final permissions explicit regardless of it, and also tighten
+            // a pre-existing target that was created with a looser mode.
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .context("set config file permissions")?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        result
     }
 
     /// Reload config from the file if it has changed externally.
@@ -565,11 +639,15 @@ async fn open_wallet(
     };
 
     let wallet_signer = VaultSigner::new(master_secret).await?;
+    // The wallet binds the network identity into every signature, so it is
+    // read from the chain this client talks to rather than from local config.
+    let global_id = rpc_client.get_global_id().await.context("read network global_id")?;
     let wallet = WalletContract::new(
         Box::new(wallet_signer),
         wallet_config.version,
         wallet_config.subwallet_id,
         wallet_config.workchain,
+        global_id,
         contract_provider!(rpc_client),
     )
     .await?;
@@ -677,5 +755,121 @@ fn open_nominator_pool(
         PoolConfig::CorePool { .. } => {
             anyhow::bail!("core pools are not driven by the elections daemon")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn test_app_config() -> Arc<AppConfig> {
+        Arc::new(AppConfig {
+            nodes: HashMap::new(),
+            wallets: HashMap::new(),
+            pools: HashMap::new(),
+            bindings: HashMap::new(),
+            chain_rpc: Default::default(),
+            http: Default::default(),
+            elections: None,
+            voting: None,
+            master_wallet: None,
+            tick_interval: 30,
+            log: None,
+            bookmarks: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
+            capability_registries: HashMap::new(),
+            service_actors: HashMap::new(),
+            disputes: HashMap::new(),
+            proof_attestations: HashMap::new(),
+            alerts: Default::default(),
+        })
+    }
+
+    fn assert_saved_config_is_private_and_valid(path: &Path) {
+        let mode = std::fs::metadata(path).expect("saved config metadata").permissions().mode();
+        assert_eq!(mode & 0o7777, 0o600, "saved config must be owner read/write only");
+        let data = std::fs::read_to_string(path).expect("read saved config");
+        let value: serde_json::Value = serde_json::from_str(&data).expect("saved config is JSON");
+        assert!(value.is_object());
+    }
+
+    #[test]
+    fn save_to_file_writes_private_valid_file_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        let store = RuntimeConfigStore::from_app_config_at_path(
+            test_app_config(),
+            path.display().to_string(),
+        );
+
+        store.save_to_file();
+        assert_saved_config_is_private_and_valid(&path);
+
+        // A second save with changed content replaces the target atomically:
+        // still valid JSON, still 0600, and no temporary file left behind.
+        store.update_with(|cfg| cfg.tick_interval = 60).expect("update config");
+        store.save_to_file();
+        assert_saved_config_is_private_and_valid(&path);
+        let data = std::fs::read_to_string(&path).expect("read saved config");
+        let value: serde_json::Value = serde_json::from_str(&data).expect("saved config is JSON");
+        assert_eq!(value["tick_interval"], 60);
+
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .map(|e| e.expect("dir entry").file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("config.json")]);
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_clobber_each_other() {
+        // The temporary name is per-process, so unserialized concurrent saves
+        // could unlink or rename each other's in-flight file. With the save
+        // lock, every interleaving leaves a valid, private target and no
+        // temporary residue.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        let store = std::sync::Arc::new(RuntimeConfigStore::from_app_config_at_path(
+            test_app_config(),
+            path.display().to_string(),
+        ));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..25 {
+                        store.save_to_file();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("saver thread");
+        }
+        assert_saved_config_is_private_and_valid(&path);
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .map(|e| e.expect("dir entry").file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("config.json")]);
+    }
+
+    #[test]
+    fn save_to_file_tightens_a_preexisting_loose_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, b"old content").expect("seed target");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("loosen target");
+
+        let store = RuntimeConfigStore::from_app_config_at_path(
+            test_app_config(),
+            path.display().to_string(),
+        );
+        store.save_to_file();
+        assert_saved_config_is_private_and_valid(&path);
     }
 }

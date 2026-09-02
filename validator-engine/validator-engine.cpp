@@ -2492,16 +2492,27 @@ void ValidatorEngine::start_validator() {
                                                           !state_serializer_disabled_flag_);
   load_collator_options();
 
-  // wc=0 in-process wallet index (jetton/NFT/event aggregate queries). Installed
-  // before the validator manager exists so the hook is never written while
+  // wc=0 in-process wallet index (jetton/NFT/event aggregate queries). The
+  // index exists solely to serve the JSON-RPC account endpoints, so it is
+  // opened — and the block-apply hook installed — only when the JSON-RPC
+  // server is enabled. Nodes without JSON-RPC skip the per-block indexing
+  // cost entirely; their account-index RPC handlers (unreachable anyway)
+  // would report the index as disabled. When enabled, the hook is installed
+  // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
-  tos_wallet_index::open_wallet_index_db(db_root_);
-  tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
+  // Note: on RPC nodes the hook still runs synchronously on the block-apply
+  // path; moving it off that path is a separate change.
+  if (json_rpc_addr_) {
+    tos_wallet_index::open_wallet_index_db(db_root_);
+    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
+  }
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
-  recover_wc0_index();
+  if (json_rpc_addr_) {
+    recover_wc0_index();
+  }
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);

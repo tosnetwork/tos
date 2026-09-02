@@ -197,19 +197,24 @@ impl KeyConfig {
 }
 
 fn default_http_bind() -> String {
-    "0.0.0.0:8080".to_owned()
+    // Loopback by default: exposing the API on all interfaces is an explicit
+    // operator decision and requires authentication to be configured.
+    "127.0.0.1:8080".to_owned()
 }
 
 fn default_http_enable_swagger() -> bool {
     true
 }
 
+/// Default operator token lifetime: 24 hours. A bearer token's threat model
+/// is theft, so the default stays short; a longer lifetime is an explicit
+/// operator decision made in the config, not a default.
 fn default_operator_ttl() -> u64 {
-    86400 * 30 // 30 days
+    86400 // 24 hours
 }
 
 fn default_nominator_ttl() -> u64 {
-    86400 // 1 day
+    86400 // 24 hours
 }
 
 fn default_min_password_length() -> usize {
@@ -299,13 +304,23 @@ impl Default for AuthConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct HttpConfig {
-    /// HTTP bind address, e.g. "127.0.0.1:8080" or "0.0.0.0:8080".
+    /// HTTP bind address, e.g. "127.0.0.1:8080" (the default) or "0.0.0.0:8080".
+    /// Binding to a non-loopback address requires `auth` to be configured;
+    /// the service refuses to start the HTTP server otherwise.
     #[serde(default = "default_http_bind")]
     pub bind: String,
 
     /// Expose Swagger UI endpoints.
     #[serde(default = "default_http_enable_swagger")]
     pub enable_swagger: bool,
+
+    /// Peer IP addresses of trusted reverse proxies. Only when a request's
+    /// TCP peer address is in this list is its `x-forwarded-for` header
+    /// honored for client identification (e.g. login rate limiting). A direct
+    /// client can put arbitrary text in that header, so it is ignored from
+    /// any other peer. Default: empty (never trust `x-forwarded-for`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 
     /// Authentication and authorization configuration.
     /// When `Some`, all protected routes require a valid JWT token.
@@ -321,6 +336,7 @@ impl Default for HttpConfig {
         Self {
             bind: default_http_bind(),
             enable_swagger: default_http_enable_swagger(),
+            trusted_proxies: Vec::new(),
             auth: Some(AuthConfig::default()),
         }
     }
@@ -1082,6 +1098,15 @@ mod tests {
     fn config_without_agent_tasks_loads_with_empty_map() {
         let config: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
         assert!(config.agent_tasks.is_empty());
+    }
+
+    #[test]
+    fn default_token_ttls_are_24_hours() {
+        // Bearer tokens are theft-prone: the defaults must stay short, and a
+        // longer lifetime must be an explicit configuration choice.
+        let auth = AuthConfig::default();
+        assert_eq!(auth.operator_token_ttl, 86400, "operator tokens default to 24 hours");
+        assert_eq!(auth.nominator_token_ttl, 86400, "nominator tokens default to 24 hours");
     }
 
     #[test]

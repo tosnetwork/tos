@@ -5229,8 +5229,19 @@ bool Collator::create_mc_state_extra() {
   if (ignore_cfg_changes) {
     LOG(ERROR) << "configuration changes ignored";
     return fatal_error("attempting to install invalid new configuration");
-  } else if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
-             changed_cfg) {
+  }
+  // The validator rejects a key block whose new configuration violates the
+  // transition rules (see block::valid_config_transition). Refuse to produce
+  // such a block here, with the same predicate, instead of emitting a
+  // candidate that every validator will reject.
+  auto transition_status = block::valid_config_transition(state_extra.config->prefetch_ref(), cfg_smc_config);
+  if (transition_status.is_error()) {
+    LOG(ERROR) << "configuration smart contract " << config_addr.to_hex()
+               << " contains a configuration that cannot be installed: " << transition_status;
+    return fatal_error(transition_status.move_as_error_prefix("attempting to install invalid new configuration: "));
+  }
+  if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
+      changed_cfg) {
     LOG(WARNING) << "global configuration changed, updating";
     vm::CellBuilder cb;
     CHECK(cb.store_bits_bool(config_addr) && cb.store_ref_bool(cfg_smc_config));

@@ -24,6 +24,7 @@ REQUIRED_SOURCES = [
     "tvm/params/bsc.fc",
     "tvm/params/polygon.fc",
     "tvm/params/tron.fc",
+    "tvm/tests/replay-wrong-global-id.js",
     "evm/contracts/Bridge.sol",
     "evm/contracts/SignatureChecker.sol",
     "evm/contracts/TosUtils.sol",
@@ -116,7 +117,15 @@ def verify_tvm_sources() -> None:
         "calculate_user_jetton_wallet_address",
         "https://bridge.tos.network/token/",
     ])
-    require_text(c / "multisig.fc", ["recv_external", "check_signature", "cnt >= k", "send_raw_message"])
+    require_text(c / "multisig.fc", [
+        "recv_external",
+        "check_signature",
+        "cnt >= k",
+        "send_raw_message",
+        'int get_global_id() asm "GLOBALID";',
+        "int query_global_id = in_msg~load_int(32);",
+        "throw_unless(44, query_global_id == get_global_id());",
+    ])
     require_text(c / "votes-collector.fc", ["udict_add?", "get_jetton_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"])
     require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 

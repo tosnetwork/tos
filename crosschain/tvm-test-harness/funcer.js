@@ -117,7 +117,10 @@ ${makeCell(inMsg.body)} constant in_msg_body${i}
 // sender, which is all some contracts read — but a contract that reads
 // further, as jetton-wallet does to reach fwd_fee, hit a cell underflow and
 // failed with exit code 9 rather than with anything about its own logic.
-<b b{0110} s,
+// A test may set "bounced" to deliver the message with the bounced flag,
+// the way the chain returns a rejected bounceable transfer; on chain only
+// the network sets that flag, so a bounced segment models a genuine bounce.
+<b b{011${inMsg.bounced ? 1 : 0}} s,
    sender_address${i} Addr,
    contract_addr_pair Addr,                // dst: this contract
    msg_value${i} Tomi,                     // value
@@ -138,7 +141,14 @@ b> constant in_msg${i}
 ${inMsg.contract_balance || '1000000000'} null pair // balance_remaining
 contract_address     // myself
 global_config        // global_config
-10 tuple 1 tuple constant c7
+null null null null  // code, incoming value, storage fees, previous blocks
+// The network id lives in its own configuration slot, but the opcode that
+// reads it looks in the unpacked-config position of the register tuple, not
+// in the raw configuration dictionary. Stage the one unpacked slot these
+// tests exercise; a test that stages no network id still runs unchanged as
+// long as its contract never asks for one.
+null 19 global_config 32 idict@ { ref@ <s } { null } cond 2 tuple
+15 tuple 1 tuple constant c7
 
 // A four-argument recv_internal takes my_balance first; a three-argument one
 // takes the top three and leaves this underneath, which is harmless. Pushing
@@ -510,4 +520,72 @@ const funcer = (options, data) => {
     });
 }
 
-module.exports = {funcer};
+// A minimal cell builder that reproduces the virtual machine's cell hash, so
+// a test can sign a body off line and hand the harness plain constants. Only
+// what a signed multisig query needs is implemented: ordinary cells, integer
+// fields, and references to other ordinary cells.
+class CellWriter {
+    constructor() {
+        this.bits = [];
+        this.refs = [];
+    }
+
+    u(value, bits) {
+        const v = BigInt(value);
+        if (v < 0n || v >> BigInt(bits)) throw new Error('value does not fit in ' + bits + ' bits');
+        for (let i = BigInt(bits) - 1n; i >= 0n; i--) {
+            this.bits.push(Number((v >> i) & 1n));
+        }
+        return this;
+    }
+
+    i(value, bits) {
+        let v = BigInt(value);
+        const width = BigInt(bits);
+        if (v >= (1n << (width - 1n)) || v < -(1n << (width - 1n))) {
+            throw new Error('value does not fit in ' + bits + ' signed bits');
+        }
+        if (v < 0n) v += 1n << width;
+        return this.u(v, bits);
+    }
+
+    ref(cell) {
+        if (this.refs.length >= 4) throw new Error('a cell holds at most four references');
+        this.refs.push(cell);
+        return this;
+    }
+
+    depth() {
+        return this.refs.length ? 1 + Math.max(...this.refs.map((r) => r.depth())) : 0;
+    }
+
+    hash() {
+        const crypto = require('crypto');
+        const bitLen = this.bits.length;
+        if (bitLen > 1023) throw new Error('a cell holds at most 1023 bits');
+        const data = this.bits.slice();
+        if (data.length % 8) {
+            // Completion tag: a lone one bit, then zeros to the byte boundary.
+            data.push(1);
+            while (data.length % 8) data.push(0);
+        }
+        const repr = Buffer.alloc(2 + data.length / 8 + this.refs.length * 34);
+        repr[0] = this.refs.length;                                  // refs, level 0, not exotic
+        repr[1] = Math.floor(bitLen / 8) + Math.ceil(bitLen / 8);    // odd when a tag was added
+        for (let j = 0; j < data.length; j++) {
+            if (data[j]) repr[2 + (j >> 3)] |= 0x80 >> (j & 7);
+        }
+        let off = 2 + data.length / 8;
+        for (const r of this.refs) {
+            repr.writeUInt16BE(r.depth(), off);
+            off += 2;
+        }
+        for (const r of this.refs) {
+            r.hash().copy(repr, off);
+            off += 32;
+        }
+        return crypto.createHash('sha256').update(repr).digest();
+    }
+}
+
+module.exports = {funcer, CellWriter};

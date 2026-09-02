@@ -958,7 +958,7 @@ tosctl config-param -c config.json 34
 
 ## REST API Endpoints
 
-When running in service mode, tosctl exposes a REST API for monitoring and management. By default, the HTTP server listens on all interfaces (`0.0.0.0:8080`) with authentication enabled and no users — all protected endpoints return `401` until at least one user is created via `tosctl auth add`. Protected endpoints require a JWT token in the `Authorization: Bearer <token>` header. See the **[Security Guide](./docs/tosctl-security.md)** for full details on roles, rate limiting, and token revocation.
+When running in service mode, tosctl exposes a REST API for monitoring and management. By default, the HTTP server listens on loopback only (`127.0.0.1:8080`); binding a non-loopback address requires `http.auth` to be configured, and the service refuses to start otherwise. Authentication starts enabled with no users — all protected endpoints return `401` until at least one user is created via `tosctl auth add`. Protected endpoints require a JWT token in the `Authorization: Bearer <token>` header. See the **[Security Guide](./docs/tosctl-security.md)** for full details on roles, rate limiting, and token revocation.
 
 > **Warning:** tosctl serves plain HTTP. If the API is reachable outside your trusted network, terminate TLS at a reverse proxy or load balancer — otherwise passwords (`/auth/login`) and JWT tokens (`Authorization` header) travel in plain text.
 
@@ -969,11 +969,14 @@ The HTTP server is configured in the `http` section of the config:
 ```json
 {
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",
     "enable_swagger": true
   }
 }
 ```
+
+To serve on a non-loopback address, `http.auth` must also be configured; the
+service refuses to start otherwise.
 
 ### OpenAPI / Swagger
 
@@ -1016,7 +1019,7 @@ Authenticate and obtain a JWT token. Rate-limited: 5 failed attempts per 60s win
 {
   "ok": true,
   "token": "<JWT>",
-  "expires_in": 2592000,
+  "expires_in": 86400,
   "role": "operator"
 }
 ```
@@ -1285,9 +1288,9 @@ Configuration is specified in JSON format.
     "api_key": "<OPTIONAL_API_KEY>" | null
   },
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",   // non-loopback binds require "auth"
     "enable_swagger": true,
-    "api_key": null
+    "auth": { ... }             // see the Security Guide
   },
   // optional
   "master_wallet": {
@@ -1377,7 +1380,8 @@ Chain RPC endpoint configuration:
 
 HTTP REST API server configuration:
 
-- `bind` — address and port to bind (default: `0.0.0.0:8080`)
+- `bind` — address and port to bind (default: `127.0.0.1:8080`; a non-loopback bind requires `auth` to be configured)
+- `trusted_proxies` — list of proxy IPs whose `x-forwarded-for` is honored for login rate limiting (default: empty; the TCP peer address is used otherwise)
 - `enable_swagger` — enable Swagger UI at `/swagger` (default: `true`)
 - `auth` — JWT authentication configuration (see below)
 
@@ -1389,8 +1393,8 @@ REST API authentication settings. **Authentication is enabled by default** — a
 >
 > **No restart required:** The service hot-reloads the configuration, so changes to users or auth settings take effect immediately.
 
-- `operator_token_ttl` — operator token TTL in seconds (default: `2592000` — 30 days)
-- `nominator_token_ttl` — nominator token TTL in seconds (default: `86400` — 1 day)
+- `operator_token_ttl` — operator token TTL in seconds (default: `86400` — 24 hours). Bearer tokens can be stolen and replayed until they expire, so the default is deliberately short; configuring a longer TTL is an explicit operator decision.
+- `nominator_token_ttl` — nominator token TTL in seconds (default: `86400` — 24 hours)
 - `min_password_length` — minimum password length (default: `8`)
 - `jwt_secret` — base64-encoded JWT signing key (optional; falls back to vault secret `auth.jwt-signing-key`)
 - `users` — list of user entries (managed via `tosctl auth` commands)
@@ -1450,7 +1454,7 @@ Logging configuration:
     "tick_interval": 40
   },
   "http": {
-    "bind": "0.0.0.0:8080",
+    "bind": "127.0.0.1:8080",
     "enable_swagger": true
   },
   "master_wallet": {
