@@ -2913,7 +2913,8 @@ void ValidatorManagerImpl::update_shards() {
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,
-                            is_validator() && last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
+                            (is_validator() || !collator_nodes_.empty()) &&
+                                last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
   }
   init_shard_block_verifier(mc_validator_adnl_id);
 }
