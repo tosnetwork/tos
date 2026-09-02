@@ -1754,10 +1754,21 @@ void DownloadShardState::written_shard_state(td::Ref<ShardState> state) {
 
 void DownloadShardState::written_block_handle() {
   LOG(WARNING) << "finished downloading and storing shard state " << block_id_.to_str();
-  finish_query();
+  if (handle_->need_flush()) {
+    handle_->flush(manager_, handle_, [SelfId = actor_id(this)](td::Result<td::Unit> R) {
+      if (R.is_error()) {
+        fail_handler(SelfId, R.move_as_error_prefix("handle flush: "));
+        return;
+      }
+      td::actor::send_closure(SelfId, &DownloadShardState::finish_query);
+    });
+  } else {
+    finish_query();
+  }
 }
 
 void DownloadShardState::finish_query() {
+  handle_->set_applied_stored();
   if (promise_) {
     promise_.set_value(std::move(state_));
   }
