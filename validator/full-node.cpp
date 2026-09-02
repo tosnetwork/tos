@@ -242,6 +242,12 @@ void FullNodeImpl::on_new_masterchain_block(td::Ref<MasterchainState> state, std
     if (all_shards.contains(it->first)) {
       ++it;
     } else {
+      if (!it->second.local_id.is_zero()) {
+        // The per-overlay broadcast identity is a temporary keyring entry;
+        // drop it with the shard so topology churn cannot grow the keyring.
+        td::actor::send_closure(keyring_, &tos::keyring::Keyring::del_key, it->second.local_id,
+                                [](td::Result<td::Unit>) {});
+      }
       it = shards_.erase(it);
     }
   }
