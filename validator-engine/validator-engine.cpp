@@ -2648,9 +2648,6 @@ void ValidatorEngine::started_validator() {
 void ValidatorEngine::start_full_node() {
   if (!config_.full_node.is_zero() || !config_.full_node_slaves.empty()) {
     full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
-    auto pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};
-    auto short_id = pk.compute_short_id();
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(pk), true, [](td::Result<>) {});
     if (config_.full_node_slaves.size() > 0) {
       std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
       for (auto &x : config_.full_node_slaves) {
@@ -2672,8 +2669,8 @@ void ValidatorEngine::start_full_node() {
     tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
     full_node_options.config_ = config_.full_node_config;
     full_node_ = tos::validator::fullnode::FullNode::create(
-        short_id, full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(),
-        adnl_.get(), rldp_.get(), rldp2_.get(), quic_.get(),
+        full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
+        rldp_.get(), rldp2_.get(), quic_.get(),
         default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
         overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
     for (auto &v : config_.validators) {

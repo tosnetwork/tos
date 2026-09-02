@@ -133,7 +133,7 @@ class FullNode : public td::actor::Actor {
   static constexpr td::int32 MAX_FAST_SYNC_OVERLAY_CLIENTS = 5;
 
   static td::actor::ActorOwn<FullNode> create(
-      tos::PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
+      adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
       td::actor::ActorId<rldp::Rldp> legacy_rldp, td::actor::ActorId<rldp2::Rldp> rldp2,
       td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<dht::Dht> dht,

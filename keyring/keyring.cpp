@@ -23,6 +23,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 
 #include "keyring.hpp"
 
@@ -199,6 +200,18 @@ void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise)
     return promise.set_value(td::Unit());
   }
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
+  // The disk is the authority on what needs wiping: a temporary key, an
+  // already-deleted key, or a key that was never stored has no file, and
+  // wiping one anyway would create and destroy it — and turn a read-only key
+  // directory into an abort. Only genuine absence counts: any other stat
+  // failure falls through to the wipe, whose own failure stops the process
+  // rather than reporting a deletion that left the file behind. This also
+  // wipes the persisted file of a key later re-added as temporary.
+  auto stat_result = td::stat(name);
+  if (stat_result.is_error() &&
+      (stat_result.error().code() == ENOENT || stat_result.error().code() == ENOTDIR)) {
+    return promise.set_value(td::Unit());
+  }
   td::BufferSlice d{256};
   td::Random::secure_bytes(d.as_slice());
   td::write_file(name, d.as_slice()).ensure();

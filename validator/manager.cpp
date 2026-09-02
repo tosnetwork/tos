@@ -2333,7 +2333,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
 
   serializer_ =
       td::actor::create_actor<AsyncStateSerializer>("serializer", last_key_block_handle_->id(), opts_, actor_id(this));
-  td::actor::send_closure(serializer_, &AsyncStateSerializer::update_last_known_key_block_ts,
+  td::actor::send_closure(serializer_, &AsyncStateSerializer::update_last_known_key_block, last_key_block_handle_->id(),
                           last_key_block_handle_->unix_time());
 
   if (last_masterchain_block_handle_->inited_next_left()) {
@@ -2520,8 +2520,8 @@ void ValidatorManagerImpl::new_masterchain_block() {
       callback_->new_key_block(last_key_block_handle_);
     }
     if (!serializer_.empty()) {
-      td::actor::send_closure(serializer_, &AsyncStateSerializer::update_last_known_key_block_ts,
-                              last_key_block_handle_->unix_time());
+      td::actor::send_closure(serializer_, &AsyncStateSerializer::update_last_known_key_block,
+                              last_key_block_handle_->id(), last_key_block_handle_->unix_time());
     }
   }
 
@@ -2913,7 +2913,8 @@ void ValidatorManagerImpl::update_shards() {
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,
-                            is_validator() && last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
+                            (is_validator() || !collator_nodes_.empty()) &&
+                                last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
   }
   init_shard_block_verifier(mc_validator_adnl_id);
 }
@@ -3623,7 +3624,7 @@ void ValidatorManagerImpl::get_block_handle_for_litequery(BlockIdExt block_id, t
   get_block_handle(block_id, false,
                    [SelfId = actor_id(this), block_id, promise = std::move(promise),
                     allow_not_applied = opts_->nonfinal_ls_queries_enabled()](td::Result<BlockHandle> R) mutable {
-                     if (R.is_ok() && (allow_not_applied || R.ok()->is_applied())) {
+                     if (R.is_ok() && (allow_not_applied || R.ok()->handle_moved_to_archive())) {
                        promise.set_value(R.move_as_ok());
                      } else {
                        td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_block_handle_for_litequery_error,
@@ -3655,7 +3656,7 @@ void ValidatorManagerImpl::get_block_by_lt_for_litequery(AccountIdPrefixFull acc
                                                          td::Promise<ConstBlockHandle> promise) {
   get_block_by_lt_from_db(
       account, lt, [=, SelfId = actor_id(this), promise = std::move(promise)](td::Result<ConstBlockHandle> R) mutable {
-        if (R.is_ok() && R.ok()->is_applied()) {
+        if (R.is_ok() && R.ok()->handle_moved_to_archive()) {
           promise.set_value(R.move_as_ok());
         } else {
           td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_lookup_block_for_litequery_error, account, 0,
@@ -3668,7 +3669,7 @@ void ValidatorManagerImpl::get_block_by_unix_time_for_litequery(AccountIdPrefixF
                                                                 td::Promise<ConstBlockHandle> promise) {
   get_block_by_unix_time_from_db(
       account, ts, [=, SelfId = actor_id(this), promise = std::move(promise)](td::Result<ConstBlockHandle> R) mutable {
-        if (R.is_ok() && R.ok()->is_applied()) {
+        if (R.is_ok() && R.ok()->handle_moved_to_archive()) {
           promise.set_value(R.move_as_ok());
         } else {
           td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_lookup_block_for_litequery_error, account, 1,
@@ -3682,7 +3683,7 @@ void ValidatorManagerImpl::get_block_by_seqno_for_litequery(AccountIdPrefixFull 
   get_block_by_seqno_from_db(
       account, seqno,
       [=, SelfId = actor_id(this), promise = std::move(promise)](td::Result<ConstBlockHandle> R) mutable {
-        if (R.is_ok() && R.ok()->is_applied()) {
+        if (R.is_ok() && R.ok()->handle_moved_to_archive()) {
           promise.set_value(R.move_as_ok());
         } else {
           td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_lookup_block_for_litequery_error, account, 2,
@@ -3699,7 +3700,7 @@ void ValidatorManagerImpl::process_block_handle_for_litequery_error(BlockIdExt b
     err = r_handle.move_as_error();
   } else {
     auto handle = r_handle.move_as_ok();
-    if (handle->is_applied()) {
+    if (handle->handle_moved_to_archive()) {
       promise.set_value(std::move(handle));
       return;
     }
@@ -3738,7 +3739,7 @@ void ValidatorManagerImpl::process_lookup_block_for_litequery_error(AccountIdPre
     err = r_handle.move_as_error();
   } else {
     auto handle = r_handle.move_as_ok();
-    if (handle->is_applied()) {
+    if (handle->handle_moved_to_archive()) {
       promise.set_value(std::move(handle));
       return;
     }
