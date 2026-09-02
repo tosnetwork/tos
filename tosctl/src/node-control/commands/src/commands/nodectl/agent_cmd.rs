@@ -3214,6 +3214,10 @@ fn validate_task_send_resolution_evidence(
             != Some(
                 "distinct RPC process views; no independent-operator or Byzantine-finality claim",
             )
+        || evidence.get("block_reference_scope").and_then(serde_json::Value::as_str)
+            != Some(
+                "RPC-asserted transaction and block identifiers; no inclusion proof was verified",
+            )
         || quorum.get("members").and_then(serde_json::Value::as_u64) != Some(3)
         || quorum.get("threshold").and_then(serde_json::Value::as_u64) != Some(2)
         || quorum.get("agreeing").and_then(serde_json::Value::as_u64)
@@ -3336,7 +3340,12 @@ impl AgentAccountTaskSendResolveCmd {
                 anyhow::bail!("every task-send quorum config must name exactly one RPC endpoint");
             }
             let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
-            if !endpoints.insert(endpoint.clone()) {
+            // Distinctness is judged on the origin, matching how the evidence
+            // records and re-validates endpoints: two configs naming the same
+            // origin with different paths are one RPC process, and letting
+            // them pass here would only fail later with a confusing
+            // evidence-conflict error after a quorum was already found.
+            if !endpoints.insert(display_origin.clone()) {
                 anyhow::bail!("task-send quorum RPC endpoints must be distinct");
             }
             members.push((
@@ -3348,6 +3357,7 @@ impl AgentAccountTaskSendResolveCmd {
         }
         let threshold = 2;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        let mut failures: Vec<String> = Vec::new();
         loop {
             let mut votes: BTreeMap<String, Vec<TaskSendResolutionVote>> = BTreeMap::new();
             for (config, _endpoint, display_origin, locator_identity_digest) in &members {
@@ -3361,8 +3371,12 @@ impl AgentAccountTaskSendResolveCmd {
                     self.max_transactions,
                 )
                 .await;
-                let Ok(observation) = observation else {
-                    continue;
+                let observation = match observation {
+                    Ok(observation) => observation,
+                    Err(error) => {
+                        failures.push(rpc_failure_diagnostic(display_origin, &error));
+                        continue;
+                    }
                 };
                 let finalized: anyhow::Result<AgentAccountData> = async {
                     let rpc = try_create_rpc_client(config).await?;
@@ -3393,6 +3407,7 @@ impl AgentAccountTaskSendResolveCmd {
                     "network_domain": expected_network,
                     "quorum": {"members": 3, "threshold": threshold, "agreeing": winner.len()},
                     "process_view_scope": "distinct RPC process views; no independent-operator or Byzantine-finality claim",
+                    "block_reference_scope": "RPC-asserted transaction and block identifiers; no inclusion proof was verified",
                     "independent_operator_domains_proven": false,
                     "transaction": &winner[0],
                     "observations": winner,
@@ -3442,8 +3457,16 @@ impl AgentAccountTaskSendResolveCmd {
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
+                let detail = if failures.is_empty() {
+                    String::new()
+                } else {
+                    let mut sorted: Vec<_> = failures.iter().cloned().collect();
+                    sorted.sort();
+                    sorted.dedup();
+                    format!(" (member failures: {})", sorted.join("; "))
+                };
                 anyhow::bail!(
-                    "task-send could not obtain a strict-majority exact transaction resolution"
+                    "task-send could not obtain a strict-majority exact transaction resolution{detail}"
                 );
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -9959,6 +9982,7 @@ mod tests {
             "network_domain": record.claim.network_domain,
             "quorum": {"members": 3, "threshold": 2, "agreeing": 2},
             "process_view_scope": "distinct RPC process views; no independent-operator or Byzantine-finality claim",
+            "block_reference_scope": "RPC-asserted transaction and block identifiers; no inclusion proof was verified",
             "independent_operator_domains_proven": false,
             "transaction": first_observation.clone(),
             "observations": [first_observation, second_observation],
@@ -10104,6 +10128,28 @@ mod tests {
             controller_resolution_evidence_digest(TASK_SEND_FINALIZED_SCHEMA, &wrong_body.evidence)
                 .unwrap();
         assert!(validate_task_send_resolution_evidence(&record, &wrong_body).is_err());
+
+        // The declared scopes are part of the contract: evidence that drops
+        // or rewrites the RPC-asserted block-reference disclaimer, or names a
+        // different network domain, must be rejected.
+        let mut wrong_scope = resolution.clone();
+        wrong_scope.evidence["block_reference_scope"] =
+            serde_json::json!("verified inclusion proof");
+        wrong_scope.evidence_digest = controller_resolution_evidence_digest(
+            TASK_SEND_FINALIZED_SCHEMA,
+            &wrong_scope.evidence,
+        )
+        .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &wrong_scope).is_err());
+
+        let mut wrong_network = resolution.clone();
+        wrong_network.evidence["network_domain"]["global_id"] = serde_json::json!(-999);
+        wrong_network.evidence_digest = controller_resolution_evidence_digest(
+            TASK_SEND_FINALIZED_SCHEMA,
+            &wrong_network.evidence,
+        )
+        .unwrap();
+        assert!(validate_task_send_resolution_evidence(&record, &wrong_network).is_err());
 
         let mut wrong_observation = resolution.clone();
         wrong_observation.evidence["observations"][1]["outbound_body_hash"] =

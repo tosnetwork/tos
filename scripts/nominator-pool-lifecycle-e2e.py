@@ -56,6 +56,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 from contract import WalletV1, WalletV1Blueprint  # noqa: E402
+from pytosiq_core.boc.deserialize import BocError  # noqa: E402
+from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -1120,7 +1122,7 @@ def match_agent_pool_transaction(
         boc = base64.b64decode(encoded, validate=True)
         transaction_cell = Cell.one_from_boc(boc)
         transaction = Transaction.deserialize(transaction_cell.begin_parse())
-    except TypeError, ValueError:
+    except (TypeError, ValueError, TlbError, BocError, IndexError):
         return None
     if transaction.account_addr != sender.hash_part or getattr(
         transaction.description, "aborted", True
