@@ -217,11 +217,26 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     co_await check_rate_limit(event->source);
 
-    auto& state = state_[id];
-    begin_operation(state);
-    SCOPE_EXIT {
-      end_operation(id, state);
-    };
+    if (auto it = state_.find(id); it != state_.end()) {
+      auto& state = it->second;
+      begin_operation(state);
+      SCOPE_EXIT {
+        end_operation(id, state);
+      };
+      if (request->want_candidate_) {
+        co_await try_load_candidate_data_from_db(id, state);
+      }
+      if (request->want_notar_) {
+        co_await try_load_notar_cert_from_db_or_bootstrap(id, state);
+      }
+      co_return ProtocolMessage{state.candidate_and_cert.to_tl(*request)};
+    }
+    // An id this node is not tracking is served through a transient state
+    // that never enters the map: the requested id is remote-chosen (any
+    // slot, including far beyond the retention window), so inserting it
+    // would let peers grow the map for the life of the session. Anything
+    // durable is still served from the database and bootstrap set.
+    CandidateState state;
     if (request->want_candidate_) {
       co_await try_load_candidate_data_from_db(id, state);
     }
@@ -287,6 +302,17 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     co_await std::move(task);
     co_return td::Unit{};
+  }
+
+  template <>
+  td::actor::Task<size_t> process(BusHandle, std::shared_ptr<QueryResolverTrackedStateCount> query) {
+    size_t count = 0;
+    for (const auto& [id, _] : state_) {
+      if (id.slot >= query->min_slot) {
+        ++count;
+      }
+    }
+    co_return count;
   }
 
   template <>

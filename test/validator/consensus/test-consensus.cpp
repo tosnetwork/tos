@@ -1019,6 +1019,13 @@ class TestConsensus : public td::actor::Actor {
         ++query_abuse_rejected_;
       }
     }
+    // The requested ids are far outside any live slot; serving them must not
+    // leave permanent per-id state behind. Count only entries at or above the
+    // injected slot base so legitimate in-flight consensus state (low slots)
+    // does not mask a regression: this must be zero.
+    query_abuse_tracked_states_ = co_await bus.publish(
+        std::make_shared<simplex::QueryResolverTrackedStateCount>(simplex::QueryResolverTrackedStateCount{
+            .min_slot = 1000000}));
     query_abuse_completed_ = true;
     co_return td::Unit{};
   }
@@ -1232,6 +1239,11 @@ class TestConsensus : public td::actor::Actor {
           PSTRING() << "candidate query rate limit was not enforced: accepted=" << query_abuse_accepted_
                     << " rejected=" << query_abuse_rejected_);
     }
+    if (QUERY_ABUSE_TEST && query_abuse_tracked_states_ != 0) {
+      co_return td::Status::Error(
+          PSTRING() << "candidate requests for untracked ids grew the resolver state map: tracked_states="
+                    << query_abuse_tracked_states_);
+    }
     if (CATCH_UP_DOWNTIME >= 0.0) {
       if (!catch_up_error_.empty()) {
         co_return td::Status::Error(catch_up_error_);
@@ -1317,6 +1329,7 @@ class TestConsensus : public td::actor::Actor {
   bool catch_up_completed_ = false;
   std::string catch_up_error_;
   size_t query_abuse_rejected_ = 0;
+  size_t query_abuse_tracked_states_ = 0;
   bool query_abuse_completed_ = false;
   bool empty_chain_restart_completed_ = false;
   std::string empty_chain_restart_error_;
