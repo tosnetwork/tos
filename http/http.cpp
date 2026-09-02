@@ -98,6 +98,13 @@ td::Result<std::unique_ptr<HttpRequest>> HttpRequest::parse(std::unique_ptr<Http
       break;
     }
 
+    if (request) {
+      request->total_headers_size_ += line.size() + 2;
+      if (request->total_headers_size_ > HttpRequest::max_header_size()) {
+        return td::Status::Error("request headers too large");
+      }
+    }
+
     if (!request) {
       auto v = td::full_split(line);
       if (v.size() != 3) {

@@ -143,18 +143,19 @@ class HttpInboundConnection : public HttpConnection {
   }
 
   // True while progress depends on the client sending more of its request:
-  // the header phase, and a request body whose end is defined (empty,
-  // content-length or chunked). Tunnels and read-until-close bodies have no
-  // deadline by design.
+  // the header phase, and any request payload. The single exception is a
+  // tunnel the handler has explicitly ACCEPTED with a 2xx response — an
+  // established tunnel is a long-lived bidirectional stream by design. A
+  // tunnel merely requested (a CONNECT whose answer is still pending or was
+  // refused) stays under the deadline, otherwise refused CONNECTs would pin
+  // connection slots forever.
   bool waiting_for_client_request_data() const {
     if (waiting_for_request_headers()) {
       return true;
     }
     if (reading_payload_) {
-      auto type = reading_payload_->payload_type();
-      return type == HttpPayload::PayloadType::pt_empty ||
-             type == HttpPayload::PayloadType::pt_content_length ||
-             type == HttpPayload::PayloadType::pt_chunked;
+      return !(reading_payload_->payload_type() == HttpPayload::PayloadType::pt_tunnel &&
+               tunnel_established_);
     }
     return false;
   }
@@ -198,6 +199,9 @@ class HttpInboundConnection : public HttpConnection {
   double request_header_timeout_ = 0;
   double request_body_timeout_ = 0;
   td::Timestamp request_header_deadline_;
+  // Set when the handler answers a CONNECT with a 2xx response; only then
+  // is the tunnel payload exempt from the request deadline.
+  bool tunnel_established_ = false;
 };
 
 }  // namespace http

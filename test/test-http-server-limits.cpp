@@ -48,7 +48,11 @@ class OkCallback : public tos::http::HttpServer::Callback {
       std::unique_ptr<tos::http::HttpRequest> request, std::shared_ptr<tos::http::HttpPayload> payload,
       td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>
           promise) override {
-    auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    // Refuse tunnels the way a non-proxy API server does.
+    int status = request->method() == "CONNECT" ? 405 : 200;
+    auto response =
+        tos::http::HttpResponse::create("HTTP/1.1", status, status == 200 ? "OK" : "Method Not Allowed", false, false)
+            .move_as_ok();
     response->add_header({"Content-Type", "text/plain"});
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
@@ -268,6 +272,24 @@ TEST(HttpServerLimits, request_header_deadline_closes_silent_and_partial_connect
     ASSERT_TRUE(body_stall.send_all(
         "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial"));
     ASSERT_TRUE(body_stall.wait_for_eof(5000));
+
+    // A refused CONNECT must not linger as an exempt tunnel: the handler
+    // answers non-2xx and the connection is closed right after the write.
+    Client tunnel(port);
+    ASSERT_TRUE(tunnel.connect_with_retries());
+    ASSERT_TRUE(tunnel.send_all("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n"));
+    ASSERT_TRUE(tunnel.wait_for_eof(5000));
+
+    // An oversized header block is rejected outright.
+    Client fat_headers(port);
+    ASSERT_TRUE(fat_headers.connect_with_retries());
+    std::string many_headers = "GET / HTTP/1.1\r\nHost: localhost\r\n";
+    for (int i = 0; i < 2000; i++) {
+      many_headers += "X-H" + std::to_string(i) + ": v\r\n";
+    }
+    many_headers += "\r\n";
+    ASSERT_TRUE(fat_headers.send_all(many_headers));
+    ASSERT_TRUE(fat_headers.wait_for_eof(5000));
 
     // A complete request is served, and the idle keep-alive connection is
     // then closed once the next request's headers fail to arrive in time.

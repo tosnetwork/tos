@@ -188,6 +188,12 @@ class HttpRequest {
     return 16 << 10;
   }
 
+  // Aggregate size of the request line and all header lines accepted so
+  // far. Each line is individually capped, but without an aggregate budget
+  // a client could stream an unbounded number of short headers for the
+  // whole request-header window; parse() enforces max_header_size() here.
+  size_t total_headers_size_ = 0;
+
   // Round 152 HIGH fix: bumped from 1 MiB to 4 MiB to match
   // kJsonRpcMaxRequestBodyBytes in validator-engine/json-rpc-server.
   // cpp.  Pre-fix a legitimate uno_sendTransfer payload (~2.3 MiB
