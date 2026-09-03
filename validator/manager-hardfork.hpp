@@ -165,7 +165,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_key_block_proof_link(BlockIdExt block_id, td::Promise<td::BufferSlice> promise) override;
 
   td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                    td::optional<PublicKeyHash> source_peer = {}) override;
+                                                   td::optional<PublicKeyHash> source_peer = {}) override;
   void new_ihr_message(td::BufferSlice data) override;
   void new_shard_block_description_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                              td::BufferSlice data) override {
@@ -439,7 +439,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_vertical_seqno(BlockSeqno seqno, td::Promise<td::uint32> promise) override {
     promise.set_result(opts_->get_vertical_seqno(seqno));
   }
-  void run_ext_query(td::BufferSlice data, td::Promise<td::BufferSlice> promise) override {
+  void run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
+                     td::Promise<td::BufferSlice> promise) override {
     UNREACHABLE();
   }
 

@@ -28,20 +28,26 @@ namespace adnl {
 
 td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(f, fetch_tl_object<tos_api::adnl_message_query>(std::move(data), true));
-
-  auto P =
-      td::PromiseCreator::lambda([SelfId = actor_id(this), query_id = f->query_id_](td::Result<td::BufferSlice> R) {
-        if (R.is_error()) {
-          auto S = R.move_as_error();
-          LOG(INFO) << "failed ext query: " << S;
-        } else {
-          auto B = create_tl_object<tos_api::adnl_message_answer>(query_id, R.move_as_ok());
-          td::actor::send_closure(SelfId, &AdnlInboundConnection::send, serialize_tl_object(B, true));
-        }
+  if (!query_limits_.try_acquire()) {
+    return td::Status::Error(ErrorCode::notready, "external query admission limit exceeded");
+  }
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), query_id = f->query_id_](td::Result<td::BufferSlice> R) mutable {
+        td::actor::send_closure(SelfId, &AdnlInboundConnection::query_finished, query_id, std::move(R));
       });
   td::actor::send_closure(peer_table_, &AdnlPeerTable::deliver_query, remote_id_, local_id_, std::move(f->query_),
                           std::move(P));
   return td::Status::OK();
+}
+
+void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
+  query_limits_.release();
+  if (result.is_error()) {
+    LOG(INFO) << "failed ext query: " << result.error();
+    return;
+  }
+  auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
+  send(serialize_tl_object(answer, true));
 }
 
 td::Status AdnlInboundConnection::process_init_packet(td::BufferSlice data) {
@@ -169,9 +175,42 @@ void AdnlExtServerImpl::add_local_id(AdnlNodeIdShort id) {
 }
 
 void AdnlExtServerImpl::accepted(td::SocketFd fd) {
+  td::IPAddress peer_address;
+  auto status = peer_address.init_peer_address(fd);
+  if (status.is_error()) {
+    LOG(WARNING) << "Rejecting external connection with unknown peer address: " << status;
+    return;
+  }
+  auto peer_ip = peer_address.get_ip_host();
+  if (!connection_limits_.try_acquire(peer_ip)) {
+    LOG(WARNING) << "Rejecting external connection from " << peer_ip << ": connection limit exceeded";
+    return;
+  }
+
+  class Callback final : public AdnlExtConnection::Callback {
+   public:
+    Callback(td::actor::ActorId<AdnlExtServerImpl> server, std::string peer_ip)
+        : server_(server), peer_ip_(std::move(peer_ip)) {
+    }
+    void on_close(td::actor::ActorId<AdnlExtConnection>) override {
+      td::actor::send_closure(server_, &AdnlExtServerImpl::connection_closed, std::move(peer_ip_));
+    }
+    void on_ready(td::actor::ActorId<AdnlExtConnection>) override {
+    }
+
+   private:
+    td::actor::ActorId<AdnlExtServerImpl> server_;
+    std::string peer_ip_;
+  };
+
   td::actor::create_actor<AdnlInboundConnection>(td::actor::ActorOptions().with_name("inconn").with_poll(),
-                                                 std::move(fd), peer_table_, actor_id(this))
+                                                 std::move(fd), peer_table_, actor_id(this),
+                                                 std::make_unique<Callback>(actor_id(this), std::move(peer_ip)))
       .release();
+}
+
+void AdnlExtServerImpl::connection_closed(std::string peer_ip) {
+  connection_limits_.release(peer_ip);
 }
 
 void AdnlExtServerImpl::decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data,

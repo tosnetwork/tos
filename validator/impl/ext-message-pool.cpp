@@ -14,6 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <algorithm>
 #include <vector>
 
 #include "td/utils/Random.h"
@@ -34,9 +35,11 @@ void ExtMessagePool::init_checkers() {
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(
     td::BufferSlice data, int priority, bool add_to_mempool, td::optional<PublicKeyHash> source_peer) {
-  // Keep the transport-facing API stable. Admission is currently global rather than peer-specific.
-  (void)source_peer;
   ++admission_window_.in;
+  if (!admit_source(source_peer, td::Timestamp::now())) {
+    ++admission_window_.rejected;
+    co_return td::Status::Error(ErrorCode::notready, "external message source rate limit exceeded");
+  }
   if (last_masterchain_state_.is_null()) {
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "not ready");
@@ -107,6 +110,28 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     add_message_to_mempool(checked.message, priority);
   }
   co_return result.move_as_ok();
+}
+
+bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now) {
+  if (!source_peer) {
+    return true;
+  }
+  auto it = peer_admission_.find(source_peer.value());
+  if (it == peer_admission_.end()) {
+    if (peer_admission_.size() >= MAX_TRACKED_ADMISSION_PEERS) {
+      auto oldest = std::min_element(peer_admission_.begin(), peer_admission_.end(), [](const auto &a, const auto &b) {
+        return a.second.last_seen.at() < b.second.last_seen.at();
+      });
+      peer_admission_.erase(oldest);
+    }
+    it = peer_admission_.emplace(source_peer.value(), PeerAdmission{}).first;
+  }
+  it->second.last_seen = now;
+  if (!it->second.rate.check(now)) {
+    return false;
+  }
+  it->second.rate.insert(now);
+  return true;
 }
 
 size_t ExtMessagePool::max_admission_waiters() {

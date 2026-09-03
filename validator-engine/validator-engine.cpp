@@ -5839,7 +5839,7 @@ void ValidatorEngine::process_control_query(td::uint16 port, tos::adnl::AdnlNode
       return;
     }
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::run_ext_query,
-                            std::move(data), std::move(promise));
+                            src, std::move(data), std::move(promise));
     return;
   }
 

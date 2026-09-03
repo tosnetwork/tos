@@ -11,6 +11,7 @@ set(ADNL_HEADERS
   adnl-ext-client.hpp
   adnl-ext-connection.hpp
   adnl-ext-server.h
+  adnl-ext-server-limits.h
   adnl-ext-server.hpp
   adnl-local-id.h
   adnl-message.h

@@ -537,7 +537,7 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_slave_sendExtMessage &query,
                                        td::Promise<td::BufferSlice> promise) {
   td::actor::send_closure(
-      validator_manager_, &ValidatorManagerInterface::run_ext_query,
+      validator_manager_, &ValidatorManagerInterface::run_ext_query, src,
       create_serialize_tl_object<lite_api::liteServer_query>(
           create_serialize_tl_object<lite_api::liteServer_sendMessage>(std::move(query.message_->data_))),
       [&](td::Result<td::BufferSlice>) {});
