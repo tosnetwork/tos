@@ -5,6 +5,7 @@
  */
 
 #include <algorithm>
+#include <vector>
 
 #include "adnl/adnl-ext-server-limits.h"
 #include "td/utils/tests.h"
@@ -131,6 +132,30 @@ TEST(LiteServerAdmission, ConnectionIdentityPairsAddressWithItsKey) {
   auto b = adnl::make_ext_connection_identity("198.51.100.2");
   EXPECT(a.anonymous_id != b.anonymous_id);
   EXPECT(a.peer_ip != b.peer_ip);
+}
+
+TEST(LiteServerAdmission, EveryCategorisedRequestIsAdmissible) {
+  // check_rate refuses any request id it does not know, so the known set must
+  // stay the exact union of the cost categories. If it is maintained by hand
+  // and a category gains a method that is not copied across, that method stops
+  // being served at all -- a silent outage, not a visible error. Deriving the
+  // set makes that impossible; this pins the property.
+  const std::vector<td::int32> categorised{
+      lite_api::liteServer_getState::ID,          lite_api::liteServer_getBlockProof::ID,
+      lite_api::liteServer_getConfigAll::ID,      lite_api::liteServer_getTransactions::ID,
+      lite_api::liteServer_getAccountState::ID,   lite_api::liteServer_getBlock::ID,
+      lite_api::liteServer_runSmcMethod::ID,      lite_api::liteServer_sendMessage::ID,
+      lite_api::liteServer_getMasterchainInfo::ID, lite_api::liteServer_getTime::ID,
+      lite_api::liteServer_getVersion::ID,
+  };
+  for (auto id : categorised) {
+    validator::LiteServerAdmission admission;
+    EXPECT(admission.check_rate(id, 4, td::Timestamp::at(100.0)));
+  }
+
+  // An id belonging to no category must still be refused.
+  validator::LiteServerAdmission admission;
+  EXPECT(!admission.check_rate(0x7fffffff, 4, td::Timestamp::at(100.0)));
 }
 
 }  // namespace

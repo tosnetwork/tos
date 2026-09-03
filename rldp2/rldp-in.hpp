@@ -28,6 +28,7 @@
 #include "tl-utils/tl-utils.hpp"
 
 #include "rldp.hpp"
+#include "rldp-connection-limits.h"
 
 namespace tos {
 
@@ -118,7 +119,7 @@ class RldpIn : public RldpImpl {
 
   struct Connection;
   std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, Connection> connections_;
-  std::set<std::tuple<td::Timestamp, adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>> timeout_set_;
+  RldpTimeoutSet timeout_set_;
 
   struct OutQuery {
     td::Promise<td::BufferSlice> promise;
@@ -134,6 +135,21 @@ class RldpIn : public RldpImpl {
                                                                    td::Timestamp timeout = {});
 
   static constexpr double CONNECTION_TIMEOUT = 120.0;
+
+  // Upper bound on live peer connections. An inbound message part creates a
+  // connection for whatever source id it claims, and ADNL source ids are free
+  // to mint, so without a cap the table grows with the rate of fresh
+  // identities for a whole CONNECTION_TIMEOUT window. Every comparable table
+  // in the node is bounded (DHT values and reverse connections, overlay peers,
+  // ADNL idle peer pairs, the external server's connections and queries); this
+  // one was the exception. The bound is far above any legitimate peer count.
+  static constexpr size_t MAX_CONNECTIONS = 4096;
+
+  // Drop the connection closest to expiring. Its timeout is refreshed on every
+  // packet, so the entry chosen is the most idle one; a peer that is actively
+  // transferring is never the victim, and dropping an idle entry costs only a
+  // re-create on that peer's next packet.
+  void evict_one_connection();
 };
 
 }  // namespace rldp2
