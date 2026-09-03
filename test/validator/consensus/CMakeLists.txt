@@ -24,6 +24,14 @@ target_link_libraries(test-validator-manager-resource-policy PRIVATE
     validator
 )
 
+add_executable(test-liteserver-admission test-liteserver-admission.cpp)
+target_link_libraries(test-liteserver-admission PRIVATE
+    td-test-main
+    tdutils
+    tl_api
+)
+tos_test(test-liteserver-admission)
+
 add_test(
     NAME test-consensus-simplex2-loss
     COMMAND test-consensus --duration 4 --n-nodes 5 --target-rate-ms 100

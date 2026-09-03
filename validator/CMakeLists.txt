@@ -51,6 +51,7 @@ set(VALIDATOR_HEADERS
   interfaces/validator-full-id.h
   interfaces/validator-manager.h
   invariants.hpp
+  liteserver-admission.h
 
   import-db-slice.hpp
   import-db-slice-local.hpp

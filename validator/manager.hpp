@@ -40,6 +40,7 @@
 #include "td/utils/port/Poll.h"
 #include "td/utils/port/StdStreams.h"
 
+#include "liteserver-admission.h"
 #include "manager-init.h"
 #include "manager-resource-policy.h"
 #include "consensus/session-compat.h"
@@ -235,9 +236,10 @@ class ValidatorManagerImpl : public ValidatorManager {
                                                               BlockSeqno key_seqno,
                                                               consensus::ValidatorSessionOptions opts,
                                                               bool create_catchain);
-  td::actor::ActorOwn<IValidatorGroup> create_observer_group(
-      ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
-      td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config);
+  td::actor::ActorOwn<IValidatorGroup> create_observer_group(ValidatorSessionId session_id, ShardIdFull shard,
+                                                             adnl::AdnlNodeIdShort local_adnl_id,
+                                                             td::Ref<block::ValidatorSet> validator_set,
+                                                             NewConsensusConfig config);
   std::set<adnl::AdnlNodeIdShort> get_observer_adnl_ids(td::Ref<block::ValidatorSet> validator_set) const;
   std::vector<adnl::AdnlNodeIdShort> get_all_validator_adnl_ids() const;
   td::actor::ActorId<CollationManager> get_collation_manager(adnl::AdnlNodeIdShort adnl_id);
@@ -370,20 +372,24 @@ class ValidatorManagerImpl : public ValidatorManager {
   //void get_block_description(BlockIdExt block_id, td::Promise<BlockDescription> promise) override;
 
   td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                    td::optional<PublicKeyHash> source_peer = {}) override;
-  td::actor::Task<> new_external_message_query(td::BufferSlice data) override;
+                                                   td::optional<PublicKeyHash> source_peer = {}) override;
+  td::actor::Task<> new_external_message_query(td::BufferSlice data,
+                                               td::optional<PublicKeyHash> source_peer = {}) override;
   td::actor::Task<> new_external_message_query_cont(td::Ref<ExtMessage> message,
                                                     td::actor::StartedTask<> wait_allow_broadcast);
 
   void new_ihr_message(td::BufferSlice data) override;
   void new_shard_block_description_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                              td::BufferSlice data) override;
-  td::actor::Task<> new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
-                                                  td::BufferSlice data, BroadcastSource source) override;
+  td::actor::Task<> new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data,
+                                                  BroadcastSource source) override;
 
   void add_ext_server_id(adnl::AdnlNodeIdShort id) override;
   void add_ext_server_port(td::uint16 port) override;
-  void run_ext_query(td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
+  void run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
+  void execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+                         td::Promise<td::BufferSlice> promise);
+  void finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise);
 
   void get_block_handle(BlockIdExt id, bool force, td::Promise<BlockHandle> promise) override;
   void get_block_handle_cont(BlockIdExt id, td::Result<BlockHandle> R);
@@ -693,6 +699,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::ActorOwn<LiteServerCache> lite_server_cache_;
   std::vector<td::uint16> pending_ext_ports_;
   std::vector<adnl::AdnlNodeIdShort> pending_ext_ids_;
+  LiteServerAdmission lite_server_admission_;
 
   void created_ext_server(td::actor::ActorOwn<adnl::AdnlExtServer> lite_server);
 

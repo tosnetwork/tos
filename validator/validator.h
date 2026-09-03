@@ -33,12 +33,12 @@
 #include "interfaces/proof.h"
 #include "interfaces/shard.h"
 #include "overlay/overlays.h"
-#include "state-download-buffer.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
 #include "tos/tos-types.h"
 
+#include "state-download-buffer.h"
 #include "types.h"
 
 namespace tos {
@@ -360,8 +360,9 @@ class ValidatorManagerInterface : public td::actor::Actor {
   // peer that broadcast this message. Locally-originated submissions
   // pass an empty optional.
   virtual td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                            td::optional<PublicKeyHash> source_peer = {}) = 0;
-  virtual td::actor::Task<> new_external_message_query(td::BufferSlice data) {
+                                                           td::optional<PublicKeyHash> source_peer = {}) = 0;
+  virtual td::actor::Task<> new_external_message_query(td::BufferSlice data,
+                                                       td::optional<PublicKeyHash> source_peer = {}) {
     co_return td::Status::Error("not implemented");
   }
   virtual void new_ihr_message(td::BufferSlice data) = 0;
@@ -418,7 +419,8 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void get_archive_slice(td::uint64 archive_id, td::uint64 offset, td::uint32 limit,
                                  td::Promise<td::BufferSlice> promise) = 0;
 
-  virtual void run_ext_query(td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;
+  virtual void run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
+                             td::Promise<td::BufferSlice> promise) = 0;
   virtual void prepare_stats(td::Promise<std::vector<std::pair<std::string, std::string>>> promise) = 0;
   virtual void prepare_actor_stats(td::Promise<std::string> promise) = 0;
 

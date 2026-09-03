@@ -229,8 +229,7 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
 }
 
 void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
-                                               BroadcastSource source,
-                                               td::Promise<td::Unit> promise) {
+                                               BroadcastSource source, td::Promise<td::Unit> promise) {
   if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
     return;
@@ -241,8 +240,8 @@ void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool si
   }
   auto sig_set = broadcast.sig_set;
   promise = [SelfId = actor_id(this), promise = std::move(promise), block_id = broadcast.block_id,
-             cc_seqno = broadcast.sig_set->get_catchain_seqno(),
-             is_final = broadcast.sig_set->is_final(), sig_set = std::move(sig_set)](td::Result<td::Unit> R) mutable {
+             cc_seqno = broadcast.sig_set->get_catchain_seqno(), is_final = broadcast.sig_set->is_final(),
+             sig_set = std::move(sig_set)](td::Result<td::Unit> R) mutable {
     if (R.is_ok() && is_final) {
       td::actor::ask(SelfId, &ValidatorManagerImpl::validated_accepted_block_broadcast, block_id, cc_seqno).detach();
       if (!block_id.is_masterchain()) {
@@ -287,20 +286,18 @@ td::actor::Task<> ValidatorManagerImpl::validated_accepted_block_broadcast(Block
   co_return td::Unit{};
 }
 
-td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(
-    BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set) {
+td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(BlockIdExt block_id,
+                                                                         Ref<block::BlockSignatureSet> sig_set) {
   if (!is_validator()) {
     co_return td::Unit{};
   }
   if (!shard_client_handle_ || shard_client_handle_->unix_time() <= (UnixTime)td::Clocks::system() - 60) {
-    VLOG(VALIDATOR_INFO) << "Failed to generate shard block description for " << block_id.to_str()
-                         << " : out of sync";
+    VLOG(VALIDATOR_INFO) << "Failed to generate shard block description for " << block_id.to_str() << " : out of sync";
     co_return td::Unit{};
   }
   auto shard_desc = last_masterchain_state_->get_shard_from_config(block_id.shard_full());
   if (shard_desc.not_null() && shard_desc->top_block_id().seqno() >= block_id.seqno()) {
-    VLOG(VALIDATOR_INFO) << "Don't generate shard block description for " << block_id.to_str()
-                         << " : too old block";
+    VLOG(VALIDATOR_INFO) << "Don't generate shard block description for " << block_id.to_str() << " : too old block";
     co_return td::Unit{};
   }
 
@@ -490,14 +487,13 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                                        td::optional<PublicKeyHash> source_peer) {
+                                                                       td::optional<PublicKeyHash> source_peer) {
   if (!started_) {
     co_return td::Status::Error(ErrorCode::notready, "node not synced");
   }
   auto r_check_result =
       co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), priority,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(),
-                              std::move(source_peer))
+                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer))
           .wrap();
   if (r_check_result.is_error()) {
     VLOG(VALIDATOR_DEBUG) << "Dropping external message broadcast (prio=" << priority
@@ -516,11 +512,11 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
   co_return td::Unit{};
 }
 
-td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data) {
-  auto [message, wait_allow_broadcast] =
-      co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(),
-                              td::optional<PublicKeyHash>{});
+td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data,
+                                                                   td::optional<PublicKeyHash> source_peer) {
+  auto [message, wait_allow_broadcast] = co_await td::actor::ask(
+      ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
+      /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer));
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};
 }
@@ -645,8 +641,7 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
     co_return td::Unit{};
   }
   if (finality.sig_set.is_null()) {
-    VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast without signatures: "
-                            << finality.block_id.to_str();
+    VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast without signatures: " << finality.block_id.to_str();
     co_return td::Unit{};
   }
   if (finality.block_id.is_masterchain() && !finality.sig_set->is_final()) {
@@ -661,8 +656,7 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
     co_return td::Unit{};
   }
 
-  auto status =
-      co_await check_finality_signatures(finality.block_id, finality.sig_set, last_masterchain_state_).wrap();
+  auto status = co_await check_finality_signatures(finality.block_id, finality.sig_set, last_masterchain_state_).wrap();
   if (status.is_error()) {
     VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast: " << status.move_as_error();
     co_return td::Unit{};
@@ -896,20 +890,16 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
   }
   pending_block_finality_.erase(block_id);
   BlockBroadcast broadcast{block_id, std::move(sig_set), std::move(data), proof.move_as_ok()};
-  new_block_broadcast(
-      std::move(broadcast), true, finality_source,
-      [block_id](td::Result<td::Unit> R) mutable {
-        if (R.is_error()) {
-          auto error = R.move_as_error();
-          if (error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout) {
-            VLOG(VALIDATOR_DEBUG) << "dropped pending block finality broadcast for " << block_id.to_str() << ": "
-                                  << error;
-          } else {
-            VLOG(VALIDATOR_INFO) << "dropped pending block finality broadcast for " << block_id.to_str() << ": "
-                                 << error;
-          }
-        }
-      });
+  new_block_broadcast(std::move(broadcast), true, finality_source, [block_id](td::Result<td::Unit> R) mutable {
+    if (R.is_error()) {
+      auto error = R.move_as_error();
+      if (error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout) {
+        VLOG(VALIDATOR_DEBUG) << "dropped pending block finality broadcast for " << block_id.to_str() << ": " << error;
+      } else {
+        VLOG(VALIDATOR_INFO) << "dropped pending block finality broadcast for " << block_id.to_str() << ": " << error;
+      }
+    }
+  });
 }
 
 void ValidatorManagerImpl::add_ext_server_id(adnl::AdnlNodeIdShort id) {
@@ -921,22 +911,7 @@ void ValidatorManagerImpl::add_ext_server_id(adnl::AdnlNodeIdShort id) {
     }
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
-      // Round 155 MEDIUM (deferred): the ADNL source `src` is dropped
-      // here, so the lite-client liteServer_sendMessage path forwards
-      // unattributed data into ExtMessagePool::check_add_external_
-      // message with `td::optional<PublicKeyHash>{}`.  ExtMessagePool's
-      // per-peer limiter only runs when source_peer is set, so a
-      // single ADNL client can submit unique liteServer.sendMessage
-      // queries indefinitely without per-source throttling.  Closing
-      // this requires plumbing the AdnlNodeIdShort through
-      // run_ext_query → LiteQuery::perform_sendMessage →
-      // new_external_message_query so the source is preserved at
-      // ExtMessagePool admission.  Tracked as a focused follow-up;
-      // exposure is bounded by the per-IP gate the JSON-RPC layer
-      // enforces (round 153/154/155) on the dominant submission
-      // path, while the ADNL/lite-server submission path remains
-      // a DoS surface for direct lite-client connections.
-      td::actor::send_closure(id_, &ValidatorManagerImpl::run_ext_query, std::move(data), std::move(promise));
+      td::actor::send_closure(id_, &ValidatorManagerImpl::run_ext_query, src, std::move(data), std::move(promise));
     }
 
    public:
@@ -975,7 +950,8 @@ void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtS
   pending_ext_ports_.clear();
 }
 
-void ValidatorManagerImpl::run_ext_query(td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
+void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
+                                         td::Promise<td::BufferSlice> promise) {
   if (!started_ && !opts_->get_unsynced_liteserver()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not synced"));
     return;
@@ -991,38 +967,73 @@ void ValidatorManagerImpl::run_ext_query(td::BufferSlice data, td::Promise<td::B
     }
   }
 
-  auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-    td::BufferSlice data;
-    if (R.is_error()) {
-      auto S = R.move_as_error();
-      data = create_serialize_tl_object<lite_api::liteServer_error>(S.code(), S.message().c_str());
-    } else {
-      data = R.move_as_ok();
-    }
-    promise.set_value(std::move(data));
-  });
-
   auto E = fetch_tl_prefix<lite_api::liteServer_waitMasterchainSeqno>(data, true);
-  if (E.is_error()) {
-    run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(P));
+  td::optional<tl_object_ptr<lite_api::liteServer_waitMasterchainSeqno>> wait;
+  if (E.is_ok()) {
+    wait = E.move_as_ok();
+  }
+
+  if (data.size() < sizeof(td::int32)) {
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "liteserver query has no function tag"));
+    return;
+  }
+  auto request_id = td::as<td::int32>(data.as_slice().data());
+  if (!lite_server_admission_.check_rate(request_id, data.size())) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver admission limit exceeded"));
+    return;
+  }
+
+  td::optional<PublicKeyHash> source_peer;
+  if (!source.is_zero()) {
+    source_peer = source.pubkey_hash();
+  }
+
+  if (!wait) {
+    execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
   } else {
-    auto e = E.move_as_ok();
+    auto e = std::move(*wait);
     if (static_cast<BlockSeqno>(e->seqno_) <= min_confirmed_masterchain_seqno_) {
-      run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(P));
+      execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
     } else {
       auto t = e->timeout_ms_ < 10000 ? e->timeout_ms_ * 0.001 : 10.0;
-      auto Q =
-          td::PromiseCreator::lambda([data = std::move(data), SelfId = actor_id(this), cache = lite_server_cache_.get(),
-                                      promise = std::move(P)](td::Result<td::Unit> R) mutable {
-            if (R.is_error()) {
-              promise.set_error(R.move_as_error());
-              return;
-            }
-            run_liteserver_query(std::move(data), SelfId, cache, std::move(promise));
-          });
+      auto Q = td::PromiseCreator::lambda([data = std::move(data), SelfId = actor_id(this),
+                                           source_peer = std::move(source_peer),
+                                           promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::execute_ext_query, std::move(source_peer),
+                                std::move(data), std::move(promise));
+      });
       wait_shard_client_state(e->seqno_, td::Timestamp::in(t), std::move(Q));
     }
   }
+}
+
+void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+                                             td::Promise<td::BufferSlice> promise) {
+  if (!lite_server_admission_.try_acquire_execution()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver execution limit exceeded"));
+    return;
+  }
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::finish_ext_query, std::move(R), std::move(promise));
+      });
+  run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source_peer), std::move(P));
+}
+
+void ValidatorManagerImpl::finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise) {
+  lite_server_admission_.release();
+  td::BufferSlice data;
+  if (result.is_error()) {
+    auto status = result.move_as_error();
+    data = create_serialize_tl_object<lite_api::liteServer_error>(status.code(), status.message().c_str());
+  } else {
+    data = result.move_as_ok();
+  }
+  promise.set_value(std::move(data));
 }
 
 void ValidatorManagerImpl::wait_block_state(BlockHandle handle, td::uint32 priority, td::Timestamp timeout,
@@ -1615,14 +1626,13 @@ void ValidatorManagerImpl::create_celldb_streaming_writer_unsafe_for_tests_only(
   td::actor::send_closure(db_, &Db::create_celldb_streaming_writer_unsafe_for_tests_only, std::move(promise));
 }
 
-void ValidatorManagerImpl::import_persistent_state_streaming(
-    PersistentStateImportRequest request, td::Promise<PersistentStateImportResult> promise) {
+void ValidatorManagerImpl::import_persistent_state_streaming(PersistentStateImportRequest request,
+                                                             td::Promise<PersistentStateImportResult> promise) {
   // tos26 P1-4: forward the actor-local import request through the
   // Db layer. The entire begin_batch / parse / verify-root / commit
   // lifecycle runs inside CellDbIn's serialized actor loop, so the
   // downloader actor never reaches into vm::KeyValue.
-  td::actor::send_closure(db_, &Db::import_persistent_state_streaming, std::move(request),
-                          std::move(promise));
+  td::actor::send_closure(db_, &Db::import_persistent_state_streaming, std::move(request), std::move(promise));
 }
 
 void ValidatorManagerImpl::store_persistent_state_file(BlockIdExt block_id, BlockIdExt masterchain_block_id,
@@ -2811,7 +2821,7 @@ void ValidatorManagerImpl::update_shards() {
 
   std::map<ObserverGroupId, ValidatorGroupEntry> new_observer_groups;
   if (allow_validate_) {
-    for (const auto& [shard, prev] : new_shards) {
+    for (const auto &[shard, prev] : new_shards) {
       auto maybe_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
       if (!consensus_group_admissible(maybe_config)) {
         // Missing config, or a protocol version newer than this build supports:
@@ -2840,12 +2850,10 @@ void ValidatorManagerImpl::update_shards() {
               .started = false,
               .cc_seqno = val_set->get_catchain_seqno(),
           };
-          LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at "
-                    << local_adnl_id;
+          LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at " << local_adnl_id;
         }
         if (!entry.started) {
-          LOG(INFO) << "Started observer group " << shard.to_str() << "." << entry.cc_seqno << " at "
-                    << local_adnl_id;
+          LOG(INFO) << "Started observer group " << shard.to_str() << "." << entry.cc_seqno << " at " << local_adnl_id;
           td::actor::send_closure(entry.actor, &IValidatorGroup::start, prev, last_masterchain_block_id_);
           entry.started = true;
         }
@@ -2853,7 +2861,7 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
-  for (auto& [observer_id, entry] : observer_groups_) {
+  for (auto &[observer_id, entry] : observer_groups_) {
     LOG(INFO) << "Destroying observer group " << entry.shard.to_str() << "." << entry.cc_seqno << " at "
               << observer_id.second;
     td::actor::send_closure(entry.actor.release(), &IValidatorGroup::destroy);
@@ -3040,12 +3048,12 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     return {};
   }
   auto config = new_consensus_config.value();
-  return IValidatorGroup::create_bridge(
-      PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
-      keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
-      actor_id(this), get_collation_manager(adnl_id), init_session,
-      opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-      opts_->need_monitor(shard, last_masterchain_state_));
+  return IValidatorGroup::create_bridge(PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id,
+                                        validator_set, key_seqno, config, keyring_, adnl_, quic_, overlays_,
+                                        get_all_validator_adnl_ids(), db_root_, actor_id(this),
+                                        get_collation_manager(adnl_id), init_session,
+                                        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
+                                        opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
@@ -3053,14 +3061,14 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group
     td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config) {
   return IValidatorGroup::create_bridge_observer(
       PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
-      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this), opts_,
-      opts_->need_monitor(shard, last_masterchain_state_));
+      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
+      opts_, opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
     td::Ref<block::ValidatorSet> validator_set) const {
   std::set<adnl::AdnlNodeIdShort> result;
-  for (const auto& key : temp_keys_) {
+  for (const auto &key : temp_keys_) {
     if (validator_set->is_validator(key.bits256_value())) {
       continue;
     }
@@ -3086,7 +3094,7 @@ std::vector<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_all_validator_adnl_
     if (total_set.is_null()) {
       continue;
     }
-    for (const auto& descr : total_set->export_vector()) {
+    for (const auto &descr : total_set->export_vector()) {
       auto key_hash = ValidatorFullId{descr.key}.compute_short_id();
       result.emplace_back(descr.addr.is_zero() ? key_hash.bits256_value() : descr.addr);
     }

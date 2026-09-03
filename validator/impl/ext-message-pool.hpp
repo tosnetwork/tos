@@ -22,6 +22,7 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/PersistentTreap.h"
+#include "td/utils/RateLimiterWindow.h"
 
 #include "ext-message-checker.hpp"
 
@@ -172,6 +173,13 @@ class ExtMessagePool : public td::actor::Actor {
   double rate_window_start_{td::Time::now()};
   size_t max_admission_waiters();
 
+  struct PeerAdmission {
+    td::RateLimiterWindow rate{10.0, 30};
+    td::Timestamp last_seen = td::Timestamp::now();
+  };
+  std::map<PublicKeyHash, PeerAdmission> peer_admission_;
+  bool admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now);
+
   struct AdmissionWindowStats {
     td::uint64 in{0};
     td::uint64 admitted{0};
@@ -195,6 +203,7 @@ class ExtMessagePool : public td::actor::Actor {
   static constexpr size_t MAX_INFLIGHT_CHECKS = 8 * NUM_CHECKERS;
   static constexpr size_t MAX_ADMISSION_WAITERS = 50000;
   static constexpr double MAX_ADMISSION_QUEUE_DELAY = 5.0;
+  static constexpr size_t MAX_TRACKED_ADMISSION_PEERS = 4096;
   static constexpr double ADMISSION_STATS_PERIOD = 5.0;
 };
 

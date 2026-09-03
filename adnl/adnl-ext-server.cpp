@@ -28,20 +28,56 @@ namespace adnl {
 
 td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(f, fetch_tl_object<tos_api::adnl_message_query>(std::move(data), true));
-
-  auto P =
-      td::PromiseCreator::lambda([SelfId = actor_id(this), query_id = f->query_id_](td::Result<td::BufferSlice> R) {
-        if (R.is_error()) {
-          auto S = R.move_as_error();
-          LOG(INFO) << "failed ext query: " << S;
-        } else {
-          auto B = create_tl_object<tos_api::adnl_message_answer>(query_id, R.move_as_ok());
-          td::actor::send_closure(SelfId, &AdnlInboundConnection::send, serialize_tl_object(B, true));
-        }
+  if (!query_limits_.try_acquire()) {
+    // Reject only this query. Returning an error from process_packet stops the
+    // whole multiplexed TCP connection and discards unrelated in-flight work.
+    log_dropped_query("per-connection admission limit exceeded");
+    return td::Status::OK();
+  }
+  if (!server_query_limits_->try_acquire(peer_ip_)) {
+    query_limits_.release();
+    log_dropped_query("server or per-IP in-flight limit exceeded");
+    return td::Status::OK();
+  }
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), query_id = f->query_id_, peer_ip = peer_ip_,
+       server_query_limits = server_query_limits_](td::Result<td::BufferSlice> R) mutable {
+        server_query_limits->release(peer_ip);
+        td::actor::send_closure(SelfId, &AdnlInboundConnection::query_finished, query_id, std::move(R));
       });
-  td::actor::send_closure(peer_table_, &AdnlPeerTable::deliver_query, remote_id_, local_id_, std::move(f->query_),
+  auto source_id = remote_id_.is_zero() ? anonymous_remote_id_ : remote_id_;
+  td::actor::send_closure(peer_table_, &AdnlPeerTable::deliver_query, source_id, local_id_, std::move(f->query_),
                           std::move(P));
   return td::Status::OK();
+}
+
+void AdnlInboundConnection::log_dropped_query(td::Slice reason) {
+  // A client that keeps sending past its budget would otherwise turn every
+  // rejected query into a log line, so only the first drop per connection is
+  // surfaced at warning level; the running total is reported when it closes.
+  if (dropped_queries_++ == 0) {
+    LOG(WARNING) << "Dropping external query from " << peer_ip_ << ": " << reason;
+  } else {
+    LOG(DEBUG) << "Dropping external query from " << peer_ip_ << ": " << reason;
+  }
+}
+
+void AdnlInboundConnection::tear_down() {
+  if (dropped_queries_ > 0) {
+    LOG(INFO) << "External connection from " << peer_ip_ << " closed after " << dropped_queries_
+              << " dropped queries";
+  }
+  AdnlExtConnection::tear_down();
+}
+
+void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
+  query_limits_.release();
+  if (result.is_error()) {
+    LOG(INFO) << "failed ext query: " << result.error();
+    return;
+  }
+  auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
+  send(serialize_tl_object(answer, true));
 }
 
 td::Status AdnlInboundConnection::process_init_packet(td::BufferSlice data) {
@@ -169,9 +205,48 @@ void AdnlExtServerImpl::add_local_id(AdnlNodeIdShort id) {
 }
 
 void AdnlExtServerImpl::accepted(td::SocketFd fd) {
+  td::IPAddress peer_address;
+  auto status = peer_address.init_peer_address(fd);
+  if (status.is_error()) {
+    LOG(WARNING) << "Rejecting external connection with unknown peer address: " << status;
+    return;
+  }
+  auto peer_ip = peer_address.get_ip_host();
+  if (!connection_limits_.try_acquire(peer_ip)) {
+    LOG(WARNING) << "Rejecting external connection from " << peer_ip << ": connection limit exceeded";
+    return;
+  }
+
+  class Callback final : public AdnlExtConnection::Callback {
+   public:
+    Callback(td::actor::ActorId<AdnlExtServerImpl> server, std::string peer_ip)
+        : server_(server), peer_ip_(std::move(peer_ip)) {
+    }
+    void on_close(td::actor::ActorId<AdnlExtConnection>) override {
+      td::actor::send_closure(server_, &AdnlExtServerImpl::connection_closed, std::move(peer_ip_));
+    }
+    void on_ready(td::actor::ActorId<AdnlExtConnection>) override {
+    }
+
+   private:
+    td::actor::ActorId<AdnlExtServerImpl> server_;
+    std::string peer_ip_;
+  };
+
+  // Derive the anonymous identity and the rate-limiting key together, before
+  // the call, so neither depends on the order the arguments below happen to be
+  // evaluated in.
+  auto identity = make_ext_connection_identity(std::move(peer_ip));
   td::actor::create_actor<AdnlInboundConnection>(td::actor::ActorOptions().with_name("inconn").with_poll(),
-                                                 std::move(fd), peer_table_, actor_id(this))
+                                                 std::move(fd), peer_table_, actor_id(this),
+                                                 AdnlNodeIdShort{identity.anonymous_id},
+                                                 identity.peer_ip, query_limits_,
+                                                 std::make_unique<Callback>(actor_id(this), identity.peer_ip))
       .release();
+}
+
+void AdnlExtServerImpl::connection_closed(std::string peer_ip) {
+  connection_limits_.release(peer_ip);
 }
 
 void AdnlExtServerImpl::decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data,

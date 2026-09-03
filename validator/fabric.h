@@ -89,8 +89,8 @@ td::Result<std::vector<td::Ref<ShardTopBlockDescription>>> create_new_shard_bloc
 
 void run_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                             td::Ref<block::ValidatorSet> validator_set, td::Ref<block::BlockSignatureSet> signatures,
-                            int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc, bool apply,
-                            td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
+                            int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
+                            bool apply, td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
 void run_fake_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                                  td::Ref<block::ValidatorSet> validator_set,
                                  td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
@@ -120,7 +120,8 @@ void run_validate_query(BlockCandidate candidate, ValidateParams params, td::act
 void run_collate_query(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
                        td::CancellationToken cancellation_token, td::Promise<BlockCandidate> promise);
 void run_liteserver_query(td::BufferSlice data, td::actor::ActorId<ValidatorManager> manager,
-                          td::actor::ActorId<LiteServerCache> cache, td::Promise<td::BufferSlice> promise);
+                          td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                          td::Promise<td::BufferSlice> promise);
 void run_fetch_account_state(
     WorkchainId wc, StdSmcAddress addr, td::actor::ActorId<ValidatorManager> manager,
     td::Promise<std::tuple<td::Ref<vm::CellSlice>, UnixTime, LogicalTime, std::unique_ptr<block::ConfigInfo>>> promise);

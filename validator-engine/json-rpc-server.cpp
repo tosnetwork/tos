@@ -1320,7 +1320,7 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
   }
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
-                          std::move(query), std::move(promise));
+                          adnl::AdnlNodeIdShort::zero(), std::move(query), std::move(promise));
 }
 
 // ─── JSON response construction ───────────────────────────────────────────
