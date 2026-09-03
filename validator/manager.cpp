@@ -978,42 +978,50 @@ void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::Buffe
     return;
   }
   auto request_id = td::as<td::int32>(data.as_slice().data());
-  if (!lite_server_admission_.try_acquire(request_id, data.size())) {
+  if (!lite_server_admission_.check_rate(request_id, data.size())) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver admission limit exceeded"));
     return;
   }
 
-  auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::finish_ext_query, std::move(R), std::move(promise));
-      });
   td::optional<PublicKeyHash> source_peer;
   if (!source.is_zero()) {
     source_peer = source.pubkey_hash();
   }
 
   if (!wait) {
-    run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source_peer),
-                         std::move(P));
+    execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
   } else {
     auto e = std::move(*wait);
     if (static_cast<BlockSeqno>(e->seqno_) <= min_confirmed_masterchain_seqno_) {
-      run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source_peer),
-                           std::move(P));
+      execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
     } else {
       auto t = e->timeout_ms_ < 10000 ? e->timeout_ms_ * 0.001 : 10.0;
       auto Q = td::PromiseCreator::lambda([data = std::move(data), SelfId = actor_id(this),
-                                           cache = lite_server_cache_.get(), source_peer = std::move(source_peer),
-                                           promise = std::move(P)](td::Result<td::Unit> R) mutable {
+                                           source_peer = std::move(source_peer),
+                                           promise = std::move(promise)](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
           promise.set_error(R.move_as_error());
           return;
         }
-        run_liteserver_query(std::move(data), SelfId, cache, std::move(source_peer), std::move(promise));
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::execute_ext_query, std::move(source_peer),
+                                std::move(data), std::move(promise));
       });
       wait_shard_client_state(e->seqno_, td::Timestamp::in(t), std::move(Q));
     }
   }
+}
+
+void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+                                             td::Promise<td::BufferSlice> promise) {
+  if (!lite_server_admission_.try_acquire_execution()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver execution limit exceeded"));
+    return;
+  }
+  auto P = td::PromiseCreator::lambda(
+      [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::finish_ext_query, std::move(R), std::move(promise));
+      });
+  run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source_peer), std::move(P));
 }
 
 void ValidatorManagerImpl::finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise) {

@@ -105,6 +105,16 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
     notify();
   }
 
+  void tear_down() override {
+    if (callback_) {
+      callback_->on_close(actor_id(this));
+      callback_ = nullptr;
+    }
+    // unsubscribe from socket updates
+    // nb: interface will be changed
+    td::actor::SchedulerContext::get().get_poll().unsubscribe(buffered_fd_.get_poll_info().get_pollable_fd_ref());
+  }
+
  private:
   td::AesCtrState in_ctr_;
   td::AesCtrState out_ctr_;
@@ -119,16 +129,6 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
 
   void on_net() {
     loop();
-  }
-
-  void tear_down() override {
-    if (callback_) {
-      callback_->on_close(actor_id(this));
-      callback_ = nullptr;
-    }
-    // unsubscribe from socket updates
-    // nb: interface will be changed
-    td::actor::SchedulerContext::get().get_poll().unsubscribe(buffered_fd_.get_poll_info().get_pollable_fd_ref());
   }
 
   void update_timer() {

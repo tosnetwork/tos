@@ -19,12 +19,16 @@ class LiteServerAdmission {
  public:
   static constexpr size_t MAX_INFLIGHT = 512;
 
-  bool try_acquire(td::int32 request_id, size_t request_bytes, td::Timestamp now = td::Timestamp::now()) {
-    if (inflight_ >= MAX_INFLIGHT || !known_requests_.contains(request_id)) {
+  bool check_rate(td::int32 request_id, size_t request_bytes, td::Timestamp now = td::Timestamp::now()) {
+    if (!known_requests_.contains(request_id)) {
       return false;
     }
     size_t cost = 1 + request_bytes / (16 * 1024);
-    if (!rate_limiter_.check_in(request_id, cost, now)) {
+    return rate_limiter_.check_in(request_id, cost, now);
+  }
+
+  bool try_acquire_execution() {
+    if (inflight_ >= MAX_INFLIGHT) {
       return false;
     }
     ++inflight_;

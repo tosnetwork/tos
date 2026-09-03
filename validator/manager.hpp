@@ -386,6 +386,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_ext_server_id(adnl::AdnlNodeIdShort id) override;
   void add_ext_server_port(td::uint16 port) override;
   void run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
+  void execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+                         td::Promise<td::BufferSlice> promise);
   void finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise);
 
   void get_block_handle(BlockIdExt id, bool force, td::Promise<BlockHandle> promise) override;

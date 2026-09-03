@@ -20,7 +20,9 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <set>
+#include <string>
 
 #include "td/net/TcpListener.h"
 #include "td/utils/BufferedFd.h"
@@ -40,8 +42,15 @@ class AdnlExtServerImpl;
 class AdnlInboundConnection : public AdnlExtConnection {
  public:
   AdnlInboundConnection(td::SocketFd fd, td::actor::ActorId<AdnlPeerTable> peer_table,
-                        td::actor::ActorId<AdnlExtServerImpl> ext_server, std::unique_ptr<Callback> callback)
-      : AdnlExtConnection(std::move(fd), std::move(callback), false), peer_table_(peer_table), ext_server_(ext_server) {
+                        td::actor::ActorId<AdnlExtServerImpl> ext_server, AdnlNodeIdShort anonymous_remote_id,
+                        std::string peer_ip, std::shared_ptr<ExtServerQueryLimits> server_query_limits,
+                        std::unique_ptr<Callback> callback)
+      : AdnlExtConnection(std::move(fd), std::move(callback), false)
+      , peer_table_(peer_table)
+      , ext_server_(ext_server)
+      , anonymous_remote_id_(anonymous_remote_id)
+      , peer_ip_(std::move(peer_ip))
+      , server_query_limits_(std::move(server_query_limits)) {
   }
 
   td::Status process_packet(td::BufferSlice data) override;
@@ -50,14 +59,23 @@ class AdnlInboundConnection : public AdnlExtConnection {
   void inited_crypto(td::Result<td::BufferSlice> R);
   void query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result);
 
+ protected:
+  void tear_down() override;
+
  private:
+  void log_dropped_query(td::Slice reason);
+
   td::actor::ActorId<AdnlPeerTable> peer_table_;
   td::actor::ActorId<AdnlExtServerImpl> ext_server_;
   AdnlNodeIdShort local_id_;
 
   td::SecureString nonce_;
   AdnlNodeIdShort remote_id_ = AdnlNodeIdShort::zero();
+  AdnlNodeIdShort anonymous_remote_id_;
+  std::string peer_ip_;
+  std::shared_ptr<ExtServerQueryLimits> server_query_limits_;
   ExtConnectionQueryLimits query_limits_{1.0, 64, 32};
+  td::uint64 dropped_queries_{0};
 };
 
 class AdnlExtServerImpl : public AdnlExtServer {
@@ -95,6 +113,9 @@ class AdnlExtServerImpl : public AdnlExtServer {
   std::set<td::uint16> ports_;
   std::map<td::uint16, td::actor::ActorOwn<td::TcpInfiniteListener>> listeners_;
   ExtServerConnectionLimits connection_limits_{1024, 64};
+  // Bound parked and executing requests across connections. The per-IP limit
+  // stays below the validator execution budget so one address cannot monopolize it.
+  std::shared_ptr<ExtServerQueryLimits> query_limits_ = std::make_shared<ExtServerQueryLimits>(4096, 256);
 };
 
 }  // namespace adnl

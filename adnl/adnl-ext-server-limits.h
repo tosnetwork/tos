@@ -6,11 +6,19 @@
 #pragma once
 
 #include <map>
+#include <mutex>
 #include <string>
 
+#include "common/checksum.h"
 #include "td/utils/RateLimiterWindow.h"
 
 namespace tos::adnl {
+
+inline td::Bits256 external_peer_ip_identity(td::Slice peer_ip) {
+  std::string material = "tos-adnl-ext-ip:";
+  material.append(peer_ip.data(), peer_ip.size());
+  return td::sha256_bits256(material);
+}
 
 // Small value types kept separate from the socket actor so admission behavior
 // can be tested without opening real TCP connections.
@@ -82,6 +90,49 @@ class ExtConnectionQueryLimits {
   td::RateLimiterWindow rate_;
   size_t max_inflight_;
   size_t inflight_{0};
+};
+
+class ExtServerQueryLimits {
+ public:
+  ExtServerQueryLimits(size_t max_inflight, size_t max_inflight_per_ip)
+      : max_inflight_(max_inflight), max_inflight_per_ip_(max_inflight_per_ip) {
+  }
+
+  bool try_acquire(const std::string &peer_ip) {
+    std::lock_guard lock(mutex_);
+    auto it = inflight_per_ip_.find(peer_ip);
+    size_t per_ip = it == inflight_per_ip_.end() ? 0 : it->second;
+    if (inflight_ >= max_inflight_ || per_ip >= max_inflight_per_ip_) {
+      return false;
+    }
+    ++inflight_;
+    ++inflight_per_ip_[peer_ip];
+    return true;
+  }
+
+  void release(const std::string &peer_ip) {
+    std::lock_guard lock(mutex_);
+    auto it = inflight_per_ip_.find(peer_ip);
+    if (it == inflight_per_ip_.end() || it->second == 0) {
+      return;
+    }
+    --inflight_;
+    if (--it->second == 0) {
+      inflight_per_ip_.erase(it);
+    }
+  }
+
+  size_t inflight() const {
+    std::lock_guard lock(mutex_);
+    return inflight_;
+  }
+
+ private:
+  size_t max_inflight_;
+  size_t max_inflight_per_ip_;
+  mutable std::mutex mutex_;
+  size_t inflight_{0};
+  std::map<std::string, size_t> inflight_per_ip_;
 };
 
 }  // namespace tos::adnl
