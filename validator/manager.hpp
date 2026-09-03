@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include <deque>
 #include <list>
 #include <map>
 #include <queue>
@@ -784,6 +785,14 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<td::uint64,
            std::pair<std::string, std::function<void(td::Promise<std::vector<std::pair<std::string, std::string>>>)>>>
       stats_providers_;
+
+  // Dedup collator response-stats by resulting block id: a replayed collation
+  // returns the same candidate and must not append another line to the
+  // append-only session-stats file. Bounded by a fixed recent-id window; the
+  // per-collation creator set is already bounded by validator-set membership.
+  std::set<BlockIdExt> logged_collator_response_ids_;
+  std::deque<BlockIdExt> logged_collator_response_order_;
+  static constexpr size_t max_logged_collator_responses_ = 4096;
 
   td::actor::ActorOwn<StorageStatCache> storage_stat_cache_;
 

@@ -4126,6 +4126,19 @@ void ValidatorManagerImpl::log_validate_query_stats(ValidationStats stats) {
 }
 
 void ValidatorManagerImpl::log_collator_node_response_stats(CollatorNodeResponseStats stats) {
+  // Record each collated candidate at most once. A validator that replays a
+  // request receives the cached candidate (same resulting block id), which
+  // would otherwise append a duplicate line to the append-only session-stats
+  // file on every replay. The recent-id window is bounded; distinct ids per
+  // block are already bounded by the creator being a validator-set member.
+  if (!logged_collator_response_ids_.insert(stats.block_id).second) {
+    return;
+  }
+  logged_collator_response_order_.push_back(stats.block_id);
+  if (logged_collator_response_order_.size() > max_logged_collator_responses_) {
+    logged_collator_response_ids_.erase(logged_collator_response_order_.front());
+    logged_collator_response_order_.pop_front();
+  }
   write_session_stats(stats);
 }
 
