@@ -85,42 +85,14 @@ class LiteServerAdmission {
       liteServer_getTime::ID,
       liteServer_getVersion::ID,
   };
-  const std::set<td::int32> known_requests_ = [] {
-    std::set<td::int32> result{
-        liteServer_getState::ID,
-        liteServer_getBlockProof::ID,
-        liteServer_getConfigAll::ID,
-        liteServer_getTransactions::ID,
-        liteServer_getValidatorStats::ID,
-        liteServer_getShardBlockProof::ID,
-        liteServer_getLibrariesWithProof::ID,
-        liteServer_lookupBlockWithProof::ID,
-        liteServer_getAccountState::ID,
-        liteServer_getAccountStatePrunned::ID,
-        liteServer_getAllShardsInfo::ID,
-        liteServer_getBlock::ID,
-        liteServer_getBlockHeader::ID,
-        liteServer_getBlockOutMsgQueueSize::ID,
-        liteServer_getConfigParams::ID,
-        liteServer_getDispatchQueueInfo::ID,
-        liteServer_getDispatchQueueMessages::ID,
-        liteServer_getLibraries::ID,
-        liteServer_getOneTransaction::ID,
-        liteServer_getOutMsgQueueSizes::ID,
-        liteServer_getShardInfo::ID,
-        liteServer_listBlockTransactions::ID,
-        liteServer_listBlockTransactionsExt::ID,
-        liteServer_lookupBlock::ID,
-        liteServer_nonfinal_getCandidate::ID,
-        liteServer_nonfinal_getPendingShardBlocks::ID,
-        liteServer_nonfinal_getValidatorGroups::ID,
-        liteServer_runSmcMethod::ID,
-        liteServer_sendMessage::ID,
-        liteServer_getMasterchainInfo::ID,
-        liteServer_getMasterchainInfoExt::ID,
-        liteServer_getTime::ID,
-        liteServer_getVersion::ID,
-    };
+  // Derived from the category sets rather than repeated: a request added to a
+  // category but forgotten here would be rejected outright by check_rate,
+  // silently disabling that method.
+  const std::set<td::int32> known_requests_ = [this] {
+    std::set<td::int32> result;
+    result.insert(heavy_requests_.begin(), heavy_requests_.end());
+    result.insert(medium_requests_.begin(), medium_requests_.end());
+    result.insert(small_requests_.begin(), small_requests_.end());
     return result;
   }();
   fullnode::RateLimiter<td::int32> rate_limiter_{
