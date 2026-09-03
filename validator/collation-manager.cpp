@@ -22,6 +22,7 @@
 #include "collator-node/utils.hpp"
 #include "common/checksum.h"
 #include "td/utils/Random.h"
+#include "vm/boc.h"
 
 #include "collation-manager.hpp"
 #include "fabric.h"
@@ -211,6 +212,19 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
     // hash does not match the id it is announced under.
     if (candidate.id.file_hash != td::sha256_bits256(candidate.data.as_slice())) {
       P.set_error(td::Status::Error("collate query: block file hash does not match data"));
+      return;
+    }
+    // Also verify the claimed root hash against the actual BoC root. file_hash
+    // pins the bytes, but the block is announced (and broadcast, below, before
+    // full validation) under id.root_hash; a compromised collator could pair
+    // correct bytes with a wrong root hash, so recompute it here.
+    auto root = vm::std_boc_deserialize(candidate.data.as_slice());
+    if (root.is_error()) {
+      P.set_error(root.move_as_error_prefix("collate query: cannot deserialize block: "));
+      return;
+    }
+    if (root.ok()->get_hash().as_slice() != candidate.id.root_hash.as_slice()) {
+      P.set_error(td::Status::Error("collate query: block root hash does not match data"));
       return;
     }
     LOG(INFO) << "got collated block " << next_block_id.to_str() << " from #" << selected_idx << " ("

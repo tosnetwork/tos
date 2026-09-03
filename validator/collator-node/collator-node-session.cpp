@@ -49,6 +49,9 @@ CollatorNodeSession::CollatorNodeSession(ShardIdFull shard, std::vector<BlockIdE
     , adnl_(adnl)
     , rldp_(rldp)
     , next_block_seqno_(get_next_block_seqno(prev_)) {
+  // Every set member may legitimately coalesce onto one block, plus this
+  // session's internal request and a margin for retries.
+  max_waiters_per_collation_ = validator_set_->export_vector().size() + 16;
   update_masterchain_config(state);
 }
 
@@ -194,7 +197,7 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
   // requests share a single cache entry and so bypass the concurrency cap; an
   // uncapped waiter vector would grow with the request flood, and each waiter
   // drives its own creator-rewrite and candidate persist at completion.
-  if (cache_entry->promises.size() >= MAX_WAITERS_PER_COLLATION) {
+  if (cache_entry->promises.size() >= max_waiters_per_collation_) {
     FLOG(INFO) {
       prefix(sb);
       sb << ": refusing query, " << cache_entry->promises.size() << " callers already waiting";
@@ -291,8 +294,19 @@ void CollatorNodeSession::process_result(std::shared_ptr<CacheEntry> cache_entry
 }
 
 void CollatorNodeSession::process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks,
-                                          BlockCandidatePriority priority, td::Timestamp timeout,
-                                          td::Promise<BlockCandidate> promise) {
+                                          BlockCandidatePriority priority, Ed25519_PublicKey creator,
+                                          td::Timestamp timeout, td::Promise<BlockCandidate> promise) {
+  // The requester chooses the block's created_by (creator); the response path
+  // rewrites the candidate to it and persists a record keyed by the resulting
+  // block id. An arbitrary creator would let one authorized validator mint
+  // unbounded distinct records (and pay the rewrite cost) for a single block.
+  // Require the creator to be a member of this group's validator set, which
+  // bounds the distinct creators -- and thus the stored records -- to the set.
+  auto creator_id = PublicKey(pubkeys::Ed25519(creator)).compute_short_id();
+  if (validator_set_->get_validator(creator_id.bits256_value()) == nullptr) {
+    promise.set_error(td::Status::Error(ErrorCode::error, "collate query: creator is not in the validator set"));
+    return;
+  }
   generate_block(std::move(prev_blocks), priority, timeout, std::move(promise));
 }
 

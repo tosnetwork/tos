@@ -2817,6 +2817,11 @@ void ValidatorManagerImpl::update_shards() {
         continue;
       }
       auto config = maybe_config.value();
+      if (!config.protocol_version_supported()) {
+        // A protocol version newer than this build supports: skip the observer
+        // group rather than aborting in create_bridge_observer's version check.
+        continue;
+      }
       if (!config.enable_block_sync() && !config.observers_in_private_overlay()) {
         continue;
       }
@@ -3037,6 +3042,17 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     return {};
   }
   auto config = new_consensus_config.value();
+  if (!config.protocol_version_supported()) {
+    // Same fail-closed reasoning as a missing config: a config this build
+    // cannot run (a newer protocol version activated by governance) must not
+    // crash the node. Skip the group and stay a full node until upgraded --
+    // create_bridge would otherwise abort on this exact condition.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": Simplex protocol version "
+               << config.protocol_version << " is newer than this build supports (max "
+               << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION
+               << "); validation for this shard is disabled until the node is upgraded";
+    return {};
+  }
   return IValidatorGroup::create_bridge(
       PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
       keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,

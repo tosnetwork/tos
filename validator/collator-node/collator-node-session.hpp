@@ -45,7 +45,7 @@ class CollatorNodeSession : public td::actor::Actor {
   void new_shard_block_accepted(BlockIdExt block_id, bool can_generate);
 
   void process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                       td::Timestamp timeout, td::Promise<BlockCandidate> promise);
+                       Ed25519_PublicKey creator, td::Timestamp timeout, td::Promise<BlockCandidate> promise);
   void update_masterchain_config(td::Ref<MasterchainState> state);
 
  private:
@@ -74,11 +74,12 @@ class CollatorNodeSession : public td::actor::Actor {
     void cancel(td::Status reason);
   };
 
-  // Upper bound on callers coalesced onto a single in-flight collation. Well
-  // above the legitimate internal + external + retry fan-in, small enough that
-  // a flood of identical requests cannot grow the waiter vector (or the
-  // per-waiter completion work) without bound.
-  static constexpr size_t MAX_WAITERS_PER_COLLATION = 32;
+  // Upper bound on callers coalesced onto a single in-flight collation. Sized
+  // from the validator set (each member may legitimately ask for the same
+  // block once, plus this session's own internal request and a retry margin),
+  // so a flood of identical requests cannot grow the waiter vector -- or the
+  // per-waiter completion work -- without bound. Set in the constructor.
+  size_t max_waiters_per_collation_ = 64;
 
   BlockSeqno next_block_seqno_;
   std::map<std::vector<BlockIdExt>, std::shared_ptr<CacheEntry>> cache_;

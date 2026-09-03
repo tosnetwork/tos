@@ -394,13 +394,14 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
     return;
   }
   LOG(INFO) << "got adnl query from " << src << ": shard=" << shard.to_str() << ", cc_seqno=" << cc_seqno;
-  process_generate_block_query(src, shard, cc_seqno, std::move(prev_blocks), priority, td::Timestamp::in(10.0),
+  process_generate_block_query(src, shard, cc_seqno, std::move(prev_blocks), priority, creator, td::Timestamp::in(10.0),
                                std::move(new_promise));
 }
 
 void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, ShardIdFull shard, CatchainSeqno cc_seqno,
                                                 std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                                                td::Timestamp timeout, td::Promise<BlockCandidate> promise) {
+                                                Ed25519_PublicKey creator, td::Timestamp timeout,
+                                                td::Promise<BlockCandidate> promise) {
   if (last_masterchain_state_.is_null()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "not ready"));
     return;
@@ -429,7 +430,7 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
                                                 promise = std::move(promise)](td::Result<td::Unit> R) mutable {
       TRY_STATUS_PROMISE(promise, R.move_as_status());
       td::actor::send_closure(SelfId, &CollatorNode::process_generate_block_query, src, shard, cc_seqno,
-                              std::move(prev_blocks), std::move(priority), timeout, std::move(promise));
+                              std::move(prev_blocks), std::move(priority), creator, timeout, std::move(promise));
     });
     return;
   }
@@ -439,7 +440,7 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
     return;
   }
   td::actor::send_closure(validator_group_info.actor, &CollatorNodeSession::process_request, src,
-                          std::move(prev_blocks), priority, timeout, std::move(promise));
+                          std::move(prev_blocks), priority, creator, timeout, std::move(promise));
 }
 
 td::Status CollatorNode::check_out_of_sync() {
