@@ -87,6 +87,9 @@ class Rldp : public adnl::AdnlSenderEx {
     // Per local id, so an operator can see whether one entry point is holding
     // the table on its own.
     std::vector<std::pair<adnl::AdnlNodeIdShort, size_t>> per_local_id;
+    // Outbound queries still awaiting an answer. A connection that goes away
+    // must take its queries with it, so this must not outgrow the table.
+    size_t pending_queries{0};
   };
   virtual void get_connection_stats(td::Promise<ConnectionStats> promise) = 0;
 

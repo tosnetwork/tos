@@ -337,9 +337,17 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
 
   auto it = inbound_transfers_.find(transfer_id);
   if (it == inbound_transfers_.end()) {
+    if (inbound_transfers_.size() >= MAX_INBOUND_TRANSFERS) {
+      // The peer already has as many transfers open as it is allowed. Dropping
+      // the part costs it a retransmit once one of them finishes or expires;
+      // accepting it would let the peer choose how much memory to allocate
+      // here, since it also chooses the transfer ids.
+      VLOG(RLDP_INFO) << "Drop rldp message: peer already has " << inbound_transfers_.size()
+                      << " inbound transfers open";
+      return;
+    }
     if (!has_limit) {
       // set timeout even for small inbound queries
-      // TODO: other party stil may ddos us with small transfers
       set_receive_limits(transfer_id, td::Timestamp::in(10), max_size);
     }
     it = inbound_transfers_.emplace(transfer_id, InboundTransfer{total_size}).first;

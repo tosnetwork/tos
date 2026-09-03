@@ -71,13 +71,27 @@ class RldpConnection {
     return default_mtu_;
   }
 
+  // Concurrent inbound transfers one peer may have open on this connection.
+  // The transfer id is the peer's to choose, and every unseen one allocates
+  // decoder state, a reassembly buffer and a timeout entry. Nothing about that
+  // is bounded by the connection cap, which counts peers: this is one peer, on
+  // one connection. Set far above any legitimate peer's concurrency, so it
+  // only ever bites a peer that is not doing real work.
+  static constexpr size_t MAX_INBOUND_TRANSFERS = 256;
+
   static constexpr td::uint64 DEFAULT_MTU = 7680;
+
+  // Inbound transfers currently open, for tests and diagnostics.
+  size_t inbound_transfer_count() const {
+    return inbound_transfers_.size();
+  }
 
  private:
   td::uint64 default_mtu_ = DEFAULT_MTU;
 
   std::map<TransferId, OutboundTransfer> outbound_transfers_;
   td::uint32 in_flight_count_{0};
+
   std::map<TransferId, InboundTransfer> inbound_transfers_;
 
   struct Limit : public td::HeapNode {

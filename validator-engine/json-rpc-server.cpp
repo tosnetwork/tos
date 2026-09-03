@@ -1125,6 +1125,18 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
 // A handler that throws has already lost its promise to stack unwinding, and
 // ~LambdaPromise answers the client with "Lost promise", so the caller still
 // gets a response. All this has to do is stop the exception reaching the actor.
+namespace {
+// A JSON-RPC method name is whatever the client sent. Anything longer than a
+// real method name is reported under one fixed label rather than kept.
+std::string metric_label_for_method(const std::string &method) {
+  constexpr size_t MAX_METHOD_LABEL = 64;
+  if (method.size() > MAX_METHOD_LABEL) {
+    return "<oversized-method>";
+  }
+  return method;
+}
+}  // namespace
+
 void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
                                     std::string req_id, std::string source_ip,
                                     td::Promise<HttpReturn> promise) {
@@ -1142,10 +1154,15 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   // Track per-method request count
   requests_total_.fetch_add(1);
   active_requests_.fetch_add(1);
-  method_requests_->label(method)->add(1);
+  // The metric label comes from the request, so it is bounded here as well as
+  // in the metric itself: a name long enough to matter is not one this node
+  // implements, and keeping the full string would let a handful of requests
+  // hold megabytes each before the label limit ever applied.
+  auto method_label = metric_label_for_method(method);
+  method_requests_->label(method_label)->add(1);
 
   // Wrap the promise to track completion and errors
-  auto method_copy = method;
+  auto method_copy = std::move(method_label);
   promise = td::PromiseCreator::lambda(
       [this, method_copy, inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
         active_requests_.fetch_sub(1);

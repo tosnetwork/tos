@@ -187,9 +187,13 @@ struct AdmissionResult {
 // Admission for a new connection: evict until there is room, then report
 // whether the caller may insert. Returning the decision rather than doing the
 // insert keeps the rules testable on their own.
-template <typename ConnectionMap>
+// `on_evict(local_id, peer_id)` runs before each victim is removed. Losing a
+// connection is not only a bookkeeping change: work in flight on it has to be
+// told, or it waits for a reply that can no longer arrive. The caller supplies
+// that, so this stays a pure decision about the table.
+template <typename ConnectionMap, typename OnEvict>
 AdmissionResult admit_connection(ConnectionMap &connections, RldpTimeoutSet &timeout_set, size_t max_connections,
-                                 adnl::AdnlNodeIdShort local_id, size_t per_local_id_share) {
+                                 adnl::AdnlNodeIdShort local_id, size_t per_local_id_share, OnEvict &&on_evict) {
   AdmissionResult result;
   while (connections.size() >= max_connections) {
     auto victim = choose_eviction_victim(timeout_set, local_id, per_local_id_share);
@@ -199,6 +203,7 @@ AdmissionResult admit_connection(ConnectionMap &connections, RldpTimeoutSet &tim
       return result;
     }
     auto &chosen = victim.value();
+    on_evict(chosen.local_id, chosen.peer_id);
     erase_connection(connections, timeout_set, chosen.local_id, chosen.peer_id, chosen.expiry);
     ++result.evicted;
   }

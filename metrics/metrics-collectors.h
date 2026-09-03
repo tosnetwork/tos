@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <type_traits>
 
 #include "td/actor/ActorId.h"
 #include "td/actor/PromiseFuture.h"
@@ -143,14 +144,34 @@ class AtomicCounter : public Instrument<AtomicCounter<ValueType>> {
   std::atomic<ValueType> value_ = {ValueType()};
 };
 
+// A counter split by a label value. Each distinct value seen becomes a
+// permanent entry, so a label fed from anything remote -- a method name a
+// client chose, say -- would otherwise let that client grow the process by
+// sending a fresh value each time. Past MAX_LABELS distinct values, everything
+// further is counted under one overflow label: the totals stay right, and the
+// series a well-behaved deployment produces are all still there, because real
+// label sets are small and fixed by the code that emits them.
 template <typename LabelType, typename InstrumentType>
 class Labeled : public Instrument<Labeled<LabelType, InstrumentType>> {
  public:
+  // Comfortably above any label set the node itself produces (the largest is
+  // its JSON-RPC method list, in the dozens).
+  static constexpr size_t MAX_LABELS = 256;
+
   template <typename... Args>
   explicit Labeled(std::string label_name, Args... args);
   MetricSet collect() override;
 
   std::shared_ptr<InstrumentType> label(LabelType label);
+
+  // The value everything past MAX_LABELS is counted under.
+  static LabelType overflow_label() {
+    if constexpr (std::is_same_v<LabelType, std::string>) {
+      return std::string{"<over-label-limit>"};
+    } else {
+      return LabelType{};
+    }
+  }
 
  private:
   const std::string label_name_;
@@ -258,15 +279,22 @@ MetricSet Labeled<LabelType, InstrumentType>::collect() {
 
 template <typename LabelType, typename InstrumentType>
 std::shared_ptr<InstrumentType> Labeled<LabelType, InstrumentType>::label(LabelType label) {
-  std::shared_ptr<InstrumentType> result;
-  {
-    std::unique_lock lock(mutex_);
-    if (!instruments_.contains(label)) {
-      instruments_.insert({label, make_()});
+  std::unique_lock lock(mutex_);
+  auto it = instruments_.find(label);
+  if (it == instruments_.end()) {
+    if (instruments_.size() >= MAX_LABELS) {
+      // Count it, but do not remember the value: a new entry per value seen is
+      // exactly how a remote caller would grow this map without limit.
+      auto overflow = overflow_label();
+      it = instruments_.find(overflow);
+      if (it == instruments_.end()) {
+        it = instruments_.emplace(std::move(overflow), make_()).first;
+      }
+      return it->second;
     }
-    result = instruments_.at(label);
+    it = instruments_.emplace(std::move(label), make_()).first;
   }
-  return result;
+  return it->second;
 }
 
 }  // namespace tos::metrics

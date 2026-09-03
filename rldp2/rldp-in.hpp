@@ -125,7 +125,21 @@ class RldpIn : public RldpImpl {
     td::Promise<td::BufferSlice> promise;
     td::uint64 max_answer_size;
   };
-  std::map<TransferId, OutQuery> queries_;
+  // Outbound queries awaiting an answer, partitioned by the connection
+  // carrying them. A query's completion lives in that connection's actor, so
+  // when the connection goes the query has to be failed rather than left
+  // waiting for a reply that can never arrive -- and finding those queries
+  // must not mean scanning every outstanding query, since eviction happens
+  // once per admitted peer under a flood.
+  std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, std::map<TransferId, OutQuery>> queries_;
+
+  // Fail every query in flight on one connection. Called before the
+  // connection is removed, whether it expired or was evicted.
+  void fail_queries_on_connection(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, td::Slice reason);
+
+  // Look up one outstanding query, or nullptr.
+  OutQuery *find_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
+  void erase_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
 
   std::set<adnl::AdnlNodeIdShort> local_ids_;
   PartCompletedCallback part_completed_callback_;
@@ -155,13 +169,17 @@ class RldpIn : public RldpImpl {
   // external server's connections and queries); this one was the exception.
   static constexpr size_t MAX_CONNECTIONS = 4096;
 
-  // How often to report continuing eviction after the first one.
-  static constexpr td::uint64 EVICTION_LOG_INTERVAL = 1024;
+  // Minimum seconds between eviction reports. Paced by the clock, not by the
+  // eviction count: the count is whatever an attacker sends.
+  static constexpr double EVICTION_LOG_INTERVAL = 60.0;
 
   // Total connections dropped to stay within the cap. It is the signal that
   // the bound is being exercised at all; without it the cap is silent and
   // there is nothing to calibrate it against.
   td::uint64 connections_evicted_{0};
+
+  // When the next eviction report may be written.
+  td::Timestamp next_eviction_log_;
 
 };
 

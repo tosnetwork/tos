@@ -60,6 +60,10 @@ size_t total_ordered(const rldp2::RldpTimeoutSet &timeouts) {
   return total;
 }
 
+// Eviction hands the caller each victim so work in flight on it can be
+// failed. Most cases here do not care which; the one that does records them.
+const auto ignore_evicted = [](adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort) {};
+
 // Evict once, whoever the rule picks. Returns false when there was nothing to
 // evict.
 bool evict_once(Table &connections, rldp2::RldpTimeoutSet &timeouts, adnl::AdnlNodeIdShort local_id, size_t share) {
@@ -137,7 +141,7 @@ TEST(Rldp2ConnectionLimits, AdmissionHoldsTheTableAtTheCap) {
   // active than everything already in the table.
   size_t evicted_total = 0;
   for (td::uint16 n = 1; n <= 300; ++n) {
-    auto admission = rldp2::admit_connection(connections, timeouts, kCap, local, kCap);
+    auto admission = rldp2::admit_connection(connections, timeouts, kCap, local, kCap, ignore_evicted);
     EXPECT(admission.admitted);
     evicted_total += admission.evicted;
     auto peer_id = peer(static_cast<td::uint8>(n & 0xff), static_cast<td::uint8>(n >> 8));
@@ -165,7 +169,7 @@ TEST(Rldp2ConnectionLimits, AdmissionIsANoOpBelowTheCap) {
   }
 
   // Room to spare: admitting must not evict anyone.
-  auto admission = rldp2::admit_connection(connections, timeouts, 8, local, 8);
+  auto admission = rldp2::admit_connection(connections, timeouts, 8, local, 8, ignore_evicted);
   EXPECT(admission.admitted);
   EXPECT(admission.evicted == 0);
   EXPECT(connections.size() == 3);
@@ -181,7 +185,7 @@ TEST(Rldp2ConnectionLimits, AdmissionRefusesRatherThanGrowWhenTheOrderIsLost) {
   for (td::uint8 n = 1; n <= 4; ++n) {
     connections[{local, peer(n)}] = n;
   }
-  EXPECT(!rldp2::admit_connection(connections, timeouts, 4, local, 4).admitted);
+  EXPECT(!rldp2::admit_connection(connections, timeouts, 4, local, 4, ignore_evicted).admitted);
   EXPECT(connections.size() == 4);
 }
 
@@ -204,7 +208,7 @@ TEST(Rldp2ConnectionLimits, AFloodedLocalIdRecyclesItsOwnInsteadOfTakingFromAnot
     add(connections, timeouts, flooded, peer(n), 200.0 + n);
   }
 
-  auto admission = rldp2::admit_connection(connections, timeouts, kCap, flooded, kShare);
+  auto admission = rldp2::admit_connection(connections, timeouts, kCap, flooded, kShare, ignore_evicted);
   EXPECT(admission.admitted);
   EXPECT(admission.evicted == 1);
   // It took the slot from itself, and the other id is untouched.
@@ -227,7 +231,7 @@ TEST(Rldp2ConnectionLimits, AFloodCannotStarveAnotherLocalIdHoweverLongItRuns) {
   add(connections, timeouts, quiet, peer(2), 2.0);
 
   for (td::uint16 n = 1; n <= 500; ++n) {
-    auto admission = rldp2::admit_connection(connections, timeouts, kCap, flooded, kShare);
+    auto admission = rldp2::admit_connection(connections, timeouts, kCap, flooded, kShare, ignore_evicted);
     EXPECT(admission.admitted);
     add(connections, timeouts, flooded, peer(static_cast<td::uint8>(n & 0xff), static_cast<td::uint8>(n >> 8)),
         100.0 + n);
@@ -254,7 +258,7 @@ TEST(Rldp2ConnectionLimits, ALocalIdBelowItsShareTakesFromAnOverServedOne) {
     add(connections, timeouts, hog, peer(n), 100.0 + n);
   }
 
-  auto admission = rldp2::admit_connection(connections, timeouts, kCap, starved, kShare);
+  auto admission = rldp2::admit_connection(connections, timeouts, kCap, starved, kShare, ignore_evicted);
   EXPECT(admission.admitted);
   EXPECT(admission.evicted == 1);
   EXPECT(rldp2::connections_held_by(timeouts, hog) == 7);
@@ -271,7 +275,7 @@ TEST(Rldp2ConnectionLimits, ASingleLocalIdBehavesAsPlainMostIdleEviction) {
     add(connections, timeouts, only, peer(n), 100.0 + n);
   }
 
-  auto admission = rldp2::admit_connection(connections, timeouts, kCap, only, kCap);
+  auto admission = rldp2::admit_connection(connections, timeouts, kCap, only, kCap, ignore_evicted);
   EXPECT(admission.admitted);
   EXPECT(!connections.contains({only, peer(1)}));
   EXPECT(connections.size() == 3);
@@ -311,7 +315,7 @@ TEST(Rldp2ConnectionLimits, AnUnderstatedShareWedgesAnIdOnTheConnectionsItHas) {
   Table understated;
   rldp2::RldpTimeoutSet understated_timeouts;
   seed(understated, understated_timeouts);
-  auto wedged = rldp2::admit_connection(understated, understated_timeouts, kCap, small, 1);
+  auto wedged = rldp2::admit_connection(understated, understated_timeouts, kCap, small, 1, ignore_evicted);
   EXPECT(wedged.admitted);
   EXPECT(!understated.contains({small, peer(1)}));
   EXPECT(rldp2::connections_held_by(understated_timeouts, hog) == 7);
@@ -324,7 +328,7 @@ TEST(Rldp2ConnectionLimits, AnUnderstatedShareWedgesAnIdOnTheConnectionsItHas) {
   seed(correct, correct_timeouts);
   auto share = rldp2::per_local_id_share(kCap, correct_timeouts.size());
   EXPECT(share == 4);
-  auto ok = rldp2::admit_connection(correct, correct_timeouts, kCap, small, share);
+  auto ok = rldp2::admit_connection(correct, correct_timeouts, kCap, small, share, ignore_evicted);
   EXPECT(ok.admitted);
   EXPECT(correct.contains({small, peer(1)}));
   EXPECT(rldp2::connections_held_by(correct_timeouts, hog) == 6);
@@ -341,6 +345,32 @@ TEST(Rldp2ConnectionLimits, TheShareFollowsLiveHoldersAndNeverReachesZero) {
   // A holder count cannot exceed the cap, but the floor holds if one ever did.
   EXPECT(rldp2::per_local_id_share(4096, 4096) == 1);
   EXPECT(rldp2::per_local_id_share(4096, 100000) == 1);
+}
+
+// Every victim is reported before it is removed, in the order it is chosen.
+// Nothing else can tell a query in flight that its connection is gone.
+TEST(Rldp2ConnectionLimits, EveryEvictedConnectionIsReportedToTheCaller) {
+  constexpr size_t kCap = 4;
+  Table connections;
+  rldp2::RldpTimeoutSet timeouts;
+  auto local = peer(0);
+  for (td::uint8 n = 1; n <= 4; ++n) {
+    add(connections, timeouts, local, peer(n), 100.0 + n);
+  }
+
+  std::vector<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>> reported;
+  auto record = [&](adnl::AdnlNodeIdShort victim_local_id, adnl::AdnlNodeIdShort victim_peer_id) {
+    reported.emplace_back(victim_local_id, victim_peer_id);
+    // The victim must still be in the table when it is reported, so the
+    // caller can act on a connection that still exists.
+    EXPECT(connections.contains({victim_local_id, victim_peer_id}));
+  };
+
+  auto admission = rldp2::admit_connection(connections, timeouts, kCap, local, kCap, record);
+  EXPECT(admission.admitted);
+  EXPECT(admission.evicted == 1);
+  EXPECT(reported.size() == 1);
+  EXPECT(reported[0].second == peer(1));
 }
 
 }  // namespace

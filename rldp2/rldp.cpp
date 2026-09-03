@@ -103,6 +103,42 @@ TransferId get_responce_transfer_id(TransferId transfer_id) {
 }
 }  // namespace
 
+RldpIn::OutQuery *RldpIn::find_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id,
+                                     TransferId transfer_id) {
+  auto connection = queries_.find({local_id, peer_id});
+  if (connection == queries_.end()) {
+    return nullptr;
+  }
+  auto query = connection->second.find(transfer_id);
+  return query == connection->second.end() ? nullptr : &query->second;
+}
+
+void RldpIn::erase_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id) {
+  auto connection = queries_.find({local_id, peer_id});
+  if (connection == queries_.end()) {
+    return;
+  }
+  connection->second.erase(transfer_id);
+  if (connection->second.empty()) {
+    queries_.erase(connection);
+  }
+}
+
+void RldpIn::fail_queries_on_connection(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id,
+                                        td::Slice reason) {
+  auto connection = queries_.find({local_id, peer_id});
+  if (connection == queries_.end()) {
+    return;
+  }
+  // Take the queries out first: answering a promise can run arbitrary caller
+  // code, which may reach back into this table.
+  auto queries = std::move(connection->second);
+  queries_.erase(connection);
+  for (auto &[transfer_id, query] : queries) {
+    query.promise.set_error(td::Status::Error(reason.str()));
+  }
+}
+
 size_t RldpIn::per_local_id_share() const {
   // The expiry order is partitioned by local id, so its size is the number of
   // local ids currently holding connections.
@@ -116,6 +152,9 @@ void RldpIn::get_connection_stats(td::Promise<ConnectionStats> promise) {
   stats.per_local_id.reserve(timeout_set_.size());
   for (auto &[id, order] : timeout_set_) {
     stats.per_local_id.emplace_back(id, order.size());
+  }
+  for (auto &[connection, queries] : queries_) {
+    stats.pending_queries += queries.size();
   }
   promise.set_value(std::move(stats));
 }
@@ -165,7 +204,7 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
                                true);
 
   auto response_transfer_id = get_responce_transfer_id(request_transfer_id);
-  if (queries_.count(response_transfer_id) != 0) {
+  if (find_query(src, dst, response_transfer_id) != nullptr) {
     promise.set_error(td::Status::Error("explicit RLDP response transfer id is already active"));
     return;
   }
@@ -174,7 +213,8 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     promise.set_error(td::Status::Error("no RLDP connection available for this peer"));
     return;
   }
-  queries_.emplace(response_transfer_id, OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
+  queries_[{src, dst}].emplace(response_transfer_id,
+                               OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
   send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
   send_closure(connection, &RldpConnectionActor::send, request_transfer_id, std::move(B), timeout);
 }
@@ -219,21 +259,30 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
     VLOG(RLDP_INFO) << "dropping incoming packet " << local_id << " <- " << peer_id << " : peer not allowed";
     return {};
   }
-  auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share());
+  auto admission = admit_connection(
+      connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share(),
+      [this](adnl::AdnlNodeIdShort evicted_local_id, adnl::AdnlNodeIdShort evicted_peer_id) {
+        fail_queries_on_connection(evicted_local_id, evicted_peer_id,
+                                   "RLDP connection evicted before the query was answered");
+      });
   if (!admission.admitted) {
     VLOG(RLDP_INFO) << "refusing connection " << local_id << " , " << peer_id << " : connection table is full";
     return {};
   }
   if (admission.evicted > 0) {
     // The table only reaches its cap under a flood of fresh peer identities or
-    // a badly undersized bound. Either way an operator needs to see it, but a
-    // line per evicted connection would itself be a flood, so report the first
-    // one and then one per EVICTION_LOG_INTERVAL evictions.
+    // a badly undersized bound, and an operator needs to see that. But the
+    // condition is driven by the flood, so the log line has to be paced by
+    // time rather than by evictions: one line per N evictions is still one
+    // line per N packets an attacker chooses to send, and the node's log files
+    // have no size bound of their own -- a full disk is fatal to it. Once per
+    // interval, with the running total, says the same thing and cannot be
+    // driven faster than the clock.
     connections_evicted_ += admission.evicted;
-    if (connections_evicted_ == admission.evicted || connections_evicted_ % EVICTION_LOG_INTERVAL == 0) {
-      LOG(WARNING) << "rldp2 connection table is at its " << MAX_CONNECTIONS
-                   << " connection cap: evicted " << connections_evicted_
-                   << " idle connections so far to admit new peers";
+    if (!next_eviction_log_ || next_eviction_log_.is_in_past()) {
+      LOG(WARNING) << "rldp2 connection table is at its " << MAX_CONNECTIONS << " connection cap: evicted "
+                   << connections_evicted_ << " idle connections so far to admit new peers";
+      next_eviction_log_ = td::Timestamp::in(EVICTION_LOG_INTERVAL);
     }
   }
   auto connection =
@@ -251,10 +300,9 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
 void RldpIn::receive_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort local_id, TransferId transfer_id,
                              td::Result<td::BufferSlice> r_data) {
   if (r_data.is_error()) {
-    auto it = queries_.find(transfer_id);
-    if (it != queries_.end()) {
-      it->second.promise.set_error(r_data.move_as_error());
-      queries_.erase(it);
+    if (auto *query = find_query(local_id, source, transfer_id)) {
+      query->promise.set_error(r_data.move_as_error());
+      erase_query(local_id, source, transfer_id);
     } else {
       VLOG(RLDP_INFO) << "received error to unknown transfer_id " << transfer_id << " " << r_data.error();
     }
@@ -266,9 +314,9 @@ void RldpIn::receive_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
   auto F = fetch_tl_object<tos_api::rldp_Message>(std::move(data), true);
   if (F.is_error()) {
     VLOG(RLDP_INFO) << "failed to parse rldp packet [" << source << "->" << local_id << "]: " << F.error();
-    if (auto it = queries_.find(transfer_id); it != queries_.end()) {
-      it->second.promise.set_error(F.move_as_error_prefix("received invalid rldp query answer: "));
-      queries_.erase(it);
+    if (auto *query = find_query(local_id, source, transfer_id)) {
+      query->promise.set_error(F.move_as_error_prefix("received invalid rldp query answer: "));
+      erase_query(local_id, source, transfer_id);
     }
     return;
   }
@@ -276,9 +324,9 @@ void RldpIn::receive_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
   tos_api::downcast_call(*F.move_as_ok().get(),
                          [&](auto &obj) { this->process_message(source, local_id, transfer_id, obj); });
 
-  if (auto it = queries_.find(transfer_id); it != queries_.end()) {
-    it->second.promise.set_error(td::Status::Error("received invalid rldp query answer"));
-    queries_.erase(it);
+  if (auto *query = find_query(local_id, source, transfer_id)) {
+    query->promise.set_error(td::Status::Error("received invalid rldp query answer"));
+    erase_query(local_id, source, transfer_id);
   }
 }
 
@@ -315,10 +363,9 @@ void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
 
 void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort local_id, TransferId transfer_id,
                              tos_api::rldp_answer &message) {
-  auto it = queries_.find(transfer_id);
-  if (it != queries_.end()) {
-    detail::complete_out_query(std::move(it->second.promise), it->second.max_answer_size, std::move(message.data_));
-    queries_.erase(it);
+  if (auto *query = find_query(local_id, source, transfer_id)) {
+    detail::complete_out_query(std::move(query->promise), query->max_answer_size, std::move(message.data_));
+    erase_query(local_id, source, transfer_id);
   } else {
     VLOG(RLDP_INFO) << "received answer to unknown query " << message.query_id_;
   }
@@ -390,6 +437,7 @@ void RldpIn::alarm() {
   }
   for (auto &[local_id, peer_id, timeout] : expired) {
     VLOG(RLDP_INFO) << "removing old connection " << local_id << " , " << peer_id;
+    fail_queries_on_connection(local_id, peer_id, "RLDP connection expired before the query was answered");
     erase_connection(connections_, timeout_set_, local_id, peer_id, timeout);
   }
   auto next = earliest_expiry(timeout_set_);
