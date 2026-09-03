@@ -52,12 +52,21 @@ impl SymmetricKey for SymmetricKeyInMemory {
         secret_key.clone().await
     }
 
+    // Symmetric encryption through this in-memory handle is not implemented.
+    // These return an error rather than aborting: the type is constructed for
+    // every symmetric secret loaded from storage, so a caller reaching them --
+    // today there is none -- would otherwise take the process down instead of
+    // surfacing a missing capability.
     async fn encrypt(&self, _plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
-        todo!();
+        anyhow::bail!(VaultError::encryption_failed(
+            "in-memory symmetric key does not implement encryption"
+        ))
     }
 
     async fn decrypt(&self, _ciphertext: &[u8]) -> anyhow::Result<Vec<u8>> {
-        todo!();
+        anyhow::bail!(VaultError::decryption_failed(
+            "in-memory symmetric key does not implement decryption"
+        ))
     }
 
     async fn serialize(&self) -> anyhow::Result<ProtectedMemory> {
