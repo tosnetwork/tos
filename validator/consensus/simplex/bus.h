@@ -77,6 +77,19 @@ struct QuerySlotSkipped {
   std::string contents_to_string() const;
 };
 
+// Read-only observability: number of CandidateStates the resolver currently
+// tracks in memory whose slot is at or above min_slot. Used by diagnostics
+// and by tests that assert a peer cannot grow this map with out-of-window ids
+// through the network request path (query with a slot above any live slot to
+// isolate injected entries from legitimate in-flight consensus state).
+struct QueryResolverTrackedStateCount {
+  using ReturnType = size_t;
+
+  td::uint32 min_slot = 0;
+
+  std::string contents_to_string() const;
+};
+
 enum class SkippedSlotResolution { ResolveCandidate, UseAvailableBase };
 
 td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
@@ -137,7 +150,7 @@ class Bus : public consensus::Bus {
   using Parent = consensus::Bus;
   using Events = td::TypeList<BroadcastVote, NotarizationObserved, FinalizationObserved, LeaderWindowObserved,
                               WaitForParent, ResolveCandidate, StoreCandidate, ResolveState, SaveCertificate,
-                              QueryValidatorGroupInfo, QuerySlotSkipped>;
+                              QueryValidatorGroupInfo, QuerySlotSkipped, QueryResolverTrackedStateCount>;
 
   Bus() = default;
 

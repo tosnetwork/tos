@@ -785,6 +785,14 @@ class ValidatorManagerImpl : public ValidatorManager {
            std::pair<std::string, std::function<void(td::Promise<std::vector<std::pair<std::string, std::string>>>)>>>
       stats_providers_;
 
+  // Cap on the append-only session-stats file. When it is reached the file is
+  // rotated to a single ".old" sidecar, bounding total on-disk size to ~2x
+  // this value for the life of the process across all stats writers.
+  static constexpr td::int64 max_session_stats_file_bytes_ = 256 * (1 << 20);
+  // Set while rotation is failing, so the warning is emitted once per episode
+  // rather than once per record.
+  bool session_stats_rotate_failed_ = false;
+
   td::actor::ActorOwn<StorageStatCache> storage_stat_cache_;
 
   template <typename T>

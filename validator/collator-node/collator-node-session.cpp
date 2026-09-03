@@ -16,6 +16,7 @@
 */
 
 #include "collator-node-session.hpp"
+#include "collator-node-limits.h"
 #include "collator-node.hpp"
 #include "fabric.h"
 #include "utils.hpp"
@@ -48,6 +49,13 @@ CollatorNodeSession::CollatorNodeSession(ShardIdFull shard, std::vector<BlockIdE
     , adnl_(adnl)
     , rldp_(rldp)
     , next_block_seqno_(get_next_block_seqno(prev_)) {
+  // Every set member may legitimately coalesce onto one block, plus this
+  // session's internal request and a margin for retries.
+  size_t validator_count = validator_set_->export_vector().size();
+  max_waiters_per_collation_ = validator_count + 16;
+  // A generous ceiling on distinct cached prev sets: a few per live seqno
+  // across the window, scaled by the set, never below a floor.
+  max_cache_entries_ = std::max<size_t>(64, validator_count * 4);
   update_masterchain_config(state);
 }
 
@@ -152,9 +160,25 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
     prefix_inner(sb, shard_, validator_set_->get_catchain_seqno(), block_seqno, o_priority);
   };
 
-  auto cache_entry = cache_[prev_blocks];
-  if (cache_entry == nullptr) {
+  std::shared_ptr<CacheEntry> cache_entry;
+  if (auto it = cache_.find(prev_blocks); it != cache_.end()) {
+    cache_entry = it->second;
+  } else {
+    // Bound the total cache. Legitimate collation touches only the real chain
+    // shape (a handful of prev sets per seqno); a new entry beyond the cap
+    // means a requester is probing many distinct prev sets, so refuse rather
+    // than let the map (and its stored candidates) grow. find() above avoids
+    // operator[] inserting an empty entry just by looking up.
+    if (cache_.size() >= max_cache_entries_) {
+      FLOG(INFO) {
+        prefix(sb);
+        sb << ": refusing query, collation cache is full (" << cache_.size() << ")";
+      };
+      promise.set_error(td::Status::Error(ErrorCode::notready, "collator busy: collation cache is full"));
+      return;
+    }
     cache_entry = cache_[prev_blocks] = std::make_shared<CacheEntry>();
+    cache_entry->key = prev_blocks;
   }
   if (is_external && !cache_entry->has_external_query_at) {
     cache_entry->has_external_query_at = td::Timestamp::now();
@@ -186,6 +210,20 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
     promise.set_result(cache_entry->result.value().clone());
     return;
   }
+
+  // Bound the number of callers coalesced onto one in-flight collation. This
+  // check precedes the started/concurrency handling below because identical
+  // requests share a single cache entry and so bypass the concurrency cap; an
+  // uncapped waiter vector would grow with the request flood, and each waiter
+  // drives its own creator-rewrite and candidate persist at completion.
+  if (cache_entry->promises.size() >= max_waiters_per_collation_) {
+    FLOG(INFO) {
+      prefix(sb);
+      sb << ": refusing query, " << cache_entry->promises.size() << " callers already waiting";
+    };
+    promise.set_error(td::Status::Error(ErrorCode::notready, "collator busy: too many callers for this block"));
+    return;
+  }
   cache_entry->promises.push_back(std::move(promise));
 
   if (cache_entry->started) {
@@ -195,6 +233,33 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
     };
     return;
   }
+
+  // Bound concurrent collations. Each distinct prev_blocks vector starts its
+  // own Collator, and for block_seqno in next_block_seqno_+1..+10 the prev
+  // hashes need not match any real block, so a single authorized requester
+  // can mint unlimited distinct cache keys and spawn a Collator per key. Cap
+  // the number of in-flight collations; requests beyond the cap are refused
+  // (the requester retries) rather than allowed to exhaust CPU and memory.
+  // Identical requests still coalesce onto the started entry above.
+  size_t in_flight = 0;
+  for (const auto& [_, entry] : cache_) {
+    if (collation_slot_in_flight(CollationSlot{entry->started, static_cast<bool>(entry->result)})) {
+      ++in_flight;
+    }
+  }
+  if (at_capacity(in_flight, MAX_CONCURRENT_COLLATIONS)) {
+    FLOG(INFO) {
+      prefix(sb);
+      sb << ": refusing collation, " << in_flight << " already in flight";
+    };
+    auto promises = std::move(cache_entry->promises);
+    cache_.erase(prev_blocks);
+    for (auto& p : promises) {
+      p.set_error(td::Status::Error(ErrorCode::notready, "collator busy: too many concurrent collations"));
+    }
+    return;
+  }
+
   FLOG(INFO) {
     prefix(sb);
     sb << ": starting collation";
@@ -229,7 +294,15 @@ void CollatorNodeSession::process_result(std::shared_ptr<CacheEntry> cache_entry
     for (auto& p : cache_entry->promises) {
       p.set_error(R.error().clone());
     }
-  } else {
+    cache_entry->promises.clear();
+    // A failed collation caches nothing worth keeping. Drop the entry so a
+    // requester streaming distinct-but-invalid prev_blocks cannot accumulate
+    // dead entries: once started clears they no longer count against the
+    // concurrency cap, and the seqno-ordered cleanup may never reach them.
+    cache_.erase(cache_entry->key);
+    return;
+  }
+  {
     cache_entry->result = R.move_as_ok();
     cache_entry->has_result_at = td::Timestamp::now();
     for (auto& p : cache_entry->promises) {
@@ -240,8 +313,19 @@ void CollatorNodeSession::process_result(std::shared_ptr<CacheEntry> cache_entry
 }
 
 void CollatorNodeSession::process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks,
-                                          BlockCandidatePriority priority, td::Timestamp timeout,
-                                          td::Promise<BlockCandidate> promise) {
+                                          BlockCandidatePriority priority, Ed25519_PublicKey creator,
+                                          td::Timestamp timeout, td::Promise<BlockCandidate> promise) {
+  // The requester chooses the block's created_by (creator); the response path
+  // rewrites the candidate to it and persists a record keyed by the resulting
+  // block id. An arbitrary creator would let one authorized validator mint
+  // unbounded distinct records (and pay the rewrite cost) for a single block.
+  // Require the creator to be a member of this group's validator set, which
+  // bounds the distinct creators -- and thus the stored records -- to the set.
+  auto creator_id = PublicKey(pubkeys::Ed25519(creator)).compute_short_id();
+  if (validator_set_->get_validator(creator_id.bits256_value()) == nullptr) {
+    promise.set_error(td::Status::Error(ErrorCode::error, "collate query: creator is not in the validator set"));
+    return;
+  }
   generate_block(std::move(prev_blocks), priority, timeout, std::move(promise));
 }
 

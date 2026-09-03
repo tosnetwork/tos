@@ -186,6 +186,13 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       if (generated_candidate.has_value()) {
         td::actor::send_closure(bus.manager, &ManagerFacade::cache_block_candidate,
                                 generated_candidate->candidate.clone());
+        // ChainState::apply crashes (LOG_CHECK / move_as_ok / LOG(FATAL)) on a
+        // malformed candidate. That is safe only because this candidate is
+        // self-collated by this node's own Collator (bridge.cpp collate_block,
+        // self_collated=true): CollationManager remote routing is future work
+        // (V-022) and the legacy remote-collation path is fail-closed. If an
+        // untrusted, collator-supplied candidate is ever routed here, it must
+        // be fully validated (or apply made fail-soft) before this call.
         state = state->apply(generated_candidate->candidate);
         block = std::move(generated_candidate->candidate);
         if (!generated_candidate->collator_node_id.is_zero()) {

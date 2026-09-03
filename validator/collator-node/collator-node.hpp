@@ -22,6 +22,7 @@
 #include "interfaces/validator-manager.h"
 #include "rldp/rldp.h"
 #include "rldp2/rldp.h"
+#include "td/utils/RateLimiterWindow.h"
 
 #include "collator-node-session.hpp"
 
@@ -49,7 +50,8 @@ class CollatorNode : public td::actor::Actor {
   void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
   void process_generate_block_query(adnl::AdnlNodeIdShort src, ShardIdFull shard, CatchainSeqno cc_seqno,
                                     std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                                    td::Timestamp timeout, td::Promise<BlockCandidate> promise);
+                                    Ed25519_PublicKey creator, td::Timestamp timeout,
+                                    td::Promise<BlockCandidate> promise);
   void process_ping(adnl::AdnlNodeIdShort src, tos_api::collatorNode_ping& ping, td::Promise<td::BufferSlice> promise);
 
   bool can_collate_shard(ShardIdFull shard) const;
@@ -73,6 +75,17 @@ class CollatorNode : public td::actor::Actor {
   };
   std::map<ShardIdFull, ValidatorGroupInfo> validator_groups_;
   std::map<std::pair<ShardIdFull, CatchainSeqno>, FutureValidatorGroup> future_validator_groups_;
+
+  // Per-source request rate limit for collation queries, keyed by the
+  // authenticated validator src and pruned to the current validator set.
+  std::map<adnl::AdnlNodeIdShort, td::RateLimiterWindow> generate_rate_limiter_;
+  static constexpr double GENERATE_RATE_WINDOW_SECONDS = 1.0;
+  static constexpr size_t GENERATE_RATE_WINDOW_LIMIT = 16;
+
+  // Upper bound on requests parked waiting for a not-yet-active future
+  // validator group. Well above the number of distinct validators that could
+  // legitimately probe ahead of a group, small enough to bound memory.
+  static constexpr size_t MAX_FUTURE_GROUP_PROMISES = 256;
 
   td::Ref<MasterchainState> last_masterchain_state_;
   BlockHandle shard_client_handle_;

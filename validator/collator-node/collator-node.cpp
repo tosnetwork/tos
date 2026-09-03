@@ -23,6 +23,7 @@
 #include "block-db.h"
 #include "checksum.h"
 #include "collator-node.hpp"
+#include "collator-node-limits.h"
 #include "fabric.h"
 #include "utils.hpp"
 
@@ -133,6 +134,11 @@ void CollatorNode::new_masterchain_block_notification(td::Ref<MasterchainState> 
           }
         }
       }
+    }
+    // Drop rate-limiter state for identities that are no longer validators, so
+    // the map stays bounded by the current validator set across rotations.
+    for (auto it = generate_rate_limiter_.begin(); it != generate_rate_limiter_.end();) {
+      it = validator_adnl_ids_.contains(it->first) ? std::next(it) : generate_rate_limiter_.erase(it);
     }
     for (auto& [_, group] : validator_groups_) {
       if (!group.actor.empty()) {
@@ -331,6 +337,25 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
     return;
   }
 
+  // Per-source rate limit on collation requests. An authorized validator may
+  // ask far faster than blocks are produced, and every request -- cache hit or
+  // miss -- rewrites the candidate to its creator, persists it, and appends a
+  // response-stats record. Bound the request rate per validator so a single
+  // one cannot drive that work (or the stats log) without limit; the map is
+  // keyed by the authenticated src and pruned to the validator set above.
+  {
+    if (!generate_rate_limiter_.contains(src)) {
+      generate_rate_limiter_[src] = td::RateLimiterWindow{GENERATE_RATE_WINDOW_SECONDS, GENERATE_RATE_WINDOW_LIMIT};
+    }
+    auto now = td::Timestamp::now();
+    auto& window = generate_rate_limiter_[src];
+    if (!window.check(now)) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "too many collation requests"));
+      return;
+    }
+    window.insert(now);
+  }
+
   ShardIdFull shard;
   CatchainSeqno cc_seqno;
   std::vector<BlockIdExt> prev_blocks;
@@ -393,13 +418,14 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
     return;
   }
   LOG(INFO) << "got adnl query from " << src << ": shard=" << shard.to_str() << ", cc_seqno=" << cc_seqno;
-  process_generate_block_query(src, shard, cc_seqno, std::move(prev_blocks), priority, td::Timestamp::in(10.0),
+  process_generate_block_query(src, shard, cc_seqno, std::move(prev_blocks), priority, creator, td::Timestamp::in(10.0),
                                std::move(new_promise));
 }
 
 void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, ShardIdFull shard, CatchainSeqno cc_seqno,
                                                 std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                                                td::Timestamp timeout, td::Promise<BlockCandidate> promise) {
+                                                Ed25519_PublicKey creator, td::Timestamp timeout,
+                                                td::Promise<BlockCandidate> promise) {
   if (last_masterchain_state_.is_null()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "not ready"));
     return;
@@ -408,14 +434,27 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
     promise.set_error(td::Status::Error(ErrorCode::timeout));
     return;
   }
+  // Refuse to collate against a stale view of the chain. Candidates built on
+  // an out-of-sync masterchain state fail validation anyway; gating here (the
+  // ping path already does) stops a stale node from spending collation CPU
+  // and from parking unbounded future-group requests while desynced.
+  TRY_STATUS_PROMISE(promise, check_out_of_sync());
   auto it = validator_groups_.find(shard);
   if (it == validator_groups_.end() || it->second.cc_seqno != cc_seqno) {
     TRY_RESULT_PROMISE(promise, future_validator_group, get_future_validator_group(shard, cc_seqno));
+    // Bound the parked-request queue. These closures each retain a prev_blocks
+    // vector and the reply state, and are only drained when a masterchain
+    // block for this future group arrives; without a cap a peer can pile them
+    // up while the group stays in the future.
+    if (at_capacity(future_validator_group->promises.size(), MAX_FUTURE_GROUP_PROMISES)) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "too many pending requests for a future group"));
+      return;
+    }
     future_validator_group->promises.push_back([=, SelfId = actor_id(this), prev_blocks = std::move(prev_blocks),
                                                 promise = std::move(promise)](td::Result<td::Unit> R) mutable {
       TRY_STATUS_PROMISE(promise, R.move_as_status());
       td::actor::send_closure(SelfId, &CollatorNode::process_generate_block_query, src, shard, cc_seqno,
-                              std::move(prev_blocks), std::move(priority), timeout, std::move(promise));
+                              std::move(prev_blocks), std::move(priority), creator, timeout, std::move(promise));
     });
     return;
   }
@@ -425,7 +464,7 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
     return;
   }
   td::actor::send_closure(validator_group_info.actor, &CollatorNodeSession::process_request, src,
-                          std::move(prev_blocks), priority, timeout, std::move(promise));
+                          std::move(prev_blocks), priority, creator, timeout, std::move(promise));
 }
 
 td::Status CollatorNode::check_out_of_sync() {

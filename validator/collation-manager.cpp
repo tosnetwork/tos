@@ -20,6 +20,7 @@
 
 #include "collator-node/collator-node.hpp"
 #include "collator-node/utils.hpp"
+#include "common/checksum.h"
 #include "td/utils/Random.h"
 
 #include "collation-manager.hpp"
@@ -203,6 +204,23 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
       P.set_error(td::Status::Error("collate query: block id mismatch"));
       return;
     }
+    // The collator claims this block's file hash; the requester broadcasts the
+    // candidate to the overlays and proposes it under its own identity before
+    // full validation runs. Verify the claim against the actual bytes now
+    // (cheap) so a compromised collator cannot make this node relay data whose
+    // hash does not match the id it is announced under.
+    if (candidate.id.file_hash != td::sha256_bits256(candidate.data.as_slice())) {
+      P.set_error(td::Status::Error("collate query: block file hash does not match data"));
+      return;
+    }
+    // The file hash pins the exact bytes. The claimed root hash is not
+    // recomputed here on purpose: doing so would require deserializing the
+    // whole block BoC on the pre-broadcast path -- duplicating the allocation
+    // that full validation already performs with its own cell bounds -- to
+    // catch a mislabeled root hash that every peer and this node's own
+    // ValidateQuery already reject by recomputing the root from the pinned
+    // data. A wrong root hash therefore costs at most a wasted broadcast, not
+    // a propagated block; the eager deserialize is not worth its cost.
     LOG(INFO) << "got collated block " << next_block_id.to_str() << " from #" << selected_idx << " ("
               << selected_collator << ") in " << timer.elapsed() << "s";
     P.set_result(std::move(candidate));

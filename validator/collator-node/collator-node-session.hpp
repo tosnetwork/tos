@@ -45,7 +45,7 @@ class CollatorNodeSession : public td::actor::Actor {
   void new_shard_block_accepted(BlockIdExt block_id, bool can_generate);
 
   void process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                       td::Timestamp timeout, td::Promise<BlockCandidate> promise);
+                       Ed25519_PublicKey creator, td::Timestamp timeout, td::Promise<BlockCandidate> promise);
   void update_masterchain_config(td::Ref<MasterchainState> state);
 
  private:
@@ -66,6 +66,7 @@ class CollatorNodeSession : public td::actor::Actor {
     td::Timestamp has_external_query_at;
     td::Timestamp has_result_at;
     BlockSeqno block_seqno = 0;
+    std::vector<BlockIdExt> key;  // this entry's key in cache_, for self-erase on failure
     td::optional<BlockCandidate> result;
     td::CancellationTokenSource cancellation_token_source;
     std::vector<td::Promise<BlockCandidate>> promises;
@@ -73,8 +74,27 @@ class CollatorNodeSession : public td::actor::Actor {
     void cancel(td::Status reason);
   };
 
+  // Upper bound on callers coalesced onto a single in-flight collation. Sized
+  // from the validator set (each member may legitimately ask for the same
+  // block once, plus this session's own internal request and a retry margin),
+  // so a flood of identical requests cannot grow the waiter vector -- or the
+  // per-waiter completion work -- without bound. Set in the constructor.
+  size_t max_waiters_per_collation_ = 64;
+
+  // Upper bound on distinct prev-block sets cached at once. Real collation
+  // follows the chain, touching only a few per seqno; this caps how far a
+  // requester probing arbitrary prev sets can grow the cache and its stored
+  // candidates. Sized generously from the validator set. Set in the ctor.
+  size_t max_cache_entries_ = 256;
+
   BlockSeqno next_block_seqno_;
   std::map<std::vector<BlockIdExt>, std::shared_ptr<CacheEntry>> cache_;
+
+  // Upper bound on Collator actors running at once for this shard session.
+  // Honest collation needs only a couple (the current block and maybe one
+  // optimistic lookahead); the rest of the +10 seqno window exists for
+  // reordering tolerance, not concurrency.
+  static constexpr size_t MAX_CONCURRENT_COLLATIONS = 4;
 
   td::uint32 proto_version_ = 0;
   td::uint32 max_candidate_size_ = 0;

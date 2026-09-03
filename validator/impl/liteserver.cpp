@@ -987,6 +987,7 @@ void LiteQuery::continue_getLibrariesWithProof(std::vector<td::Bits256> library_
   block::gen::ShardStateUnsplit::Record state;
   if (!tlb::unpack_cell(pb.root(), state)) {
     fatal_error("cannot unpack header of shardchain state "s + base_blk_id_.to_str());
+    return;
   }
   auto libraries_dict = vm::Dictionary(state.r1.libraries->prefetch_ref(), 256);
 

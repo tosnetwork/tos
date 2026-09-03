@@ -2692,6 +2692,13 @@ void ValidatorManagerImpl::update_shards() {
     }
 
     auto G = create_validator_group(id, shard, val_set, key_seqno, opts, started_);
+    if (G.empty()) {
+      // create_validator_group fails closed (and logs) when the consensus
+      // config is missing or unreadable. Do not materialize a group entry for
+      // it: an empty actor stored here would abort the process the moment any
+      // caller sends it a message. Signal "no group" to the caller instead.
+      return next_validator_groups_.end();
+    }
     ValidatorGroupEntry entry{
         .actor = std::move(G),
         .shard = shard,
@@ -2748,12 +2755,22 @@ void ValidatorManagerImpl::update_shards() {
             return &entry;
           } else {
             auto it2 = get_or_make_next_group(shard, val_group_id, val_set);
+            if (it2 == next_validator_groups_.end()) {
+              return static_cast<ValidatorGroupEntry *>(nullptr);
+            }
             auto &entry = new_validator_groups[val_group_id] = std::move(it2->second);
             next_validator_groups_.erase(it2);
             return &entry;
           }
         };
         auto entry = find_or_create_validator_group();
+        if (entry == nullptr) {
+          // Consensus config unreadable for this shard (logged in
+          // create_validator_group). Do not run a group; stay a full node for
+          // this shard rather than crashing or running the wrong protocol.
+          --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+          continue;
+        }
 
         if (!entry->started) {
           LOG(INFO) << "Started " << entry->name() << ":" << val_group_id;
@@ -2796,7 +2813,9 @@ void ValidatorManagerImpl::update_shards() {
   if (allow_validate_) {
     for (const auto& [shard, prev] : new_shards) {
       auto maybe_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-      if (!maybe_config) {
+      if (!consensus_group_admissible(maybe_config)) {
+        // Missing config, or a protocol version newer than this build supports:
+        // skip the observer group rather than aborting in the version check.
         continue;
       }
       auto config = maybe_config.value();
@@ -3006,18 +3025,23 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   auto adnl_id = adnl::AdnlNodeIdShort{
       descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
   auto new_consensus_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-  if (new_consensus_config) {
-    auto config = new_consensus_config.value();
-    return IValidatorGroup::create_bridge(
-        PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
-        keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
-        actor_id(this), get_collation_manager(adnl_id), init_session,
-        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-        opts_->need_monitor(shard, last_masterchain_state_));
+  if (!consensus_group_admissible(new_consensus_config)) {
+    // Fail closed. A missing or unrecognized consensus config (absent
+    // parameter, unpack failure, reserved flag bits), or one whose protocol
+    // version is newer than this build supports, must stop this node from
+    // validating the shard rather than silently selecting a different
+    // consensus implementation (which would split the network between binary
+    // versions) or aborting in the bridge's version check. Refusing keeps the
+    // node a safe full node until it is upgraded or the config is fixed.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": consensus config is missing or its protocol version is not supported by this build; "
+                  "validation for this shard is disabled until the node is upgraded or the config is fixed";
+    return {};
   }
-  return IValidatorGroup::create_catchain(
-      PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, opts,
-      keyring_, adnl_, opts.use_quic ? td::actor::ActorId<adnl::AdnlSenderEx>{quic_} : rldp2_, overlays_, db_root_,
+  auto config = new_consensus_config.value();
+  return IValidatorGroup::create_bridge(
+      PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
+      keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
       actor_id(this), get_collation_manager(adnl_id), init_session,
       opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
       opts_->need_monitor(shard, last_masterchain_state_));
@@ -4114,6 +4138,29 @@ void ValidatorManagerImpl::write_session_stats(const T &obj) {
     s = td::json_encode<std::string>(td::ToJson(*obj.tl()), false);
   }
   s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return c == '\n' || c == '\r'; }), s.end());
+
+  // Bound the append-only session-stats file. It grows with every collate,
+  // validate, and collator-response record, so over a node's lifetime it is
+  // otherwise unbounded (and a peer that drives collator responses adds to
+  // it). When it reaches the cap, rotate it to a single ".old" sidecar and
+  // start fresh; total on-disk size stays within ~2x the cap.
+  auto r_stat = td::stat(fname);
+  if (r_stat.is_ok() && r_stat.ok().size_ >= max_session_stats_file_bytes_) {
+    auto rotated = td::rename(fname, fname + ".old");
+    if (rotated.is_error()) {
+      // Never fail the node over a stats file, but never rotate silently
+      // either: if the rename keeps failing the file grows past the cap, and
+      // silence would be indistinguishable from a working rotation. Warn on
+      // the transition only, so a persistently unwritable directory does not
+      // add a log line per stats record.
+      if (!session_stats_rotate_failed_) {
+        session_stats_rotate_failed_ = true;
+        LOG(WARNING) << "cannot rotate session stats file " << fname << ", it will keep growing: " << rotated;
+      }
+    } else {
+      session_stats_rotate_failed_ = false;
+    }
+  }
 
   std::ofstream file;
   file.open(fname, std::ios_base::app);
