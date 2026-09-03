@@ -135,6 +135,11 @@ void CollatorNode::new_masterchain_block_notification(td::Ref<MasterchainState> 
         }
       }
     }
+    // Drop rate-limiter state for identities that are no longer validators, so
+    // the map stays bounded by the current validator set across rotations.
+    for (auto it = generate_rate_limiter_.begin(); it != generate_rate_limiter_.end();) {
+      it = validator_adnl_ids_.contains(it->first) ? std::next(it) : generate_rate_limiter_.erase(it);
+    }
     for (auto& [_, group] : validator_groups_) {
       if (!group.actor.empty()) {
         td::actor::send_closure(group.actor, &CollatorNodeSession::update_masterchain_config, state);
@@ -330,6 +335,25 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
   if (r_ping.is_ok()) {
     process_ping(src, *r_ping.ok_ref(), std::move(promise));
     return;
+  }
+
+  // Per-source rate limit on collation requests. An authorized validator may
+  // ask far faster than blocks are produced, and every request -- cache hit or
+  // miss -- rewrites the candidate to its creator, persists it, and appends a
+  // response-stats record. Bound the request rate per validator so a single
+  // one cannot drive that work (or the stats log) without limit; the map is
+  // keyed by the authenticated src and pruned to the validator set above.
+  {
+    if (!generate_rate_limiter_.contains(src)) {
+      generate_rate_limiter_[src] = td::RateLimiterWindow{GENERATE_RATE_WINDOW_SECONDS, GENERATE_RATE_WINDOW_LIMIT};
+    }
+    auto now = td::Timestamp::now();
+    auto& window = generate_rate_limiter_[src];
+    if (!window.check(now)) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "too many collation requests"));
+      return;
+    }
+    window.insert(now);
   }
 
   ShardIdFull shard;

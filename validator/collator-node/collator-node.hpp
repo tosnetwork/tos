@@ -22,6 +22,7 @@
 #include "interfaces/validator-manager.h"
 #include "rldp/rldp.h"
 #include "rldp2/rldp.h"
+#include "td/utils/RateLimiterWindow.h"
 
 #include "collator-node-session.hpp"
 
@@ -74,6 +75,12 @@ class CollatorNode : public td::actor::Actor {
   };
   std::map<ShardIdFull, ValidatorGroupInfo> validator_groups_;
   std::map<std::pair<ShardIdFull, CatchainSeqno>, FutureValidatorGroup> future_validator_groups_;
+
+  // Per-source request rate limit for collation queries, keyed by the
+  // authenticated validator src and pruned to the current validator set.
+  std::map<adnl::AdnlNodeIdShort, td::RateLimiterWindow> generate_rate_limiter_;
+  static constexpr double GENERATE_RATE_WINDOW_SECONDS = 1.0;
+  static constexpr size_t GENERATE_RATE_WINDOW_LIMIT = 16;
 
   // Upper bound on requests parked waiting for a not-yet-active future
   // validator group. Well above the number of distinct validators that could
