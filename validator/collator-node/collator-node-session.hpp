@@ -81,6 +81,12 @@ class CollatorNodeSession : public td::actor::Actor {
   // per-waiter completion work -- without bound. Set in the constructor.
   size_t max_waiters_per_collation_ = 64;
 
+  // Upper bound on distinct prev-block sets cached at once. Real collation
+  // follows the chain, touching only a few per seqno; this caps how far a
+  // requester probing arbitrary prev sets can grow the cache and its stored
+  // candidates. Sized generously from the validator set. Set in the ctor.
+  size_t max_cache_entries_ = 256;
+
   BlockSeqno next_block_seqno_;
   std::map<std::vector<BlockIdExt>, std::shared_ptr<CacheEntry>> cache_;
 

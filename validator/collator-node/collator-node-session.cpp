@@ -51,7 +51,11 @@ CollatorNodeSession::CollatorNodeSession(ShardIdFull shard, std::vector<BlockIdE
     , next_block_seqno_(get_next_block_seqno(prev_)) {
   // Every set member may legitimately coalesce onto one block, plus this
   // session's internal request and a margin for retries.
-  max_waiters_per_collation_ = validator_set_->export_vector().size() + 16;
+  size_t validator_count = validator_set_->export_vector().size();
+  max_waiters_per_collation_ = validator_count + 16;
+  // A generous ceiling on distinct cached prev sets: a few per live seqno
+  // across the window, scaled by the set, never below a floor.
+  max_cache_entries_ = std::max<size_t>(64, validator_count * 4);
   update_masterchain_config(state);
 }
 
@@ -156,8 +160,23 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
     prefix_inner(sb, shard_, validator_set_->get_catchain_seqno(), block_seqno, o_priority);
   };
 
-  auto cache_entry = cache_[prev_blocks];
-  if (cache_entry == nullptr) {
+  std::shared_ptr<CacheEntry> cache_entry;
+  if (auto it = cache_.find(prev_blocks); it != cache_.end()) {
+    cache_entry = it->second;
+  } else {
+    // Bound the total cache. Legitimate collation touches only the real chain
+    // shape (a handful of prev sets per seqno); a new entry beyond the cap
+    // means a requester is probing many distinct prev sets, so refuse rather
+    // than let the map (and its stored candidates) grow. find() above avoids
+    // operator[] inserting an empty entry just by looking up.
+    if (cache_.size() >= max_cache_entries_) {
+      FLOG(INFO) {
+        prefix(sb);
+        sb << ": refusing query, collation cache is full (" << cache_.size() << ")";
+      };
+      promise.set_error(td::Status::Error(ErrorCode::notready, "collator busy: collation cache is full"));
+      return;
+    }
     cache_entry = cache_[prev_blocks] = std::make_shared<CacheEntry>();
     cache_entry->key = prev_blocks;
   }
