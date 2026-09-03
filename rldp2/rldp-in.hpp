@@ -130,6 +130,12 @@ class RldpIn : public RldpImpl {
   std::set<adnl::AdnlNodeIdShort> local_ids_;
   PartCompletedCallback part_completed_callback_;
 
+  void get_connection_stats(td::Promise<ConnectionStats> promise) override;
+
+  // The number of connections one local id may hold before it must stop
+  // taking slots from the others.
+  size_t per_local_id_share() const;
+
   td::actor::ActorId<RldpConnectionActor> get_or_create_connection(adnl::AdnlNodeIdShort local_id,
                                                                    adnl::AdnlNodeIdShort peer_id, bool incoming,
                                                                    td::Timestamp timeout = {});
@@ -156,6 +162,7 @@ class RldpIn : public RldpImpl {
   // the bound is being exercised at all; without it the cap is silent and
   // there is nothing to calibrate it against.
   td::uint64 connections_evicted_{0};
+
 };
 
 }  // namespace rldp2

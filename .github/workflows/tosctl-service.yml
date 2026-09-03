@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "tosctl/src/node-control/**"
+      - "tosctl/src/secrets-vault/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
       - "scripts/toscan-dev-seed.py"
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - "tosctl/src/node-control/**"
+      - "tosctl/src/secrets-vault/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
       - "scripts/toscan-dev-seed.py"
@@ -41,6 +43,30 @@ jobs:
         run: cargo fmt --manifest-path service/Cargo.toml --check
       - name: Service tests
         run: cargo test --manifest-path service/Cargo.toml --lib --locked
+
+  # The vault holds the node's signing keys and every operator credential, and
+  # its 218 tests ran only on developer machines -- a suite nothing enforces is
+  # a suite that silently stops being true. It is a separate job because it is
+  # a separate workspace member with its own build, and because a vault
+  # regression should name itself rather than arrive as "the service job
+  # failed".
+  secrets-vault:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tosctl/src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Formatting
+        run: cargo fmt -p secrets-vault --check
+      - name: Vault tests
+        run: cargo test -p secrets-vault --lib --locked
 
   # On demand only. The gate itself takes under a minute; what made this a
   # forty-seven minute job was compiling the node in front of it, which a

@@ -77,6 +77,19 @@ class Rldp : public adnl::AdnlSenderEx {
                                               td::BufferSlice data, td::uint64 max_answer_size,
                                               td::Bits256 request_transfer_id) = 0;
 
+  // Live peer connections, and how many have been dropped to stay within the
+  // cap. Under normal operation the table never reaches its cap, so a non-zero
+  // eviction count is the signal that it is being exercised at all -- and the
+  // only basis on which the cap could be recalibrated.
+  struct ConnectionStats {
+    size_t live{0};
+    td::uint64 evicted{0};
+    // Per local id, so an operator can see whether one entry point is holding
+    // the table on its own.
+    std::vector<std::pair<adnl::AdnlNodeIdShort, size_t>> per_local_id;
+  };
+  virtual void get_connection_stats(td::Promise<ConnectionStats> promise) = 0;
+
   // An observer sees completed inbound FEC parts after successful decode. It
   // cannot alter transfer validity; measurement tools use it to place an
   // independently counted network-loss window after real progress.

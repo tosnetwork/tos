@@ -103,6 +103,23 @@ TransferId get_responce_transfer_id(TransferId transfer_id) {
 }
 }  // namespace
 
+size_t RldpIn::per_local_id_share() const {
+  // An equal split of the cap. With one local id the share is the whole cap,
+  // which is the same rule as having none.
+  return MAX_CONNECTIONS / std::max<size_t>(1, local_ids_.size());
+}
+
+void RldpIn::get_connection_stats(td::Promise<ConnectionStats> promise) {
+  ConnectionStats stats;
+  stats.live = connections_.size();
+  stats.evicted = connections_evicted_;
+  stats.per_local_id.reserve(timeout_set_.size());
+  for (auto &[id, order] : timeout_set_) {
+    stats.per_local_id.emplace_back(id, order.size());
+  }
+  promise.set_value(std::move(stats));
+}
+
 void RldpIn::send_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data) {
   return send_message_ex(src, dst, td::Timestamp::in(10.0), std::move(data));
 }
@@ -115,8 +132,15 @@ void RldpIn::send_message_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort ds
   auto B = serialize_tl_object(create_tl_object<tos_api::rldp_message>(id, std::move(data)), true);
 
   auto transfer_id = get_random_transfer_id();
-  send_closure(get_or_create_connection(src, dst, false, timeout), &RldpConnectionActor::send, transfer_id,
-               std::move(B), timeout);
+  auto connection = get_or_create_connection(src, dst, false, timeout);
+  if (connection.empty()) {
+    // The connection table would not admit this peer. Dropping the message is
+    // the only option left, and it must be an explicit one: sending to an
+    // empty actor id terminates the process.
+    VLOG(RLDP_INFO) << "dropping outbound message " << src << " -> " << dst << " : no connection available";
+    return;
+  }
+  send_closure(connection, &RldpConnectionActor::send, transfer_id, std::move(B), timeout);
 }
 
 void RldpIn::send_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, std::string name,
@@ -145,8 +169,12 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     promise.set_error(td::Status::Error("explicit RLDP response transfer id is already active"));
     return;
   }
-  queries_.emplace(response_transfer_id, OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
   auto connection = get_or_create_connection(src, dst, false, timeout);
+  if (connection.empty()) {
+    promise.set_error(td::Status::Error("no RLDP connection available for this peer"));
+    return;
+  }
+  queries_.emplace(response_transfer_id, OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
   send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
   send_closure(connection, &RldpConnectionActor::send, request_transfer_id, std::move(B), timeout);
 }
@@ -155,8 +183,12 @@ void RldpIn::answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, 
                           adnl::AdnlQueryId query_id, TransferId transfer_id, td::BufferSlice data) {
   auto B = serialize_tl_object(create_tl_object<tos_api::rldp_answer>(query_id, std::move(data)), true);
 
-  send_closure(get_or_create_connection(src, dst, false, timeout), &RldpConnectionActor::send, transfer_id,
-               std::move(B), timeout);
+  auto connection = get_or_create_connection(src, dst, false, timeout);
+  if (connection.empty()) {
+    VLOG(RLDP_INFO) << "dropping answer " << src << " -> " << dst << " : no connection available";
+    return;
+  }
+  send_closure(connection, &RldpConnectionActor::send, transfer_id, std::move(B), timeout);
 }
 
 void RldpIn::receive_message_part(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort local_id, td::BufferSlice data) {
@@ -176,9 +208,9 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
   timeout += CONNECTION_TIMEOUT;
   auto it = connections_.find(std::make_pair(local_id, peer_id));
   if (it != connections_.end()) {
-    timeout_set_.erase({it->second.remove_at, local_id, peer_id});
+    auto previous = it->second.remove_at;
     it->second.remove_at = std::max(it->second.remove_at, timeout);
-    timeout_set_.emplace(it->second.remove_at, local_id, peer_id);
+    refresh_connection(timeout_set_, local_id, peer_id, previous, it->second.remove_at);
     alarm_timestamp().relax(timeout);
     return it->second.actor.get();
   }
@@ -187,7 +219,7 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
     VLOG(RLDP_INFO) << "dropping incoming packet " << local_id << " <- " << peer_id << " : peer not allowed";
     return {};
   }
-  auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS);
+  auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share());
   if (!admission.admitted) {
     VLOG(RLDP_INFO) << "refusing connection " << local_id << " , " << peer_id << " : connection table is full";
     return {};
@@ -209,7 +241,7 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
   td::actor::send_closure(connection, &RldpConnectionActor::set_default_mtu, mtu);
   auto res = connection.get();
   connections_[std::make_pair(local_id, peer_id)] = {std::move(connection), timeout};
-  timeout_set_.emplace(timeout, local_id, peer_id);
+  record_connection(timeout_set_, local_id, peer_id, timeout);
   alarm_timestamp().relax(timeout);
   VLOG(RLDP_INFO) << "creating connection " << local_id << " , " << peer_id << " ("
                   << (incoming ? "inbound" : "outbound") << ")";
@@ -347,16 +379,22 @@ void RldpIn::on_mtu_updated(td::optional<adnl::AdnlNodeIdShort> local_id, td::op
 
 
 void RldpIn::alarm() {
-  for (auto it = timeout_set_.begin(); it != timeout_set_.end();) {
-    auto &[timeout, local_id, peer_id] = *it;
-    if (timeout.is_in_past()) {
-      VLOG(RLDP_INFO) << "removing old connection " << local_id << " , " << peer_id;
-      connections_.erase({local_id, peer_id});
-      it = timeout_set_.erase(it);
-    } else {
-      alarm_timestamp() = timeout;
-      break;
+  // The expiry order is partitioned by local id, so expired connections are
+  // collected from the front of each partition before anything is erased --
+  // erasing while iterating would invalidate the partition being walked.
+  std::vector<std::tuple<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::Timestamp>> expired;
+  for (auto &[local_id, order] : timeout_set_) {
+    for (auto it = order.begin(); it != order.end() && it->first.is_in_past(); ++it) {
+      expired.emplace_back(local_id, it->second, it->first);
     }
+  }
+  for (auto &[local_id, peer_id, timeout] : expired) {
+    VLOG(RLDP_INFO) << "removing old connection " << local_id << " , " << peer_id;
+    erase_connection(connections_, timeout_set_, local_id, peer_id, timeout);
+  }
+  auto next = earliest_expiry(timeout_set_);
+  if (next) {
+    alarm_timestamp() = next;
   }
 }
 
