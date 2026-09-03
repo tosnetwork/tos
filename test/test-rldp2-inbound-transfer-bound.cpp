@@ -146,5 +146,26 @@ TEST(Rldp2InboundTransferBound, FinishedTransferIdsDoNotAccumulateWithoutLimit) 
   ASSERT_TRUE(receiver.completed_transfer_count() <= RldpConnection::MAX_COMPLETED_TRANSFERS);
 }
 
+
+// The other direction. The node holds every answer it sends -- the bytes, the
+// encoder, the timeout entry -- until the peer acknowledges it. A peer that
+// asks constantly and never acknowledges would otherwise decide how many are
+// held: asking is cheap, and the timeout bounds each answer's age, not how
+// many exist at once.
+TEST(Rldp2InboundTransferBound, AnswersAwaitingAcknowledgementAreBounded) {
+  RldpConnection connection;
+  Sink sink;
+
+  // Every one of these is an answer the node is sending out and nothing ever
+  // acknowledges, which is exactly the state the peer can hold it in.
+  const size_t kSent = RldpConnection::MAX_OUTBOUND_TRANSFERS + 500;
+  for (size_t i = 0; i < kSent; i++) {
+    connection.send(transfer(static_cast<td::uint32>(20000 + i)), payload(64), td::Timestamp::in(60.0));
+    connection.run(sink);
+  }
+
+  ASSERT_TRUE(connection.outbound_transfer_count() <= RldpConnection::MAX_OUTBOUND_TRANSFERS);
+}
+
 }  // namespace
 }  // namespace tos::rldp2

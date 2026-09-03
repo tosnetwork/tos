@@ -84,6 +84,11 @@ class RldpConnection {
   // drive, so how many are kept must not also be.
   static constexpr size_t MAX_COMPLETED_TRANSFERS = 2048;
 
+  // Answers and requests awaiting the peer's acknowledgement. The peer drives
+  // how many of these exist by how often it asks and whether it acknowledges,
+  // so this is bounded for the same reason as the inbound side.
+  static constexpr size_t MAX_OUTBOUND_TRANSFERS = 256;
+
   static constexpr td::uint64 DEFAULT_MTU = 7680;
 
   // Inbound transfers currently open, for tests and diagnostics.
@@ -94,6 +99,11 @@ class RldpConnection {
   // Finished transfer ids currently remembered.
   size_t completed_transfer_count() const {
     return completed_set_.size();
+  }
+
+  // Transfers awaiting the peer's acknowledgement.
+  size_t outbound_transfer_count() const {
+    return outbound_transfers_.size();
   }
 
  private:

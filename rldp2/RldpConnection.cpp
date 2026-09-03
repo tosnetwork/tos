@@ -130,6 +130,19 @@ void RldpConnection::send(TransferId transfer_id, td::BufferSlice data, td::Time
     }
   }
 
+  // The peer decides how often it asks, and the node holds every answer --
+  // its bytes, its encoder and its timeout entry -- until the peer
+  // acknowledges it or it expires. So the peer would otherwise decide how many
+  // answers are held at once: it can ask at any rate and simply never
+  // acknowledge, and the timeout bounds how long each is kept, not how many
+  // there are. Refused before the limit entry is added, so nothing is left
+  // behind for a transfer that does not exist.
+  if (outbound_transfers_.size() >= MAX_OUTBOUND_TRANSFERS) {
+    VLOG(RLDP_INFO) << "Drop outbound transfer: " << outbound_transfers_.size()
+                    << " are already awaiting acknowledgement";
+    return;
+  }
+
   if (timeout) {
     Limit limit;
     limit.transfer_id = transfer_id;
