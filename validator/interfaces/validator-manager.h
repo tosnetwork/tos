@@ -28,7 +28,6 @@
 #include "crypto/vm/db/DynamicBagOfCellsDb.h"
 #include "impl/out-msg-queue-proof.hpp"
 #include "td/actor/BackpressureQueue.h"
-#include "validator-session/validator-session-types.h"
 #include "validator/state-download-buffer.h"
 #include "validator/validator.h"
 

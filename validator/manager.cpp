@@ -2610,7 +2610,7 @@ void ValidatorManagerImpl::update_shards() {
   }
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
-  validatorsession::ValidatorSessionOptions opts{config};
+  consensus::ValidatorSessionOptions opts{config};
   auto opts_hash = opts.get_hash();
 
   std::map<ShardIdFull, std::vector<BlockIdExt>> new_shards;
@@ -2989,7 +2989,7 @@ void ValidatorManagerImpl::updated_init_block(BlockIdExt last_rotate_block_id,
 
 ValidatorSessionId ValidatorManagerImpl::get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set,
                                                               td::Bits256 opts_hash, BlockSeqno last_key_block_seqno,
-                                                              const validatorsession::ValidatorSessionOptions &opts) {
+                                                              const consensus::ValidatorSessionOptions &opts) {
   std::vector<tl_object_ptr<tos_api::validator_groupMember>> vec;
   auto v = val_set->export_vector();
   auto vert_seqno = opts_->get_maximal_vertical_seqno();
@@ -3015,7 +3015,7 @@ ValidatorSessionId ValidatorManagerImpl::get_validator_set_id(ShardIdFull shard,
 
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_group(
     ValidatorSessionId session_id, ShardIdFull shard, td::Ref<block::ValidatorSet> validator_set, BlockSeqno key_seqno,
-    validatorsession::ValidatorSessionOptions opts, bool init_session) {
+    consensus::ValidatorSessionOptions opts, bool init_session) {
   td::actor::send_closure(ext_message_pool_, &ExtMessagePool::cleanup_external_messages, shard);
 
   auto validator_id = get_validator(shard, validator_set);

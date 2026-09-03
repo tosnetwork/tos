@@ -110,6 +110,8 @@ set(VALIDATOR_SOURCE
   consensus/simplex/stats.cpp
   consensus/simplex/votes.cpp
   consensus/block-accepter.cpp
+  consensus/candidate-codec.cpp
+  consensus/candidate-codec.h
   consensus/block-producer.cpp
   consensus/block-sync-overlay.cpp
   consensus/block-validator.cpp
@@ -119,6 +121,8 @@ set(VALIDATOR_SOURCE
   consensus/misbehavior-reporter.cpp
   consensus/payload.cpp
   consensus/private-overlay.cpp
+  consensus/session-compat.cpp
+  consensus/session-compat.h
   consensus/trace-collector.cpp
   consensus/stats.cpp
   consensus/types.cpp
@@ -185,7 +189,7 @@ target_link_libraries(validator-state-download-budget PUBLIC tdutils tos_crypto)
 
 add_library(validator-db OBJECT ${VALIDATOR_DB_SOURCE})
 target_include_directories(validator-db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay validatorsession tos_db
+target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay tos_db
                       validator-state-download-budget)
 
 add_library(validator-common OBJECT
@@ -258,4 +262,4 @@ target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
 
 target_link_libraries(full-node PUBLIC validator-state-download-budget)
-target_link_libraries(full-node PRIVATE tdactor adnl rldp rldp2 tl_api dht tdfec overlay validatorsession tos_db)
+target_link_libraries(full-node PRIVATE tdactor adnl rldp rldp2 tl_api dht tdfec overlay tos_db)

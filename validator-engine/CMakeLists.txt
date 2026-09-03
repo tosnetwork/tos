@@ -41,7 +41,7 @@ target_compile_options(validator-engine PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
 )
 target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_api dht
-  rldp rldp2 quic validatorsession full-node validator tos_validator validator
+  rldp rldp2 quic full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse)

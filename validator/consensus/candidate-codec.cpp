@@ -24,13 +24,13 @@
 
 #include <limits>
 
-#include "candidate-serializer.h"
-#include "validator-session-types.h"
+#include "candidate-codec.h"
+#include "session-compat.h"
 
-namespace tos::validatorsession {
+namespace tos::validator::consensus {
 
 namespace {
-constexpr const char* k_called_from_validator_session = "validator_session";
+constexpr const char* k_called_from_consensus = "consensus";
 }  // namespace
 
 td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::validatorSession_candidate>& block,
@@ -40,7 +40,7 @@ td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::val
     auto res = serialize_tl_object(block, true);
     VLOG(VALIDATOR_SESSION_BENCHMARK) << "Broadcast_benchmark serialize_candidate block_id="
                                       << block->root_hash_.to_hex()
-                                      << " called_from=" << k_called_from_validator_session
+                                      << " called_from=" << k_called_from_consensus
                                       << " time_sec=" << (td::Time::now() - t_compression_start)
                                       << " compression=" << "none"
                                       << " original_size=" << block->data_.size() + block->collated_data_.size()
@@ -49,7 +49,7 @@ td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::val
   }
   size_t decompressed_size;
   TRY_RESULT(compressed, compress_candidate_data(block->data_, block->collated_data_, decompressed_size,
-                                                 k_called_from_validator_session, block->root_hash_))
+                                                 k_called_from_consensus, block->root_hash_))
   if (decompressed_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     return td::Status::Error("candidate decompressed size does not fit into the wire format");
   }
@@ -67,7 +67,7 @@ td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candi
     auto t_decompression_start = td::Time::now();
     TRY_RESULT(res, fetch_tl_object<tos_api::validatorSession_candidate>(data, true));
     VLOG(VALIDATOR_SESSION_BENCHMARK) << "Broadcast_benchmark deserialize_candidate block_id="
-                                      << res->root_hash_.to_hex() << " called_from=" << k_called_from_validator_session
+                                      << res->root_hash_.to_hex() << " called_from=" << k_called_from_consensus
                                       << " time_sec=" << (td::Time::now() - t_decompression_start)
                                       << " compression=" << "none"
                                       << " compressed_size=" << res->data_.size() + res->collated_data_.size();
@@ -90,7 +90,7 @@ td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candi
                   }
                   TRY_RESULT(p,
                              decompress_candidate_data(c.data_, false, c.decompressed_size_, max_decompressed_data_size,
-                                                       k_called_from_validator_session, c.root_hash_));
+                                                       k_called_from_consensus, c.root_hash_));
                   return create_tl_object<tos_api::validatorSession_candidate>(c.src_, c.round_, c.root_hash_,
                                                                                std::move(p.first), std::move(p.second));
                 }();
@@ -101,7 +101,7 @@ td::Result<tl_object_ptr<tos_api::validatorSession_candidate>> deserialize_candi
                     return td::Status::Error("Compressed data is too big");
                   }
                   TRY_RESULT(p, decompress_candidate_data(c.data_, true, 0, max_decompressed_data_size,
-                                                          k_called_from_validator_session, c.root_hash_));
+                                                          k_called_from_consensus, c.root_hash_));
                   return create_tl_object<tos_api::validatorSession_candidate>(c.src_, c.round_, c.root_hash_,
                                                                                std::move(p.first), std::move(p.second));
                 }();
@@ -174,4 +174,4 @@ td::Result<std::pair<td::BufferSlice, td::BufferSlice>> decompress_candidate_dat
   return std::make_pair(std::move(block_data), std::move(collated_data));
 }
 
-}  // namespace tos::validatorsession
+}  // namespace tos::validator::consensus

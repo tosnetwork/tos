@@ -42,6 +42,7 @@
 
 #include "manager-init.h"
 #include "manager-resource-policy.h"
+#include "consensus/session-compat.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -228,11 +229,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // VALIDATOR GROUPS
   ValidatorSessionId get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set,
                                           td::Bits256 opts_hash, BlockSeqno last_key_block_seqno,
-                                          const validatorsession::ValidatorSessionOptions &opts);
+                                          const consensus::ValidatorSessionOptions &opts);
   td::actor::ActorOwn<IValidatorGroup> create_validator_group(ValidatorSessionId session_id, ShardIdFull shard,
                                                               td::Ref<block::ValidatorSet> validator_set,
                                                               BlockSeqno key_seqno,
-                                                              validatorsession::ValidatorSessionOptions opts,
+                                                              consensus::ValidatorSessionOptions opts,
                                                               bool create_catchain);
   td::actor::ActorOwn<IValidatorGroup> create_observer_group(
       ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
