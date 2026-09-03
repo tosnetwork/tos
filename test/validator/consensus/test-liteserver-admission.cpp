@@ -109,5 +109,29 @@ TEST(LiteServerAdmission, WaitingDoesNotConsumeExecutionCapacity) {
   EXPECT(admission.inflight() == 0);
 }
 
+TEST(LiteServerAdmission, ConnectionIdentityPairsAddressWithItsKey) {
+  // The anonymous identity and the per-IP rate-limiting key are derived
+  // together so the derivation cannot depend on the order a call site happens
+  // to evaluate its arguments in. If the address were consumed before being
+  // hashed, every peer would share the identity of the empty string and every
+  // per-IP bucket would collapse into one, silently, while the limits still
+  // looked like they were working.
+  for (std::string ip : {std::string{"1.2.3.4"}, std::string{"203.0.113.9"}, std::string{"::1"}}) {
+    auto identity = adnl::make_ext_connection_identity(ip);
+    // The address must survive the derivation: it is the per-IP bucket key.
+    EXPECT(identity.peer_ip == ip);
+    // And the identity must be the one derived from that same address, not
+    // from an emptied or unrelated string.
+    EXPECT(identity.anonymous_id == adnl::external_peer_ip_identity(ip));
+    EXPECT(identity.anonymous_id != adnl::external_peer_ip_identity(td::Slice()));
+  }
+
+  // Distinct addresses must stay distinct, or per-IP isolation is a no-op.
+  auto a = adnl::make_ext_connection_identity("198.51.100.1");
+  auto b = adnl::make_ext_connection_identity("198.51.100.2");
+  EXPECT(a.anonymous_id != b.anonymous_id);
+  EXPECT(a.peer_ip != b.peer_ip);
+}
+
 }  // namespace
 }  // namespace tos

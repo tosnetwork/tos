@@ -20,6 +20,25 @@ inline td::Bits256 external_peer_ip_identity(td::Slice peer_ip) {
   return td::sha256_bits256(material);
 }
 
+// The anonymous identity and the per-IP rate-limiting key must both be derived
+// from the same peer address. Deriving them together here keeps that from
+// depending on argument evaluation order at the call site: moving the address
+// into one argument while another argument still reads it is unspecified
+// order, and on a compiler that evaluates the move first every anonymous peer
+// would receive the identity of the empty string and every per-IP bucket would
+// collapse into one -- silently, with the limits still appearing to work.
+struct ExtConnectionIdentity {
+  td::Bits256 anonymous_id;
+  std::string peer_ip;
+};
+
+inline ExtConnectionIdentity make_ext_connection_identity(std::string peer_ip) {
+  ExtConnectionIdentity result;
+  result.anonymous_id = external_peer_ip_identity(peer_ip);
+  result.peer_ip = std::move(peer_ip);
+  return result;
+}
+
 // Small value types kept separate from the socket actor so admission behavior
 // can be tested without opening real TCP connections.
 class ExtServerConnectionLimits {

@@ -233,11 +233,15 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
     std::string peer_ip_;
   };
 
+  // Derive the anonymous identity and the rate-limiting key together, before
+  // the call, so neither depends on the order the arguments below happen to be
+  // evaluated in.
+  auto identity = make_ext_connection_identity(std::move(peer_ip));
   td::actor::create_actor<AdnlInboundConnection>(td::actor::ActorOptions().with_name("inconn").with_poll(),
                                                  std::move(fd), peer_table_, actor_id(this),
-                                                 AdnlNodeIdShort{external_peer_ip_identity(peer_ip)},
-                                                 peer_ip, query_limits_,
-                                                 std::make_unique<Callback>(actor_id(this), std::move(peer_ip)))
+                                                 AdnlNodeIdShort{identity.anonymous_id},
+                                                 identity.peer_ip, query_limits_,
+                                                 std::make_unique<Callback>(actor_id(this), identity.peer_ip))
       .release();
 }
 
