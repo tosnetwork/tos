@@ -1109,9 +1109,22 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
 
+// Boundary guard for the whole handler surface.
+//
+// Handlers run inside an actor callback, and an exception that escapes one
+// terminates the process. Individual handlers are careful -- attacker-supplied
+// BOCs are probed with the special-aware loader, fee estimation is a function
+// try-block, the shared parse helpers catch VM errors -- but that safety is a
+// per-site convention across ~12k lines and every handler added later. The
+// liteserver *reply* path already has this guard; the request path did not, so
+// a single missed site anywhere took the validator down.
+//
+// A handler that throws has already lost its promise to stack unwinding, and
+// ~LambdaPromise answers the client with "Lost promise", so the caller still
+// gets a response. All this has to do is stop the exception reaching the actor.
 void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
                                     std::string req_id, std::string source_ip,
-                                    td::Promise<HttpReturn> promise) {
+                                    td::Promise<HttpReturn> promise) try {
   // Track per-method request count
   requests_total_.fetch_add(1);
   active_requests_.fetch_add(1);
@@ -1269,6 +1282,14 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     // for the rationale.
     promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
+} catch (vm::VmError& err) {
+  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised VM error: " << err.get_msg();
+} catch (vm::VmVirtError& err) {
+  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised VM virtualization error: " << err.get_msg();
+} catch (std::exception& err) {
+  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised exception: " << err.what();
+} catch (...) {
+  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised an unknown exception";
 }
 
 // ─── Liteserver query forwarding ──────────────────────────────────────────
