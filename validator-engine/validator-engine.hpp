@@ -41,7 +41,6 @@
 #include "tos/tos-types.h"
 #include "json-rpc-server.h"
 #include "quic/quic-sender.h"
-#include "rldp/rldp.h"
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
@@ -172,7 +171,6 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::keyring::Keyring> keyring_;
   td::actor::ActorOwn<tos::adnl::AdnlNetworkManager> adnl_network_manager_;
   td::actor::ActorOwn<tos::adnl::Adnl> adnl_;
-  td::actor::ActorOwn<tos::rldp::Rldp> rldp_;
   td::actor::ActorOwn<tos::rldp2::Rldp> rldp2_;
   td::actor::ActorOwn<tos::quic::QuicSender> quic_;
   std::map<tos::PublicKeyHash, td::actor::ActorOwn<tos::dht::Dht>> dht_nodes_;

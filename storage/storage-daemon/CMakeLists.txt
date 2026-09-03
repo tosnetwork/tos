@@ -23,7 +23,7 @@ set(STORAGE_DAEMON_CLI_SOURCE
   )
 
 add_executable(storage-daemon ${STORAGE_DAEMON_SOURCE})
-target_link_libraries(storage-daemon storage overlay tdutils tdactor adnl tl_api dht rldp rldp2 fift-lib memprof git toslib)
+target_link_libraries(storage-daemon storage overlay tdutils tdactor adnl tl_api dht rldp2 fift-lib memprof git toslib)
 
 add_executable(storage-daemon-cli ${STORAGE_DAEMON_CLI_SOURCE})
 target_link_libraries(storage-daemon-cli tdutils tdactor adnllite tl_api tl_lite_api tl-lite-utils tos_block terminal git)
