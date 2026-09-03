@@ -123,5 +123,28 @@ TEST(Rldp2InboundTransferBound, TransfersPastTheLimitAreRefusedNotAllocated) {
   ASSERT_TRUE(sink.completed.empty());
 }
 
+
+// A transfer that completes in a single part frees its slot at once, so the
+// concurrency limit above never engages for a peer sending small transfers
+// back to back. What grows instead is the set of finished ids kept for
+// duplicate suppression: how long an id is kept is fixed, how many arrive is
+// the peer's to choose. So that set has a ceiling of its own.
+TEST(Rldp2InboundTransferBound, FinishedTransferIdsDoNotAccumulateWithoutLimit) {
+  RldpConnection receiver;
+  Sink sink;
+
+  // Every one of these completes immediately, so nothing is ever concurrent.
+  const size_t kSent = RldpConnection::MAX_COMPLETED_TRANSFERS + 500;
+  for (size_t i = 0; i < kSent; i++) {
+    deliver_whole_transfer(receiver, sink, transfer(static_cast<td::uint32>(10000 + i)));
+  }
+  ASSERT_EQ(kSent, sink.completed.size());
+  // None of them is still open...
+  ASSERT_EQ(0u, receiver.inbound_transfer_count());
+  // ...and the record of finished ones stopped growing at its ceiling, rather
+  // than following the rate the peer chose to send at.
+  ASSERT_TRUE(receiver.completed_transfer_count() <= RldpConnection::MAX_COMPLETED_TRANSFERS);
+}
+
 }  // namespace
 }  // namespace tos::rldp2

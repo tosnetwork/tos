@@ -62,7 +62,18 @@ void RldpConnection::on_inbound_completed(TransferId transfer_id, td::Timestamp 
   inbound_transfers_.erase(transfer_id);
   completed_set_.insert(transfer_id);
   completed_queue_.push(CompletedId{transfer_id, now.in(20)});
-  while (completed_queue_.size() > 128 && completed_queue_.front().timeout.is_in_past(now)) {
+  // Remembering a finished transfer id keeps a late duplicate from being
+  // reassembled a second time. Ids leave after twenty seconds, which bounds
+  // how long one is remembered but not how many there are: a transfer that
+  // completes in one part frees its slot immediately, so a peer sending small
+  // transfers back to back never meets the concurrency limit and fills this
+  // instead, at whatever rate it can send. So there is also a hard ceiling.
+  // Dropping the oldest ids early only costs the duplicate protection they
+  // were providing, and a duplicate reassembly is itself bounded by the
+  // concurrency limit.
+  while (!completed_queue_.empty() &&
+         (completed_queue_.size() > MAX_COMPLETED_TRANSFERS ||
+          (completed_queue_.size() > 128 && completed_queue_.front().timeout.is_in_past(now)))) {
     completed_set_.erase(completed_queue_.pop().transfer_id);
   }
 }
@@ -342,6 +353,9 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
       // the part costs it a retransmit once one of them finishes or expires;
       // accepting it would let the peer choose how much memory to allocate
       // here, since it also chooses the transfer ids.
+      // At RLDP_INFO, like every other per-packet drop in this file, so a
+      // peer holding itself at the limit cannot drive the node's log volume
+      // unless debug logging was deliberately turned on.
       VLOG(RLDP_INFO) << "Drop rldp message: peer already has " << inbound_transfers_.size()
                       << " inbound transfers open";
       return;

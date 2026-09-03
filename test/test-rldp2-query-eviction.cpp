@@ -198,6 +198,48 @@ int main() {
     fail(PSLICE() << "the removed query's record was left behind: " << pending_after << " still pending");
   }
 
+  // A peer that accepts requests and never answers them decides how many
+  // queries the node is holding, unless the total is capped. Nothing here is
+  // ever answered, so every one of these stays outstanding.
+  size_t refused = 0;
+  scheduler.run_in_context([&] {
+    for (size_t i = 0; i < tos::rldp2::Rldp::MAX_PENDING_QUERIES + 64; i++) {
+      td::actor::send_closure(rldp, &tos::rldp2::Rldp::send_query_ex, src, dst, std::string("q"),
+                              td::PromiseCreator::lambda([&refused](td::Result<td::BufferSlice> R) {
+                                if (R.is_error()) {
+                                  ++refused;
+                                }
+                              }),
+                              td::Timestamp::in(100000.0), td::BufferSlice("x"), 1 << 20);
+    }
+  });
+  scheduler.run(1.0);
+
+  size_t pending_at_cap = 0;
+  bool third_stats = false;
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(rldp, &tos::rldp2::Rldp::get_connection_stats,
+                            td::PromiseCreator::lambda([&](td::Result<tos::rldp2::Rldp::ConnectionStats> R) {
+                              R.ensure();
+                              pending_at_cap = R.ok().pending_queries;
+                              third_stats = true;
+                            }));
+  });
+  scheduler.run(0.05);
+  if (!third_stats) {
+    fail("the node never answered the third connection stats query");
+  }
+  LOG(ERROR) << "after flooding queries: " << pending_at_cap << " pending, " << refused << " refused";
+
+  if (pending_at_cap > tos::rldp2::Rldp::MAX_PENDING_QUERIES) {
+    fail(PSLICE() << "outstanding queries grew past their cap: " << pending_at_cap);
+  }
+  // Refused, not silently dropped: a caller that gets no answer at all is the
+  // hang this whole file is about.
+  if (refused == 0) {
+    fail("queries past the cap were neither admitted nor refused");
+  }
+
   scheduler.run_in_context([&] {
     rldp.reset();
     adnl.reset();

@@ -118,24 +118,31 @@ void RldpIn::erase_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort p
   if (connection == queries_.end()) {
     return;
   }
-  connection->second.erase(transfer_id);
+  if (connection->second.erase(transfer_id) > 0 && pending_queries_ > 0) {
+    --pending_queries_;
+  }
   if (connection->second.empty()) {
     queries_.erase(connection);
   }
 }
 
-void RldpIn::fail_queries_on_connection(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id,
-                                        td::Slice reason) {
+std::map<TransferId, RldpIn::OutQuery> RldpIn::take_queries_on_connection(adnl::AdnlNodeIdShort local_id,
+                                                                         adnl::AdnlNodeIdShort peer_id) {
   auto connection = queries_.find({local_id, peer_id});
   if (connection == queries_.end()) {
-    return;
+    return {};
   }
-  // Take the queries out first: answering a promise can run arbitrary caller
-  // code, which may reach back into this table.
   auto queries = std::move(connection->second);
   queries_.erase(connection);
-  for (auto &[transfer_id, query] : queries) {
-    query.promise.set_error(td::Status::Error(reason.str()));
+  pending_queries_ -= std::min(pending_queries_, queries.size());
+  return queries;
+}
+
+void RldpIn::fail_orphaned_queries(std::vector<std::map<TransferId, OutQuery>> orphaned, std::string reason) {
+  for (auto &queries : orphaned) {
+    for (auto &[transfer_id, query] : queries) {
+      query.promise.set_error(td::Status::Error(reason));
+    }
   }
 }
 
@@ -208,6 +215,13 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     promise.set_error(td::Status::Error("explicit RLDP response transfer id is already active"));
     return;
   }
+  if (pending_queries_ >= MAX_PENDING_QUERIES) {
+    // A peer that accepts requests and never answers them would otherwise
+    // decide how many of these the node holds. Failing now lets the caller
+    // retry or give up; remembering it would not.
+    promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer"));
+    return;
+  }
   auto connection = get_or_create_connection(src, dst, false, timeout);
   if (connection.empty()) {
     promise.set_error(td::Status::Error("no RLDP connection available for this peer"));
@@ -215,6 +229,7 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
   }
   queries_[{src, dst}].emplace(response_transfer_id,
                                OutQuery{.promise = std::move(promise), .max_answer_size = max_answer_size});
+  ++pending_queries_;
   send_closure(connection, &RldpConnectionActor::set_receive_limits, response_transfer_id, timeout, max_answer_size);
   send_closure(connection, &RldpConnectionActor::send, request_transfer_id, std::move(B), timeout);
 }
@@ -261,23 +276,32 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
   }
   // Collect the victims rather than answering their queries as they are
   // chosen. Answering runs the caller's continuation, which may come straight
-  // back here to open another connection; doing that while the table is half
-  // updated would let it recurse through a state no invariant covers. The
-  // table is finished first, then the queries are told.
+  // back here to open another connection -- and could then evict the very
+  // connection this call is about to return, leaving the caller with an actor
+  // that is already stopped and a query nothing will ever fail. So the queries
+  // are detached here and answered in a later turn, once this call has
+  // returned and its result is the caller's.
   std::vector<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>> evicted;
   auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share(),
                                     [&evicted](adnl::AdnlNodeIdShort evicted_local_id,
                                                adnl::AdnlNodeIdShort evicted_peer_id) {
                                       evicted.emplace_back(evicted_local_id, evicted_peer_id);
                                     });
-  auto answer_evicted_queries = [this, &evicted] {
+  auto detach_evicted_queries = [this, &evicted] {
+    std::vector<std::map<TransferId, OutQuery>> orphaned;
     for (auto &[evicted_local_id, evicted_peer_id] : evicted) {
-      fail_queries_on_connection(evicted_local_id, evicted_peer_id,
-                                 "RLDP connection evicted before the query was answered");
+      auto queries = take_queries_on_connection(evicted_local_id, evicted_peer_id);
+      if (!queries.empty()) {
+        orphaned.push_back(std::move(queries));
+      }
+    }
+    if (!orphaned.empty()) {
+      td::actor::send_closure(actor_id(this), &RldpIn::fail_orphaned_queries, std::move(orphaned),
+                              std::string("RLDP connection evicted before the query was answered"));
     }
   };
   if (!admission.admitted) {
-    answer_evicted_queries();
+    detach_evicted_queries();
     VLOG(RLDP_INFO) << "refusing connection " << local_id << " , " << peer_id << " : connection table is full";
     return {};
   }
@@ -306,9 +330,9 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
   alarm_timestamp().relax(timeout);
   VLOG(RLDP_INFO) << "creating connection " << local_id << " , " << peer_id << " ("
                   << (incoming ? "inbound" : "outbound") << ")";
-  // The table is consistent now, so a continuation that reaches back into it
-  // sees a state the invariants cover.
-  answer_evicted_queries();
+  // Detach now, while the pairs still name the connections that were removed;
+  // answering happens in its own turn, so `res` is still the caller's.
+  detach_evicted_queries();
   return res;
 }
 
@@ -450,15 +474,22 @@ void RldpIn::alarm() {
       expired.emplace_back(local_id, it->second, it->first);
     }
   }
+  std::vector<std::map<TransferId, OutQuery>> orphaned;
   for (auto &[local_id, peer_id, timeout] : expired) {
     VLOG(RLDP_INFO) << "removing old connection " << local_id << " , " << peer_id;
     erase_connection(connections_, timeout_set_, local_id, peer_id, timeout);
+    // Detach in the same pass that removes the connection. A pair alone does
+    // not distinguish a connection from its replacement, so waiting until
+    // after the sweep would let a query belonging to a connection re-created
+    // under the same pair be failed as if it were one of these.
+    auto queries = take_queries_on_connection(local_id, peer_id);
+    if (!queries.empty()) {
+      orphaned.push_back(std::move(queries));
+    }
   }
-  // Same order as eviction: finish the table, then tell the queries, so a
-  // continuation that opens a connection does not run against a half-swept
-  // expiry order.
-  for (auto &[local_id, peer_id, timeout] : expired) {
-    fail_queries_on_connection(local_id, peer_id, "RLDP connection expired before the query was answered");
+  if (!orphaned.empty()) {
+    td::actor::send_closure(actor_id(this), &RldpIn::fail_orphaned_queries, std::move(orphaned),
+                            std::string("RLDP connection expired before the query was answered"));
   }
   auto next = earliest_expiry(timeout_set_);
   if (next) {

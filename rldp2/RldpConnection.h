@@ -79,11 +79,21 @@ class RldpConnection {
   // only ever bites a peer that is not doing real work.
   static constexpr size_t MAX_INBOUND_TRANSFERS = 256;
 
+  // Finished transfer ids remembered for duplicate suppression. Bounded for
+  // the same reason as the above: how long an id is kept is the peer's to
+  // drive, so how many are kept must not also be.
+  static constexpr size_t MAX_COMPLETED_TRANSFERS = 2048;
+
   static constexpr td::uint64 DEFAULT_MTU = 7680;
 
   // Inbound transfers currently open, for tests and diagnostics.
   size_t inbound_transfer_count() const {
     return inbound_transfers_.size();
+  }
+
+  // Finished transfer ids currently remembered.
+  size_t completed_transfer_count() const {
+    return completed_set_.size();
   }
 
  private:

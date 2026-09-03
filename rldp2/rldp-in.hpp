@@ -100,6 +100,17 @@ class RldpIn : public RldpImpl {
 
   void add_id(adnl::AdnlNodeIdShort local_id) override;
 
+  struct OutQuery {
+    td::Promise<td::BufferSlice> promise;
+    td::uint64 max_answer_size;
+  };
+
+  // Answer queries whose connection is gone. Runs as its own actor turn, so
+  // the continuations it invokes cannot act on a table mid-update, and cannot
+  // invalidate a connection the caller that triggered the removal is still
+  // holding.
+  void fail_orphaned_queries(std::vector<std::map<TransferId, OutQuery>> orphaned, std::string reason);
+
   void get_conn_ip_str(adnl::AdnlNodeIdShort l_id, adnl::AdnlNodeIdShort p_id,
                        td::Promise<td::string> promise) override;
 
@@ -121,10 +132,6 @@ class RldpIn : public RldpImpl {
   std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, Connection> connections_;
   RldpTimeoutSet timeout_set_;
 
-  struct OutQuery {
-    td::Promise<td::BufferSlice> promise;
-    td::uint64 max_answer_size;
-  };
   // Outbound queries awaiting an answer, partitioned by the connection
   // carrying them. A query's completion lives in that connection's actor, so
   // when the connection goes the query has to be failed rather than left
@@ -133,13 +140,21 @@ class RldpIn : public RldpImpl {
   // once per admitted peer under a flood.
   std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, std::map<TransferId, OutQuery>> queries_;
 
-  // Fail every query in flight on one connection. Called before the
-  // connection is removed, whether it expired or was evicted.
-  void fail_queries_on_connection(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, td::Slice reason);
+  // Detach the queries in flight on one connection, without answering them.
+  // Detaching and answering are deliberately separate: answering runs the
+  // caller's continuation, which may open a connection, send a query, or both.
+  // Doing that mid-removal would let it act on a table still being swept, and
+  // would let a connection re-created under the same pair have its brand new
+  // query mistaken for one belonging to the connection just removed.
+  std::map<TransferId, OutQuery> take_queries_on_connection(adnl::AdnlNodeIdShort local_id,
+                                                            adnl::AdnlNodeIdShort peer_id);
 
   // Look up one outstanding query, or nullptr.
   OutQuery *find_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
   void erase_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
+
+  // Count behind Rldp::MAX_PENDING_QUERIES.
+  size_t pending_queries_{0};
 
   std::set<adnl::AdnlNodeIdShort> local_ids_;
   PartCompletedCallback part_completed_callback_;

@@ -60,6 +60,13 @@ class Rldp : public adnl::AdnlSenderEx {
   }
   ~Rldp() override = default;
 
+  // Queries awaiting an answer, across every connection. Each holds the
+  // caller's promise and its captured state until answered, and a peer that
+  // accepts requests but never answers them decides how many exist -- so the
+  // total is capped, and a query beyond it fails at once rather than being
+  // remembered.
+  static constexpr size_t MAX_PENDING_QUERIES = 8192;
+
   static constexpr td::uint64 default_mtu() {
     return 7680;  // See RldpConnection::DEFAULT_MTU
   }
