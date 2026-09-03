@@ -259,13 +259,25 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
     VLOG(RLDP_INFO) << "dropping incoming packet " << local_id << " <- " << peer_id << " : peer not allowed";
     return {};
   }
-  auto admission = admit_connection(
-      connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share(),
-      [this](adnl::AdnlNodeIdShort evicted_local_id, adnl::AdnlNodeIdShort evicted_peer_id) {
-        fail_queries_on_connection(evicted_local_id, evicted_peer_id,
-                                   "RLDP connection evicted before the query was answered");
-      });
+  // Collect the victims rather than answering their queries as they are
+  // chosen. Answering runs the caller's continuation, which may come straight
+  // back here to open another connection; doing that while the table is half
+  // updated would let it recurse through a state no invariant covers. The
+  // table is finished first, then the queries are told.
+  std::vector<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>> evicted;
+  auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS, local_id, per_local_id_share(),
+                                    [&evicted](adnl::AdnlNodeIdShort evicted_local_id,
+                                               adnl::AdnlNodeIdShort evicted_peer_id) {
+                                      evicted.emplace_back(evicted_local_id, evicted_peer_id);
+                                    });
+  auto answer_evicted_queries = [this, &evicted] {
+    for (auto &[evicted_local_id, evicted_peer_id] : evicted) {
+      fail_queries_on_connection(evicted_local_id, evicted_peer_id,
+                                 "RLDP connection evicted before the query was answered");
+    }
+  };
   if (!admission.admitted) {
+    answer_evicted_queries();
     VLOG(RLDP_INFO) << "refusing connection " << local_id << " , " << peer_id << " : connection table is full";
     return {};
   }
@@ -294,6 +306,9 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
   alarm_timestamp().relax(timeout);
   VLOG(RLDP_INFO) << "creating connection " << local_id << " , " << peer_id << " ("
                   << (incoming ? "inbound" : "outbound") << ")";
+  // The table is consistent now, so a continuation that reaches back into it
+  // sees a state the invariants cover.
+  answer_evicted_queries();
   return res;
 }
 
@@ -437,8 +452,13 @@ void RldpIn::alarm() {
   }
   for (auto &[local_id, peer_id, timeout] : expired) {
     VLOG(RLDP_INFO) << "removing old connection " << local_id << " , " << peer_id;
-    fail_queries_on_connection(local_id, peer_id, "RLDP connection expired before the query was answered");
     erase_connection(connections_, timeout_set_, local_id, peer_id, timeout);
+  }
+  // Same order as eviction: finish the table, then tell the queries, so a
+  // continuation that opens a connection does not run against a half-swept
+  // expiry order.
+  for (auto &[local_id, peer_id, timeout] : expired) {
+    fail_queries_on_connection(local_id, peer_id, "RLDP connection expired before the query was answered");
   }
   auto next = earliest_expiry(timeout_set_);
   if (next) {
