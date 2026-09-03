@@ -292,5 +292,56 @@ TEST(Rldp2ConnectionLimits, TheAlarmSeesTheEarliestExpiryAcrossEveryLocalId) {
   EXPECT(next.at() == td::Timestamp::at(100.0).at());
 }
 
+// Understating the share inverts the rule: every id reads as at or above it,
+// so nobody may take a slot from anybody. An id holding a single connection
+// can then only recycle that one, however idle the rest of the table is.
+TEST(Rldp2ConnectionLimits, AnUnderstatedShareWedgesAnIdOnTheConnectionsItHas) {
+  constexpr size_t kCap = 8;
+  auto small = peer(0);
+  auto hog = peer(200);
+  auto seed = [&](Table &connections, rldp2::RldpTimeoutSet &timeouts) {
+    add(connections, timeouts, small, peer(1), 1.0);
+    for (td::uint8 n = 2; n <= 8; ++n) {
+      add(connections, timeouts, hog, peer(n), 100.0 + n);
+    }
+  };
+
+  // A share of one: the id holding a single connection is already "at its
+  // share", so it evicts that connection to make room and gains nothing.
+  Table understated;
+  rldp2::RldpTimeoutSet understated_timeouts;
+  seed(understated, understated_timeouts);
+  auto wedged = rldp2::admit_connection(understated, understated_timeouts, kCap, small, 1);
+  EXPECT(wedged.admitted);
+  EXPECT(!understated.contains({small, peer(1)}));
+  EXPECT(rldp2::connections_held_by(understated_timeouts, hog) == 7);
+
+  // The share the rule actually computes for two holders of an eight slot
+  // table. Now the small id is well below it and takes a slot from the id
+  // that is over its own.
+  Table correct;
+  rldp2::RldpTimeoutSet correct_timeouts;
+  seed(correct, correct_timeouts);
+  auto share = rldp2::per_local_id_share(kCap, correct_timeouts.size());
+  EXPECT(share == 4);
+  auto ok = rldp2::admit_connection(correct, correct_timeouts, kCap, small, share);
+  EXPECT(ok.admitted);
+  EXPECT(correct.contains({small, peer(1)}));
+  EXPECT(rldp2::connections_held_by(correct_timeouts, hog) == 6);
+}
+
+// The share must follow the ids that actually hold connections. Registered
+// but idle ids would shrink it forever, since nothing ever unregisters one.
+TEST(Rldp2ConnectionLimits, TheShareFollowsLiveHoldersAndNeverReachesZero) {
+  // One busy local id gets the whole cap; competition tightens it.
+  EXPECT(rldp2::per_local_id_share(4096, 0) == 4096);
+  EXPECT(rldp2::per_local_id_share(4096, 1) == 4096);
+  EXPECT(rldp2::per_local_id_share(4096, 2) == 2048);
+  EXPECT(rldp2::per_local_id_share(4096, 4) == 1024);
+  // A holder count cannot exceed the cap, but the floor holds if one ever did.
+  EXPECT(rldp2::per_local_id_share(4096, 4096) == 1);
+  EXPECT(rldp2::per_local_id_share(4096, 100000) == 1);
+}
+
 }  // namespace
 }  // namespace tos

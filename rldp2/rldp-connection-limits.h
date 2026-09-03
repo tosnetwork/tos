@@ -10,6 +10,7 @@
 */
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <utility>
@@ -113,6 +114,23 @@ inline void refresh_connection(RldpTimeoutSet &timeout_set, adnl::AdnlNodeIdShor
 // So a local id holding no more than its share can never lose a connection to
 // another id's traffic. With a single local id the share is the whole cap and
 // the rule reduces to plain most-idle eviction.
+// The share of the cap one local id may hold before it must recycle its own
+// connections instead of taking from another.
+//
+// Divided among the local ids actually holding connections, not among the
+// registered ones: that set only ever grows (nothing unregisters an id), so
+// ids that never carry traffic would permanently shrink the share of the ones
+// that do. Understate the share and the rule inverts -- every id reads as at
+// or above it, nobody may take a slot from anybody, and an id holding one
+// connection can never acquire a second however idle the rest of the table
+// is. Counting live holders makes the share track actual competition: one
+// busy id gets the whole cap, and it tightens only when another id shows up.
+inline size_t per_local_id_share(size_t max_connections, size_t local_ids_holding_connections) {
+  // A holder count can never exceed the cap, so the division cannot reach
+  // zero; the floor is a guard against a caller that passes something else.
+  return std::max<size_t>(1, max_connections / std::max<size_t>(1, local_ids_holding_connections));
+}
+
 struct EvictionVictim {
   adnl::AdnlNodeIdShort local_id;
   adnl::AdnlNodeIdShort peer_id;

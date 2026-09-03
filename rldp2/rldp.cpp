@@ -104,9 +104,9 @@ TransferId get_responce_transfer_id(TransferId transfer_id) {
 }  // namespace
 
 size_t RldpIn::per_local_id_share() const {
-  // An equal split of the cap. With one local id the share is the whole cap,
-  // which is the same rule as having none.
-  return MAX_CONNECTIONS / std::max<size_t>(1, local_ids_.size());
+  // The expiry order is partitioned by local id, so its size is the number of
+  // local ids currently holding connections.
+  return tos::rldp2::per_local_id_share(MAX_CONNECTIONS, timeout_set_.size());
 }
 
 void RldpIn::get_connection_stats(td::Promise<ConnectionStats> promise) {
