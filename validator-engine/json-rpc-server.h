@@ -283,9 +283,17 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_post_rest_body_ready(PayloadPtr payload, std::string method,
                                std::string source_ip,
                                td::Promise<HttpReturn> promise);
+  // Guarded boundary: routes to dispatch_method_impl with the handler guard
+  // around it, so nothing a handler throws escapes into the actor.
   void dispatch_method(std::string method, td::JsonObject &params,
                        std::string req_id, std::string source_ip,
                        td::Promise<HttpReturn> promise);
+  // The routing body itself. Call it only through dispatch_method: it is
+  // allowed to throw, and reaching an actor callback with an exception in
+  // flight terminates the process.
+  void dispatch_method_impl(const std::string &method, td::JsonObject &params,
+                            std::string req_id, std::string source_ip,
+                            td::Promise<HttpReturn> promise);
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       td::Promise<HttpReturn> promise);

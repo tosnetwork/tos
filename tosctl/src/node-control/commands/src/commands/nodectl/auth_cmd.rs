@@ -306,6 +306,10 @@ impl SetTtlCmd {
             changes.push(format!("nominator={}s", ttl));
         }
 
+        // Refuse here rather than writing a file the service will reject at
+        // startup: the operator finds out now, with the old config intact.
+        auth.validate()?;
+
         save_config(&config, config_path)?;
         println!("{} Token TTL updated: {}", "OK".green().bold(), changes.join(", "));
         Ok(())

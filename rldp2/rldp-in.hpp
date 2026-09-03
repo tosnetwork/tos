@@ -137,19 +137,25 @@ class RldpIn : public RldpImpl {
   static constexpr double CONNECTION_TIMEOUT = 120.0;
 
   // Upper bound on live peer connections. An inbound message part creates a
-  // connection for whatever source id it claims, and ADNL source ids are free
-  // to mint, so without a cap the table grows with the rate of fresh
-  // identities for a whole CONNECTION_TIMEOUT window. Every comparable table
-  // in the node is bounded (DHT values and reverse connections, overlay peers,
-  // ADNL idle peer pairs, the external server's connections and queries); this
-  // one was the exception. The bound is far above any legitimate peer count.
+  // connection for its source id. ADNL authenticates that id, so it is not
+  // spoofable -- but generating fresh keys is free, so an attacker presents as
+  // many identities as it likes and without a cap the table grows with the
+  // rate of fresh identities for a whole CONNECTION_TIMEOUT window. The cap is
+  // global across local ids: a flood on one entry point can evict connections
+  // belonging to another, which is a deliberate trade (a hard global memory
+  // bound over per-id fairness) and the reason it sits far above any
+  // legitimate peer count. Every comparable table in the node is bounded (DHT
+  // values and reverse connections, overlay peers, ADNL idle peer pairs, the
+  // external server's connections and queries); this one was the exception.
   static constexpr size_t MAX_CONNECTIONS = 4096;
 
-  // Drop the connection closest to expiring. Its timeout is refreshed on every
-  // packet, so the entry chosen is the most idle one; a peer that is actively
-  // transferring is never the victim, and dropping an idle entry costs only a
-  // re-create on that peer's next packet.
-  void evict_one_connection();
+  // How often to report continuing eviction after the first one.
+  static constexpr td::uint64 EVICTION_LOG_INTERVAL = 1024;
+
+  // Total connections dropped to stay within the cap. It is the signal that
+  // the bound is being exercised at all; without it the cap is silent and
+  // there is nothing to calibrate it against.
+  td::uint64 connections_evicted_{0};
 };
 
 }  // namespace rldp2

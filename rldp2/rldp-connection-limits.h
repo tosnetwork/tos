@@ -19,11 +19,14 @@
 namespace tos::rldp2 {
 
 // Connection bookkeeping is two containers that must stay in step: the table
-// itself and the expiry order. Evicting picks the entry closest to expiring --
-// a connection's expiry is refreshed on every packet it carries, so that entry
-// is the most idle peer and never one in the middle of a transfer -- and drops
-// it from both. Kept here, apart from the actor, so the rule can be exercised
-// directly with the real key and timestamp types.
+// itself and the expiry order. Evicting picks the entry closest to expiring.
+// A connection's expiry is refreshed on every packet it carries, so that entry
+// is the one that has been quiet longest -- which is the best available proxy
+// for "least likely to be in use", not a proof of it: a transfer stalled
+// waiting on a retransmit is quiet too, and can be chosen. Losing it costs a
+// re-create on the peer's next packet, which RLDP recovers from, so the
+// trade-off is deliberate. Kept here, apart from the actor, so the rule can be
+// exercised directly with the real key and timestamp types.
 using RldpTimeoutSet = std::set<std::tuple<td::Timestamp, adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>>;
 
 template <typename ConnectionMap>
@@ -36,6 +39,33 @@ bool evict_most_idle_connection(ConnectionMap &connections, RldpTimeoutSet &time
   connections.erase({local_id, peer_id});
   timeout_set.erase(it);
   return true;
+}
+
+struct AdmissionResult {
+  // Whether the caller may insert the new connection.
+  bool admitted{false};
+  // How many existing connections had to be dropped to make room. Non-zero
+  // means the table is at its cap, which is worth surfacing: under normal
+  // operation it never is.
+  size_t evicted{0};
+};
+
+// Admission for a new connection: evict until there is room, then report
+// whether the caller may insert. Returning the decision rather than doing the
+// insert keeps the size rule testable on its own.
+template <typename ConnectionMap>
+AdmissionResult admit_connection(ConnectionMap &connections, RldpTimeoutSet &timeout_set, size_t max_connections) {
+  AdmissionResult result;
+  while (connections.size() >= max_connections) {
+    if (!evict_most_idle_connection(connections, timeout_set)) {
+      // Nothing left to evict: the order is empty while the table is not,
+      // which means the two have drifted apart. Refuse rather than grow.
+      return result;
+    }
+    ++result.evicted;
+  }
+  result.admitted = true;
+  return result;
 }
 
 }  // namespace tos::rldp2

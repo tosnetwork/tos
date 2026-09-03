@@ -804,6 +804,10 @@ add_executable(test-promise-loss-contract test/test-td-main.cpp test/test-promis
 target_include_directories(test-promise-loss-contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-promise-loss-contract PRIVATE tdactor tdutils)
 
+add_executable(test-json-rpc-handler-guard test/test-td-main.cpp test/test-json-rpc-handler-guard.cpp)
+target_include_directories(test-json-rpc-handler-guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-handler-guard PRIVATE tdactor tdutils tos_crypto)
+
 add_executable(test-collator-node-limits test/test-collator-node-limits.cpp)
 target_include_directories(test-collator-node-limits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-collator-node-limits PRIVATE tdutils)
@@ -1101,6 +1105,7 @@ tos_test(test-keyring-temp-key)
 tos_test(test-collator-node-limits)
 tos_test(test-rldp2-connection-limits)
 tos_test(test-promise-loss-contract)
+tos_test(test-json-rpc-handler-guard)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)
 tos_test(test-wallet-index)

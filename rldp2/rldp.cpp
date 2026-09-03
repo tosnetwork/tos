@@ -187,8 +187,22 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
     VLOG(RLDP_INFO) << "dropping incoming packet " << local_id << " <- " << peer_id << " : peer not allowed";
     return {};
   }
-  if (connections_.size() >= MAX_CONNECTIONS) {
-    evict_one_connection();
+  auto admission = admit_connection(connections_, timeout_set_, MAX_CONNECTIONS);
+  if (!admission.admitted) {
+    VLOG(RLDP_INFO) << "refusing connection " << local_id << " , " << peer_id << " : connection table is full";
+    return {};
+  }
+  if (admission.evicted > 0) {
+    // The table only reaches its cap under a flood of fresh peer identities or
+    // a badly undersized bound. Either way an operator needs to see it, but a
+    // line per evicted connection would itself be a flood, so report the first
+    // one and then one per EVICTION_LOG_INTERVAL evictions.
+    connections_evicted_ += admission.evicted;
+    if (connections_evicted_ == admission.evicted || connections_evicted_ % EVICTION_LOG_INTERVAL == 0) {
+      LOG(WARNING) << "rldp2 connection table is at its " << MAX_CONNECTIONS
+                   << " connection cap: evicted " << connections_evicted_
+                   << " idle connections so far to admit new peers";
+    }
   }
   auto connection =
       td::actor::create_actor<RldpConnectionActor>("RldpConnection", actor_id(this), local_id, peer_id, adnl_);
@@ -331,13 +345,6 @@ void RldpIn::on_mtu_updated(td::optional<adnl::AdnlNodeIdShort> local_id, td::op
   }
 }
 
-void RldpIn::evict_one_connection() {
-  if (!timeout_set_.empty()) {
-    auto [timeout, local_id, peer_id] = *timeout_set_.begin();
-    VLOG(RLDP_INFO) << "evicting idle connection " << local_id << " , " << peer_id << " : connection limit reached";
-  }
-  evict_most_idle_connection(connections_, timeout_set_);
-}
 
 void RldpIn::alarm() {
   for (auto it = timeout_set_.begin(); it != timeout_set_.end();) {
