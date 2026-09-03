@@ -63,8 +63,12 @@ impl JwtAuth {
     /// The caller provides the `ttl` (seconds) from the current live config,
     /// so that TTL changes applied via config reload take effect immediately.
     pub fn generate(&self, username: &str, role: Role, ttl: u64) -> anyhow::Result<(String, u64)> {
-        let now =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        // The function already returns Result, so a clock reading before the
+        // epoch becomes an error rather than a panic in the token signer.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow::anyhow!("system clock is before the unix epoch: {e}"))?
+            .as_secs();
 
         let claims = Claims { sub: username.to_owned(), role, iat: now, exp: now + ttl };
 

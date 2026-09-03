@@ -42,8 +42,11 @@ pub async fn execute(
             let data = from_private_key(data).await?;
             Secret::from_protected_data(data, metadata, crypto).await?
         }
+        // Importing a symmetric key is not implemented. Report it the same
+        // way every other unhandled algorithm is reported, one arm below,
+        // rather than aborting the process on an operator's typo.
         Algorithm::Aes256Gcm => {
-            todo!()
+            anyhow::bail!(VaultError::unsupported_algorithm(algorithm))
         }
         _ => anyhow::bail!(VaultError::unsupported_algorithm(algorithm)),
     };
