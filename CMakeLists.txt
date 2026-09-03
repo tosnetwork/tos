@@ -810,7 +810,7 @@ add_executable(test-collator-node-limits test/test-collator-node-limits.cpp)
 target_include_directories(test-collator-node-limits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-collator-node-limits PRIVATE tdutils)
 
-add_executable(test-consensus-config-admission test/test-consensus-config-admission.cpp)
+add_executable(test-consensus-config-admission test/test-td-main.cpp test/test-consensus-config-admission.cpp)
 target_link_libraries(test-consensus-config-admission PRIVATE tos_block tos_crypto tdutils)
 
 add_executable(test-weak-ptr-registry test/test-td-main.cpp test/test-weak-ptr-registry.cpp)
