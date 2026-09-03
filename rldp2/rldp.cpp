@@ -187,6 +187,9 @@ td::actor::ActorId<RldpConnectionActor> RldpIn::get_or_create_connection(adnl::A
     VLOG(RLDP_INFO) << "dropping incoming packet " << local_id << " <- " << peer_id << " : peer not allowed";
     return {};
   }
+  if (connections_.size() >= MAX_CONNECTIONS) {
+    evict_one_connection();
+  }
   auto connection =
       td::actor::create_actor<RldpConnectionActor>("RldpConnection", actor_id(this), local_id, peer_id, adnl_);
   td::actor::send_closure(connection, &RldpConnectionActor::set_default_mtu, mtu);
@@ -326,6 +329,14 @@ void RldpIn::on_mtu_updated(td::optional<adnl::AdnlNodeIdShort> local_id, td::op
     update_mtu(it);
     ++it;
   }
+}
+
+void RldpIn::evict_one_connection() {
+  if (!timeout_set_.empty()) {
+    auto [timeout, local_id, peer_id] = *timeout_set_.begin();
+    VLOG(RLDP_INFO) << "evicting idle connection " << local_id << " , " << peer_id << " : connection limit reached";
+  }
+  evict_most_idle_connection(connections_, timeout_set_);
 }
 
 void RldpIn::alarm() {
