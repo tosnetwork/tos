@@ -100,6 +100,17 @@ class RldpIn : public RldpImpl {
 
   void add_id(adnl::AdnlNodeIdShort local_id) override;
 
+  struct OutQuery {
+    td::Promise<td::BufferSlice> promise;
+    td::uint64 max_answer_size;
+  };
+
+  // Answer queries whose connection is gone. Runs as its own actor turn, so
+  // the continuations it invokes cannot act on a table mid-update, and cannot
+  // invalidate a connection the caller that triggered the removal is still
+  // holding.
+  void fail_orphaned_queries(std::vector<std::map<TransferId, OutQuery>> orphaned, std::string reason);
+
   void get_conn_ip_str(adnl::AdnlNodeIdShort l_id, adnl::AdnlNodeIdShort p_id,
                        td::Promise<td::string> promise) override;
 
@@ -121,14 +132,38 @@ class RldpIn : public RldpImpl {
   std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, Connection> connections_;
   RldpTimeoutSet timeout_set_;
 
-  struct OutQuery {
-    td::Promise<td::BufferSlice> promise;
-    td::uint64 max_answer_size;
-  };
-  std::map<TransferId, OutQuery> queries_;
+  // Outbound queries awaiting an answer, partitioned by the connection
+  // carrying them. A query's completion lives in that connection's actor, so
+  // when the connection goes the query has to be failed rather than left
+  // waiting for a reply that can never arrive -- and finding those queries
+  // must not mean scanning every outstanding query, since eviction happens
+  // once per admitted peer under a flood.
+  std::map<std::pair<adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort>, std::map<TransferId, OutQuery>> queries_;
+
+  // Detach the queries in flight on one connection, without answering them.
+  // Detaching and answering are deliberately separate: answering runs the
+  // caller's continuation, which may open a connection, send a query, or both.
+  // Doing that mid-removal would let it act on a table still being swept, and
+  // would let a connection re-created under the same pair have its brand new
+  // query mistaken for one belonging to the connection just removed.
+  std::map<TransferId, OutQuery> take_queries_on_connection(adnl::AdnlNodeIdShort local_id,
+                                                            adnl::AdnlNodeIdShort peer_id);
+
+  // Look up one outstanding query, or nullptr.
+  OutQuery *find_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
+  void erase_query(adnl::AdnlNodeIdShort local_id, adnl::AdnlNodeIdShort peer_id, TransferId transfer_id);
+
+  // Count behind Rldp::MAX_PENDING_QUERIES.
+  size_t pending_queries_{0};
 
   std::set<adnl::AdnlNodeIdShort> local_ids_;
   PartCompletedCallback part_completed_callback_;
+
+  void get_connection_stats(td::Promise<ConnectionStats> promise) override;
+
+  // The number of connections one local id may hold before it must stop
+  // taking slots from the others.
+  size_t per_local_id_share() const;
 
   td::actor::ActorId<RldpConnectionActor> get_or_create_connection(adnl::AdnlNodeIdShort local_id,
                                                                    adnl::AdnlNodeIdShort peer_id, bool incoming,
@@ -137,19 +172,30 @@ class RldpIn : public RldpImpl {
   static constexpr double CONNECTION_TIMEOUT = 120.0;
 
   // Upper bound on live peer connections. An inbound message part creates a
-  // connection for whatever source id it claims, and ADNL source ids are free
-  // to mint, so without a cap the table grows with the rate of fresh
-  // identities for a whole CONNECTION_TIMEOUT window. Every comparable table
-  // in the node is bounded (DHT values and reverse connections, overlay peers,
-  // ADNL idle peer pairs, the external server's connections and queries); this
-  // one was the exception. The bound is far above any legitimate peer count.
+  // connection for its source id. ADNL authenticates that id, so it is not
+  // spoofable -- but generating fresh keys is free, so an attacker presents as
+  // many identities as it likes and without a cap the table grows with the
+  // rate of fresh identities for a whole CONNECTION_TIMEOUT window. The cap is
+  // global across local ids: a flood on one entry point can evict connections
+  // belonging to another, which is a deliberate trade (a hard global memory
+  // bound over per-id fairness) and the reason it sits far above any
+  // legitimate peer count. Every comparable table in the node is bounded (DHT
+  // values and reverse connections, overlay peers, ADNL idle peer pairs, the
+  // external server's connections and queries); this one was the exception.
   static constexpr size_t MAX_CONNECTIONS = 4096;
 
-  // Drop the connection closest to expiring. Its timeout is refreshed on every
-  // packet, so the entry chosen is the most idle one; a peer that is actively
-  // transferring is never the victim, and dropping an idle entry costs only a
-  // re-create on that peer's next packet.
-  void evict_one_connection();
+  // Minimum seconds between eviction reports. Paced by the clock, not by the
+  // eviction count: the count is whatever an attacker sends.
+  static constexpr double EVICTION_LOG_INTERVAL = 60.0;
+
+  // Total connections dropped to stay within the cap. It is the signal that
+  // the bound is being exercised at all; without it the cap is silent and
+  // there is nothing to calibrate it against.
+  td::uint64 connections_evicted_{0};
+
+  // When the next eviction report may be written.
+  td::Timestamp next_eviction_log_;
+
 };
 
 }  // namespace rldp2

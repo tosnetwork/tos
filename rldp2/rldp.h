@@ -60,6 +60,13 @@ class Rldp : public adnl::AdnlSenderEx {
   }
   ~Rldp() override = default;
 
+  // Queries awaiting an answer, across every connection. Each holds the
+  // caller's promise and its captured state until answered, and a peer that
+  // accepts requests but never answers them decides how many exist -- so the
+  // total is capped, and a query beyond it fails at once rather than being
+  // remembered.
+  static constexpr size_t MAX_PENDING_QUERIES = 8192;
+
   static constexpr td::uint64 default_mtu() {
     return 7680;  // See RldpConnection::DEFAULT_MTU
   }
@@ -76,6 +83,22 @@ class Rldp : public adnl::AdnlSenderEx {
                                               td::Promise<td::BufferSlice> promise, td::Timestamp timeout,
                                               td::BufferSlice data, td::uint64 max_answer_size,
                                               td::Bits256 request_transfer_id) = 0;
+
+  // Live peer connections, and how many have been dropped to stay within the
+  // cap. Under normal operation the table never reaches its cap, so a non-zero
+  // eviction count is the signal that it is being exercised at all -- and the
+  // only basis on which the cap could be recalibrated.
+  struct ConnectionStats {
+    size_t live{0};
+    td::uint64 evicted{0};
+    // Per local id, so an operator can see whether one entry point is holding
+    // the table on its own.
+    std::vector<std::pair<adnl::AdnlNodeIdShort, size_t>> per_local_id;
+    // Outbound queries still awaiting an answer. A connection that goes away
+    // must take its queries with it, so this must not outgrow the table.
+    size_t pending_queries{0};
+  };
+  virtual void get_connection_stats(td::Promise<ConnectionStats> promise) = 0;
 
   // An observer sees completed inbound FEC parts after successful decode. It
   // cannot alter transfer validity; measurement tools use it to place an

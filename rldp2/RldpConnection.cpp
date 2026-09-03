@@ -62,7 +62,18 @@ void RldpConnection::on_inbound_completed(TransferId transfer_id, td::Timestamp 
   inbound_transfers_.erase(transfer_id);
   completed_set_.insert(transfer_id);
   completed_queue_.push(CompletedId{transfer_id, now.in(20)});
-  while (completed_queue_.size() > 128 && completed_queue_.front().timeout.is_in_past(now)) {
+  // Remembering a finished transfer id keeps a late duplicate from being
+  // reassembled a second time. Ids leave after twenty seconds, which bounds
+  // how long one is remembered but not how many there are: a transfer that
+  // completes in one part frees its slot immediately, so a peer sending small
+  // transfers back to back never meets the concurrency limit and fills this
+  // instead, at whatever rate it can send. So there is also a hard ceiling.
+  // Dropping the oldest ids early only costs the duplicate protection they
+  // were providing, and a duplicate reassembly is itself bounded by the
+  // concurrency limit.
+  while (!completed_queue_.empty() &&
+         (completed_queue_.size() > MAX_COMPLETED_TRANSFERS ||
+          (completed_queue_.size() > 128 && completed_queue_.front().timeout.is_in_past(now)))) {
     completed_set_.erase(completed_queue_.pop().transfer_id);
   }
 }
@@ -117,6 +128,19 @@ void RldpConnection::send(TransferId transfer_id, td::BufferSlice data, td::Time
       VLOG(RLDP_WARNING) << "Skip resend of " << transfer_id.to_hex();
       return;
     }
+  }
+
+  // The peer decides how often it asks, and the node holds every answer --
+  // its bytes, its encoder and its timeout entry -- until the peer
+  // acknowledges it or it expires. So the peer would otherwise decide how many
+  // answers are held at once: it can ask at any rate and simply never
+  // acknowledge, and the timeout bounds how long each is kept, not how many
+  // there are. Refused before the limit entry is added, so nothing is left
+  // behind for a transfer that does not exist.
+  if (outbound_transfers_.size() >= MAX_OUTBOUND_TRANSFERS) {
+    VLOG(RLDP_INFO) << "Drop outbound transfer: " << outbound_transfers_.size()
+                    << " are already awaiting acknowledgement";
+    return;
   }
 
   if (timeout) {
@@ -337,9 +361,20 @@ void RldpConnection::receive_raw_obj(tos::tos_api::rldp2_messagePart &part) {
 
   auto it = inbound_transfers_.find(transfer_id);
   if (it == inbound_transfers_.end()) {
+    if (inbound_transfers_.size() >= MAX_INBOUND_TRANSFERS) {
+      // The peer already has as many transfers open as it is allowed. Dropping
+      // the part costs it a retransmit once one of them finishes or expires;
+      // accepting it would let the peer choose how much memory to allocate
+      // here, since it also chooses the transfer ids.
+      // At RLDP_INFO, like every other per-packet drop in this file, so a
+      // peer holding itself at the limit cannot drive the node's log volume
+      // unless debug logging was deliberately turned on.
+      VLOG(RLDP_INFO) << "Drop rldp message: peer already has " << inbound_transfers_.size()
+                      << " inbound transfers open";
+      return;
+    }
     if (!has_limit) {
       // set timeout even for small inbound queries
-      // TODO: other party stil may ddos us with small transfers
       set_receive_limits(transfer_id, td::Timestamp::in(10), max_size);
     }
     it = inbound_transfers_.emplace(transfer_id, InboundTransfer{total_size}).first;

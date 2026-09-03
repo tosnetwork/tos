@@ -290,6 +290,32 @@ pub struct AuthConfig {
     pub users: Vec<UserEntry>,
 }
 
+impl AuthConfig {
+    /// Upper bound on a configured token TTL, in seconds (one year).
+    ///
+    /// A TTL is added to the current time to form the token's `exp`, so an
+    /// unbounded value is both an arithmetic hazard and a security one: a
+    /// token valid for centuries is a permanent credential that revocation by
+    /// TTL expiry can never clear. Anything above this is a typo or an attempt
+    /// to mint one, and is refused at config load rather than silently signed.
+    pub const MAX_TOKEN_TTL: u64 = 365 * 24 * 60 * 60;
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (name, ttl) in [
+            ("operator_token_ttl", self.operator_token_ttl),
+            ("nominator_token_ttl", self.nominator_token_ttl),
+        ] {
+            if ttl == 0 {
+                anyhow::bail!("{name} must be greater than zero");
+            }
+            if ttl > Self::MAX_TOKEN_TTL {
+                anyhow::bail!("{name} must not exceed {} seconds, got {ttl}", Self::MAX_TOKEN_TTL);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
@@ -1051,6 +1077,7 @@ impl AppConfig {
 
     fn validate(&self) -> anyhow::Result<()> {
         self.elections.as_ref().map(|e| e.validate()).transpose()?;
+        self.http.auth.as_ref().map(|a| a.validate()).transpose()?;
         Ok(())
     }
 }
@@ -1058,6 +1085,54 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_config_rejects_an_unbounded_token_ttl() {
+        let auth =
+            AuthConfig { operator_token_ttl: AuthConfig::MAX_TOKEN_TTL + 1, ..Default::default() };
+        let err = auth.validate().expect_err("a ttl above the bound must be refused");
+        assert!(err.to_string().contains("operator_token_ttl"), "got: {err}");
+
+        let auth = AuthConfig { nominator_token_ttl: u64::MAX, ..Default::default() };
+        let err = auth.validate().expect_err("u64::MAX must be refused");
+        assert!(err.to_string().contains("nominator_token_ttl"), "got: {err}");
+    }
+
+    #[test]
+    fn auth_config_rejects_a_zero_token_ttl() {
+        // A token that is expired the moment it is signed locks every operator
+        // out; refuse it rather than ship an unusable service.
+        let auth = AuthConfig { operator_token_ttl: 0, ..Default::default() };
+        assert!(auth.validate().is_err());
+    }
+
+    #[test]
+    fn auth_config_accepts_the_bound_and_the_defaults() {
+        let auth = AuthConfig::default();
+        auth.validate().expect("defaults must be valid");
+
+        let auth = AuthConfig {
+            operator_token_ttl: AuthConfig::MAX_TOKEN_TTL,
+            nominator_token_ttl: AuthConfig::MAX_TOKEN_TTL,
+            ..Default::default()
+        };
+        auth.validate().expect("the bound itself must be accepted");
+    }
+
+    #[test]
+    fn loading_a_config_with_an_absurd_ttl_fails() {
+        // The bound has to be enforced where configs actually enter, not only
+        // when something remembers to call validate().
+        let mut json = minimal_config_json();
+        json["http"] = serde_json::json!({
+            "auth": {"operator_token_ttl": u64::MAX, "nominator_token_ttl": 3600}
+        });
+        let err = match AppConfig::parse(&json.to_string(), "json", "test") {
+            Ok(_) => panic!("a config with an absurd ttl must be refused at load"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("operator_token_ttl"), "got: {err}");
+    }
 
     #[cfg(unix)]
     #[test]

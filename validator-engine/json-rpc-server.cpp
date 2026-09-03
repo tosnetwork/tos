@@ -17,11 +17,14 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "json-rpc-server-internal.h"
+#include "json-rpc-handler-guard.h"
 
 #include <cstdlib>
 #include <cstring>
 
 namespace tos {
+
+using tos::validator_engine::guard_handler;
 
 // ─── HTTP body draining helper ─────────────────────────────────────────────
 //
@@ -1122,16 +1125,44 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
 // A handler that throws has already lost its promise to stack unwinding, and
 // ~LambdaPromise answers the client with "Lost promise", so the caller still
 // gets a response. All this has to do is stop the exception reaching the actor.
+namespace {
+// A JSON-RPC method name is whatever the client sent. Anything longer than a
+// real method name is reported under one fixed label rather than kept.
+std::string metric_label_for_method(const std::string &method) {
+  constexpr size_t MAX_METHOD_LABEL = 64;
+  if (method.size() > MAX_METHOD_LABEL) {
+    return "<oversized-method>";
+  }
+  return method;
+}
+}  // namespace
+
 void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
                                     std::string req_id, std::string source_ip,
-                                    td::Promise<HttpReturn> promise) try {
+                                    td::Promise<HttpReturn> promise) {
+  // The guard covers the routing body below. It does NOT reach the
+  // continuations handlers hand to other actors: those run later, on their own
+  // stack, and each has to be guarded where it is created.
+  guard_handler(method.c_str(), [&] {
+    dispatch_method_impl(method, params, std::move(req_id), std::move(source_ip), std::move(promise));
+  });
+}
+
+void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObject &params,
+                                         std::string req_id, std::string source_ip,
+                                         td::Promise<HttpReturn> promise) {
   // Track per-method request count
   requests_total_.fetch_add(1);
   active_requests_.fetch_add(1);
-  method_requests_->label(method)->add(1);
+  // The metric label comes from the request, so it is bounded here as well as
+  // in the metric itself: a name long enough to matter is not one this node
+  // implements, and keeping the full string would let a handful of requests
+  // hold megabytes each before the label limit ever applied.
+  auto method_label = metric_label_for_method(method);
+  method_requests_->label(method_label)->add(1);
 
   // Wrap the promise to track completion and errors
-  auto method_copy = method;
+  auto method_copy = std::move(method_label);
   promise = td::PromiseCreator::lambda(
       [this, method_copy, inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
         active_requests_.fetch_sub(1);
@@ -1282,14 +1313,6 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     // for the rationale.
     promise.set_value(make_json_rpc_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
-} catch (vm::VmError& err) {
-  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised VM error: " << err.get_msg();
-} catch (vm::VmVirtError& err) {
-  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised VM virtualization error: " << err.get_msg();
-} catch (std::exception& err) {
-  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised exception: " << err.what();
-} catch (...) {
-  LOG(WARNING) << "json-rpc: handler for '" << method << "' raised an unknown exception";
 }
 
 // ─── Liteserver query forwarding ──────────────────────────────────────────
@@ -1306,7 +1329,7 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
   // promise is destroyed unfulfilled, which surfaces as an HTTP error.
   promise = td::PromiseCreator::lambda(
       [promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
-        try {
+        guard_handler("a handler processing a liteserver reply", [&] {
           if (result.is_error()) {
             promise.set_error(result.move_as_error());
             return;
@@ -1319,14 +1342,7 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
             return;
           }
           promise.set_value(std::move(data));
-        } catch (vm::VmError& err) {
-          LOG(WARNING) << "json-rpc: handler raised VM error while processing liteserver reply: " << err.get_msg();
-        } catch (vm::VmVirtError& err) {
-          LOG(WARNING) << "json-rpc: handler raised VM virtualization error while processing liteserver reply: "
-                       << err.get_msg();
-        } catch (std::exception& err) {
-          LOG(WARNING) << "json-rpc: handler raised exception while processing liteserver reply: " << err.what();
-        }
+        });
       });
   if (opts_.request_timeout > 0) {
     auto guard = td::actor::create_actor<QueryTimeoutGuard>(

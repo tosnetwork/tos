@@ -70,7 +70,14 @@ impl JwtAuth {
             .map_err(|e| anyhow::anyhow!("system clock is before the unix epoch: {e}"))?
             .as_secs();
 
-        let claims = Claims { sub: username.to_owned(), role, iat: now, exp: now + ttl };
+        // A wrapped `exp` would be in the past, which reads as an expired
+        // token rather than an eternal one, but the config that produced it is
+        // wrong either way -- say so instead of signing a token nobody can use.
+        let exp = now.checked_add(ttl).ok_or_else(|| {
+            anyhow::anyhow!("token expiry overflows: clock {now}s plus ttl {ttl}s")
+        })?;
+
+        let claims = Claims { sub: username.to_owned(), role, iat: now, exp };
 
         let token = jsonwebtoken::encode(&Header::default(), &claims, &self.encoding_key)?;
         Ok((token, ttl))
@@ -165,6 +172,27 @@ mod tests {
         };
         let token = jsonwebtoken::encode(&Header::default(), &claims, &mgr.encoding_key).unwrap();
         assert!(mgr.verify(&token).is_err());
+    }
+
+    #[tokio::test]
+    async fn generate_rejects_a_ttl_that_overflows_the_expiry() {
+        // A TTL this large cannot survive being added to any real clock
+        // reading. It must be reported, not wrapped into a past expiry.
+        let mgr = JwtAuth::new(None, Some(&test_secret())).await.unwrap();
+        let err = mgr.generate("admin", Role::Operator, u64::MAX).unwrap_err();
+        assert!(err.to_string().contains("overflows"), "expected an overflow error, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn generate_accepts_the_largest_configurable_ttl() {
+        // The bound config validation enforces must still produce a token, or
+        // the two limits contradict each other.
+        let mgr = JwtAuth::new(None, Some(&test_secret())).await.unwrap();
+        let (token, ttl) = mgr
+            .generate("admin", Role::Operator, common::app_config::AuthConfig::MAX_TOKEN_TTL)
+            .expect("largest configurable ttl must be signable");
+        assert_eq!(ttl, common::app_config::AuthConfig::MAX_TOKEN_TTL);
+        assert!(mgr.verify(&token).is_ok());
     }
 
     #[tokio::test]

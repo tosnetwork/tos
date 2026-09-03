@@ -17,6 +17,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "json-rpc-server-internal.h"
+#include "json-rpc-handler-guard.h"
 
 #include "auto/tl/lite_api.hpp"
 #include "tl/tl_object_parse.h"
@@ -30,6 +31,8 @@
 #include "td/utils/crypto.h"
 
 namespace tos {
+
+using tos::validator_engine::guard_handler;
 
 void JsonRpcServer::handle_getMasterchainInfo(td::JsonObject &params, std::string req_id,
                                               td::Promise<HttpReturn> promise) {
@@ -158,29 +161,33 @@ void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string
       td::PromiseCreator::lambda(
           [this, req_id = std::move(req_id), promise = std::move(promise)](
               td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getConsensusBlock: " << R.error(), req_id));
-          return;
-        }
-        auto [state, block_id] = R.move_as_ok();
-        td::uint32 seqno = block_id.seqno();
-        if (consensus_block_seqno_ != seqno) {
-          consensus_block_seqno_ = seqno;
-          consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-        } else if (consensus_block_timestamp_ == 0) {
-          consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-        }
+        // This continuation runs on the manager's callback, not inside
+        // dispatch_method, so the boundary guard there does not reach it.
+        guard_handler("getConsensusBlock continuation", [&] {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getConsensusBlock: " << R.error(), req_id));
+            return;
+          }
+          auto [state, block_id] = R.move_as_ok();
+          td::uint32 seqno = block_id.seqno();
+          if (consensus_block_seqno_ != seqno) {
+            consensus_block_seqno_ = seqno;
+            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+          } else if (consensus_block_timestamp_ == 0) {
+            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+          }
 
-        td::StringBuilder sb;
-        sb << "{\"@type\":\"ext.blocks.consensusBlock\""
-           << ",\"consensus_block\":" << consensus_block_seqno_
-           << ",\"timestamp\":" << consensus_block_timestamp_;
-        if (state.not_null()) {
-          sb << ",\"last_block_utime\":" << state->get_unix_time();
-        }
-        sb << "}";
-        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          td::StringBuilder sb;
+          sb << "{\"@type\":\"ext.blocks.consensusBlock\""
+             << ",\"consensus_block\":" << consensus_block_seqno_
+             << ",\"timestamp\":" << consensus_block_timestamp_;
+          if (state.not_null()) {
+            sb << ",\"last_block_utime\":" << state->get_unix_time();
+          }
+          sb << "}";
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+        });
       }));
 }
 

@@ -122,11 +122,17 @@ Controls `put()` behavior:
 
 ### Secret Types
 
-| Type           | Algorithm     | Operations            |
-|----------------|---------------|-----------------------|
-| `KeyPair`      | `Ed25519`     | sign, verify, export  |
-| `SymmetricKey` | `Aes256Gcm`   | encrypt, decrypt      |
-| `Blob`         | `None`        | read/write raw data   |
+| Type           | Algorithm     | Operations                    |
+|----------------|---------------|-------------------------------|
+| `KeyPair`      | `Ed25519`     | sign, verify, export          |
+| `SymmetricKey` | `Aes256Gcm`   | store, export (see note)      |
+| `Blob`         | `None`        | read/write raw data           |
+
+The `SymmetricKey` trait declares `encrypt`/`decrypt`, but the bundled
+in-memory implementation does not provide them: it stores and returns key
+material, and both operations return an error. Vault contents are still
+encrypted at rest under the master key -- that is storage-level encryption and
+is unrelated to these per-key operations.
 
 Access typed data via `secret.as_keypair()`, `secret.as_symmetric_key()`, or `secret.as_blob()`.
 
