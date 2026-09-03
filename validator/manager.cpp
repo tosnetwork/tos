@@ -2813,15 +2813,12 @@ void ValidatorManagerImpl::update_shards() {
   if (allow_validate_) {
     for (const auto& [shard, prev] : new_shards) {
       auto maybe_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-      if (!maybe_config) {
+      if (!consensus_group_admissible(maybe_config)) {
+        // Missing config, or a protocol version newer than this build supports:
+        // skip the observer group rather than aborting in the version check.
         continue;
       }
       auto config = maybe_config.value();
-      if (!config.protocol_version_supported()) {
-        // A protocol version newer than this build supports: skip the observer
-        // group rather than aborting in create_bridge_observer's version check.
-        continue;
-      }
       if (!config.enable_block_sync() && !config.observers_in_private_overlay()) {
         continue;
       }
@@ -3028,31 +3025,20 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   auto adnl_id = adnl::AdnlNodeIdShort{
       descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
   auto new_consensus_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-  if (!new_consensus_config) {
+  if (!consensus_group_admissible(new_consensus_config)) {
     // Fail closed. A missing or unrecognized consensus config (absent
-    // parameter, unpack failure, reserved flag bits from a newer protocol
-    // version) must stop this node from validating the shard, not silently
-    // select a different consensus implementation: nodes that do understand
-    // the config would run the new protocol while this one runs another,
-    // splitting the network between binary versions. Refusing to sign keeps
-    // the node a safe full node until it is upgraded or the config is fixed.
+    // parameter, unpack failure, reserved flag bits), or one whose protocol
+    // version is newer than this build supports, must stop this node from
+    // validating the shard rather than silently selecting a different
+    // consensus implementation (which would split the network between binary
+    // versions) or aborting in the bridge's version check. Refusing keeps the
+    // node a safe full node until it is upgraded or the config is fixed.
     LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-               << ": consensus config is missing or not recognized by this version; validation for this shard is "
-                  "disabled until the node is upgraded or the config is fixed";
+               << ": consensus config is missing or its protocol version is not supported by this build; "
+                  "validation for this shard is disabled until the node is upgraded or the config is fixed";
     return {};
   }
   auto config = new_consensus_config.value();
-  if (!config.protocol_version_supported()) {
-    // Same fail-closed reasoning as a missing config: a config this build
-    // cannot run (a newer protocol version activated by governance) must not
-    // crash the node. Skip the group and stay a full node until upgraded --
-    // create_bridge would otherwise abort on this exact condition.
-    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": Simplex protocol version "
-               << config.protocol_version << " is newer than this build supports (max "
-               << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION
-               << "); validation for this shard is disabled until the node is upgraded";
-    return {};
-  }
   return IValidatorGroup::create_bridge(
       PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id, validator_set, key_seqno, config,
       keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_,
@@ -4126,19 +4112,6 @@ void ValidatorManagerImpl::log_validate_query_stats(ValidationStats stats) {
 }
 
 void ValidatorManagerImpl::log_collator_node_response_stats(CollatorNodeResponseStats stats) {
-  // Record each collated candidate at most once. A validator that replays a
-  // request receives the cached candidate (same resulting block id), which
-  // would otherwise append a duplicate line to the append-only session-stats
-  // file on every replay. The recent-id window is bounded; distinct ids per
-  // block are already bounded by the creator being a validator-set member.
-  if (!logged_collator_response_ids_.insert(stats.block_id).second) {
-    return;
-  }
-  logged_collator_response_order_.push_back(stats.block_id);
-  if (logged_collator_response_order_.size() > max_logged_collator_responses_) {
-    logged_collator_response_ids_.erase(logged_collator_response_order_.front());
-    logged_collator_response_order_.pop_front();
-  }
   write_session_stats(stats);
 }
 
@@ -4165,6 +4138,16 @@ void ValidatorManagerImpl::write_session_stats(const T &obj) {
     s = td::json_encode<std::string>(td::ToJson(*obj.tl()), false);
   }
   s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return c == '\n' || c == '\r'; }), s.end());
+
+  // Bound the append-only session-stats file. It grows with every collate,
+  // validate, and collator-response record, so over a node's lifetime it is
+  // otherwise unbounded (and a peer that drives collator responses adds to
+  // it). When it reaches the cap, rotate it to a single ".old" sidecar and
+  // start fresh; total on-disk size stays within ~2x the cap.
+  auto r_stat = td::stat(fname);
+  if (r_stat.is_ok() && r_stat.ok().size_ >= max_session_stats_file_bytes_) {
+    td::rename(fname, fname + ".old").ignore();
+  }
 
   std::ofstream file;
   file.open(fname, std::ios_base::app);

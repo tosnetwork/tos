@@ -601,6 +601,16 @@ struct NewConsensusConfig {
   NoncriticalParams noncritical_params = {};
 };
 
+// Fail-closed admission for a validator or observer group. Run only when the
+// consensus config is present AND its protocol version is one this build
+// understands. A missing/unreadable config or a newer-than-supported version
+// means this node must not run a group: it would otherwise fall back to a
+// different consensus implementation (splitting the network by version) or
+// abort in the bridge's version check. It stays a full node instead.
+inline bool consensus_group_admissible(const td::optional<NewConsensusConfig>& config) {
+  return config && config.value().protocol_version_supported();
+}
+
 struct PersistentStateDescription : public td::CntObject {
   struct ShardBlock {
     BlockIdExt block;
