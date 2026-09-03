@@ -4146,7 +4146,20 @@ void ValidatorManagerImpl::write_session_stats(const T &obj) {
   // start fresh; total on-disk size stays within ~2x the cap.
   auto r_stat = td::stat(fname);
   if (r_stat.is_ok() && r_stat.ok().size_ >= max_session_stats_file_bytes_) {
-    td::rename(fname, fname + ".old").ignore();
+    auto rotated = td::rename(fname, fname + ".old");
+    if (rotated.is_error()) {
+      // Never fail the node over a stats file, but never rotate silently
+      // either: if the rename keeps failing the file grows past the cap, and
+      // silence would be indistinguishable from a working rotation. Warn on
+      // the transition only, so a persistently unwritable directory does not
+      // add a log line per stats record.
+      if (!session_stats_rotate_failed_) {
+        session_stats_rotate_failed_ = true;
+        LOG(WARNING) << "cannot rotate session stats file " << fname << ", it will keep growing: " << rotated;
+      }
+    } else {
+      session_stats_rotate_failed_ = false;
+    }
   }
 
   std::ofstream file;
