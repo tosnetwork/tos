@@ -31,24 +31,13 @@ namespace tos {
 
 namespace validatorsession {
 
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_BENCHMARK) = verbosity_WARNING;
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_NOTICE) = verbosity_DEBUG;
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_INFO) = verbosity_DEBUG;
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_DEBUG) = verbosity_DEBUG;
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_EXTRA_DEBUG) = verbosity_DEBUG + 1;
 
-using ValidatorSessionRootHash = td::Bits256;
-using ValidatorSessionFileHash = td::Bits256;
-using ValidatorSessionCollatedDataFileHash = td::Bits256;
 using ValidatorSessionCandidateId = td::Bits256;
-
-inline ValidatorSessionCandidateId skip_round_candidate_id() {
-  return ValidatorSessionCandidateId::zero();
-}
 
 struct ValidatorSessionOptions {
   ValidatorSessionOptions() = default;
+
   explicit ValidatorSessionOptions(const ValidatorSessionConfig &conf);
 
   CatChainOptions catchain_opts;

@@ -29,7 +29,6 @@
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api_json.h"
-#include "catchain/catchain.h"
 #include "common/errorlog.h"
 #include "crypto/block/block-db.h"
 #include "crypto/vm/vm.h"
@@ -46,7 +45,6 @@
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "tos/tos-types.h"
-#include "validator-session/validator-session.h"
 #include "validator/fabric.h"
 #include "validator/manager-disk.h"
 

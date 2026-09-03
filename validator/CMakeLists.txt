@@ -185,7 +185,7 @@ target_link_libraries(validator-state-download-budget PUBLIC tdutils tos_crypto)
 
 add_library(validator-db OBJECT ${VALIDATOR_DB_SOURCE})
 target_include_directories(validator-db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay catchain validatorsession tos_db
+target_link_libraries(validator-db PUBLIC tdactor adnl rldp tl_api dht tdfec overlay validatorsession tos_db
                       validator-state-download-budget)
 
 add_library(validator-common OBJECT
@@ -199,7 +199,6 @@ add_library(validator-common OBJECT
   queue-size-counter.cpp
   shard-client.cpp
   validator-full-id.cpp
-  validator-group.cpp
   validator-options.cpp
 )
 target_link_libraries(validator-common PUBLIC validator-db validator-state-download-budget)
@@ -259,4 +258,4 @@ target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
 
 target_link_libraries(full-node PUBLIC validator-state-download-budget)
-target_link_libraries(full-node PRIVATE tdactor adnl rldp rldp2 tl_api dht tdfec overlay catchain validatorsession tos_db)
+target_link_libraries(full-node PRIVATE tdactor adnl rldp rldp2 tl_api dht tdfec overlay validatorsession tos_db)
