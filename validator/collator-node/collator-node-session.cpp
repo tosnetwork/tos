@@ -16,6 +16,7 @@
 */
 
 #include "collator-node-session.hpp"
+#include "collator-node-limits.h"
 #include "collator-node.hpp"
 #include "fabric.h"
 #include "utils.hpp"
@@ -205,11 +206,11 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
   // Identical requests still coalesce onto the started entry above.
   size_t in_flight = 0;
   for (const auto& [_, entry] : cache_) {
-    if (entry->started && !entry->result) {
+    if (collation_slot_in_flight(CollationSlot{entry->started, static_cast<bool>(entry->result)})) {
       ++in_flight;
     }
   }
-  if (in_flight >= MAX_CONCURRENT_COLLATIONS) {
+  if (at_capacity(in_flight, MAX_CONCURRENT_COLLATIONS)) {
     FLOG(INFO) {
       prefix(sb);
       sb << ": refusing collation, " << in_flight << " already in flight";

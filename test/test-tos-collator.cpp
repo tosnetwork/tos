@@ -75,7 +75,11 @@ class TestNode : public td::actor::Actor {
  private:
   td::actor::ActorOwn<tos::validator::ValidatorManagerInterface> validator_manager_;
 
-  std::string db_root_ = "/var/tos-work/db/";
+  // A relative default so the tool runs without a preexisting privileged
+  // directory; override with -D. The disk validator manager only reads state
+  // that is already in this DB -- it cannot download -- so this directory must
+  // be populated by a prior run or pointed at an existing node DB.
+  std::string db_root_ = "tos-collator-work-db";
   std::string global_config_;
   td::Ref<tos::validator::ValidatorManagerOptions> opts_;
 
@@ -269,6 +273,20 @@ class TestNode : public td::actor::Actor {
   }
 
   void run() {
+    // This is a manual collation tool, not a self-checking test: it collates a
+    // block for a given shard atop a given top block, using state that already
+    // lives in the DB. The disk validator manager cannot download, so without a
+    // global config (and a DB and zerostate to match it) there is nothing to
+    // collate on -- a bare run would otherwise abort deep inside the manager on
+    // an unreachable state-download path. Fail early with an actionable message.
+    if (global_config_.empty()) {
+      std::cerr << "fatal: test-tos-collator is a manual collation tool and needs inputs.\n"
+                   "  required: -C <global-config> and a -D <db> populated with the referenced state\n"
+                   "            (or an existing node DB), plus -w <workchain[:shard]> and -T <top-block>.\n"
+                   "  a zerostate file may be supplied with -z (with -Z/-F hashes).\n"
+                   "  run with -h for the full option list.\n";
+      std::_Exit(2);
+    }
     zero_id_.workchain = tos::masterchainId;
     td::mkdir(db_root_).ensure();
     tos::errorlog::ErrorLog::create(db_root_);

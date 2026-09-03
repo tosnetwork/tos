@@ -23,6 +23,7 @@
 #include "block-db.h"
 #include "checksum.h"
 #include "collator-node.hpp"
+#include "collator-node-limits.h"
 #include "fabric.h"
 #include "utils.hpp"
 
@@ -420,7 +421,7 @@ void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, Shard
     // vector and the reply state, and are only drained when a masterchain
     // block for this future group arrives; without a cap a peer can pile them
     // up while the group stays in the future.
-    if (future_validator_group->promises.size() >= MAX_FUTURE_GROUP_PROMISES) {
+    if (at_capacity(future_validator_group->promises.size(), MAX_FUTURE_GROUP_PROMISES)) {
       promise.set_error(td::Status::Error(ErrorCode::notready, "too many pending requests for a future group"));
       return;
     }
