@@ -8,44 +8,27 @@
  * MisbehaviorReporter — consensus bus subscriber
  *
  * Subscribes to MisbehaviorReport events published by the simplex consensus
- * layer (pool.cpp, consensus.cpp) and forwards each report toward the
- * masterchain so that the elector contract can slash the offending validator.
+ * layer (pool.cpp, consensus.cpp) and records each report for operators.
  *
- * Current forwarding path
- * -----------------------
+ * Current handling
+ * ----------------
  * 1. A structured LOG(ERROR) entry is written immediately so node operators
  *    can act without waiting for on-chain settlement.
- * 2. A minimal evidence cell is built and handed to
- *    ManagerFacade::send_misbehavior_report, which calls
- *    ValidatorManager::new_external_message_broadcast.  The external message
- *    enters the normal ext-message queue and is included in the next
- *    masterchain block.
  *
- * Evidence cell layout (TL-B, opcode 0xd1)
- * -----------------------------------------
- * The cell is intentionally small so that it fits in a single masterchain
- * block even if many validators misbehave simultaneously.  A future upgrade
- * will replace this with a full ValidatorComplaint cell once the elector
- * contract's slash handler is deployed.
+ * Reports are deliberately not submitted as external messages.  The current
+ * Misbehavior objects are local allegations: rejected candidates and malformed
+ * broadcasts in particular do not carry the signed, replay-protected bytes an
+ * on-chain verifier would need.  Sending a private binary envelope to the
+ * external-message ingress only makes the BOC parser reject it and creates a
+ * false impression that slashing evidence reached the chain.
  *
- *   simplex_misbehavior_report#d1
- *     validator_pubkey:bits256   -- offending validator's Ed25519 key hash
- *     session_id:bits256         -- consensus session that observed the fault
- *     kind:uint8                 -- see MisbehaviorKind enum below
- *     evidence_hash:bits256      -- SHA-256 of the raw proof bytes
- *   = SimplexMisbehaviorReport;
- *
- * TODO (on-chain slashing): once the elector contract exposes a
- * `report_simplex_misbehavior` method, replace the cell above with a full
- * `ValidatorComplaint` (block.tlb:877) and set the destination address to
- * config param #1 (elector address).  The `send_misbehavior_report` path in
- * ManagerFacadeImpl already routes the message through
- * `new_external_message_broadcast`, so only the cell builder here needs to
- * change.
+ * TODO (on-chain slashing): define a canonical evidence envelope only when a
+ * consumer exists.  It must retain the signed protocol messages, bind them to
+ * the chain and session, identify the destination contract, and include replay
+ * protection.  Until then these records are telemetry, not proof.
  */
 
 #include "bus.h"
-#include "manager-facade.h"
 #include "simplex/misbehavior.h"
 #include "td/utils/crypto.h"
 
@@ -120,35 +103,6 @@ static const char* kind_name(MisbehaviorKind k) {
   }
 }
 
-// Build the evidence cell described in the module comment.
-//
-//   4 bytes  opcode  0xd1 00 00 00   (little-endian uint32 written as big-endian bits)
-//  32 bytes  validator_pubkey
-//  32 bytes  session_id
-//   1 byte   kind
-//  32 bytes  evidence_hash
-// = 101 bytes = 808 bits — well within the 1023-bit cell limit.
-td::BufferSlice build_evidence_cell(const PublicKeyHash& short_id, const ValidatorSessionId& session_id,
-                                    MisbehaviorKind kind, const std::string& evidence_bytes) {
-  td::uint8 buf[1 + 32 + 32 + 1 + 32];  // opcode(1) + pubkey(32) + session(32) + kind(1) + hash(32) = 99 bytes
-  // Opcode 0xd1 (simplex misbehavior report)
-  buf[0] = 0xd1;
-  // validator short_id (pubkey hash, 32 bytes)
-  auto key_slice = short_id.as_slice();
-  CHECK(key_slice.size() == 32);
-  std::memcpy(buf + 1, key_slice.data(), 32);
-  // session_id (32 bytes)
-  std::memcpy(buf + 33, session_id.as_slice().data(), 32);
-  // kind (1 byte)
-  buf[65] = static_cast<td::uint8>(kind);
-  // evidence_hash: SHA-256 of the concatenated proof bytes
-  td::uint8 hash[32];
-  td::sha256(td::Slice(evidence_bytes), td::MutableSlice(hash, 32));
-  std::memcpy(buf + 66, hash, 32);
-
-  return td::BufferSlice(td::Slice(reinterpret_cast<const char*>(buf), sizeof(buf)));
-}
-
 class MisbehaviorReporterImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
@@ -156,7 +110,6 @@ class MisbehaviorReporterImpl : public td::actor::SpawnsWith<Bus>, public td::ac
   void start_up() override {
     auto& bus = *owning_bus();
     session_id_ = bus.session_id;
-    manager_ = bus.manager;
   }
 
   template <>
@@ -177,22 +130,21 @@ class MisbehaviorReporterImpl : public td::actor::SpawnsWith<Bus>, public td::ac
 
     auto [kind, evidence_bytes] = classify(*event->proof);
 
-    // Always emit a structured ERROR log so the node operator has an
-    // auditable record even if the on-chain path is not yet deployed.
+    auto fingerprint = td::sha256_bits256(td::Slice(evidence_bytes));
+
+    // This is an allegation fingerprint for correlation between validator
+    // logs.  It is not independently verifiable slashing evidence.
     LOG(ERROR) << "MISBEHAVIOR DETECTED"
                << " kind=" << kind_name(kind)
                << " validator=" << offender.short_id.bits256_value().to_hex()
                << " adnl=" << offender.adnl_id.bits256_value().to_hex()
                << " session=" << session_id_.to_hex()
-               << " evidence_bytes=" << evidence_bytes.size();
-
-    auto cell = build_evidence_cell(offender.short_id, session_id_, kind, evidence_bytes);
-    td::actor::ask(manager_, &ManagerFacade::send_misbehavior_report, std::move(cell)).detach("MisbehaviorReporter::send");
+               << " allegation_bytes=" << evidence_bytes.size()
+               << " allegation_fingerprint=" << fingerprint.to_hex();
   }
 
  private:
   ValidatorSessionId session_id_;
-  td::actor::ActorId<ManagerFacade> manager_;
 };
 
 }  // namespace

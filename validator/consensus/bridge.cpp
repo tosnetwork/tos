@@ -95,22 +95,6 @@ class ManagerFacadeImpl : public ManagerFacade {
                             std::move(data), mode);
   }
 
-  td::actor::Task<> send_misbehavior_report(td::BufferSlice data) override {
-    // Forward the evidence to the manager's external-message ingress so it is
-    // included in the next masterchain block.  A missing last-mc-state causes
-    // the manager to return ErrorCode::notready; treat that as a transient
-    // error and silently drop — the evidence is also written to the node log
-    // by MisbehaviorReporter before this call.
-    auto result = co_await td::actor::ask(manager_, &ValidatorManager::new_external_message_broadcast,
-                                          std::move(data), /*priority=*/0,
-                                          /*source_peer=*/td::optional<PublicKeyHash>{})
-                      .wrap();
-    if (result.is_error() && result.error().code() != ErrorCode::notready) {
-      LOG(WARNING) << "MisbehaviorReporter: failed to deliver report to manager: " << result.error();
-    }
-    co_return td::Unit{};
-  }
-
   void update_collator_options(td::Ref<ValidatorManagerOptions> opts) {
     opts_ = std::move(opts);
   }
