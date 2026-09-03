@@ -156,6 +156,7 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
   auto cache_entry = cache_[prev_blocks];
   if (cache_entry == nullptr) {
     cache_entry = cache_[prev_blocks] = std::make_shared<CacheEntry>();
+    cache_entry->key = prev_blocks;
   }
   if (is_external && !cache_entry->has_external_query_at) {
     cache_entry->has_external_query_at = td::Timestamp::now();
@@ -185,6 +186,20 @@ void CollatorNodeSession::generate_block(std::vector<BlockIdExt> prev_blocks,
       sb << (is_external ? " for external query [WON]" : " for internal query ");
     };
     promise.set_result(cache_entry->result.value().clone());
+    return;
+  }
+
+  // Bound the number of callers coalesced onto one in-flight collation. This
+  // check precedes the started/concurrency handling below because identical
+  // requests share a single cache entry and so bypass the concurrency cap; an
+  // uncapped waiter vector would grow with the request flood, and each waiter
+  // drives its own creator-rewrite and candidate persist at completion.
+  if (cache_entry->promises.size() >= MAX_WAITERS_PER_COLLATION) {
+    FLOG(INFO) {
+      prefix(sb);
+      sb << ": refusing query, " << cache_entry->promises.size() << " callers already waiting";
+    };
+    promise.set_error(td::Status::Error(ErrorCode::notready, "collator busy: too many callers for this block"));
     return;
   }
   cache_entry->promises.push_back(std::move(promise));
@@ -257,7 +272,15 @@ void CollatorNodeSession::process_result(std::shared_ptr<CacheEntry> cache_entry
     for (auto& p : cache_entry->promises) {
       p.set_error(R.error().clone());
     }
-  } else {
+    cache_entry->promises.clear();
+    // A failed collation caches nothing worth keeping. Drop the entry so a
+    // requester streaming distinct-but-invalid prev_blocks cannot accumulate
+    // dead entries: once started clears they no longer count against the
+    // concurrency cap, and the seqno-ordered cleanup may never reach them.
+    cache_.erase(cache_entry->key);
+    return;
+  }
+  {
     cache_entry->result = R.move_as_ok();
     cache_entry->has_result_at = td::Timestamp::now();
     for (auto& p : cache_entry->promises) {

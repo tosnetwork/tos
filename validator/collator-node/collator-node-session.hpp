@@ -66,12 +66,19 @@ class CollatorNodeSession : public td::actor::Actor {
     td::Timestamp has_external_query_at;
     td::Timestamp has_result_at;
     BlockSeqno block_seqno = 0;
+    std::vector<BlockIdExt> key;  // this entry's key in cache_, for self-erase on failure
     td::optional<BlockCandidate> result;
     td::CancellationTokenSource cancellation_token_source;
     std::vector<td::Promise<BlockCandidate>> promises;
 
     void cancel(td::Status reason);
   };
+
+  // Upper bound on callers coalesced onto a single in-flight collation. Well
+  // above the legitimate internal + external + retry fan-in, small enough that
+  // a flood of identical requests cannot grow the waiter vector (or the
+  // per-waiter completion work) without bound.
+  static constexpr size_t MAX_WAITERS_PER_COLLATION = 32;
 
   BlockSeqno next_block_seqno_;
   std::map<std::vector<BlockIdExt>, std::shared_ptr<CacheEntry>> cache_;

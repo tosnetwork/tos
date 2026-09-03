@@ -2692,6 +2692,13 @@ void ValidatorManagerImpl::update_shards() {
     }
 
     auto G = create_validator_group(id, shard, val_set, key_seqno, opts, started_);
+    if (G.empty()) {
+      // create_validator_group fails closed (and logs) when the consensus
+      // config is missing or unreadable. Do not materialize a group entry for
+      // it: an empty actor stored here would abort the process the moment any
+      // caller sends it a message. Signal "no group" to the caller instead.
+      return next_validator_groups_.end();
+    }
     ValidatorGroupEntry entry{
         .actor = std::move(G),
         .shard = shard,
@@ -2748,12 +2755,22 @@ void ValidatorManagerImpl::update_shards() {
             return &entry;
           } else {
             auto it2 = get_or_make_next_group(shard, val_group_id, val_set);
+            if (it2 == next_validator_groups_.end()) {
+              return static_cast<ValidatorGroupEntry *>(nullptr);
+            }
             auto &entry = new_validator_groups[val_group_id] = std::move(it2->second);
             next_validator_groups_.erase(it2);
             return &entry;
           }
         };
         auto entry = find_or_create_validator_group();
+        if (entry == nullptr) {
+          // Consensus config unreadable for this shard (logged in
+          // create_validator_group). Do not run a group; stay a full node for
+          // this shard rather than crashing or running the wrong protocol.
+          --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+          continue;
+        }
 
         if (!entry->started) {
           LOG(INFO) << "Started " << entry->name() << ":" << val_group_id;

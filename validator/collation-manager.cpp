@@ -20,6 +20,7 @@
 
 #include "collator-node/collator-node.hpp"
 #include "collator-node/utils.hpp"
+#include "common/checksum.h"
 #include "td/utils/Random.h"
 
 #include "collation-manager.hpp"
