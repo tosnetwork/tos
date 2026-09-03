@@ -25,7 +25,7 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
-#include "validator-session/candidate-serializer.h"
+#include "validator/consensus/candidate-codec.h"
 #include "validator/finality-cache-policy.h"
 #include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
@@ -36,6 +36,7 @@
 using namespace tos;
 using namespace tos::validator;
 using namespace tos::validator::consensus;
+namespace validatorsession = tos::validator::consensus;
 
 namespace {
 td::Bits256 from_hex(td::Slice s) {

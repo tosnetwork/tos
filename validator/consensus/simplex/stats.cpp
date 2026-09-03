@@ -5,7 +5,7 @@
  */
 
 #include "stats.h"
-#include "validator-session-types.h"
+#include "validator/consensus/session-compat.h"
 
 namespace tos::validator::consensus::simplex::stats {
 
@@ -180,15 +180,15 @@ void MetricCollector::collect_cert_observed(const CertObserved& event) {
 
 namespace {
 
-validatorsession::ValidatorSessionStats::Producer flow_to_legacy_stats(const Flow& flow) {
+consensus::ValidatorSessionStats::Producer flow_to_legacy_stats(const Flow& flow) {
   return {
-      .block_status = validatorsession::ValidatorSessionStats::status_approved,
+      .block_status = consensus::ValidatorSessionStats::status_approved,
       .block_id = *flow.block_id,
       .is_accepted = true,
       .is_ours = flow.is_collator,
       .got_block_at = *flow.candidate_received,
-      .got_block_by = flow.is_collator ? validatorsession::ValidatorSessionStats::recv_collated
-                                       : validatorsession::ValidatorSessionStats::recv_broadcast,
+      .got_block_by = flow.is_collator ? consensus::ValidatorSessionStats::recv_collated
+                                       : consensus::ValidatorSessionStats::recv_broadcast,
       .got_submit_at = flow.is_collator ? *flow.collate_started : *flow.candidate_received,
       .comment = "",
       .collation_time = flow.is_collator ? (*flow.collate_finished - *flow.collate_started) : -1.0,
@@ -216,14 +216,14 @@ void MetricCollector::log_fake_catchain_stats(const Flow& flow) {
     return;
   }
 
-  validatorsession::ValidatorSessionStats stats;
+  consensus::ValidatorSessionStats stats;
   stats.session_id = session_id_;
   stats.self = self_id_;
   stats.block_id = *flow.block_id;
   stats.success = true;
   stats.timestamp = *flow.finalize_voted;
 
-  validatorsession::ValidatorSessionStats::Round round;
+  consensus::ValidatorSessionStats::Round round;
   round.started_at = *flow.candidate_received;
   round.producers = {flow_to_legacy_stats(flow)};
 

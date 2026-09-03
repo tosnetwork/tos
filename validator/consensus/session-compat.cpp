@@ -21,9 +21,9 @@
 #include "auto/tl/tos_api.h"
 #include "tl-utils/tl-utils.hpp"
 
-#include "validator-session-types.h"
+#include "session-compat.h"
 
-namespace tos::validatorsession {
+namespace tos::validator::consensus {
 
 ValidatorSessionOptions::ValidatorSessionOptions(const ValidatorSessionConfig &conf)
     : catchain_opts(conf.catchain_opts)
@@ -64,4 +64,4 @@ td::Bits256 ValidatorSessionOptions::get_hash() const {
   }
 }
 
-}  // namespace tos::validatorsession
+}  // namespace tos::validator::consensus

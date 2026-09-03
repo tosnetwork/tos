@@ -20,7 +20,7 @@
 #include "auto/tl/tos_api.h"
 #include "tos/tos-types.h"
 
-namespace tos::validatorsession {
+namespace tos::validator::consensus {
 
 td::Result<td::BufferSlice> serialize_candidate(const tl_object_ptr<tos_api::validatorSession_candidate>& block,
                                                 bool compression_enabled);
@@ -34,4 +34,4 @@ td::Result<std::pair<td::BufferSlice, td::BufferSlice>> decompress_candidate_dat
     td::Slice compressed, bool improved_compression, int decompressed_size, int max_decompressed_size,
     std::string called_from, td::Bits256 root_hash);
 
-}  // namespace tos::validatorsession
+}  // namespace tos::validator::consensus

@@ -575,7 +575,6 @@ add_subdirectory(rldp)
 add_subdirectory(rldp2)
 add_subdirectory(dht)
 add_subdirectory(overlay)
-add_subdirectory(validator-session)
 add_subdirectory(validator)
 if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_subdirectory(blockchain-explorer)
@@ -737,7 +736,7 @@ add_test(NAME plumtree-graph-sim-simple-stress
 add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
-  validatorsession validator-disk tos_validator validator-disk )
+  validator-disk tos_validator validator-disk )
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)

@@ -16,7 +16,7 @@
 */
 #include "keys/keys.hpp"
 #include "tos/tos-tl.hpp"
-#include "validator-session/candidate-serializer.h"
+#include "validator/consensus/candidate-codec.h"
 
 #include "checksum.h"
 #include "utils.hpp"
@@ -41,8 +41,8 @@ tl_object_ptr<tos_api::collatorNode_Candidate> serialize_candidate(const BlockCa
   }
   size_t decompressed_size;
   td::BufferSlice compressed =
-      validatorsession::compress_candidate_data(block.data, block.collated_data, decompressed_size,
-                                                k_called_from_collator_node, block.id.root_hash)
+      consensus::compress_candidate_data(block.data, block.collated_data, decompressed_size,
+                                         k_called_from_collator_node, block.id.root_hash)
           .move_as_ok();
   return create_tl_object<tos_api::collatorNode_compressedCandidate>(
       0, PublicKey{pubkeys::Ed25519{block.pubkey.as_bits256()}}.tl(), create_tl_block_id(block.id),
@@ -81,7 +81,7 @@ td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collator
                   if (c.decompressed_size_ > max_decompressed_data_size) {
                     return td::Status::Error("decompressed size is too big");
                   }
-                  TRY_RESULT(p, validatorsession::decompress_candidate_data(
+                  TRY_RESULT(p, consensus::decompress_candidate_data(
                                     c.data_, false, c.decompressed_size_, max_decompressed_data_size,
                                     k_called_from_collator_node, create_block_id(c.id_).root_hash));
                   auto collated_data_hash = td::sha256_bits256(p.second);
@@ -96,7 +96,7 @@ td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collator
               },
               [&](tos_api::collatorNode_compressedCandidateV2& c) {
                 res = [&]() -> td::Result<BlockCandidate> {
-                  TRY_RESULT(p, validatorsession::decompress_candidate_data(
+                  TRY_RESULT(p, consensus::decompress_candidate_data(
                                     c.data_, true, 0, max_decompressed_data_size, k_called_from_collator_node,
                                     create_block_id(c.id_).root_hash));
                   auto collated_data_hash = td::sha256_bits256(p.second);

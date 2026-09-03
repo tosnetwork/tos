@@ -27,9 +27,7 @@
 #include "tos/quorum.h"
 #include "tos/tos-types.h"
 
-namespace tos {
-
-namespace validatorsession {
+namespace tos::validator::consensus {
 
 constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_BENCHMARK) = verbosity_WARNING;
 
@@ -56,12 +54,6 @@ struct ValidatorSessionOptions {
   td::uint32 proto_version = 0;
 
   td::Bits256 get_hash() const;
-};
-
-struct ValidatorSessionNode {
-  PublicKey pub_key;
-  adnl::AdnlNodeIdShort adnl_id;
-  ValidatorWeight weight;
 };
 
 struct ValidatorSessionStats {
@@ -207,67 +199,4 @@ struct ValidatorSessionStats {
   }
 };
 
-struct NewValidatorGroupStats {
-  struct Node {
-    PublicKeyHash id = PublicKeyHash::zero();
-    PublicKey pubkey;
-    adnl::AdnlNodeIdShort adnl_id = adnl::AdnlNodeIdShort::zero();
-    ValidatorWeight weight = 0;
-  };
-
-  ValidatorSessionId session_id = ValidatorSessionId::zero();
-  ShardIdFull shard{masterchainId};
-  CatchainSeqno cc_seqno = 0;
-  BlockSeqno last_key_block_seqno = 0;
-  double started_at = -1.0;
-  std::vector<BlockIdExt> prev;
-  td::uint32 self_idx = 0;
-  PublicKeyHash self = PublicKeyHash::zero();
-  std::vector<Node> nodes{};
-
-  tl_object_ptr<tos_api::validatorStats_newValidatorGroup> tl() const {
-    std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> prev_arr;
-    for (const auto &p : prev) {
-      prev_arr.push_back(create_tl_block_id(p));
-    }
-    std::vector<tl_object_ptr<tos_api::validatorStats_newValidatorGroup_node>> nodes_arr;
-    for (const auto &node : nodes) {
-      nodes_arr.push_back(create_tl_object<tos_api::validatorStats_newValidatorGroup_node>(
-          node.id.bits256_value(), node.pubkey.tl(), node.adnl_id.bits256_value(), node.weight));
-    }
-    return create_tl_object<tos_api::validatorStats_newValidatorGroup>(
-        session_id, create_tl_shard_id(shard), cc_seqno, last_key_block_seqno, started_at, std::move(prev_arr),
-        self_idx, self.bits256_value(), std::move(nodes_arr));
-  }
-};
-
-struct EndValidatorGroupStats {
-  struct Node {
-    PublicKeyHash id = PublicKeyHash::zero();
-    td::uint32 catchain_blocks = 0;
-  };
-
-  ValidatorSessionId session_id = ValidatorSessionId::zero();
-  double timestamp = -1.0;
-  PublicKeyHash self = PublicKeyHash::zero();
-  std::vector<Node> nodes{};
-
-  tl_object_ptr<tos_api::validatorStats_endValidatorGroup> tl() const {
-    std::vector<tl_object_ptr<tos_api::validatorStats_endValidatorGroup_node>> nodes_arr;
-    for (const auto &node : nodes) {
-      nodes_arr.push_back(create_tl_object<tos_api::validatorStats_endValidatorGroup_node>(node.id.bits256_value(),
-                                                                                           node.catchain_blocks));
-    }
-    return create_tl_object<tos_api::validatorStats_endValidatorGroup>(session_id, timestamp, self.bits256_value(),
-                                                                       std::move(nodes_arr));
-  }
-};
-
-struct BlockSourceInfo {
-  PublicKey source;
-  BlockCandidatePriority priority;
-};
-
-}  // namespace validatorsession
-
-}  // namespace tos
+}  // namespace tos::validator::consensus
