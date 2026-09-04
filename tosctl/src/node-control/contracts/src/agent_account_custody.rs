@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::agent_account::{
-    AGENT_CANCEL_SEQNO_OPCODE, AGENT_NATIVE_SEND_OPCODE, AGENT_TASK_SEND_OPCODE,
+    AGENT_CANCEL_SEQNO_OPCODE, AGENT_DEPLOY_SEND_OPCODE, AGENT_NATIVE_SEND_OPCODE,
+    AGENT_TASK_SEND_OPCODE,
 };
 
 const SCHEMA: &str = "tos.agent-account.controller-journal.v2";
@@ -75,6 +76,10 @@ pub struct ControllerActionClaim {
     /// cancellations. It is independently verified from the signed BOC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_hash: Option<String>,
+    /// Exact StateInit cell carried by deploy-send. Other action kinds must
+    /// leave this empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_init_hash: Option<String>,
     pub action_kind: String,
     pub idempotency_key: String,
     pub action_identity: String,
@@ -254,6 +259,16 @@ impl AgentAccountCustodyJournal {
         &self,
         idempotency_key: &str,
     ) -> anyhow::Result<ControllerActionRecord> {
+        self.find_action_by_idempotency_key(idempotency_key)?
+            .context("controller action was not found")
+    }
+
+    /// Return a durable controller action when present without turning absence
+    /// into an error. Corruption, including duplicate keys, still fails closed.
+    pub fn find_action_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<ControllerActionRecord>> {
         if idempotency_key.len() != 64
             || !idempotency_key
                 .bytes()
@@ -266,7 +281,7 @@ impl AgentAccountCustodyJournal {
                 .records
                 .iter()
                 .filter(|record| record.claim.idempotency_key == idempotency_key);
-            let record = matching.next().context("controller action was not found")?.clone();
+            let record = matching.next().cloned();
             if matching.next().is_some() {
                 anyhow::bail!("duplicate controller action idempotency key");
             }
@@ -1787,6 +1802,7 @@ fn same_unsigned_claim(left: &ControllerActionClaim, right: &ControllerActionCla
         && left.target == right.target
         && left.value_atomic == right.value_atomic
         && left.body_hash == right.body_hash
+        && left.state_init_hash == right.state_init_hash
         && left.action_kind == right.action_kind
         && left.idempotency_key == right.idempotency_key
         && left.action_identity == right.action_identity
@@ -1866,8 +1882,10 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         }
     }
     if claim.network_global_id == 0
-        || claim.action_kind.is_empty()
-        || claim.action_kind.len() > 64
+        || !matches!(
+            claim.action_kind.as_str(),
+            "agent-native-send" | "agent-task-send" | "agent-deploy-send"
+        )
         || !valid_idempotency_key(&claim.idempotency_key)
         || !valid_digest(&claim.action_identity)
         || claim.target.is_empty()
@@ -1875,8 +1893,13 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || claim.value_atomic == 0
         || claim.valid_until == 0
         || claim.body_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
+        || claim.state_init_hash.as_ref().is_some_and(|value| !valid_cell_digest(value))
         || (claim.action_kind == "agent-native-send" && claim.body_hash.is_some())
-        || (claim.action_kind == "agent-task-send" && claim.body_hash.is_none())
+        || (claim.action_kind == "agent-native-send" && claim.state_init_hash.is_some())
+        || (claim.action_kind == "agent-task-send"
+            && (claim.body_hash.is_none() || claim.state_init_hash.is_some()))
+        || (claim.action_kind == "agent-deploy-send"
+            && (claim.body_hash.is_none() || claim.state_init_hash.is_none()))
     {
         anyhow::bail!("invalid controller action claim");
     }
@@ -2385,6 +2408,9 @@ fn validate_signed_boc(
     let expected_opcode = match expected_action {
         ExpectedAction::Cancellation => AGENT_CANCEL_SEQNO_OPCODE,
         ExpectedAction::Primary if claim.action_kind == "agent-task-send" => AGENT_TASK_SEND_OPCODE,
+        ExpectedAction::Primary if claim.action_kind == "agent-deploy-send" => {
+            AGENT_DEPLOY_SEND_OPCODE
+        }
         ExpectedAction::Primary if claim.action_kind == "agent-native-send" => {
             AGENT_NATIVE_SEND_OPCODE
         }
@@ -2407,7 +2433,11 @@ fn validate_signed_boc(
         if target.to_string() != claim.target || value != u128::from(claim.value_atomic) {
             anyhow::bail!("stored Agent Account BOC target/value does not match custody claim");
         }
-        let expected_refs = usize::from(claim.action_kind == "agent-task-send");
+        let expected_refs = match claim.action_kind.as_str() {
+            "agent-task-send" => 1,
+            "agent-deploy-send" => 2,
+            _ => 0,
+        };
         if body.remaining_bits() != 0 || body.remaining_references() != expected_refs {
             anyhow::bail!("stored Agent Account BOC has unexpected trailing action data");
         }
@@ -2416,6 +2446,17 @@ fn validate_signed_boc(
             let actual = agent_account_task_body_hash(&task_body);
             if claim.body_hash.as_deref() != Some(actual.as_str()) {
                 anyhow::bail!("stored Agent Account task body differs from custody claim");
+            }
+        } else if claim.action_kind == "agent-deploy-send" {
+            let state_init = body.checked_drain_reference()?;
+            let actual_state_init = agent_account_task_body_hash(&state_init);
+            if claim.state_init_hash.as_deref() != Some(actual_state_init.as_str()) {
+                anyhow::bail!("stored Agent Account StateInit differs from custody claim");
+            }
+            let task_body = body.checked_drain_reference()?;
+            let actual_body = agent_account_task_body_hash(&task_body);
+            if claim.body_hash.as_deref() != Some(actual_body.as_str()) {
+                anyhow::bail!("stored Agent Account deploy body differs from custody claim");
             }
         }
     } else if body.remaining_bits() != 0 || body.remaining_references() != 0 {
@@ -2621,7 +2662,7 @@ fn valid_idempotency_key(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chain_block::{Cell, MsgAddressInt, base64_encode, write_boc};
+    use chain_block::{Cell, MsgAddressInt, Serializable, StateInit, base64_encode, write_boc};
     use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
@@ -2651,6 +2692,7 @@ mod tests {
             target: MsgAddressInt::with_standart(None, 0, [0x22; 32].into()).unwrap().to_string(),
             value_atomic: 1,
             body_hash: None,
+            state_init_hash: None,
             action_kind: "agent-native-send".into(),
             idempotency_key: "1".repeat(64),
             action_identity: format!("sha256:{}", marker.to_string().repeat(64)),
@@ -2764,6 +2806,49 @@ mod tests {
             &claim.target.parse::<MsgAddressInt>().unwrap(),
             claim.value_atomic,
             body,
+        )
+        .unwrap();
+        let signed =
+            crate::AgentAccountContract::build_signed_controller_message(payload, &[0x44; 64])
+                .unwrap();
+        let message =
+            crate::AgentAccountContract::build_external_controller_message(account, signed)
+                .unwrap();
+        let bytes = write_boc(&message).unwrap();
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
+        (base64_encode(bytes), digest)
+    }
+
+    fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
+        let state_init = StateInit::with_code_and_data(Cell::default(), Cell::default());
+        let state_cell = state_init.clone().write_to_new_cell().unwrap().into_cell().unwrap();
+        let target = MsgAddressInt::with_standart(None, 0, state_cell.hash(0).into()).unwrap();
+        let body = Cell::default();
+        let mut action = claim(seqno, 'd');
+        action.target = target.to_string();
+        action.body_hash = Some(agent_account_task_body_hash(&body));
+        action.state_init_hash = Some(agent_account_task_body_hash(&state_cell));
+        action.action_kind = "agent-deploy-send".into();
+        (action, state_init, body)
+    }
+
+    fn signed_deploy_boc(
+        claim: &ControllerActionClaim,
+        state_init: StateInit,
+        body: Cell,
+    ) -> (String, String) {
+        let account = claim.account.parse::<MsgAddressInt>().unwrap();
+        let payload = crate::AgentAccountContract::build_deploy_send_payload(
+            claim.network_global_id,
+            claim.controller_epoch,
+            claim.seqno,
+            claim.valid_until,
+            &crate::AgentDeploySend {
+                target: claim.target.parse::<MsgAddressInt>().unwrap(),
+                value: claim.value_atomic,
+                state_init,
+                body,
+            },
         )
         .unwrap();
         let signed =
@@ -3050,6 +3135,51 @@ mod tests {
         assert_eq!(resumed.exact_signed_boc_digest, first.exact_signed_boc_digest);
         assert_eq!(resumed.claim.seqno, first.claim.seqno);
     }
+
+    #[test]
+    fn deploy_send_custody_binds_exact_state_init_and_body() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let (action, state_init, body) = deploy_claim(4);
+        journal.claim_primary(action.clone(), 10).unwrap();
+        let (boc, digest) = signed_deploy_boc(&action, state_init, body);
+        journal.attach_signed_boc(&action, &boc, &digest, 11).unwrap();
+
+        let mut changed = action.clone();
+        changed.state_init_hash = Some(format!("tvm-cell-sha256:{}", "f".repeat(64)));
+        assert!(journal.claim_primary(changed, 12).is_err());
+
+        let reopened =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let stored = reopened.action_by_idempotency_key(&action.idempotency_key).unwrap();
+        assert_eq!(stored.claim.state_init_hash, action.state_init_hash);
+        assert_eq!(stored.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
+    }
+
+    #[test]
+    fn custody_rejects_unknown_controller_action_kinds_before_persistence() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let mut action = claim(4, 'd');
+        action.action_kind = "future-unsigned-action".into();
+        assert!(journal.claim_primary(action, 10).is_err());
+        let reopened =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        assert!(reopened.find_action_by_idempotency_key(&"1".repeat(64)).unwrap().is_none());
+    }
+
     #[test]
     fn one_cancellation_only_and_changed_boc_conflicts() {
         let directory = tempfile::tempdir().unwrap();

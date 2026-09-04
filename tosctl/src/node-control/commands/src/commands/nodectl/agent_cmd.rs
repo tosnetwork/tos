@@ -20,8 +20,9 @@ use super::utils::{
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{
-    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, IBitstring, Message, MsgAddressInt,
-    Serializable, Transaction, TransactionDescr, read_single_root_boc, write_boc,
+    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, GasLimitsPrices, IBitstring,
+    Message, MsgAddressInt, MsgForwardPrices, Serializable, SizeLimitsConfig, StorageUsageCalc,
+    Transaction, TransactionDescr, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::{
     canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
@@ -41,8 +42,9 @@ use common::{
     time_format,
 };
 use contracts::{
-    AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentAccountInit,
-    AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionResolutionEvidence,
+    AGENT_ACCOUNT_MAX_ACTION_GAS, AgentAccountContract, AgentAccountCustodyJournal,
+    AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend,
+    ControllerActionClaim, ControllerActionRecord, ControllerActionResolutionEvidence,
     ControllerActionStatus, EconomicActionAuthorization, EconomicEffectAuthorization,
     TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet, agent_account_task_body_hash,
     controller_resolution_evidence_digest,
@@ -277,8 +279,12 @@ pub struct AgentTaskLsCmd {
 pub struct AgentTaskCreateCmd {
     #[arg(long, help = "Local task record name; defaults to task-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Creator address; must match the funding wallet")]
-    creator: String,
+    #[arg(
+        long,
+        required_unless_present = "via_agent_account",
+        help = "Creator address; must match the funding wallet or Agent Account"
+    )]
+    creator: Option<String>,
     #[arg(long)]
     agent: Option<String>,
     #[arg(long, help = "Optional verifier allowed to settle the task")]
@@ -317,8 +323,46 @@ pub struct AgentTaskCreateCmd {
         help = "Derive --attestor-pubkey from a vault key instead of passing it directly"
     )]
     signer_vault_key: Option<String>,
-    #[arg(long, help = "Funding wallet name or master_wallet")]
-    from: String,
+    #[arg(
+        long,
+        conflicts_with = "via_agent_account",
+        required_unless_present = "via_agent_account",
+        help = "Funding wallet name or master_wallet"
+    )]
+    from: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "from",
+        requires_all = ["controller_action_id", "quorum_configs"],
+        help = "Agent Wallet profile whose Agent Account deploys and funds the escrow"
+    )]
+    via_agent_account: Option<String>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        help = "Controller action expiry; defaults to now + 300s"
+    )]
+    valid_until: Option<u32>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        help = "Stable 64-lowercase-hex idempotency ID for the deployment"
+    )]
+    controller_action_id: Option<String>,
+    #[arg(
+        long = "quorum-config",
+        requires = "via_agent_account",
+        num_args = 2..,
+        help = "Additional absolute single-endpoint configs used to resolve the exact deployment"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(
+        long,
+        requires = "via_agent_account",
+        default_value_t = 1000,
+        help = "Maximum source-account transactions inspected per RPC during deployment resolution"
+    )]
+    max_transactions: u32,
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
@@ -327,8 +371,12 @@ pub struct AgentTaskCreateCmd {
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
     amount_nanotos: Option<u64>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
-    workchain: i32,
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        help = "Deployment workchain; defaults to the Agent Account workchain, or -1 with --from"
+    )]
+    workchain: Option<i32>,
     #[arg(long)]
     yes: bool,
     #[arg(short, long, default_value = "table")]
@@ -1559,7 +1607,7 @@ struct AgentTaskCapabilitiesView {
     schema_version: &'static str,
     action_encoding: &'static str,
     commands: [&'static str; 3],
-    create_flags: [&'static str; 14],
+    create_flags: [&'static str; 19],
     send_flags: [&'static str; 10],
     send_operations: [&'static str; 9],
 }
@@ -1570,7 +1618,7 @@ impl AgentTaskCapabilitiesCmd {
             anyhow::bail!("Task Escrow capabilities support only JSON output");
         }
         let view = AgentTaskCapabilitiesView {
-            schema_version: "tosctl.task-escrow-cli.v1",
+            schema_version: "tosctl.task-escrow-cli.v2",
             action_encoding: "tos.task-escrow.action.v1",
             commands: ["agent task build-state", "agent task create", "agent task send"],
             create_flags: [
@@ -1584,6 +1632,11 @@ impl AgentTaskCapabilitiesCmd {
                 "--policy-hash",
                 "--permission-hash",
                 "--from",
+                "--via-agent-account",
+                "--valid-until",
+                "--controller-action-id",
+                "--quorum-config",
+                "--max-transactions",
                 "--amount-nanotos",
                 "--workchain",
                 "--yes",
@@ -2164,12 +2217,292 @@ impl AgentTaskShowCmd {
     }
 }
 
+fn task_deployment_workchain(
+    requested: Option<i32>,
+    agent_account: Option<&MsgAddressInt>,
+) -> anyhow::Result<i32> {
+    let workchain =
+        requested.or_else(|| agent_account.map(MsgAddressInt::workchain_id)).unwrap_or(-1);
+    if agent_account.is_some_and(|account| account.workchain_id() != workchain) {
+        anyhow::bail!("Task deployment workchain must match the funding Agent Account workchain");
+    }
+    Ok(workchain)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_agent_account_task_create_funding(
+    account: &MsgAddressInt,
+    creator: &MsgAddressInt,
+    data: &AgentAccountData,
+    account_balance: u64,
+    amount_nanotos: u64,
+    fee_reserve: u64,
+    chain_now: u64,
+    valid_until: u32,
+) -> anyhow::Result<()> {
+    if account != creator {
+        anyhow::bail!("creator address must match funding Agent Account address");
+    }
+    if amount_nanotos > data.max_per_tx {
+        anyhow::bail!("funding amount exceeds Agent Account max_per_tx");
+    }
+    let chain_day = u32::try_from(chain_now / 86_400).context("chain day exceeds uint32")?;
+    let spent_today = if data.spend_day == chain_day { data.spent_today } else { 0 };
+    let total_today =
+        spent_today.checked_add(amount_nanotos).context("Agent Account daily spend overflowed")?;
+    if total_today > data.daily_limit {
+        anyhow::bail!("funding amount exceeds Agent Account remaining daily limit");
+    }
+    let required_balance = amount_nanotos
+        .checked_add(fee_reserve)
+        .context("funding amount plus deployment fees overflowed")?;
+    if account_balance < required_balance {
+        anyhow::bail!("Agent Account has insufficient balance");
+    }
+    if u64::from(valid_until) <= chain_now {
+        anyhow::bail!("valid_until must be later than finalized chain time");
+    }
+    let latest_expiry = chain_now
+        .checked_add(data.default_task_timeout_secs)
+        .context("Agent Account action timeout overflowed")?;
+    if u64::from(valid_until) > latest_expiry {
+        anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
+    }
+    Ok(())
+}
+
+struct AgentDeployFeeSchedule {
+    gas: GasLimitsPrices,
+    forwarding: MsgForwardPrices,
+    limits: SizeLimitsConfig,
+}
+
+async fn load_agent_deploy_fee_schedule(
+    rpc_client: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
+    account: &MsgAddressInt,
+) -> anyhow::Result<AgentDeployFeeSchedule> {
+    let (gas, forwarding) = if account.is_masterchain() {
+        let gas = match rpc_client.get_config_param(20).await? {
+            ConfigParamEnum::ConfigParam20(value) => value,
+            _ => anyhow::bail!("chain config parameter 20 is not masterchain gas pricing"),
+        };
+        let forwarding = match rpc_client.get_config_param(24).await? {
+            ConfigParamEnum::ConfigParam24(value) => value,
+            _ => anyhow::bail!("chain config parameter 24 is not masterchain forwarding pricing"),
+        };
+        (gas, forwarding)
+    } else {
+        let gas = match rpc_client.get_config_param(21).await? {
+            ConfigParamEnum::ConfigParam21(value) => value,
+            _ => anyhow::bail!("chain config parameter 21 is not workchain gas pricing"),
+        };
+        let forwarding = match rpc_client.get_config_param(25).await? {
+            ConfigParamEnum::ConfigParam25(value) => value,
+            _ => anyhow::bail!("chain config parameter 25 is not workchain forwarding pricing"),
+        };
+        (gas, forwarding)
+    };
+    let limits = match rpc_client.get_optional_config_param(43).await? {
+        Some(ConfigParamEnum::ConfigParam43(value)) => value,
+        Some(_) => anyhow::bail!("chain config parameter 43 is not a size-limits configuration"),
+        None => SizeLimitsConfig::default(),
+    };
+    Ok(AgentDeployFeeSchedule { gas, forwarding, limits })
+}
+
+fn append_storage_tree(usage: &mut StorageUsageCalc, cell: &Cell) -> anyhow::Result<()> {
+    usage.append_cell(cell, true, &mut 0)?;
+    Ok(())
+}
+
+/// Calculates the balance headroom needed before an external deploy request
+/// is imported. The outbound component intentionally mirrors the contract's
+/// SDATASIZE/GETFORWARDFEE admission gate; the inbound component mirrors the
+/// executor fee that is deducted before the contract observes its balance.
+fn agent_deploy_fee_reserve(
+    state_init: &Cell,
+    body: &Cell,
+    unsigned_external_message: &Cell,
+    schedule: &AgentDeployFeeSchedule,
+) -> anyhow::Result<u64> {
+    let mut outbound = StorageUsageCalc::with_limits(0, 0);
+    append_storage_tree(&mut outbound, state_init)?;
+    append_storage_tree(&mut outbound, body)?;
+    if outbound.cells() > u64::from(schedule.limits.max_msg_cells)
+        || outbound.bits() > u64::from(schedule.limits.max_msg_bits)
+    {
+        anyhow::bail!("Task deployment StateInit and body exceed chain message limits");
+    }
+
+    let mut inbound = StorageUsageCalc::with_limits(0, 0);
+    // The external-message root is covered by the lump price, matching the
+    // executor's import calculation; only its referenced tree is accumulated.
+    inbound.append_cell(unsigned_external_message, false, &mut 0)?;
+    if inbound.cells() > u64::from(schedule.limits.max_msg_cells)
+        || inbound.bits() > u64::from(schedule.limits.max_msg_bits)
+    {
+        anyhow::bail!("signed Task deployment request exceeds chain message limits");
+    }
+
+    let reserve = schedule
+        .gas
+        .calc_gas_fee(AGENT_ACCOUNT_MAX_ACTION_GAS)
+        .checked_add(schedule.forwarding.calc_fwd_fee(outbound.bits(), outbound.cells()))
+        .and_then(|value| {
+            value.checked_add(schedule.forwarding.calc_fwd_fee(inbound.bits(), inbound.cells()))
+        })
+        .context("Task deployment fee reserve overflowed")?;
+    u64::try_from(reserve).context("Task deployment fee reserve exceeds uint64")
+}
+
+fn exact_task_deploy_boc(record: &ControllerActionRecord) -> anyhow::Result<Vec<u8>> {
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_deref()
+        .context("Task deployment custody record has no exact signed BOC")?;
+    let boc = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("decode Task deployment custody BOC")?;
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+    if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+        anyhow::bail!("Task deployment custody BOC digest is inconsistent");
+    }
+    validate_exact_boc_before_broadcast(&boc)?;
+    Ok(boc)
+}
+
+fn begin_or_resume_task_deploy_broadcast(
+    journal: &AgentAccountCustodyJournal,
+    record: &ControllerActionRecord,
+    now: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let boc = exact_task_deploy_boc(record)?;
+    journal.begin_or_resume_exact_broadcast(&record.claim, now)?;
+    Ok(boc)
+}
+
+fn task_deploy_valid_until(
+    requested: Option<u32>,
+    existing: Option<&contracts::ControllerActionRecord>,
+    default: u32,
+) -> anyhow::Result<u32> {
+    if let Some(existing) = existing {
+        if requested.is_some_and(|value| value != existing.claim.valid_until) {
+            anyhow::bail!(
+                "controller action id was reused with a different Task deployment expiry"
+            );
+        }
+        return Ok(existing.claim.valid_until);
+    }
+    Ok(requested.unwrap_or(default))
+}
+
+fn canonical_task_deploy_primary_config(
+    config_path: &Path,
+    working_directory: &Path,
+) -> anyhow::Result<PathBuf> {
+    let candidate = if config_path.is_absolute() {
+        config_path.to_path_buf()
+    } else {
+        working_directory.join(config_path)
+    };
+    fs::canonicalize(candidate).context("canonicalize primary Task deployment RPC config")
+}
+
+fn validate_task_deploy_quorum_configs(
+    config_path: &str,
+    quorum_configs: &[String],
+    max_transactions: u32,
+) -> anyhow::Result<()> {
+    if quorum_configs.len() < 2 || max_transactions == 0 || max_transactions > 10_000 {
+        anyhow::bail!(
+            "Task deployment requires two additional RPC configs and max_transactions between 1 and 10000"
+        );
+    }
+    let mut paths = Vec::with_capacity(quorum_configs.len() + 1);
+    paths.push(PathBuf::from(config_path));
+    paths.extend(quorum_configs.iter().map(PathBuf::from));
+    let mut endpoints = BTreeSet::new();
+    for path in paths {
+        if !path.is_absolute() {
+            anyhow::bail!("every Task deployment RPC config must be absolute");
+        }
+        let bytes = fs::read(&path).context("read Task deployment RPC config")?;
+        let config = AppConfig::load_bytes(
+            &bytes,
+            config_format_from_path(&path)?,
+            "Task deployment RPC config",
+        )?;
+        let configured = config.chain_rpc.endpoints();
+        if configured.len() != 1 {
+            anyhow::bail!("every Task deployment RPC config must name one RPC endpoint");
+        }
+        let (_, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+        if !endpoints.insert(display_origin) {
+            anyhow::bail!("Task deployment quorum RPC endpoints must be distinct");
+        }
+    }
+    Ok(())
+}
+
+async fn verify_task_deploy_quorum_network(
+    config_path: &str,
+    quorum_configs: &[String],
+    expected: &RelayNetworkDomainPin,
+) -> anyhow::Result<()> {
+    let mut paths = Vec::with_capacity(quorum_configs.len() + 1);
+    paths.push(PathBuf::from(config_path));
+    paths.extend(quorum_configs.iter().map(PathBuf::from));
+    for path in paths {
+        let bytes = fs::read(&path).context("read Task deployment RPC config")?;
+        let config = AppConfig::load_bytes(
+            &bytes,
+            config_format_from_path(&path)?,
+            "Task deployment RPC config",
+        )?;
+        try_create_rpc_client(&config).await?.verify_pinned_primary_network(expected).await?;
+    }
+    Ok(())
+}
+
 impl AgentTaskCreateCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let amount_nanotos =
             resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.2))?;
         let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
-        let creator = self.creator.parse::<MsgAddressInt>().context("invalid creator address")?;
+        let path = Path::new(config_path);
+        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
+        let agent_account = self
+            .via_agent_account
+            .as_ref()
+            .map(|profile| {
+                config
+                    .agent_wallets
+                    .get(profile)
+                    .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", profile))?
+                    .agent_account_address
+                    .as_ref()
+                    .context("Agent Account is not deployed for this wallet")?
+                    .parse::<MsgAddressInt>()
+                    .context("invalid persisted Agent Account address")
+            })
+            .transpose()?;
+        let deployment_workchain =
+            task_deployment_workchain(self.workchain, agent_account.as_ref())?;
+        let creator = match (&self.creator, &agent_account) {
+            (Some(value), Some(account)) => {
+                let creator = value.parse::<MsgAddressInt>().context("invalid creator address")?;
+                if &creator != account {
+                    anyhow::bail!("creator address must match funding Agent Account address");
+                }
+                creator
+            }
+            (None, Some(account)) => account.clone(),
+            (Some(value), None) => {
+                value.parse::<MsgAddressInt>().context("invalid creator address")?
+            }
+            (None, None) => anyhow::bail!("--creator is required with --from"),
+        };
         let agent =
             self.agent.as_deref().map(str::parse).transpose().context("invalid agent address")?;
         let verifier = self
@@ -2178,8 +2511,8 @@ impl AgentTaskCreateCmd {
             .map(str::parse)
             .transpose()
             .context("invalid verifier address")?;
-        let policy_hash =
-            parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?.unwrap();
+        let policy_hash = parse_optional_hash("policy-hash", &Some(self.policy_hash.clone()))?
+            .context("policy-hash is required")?;
         if let Some(permission_id) = &self.permission_id {
             validate_non_empty("permission-id", permission_id)?;
         }
@@ -2187,8 +2520,6 @@ impl AgentTaskCreateCmd {
             Some(value) => value,
             None => permission_id_hash(self.permission_id.as_deref()),
         };
-        let path = Path::new(config_path);
-        let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let attestor_pubkey =
             resolve_attestor_pubkey(&self.attestor_pubkey, &self.signer_vault_key, vault.clone())
                 .await?;
@@ -2203,7 +2534,7 @@ impl AgentTaskCreateCmd {
             permission_hash,
             attestor_pubkey,
         };
-        let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
+        let address = TaskEscrowContract::calculate_address(deployment_workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
@@ -2230,8 +2561,300 @@ impl AgentTaskCreateCmd {
                 existing_name
             );
         }
-        let payer_cfg =
-            get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
+
+        if let (Some(profile), Some(account)) = (&self.via_agent_account, agent_account) {
+            if self.quorum_configs.len() < 2 {
+                anyhow::bail!(
+                    "--via-agent-account requires at least two --quorum-config values before any deployment side effect"
+                );
+            }
+            let action_id = self.controller_action_id.as_deref().context(
+                "--controller-action-id is required for crash-safe Agent Account deployment",
+            )?;
+            validate_controller_action_id(action_id)?;
+            let working_directory =
+                std::env::current_dir().context("read current working directory")?;
+            let primary_path = canonical_task_deploy_primary_config(path, &working_directory)?;
+            let primary_config_path = primary_path
+                .to_str()
+                .context("primary Task deployment RPC config path is not valid UTF-8")?;
+            validate_task_deploy_quorum_configs(
+                primary_config_path,
+                &self.quorum_configs,
+                self.max_transactions,
+            )?;
+            let body = BuilderData::new().into_cell()?;
+            let body_hash = agent_account_task_body_hash(&body);
+            let state_cell = state_init.clone().write_to_new_cell()?.into_cell()?;
+            let state_init_hash = agent_account_task_body_hash(&state_cell);
+            let journal = open_controller_journal(&primary_path)?;
+            let existing_action = journal.find_action_by_idempotency_key(action_id)?;
+            if let Some(existing) = &existing_action {
+                if existing.claim.account != account.to_string()
+                    || existing.claim.target != address.to_string()
+                    || existing.claim.value_atomic != amount_nanotos
+                    || existing.claim.body_hash.as_deref() != Some(body_hash.as_str())
+                    || existing.claim.state_init_hash.as_deref() != Some(state_init_hash.as_str())
+                    || existing.claim.action_kind != "agent-deploy-send"
+                {
+                    anyhow::bail!(
+                        "controller action id was reused for different Task deployment semantics"
+                    );
+                }
+                // Expiry is part of the idempotency contract and must be
+                // checked before every status-specific retry path.
+                task_deploy_valid_until(
+                    self.valid_until,
+                    Some(existing),
+                    existing.claim.valid_until,
+                )?;
+                if existing.status == ControllerActionStatus::Resolved {
+                    return resolve_agent_account_task_deployment(
+                        primary_config_path,
+                        profile,
+                        action_id,
+                        &record_name,
+                        &init,
+                        self.permission_id.as_deref(),
+                        &self.quorum_configs,
+                        self.max_transactions,
+                        self.format.clone(),
+                    )
+                    .await;
+                }
+                if matches!(
+                    existing.status,
+                    ControllerActionStatus::Signed | ControllerActionStatus::Broadcasting
+                ) {
+                    let network_domain =
+                        existing.claim.network_domain.as_ref().context(
+                            "Task deployment custody claim has no full network-domain pin",
+                        )?;
+                    verify_task_deploy_quorum_network(
+                        primary_config_path,
+                        &self.quorum_configs,
+                        network_domain,
+                    )
+                    .await?;
+                    // This transition is durable before the socket write. A
+                    // retry is allowed to replay only these exact bytes.
+                    let boc = begin_or_resume_task_deploy_broadcast(
+                        &journal,
+                        existing,
+                        time_format::now(),
+                    )?;
+                    if let Err(error) =
+                        rpc_client.submit_exact_boc_pinned(&boc, network_domain).await
+                    {
+                        // A transport error cannot prove non-submission. Keep
+                        // resolving the already-ambiguous exact action.
+                        eprintln!("Task deployment rebroadcast was inconclusive: {error}");
+                    }
+                    return resolve_agent_account_task_deployment(
+                        primary_config_path,
+                        profile,
+                        action_id,
+                        &record_name,
+                        &init,
+                        self.permission_id.as_deref(),
+                        &self.quorum_configs,
+                        self.max_transactions,
+                        self.format.clone(),
+                    )
+                    .await;
+                }
+            }
+
+            let profile_config = config
+                .agent_wallets
+                .get(profile)
+                .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", profile))?;
+            let provider = contracts::contract_provider!(rpc_client.clone());
+            let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+            let account_info = rpc_client.get_address_information(&account).await?;
+            let deployed_code = account_info.code.as_ref().context("Agent Account has no code")?;
+            if account_info.state != AccountState::Active
+                || read_single_root_boc(deployed_code)?.hash(0)
+                    != AgentAccountContract::code()?.hash(0)
+            {
+                anyhow::bail!("Agent Account is inactive or uses an unsupported code version");
+            }
+            let master = rpc_client.get_masterchain_info().await?;
+            let zero_state = master.init.context("primary RPC omitted the zero-state identity")?;
+            let header = rpc_client
+                .get_block_header(
+                    master.last.workchain,
+                    &master.last.shard.to_string(),
+                    master.last.seqno,
+                )
+                .await?;
+            if header.gen_utime == 0 {
+                anyhow::bail!("latest masterchain block has no generation time");
+            }
+            let chain_now = u64::from(header.gen_utime);
+            let default_valid_until = header
+                .gen_utime
+                .checked_add(300)
+                .context("default controller expiry overflowed")?;
+            let valid_until = task_deploy_valid_until(
+                self.valid_until,
+                existing_action.as_ref(),
+                default_valid_until,
+            )?;
+            let secret = profile_config.controller_key.read_secret(Some(vault)).await?;
+            let keypair = secret.as_keypair()?;
+            let controller_pubkey: [u8; 32] = keypair
+                .public_key()
+                .await?
+                .context("controller secret has no public key")?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+            if controller_pubkey != data.controller_pubkey {
+                anyhow::bail!("configured controller key does not match the Agent Account");
+            }
+            let global_id = match rpc_client.get_config_param(19).await? {
+                ConfigParamEnum::ConfigParam19(value) => value as i32,
+                _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+            };
+            let network_domain = RelayNetworkDomainPin {
+                network_id: format!("tos:global-id:{global_id}"),
+                global_id,
+                zero_state_root_hash: format!("sha256:{}", hex::encode(&zero_state.root_hash)),
+                zero_state_file_hash: format!("sha256:{}", hex::encode(&zero_state.file_hash)),
+                workchain_id: account.workchain_id(),
+            };
+            verify_task_deploy_quorum_network(
+                primary_config_path,
+                &self.quorum_configs,
+                &network_domain,
+            )
+            .await?;
+            let payload = AgentAccountContract::build_deploy_send_payload(
+                global_id,
+                data.controller_epoch,
+                data.seqno,
+                valid_until,
+                &AgentDeploySend {
+                    target: address.clone(),
+                    value: amount_nanotos,
+                    state_init,
+                    body: body.clone(),
+                },
+            )?;
+            let unsigned_signed =
+                AgentAccountContract::build_signed_controller_message(payload.clone(), &[0; 64])?;
+            let unsigned_external = AgentAccountContract::build_external_controller_message(
+                account.clone(),
+                unsigned_signed,
+            )?;
+            let fee_schedule = load_agent_deploy_fee_schedule(&rpc_client, &account).await?;
+            let fee_reserve =
+                agent_deploy_fee_reserve(&state_cell, &body, &unsigned_external, &fee_schedule)?;
+            validate_agent_account_task_create_funding(
+                &account,
+                &creator,
+                &data,
+                account_info.balance,
+                amount_nanotos,
+                fee_reserve,
+                chain_now,
+                valid_until,
+            )?;
+            let hash_to_sign =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let mut identity = Sha256::new();
+            identity.update(b"tos.agent-account.controller-deploy-action.v1\0");
+            for value in [
+                action_id.as_bytes(),
+                account.to_string().as_bytes(),
+                address.to_string().as_bytes(),
+                body_hash.as_bytes(),
+                state_init_hash.as_bytes(),
+            ] {
+                identity.update((value.len() as u64).to_be_bytes());
+                identity.update(value);
+            }
+            identity.update(global_id.to_be_bytes());
+            identity.update(amount_nanotos.to_be_bytes());
+            identity.update(valid_until.to_be_bytes());
+            let claim = ControllerActionClaim {
+                account: account.to_string(),
+                network_global_id: global_id,
+                network_domain: Some(network_domain.clone()),
+                deployment_id: hex::encode(data.deployment_id),
+                controller_epoch: data.controller_epoch,
+                seqno: data.seqno,
+                target: address.to_string(),
+                value_atomic: amount_nanotos,
+                body_hash: Some(body_hash),
+                state_init_hash: Some(state_init_hash),
+                action_kind: "agent-deploy-send".to_owned(),
+                idempotency_key: action_id.to_owned(),
+                action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
+                valid_until,
+            };
+            if !self.yes
+                && !confirm(&format!(
+                    "Deploy Task Escrow {} from Agent Account {} for {}?",
+                    address,
+                    account,
+                    display_tos(amount_nanotos)
+                ))?
+            {
+                return Ok(());
+            }
+            journal.reconcile_finalized_state(
+                &claim.account,
+                global_id,
+                &claim.deployment_id,
+                data.controller_epoch,
+                data.seqno,
+                time_format::now(),
+            )?;
+            let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
+            let record = if record.exact_signed_boc_base64.is_some() {
+                record
+            } else {
+                let signature: [u8; 64] = keypair
+                    .sign(&hash_to_sign)
+                    .await?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+                let signed =
+                    AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+                let message = AgentAccountContract::build_external_controller_message(
+                    account.clone(),
+                    signed,
+                )?;
+                let boc = write_boc(&message)?;
+                let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+                journal.attach_signed_boc(
+                    &claim,
+                    &base64::engine::general_purpose::STANDARD.encode(&boc),
+                    &digest,
+                    time_format::now(),
+                )?
+            };
+            let boc = begin_or_resume_task_deploy_broadcast(&journal, &record, time_format::now())?;
+            if let Err(error) = rpc_client.submit_exact_boc_pinned(&boc, &network_domain).await {
+                eprintln!("Task deployment broadcast was inconclusive: {error}");
+            }
+            return resolve_agent_account_task_deployment(
+                primary_config_path,
+                profile,
+                action_id,
+                &record_name,
+                &init,
+                self.permission_id.as_deref(),
+                &self.quorum_configs,
+                self.max_transactions,
+                self.format.clone(),
+            )
+            .await;
+        }
+
+        let from = self.from.as_deref().context("--from is required")?;
+        let payer_cfg = get_wallet_config(from, &config.wallets, config.master_wallet.as_ref())?;
         let (payer_address, payer_info, payer_secret) =
             wallet_info(rpc_client.clone(), payer_cfg, vault).await?;
         if payer_address != creator {
@@ -2240,13 +2863,16 @@ impl AgentTaskCreateCmd {
         if payer_info.account_state != AccountState::Active {
             anyhow::bail!("funding wallet is not active");
         }
-        if payer_info.balance < amount_nanotos.saturating_add(AGENT_ACCOUNT_DEPLOY_GAS) {
+        let required_balance = amount_nanotos
+            .checked_add(AGENT_ACCOUNT_DEPLOY_GAS)
+            .context("funding amount plus deploy gas overflowed")?;
+        if payer_info.balance < required_balance {
             anyhow::bail!("funding wallet has insufficient balance");
         }
         if !self.yes && !confirm("Confirm Task Escrow deployment?")? {
             return Ok(());
         }
-        let wallet = make_wallet(rpc_client.clone(), payer_cfg, payer_secret, &self.from).await?;
+        let wallet = make_wallet(rpc_client.clone(), payer_cfg, payer_secret, from).await?;
         let body = BuilderData::new().into_cell()?;
         send_wallet_message_with_state_init(
             &wallet,
@@ -2297,6 +2923,288 @@ impl AgentTaskCreateCmd {
             );
         }
         Ok(())
+    }
+}
+
+const TASK_DEPLOY_FINALIZED_SCHEMA: &str = "tos.agent-account.task-deploy-finalized.v1";
+
+fn persist_finalized_agent_task(
+    config_path: &str,
+    record_name: &str,
+    init: &TaskEscrowInit,
+    address: &MsgAddressInt,
+    permission_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let path = Path::new(config_path);
+    let mut config = AppConfig::load(path)?;
+    let created_at = config
+        .agent_tasks
+        .get(record_name)
+        .and_then(|existing| existing.created_at)
+        .unwrap_or_else(time_format::now);
+    if let Some((existing_name, _)) = config
+        .agent_tasks
+        .iter()
+        .find(|(name, task)| *name != record_name && task.address == address.to_string())
+    {
+        anyhow::bail!("Task Escrow address {} is already tracked as '{}'", address, existing_name);
+    }
+    let task = AgentTaskConfig {
+        address: address.to_string(),
+        creator: init.creator.to_string(),
+        assigned_agent: init.assigned_agent.as_ref().map(ToString::to_string),
+        verifier: init.verifier.as_ref().map(ToString::to_string),
+        permission_id: permission_id.map(ToOwned::to_owned),
+        budget: init.budget,
+        deadline: init.deadline,
+        review_period: init.review_period,
+        policy_hash: hex::encode(init.settlement_policy_hash),
+        attestor_pubkey: init.attestor_pubkey.map(hex::encode),
+        created_at: Some(created_at),
+    };
+    if let Some(existing) = config.agent_tasks.get(record_name) {
+        if existing != &task {
+            anyhow::bail!("Task record '{}' conflicts with the finalized deployment", record_name);
+        }
+        return Ok(());
+    }
+    config.agent_tasks.insert(record_name.to_owned(), task);
+    save_config(&config, path)
+}
+
+fn validate_task_deploy_resolution_record(
+    record: &contracts::ControllerActionRecord,
+    account: &MsgAddressInt,
+    address: &MsgAddressInt,
+    state_init_hash: &str,
+    body_hash: &str,
+) -> anyhow::Result<RelayNetworkDomainPin> {
+    if record.claim.action_kind != "agent-deploy-send"
+        || record.claim.account != account.to_string()
+        || record.claim.target != address.to_string()
+        || record.claim.value_atomic == 0
+        || record.claim.state_init_hash.as_deref() != Some(state_init_hash)
+        || record.claim.body_hash.as_deref() != Some(body_hash)
+    {
+        anyhow::bail!("Task deployment custody claim has different semantics");
+    }
+    record.claim.network_domain.clone().context("Task deployment has no full network-domain pin")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_agent_account_task_deployment(
+    config_path: &str,
+    wallet: &str,
+    action_id: &str,
+    record_name: &str,
+    init: &TaskEscrowInit,
+    permission_id: Option<&str>,
+    quorum_configs: &[String],
+    max_transactions: u32,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    if quorum_configs.len() < 2 || max_transactions == 0 || max_transactions > 10_000 {
+        anyhow::bail!(
+            "Agent Account Task deployment resolution requires two additional RPC configs and a bounded transaction history"
+        );
+    }
+    let primary_path = Path::new(config_path);
+    if !primary_path.is_absolute() {
+        anyhow::bail!("primary config must be absolute for Task deployment resolution");
+    }
+    let primary = AppConfig::load(primary_path)?;
+    let account = primary
+        .agent_wallets
+        .get(wallet)
+        .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", wallet))?
+        .agent_account_address
+        .as_ref()
+        .context("Agent Account is not deployed for this wallet")?
+        .parse::<MsgAddressInt>()?;
+    let state_init = TaskEscrowContract::build_state_init(init)?;
+    let state_cell = state_init.clone().write_to_new_cell()?.into_cell()?;
+    let state_init_hash = agent_account_task_body_hash(&state_cell);
+    let body_hash = agent_account_task_body_hash(&BuilderData::new().into_cell()?);
+    let expected_code_hash =
+        state_init.code.as_ref().context("Task StateInit has no code")?.hash(0);
+    let expected_data_hash =
+        state_init.data.as_ref().context("Task StateInit has no data")?.hash(0);
+    let journal = open_controller_journal(primary_path)?;
+    let record = journal.action_by_idempotency_key(action_id)?;
+    let address = record
+        .claim
+        .target
+        .parse::<MsgAddressInt>()
+        .context("Task deployment claim has an invalid destination")?;
+    if TaskEscrowContract::calculate_address(address.workchain_id(), init)? != address {
+        anyhow::bail!("Task deployment destination is not derived from the requested StateInit");
+    }
+    let expected_network = validate_task_deploy_resolution_record(
+        &record,
+        &account,
+        &address,
+        &state_init_hash,
+        &body_hash,
+    )?;
+    if record.status == ControllerActionStatus::Resolved {
+        let resolution = record
+            .exact_winner_resolution
+            .as_ref()
+            .context("resolved Task deployment has no replayable quorum evidence")?;
+        let address_text = address.to_string();
+        if resolution.evidence_kind != TASK_DEPLOY_FINALIZED_SCHEMA
+            || resolution.evidence.get("task_address").and_then(serde_json::Value::as_str)
+                != Some(address_text.as_str())
+            || resolution.evidence.get("state_init_hash").and_then(serde_json::Value::as_str)
+                != Some(state_init_hash.as_str())
+        {
+            anyhow::bail!("stored Task deployment evidence conflicts with this Task");
+        }
+        persist_finalized_agent_task(config_path, record_name, init, &address, permission_id)?;
+        println!("{}", resolution.evidence);
+        return Ok(());
+    }
+    if record.status != ControllerActionStatus::Broadcasting {
+        anyhow::bail!("only an ambiguously broadcast Task deployment may be resolved");
+    }
+
+    let mut paths = vec![primary_path.to_path_buf()];
+    paths.extend(quorum_configs.iter().map(PathBuf::from));
+    let mut endpoints = BTreeSet::new();
+    let mut members = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !path.is_absolute() {
+            anyhow::bail!("every Task deployment quorum config must be absolute");
+        }
+        let bytes = fs::read(&path).context("read Task deployment quorum config")?;
+        let config = AppConfig::load_bytes(
+            &bytes,
+            config_format_from_path(&path)?,
+            "Task deployment quorum config",
+        )?;
+        let configured = config.chain_rpc.endpoints();
+        if configured.len() != 1 {
+            anyhow::bail!("every Task deployment quorum config must name one RPC endpoint");
+        }
+        let (endpoint, display_origin) = canonicalize_chain_rpc_endpoint(&configured[0])?;
+        if !endpoints.insert(display_origin.clone()) {
+            anyhow::bail!("Task deployment quorum RPC endpoints must be distinct");
+        }
+        members.push((
+            config,
+            endpoint.clone(),
+            display_origin,
+            rpc_locator_identity_digest(&endpoint)?,
+        ));
+    }
+    let threshold = members.len() / 2 + 1;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    type DeploymentVote = (FinalizedEconomicPaymentObservation, u64, u32);
+    loop {
+        let mut votes: BTreeMap<String, Vec<DeploymentVote>> = BTreeMap::new();
+        for (config, _endpoint, display_origin, locator_identity_digest) in &members {
+            let Ok(observed) = observe_finalized_economic_payment(
+                config,
+                display_origin.clone(),
+                locator_identity_digest.clone(),
+                &expected_network,
+                &account,
+                &record,
+                max_transactions,
+            )
+            .await
+            else {
+                continue;
+            };
+            let member_result: anyhow::Result<AgentAccountData> = async {
+                let rpc = try_create_rpc_client(config).await?;
+                let info = rpc.get_address_information(&address).await?;
+                let code = info.code.as_ref().context("deployed Task has no code")?;
+                if info.state != AccountState::Active
+                    || read_single_root_boc(code)?.hash(0) != expected_code_hash
+                {
+                    anyhow::bail!("deployed Task does not run the signed StateInit code");
+                }
+                let provider = contracts::contract_provider!(rpc);
+                AgentAccountContract::get_data(provider.as_ref(), &account).await
+            }
+            .await;
+            let Ok(agent) = member_result else { continue };
+            if hex::encode(agent.deployment_id) != record.claim.deployment_id
+                || (agent.controller_epoch, agent.seqno)
+                    <= (record.claim.controller_epoch, record.claim.seqno)
+            {
+                continue;
+            }
+            let observation = observed.observation;
+            let key = format!(
+                "{}:{}:{}:{}:{}",
+                observation.quorum_key(),
+                hex::encode(&expected_code_hash),
+                hex::encode(&expected_data_hash),
+                agent.controller_epoch,
+                agent.seqno
+            );
+            votes.entry(key).or_default().push((observation, agent.controller_epoch, agent.seqno));
+        }
+        if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {
+            let output = serde_json::json!({
+                "schema": TASK_DEPLOY_FINALIZED_SCHEMA,
+                "wallet": wallet,
+                "action_id": action_id,
+                "source_account": account.to_string(),
+                "task_address": address.to_string(),
+                "state_init_hash": state_init_hash,
+                "code_hash": format!("tvm-cell-sha256:{}", hex::encode(&expected_code_hash)),
+                "data_hash": format!("tvm-cell-sha256:{}", hex::encode(&expected_data_hash)),
+                "creator": init.creator.to_string(),
+                "budget_nanotos": init.budget,
+                "network_domain": expected_network,
+                "quorum": {"members": members.len(), "threshold": threshold, "agreeing": winner.len()},
+                "transaction": &winner[0].0,
+                "state": "resolved"
+            });
+            let resolution = ControllerActionResolutionEvidence {
+                evidence_kind: TASK_DEPLOY_FINALIZED_SCHEMA.to_owned(),
+                evidence_digest: controller_resolution_evidence_digest(
+                    TASK_DEPLOY_FINALIZED_SCHEMA,
+                    &output,
+                )?,
+                evidence: output.clone(),
+            };
+            let boc_digest = record
+                .exact_signed_boc_digest
+                .as_deref()
+                .context("Task deployment custody record has no signed BOC digest")?;
+            journal.resolve_exact_winner(
+                &record.claim,
+                boc_digest,
+                winner[0].1,
+                winner[0].2,
+                resolution,
+                time_format::now(),
+            )?;
+            persist_finalized_agent_task(config_path, record_name, init, &address, permission_id)?;
+            if format == OutputFormat::Json {
+                println!("{}", output);
+            } else {
+                println!(
+                    "{} Task Escrow '{}' deployed at {} with {}/{} RPC agreement",
+                    "OK".green().bold(),
+                    record_name,
+                    address,
+                    winner.len(),
+                    members.len()
+                );
+            }
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "Task deployment could not obtain a strict-majority exact transaction resolution"
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -3147,6 +4055,7 @@ impl AgentAccountTaskSendCmd {
             target: target.to_string(),
             value_atomic: value,
             body_hash: Some(action_body_identity),
+            state_init_hash: None,
             action_kind: "agent-task-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -3812,6 +4721,7 @@ impl AgentAccountNativePrepareCmd {
             target: target.to_string(),
             value_atomic: self.amount_nanotos,
             body_hash: None,
+            state_init_hash: None,
             action_kind: "agent-native-send".to_owned(),
             idempotency_key: self.action_id.clone(),
             action_identity: format!("sha256:{}", hex::encode(identity.finalize())),
@@ -4237,6 +5147,7 @@ impl AgentAccountEconomicPaymentPrepareCmd {
             target: target.to_string(),
             value_atomic: self.amount_nanotos,
             body_hash: sponsorship_body_hash.clone(),
+            state_init_hash: None,
             action_kind: if sponsorship_commitment.is_some() {
                 "agent-task-send".to_owned()
             } else {
@@ -4493,6 +5404,7 @@ impl AgentAccountEconomicEffectPrepareCmd {
             target: target.to_string(),
             value_atomic: self.amount_nanotos,
             body_hash: Some(body_hash.clone()),
+            state_init_hash: None,
             action_kind: "agent-task-send".to_owned(),
             idempotency_key: stable_hex,
             action_identity: authorization.stable_action_id.clone(),
@@ -4917,6 +5829,7 @@ fn finalized_output_matches_claim(
     target: &MsgAddressInt,
     expected_value: &chain_block::CurrencyCollection,
     expected_body_hash: Option<&str>,
+    expected_state_init_hash: Option<&str>,
 ) -> anyhow::Result<Option<(String, Option<String>)>> {
     if message.dst().as_ref() != Some(target) || message.value() != Some(expected_value) {
         return Ok(None);
@@ -4933,6 +5846,20 @@ fn finalized_output_matches_claim(
     if expected_body_hash.is_some_and(|expected| body_hash.as_deref() != Some(expected)) {
         return Ok(None);
     }
+    let state_init_hash = message
+        .state_init()
+        .map(|state_init| {
+            state_init
+                .write_to_new_cell()
+                .and_then(BuilderData::into_cell)
+                .map(|cell| agent_account_task_body_hash(&cell))
+        })
+        .transpose()?;
+    if expected_state_init_hash.is_some_and(|expected| state_init_hash.as_deref() != Some(expected))
+        || (expected_state_init_hash.is_none() && state_init_hash.is_some())
+    {
+        return Ok(None);
+    }
     let message_hash = format!("tvm-cell-sha256:{}", hex::encode(message.serialize()?.hash(0)));
     Ok(Some((message_hash, body_hash)))
 }
@@ -4942,15 +5869,20 @@ fn select_exact_finalized_output(
     target: &MsgAddressInt,
     expected_value: &chain_block::CurrencyCollection,
     expected_body_hash: Option<&str>,
+    expected_state_init_hash: Option<&str>,
 ) -> anyhow::Result<(String, Option<String>)> {
     let mut target_value_candidates = 0usize;
     let mut exact = Vec::new();
     for message in messages {
         if message.dst().as_ref() == Some(target) && message.value() == Some(expected_value) {
             target_value_candidates += 1;
-            if let Some(identity) =
-                finalized_output_matches_claim(message, target, expected_value, expected_body_hash)?
-            {
+            if let Some(identity) = finalized_output_matches_claim(
+                message,
+                target,
+                expected_value,
+                expected_body_hash,
+                expected_state_init_hash,
+            )? {
                 exact.push(identity);
             }
         }
@@ -5029,6 +5961,7 @@ async fn observe_finalized_economic_payment(
                 &target,
                 &expected_value,
                 record.claim.body_hash.as_deref(),
+                record.claim.state_init_hash.as_deref(),
             )?;
             let block = raw.block_id.context("finalized transaction has no block identity")?;
             let master = rpc_client.get_masterchain_info().await?;
@@ -9960,16 +10893,17 @@ fn print_table_summary(view: &AgentWalletView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAccountAction, AgentTaskOperation, ControllerTaskActionContext,
-        ECONOMIC_PAYMENT_CORROBORATION_SCHEMA, ECONOMIC_PAYMENT_FINALIZED_SCHEMA,
-        ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
+        AgentAccountAction, AgentDeployFeeSchedule, AgentTaskAction, AgentTaskOperation,
+        ControllerTaskActionContext, ECONOMIC_PAYMENT_CORROBORATION_SCHEMA,
+        ECONOMIC_PAYMENT_FINALIZED_SCHEMA, ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
         ECONOMIC_PAYMENT_SPONSORSHIP_PROOF_VERIFICATION_SCHEMA, FinalizedEconomicPaymentMatch,
         FinalizedEconomicPaymentObservation, FinalizedTaskSendObservation,
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
         SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, SponsorshipAgreementPaymentRequestV3,
-        SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, canonical_file_digest,
-        canonicalize_chain_rpc_endpoint, chain_query_failure_diagnostic,
-        corroboration_snapshot_handle, decode_exact_protocol_cbor,
+        SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, agent_deploy_fee_reserve,
+        begin_or_resume_task_deploy_broadcast, canonical_file_digest,
+        canonical_task_deploy_primary_config, canonicalize_chain_rpc_endpoint,
+        chain_query_failure_diagnostic, corroboration_snapshot_handle, decode_exact_protocol_cbor,
         economic_payment_corroboration_profile, encode_protocol_json_cbor,
         exact_protocol_action_request_digest, exact_transaction_utime,
         finalized_output_matches_claim, freeze_economic_payment_corroboration_snapshot,
@@ -9978,26 +10912,31 @@ mod tests {
         relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
         rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
-        validate_controller_task_action, validate_destination_credit_semantics,
-        validate_exact_sponsorship_top_up_boc, validate_release_profile_rpc_locator,
-        validate_sponsorship_custody_evidence_context, validate_sponsorship_finality_profile,
-        validate_sponsorship_payment_request, validate_task_send_resolution_claim,
-        validate_task_send_resolution_evidence, verify_current_controller_authorization,
-        verify_parsed_controller_authorization, write_private_snapshot_file,
+        task_deploy_valid_until, task_deployment_workchain,
+        validate_agent_account_task_create_funding, validate_controller_task_action,
+        validate_destination_credit_semantics, validate_exact_sponsorship_top_up_boc,
+        validate_release_profile_rpc_locator, validate_sponsorship_custody_evidence_context,
+        validate_sponsorship_finality_profile, validate_sponsorship_payment_request,
+        validate_task_send_resolution_claim, validate_task_send_resolution_evidence,
+        verify_current_controller_authorization, verify_parsed_controller_authorization,
+        write_private_snapshot_file,
     };
     use base64::Engine;
     use chain_block::{
-        BuilderData, CurrencyCollection, InternalMessageHeader, Message, MsgAddressInt, SliceData,
-        TrCreditPhase, TransactionDescrOrdinary, read_single_root_boc, write_boc,
+        BuilderData, Cell, CurrencyCollection, InternalMessageHeader, Message, MsgAddressInt,
+        Serializable, SliceData, StateInit, TrCreditPhase, TransactionDescrOrdinary,
+        read_single_root_boc, write_boc,
     };
     use chain_rpc_client::v2::data_models::RelayNetworkDomainPin;
     use common::app_config::AppConfig;
     use contracts::{
-        AgentAccountContract, AgentAccountData, ControllerActionClaim, ControllerActionRecord,
-        ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
-        TaskEscrowData, agent_account_task_body_hash, controller_resolution_evidence_digest,
+        AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentDeploySend,
+        ControllerActionClaim, ControllerActionRecord, ControllerActionResolutionEvidence,
+        ControllerActionStatus, EconomicActionAuthorization, TaskEscrowData,
+        agent_account_task_body_hash, controller_resolution_evidence_digest,
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
     use std::{
         collections::BTreeMap,
         fs,
@@ -10011,6 +10950,12 @@ mod tests {
     struct AccountActionParser {
         #[command(subcommand)]
         action: AgentAccountAction,
+    }
+
+    #[derive(clap::Parser)]
+    struct TaskActionParser {
+        #[command(subcommand)]
+        action: AgentTaskAction,
     }
 
     struct TemporaryDirectory(PathBuf);
@@ -10110,6 +11055,7 @@ mod tests {
                 target: masterchain_address(4).to_string(),
                 value_atomic: 5_000_000_000,
                 body_hash: Some(format!("tvm-cell-sha256:{}", "5".repeat(64))),
+                state_init_hash: None,
                 action_kind: "agent-task-send".into(),
                 idempotency_key: "6".repeat(64),
                 action_identity: format!("sha256:{}", "7".repeat(64)),
@@ -10279,6 +11225,329 @@ mod tests {
         assert_eq!(resolve_payout_nanotos(None, Some(0)).unwrap(), 0);
         assert!(resolve_payout_nanotos(Some(0.0), None).is_err());
         assert!(resolve_nanotos("amount", None, Some(0), None).is_err());
+    }
+
+    #[test]
+    fn task_create_cli_requires_crash_safe_agent_account_inputs() {
+        use clap::Parser;
+
+        let action_id = "a".repeat(64);
+        let policy_hash = "b".repeat(64);
+        assert!(
+            TaskActionParser::try_parse_from([
+                "agent-task",
+                "create",
+                &format!("--creator={}", masterchain_address(1)),
+                "--from=master_wallet",
+                "--budget-nanotos=100000000",
+                "--deadline=2000000000",
+                &format!("--policy-hash={policy_hash}"),
+            ])
+            .is_ok(),
+            "the existing ordinary-wallet create interface must remain valid"
+        );
+        assert!(
+            TaskActionParser::try_parse_from([
+                "agent-task",
+                "create",
+                "--from=master_wallet",
+                "--budget-nanotos=100000000",
+                "--deadline=2000000000",
+                &format!("--policy-hash={policy_hash}"),
+            ])
+            .is_err(),
+            "ordinary-wallet creation must still require an explicit creator"
+        );
+        let valid = TaskActionParser::try_parse_from([
+            "agent-task",
+            "create",
+            "--via-agent-account=pilot-0-v3",
+            "--budget-nanotos=100000000",
+            "--deadline=2000000000",
+            &format!("--policy-hash={policy_hash}"),
+            &format!("--controller-action-id={action_id}"),
+            "--quorum-config",
+            "/private/node-2.json",
+            "/private/node-3.json",
+        ])
+        .unwrap();
+        match valid.action {
+            AgentTaskAction::Create(command) => {
+                assert_eq!(command.via_agent_account.as_deref(), Some("pilot-0-v3"));
+                assert!(command.creator.is_none());
+                assert!(command.from.is_none());
+                assert_eq!(command.controller_action_id.as_deref(), Some(action_id.as_str()));
+                assert_eq!(command.quorum_configs.len(), 2);
+                assert!(command.workchain.is_none());
+            }
+            _ => panic!("Agent Account Task creation parsed as another command"),
+        }
+
+        for missing in ["controller", "quorum"] {
+            let mut arguments = vec![
+                "agent-task".to_owned(),
+                "create".to_owned(),
+                "--via-agent-account=pilot-0-v3".to_owned(),
+                "--budget-nanotos=100000000".to_owned(),
+                "--deadline=2000000000".to_owned(),
+                format!("--policy-hash={policy_hash}"),
+            ];
+            if missing != "controller" {
+                arguments.push(format!("--controller-action-id={action_id}"));
+            }
+            if missing != "quorum" {
+                arguments.extend([
+                    "--quorum-config".to_owned(),
+                    "/private/node-2.json".to_owned(),
+                    "/private/node-3.json".to_owned(),
+                ]);
+            }
+            assert!(TaskActionParser::try_parse_from(arguments).is_err());
+        }
+
+        assert!(
+            TaskActionParser::try_parse_from([
+                "agent-task",
+                "create",
+                "--from=master_wallet",
+                "--via-agent-account=pilot-0-v3",
+                &format!("--creator={}", masterchain_address(1)),
+                "--budget-nanotos=100000000",
+                "--deadline=2000000000",
+                &format!("--policy-hash={policy_hash}"),
+                &format!("--controller-action-id={action_id}"),
+                "--quorum-config",
+                "/private/node-2.json",
+                "/private/node-3.json",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn task_create_agent_account_funding_gate_enforces_creator_balance_and_policy() {
+        let account = masterchain_address(1);
+        let other = masterchain_address(2);
+        let mut data = task_send_account_data(0, 0);
+        data.spend_day = 20_000;
+        data.spent_today = 4_000_000_000;
+        data.max_per_tx = 5_000_000_000;
+        data.daily_limit = 6_000_000_000;
+        let chain_now = u64::from(data.spend_day) * 86_400 + 100;
+        let valid_until = u32::try_from(chain_now + 300).unwrap();
+
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &account,
+                &data,
+                10_010_000_000,
+                2_000_000_000,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &other,
+                &data,
+                10_010_000_000,
+                2_000_000_000,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &account,
+                &data,
+                5_009_999_999,
+                5_000_000_000,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &account,
+                &data,
+                10_010_000_000,
+                5_000_000_001,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &account,
+                &data,
+                10_010_000_000,
+                2_000_000_001,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_err()
+        );
+
+        data.spend_day -= 1;
+        assert!(
+            validate_agent_account_task_create_funding(
+                &account,
+                &account,
+                &data,
+                5_010_000_000,
+                5_000_000_000,
+                10_000_000,
+                chain_now,
+                valid_until,
+            )
+            .is_ok(),
+            "a finalized UTC day rollover resets the effective daily spend"
+        );
+    }
+
+    #[test]
+    fn task_deploy_retry_reuses_the_durable_expiry() {
+        let mut existing = task_send_resolution_record();
+        existing.claim.valid_until = 1_900_000_123;
+
+        assert_eq!(task_deploy_valid_until(None, None, 100).unwrap(), 100);
+        assert_eq!(
+            task_deploy_valid_until(None, Some(&existing), 200).unwrap(),
+            existing.claim.valid_until
+        );
+        assert_eq!(
+            task_deploy_valid_until(Some(existing.claim.valid_until), Some(&existing), 300,)
+                .unwrap(),
+            existing.claim.valid_until
+        );
+        assert!(
+            task_deploy_valid_until(Some(existing.claim.valid_until + 1), Some(&existing), 300,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn task_deploy_defaults_to_the_funding_account_workchain_and_rejects_mismatch() {
+        let account = address(1);
+        assert_eq!(task_deployment_workchain(None, Some(&account)).unwrap(), 0);
+        assert_eq!(task_deployment_workchain(None, None).unwrap(), -1);
+        assert_eq!(task_deployment_workchain(Some(0), Some(&account)).unwrap(), 0);
+        assert!(task_deployment_workchain(Some(-1), Some(&account)).is_err());
+    }
+
+    #[test]
+    fn task_deploy_accepts_a_relative_primary_config_and_canonicalizes_it() {
+        let directory = TemporaryDirectory::create("relative-task-deploy-config");
+        let relative = Path::new("tosctl-config.json");
+        fs::write(directory.0.join(relative), b"{}").unwrap();
+
+        let canonical = canonical_task_deploy_primary_config(relative, &directory.0).unwrap();
+        assert!(canonical.is_absolute());
+        assert_eq!(canonical, directory.0.join(relative).canonicalize().unwrap());
+    }
+
+    #[test]
+    fn task_deploy_fee_preflight_scales_with_the_actual_cell_dag_and_limits() {
+        let state_init = BuilderData::new().into_cell().unwrap();
+        let mut body_builder = BuilderData::new();
+        body_builder.append_raw(&[0x55; 32], 256).unwrap();
+        let body = body_builder.into_cell().unwrap();
+        let mut external_builder = BuilderData::new();
+        external_builder.checked_append_reference(state_init.clone()).unwrap();
+        external_builder.checked_append_reference(body.clone()).unwrap();
+        let external = external_builder.into_cell().unwrap();
+        let mut schedule = AgentDeployFeeSchedule {
+            gas: chain_block::GasLimitsPrices { gas_price: 1 << 16, ..Default::default() },
+            forwarding: chain_block::MsgForwardPrices {
+                lump_price: 100,
+                bit_price: 1 << 16,
+                cell_price: 1 << 16,
+                ..Default::default()
+            },
+            limits: chain_block::SizeLimitsConfig::default(),
+        };
+
+        let reserve = agent_deploy_fee_reserve(&state_init, &body, &external, &schedule).unwrap();
+        assert!(reserve > contracts::AGENT_ACCOUNT_MAX_ACTION_GAS);
+
+        schedule.limits.max_msg_cells = 1;
+        assert!(agent_deploy_fee_reserve(&state_init, &body, &external, &schedule).is_err());
+    }
+
+    #[test]
+    fn task_deploy_exact_boc_resumes_across_both_broadcast_crash_windows() {
+        let directory = TemporaryDirectory::create("task-deploy-broadcast-resume");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let state_init = StateInit::with_code_and_data(Cell::default(), Cell::default());
+        let state_cell = state_init.clone().write_to_new_cell().unwrap().into_cell().unwrap();
+        let target = MsgAddressInt::with_standart(None, 0, state_cell.hash(0).into()).unwrap();
+        let body = BuilderData::new().into_cell().unwrap();
+        let mut record = task_send_resolution_record();
+        record.claim.target = target.to_string();
+        record.claim.body_hash = Some(agent_account_task_body_hash(&body));
+        record.claim.state_init_hash = Some(agent_account_task_body_hash(&state_cell));
+        record.claim.action_kind = "agent-deploy-send".into();
+        let claim = record.claim;
+        journal.claim_primary(claim.clone(), 10).unwrap();
+        let payload = AgentAccountContract::build_deploy_send_payload(
+            claim.network_global_id,
+            claim.controller_epoch,
+            claim.seqno,
+            claim.valid_until,
+            &AgentDeploySend { target, value: claim.value_atomic, state_init, body },
+        )
+        .unwrap();
+        let signed =
+            AgentAccountContract::build_signed_controller_message(payload, &[0x44; 64]).unwrap();
+        let message = AgentAccountContract::build_external_controller_message(
+            claim.account.parse().unwrap(),
+            signed,
+        )
+        .unwrap();
+        let boc = write_boc(&message).unwrap();
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        let signed_record = journal
+            .attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                11,
+            )
+            .unwrap();
+
+        // Crash before the socket write: Signed becomes Broadcasting and the
+        // only returned bytes are the durable exact BOC.
+        assert_eq!(
+            begin_or_resume_task_deploy_broadcast(&journal, &signed_record, 12).unwrap(),
+            boc
+        );
+        let reopened = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let broadcasting = reopened.action_by_idempotency_key(&claim.idempotency_key).unwrap();
+        assert_eq!(broadcasting.status, ControllerActionStatus::Broadcasting);
+
+        // Crash after the durable transition: reopening may replay only the
+        // same exact bytes rather than allocating another controller seqno.
+        assert_eq!(
+            begin_or_resume_task_deploy_broadcast(&reopened, &broadcasting, 13).unwrap(),
+            boc
+        );
+        let mut corrupted = broadcasting;
+        corrupted.exact_signed_boc_digest = Some(format!("sha256:{}", "f".repeat(64)));
+        assert!(begin_or_resume_task_deploy_broadcast(&reopened, &corrupted, 14).is_err());
     }
 
     #[test]
@@ -10478,9 +11747,15 @@ mod tests {
         let expected_body_hash = agent_account_task_body_hash(&body);
 
         assert!(
-            finalized_output_matches_claim(&message, &target, &value, Some(&expected_body_hash),)
-                .unwrap()
-                .is_some()
+            finalized_output_matches_claim(
+                &message,
+                &target,
+                &value,
+                Some(&expected_body_hash),
+                None,
+            )
+            .unwrap()
+            .is_some()
         );
         assert!(
             finalized_output_matches_claim(
@@ -10488,11 +11763,16 @@ mod tests {
                 &target,
                 &value,
                 Some(&format!("tvm-cell-sha256:{}", "f".repeat(64))),
+                None,
             )
             .unwrap()
             .is_none()
         );
-        assert!(finalized_output_matches_claim(&message, &target, &value, None).unwrap().is_some());
+        assert!(
+            finalized_output_matches_claim(&message, &target, &value, None, None)
+                .unwrap()
+                .is_some()
+        );
 
         let wrong_body = BuilderData::with_raw(vec![0xcd], 8).unwrap().into_cell().unwrap();
         let duplicate = Message::with_int_header_and_body(
@@ -10505,6 +11785,7 @@ mod tests {
                 &target,
                 &value,
                 Some(&expected_body_hash),
+                None,
             )
             .is_err()
         );
@@ -10520,6 +11801,7 @@ mod tests {
                 &target,
                 &value,
                 Some(&expected_body_hash),
+                None,
             )
             .unwrap()
             .is_none()
@@ -10530,8 +11812,58 @@ mod tests {
                 &target,
                 &value,
                 Some(&expected_body_hash),
+                None,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn finalized_deploy_output_requires_the_exact_state_init() {
+        let source = address(2);
+        let state_init = StateInit::with_code_and_data(
+            BuilderData::with_raw(vec![0x11], 8).unwrap().into_cell().unwrap(),
+            BuilderData::with_raw(vec![0x22], 8).unwrap().into_cell().unwrap(),
+        );
+        let state_cell = state_init.clone().write_to_new_cell().unwrap().into_cell().unwrap();
+        let target = MsgAddressInt::with_standart(None, -1, state_cell.hash(0).into()).unwrap();
+        let value = CurrencyCollection::with_coins(1_000_000_000);
+        let body = Cell::default();
+        let body_hash = agent_account_task_body_hash(&body);
+        let state_hash = agent_account_task_body_hash(&state_cell);
+        let mut message = Message::with_int_header_and_body(
+            InternalMessageHeader::with_addresses(source, target.clone(), value.clone()),
+            SliceData::load_cell(body).unwrap(),
+        );
+        message.set_state_init(state_init);
+
+        assert!(
+            finalized_output_matches_claim(
+                &message,
+                &target,
+                &value,
+                Some(&body_hash),
+                Some(&state_hash),
+            )
+            .unwrap()
+            .is_some()
+        );
+        assert!(
+            finalized_output_matches_claim(
+                &message,
+                &target,
+                &value,
+                Some(&body_hash),
+                Some(&format!("tvm-cell-sha256:{}", "f".repeat(64))),
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            finalized_output_matches_claim(&message, &target, &value, Some(&body_hash), None)
+                .unwrap()
+                .is_none(),
+            "a non-deploy claim must not accept an unexpected StateInit"
         );
     }
 
@@ -11364,6 +12696,7 @@ mod tests {
             target: destination.clone(),
             value_atomic: 50,
             body_hash: Some(format!("tvm-cell-sha256:{}", hex::encode(commitment.hash(0)))),
+            state_init_hash: None,
             action_kind: "agent-task-send".into(),
             idempotency_key: action[7..].into(),
             action_identity: action.into(),

@@ -19,6 +19,7 @@ use anyhow::Context;
 use base64::Engine;
 use chain_block::{ConfigParamEnum, MsgAddressInt, read_boc, write_boc};
 use chain_rpc_rs::client::{ApiClientV2, ApiKey, Network};
+use chain_rpc_rs::error::ToscenterError;
 use std::{
     collections::HashSet,
     net::IpAddr,
@@ -51,6 +52,27 @@ fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
     } else {
         "remote_or_protocol_error"
     }
+}
+
+fn is_explicit_missing_config_param(
+    error: &ToscenterError,
+    expected_id: &serde_json::Value,
+    param_id: u32,
+) -> bool {
+    let ToscenterError::HttpServerError { code: 500, message } = error else {
+        return false;
+    };
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(message) else {
+        return false;
+    };
+    let expected_message = format!("config param {param_id} not found");
+    envelope.get("jsonrpc").and_then(serde_json::Value::as_str) == Some("2.0")
+        && envelope.get("id") == Some(expected_id)
+        && envelope.get("ok").and_then(serde_json::Value::as_bool) == Some(false)
+        && !envelope.as_object().is_some_and(|object| object.contains_key("result"))
+        && envelope.get("code").and_then(serde_json::Value::as_i64) == Some(-32603)
+        && envelope.get("error").and_then(serde_json::Value::as_str)
+            == Some(expected_message.as_str())
 }
 
 pub struct ClientJsonRpc {
@@ -244,6 +266,51 @@ impl ClientJsonRpc {
             .with_context(|| format!("getConfigParam({})", param_id))?;
 
         decode_config_param(config_info, param_id)
+    }
+
+    /// Reads an optional configuration parameter without conflating an
+    /// on-chain absence with a transport or protocol failure.
+    ///
+    /// TOS nodes currently report an absent parameter as an HTTP 500 carrying
+    /// a JSON-RPC error envelope.  Accept that result only when every
+    /// configured endpoint returns the exact, request-bound absence response;
+    /// any other endpoint failure remains fail-closed.
+    pub async fn get_optional_config_param(
+        &self,
+        param_id: u32,
+    ) -> anyhow::Result<Option<ConfigParamEnum>> {
+        let total = self.endpoints.len();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        let request_id = serde_json::json!(uuid::Uuid::new_v4().to_string());
+        let params = serde_json::json!({"config_id": param_id});
+        let mut absent = 0usize;
+        let mut last_error_category = None;
+
+        for attempt in 0..total {
+            let idx = (start + attempt) % total;
+            let endpoint = &self.endpoints[idx];
+            match endpoint
+                .client
+                .json_rpc("getConfigParam", params.clone(), request_id.clone())
+                .await
+            {
+                Ok(response) => return decode_config_param(response, param_id).map(Some),
+                Err(error) if is_explicit_missing_config_param(&error, &request_id, param_id) => {
+                    absent += 1;
+                }
+                Err(error) => {
+                    last_error_category = Some(bounded_rpc_error_category(&error));
+                }
+            }
+        }
+
+        if absent == total {
+            return Ok(None);
+        }
+        let category = last_error_category.unwrap_or("remote_or_protocol_error");
+        anyhow::bail!(
+            "getConfigParam({param_id}) failed without unanimous absence; endpoint_count={total}; rpc_error_category={category}"
+        )
     }
 
     /// Reads the network identity (ConfigParam 19) that wallet contracts
@@ -1499,6 +1566,64 @@ mod tests {
         });
 
         (format!("http://{}", addr), handle)
+    }
+
+    async fn spawn_missing_config_param_server(
+        param_id: u32,
+        matching_id: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind async listener");
+        let addr = listener.local_addr().expect("listener local addr");
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            let request = read_json_request(&mut socket).await;
+            let id = if matching_id {
+                request.get("id").cloned().unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::json!("wrong-response-id")
+            };
+            let response_body = serde_json::json!({
+                "ok": false,
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": format!("config param {param_id} not found"),
+                "code": -32603,
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write response");
+            socket.shutdown().await.expect("shutdown socket");
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn optional_config_param_accepts_exact_request_bound_absence() {
+        let (url, handle) = spawn_missing_config_param_server(43, true).await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+
+        let value = client.get_optional_config_param(43).await.expect("optional config read");
+
+        assert!(value.is_none());
+        handle.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn optional_config_param_rejects_unbound_absence_response() {
+        let (url, handle) = spawn_missing_config_param_server(43, false).await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+
+        let error = client
+            .get_optional_config_param(43)
+            .await
+            .expect_err("mismatched response ID must not authorize a default");
+
+        assert!(error.to_string().contains("failed without unanimous absence"));
+        handle.await.expect("server task");
     }
 
     #[tokio::test]
