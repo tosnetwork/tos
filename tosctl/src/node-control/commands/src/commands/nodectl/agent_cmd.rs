@@ -10,6 +10,7 @@
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
+use super::prediction_cmd::PredictionCmd;
 use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
@@ -115,6 +116,8 @@ pub enum AgentAction {
     Dispute(DisputeCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
     Attestation(ProofAttestationCmd),
+    /// PredictionMarket V1 deployment, inspection and exact-message preparation
+    Prediction(PredictionCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -1538,6 +1541,7 @@ impl AgentCmd {
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
+            AgentAction::Prediction(cmd) => cmd.run(&self.config).await,
         }
     }
 }
