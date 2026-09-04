@@ -82,8 +82,9 @@ pub use nominator_pool::{
     NominatorPosition,
 };
 pub use prediction_market::{
-    PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionMarketContractV1,
-    PredictionMarketInitV1, PredictionOraclePolicyV1,
+    PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
+    PredictionMarketContractV1, PredictionMarketInitV1, PredictionOraclePolicyV1,
+    PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

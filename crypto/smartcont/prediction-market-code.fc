@@ -24,8 +24,16 @@ const int resolution_magic = 0x504d5230; ;; PMR0
 const int normal_runtime_magic = 0x504d524e; ;; PMRN
 const int review_runtime_magic = 0x504d5256; ;; PMRV
 const int challenge_runtime_magic = 0x504d4332; ;; PMC2
+const int challenge_runtime_some_magic = 0x504d4333; ;; PMC3
 const int final_runtime_magic = 0x504d4632; ;; PMF2
+const int optional_hash_none_magic = 0x504d4f30; ;; PMO0
+const int optional_hash_some_magic = 0x504d4f31; ;; PMO1
 const int dictionaries_magic = 0x504d4431; ;; PMD1
+const int order_magic = 0x504f5231; ;; POR1
+const int signed_order_magic = 0x50534f31; ;; PSO1
+const int order_authorization_magic = 0x504f4131; ;; POA1
+const int order_state_magic = 0x504d4f31; ;; PMO1
+const int order_domain_hash = 0xf9774e8077115f66e44a10bf681e71ff4b6008eaea08a9b3ea88ad184010726d;
 
 const int op::activate = 0x504d0001;
 const int op::register_deposit = 0x504d0002;
@@ -50,12 +58,14 @@ const int op::close_empty_account = 0x504d0014;
 const int op::force_close_account = 0x504d0015;
 const int op::compact_terminal = 0x504d0016;
 const int op::withdraw_terminal_surplus = 0x504d0017;
+const int op::prune_owner_orders = 0x504d0018;
 
 const int status::trading = 0;
 const int status::reporting = 1;
 const int status::proposed = 2;
 const int status::reviewing = 3;
 const int status::finalized = 4;
+const int status::terminal = 5;
 
 const int outcome::yes = 0;
 const int outcome::no = 1;
@@ -79,6 +89,18 @@ const int err::liability = 2415;
 const int err::insufficient_free = 2416;
 const int err::insufficient_position = 2417;
 const int err::bad_nonce = 2418;
+const int err::bad_order = 2419;
+const int err::bad_signature = 2420;
+const int err::replay = 2421;
+const int err::bad_pair = 2422;
+const int err::bad_price = 2423;
+const int err::bad_fill = 2424;
+const int err::phase_advance_required = 2425;
+const int err::round_not_open = 2426;
+const int err::bad_context = 2427;
+const int err::not_reporter = 2428;
+const int err::equivocation = 2429;
+const int err::bad_challenge = 2430;
 const int err::unknown_op = 2499;
 
 const int price_scale = 10000;
@@ -86,7 +108,10 @@ const int max_coins = (1 << 120) - 1;
 const int max_participants_hard = 4096;
 const int max_orders_per_participant_hard = 256;
 const int max_live_orders_hard = 16384;
-const int min_operation_budget = 10000000; ;; 0.01 TOS
+;; The heaviest bounded V1 path (appellate quorum finalization) currently uses
+;; 62,131 gas in the production BOC sandbox. One TOS buys 100,000 gas under the
+;; audited fee schedule, leaving >1.6x compute headroom before forward fees.
+const int min_operation_budget = 1000000000;
 const int min_first_deposit = 1000000;
 const int min_entry_fee = 1000000;
 const int min_cleanup_bounty = 1000000;
@@ -96,6 +121,42 @@ const int min_challenge_period = 60;
 const int min_appeal_review_delay = 60;
 const int min_appeal_vote_window = 60;
 const int max_market_lifetime = 31536000;
+const int max_trading_duration = 31536000;
+const int max_resolution_delay = 2592000;
+const int max_oracle_window = 2592000;
+const int max_challenge_period = 604800;
+const int max_appeal_period = 1209600;
+const int max_claim_window = 15552000;
+const int min_challenge_bond = 10000000;
+const int max_challenge_bond = 1000000000000;
+const int min_challenge_processing_fee = 1000000;
+const int max_challenge_processing_fee = 100000000000;
+const int order_schema_version = 1;
+const int contract_code_version = 1;
+const int action::buy = 0;
+const int action::sell = 1;
+const int side::yes = 0;
+const int side::no = 1;
+const int role::maker = 0;
+const int role::taker = 1;
+const int review::normal_timeout = 0;
+const int review::challenge = 1;
+const int final_reason::normal_uncontested = 0;
+const int final_reason::appeal_upheld = 1;
+const int final_reason::appeal_overturned = 2;
+const int final_reason::normal_timeout_appeal = 3;
+const int final_reason::challenge_review_timeout = 4;
+const int final_reason::both_oracle_timeout = 5;
+const int normal_context_magic = 0x504e4331; ;; PNC1
+const int review_base_magic = 0x50524231; ;; PRB1
+const int review_vote_magic = 0x50525631; ;; PRV1
+const int resolution_statement_magic = 0x50525331; ;; PRS1
+const int result_domain_hash = 0xcf625f35876b55027da1e54bedac0cd438a05cdabbf111fa45bbecb34992addb;
+const int normal_context_domain_hash = 0x8464f889fd7ad565d35335597d04d7c762f1c502c5d117cbbc30b867147d130a;
+const int review_base_domain_hash = 0x8d0a6c9a7b889dd1b9cbc78908ffc24defa2770c82f440d539d0cc7f144a77fb;
+const int review_vote_domain_hash = 0xd773c0089f4d72aecf2d43d9648294453dae45442903f11aa82857c1023118b6;
+
+(int, int, cell) load_policy(cell policy) impure inline;
 
 int cell_null?(cell c) asm "ISNULL";
 int cell_level(cell c) asm "CLEVEL";
@@ -249,6 +310,352 @@ cell pack_dictionaries(cell accounts, cell normal_votes, cell review_votes,
     .store_dict(normal_votes).store_dict(review_votes).store_dict(statement_counts).end_cell();
 }
 
+(cell, cell, cell, cell) load_resolution(cell resolution) impure inline {
+  slice r = resolution.begin_parse();
+  throw_unless(err::malformed, r~load_uint(32) == resolution_magic);
+  cell normal = r~load_ref();
+  cell review_state = r~load_ref();
+  cell challenge = r~load_ref();
+  cell final_state = r~load_ref();
+  r.end_parse();
+  return (normal, review_state, challenge, final_state);
+}
+
+cell pack_resolution(cell normal, cell review_state, cell challenge,
+    cell final_state) inline {
+  return begin_cell().store_uint(resolution_magic, 32).store_ref(normal)
+    .store_ref(review_state).store_ref(challenge).store_ref(final_state).end_cell();
+}
+
+(int, int, int, cell, int, int, int, int, int) load_normal_runtime(cell normal) impure inline {
+  slice n = normal.begin_parse();
+  throw_unless(err::malformed, n~load_uint(32) == normal_runtime_magic);
+  int nonce = n~load_uint(256);
+  int opened_at = n~load_uint(64);
+  int proposal_present = n~load_uint(1);
+  cell proposal = null();
+  if (proposal_present) { proposal = n~load_ref(); }
+  int proposal_hash = n~load_uint(256);
+  int proposal_outcome = n~load_uint(2);
+  int proposal_evidence = n~load_uint(256);
+  int proposed_at = n~load_uint(64);
+  int challenge_deadline = n~load_uint(64);
+  n.end_parse();
+  throw_unless(err::malformed, (proposal_present == 0) | (proposal_present == 1));
+  if (proposal_present) {
+    throw_unless(err::malformed,
+      (~ proposal.cell_null?()) & (proposal_hash == cell_hash(proposal)) &
+      (proposal_hash != 0) & (proposal_outcome <= outcome::invalid) &
+      (proposal_evidence != 0) & (proposed_at > 0) &
+      (challenge_deadline > proposed_at));
+  } else {
+    throw_unless(err::malformed,
+      (proposal_hash == 0) & (proposal_outcome == 0) &
+      (proposal_evidence == 0) & (proposed_at == 0) & (challenge_deadline == 0));
+  }
+  return (nonce, opened_at, proposal_present, proposal, proposal_hash,
+    proposal_outcome, proposal_evidence, proposed_at, challenge_deadline);
+}
+
+cell pack_normal_runtime(int nonce, int opened_at, int proposal_present,
+    cell proposal, int proposal_hash, int proposal_outcome,
+    int proposal_evidence, int proposed_at, int challenge_deadline) inline {
+  builder n = begin_cell().store_uint(normal_runtime_magic, 32)
+    .store_uint(nonce, 256).store_uint(opened_at, 64)
+    .store_uint(proposal_present, 1);
+  if (proposal_present) { n = n.store_ref(proposal); }
+  return n.store_uint(proposal_hash, 256).store_uint(proposal_outcome, 2)
+    .store_uint(proposal_evidence, 256).store_uint(proposed_at, 64)
+    .store_uint(challenge_deadline, 64).end_cell();
+}
+
+(int, cell, int, int, int, int) load_review_runtime(cell review_state) impure inline {
+  slice r = review_state.begin_parse();
+  throw_unless(err::malformed, r~load_uint(32) == review_runtime_magic);
+  int base_present = r~load_uint(1);
+  cell base = null();
+  if (base_present) { base = r~load_ref(); }
+  int base_hash = r~load_uint(256);
+  int vote_nonce = r~load_uint(256);
+  int vote_opened_at = r~load_uint(64);
+  int appeal_deadline = r~load_uint(64);
+  r.end_parse();
+  if (base_present) {
+    throw_unless(err::malformed,
+      (~ base.cell_null?()) & (base_hash == cell_hash(base)) &
+      (base_hash != 0) & (appeal_deadline > 0));
+  } else {
+    throw_unless(err::malformed,
+      (base_hash == 0) & (vote_nonce == 0) &
+      (vote_opened_at == 0) & (appeal_deadline == 0));
+  }
+  throw_unless(err::malformed,
+    ((vote_nonce == 0) & (vote_opened_at == 0)) |
+    ((vote_nonce != 0) & (vote_opened_at != 0)));
+  return (base_present, base, base_hash, vote_nonce, vote_opened_at, appeal_deadline);
+}
+
+cell pack_review_runtime(int base_present, cell base, int base_hash,
+    int vote_nonce, int vote_opened_at, int appeal_deadline) inline {
+  builder r = begin_cell().store_uint(review_runtime_magic, 32)
+    .store_uint(base_present, 1);
+  if (base_present) { r = r.store_ref(base); }
+  return r.store_uint(base_hash, 256).store_uint(vote_nonce, 256)
+    .store_uint(vote_opened_at, 64).store_uint(appeal_deadline, 64).end_cell();
+}
+
+(int, slice, int, int, int) load_challenge_runtime(cell challenge) impure inline {
+  slice c = challenge.begin_parse();
+  int magic = c~load_uint(32);
+  if (magic == challenge_runtime_magic) {
+    c.end_parse();
+    return (0, my_address(), 0, 0, 0);
+  }
+  throw_unless(err::malformed, magic == challenge_runtime_some_magic);
+  slice challenger = c~load_msg_addr();
+  int counter_outcome = c~load_uint(2);
+  int evidence_root = c~load_uint(256);
+  int refundable_credit = c~load_coins();
+  c.end_parse();
+  require_standard_address(challenger);
+  throw_unless(err::malformed,
+    (counter_outcome <= outcome::invalid) & (evidence_root != 0));
+  return (1, challenger, counter_outcome, evidence_root, refundable_credit);
+}
+
+cell pack_challenge_runtime(int present, slice challenger, int counter_outcome,
+    int evidence_root, int refundable_credit) inline {
+  if (present == 0) {
+    return begin_cell().store_uint(challenge_runtime_magic, 32).end_cell();
+  }
+  return begin_cell().store_uint(challenge_runtime_some_magic, 32)
+    .store_slice(challenger).store_uint(counter_outcome, 2)
+    .store_uint(evidence_root, 256).store_coins(refundable_credit).end_cell();
+}
+
+(int, int) load_optional_hash(cell optional_hash) impure inline {
+  slice o = optional_hash.begin_parse();
+  int magic = o~load_uint(32);
+  if (magic == optional_hash_none_magic) {
+    o.end_parse();
+    return (0, 0);
+  }
+  throw_unless(err::malformed, magic == optional_hash_some_magic);
+  int value = o~load_uint(256);
+  o.end_parse();
+  throw_unless(err::malformed, value != 0);
+  return (1, value);
+}
+
+cell pack_optional_hash(int present, int value) inline {
+  if (present == 0) {
+    return begin_cell().store_uint(optional_hash_none_magic, 32).end_cell();
+  }
+  return begin_cell().store_uint(optional_hash_some_magic, 32)
+    .store_uint(value, 256).end_cell();
+}
+
+(int, int, int, int, int, int, int, int, int, int) load_final_runtime(cell final_state) impure inline {
+  slice f = final_state.begin_parse();
+  throw_unless(err::malformed, f~load_uint(32) == final_runtime_magic);
+  int reason = f~load_uint(8);
+  int finalized_at = f~load_uint(64);
+  cell statement = f~load_ref();
+  cell evidence = f~load_ref();
+  cell round_context = f~load_ref();
+  cell review_base = f~load_ref();
+  f.end_parse();
+  (int statement_present, int statement_hash) = load_optional_hash(statement);
+  (int evidence_present, int evidence_hash) = load_optional_hash(evidence);
+  (int context_present, int context_hash) = load_optional_hash(round_context);
+  (int review_present, int review_hash) = load_optional_hash(review_base);
+  throw_unless(err::malformed,
+    (statement_present == evidence_present) &
+    (statement_present == context_present));
+  return (reason, finalized_at, statement_present, statement_hash,
+    evidence_hash, context_hash, review_present, review_hash,
+    evidence_present, context_present);
+}
+
+cell pack_final_runtime(int reason, int finalized_at, int statement_present,
+    int statement_hash, int evidence_hash, int context_hash,
+    int review_present, int review_hash) inline {
+  return begin_cell().store_uint(final_runtime_magic, 32).store_uint(reason, 8)
+    .store_uint(finalized_at, 64)
+    .store_ref(pack_optional_hash(statement_present, statement_hash))
+    .store_ref(pack_optional_hash(statement_present, evidence_hash))
+    .store_ref(pack_optional_hash(statement_present, context_hash))
+    .store_ref(pack_optional_hash(review_present, review_hash)).end_cell();
+}
+
+cell build_normal_context(int market_id, int rules_hash, int nonce,
+    int opened_at, int resolve_not_before, int oracle_vote_deadline) inline {
+  cell binding = begin_cell().store_uint(market_id, 256)
+    .store_uint(rules_hash, 256).store_uint(nonce, 256).end_cell();
+  return begin_cell().store_uint(normal_context_magic, 32)
+    .store_uint(order_schema_version, 16)
+    .store_uint(normal_context_domain_hash, 256).store_uint(opened_at, 64)
+    .store_uint(resolve_not_before, 64).store_uint(oracle_vote_deadline, 64)
+    .store_ref(binding).end_cell();
+}
+
+cell build_review_base(int market_id, int rules_hash, int reason,
+    int review_started_at, int review_vote_not_before, int appeal_deadline,
+    int proposal_hash, int proposal_outcome, int proposal_evidence,
+    slice challenger, int counter_outcome, int counter_evidence) inline {
+  cell identity = begin_cell().store_uint(market_id, 256)
+    .store_uint(rules_hash, 256).end_cell();
+  builder base = begin_cell().store_uint(review_base_magic, 32)
+    .store_uint(order_schema_version, 16).store_uint(review_base_domain_hash, 256)
+    .store_uint(reason, 8).store_uint(review_started_at, 64)
+    .store_uint(review_vote_not_before, 64).store_uint(appeal_deadline, 64)
+    .store_ref(identity);
+  if (reason == review::challenge) {
+    cell proposal = begin_cell().store_uint(proposal_hash, 256)
+      .store_uint(proposal_outcome, 8).store_uint(proposal_evidence, 256).end_cell();
+    cell counter = begin_cell().store_slice(challenger)
+      .store_uint(counter_outcome, 8).store_uint(counter_evidence, 256).end_cell();
+    base = base.store_ref(proposal).store_ref(counter);
+  }
+  return base.end_cell();
+}
+
+(int, int, int, int) load_review_base_times(cell base) impure inline {
+  slice b = base.begin_parse();
+  throw_unless(err::malformed, b~load_uint(32) == review_base_magic);
+  throw_unless(err::malformed, b~load_uint(16) == order_schema_version);
+  throw_unless(err::malformed, b~load_uint(256) == review_base_domain_hash);
+  int reason = b~load_uint(8);
+  int started_at = b~load_uint(64);
+  int vote_not_before = b~load_uint(64);
+  int appeal_deadline = b~load_uint(64);
+  cell identity = b~load_ref();
+  if (reason == review::challenge) {
+    b~load_ref();
+    b~load_ref();
+  }
+  b.end_parse();
+  slice i = identity.begin_parse();
+  i~load_uint(256);
+  i~load_uint(256);
+  i.end_parse();
+  throw_unless(err::malformed,
+    ((reason == review::normal_timeout) | (reason == review::challenge)) &
+    (started_at > 0) & (vote_not_before >= started_at) &
+    (appeal_deadline > vote_not_before));
+  return (reason, started_at, vote_not_before, appeal_deadline);
+}
+
+cell build_review_vote_context(int base_hash, int nonce, int opened_at) inline {
+  return begin_cell().store_uint(review_vote_magic, 32)
+    .store_uint(order_schema_version, 16).store_uint(review_vote_domain_hash, 256)
+    .store_uint(base_hash, 256).store_uint(nonce, 256)
+    .store_uint(opened_at, 64).end_cell();
+}
+
+cell build_resolution_statement(int global_id, int market_id, int rules_hash,
+    int policy_hash, int context_hash, int round, int statement_outcome,
+    int evidence_root, int created_at, int expiry) inline {
+  cell identity = begin_cell().store_slice(my_address())
+    .store_uint(market_id, 256).end_cell();
+  cell policy = begin_cell().store_uint(rules_hash, 256)
+    .store_uint(policy_hash, 256).end_cell();
+  return begin_cell().store_uint(resolution_statement_magic, 32)
+    .store_uint(order_schema_version, 16).store_uint(result_domain_hash, 256)
+    .store_int(global_id, 32).store_uint(round, 8)
+    .store_uint(statement_outcome, 8).store_uint(created_at, 64)
+    .store_uint(expiry, 64).store_uint(context_hash, 256)
+    .store_uint(evidence_root, 256).store_ref(identity).store_ref(policy).end_cell();
+}
+
+(int, cell) require_reporter(cell policy, slice sender) impure inline {
+  (int threshold, _, cell reporters) = load_policy(policy);
+  (slice encoded, int found) = reporters.udict_get?(256, slice_hash(sender));
+  throw_unless(err::not_reporter, found);
+  slice reporter = encoded~load_msg_addr();
+  encoded.end_parse();
+  throw_unless(err::not_reporter, equal_slice_bits(reporter, sender));
+  return (threshold, reporters);
+}
+
+(cell, cell, int, int) record_vote(cell votes, cell statement_counts,
+    slice sender, int statement_hash) impure inline {
+  int reporter_key = slice_hash(sender);
+  (slice existing, int found) = votes.udict_get?(256, reporter_key);
+  if (found) {
+    int previous = existing~load_uint(256);
+    existing.end_parse();
+    throw_unless(err::equivocation, previous == statement_hash);
+    (slice count_slice, int count_found) = statement_counts.udict_get?(256, statement_hash);
+    throw_unless(err::malformed, count_found);
+    int count = count_slice~load_uint(8);
+    count_slice.end_parse();
+    return (votes, statement_counts, count, 0);
+  }
+  votes = votes.udict_set(256, reporter_key,
+    begin_cell().store_uint(statement_hash, 256).end_cell().begin_parse());
+  (slice count_slice, int count_found) = statement_counts.udict_get?(256, statement_hash);
+  int count = 0;
+  if (count_found) {
+    count = count_slice~load_uint(8);
+    count_slice.end_parse();
+  }
+  throw_unless(err::capacity, count < 7);
+  count += 1;
+  statement_counts = statement_counts.udict_set(256, statement_hash,
+    begin_cell().store_uint(count, 8).end_cell().begin_parse());
+  return (votes, statement_counts, count, 1);
+}
+
+int fresh_round_nonce(int market_id, int round_tag) impure inline {
+  randomize_lt();
+  int nonce = string_hash(begin_cell().store_uint(0x504d4e31, 32)
+    .store_uint(market_id, 256).store_uint(round_tag, 8)
+    .store_uint(random(), 256).store_uint(cur_lt(), 64).end_cell().begin_parse());
+  if (nonce == 0) { nonce = 1; }
+  return nonce;
+}
+
+() require_empty_initial_runtime(int activated_at, int status, int review_reason,
+    int final_outcome, int participants, int live_orders, int fill_count,
+    int complete_sets, int total_free, int locked, int final_backing,
+    int remaining_payout, int claimed, int bond, int cleanup,
+    cell resolution, cell accounts, cell normal_votes, cell review_votes,
+    cell statement_counts) impure inline_ref {
+  throw_unless(err::bad_config,
+    (activated_at == 0) & (status == status::trading) &
+    (review_reason == 0) & (final_outcome == 0) &
+    (participants == 0) & (live_orders == 0) & (fill_count == 0) &
+    (complete_sets == 0) & (total_free == 0) & (locked == 0) &
+    (final_backing == 0) & (remaining_payout == 0) & (claimed == 0) &
+    (bond == 0) & (cleanup == 0) & accounts.cell_null?() &
+    normal_votes.cell_null?() & review_votes.cell_null?() &
+    statement_counts.cell_null?());
+  (cell normal, cell review_state, cell challenge, cell final_state) =
+    load_resolution(resolution);
+  (int nonce, int opened_at, int proposal_present, _, int proposal_hash,
+    int proposal_outcome, int proposal_evidence, int proposed_at,
+    int challenge_deadline) = load_normal_runtime(normal);
+  (int base_present, _, int base_hash, int vote_nonce, int vote_opened_at,
+    int appeal_deadline) = load_review_runtime(review_state);
+  (int challenge_present, _, int counter_outcome, int counter_evidence,
+    int refundable) = load_challenge_runtime(challenge);
+  (int reason, int finalized_at, int statement_present, int statement_hash,
+    int evidence_hash, int context_hash, int final_review_present,
+    int final_review_hash, _, _) = load_final_runtime(final_state);
+  throw_unless(err::bad_config,
+    (nonce == 0) & (opened_at == 0) & (proposal_present == 0) &
+    (proposal_hash == 0) & (proposal_outcome == 0) &
+    (proposal_evidence == 0) & (proposed_at == 0) &
+    (challenge_deadline == 0) & (base_present == 0) & (base_hash == 0) &
+    (vote_nonce == 0) & (vote_opened_at == 0) & (appeal_deadline == 0) &
+    (challenge_present == 0) & (counter_outcome == 0) &
+    (counter_evidence == 0) & (refundable == 0) & (reason == 0) &
+    (finalized_at == 0) & (statement_present == 0) & (statement_hash == 0) &
+    (evidence_hash == 0) & (context_hash == 0) &
+    (final_review_present == 0) & (final_review_hash == 0));
+}
+
 (int, int, int, int, int, int, int, int, int, int, int, int, int, int, int,
  int, int, int, int, int, int, int, int, int, int, int, int, int, int, int,
  int, slice, cell, cell)
@@ -279,10 +686,12 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
   rr.end_parse();
   require_standard_address(reserve_recipient);
   (int my_wc, _) = my_address().parse_std_addr();
+  (int reserve_wc, _) = reserve_recipient.parse_std_addr();
   throw_unless(err::wrong_network,
     (global_id == get_global_id()) & (workchain_id == my_wc));
   throw_unless(err::bad_config,
-    (deployment_salt != 0) & (rules_hash != 0) & (metadata_hash != 0));
+    (reserve_wc == my_wc) & (deployment_salt != 0) &
+    (rules_hash != 0) & (metadata_hash != 0));
   throw_if(err::bad_config, equal_slice_bits(reserve_recipient, my_address()));
 
   slice t = times.begin_parse();
@@ -296,6 +705,7 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
   int claim_deadline = t~load_uint(64);
   t.end_parse();
   int scheduled_final = oracle_vote_deadline + challenge_period + appeal_period;
+  int configured_claim_window = claim_deadline - scheduled_final;
   throw_unless(err::bad_config,
     (trade_close <= resolve_not_before) &
     (resolve_not_before + min_normal_vote_window <= oracle_vote_deadline) &
@@ -303,10 +713,17 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
     (appeal_review_delay >= min_appeal_review_delay) &
     (appeal_period >= appeal_review_delay + min_appeal_vote_window) &
     (scheduled_final > oracle_vote_deadline) & (scheduled_final < (1 << 64)) &
-    (claim_deadline > scheduled_final));
+    (claim_deadline > scheduled_final) &
+    (resolve_not_before - trade_close <= max_resolution_delay) &
+    (oracle_vote_deadline - resolve_not_before <= max_oracle_window) &
+    (challenge_period <= max_challenge_period) &
+    (appeal_period <= max_appeal_period) &
+    (configured_claim_window > 0) &
+    (configured_claim_window <= max_claim_window));
   if (activation_check) {
     throw_unless(err::bad_config,
-      (trade_close > now()) & (claim_deadline - now() <= max_market_lifetime));
+      (trade_close > now()) & (trade_close - now() <= max_trading_duration) &
+      (claim_deadline - now() <= max_market_lifetime));
   } elseif (activated_at > 0) {
     throw_unless(err::bad_config,
       (activated_at < trade_close) & (claim_deadline > activated_at) &
@@ -363,8 +780,20 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
     (order_cleanup_bounty >= min_cleanup_bounty) &
     (reserve_floor >= min_reserve_floor) &
     (terminal_reserve > 0) & (terminal_reserve <= reserve_floor) &
-    (challenge_bond > 0) & (challenge_processing_fee > 0) &
-    (max_total_liability + reserve_floor <= max_coins));
+    (challenge_bond >= min_challenge_bond) &
+    (challenge_bond <= max_challenge_bond) &
+    (challenge_processing_fee >= min_challenge_processing_fee) &
+    (challenge_processing_fee <= max_challenge_processing_fee) &
+    (max_total_liability + reserve_floor <= max_coins) &
+    (max_total_liability + terminal_reserve <= max_coins));
+  int max_cleanup_liability =
+    max_participants * account_cleanup_bounty +
+    max_live_orders * order_cleanup_bounty;
+  int worst_case_liability = max_total_free + max_locked +
+    challenge_bond + max_cleanup_liability;
+  throw_unless(err::bad_config,
+    (max_cleanup_liability <= max_coins) &
+    (worst_case_liability <= max_total_liability));
 
   slice ps = policies.begin_parse();
   throw_unless(err::bad_config, ps~load_uint(32) == policies_magic);
@@ -381,18 +810,39 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
     reserve_recipient, normal_policy, appellate_policy);
 }
 
-(int, int, int, cell) load_policy(cell policy) impure inline {
+(int, int, cell) load_policy(cell policy) impure inline {
   slice p = policy.begin_parse();
   throw_unless(err::bad_config, p~load_uint(32) == policy_magic);
   int threshold = p~load_uint(8);
   int count = p~load_uint(8);
-  int policy_hash = p~load_uint(256);
   cell reporters = p~load_dict();
   p.end_parse();
   throw_unless(err::bad_config,
     (threshold > 0) & (count >= threshold) & (count <= 7) &
-    (threshold * 2 > count) & (policy_hash != 0) & (~ reporters.cell_null?()));
-  return (threshold, count, policy_hash, reporters);
+    (threshold * 2 > count) & (~ reporters.cell_null?()));
+  int seen = 0;
+  (int key, slice reporter, int found) = reporters.udict_get_min?(256);
+  while (found) {
+    slice exact = reporter~load_msg_addr();
+    reporter.end_parse();
+    require_standard_address(exact);
+    throw_unless(err::bad_config, slice_hash(exact) == key);
+    seen += 1;
+    throw_unless(err::bad_config, seen <= 7);
+    (key, reporter, found) = reporters.udict_get_next?(256, key);
+  }
+  throw_unless(err::bad_config, seen == count);
+  return (threshold, count, reporters);
+}
+
+() require_disjoint_policies(cell normal_reporters, cell appellate_reporters) impure inline {
+  (int key, slice reporter, int found) = normal_reporters.udict_get_min?(256);
+  while (found) {
+    var (_, overlap) = appellate_reporters.udict_get?(256, key);
+    throw_if(err::bad_config, overlap);
+    reporter~impure_touch();
+    (key, reporter, found) = normal_reporters.udict_get_next?(256, key);
+  }
 }
 
 () require_config_identity(cell config, int stored_config_hash, int stored_market_id,
@@ -405,10 +855,9 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
     .store_uint(deployment_salt, 256).store_uint(stored_config_hash, 256)
     .end_cell().begin_parse());
   throw_unless(err::bad_config, derived_market_id == stored_market_id);
-  var (_, _, _, normal_reporters) = load_policy(normal_policy);
-  var (_, _, _, appellate_reporters) = load_policy(appellate_policy);
-  normal_reporters~impure_touch();
-  appellate_reporters~impure_touch();
+  var (_, _, normal_reporters) = load_policy(normal_policy);
+  var (_, _, appellate_reporters) = load_policy(appellate_policy);
+  require_disjoint_policies(normal_reporters, appellate_reporters);
 }
 
 (cell, int) find_account(cell accounts, slice owner) inline {
@@ -454,6 +903,178 @@ cell save_account(cell accounts, slice owner, cell account) inline {
   return accounts.udict_set_ref(256, slice_hash(owner), account);
 }
 
+(cell, int, slice) load_signed_order(cell signed_order) impure inline_ref {
+  throw_if(err::bad_order, signed_order.cell_level() != 0);
+  slice signed = signed_order.begin_parse();
+  throw_unless(err::bad_order, signed~load_uint(32) == signed_order_magic);
+  throw_unless(err::bad_order, signed~load_uint(16) == order_schema_version);
+  int public_key = signed~load_uint(256);
+  cell order = signed~load_ref();
+  cell signature_cell = signed~load_ref();
+  signed.end_parse();
+  throw_if(err::bad_order,
+    (order.cell_level() != 0) | (signature_cell.cell_level() != 0));
+  slice signature_bits = signature_cell.begin_parse();
+  slice signature = signature_bits~load_bits(512);
+  signature_bits.end_parse();
+  require_strong_ed25519_key(public_key);
+  return (order, public_key, signature);
+}
+
+(slice, int, slice, int, int, int, int, int, int, int, int, int, int, int, int)
+parse_order(cell order, int expected_global_id, int expected_workchain,
+    int expected_config_hash, int trade_close, int market_min_tick,
+    int market_min_fill, int market_max_lots) impure inline_ref {
+  throw_if(err::bad_order, order.cell_level() != 0);
+  slice root = order.begin_parse();
+  throw_unless(err::bad_order, root~load_uint(32) == order_magic);
+  throw_unless(err::bad_order, root~load_uint(16) == order_schema_version);
+  int global_id = root~load_int(32);
+  int workchain = root~load_int(8);
+  int key_epoch = root~load_uint(32);
+  int nonce = root~load_uint(64);
+  int salt = root~load_uint(256);
+  int quantity = root~load_uint(64);
+  int order_min_fill = root~load_uint(64);
+  int price = root~load_uint(16);
+  int valid_after = root~load_uint(64);
+  int valid_until = root~load_uint(64);
+  int action = root~load_uint(8);
+  int order_outcome = root~load_uint(8);
+  int liquidity_role = root~load_uint(8);
+  int allow_partial = root~load_uint(1);
+  cell market_binding = root~load_ref();
+  cell owner_binding = root~load_ref();
+  root.end_parse();
+  throw_if(err::bad_order,
+    (market_binding.cell_level() != 0) | (owner_binding.cell_level() != 0));
+
+  slice market_data = market_binding.begin_parse();
+  slice market = market_data~load_msg_addr();
+  int config_hash = market_data~load_uint(256);
+  market_data.end_parse();
+  require_standard_address(market);
+  slice owner_data = owner_binding.begin_parse();
+  slice owner = owner_data~load_msg_addr();
+  int has_counterparty = owner_data~load_uint(1);
+  slice counterparty = owner;
+  if (has_counterparty) {
+    counterparty = owner_data~load_msg_addr();
+    require_standard_address(counterparty);
+  }
+  owner_data.end_parse();
+  require_standard_address(owner);
+
+  throw_unless(err::wrong_network,
+    (global_id == expected_global_id) & (workchain == expected_workchain));
+  throw_unless(err::bad_order,
+    equal_slice_bits(market, my_address()) & (config_hash == expected_config_hash) &
+    (salt != 0) & ((action == action::buy) | (action == action::sell)) &
+    ((order_outcome == side::yes) | (order_outcome == side::no)) &
+    ((liquidity_role == role::maker) | (liquidity_role == role::taker)) &
+    (quantity > 0) & (quantity <= market_max_lots) &
+    (order_min_fill > 0) & (order_min_fill <= quantity) &
+    (quantity >= max(market_min_fill, order_min_fill)) &
+    (price >= market_min_tick) & (price <= price_scale - market_min_tick) &
+    (valid_after < valid_until) & (valid_until <= trade_close));
+
+  cell rebuilt_market = begin_cell().store_slice(market)
+    .store_uint(config_hash, 256).end_cell();
+  builder rebuilt_owner_builder = begin_cell().store_slice(owner)
+    .store_uint(has_counterparty, 1);
+  if (has_counterparty) {
+    rebuilt_owner_builder = rebuilt_owner_builder.store_slice(counterparty);
+  }
+  cell rebuilt_owner = rebuilt_owner_builder.end_cell();
+  cell rebuilt_order = begin_cell().store_uint(order_magic, 32)
+    .store_uint(order_schema_version, 16).store_int(global_id, 32)
+    .store_int(workchain, 8).store_uint(key_epoch, 32).store_uint(nonce, 64)
+    .store_uint(salt, 256).store_uint(quantity, 64).store_uint(order_min_fill, 64)
+    .store_uint(price, 16).store_uint(valid_after, 64).store_uint(valid_until, 64)
+    .store_uint(action, 8).store_uint(order_outcome, 8)
+    .store_uint(liquidity_role, 8).store_uint(allow_partial, 1)
+    .store_ref(rebuilt_market).store_ref(rebuilt_owner).end_cell();
+  throw_unless(err::bad_order, cell_hash(rebuilt_order) == cell_hash(order));
+
+  cell authority_binding = begin_cell().store_slice(market)
+    .store_uint(config_hash, 256).store_uint(cell_hash(order), 256).end_cell();
+  cell authorization = begin_cell().store_uint(order_authorization_magic, 32)
+    .store_uint(order_schema_version, 16).store_uint(order_domain_hash, 256)
+    .store_int(global_id, 32).store_int(workchain, 8)
+    .store_uint(contract_code_version, 16).store_ref(authority_binding).end_cell();
+  int digest = cell_hash(authorization);
+  return (owner, has_counterparty, counterparty, key_epoch, nonce, quantity,
+    order_min_fill, price, valid_after, valid_until, action, order_outcome,
+    liquidity_role, allow_partial, digest);
+}
+
+(int, int, int, int, int, int) load_order_state(cell state) impure inline {
+  slice s = state.begin_parse();
+  throw_unless(err::malformed, s~load_uint(32) == order_state_magic);
+  int digest = s~load_uint(256);
+  int quantity = s~load_uint(64);
+  int filled = s~load_uint(64);
+  int valid_until = s~load_uint(64);
+  int cancelled = s~load_uint(1);
+  int cleanup_credit = s~load_coins();
+  s.end_parse();
+  throw_unless(err::malformed, (digest != 0) & (filled <= quantity));
+  return (digest, quantity, filled, valid_until, cancelled, cleanup_credit);
+}
+
+cell pack_order_state(int digest, int quantity, int filled, int valid_until,
+    int cancelled, int cleanup_credit) inline {
+  return begin_cell().store_uint(order_state_magic, 32).store_uint(digest, 256)
+    .store_uint(quantity, 64).store_uint(filled, 64).store_uint(valid_until, 64)
+    .store_uint(cancelled, 1).store_coins(cleanup_credit).end_cell();
+}
+
+int order_key(int epoch, int nonce) inline {
+  return (epoch << 64) + nonce;
+}
+
+(int, int, int, int) inspect_order_record(cell orders, int epoch, int nonce,
+    int digest, int quantity, int valid_until) impure inline {
+  (cell state, int found) = orders.udict_get_ref?(96, order_key(epoch, nonce));
+  if (~ found) {
+    return (0, 0, 0, 0);
+  }
+  (int stored_digest, int stored_quantity, int filled, int stored_valid_until,
+    int cancelled, int cleanup_credit) = load_order_state(state);
+  throw_unless(err::replay,
+    (stored_digest == digest) & (stored_quantity == quantity) &
+    (stored_valid_until == valid_until));
+  throw_if(err::replay, cancelled);
+  return (1, filled, cancelled, cleanup_credit);
+}
+
+() require_fill_shape(int quantity, int filled, int requested, int allow_partial,
+    int market_min_fill, int order_min_fill) impure inline {
+  throw_unless(err::bad_fill,
+    (requested > 0) & (filled <= quantity) & (requested <= quantity - filled));
+  int remaining = quantity - filled;
+  int minimum = max(market_min_fill, order_min_fill);
+  if (allow_partial == 0) {
+    throw_unless(err::bad_fill, requested == remaining);
+  } else {
+    int remainder = remaining - requested;
+    throw_unless(err::bad_fill,
+      (requested == remaining) | ((requested >= minimum) & (remainder >= minimum)));
+  }
+}
+
+() require_order_limit(int action, int order_outcome, int limit, int yes_price) impure inline {
+  int execution_price = yes_price;
+  if (order_outcome == side::no) {
+    execution_price = price_scale - yes_price;
+  }
+  if (action == action::buy) {
+    throw_unless(err::bad_price, execution_price <= limit);
+  } else {
+    throw_unless(err::bad_price, execution_price >= limit);
+  }
+}
+
 int checked_add_u64(int left, int right) impure inline {
   int result = left + right;
   throw_if(err::arithmetic,
@@ -463,7 +1084,7 @@ int checked_add_u64(int left, int right) impure inline {
 
 int total_liability(int status, int total_free, int locked, int remaining_payout,
     int bond, int cleanup) impure inline {
-  if (status == status::finalized) {
+  if (status >= status::finalized) {
     throw_unless(err::liability, locked == 0);
   } else {
     throw_unless(err::liability, remaining_payout == 0);
@@ -472,12 +1093,22 @@ int total_liability(int status, int total_free, int locked, int remaining_payout
     checked_add(bond, cleanup));
 }
 
+() queue_exact_payout(slice recipient, int amount) impure inline {
+  if (amount > 0) {
+    cell payout = begin_cell().store_uint(0x10, 6).store_slice(recipient)
+      .store_tomis(amount).store_uint(0, 1 + 4 + 4 + 64 + 32)
+      .store_uint(0, 1).store_uint(0, 1).end_cell();
+    send_raw_message(payout, 17);
+  }
+}
+
 () require_solvency(int status, int total_free, int locked, int remaining_payout,
     int bond, int cleanup, int max_total_liability, int reserve_floor) impure inline {
   int liability = total_liability(status, total_free, locked, remaining_payout, bond, cleanup);
   throw_unless(err::liability, liability <= max_total_liability);
   [int balance, _] = get_balance();
   throw_unless(err::liability, balance >= liability + reserve_floor);
+  raw_reserve(liability + reserve_floor, 16);
 }
 
 int outbound_priced_as_masterchain(slice target, int my_wc) inline {
@@ -497,6 +1128,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   int op = in_msg~load_uint(32);
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
+  throw_unless(err::insufficient_value, msg_value >= min_operation_budget);
   (int activated, int activated_at, int status, int review_reason, int final_outcome,
     int stored_config_hash, int stored_market_id, cell config, cell accounting,
     cell resolution, cell dictionaries) = load_state();
@@ -546,6 +1178,10 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     require_bounceable(flags);
     throw_if(err::wrong_phase, activated);
     throw_unless(err::insufficient_value, msg_value >= reserve_floor + min_operation_budget);
+    require_empty_initial_runtime(activated_at, status, review_reason, final_outcome,
+      participant_count, global_live_orders, fill_count, complete_sets, total_free,
+      locked, final_backing, remaining_payout, claimed, bond, cleanup, resolution,
+      accounts, normal_votes, review_votes, statement_counts);
     require_solvency(status::trading, total_free, locked, remaining_payout,
       bond, cleanup, max_total_liability, reserve_floor);
     set_data(pack_state(1, now(), status::trading, 0, 0, stored_config_hash,
@@ -652,6 +1288,320 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       nonce_floor, free_balance, yes_lots, no_lots, account_live_orders,
       account_cleanup, account_order_cleanup, orders));
     dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    return ();
+  }
+
+  if (op == op::cancel_exact) {
+    cell order = in_msg~load_ref();
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::insufficient_value, msg_value >= min_operation_budget);
+    (slice order_owner, int has_counterparty, slice counterparty, int order_epoch,
+      int nonce, int quantity, int order_min_fill, int price, int valid_after,
+      int valid_until, int action, int order_outcome, int liquidity_role,
+      int allow_partial, int digest) = parse_order(order, global_id, workchain_id,
+        stored_config_hash, trade_close, min_price_tick, min_fill_lots,
+        max_order_lots);
+    has_counterparty~impure_touch();
+    counterparty~impure_touch();
+    order_min_fill~impure_touch();
+    price~impure_touch();
+    valid_after~impure_touch();
+    action~impure_touch();
+    order_outcome~impure_touch();
+    liquidity_role~impure_touch();
+    allow_partial~impure_touch();
+    throw_unless(err::not_owner, equal_slice_bits(order_owner, sender));
+    (cell account_cell, int found) = find_account(accounts, order_owner);
+    throw_unless(err::account_missing, found);
+    (slice owner, int key, int epoch, int nonce_floor, int free_balance,
+      int yes_lots, int no_lots, int account_live_orders, int account_cleanup,
+      int account_order_cleanup, cell orders) = unpack_account(account_cell);
+    throw_unless(err::not_owner, equal_slice_bits(owner, order_owner));
+    throw_unless(err::bad_nonce, order_epoch <= epoch);
+    ;; An already-invalid authorization needs no persistent tombstone.
+    if ((order_epoch < epoch) | (nonce < nonce_floor) | (now() >= trade_close)) {
+      return ();
+    }
+    int key96 = order_key(order_epoch, nonce);
+    (cell state, int record_found) = orders.udict_get_ref?(96, key96);
+    int cleanup_credit = 0;
+    if (record_found) {
+      (int stored_digest, int stored_quantity, int filled,
+        int stored_valid_until, int cancelled, cleanup_credit) = load_order_state(state);
+      throw_unless(err::replay,
+        (stored_digest == digest) & (stored_quantity == quantity) &
+        (stored_valid_until == valid_until));
+      if (cancelled) { return (); }
+      orders = orders.udict_set_ref(96, key96,
+        pack_order_state(digest, quantity, filled, valid_until, 1, cleanup_credit));
+    } else {
+      throw_unless(err::capacity,
+        (account_live_orders < max_orders_per_participant) &
+        (global_live_orders < max_live_orders));
+      int record_cost = checked_add(order_entry_fee, order_cleanup_bounty);
+      throw_unless(err::insufficient_value,
+        msg_value >= checked_add(min_operation_budget, record_cost));
+      cleanup_credit = order_cleanup_bounty;
+      account_live_orders += 1;
+      global_live_orders += 1;
+      account_order_cleanup = checked_add(account_order_cleanup, cleanup_credit);
+      cleanup = checked_add(cleanup, cleanup_credit);
+      orders = orders.udict_set_ref(96, key96,
+        pack_order_state(digest, quantity, 0, valid_until, 1, cleanup_credit));
+    }
+    accounts = save_account(accounts, owner, pack_account(owner, key, epoch,
+      nonce_floor, free_balance, yes_lots, no_lots, account_live_orders,
+      account_cleanup, account_order_cleanup, orders));
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    throw_unless(err::liability,
+      total_liability(status, total_free, locked, remaining_payout, bond, cleanup)
+        <= max_total_liability - challenge_bond);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    return ();
+  }
+
+  if (op == op::match_pair) {
+    int requested = in_msg~load_uint(64);
+    cell left_signed = in_msg~load_ref();
+    cell right_signed = in_msg~load_ref();
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase, (status == status::trading) & (now() < trade_close));
+    (cell left_order, int left_public_key, slice left_signature) =
+      load_signed_order(left_signed);
+    (cell right_order, int right_public_key, slice right_signature) =
+      load_signed_order(right_signed);
+    (slice left_owner, int left_has_counterparty, slice left_counterparty,
+      int left_epoch, int left_nonce, int left_quantity, int left_min_fill,
+      int left_price, int left_valid_after, int left_valid_until, int left_action,
+      int left_outcome, int left_role, int left_partial, int left_digest) =
+        parse_order(left_order, global_id, workchain_id, stored_config_hash,
+          trade_close, min_price_tick, min_fill_lots, max_order_lots);
+    (slice right_owner, int right_has_counterparty, slice right_counterparty,
+      int right_epoch, int right_nonce, int right_quantity, int right_min_fill,
+      int right_price, int right_valid_after, int right_valid_until, int right_action,
+      int right_outcome, int right_role, int right_partial, int right_digest) =
+        parse_order(right_order, global_id, workchain_id, stored_config_hash,
+          trade_close, min_price_tick, min_fill_lots, max_order_lots);
+    throw_if(err::bad_pair, equal_slice_bits(left_owner, right_owner));
+    throw_unless(err::bad_pair, left_role + right_role == 1);
+    if (left_has_counterparty) {
+      throw_unless(err::bad_pair, equal_slice_bits(left_counterparty, right_owner));
+    }
+    if (right_has_counterparty) {
+      throw_unless(err::bad_pair, equal_slice_bits(right_counterparty, left_owner));
+    }
+    throw_unless(err::bad_order,
+      (left_valid_after <= now()) & (now() < left_valid_until) &
+      (right_valid_after <= now()) & (now() < right_valid_until));
+
+    (cell left_account_cell, int left_found) = find_account(accounts, left_owner);
+    (cell right_account_cell, int right_found) = find_account(accounts, right_owner);
+    throw_unless(err::account_missing, left_found & right_found);
+    (slice left_account_owner, int left_key, int left_current_epoch,
+      int left_nonce_floor, int left_free, int left_yes, int left_no,
+      int left_live, int left_account_cleanup, int left_order_cleanup,
+      cell left_orders) = unpack_account(left_account_cell);
+    (slice right_account_owner, int right_key, int right_current_epoch,
+      int right_nonce_floor, int right_free, int right_yes, int right_no,
+      int right_live, int right_account_cleanup, int right_order_cleanup,
+      cell right_orders) = unpack_account(right_account_cell);
+    throw_unless(err::malformed,
+      equal_slice_bits(left_account_owner, left_owner) &
+      equal_slice_bits(right_account_owner, right_owner));
+    throw_unless(err::bad_nonce,
+      (left_epoch == left_current_epoch) & (right_epoch == right_current_epoch) &
+      (left_nonce >= left_nonce_floor) & (right_nonce >= right_nonce_floor));
+    throw_unless(err::bad_signature,
+      (left_public_key == left_key) & (right_public_key == right_key));
+    throw_unless(err::bad_signature,
+      check_signature(left_digest, left_signature, left_key));
+    throw_unless(err::bad_signature,
+      check_signature(right_digest, right_signature, right_key));
+
+    (int left_record_found, int left_filled, _, int left_cleanup_credit) =
+      inspect_order_record(left_orders, left_epoch, left_nonce, left_digest,
+        left_quantity, left_valid_until);
+    (int right_record_found, int right_filled, _, int right_cleanup_credit) =
+      inspect_order_record(right_orders, right_epoch, right_nonce, right_digest,
+        right_quantity, right_valid_until);
+    require_fill_shape(left_quantity, left_filled, requested, left_partial,
+      min_fill_lots, left_min_fill);
+    require_fill_shape(right_quantity, right_filled, requested, right_partial,
+      min_fill_lots, right_min_fill);
+
+    int maker_outcome = left_outcome;
+    int maker_price = left_price;
+    if (right_role == role::maker) {
+      maker_outcome = right_outcome;
+      maker_price = right_price;
+    }
+    int yes_price = maker_price;
+    if (maker_outcome == side::no) {
+      yes_price = price_scale - maker_price;
+    }
+    throw_unless(err::bad_price,
+      (yes_price >= min_price_tick) & (yes_price <= price_scale - min_price_tick));
+    require_order_limit(left_action, left_outcome, left_price, yes_price);
+    require_order_limit(right_action, right_outcome, right_price, yes_price);
+
+    int pair_kind = -1;
+    if ((left_action == action::buy) & (right_action == action::buy) &
+        (left_outcome != right_outcome)) {
+      pair_kind = 0; ;; mint complete set
+    } elseif ((left_action != right_action) & (left_outcome == right_outcome)) {
+      pair_kind = 1; ;; transfer an existing side
+    } elseif ((left_action == action::sell) & (right_action == action::sell) &
+        (left_outcome != right_outcome)) {
+      pair_kind = 2; ;; merge complete set
+    }
+    throw_if(err::bad_pair, pair_kind < 0);
+    int unit_value = lot_value / price_scale;
+    int notional = checked_mul(requested, lot_value);
+    int yes_value = checked_mul(checked_mul(requested, unit_value), yes_price);
+    int no_value = notional - yes_value;
+
+    if (pair_kind == 0) {
+      int left_cost = yes_value;
+      int right_cost = no_value;
+      if (left_outcome == side::no) {
+        left_cost = no_value;
+        right_cost = yes_value;
+      }
+      throw_unless(err::insufficient_free,
+        (left_free >= left_cost) & (right_free >= right_cost));
+      throw_unless(err::capacity, locked + notional <= max_locked);
+      left_free -= left_cost;
+      right_free -= right_cost;
+      total_free -= notional;
+      if (left_outcome == side::yes) {
+        left_yes = checked_add_u64(left_yes, requested);
+        right_no = checked_add_u64(right_no, requested);
+      } else {
+        left_no = checked_add_u64(left_no, requested);
+        right_yes = checked_add_u64(right_yes, requested);
+      }
+      complete_sets = checked_add_u64(complete_sets, requested);
+      locked = checked_add(locked, notional);
+    } elseif (pair_kind == 1) {
+      int trade_value = yes_value;
+      if (left_outcome == side::no) { trade_value = no_value; }
+      if (left_action == action::buy) {
+        throw_unless(err::insufficient_free, left_free >= trade_value);
+        left_free -= trade_value;
+        right_free = checked_add(right_free, trade_value);
+        if (left_outcome == side::yes) {
+          throw_unless(err::insufficient_position, right_yes >= requested);
+          right_yes -= requested;
+          left_yes = checked_add_u64(left_yes, requested);
+        } else {
+          throw_unless(err::insufficient_position, right_no >= requested);
+          right_no -= requested;
+          left_no = checked_add_u64(left_no, requested);
+        }
+      } else {
+        throw_unless(err::insufficient_free, right_free >= trade_value);
+        right_free -= trade_value;
+        left_free = checked_add(left_free, trade_value);
+        if (left_outcome == side::yes) {
+          throw_unless(err::insufficient_position, left_yes >= requested);
+          left_yes -= requested;
+          right_yes = checked_add_u64(right_yes, requested);
+        } else {
+          throw_unless(err::insufficient_position, left_no >= requested);
+          left_no -= requested;
+          right_no = checked_add_u64(right_no, requested);
+        }
+      }
+    } else {
+      int left_credit = yes_value;
+      int right_credit = no_value;
+      if (left_outcome == side::no) {
+        left_credit = no_value;
+        right_credit = yes_value;
+      }
+      if (left_outcome == side::yes) {
+        throw_unless(err::insufficient_position,
+          (left_yes >= requested) & (right_no >= requested));
+        left_yes -= requested;
+        right_no -= requested;
+      } else {
+        throw_unless(err::insufficient_position,
+          (left_no >= requested) & (right_yes >= requested));
+        left_no -= requested;
+        right_yes -= requested;
+      }
+      throw_unless(err::insufficient_position,
+        (complete_sets >= requested) & (locked >= notional));
+      left_free = checked_add(left_free, left_credit);
+      right_free = checked_add(right_free, right_credit);
+      total_free = checked_add(total_free, notional);
+      complete_sets -= requested;
+      locked -= notional;
+    }
+
+    int new_records = 0;
+    if (~ left_record_found) { new_records += 1; }
+    if (~ right_record_found) { new_records += 1; }
+    int record_cost = checked_mul(new_records,
+      checked_add(order_entry_fee, order_cleanup_bounty));
+    throw_unless(err::insufficient_value,
+      msg_value >= checked_add(min_operation_budget, record_cost));
+    if (~ left_record_found) {
+      throw_unless(err::capacity,
+        (left_live < max_orders_per_participant) &
+        (global_live_orders < max_live_orders));
+      left_live += 1;
+      global_live_orders += 1;
+      left_cleanup_credit = order_cleanup_bounty;
+      left_order_cleanup = checked_add(left_order_cleanup, order_cleanup_bounty);
+      cleanup = checked_add(cleanup, order_cleanup_bounty);
+    }
+    if (~ right_record_found) {
+      throw_unless(err::capacity,
+        (right_live < max_orders_per_participant) &
+        (global_live_orders < max_live_orders));
+      right_live += 1;
+      global_live_orders += 1;
+      right_cleanup_credit = order_cleanup_bounty;
+      right_order_cleanup = checked_add(right_order_cleanup, order_cleanup_bounty);
+      cleanup = checked_add(cleanup, order_cleanup_bounty);
+    }
+    left_filled = checked_add_u64(left_filled, requested);
+    right_filled = checked_add_u64(right_filled, requested);
+    left_orders = left_orders.udict_set_ref(96, order_key(left_epoch, left_nonce),
+      pack_order_state(left_digest, left_quantity, left_filled,
+        left_valid_until, 0, left_cleanup_credit));
+    right_orders = right_orders.udict_set_ref(96, order_key(right_epoch, right_nonce),
+      pack_order_state(right_digest, right_quantity, right_filled,
+        right_valid_until, 0, right_cleanup_credit));
+    accounts = save_account(accounts, left_owner, pack_account(left_owner, left_key,
+      left_current_epoch, left_nonce_floor, left_free, left_yes, left_no,
+      left_live, left_account_cleanup, left_order_cleanup, left_orders));
+    accounts = save_account(accounts, right_owner, pack_account(right_owner, right_key,
+      right_current_epoch, right_nonce_floor, right_free, right_yes, right_no,
+      right_live, right_account_cleanup, right_order_cleanup, right_orders));
+    if (fill_count < (1 << 64) - 1) { fill_count += 1; }
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    throw_unless(err::liability,
+      total_liability(status, total_free, locked, remaining_payout, bond, cleanup)
+        <= max_total_liability - challenge_bond);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
     set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
       stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
     return ();
@@ -706,6 +1656,333 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       cleanup, max_total_liability, reserve_floor);
     set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
       stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    return ();
+  }
+
+  if (op == op::challenge_result) {
+    int expected_proposal_hash = in_msg~load_uint(256);
+    int counter_outcome = in_msg~load_uint(8);
+    int counter_evidence = in_msg~load_uint(256);
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase, status == status::proposed);
+    (cell normal, cell review_state, cell challenge, cell final_state) =
+      load_resolution(resolution);
+    (int normal_nonce, int normal_opened_at, int proposal_present,
+      cell proposal, int proposal_hash, int proposal_outcome,
+      int proposal_evidence, int proposed_at, int challenge_deadline) =
+        load_normal_runtime(normal);
+    normal_nonce~impure_touch();
+    normal_opened_at~impure_touch();
+    proposal~impure_touch();
+    proposed_at~impure_touch();
+    throw_unless(err::bad_challenge,
+      proposal_present & (expected_proposal_hash == proposal_hash) &
+      (counter_outcome <= outcome::invalid) &
+      (counter_outcome != proposal_outcome) & (counter_evidence != 0) &
+      (now() < challenge_deadline));
+    (int challenge_present, _, _, _, _) = load_challenge_runtime(challenge);
+    throw_if(err::bad_challenge, challenge_present);
+    throw_unless(err::insufficient_value,
+      msg_value >= checked_add(min_operation_budget,
+        checked_add(challenge_bond, challenge_processing_fee)));
+    int review_started_at = now();
+    int review_vote_not_before = review_started_at + appeal_review_delay;
+    int appeal_deadline = review_started_at + appeal_period;
+    throw_unless(err::arithmetic,
+      (review_vote_not_before < (1 << 64)) & (appeal_deadline < (1 << 64)) &
+      (appeal_deadline < claim_deadline));
+    cell review_base = build_review_base(stored_market_id, rules_hash,
+      review::challenge, review_started_at, review_vote_not_before,
+      appeal_deadline, proposal_hash, proposal_outcome, proposal_evidence,
+      sender, counter_outcome, counter_evidence);
+    review_state = pack_review_runtime(1, review_base, cell_hash(review_base),
+      0, 0, appeal_deadline);
+    challenge = pack_challenge_runtime(1, sender, counter_outcome,
+      counter_evidence, 0);
+    bond = checked_add(bond, challenge_bond);
+    status = status::reviewing;
+    review_reason = review::challenge;
+    review_votes = null();
+    statement_counts = null();
+    resolution = pack_resolution(normal, review_state, challenge, final_state);
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    return ();
+  }
+
+  if (op == op::report_result) {
+    int round = in_msg~load_uint(8);
+    int expected_context = in_msg~load_uint(256);
+    int statement_outcome = in_msg~load_uint(8);
+    int evidence_root = in_msg~load_uint(256);
+    int statement_created_at = in_msg~load_uint(64);
+    int statement_expiry = in_msg~load_uint(64);
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::bad_order,
+      (statement_outcome <= outcome::invalid) & (evidence_root != 0) &
+      (statement_created_at <= now()) & (now() < statement_expiry));
+    (cell normal, cell review_state, cell challenge, cell final_state) =
+      load_resolution(resolution);
+    (int normal_nonce, int normal_opened_at, int proposal_present,
+      cell proposal, int proposal_hash, int proposal_outcome,
+      int proposal_evidence, int proposed_at, int challenge_deadline) =
+        load_normal_runtime(normal);
+    proposal~impure_touch();
+    proposal_hash~impure_touch();
+    proposal_outcome~impure_touch();
+    proposal_evidence~impure_touch();
+    proposed_at~impure_touch();
+    challenge_deadline~impure_touch();
+    int context_hash = 0;
+    int policy_hash = 0;
+    int threshold = 0;
+    cell statement = null();
+    int statement_hash = 0;
+    if (round == 0) {
+      throw_unless(err::wrong_phase, status == status::reporting);
+      throw_if(err::phase_advance_required, now() >= oracle_vote_deadline);
+      throw_unless(err::round_not_open,
+        (normal_nonce != 0) & (normal_opened_at != 0));
+      throw_unless(err::bad_order,
+        (statement_created_at >= max(resolve_not_before, normal_opened_at)) &
+        (statement_expiry <= oracle_vote_deadline));
+      context_hash = cell_hash(build_normal_context(stored_market_id, rules_hash,
+        normal_nonce, normal_opened_at, resolve_not_before, oracle_vote_deadline));
+      throw_unless(err::bad_context, expected_context == context_hash);
+      (threshold, _) = require_reporter(normal_policy, sender);
+      policy_hash = cell_hash(normal_policy);
+      statement = build_resolution_statement(global_id, stored_market_id,
+        rules_hash, policy_hash, context_hash, round, statement_outcome,
+        evidence_root, statement_created_at, statement_expiry);
+      statement_hash = cell_hash(statement);
+      int fresh = 0;
+      (normal_votes, statement_counts, int count, fresh) = record_vote(
+        normal_votes, statement_counts, sender, statement_hash);
+      fresh~impure_touch();
+      if (count >= threshold) {
+        throw_if(err::malformed, proposal_present);
+        int deadline = now() + challenge_period;
+        throw_unless(err::arithmetic,
+          (deadline < (1 << 64)) & (deadline < claim_deadline));
+        normal = pack_normal_runtime(normal_nonce, normal_opened_at, 1,
+          statement, statement_hash, statement_outcome, evidence_root,
+          now(), deadline);
+        status = status::proposed;
+      }
+    } elseif (round == 1) {
+      throw_unless(err::wrong_phase, status == status::reviewing);
+      (int base_present, cell review_base, int base_hash, int review_nonce,
+        int review_opened_at, int appeal_deadline) = load_review_runtime(review_state);
+      throw_unless(err::malformed, base_present);
+      (int base_reason, _, int vote_not_before, int base_appeal_deadline) =
+        load_review_base_times(review_base);
+      throw_unless(err::malformed,
+        (base_reason == review_reason) & (appeal_deadline == base_appeal_deadline));
+      throw_if(err::phase_advance_required, now() >= appeal_deadline);
+      throw_unless(err::round_not_open,
+        (review_nonce != 0) & (review_opened_at != 0));
+      throw_unless(err::bad_order,
+        (statement_created_at >= max(vote_not_before, review_opened_at)) &
+        (statement_expiry <= appeal_deadline));
+      context_hash = cell_hash(build_review_vote_context(base_hash,
+        review_nonce, review_opened_at));
+      throw_unless(err::bad_context, expected_context == context_hash);
+      (threshold, _) = require_reporter(appellate_policy, sender);
+      policy_hash = cell_hash(appellate_policy);
+      statement = build_resolution_statement(global_id, stored_market_id,
+        rules_hash, policy_hash, context_hash, round, statement_outcome,
+        evidence_root, statement_created_at, statement_expiry);
+      statement_hash = cell_hash(statement);
+      int fresh = 0;
+      (review_votes, statement_counts, int count, fresh) = record_vote(
+        review_votes, statement_counts, sender, statement_hash);
+      fresh~impure_touch();
+      if (count >= threshold) {
+        int final_reason = final_reason::normal_timeout_appeal;
+        int review_present = 1;
+        if (review_reason == review::challenge) {
+          (int challenge_present, slice challenger, int counter_outcome,
+            int counter_evidence, int refundable) = load_challenge_runtime(challenge);
+          counter_outcome~impure_touch();
+          counter_evidence~impure_touch();
+          throw_unless(err::malformed, challenge_present);
+          if (statement_outcome == proposal_outcome) {
+            final_reason = final_reason::appeal_upheld;
+            throw_unless(err::liability, bond >= challenge_bond);
+            bond -= challenge_bond;
+            refundable = 0;
+          } else {
+            final_reason = final_reason::appeal_overturned;
+            refundable = challenge_bond;
+          }
+          challenge = pack_challenge_runtime(1, challenger, counter_outcome,
+            counter_evidence, refundable);
+        }
+        final_state = pack_final_runtime(final_reason, now(), 1,
+          statement_hash, evidence_root, context_hash, review_present, base_hash);
+        final_outcome = statement_outcome;
+        status = status::finalized;
+        final_backing = locked;
+        remaining_payout = locked;
+        locked = 0;
+      }
+    } else {
+      throw(err::bad_order);
+    }
+    resolution = pack_resolution(normal, review_state, challenge, final_state);
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    return ();
+  }
+
+  if ((op == op::advance_phase) | (op == op::finalize_uncontested) |
+      (op == op::finalize_review_timeout)) {
+    int expected_review_base = 0;
+    if (op == op::finalize_review_timeout) {
+      expected_review_base = in_msg~load_uint(256);
+    }
+    in_msg.end_parse();
+    require_bounceable(flags);
+    (cell normal, cell review_state, cell challenge, cell final_state) =
+      load_resolution(resolution);
+    (int normal_nonce, int normal_opened_at, int proposal_present,
+      cell proposal, int proposal_hash, int proposal_outcome,
+      int proposal_evidence, int proposed_at, int challenge_deadline) =
+        load_normal_runtime(normal);
+    proposed_at~impure_touch();
+    int changed = 0;
+    if (op == op::finalize_uncontested) {
+      throw_unless(err::wrong_phase,
+        (status == status::proposed) & proposal_present &
+        (now() >= challenge_deadline));
+    } elseif (op == op::finalize_review_timeout) {
+      throw_unless(err::wrong_phase, status == status::reviewing);
+      (int base_present, _, int base_hash, _, _, int appeal_deadline) =
+        load_review_runtime(review_state);
+      throw_unless(err::bad_context,
+        base_present & (expected_review_base == base_hash));
+      throw_unless(err::wrong_phase, now() >= appeal_deadline);
+    }
+
+    if ((status == status::trading) & (now() >= trade_close)) {
+      status = status::reporting;
+      changed = 1;
+    }
+    if (status == status::reporting) {
+      if (now() >= oracle_vote_deadline) {
+        int review_started = oracle_vote_deadline;
+        int vote_not_before = oracle_vote_deadline + appeal_review_delay;
+        int appeal_deadline = oracle_vote_deadline + appeal_period;
+        cell base = build_review_base(stored_market_id, rules_hash,
+          review::normal_timeout, review_started, vote_not_before,
+          appeal_deadline, 0, 0, 0, my_address(), 0, 0);
+        review_state = pack_review_runtime(1, base, cell_hash(base),
+          0, 0, appeal_deadline);
+        status = status::reviewing;
+        review_reason = review::normal_timeout;
+        review_votes = null();
+        statement_counts = null();
+        changed = 1;
+      } elseif ((now() >= resolve_not_before) & (normal_nonce == 0)) {
+        normal_nonce = fresh_round_nonce(stored_market_id, 0);
+        normal_opened_at = now();
+        normal = pack_normal_runtime(normal_nonce, normal_opened_at, 0,
+          null(), 0, 0, 0, 0, 0);
+        changed = 1;
+      }
+    }
+    if ((status == status::proposed) & (now() >= challenge_deadline)) {
+      throw_unless(err::malformed, proposal_present);
+      final_state = pack_final_runtime(final_reason::normal_uncontested, now(),
+        1, proposal_hash, proposal_evidence,
+        cell_hash(build_normal_context(stored_market_id, rules_hash,
+          normal_nonce, normal_opened_at, resolve_not_before,
+          oracle_vote_deadline)), 0, 0);
+      final_outcome = proposal_outcome;
+      status = status::finalized;
+      final_backing = locked;
+      remaining_payout = locked;
+      locked = 0;
+      changed = 1;
+    }
+    if (status == status::reviewing) {
+      (int base_present, cell base, int base_hash, int review_nonce,
+        int review_opened_at, int appeal_deadline) = load_review_runtime(review_state);
+      throw_unless(err::malformed, base_present);
+      (int base_reason, _, int vote_not_before, int base_deadline) =
+        load_review_base_times(base);
+      throw_unless(err::malformed,
+        (base_reason == review_reason) & (base_deadline == appeal_deadline));
+      if (now() >= appeal_deadline) {
+        int terminal_outcome = outcome::invalid;
+        int terminal_reason = final_reason::both_oracle_timeout;
+        int has_statement = 0;
+        int terminal_statement = 0;
+        int terminal_evidence = 0;
+        int terminal_context = 0;
+        if (review_reason == review::challenge) {
+          throw_unless(err::malformed, proposal_present);
+          terminal_outcome = proposal_outcome;
+          terminal_reason = final_reason::challenge_review_timeout;
+          has_statement = 1;
+          terminal_statement = proposal_hash;
+          terminal_evidence = proposal_evidence;
+          terminal_context = cell_hash(build_normal_context(stored_market_id,
+            rules_hash, normal_nonce, normal_opened_at, resolve_not_before,
+            oracle_vote_deadline));
+          (int challenge_present, slice challenger, int counter_outcome,
+            int counter_evidence, _) = load_challenge_runtime(challenge);
+          throw_unless(err::malformed, challenge_present);
+          challenge = pack_challenge_runtime(1, challenger, counter_outcome,
+            counter_evidence, challenge_bond);
+        }
+        final_state = pack_final_runtime(terminal_reason, now(), has_statement,
+          terminal_statement, terminal_evidence, terminal_context, 1, base_hash);
+        final_outcome = terminal_outcome;
+        status = status::finalized;
+        final_backing = locked;
+        remaining_payout = locked;
+        locked = 0;
+        changed = 1;
+      } elseif ((now() >= vote_not_before) & (review_nonce == 0)) {
+        review_nonce = fresh_round_nonce(stored_market_id, 1);
+        review_opened_at = now();
+        review_state = pack_review_runtime(1, base, base_hash,
+          review_nonce, review_opened_at, appeal_deadline);
+        changed = 1;
+      }
+    }
+    if (op == op::finalize_uncontested) {
+      throw_unless(err::wrong_phase, status == status::finalized);
+    }
+    if (op == op::finalize_review_timeout) {
+      throw_unless(err::wrong_phase, status == status::finalized);
+    }
+    resolution = pack_resolution(normal, review_state, challenge, final_state);
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    require_solvency(status, total_free, locked, remaining_payout, bond,
+      cleanup, max_total_liability, reserve_floor);
+    if (changed) {
+      set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+        stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    }
     return ();
   }
 
@@ -794,6 +2071,352 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     return ();
   }
 
+  if ((op == op::withdraw_challenge_bond) |
+      (op == op::force_refund_challenge_bond)) {
+    slice requested_challenger = sender;
+    if (op == op::force_refund_challenge_bond) {
+      requested_challenger = in_msg~load_msg_addr();
+      require_standard_address(requested_challenger);
+    }
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase, status == status::finalized);
+    if (op == op::force_refund_challenge_bond) {
+      throw_unless(err::wrong_phase, now() >= claim_deadline);
+    }
+    (cell normal, cell review_state, cell challenge, cell final_state) =
+      load_resolution(resolution);
+    (int challenge_present, slice challenger, int counter_outcome,
+      int counter_evidence, int refundable) = load_challenge_runtime(challenge);
+    throw_unless(err::bad_challenge,
+      challenge_present & (refundable > 0) &
+      equal_slice_bits(requested_challenger, challenger));
+    if (op == op::withdraw_challenge_bond) {
+      throw_unless(err::not_owner, equal_slice_bits(sender, challenger));
+    }
+    throw_unless(err::liability, bond >= refundable);
+    bond -= refundable;
+    challenge = pack_challenge_runtime(1, challenger, counter_outcome,
+      counter_evidence, 0);
+    resolution = pack_resolution(normal, review_state, challenge, final_state);
+    int liability_after = total_liability(status, total_free, locked,
+      remaining_payout, bond, cleanup);
+    throw_unless(err::liability, liability_after <= max_total_liability);
+    int forward_fee = get_forward_fee(
+      outbound_priced_as_masterchain(challenger, workchain_id), 0, 0);
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= liability_after + reserve_floor + refundable + forward_fee);
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(liability_after + reserve_floor, 16);
+    cell payout = begin_cell().store_uint(0x10, 6).store_slice(challenger)
+      .store_tomis(refundable).store_uint(0, 1 + 4 + 4 + 64 + 32)
+      .store_uint(0, 1).store_uint(0, 1).end_cell();
+    send_raw_message(payout, 17);
+    return ();
+  }
+
+  if (op == op::prune_order) {
+    slice requested_owner = in_msg~load_msg_addr();
+    int epoch = in_msg~load_uint(32);
+    int nonce = in_msg~load_uint(64);
+    int reward_mode = in_msg~load_uint(1);
+    in_msg.end_parse();
+    require_standard_address(requested_owner);
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase, status < status::terminal);
+    (cell account_cell, int found) = find_account(accounts, requested_owner);
+    throw_unless(err::account_missing, found);
+    (slice owner, int key, int key_epoch, int nonce_floor, int free_balance,
+      int yes_lots, int no_lots, int account_live_orders, int account_cleanup,
+      int account_order_cleanup, cell orders) = unpack_account(account_cell);
+    throw_unless(err::malformed, equal_slice_bits(owner, requested_owner));
+    (cell order_state, int order_found) = orders.udict_get_ref?(96, order_key(epoch, nonce));
+    throw_unless(err::bad_order, order_found);
+    (int digest, int quantity, int filled, int valid_until, int cancelled,
+      int cleanup_credit) = load_order_state(order_state);
+    digest~impure_touch();
+    int permanently_dead = cancelled | (filled == quantity) |
+      (epoch < key_epoch) | ((epoch == key_epoch) & (nonce < nonce_floor)) |
+      (now() >= valid_until) | (now() >= trade_close);
+    throw_unless(err::bad_order, permanently_dead);
+    throw_unless(err::liability,
+      (cleanup_credit > 0) & (account_live_orders > 0) &
+      (global_live_orders > 0) & (account_order_cleanup >= cleanup_credit) &
+      (cleanup >= cleanup_credit));
+    (orders, int deleted) = orders.udict_delete?(96, order_key(epoch, nonce));
+    throw_unless(err::malformed, deleted);
+    account_live_orders -= 1;
+    global_live_orders -= 1;
+    account_order_cleanup -= cleanup_credit;
+    cleanup -= cleanup_credit;
+    accounts = save_account(accounts, owner, pack_account(owner, key, key_epoch,
+      nonce_floor, free_balance, yes_lots, no_lots, account_live_orders,
+      account_cleanup, account_order_cleanup, orders));
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    int liability_after = total_liability(status, total_free, locked,
+      remaining_payout, bond, cleanup);
+    int reward = 0;
+    int forward_fee = 0;
+    if (reward_mode) {
+      reward = cleanup_credit;
+      forward_fee = get_forward_fee(outbound_priced_as_masterchain(sender, workchain_id), 0, 0);
+    }
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= liability_after + reserve_floor + reward + forward_fee);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(liability_after + reserve_floor, 16);
+    queue_exact_payout(sender, reward);
+    return ();
+  }
+
+  if (op == op::prune_owner_orders) {
+    slice requested_owner = in_msg~load_msg_addr();
+    int reward_mode = in_msg~load_uint(1);
+    in_msg.end_parse();
+    require_standard_address(requested_owner);
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase,
+      (status < status::terminal) & (now() >= trade_close));
+    (cell account_cell, int found) = find_account(accounts, requested_owner);
+    throw_unless(err::account_missing, found);
+    (slice owner, int key, int key_epoch, int nonce_floor, int free_balance,
+      int yes_lots, int no_lots, int account_live_orders, int account_cleanup,
+      int account_order_cleanup, cell orders) = unpack_account(account_cell);
+    throw_unless(err::malformed, equal_slice_bits(owner, requested_owner));
+    throw_unless(err::bad_order,
+      (account_live_orders > 0) & (account_order_cleanup > 0) &
+      (~ orders.cell_null?()));
+    throw_unless(err::liability,
+      (global_live_orders >= account_live_orders) &
+      (cleanup >= account_order_cleanup));
+    global_live_orders -= account_live_orders;
+    cleanup -= account_order_cleanup;
+    int reward = 0;
+    if (reward_mode) { reward = account_order_cleanup; }
+    accounts = save_account(accounts, owner, pack_account(owner, key, key_epoch,
+      nonce_floor, free_balance, yes_lots, no_lots, 0, account_cleanup, 0, null()));
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    int liability_after = total_liability(status, total_free, locked,
+      remaining_payout, bond, cleanup);
+    int forward_fee = 0;
+    if (reward > 0) {
+      forward_fee = get_forward_fee(outbound_priced_as_masterchain(sender, workchain_id), 0, 0);
+    }
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= liability_after + reserve_floor + reward + forward_fee);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(liability_after + reserve_floor, 16);
+    queue_exact_payout(sender, reward);
+    return ();
+  }
+
+  if (op == op::close_empty_account) {
+    slice requested_owner = in_msg~load_msg_addr();
+    int reward_mode = in_msg~load_uint(1);
+    in_msg.end_parse();
+    require_standard_address(requested_owner);
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase,
+      (status < status::terminal) & (now() >= trade_close));
+    (cell account_cell, int found) = find_account(accounts, requested_owner);
+    throw_unless(err::account_missing, found);
+    (slice owner, int key, int key_epoch, int nonce_floor, int free_balance,
+      int yes_lots, int no_lots, int account_live_orders, int account_cleanup,
+      int account_order_cleanup, cell orders) = unpack_account(account_cell);
+    key~impure_touch();
+    key_epoch~impure_touch();
+    nonce_floor~impure_touch();
+    throw_unless(err::malformed, equal_slice_bits(owner, requested_owner));
+    throw_unless(err::bad_amount,
+      (free_balance == 0) & (yes_lots == 0) & (no_lots == 0));
+    throw_unless(err::liability,
+      (participant_count > 0) & (global_live_orders >= account_live_orders) &
+      (cleanup >= account_cleanup + account_order_cleanup));
+    if (account_live_orders == 0) {
+      throw_unless(err::malformed,
+        orders.cell_null?() & (account_order_cleanup == 0));
+    } else {
+      throw_unless(err::malformed,
+        (~ orders.cell_null?()) & (account_order_cleanup > 0));
+    }
+    int cleanup_credit = account_cleanup + account_order_cleanup;
+    (accounts, int deleted) = accounts.udict_delete?(256, slice_hash(owner));
+    throw_unless(err::malformed, deleted);
+    participant_count -= 1;
+    global_live_orders -= account_live_orders;
+    cleanup -= cleanup_credit;
+    int reward = 0;
+    if (reward_mode) { reward = cleanup_credit; }
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    int liability_after = total_liability(status, total_free, locked,
+      remaining_payout, bond, cleanup);
+    int forward_fee = 0;
+    if (reward > 0) {
+      forward_fee = get_forward_fee(outbound_priced_as_masterchain(sender, workchain_id), 0, 0);
+    }
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= liability_after + reserve_floor + reward + forward_fee);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(liability_after + reserve_floor, 16);
+    queue_exact_payout(sender, reward);
+    return ();
+  }
+
+  if (op == op::force_close_account) {
+    slice requested_owner = in_msg~load_msg_addr();
+    int reward_mode = in_msg~load_uint(1);
+    in_msg.end_parse();
+    require_standard_address(requested_owner);
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase,
+      (status == status::finalized) & (now() >= claim_deadline));
+    (cell account_cell, int found) = find_account(accounts, requested_owner);
+    throw_unless(err::account_missing, found);
+    (slice owner, int key, int key_epoch, int nonce_floor, int free_balance,
+      int yes_lots, int no_lots, int account_live_orders, int account_cleanup,
+      int account_order_cleanup, cell orders) = unpack_account(account_cell);
+    key~impure_touch();
+    key_epoch~impure_touch();
+    nonce_floor~impure_touch();
+    throw_unless(err::malformed, equal_slice_bits(owner, requested_owner));
+    if (account_live_orders == 0) {
+      throw_unless(err::malformed,
+        orders.cell_null?() & (account_order_cleanup == 0));
+    } else {
+      throw_unless(err::malformed,
+        (~ orders.cell_null?()) & (account_order_cleanup > 0));
+    }
+    int position_payout = 0;
+    if (final_outcome == outcome::yes) {
+      position_payout = checked_mul(yes_lots, lot_value);
+    } elseif (final_outcome == outcome::no) {
+      position_payout = checked_mul(no_lots, lot_value);
+    } elseif (final_outcome == outcome::invalid) {
+      position_payout = checked_mul(yes_lots + no_lots, lot_value / 2);
+    } else {
+      throw(err::wrong_phase);
+    }
+    throw_unless(err::liability,
+      (remaining_payout >= position_payout) &
+      (total_free >= free_balance) & (participant_count > 0) &
+      (global_live_orders >= account_live_orders) &
+      (cleanup >= account_cleanup + account_order_cleanup));
+    int principal = checked_add(free_balance, position_payout);
+    int cleanup_credit = account_cleanup + account_order_cleanup;
+    remaining_payout -= position_payout;
+    claimed = checked_add(claimed, position_payout);
+    total_free -= free_balance;
+    participant_count -= 1;
+    global_live_orders -= account_live_orders;
+    cleanup -= cleanup_credit;
+    (accounts, int deleted) = accounts.udict_delete?(256, slice_hash(owner));
+    throw_unless(err::malformed, deleted);
+    int reward = 0;
+    if (reward_mode) { reward = cleanup_credit; }
+    int owner_amount = principal;
+    int caller_amount = reward;
+    if (equal_slice_bits(sender, owner)) {
+      owner_amount = checked_add(owner_amount, reward);
+      caller_amount = 0;
+    }
+    accounting = pack_accounting(participant_count, global_live_orders, fill_count,
+      complete_sets, total_free, locked, final_backing, remaining_payout,
+      claimed, bond, cleanup);
+    dictionaries = pack_dictionaries(accounts, normal_votes, review_votes, statement_counts);
+    int liability_after = total_liability(status, total_free, locked,
+      remaining_payout, bond, cleanup);
+    int forward_fees = 0;
+    if (owner_amount > 0) {
+      forward_fees += get_forward_fee(outbound_priced_as_masterchain(owner, workchain_id), 0, 0);
+    }
+    if (caller_amount > 0) {
+      forward_fees += get_forward_fee(outbound_priced_as_masterchain(sender, workchain_id), 0, 0);
+    }
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= liability_after + reserve_floor + owner_amount + caller_amount + forward_fees);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(liability_after + reserve_floor, 16);
+    queue_exact_payout(owner, owner_amount);
+    queue_exact_payout(sender, caller_amount);
+    return ();
+  }
+
+  if (op == op::compact_terminal) {
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase,
+      (status == status::finalized) & (now() >= claim_deadline));
+    throw_unless(err::liability,
+      (participant_count == 0) & (global_live_orders == 0) &
+      (total_free == 0) & (locked == 0) & (remaining_payout == 0) &
+      (bond == 0) & (cleanup == 0) & accounts.cell_null?());
+    (cell normal, cell review_state, cell challenge, cell final_state) =
+      load_resolution(resolution);
+    normal~impure_touch();
+    review_state~impure_touch();
+    challenge~impure_touch();
+    normal = pack_normal_runtime(0, 0, 0, null(), 0, 0, 0, 0, 0);
+    review_state = pack_review_runtime(0, null(), 0, 0, 0, 0);
+    challenge = pack_challenge_runtime(0, my_address(), 0, 0, 0);
+    resolution = pack_resolution(normal, review_state, challenge, final_state);
+    status = status::terminal;
+    complete_sets = 0;
+    normal_votes = null();
+    review_votes = null();
+    statement_counts = null();
+    accounting = pack_accounting(0, 0, fill_count, 0, 0, 0,
+      final_backing, 0, claimed, 0, 0);
+    dictionaries = pack_dictionaries(null(), null(), null(), null());
+    [int balance, _] = get_balance();
+    throw_unless(err::liability, balance >= terminal_reserve);
+    set_data(pack_state(activated, activated_at, status, review_reason, final_outcome,
+      stored_config_hash, stored_market_id, config, accounting, resolution, dictionaries));
+    raw_reserve(terminal_reserve, 16);
+    return ();
+  }
+
+  if (op == op::withdraw_terminal_surplus) {
+    int amount = in_msg~load_coins();
+    in_msg.end_parse();
+    require_bounceable(flags);
+    throw_unless(err::wrong_phase, status == status::terminal);
+    throw_unless(err::bad_amount, amount > 0);
+    throw_unless(err::liability,
+      (participant_count == 0) & (global_live_orders == 0) &
+      (total_free == 0) & (locked == 0) & (remaining_payout == 0) &
+      (bond == 0) & (cleanup == 0) & accounts.cell_null?());
+    int forward_fee = get_forward_fee(
+      outbound_priced_as_masterchain(reserve_recipient, workchain_id), 0, 0);
+    [int balance, _] = get_balance();
+    throw_unless(err::liability,
+      balance >= terminal_reserve + amount + forward_fee);
+    raw_reserve(terminal_reserve, 16);
+    queue_exact_payout(reserve_recipient, amount);
+    return ();
+  }
+
   throw(err::unknown_op);
 }
 
@@ -806,11 +2429,11 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     final_backing, remaining_payout, claimed, bond, cleanup);
 }
 
-(int, int, int, int, int, int) get_prediction_state() method_id {
+(int, int, int, int, int, int, int) get_prediction_state() method_id {
   var (activated, activated_at, status, review_reason, final_outcome,
     config_hash, market_id, _, _, _, _) = load_state();
-  market_id~impure_touch();
-  return (activated, activated_at, status, review_reason, final_outcome, config_hash);
+  return (activated, activated_at, status, review_reason, final_outcome,
+    config_hash, market_id);
 }
 
 (slice, int, int, int, int, int, int, int, int, int, cell) get_prediction_account(slice owner) method_id {
@@ -820,4 +2443,61 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   (cell account, int found) = find_account(accounts, owner);
   throw_unless(err::account_missing, found);
   return unpack_account(account);
+}
+
+(int, int, int, int, int, int, int) get_market_phase() method_id {
+  var (_, _, status, review_reason, final_outcome, _, market_id,
+    cell config, _, cell resolution, _) = load_state();
+  slice c = config.begin_parse();
+  c~load_uint(32);
+  cell identity = c~load_ref();
+  cell times = c~load_ref();
+  c~load_ref();
+  c~load_ref();
+  c.end_parse();
+  slice i = identity.begin_parse();
+  i~load_uint(32);
+  i~load_int(32);
+  i~load_int(8);
+  i~load_uint(256);
+  int rules_hash = i~load_uint(256);
+  i~load_uint(256);
+  i~load_ref();
+  i.end_parse();
+  slice t = times.begin_parse();
+  t~load_uint(32);
+  int trade_close = t~load_uint(64);
+  int resolve_not_before = t~load_uint(64);
+  int oracle_vote_deadline = t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t.end_parse();
+  (cell normal, cell review_state, _, _) = load_resolution(resolution);
+  (int normal_nonce, int normal_opened_at, _, _, int proposal_hash,
+    _, _, _, int challenge_deadline) = load_normal_runtime(normal);
+  (int base_present, cell base, int base_hash, int review_nonce,
+    int review_opened_at, int appeal_deadline) = load_review_runtime(review_state);
+  int current_context = 0;
+  int next_deadline = trade_close;
+  if (status == status::reporting) {
+    next_deadline = oracle_vote_deadline;
+    if (normal_nonce != 0) {
+      current_context = cell_hash(build_normal_context(market_id, rules_hash,
+        normal_nonce, normal_opened_at, resolve_not_before, oracle_vote_deadline));
+    }
+  } elseif (status == status::proposed) {
+    next_deadline = challenge_deadline;
+  } elseif (status == status::reviewing) {
+    next_deadline = appeal_deadline;
+    if (review_nonce != 0) {
+      current_context = cell_hash(build_review_vote_context(base_hash,
+        review_nonce, review_opened_at));
+    }
+  } else {
+    base~impure_touch();
+  }
+  return (status, review_reason, final_outcome, current_context,
+    base_present * base_hash, proposal_hash, next_deadline);
 }

@@ -8,7 +8,7 @@ use chain_block::{
     BuilderData, Coins, HashmapE, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
     base64_decode, read_single_root_boc,
 };
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
@@ -33,6 +33,18 @@ pub const PM_FINALIZE_UNCONTESTED_OPCODE: u32 = 0x504d_000d;
 pub const PM_FINALIZE_REVIEW_TIMEOUT_OPCODE: u32 = 0x504d_000e;
 pub const PM_CLAIM_OPCODE: u32 = 0x504d_000f;
 pub const PM_WITHDRAW_OPCODE: u32 = 0x504d_0010;
+pub const PM_WITHDRAW_CHALLENGE_BOND_OPCODE: u32 = 0x504d_0011;
+pub const PM_FORCE_REFUND_CHALLENGE_BOND_OPCODE: u32 = 0x504d_0012;
+pub const PM_PRUNE_ORDER_OPCODE: u32 = 0x504d_0013;
+pub const PM_CLOSE_EMPTY_ACCOUNT_OPCODE: u32 = 0x504d_0014;
+pub const PM_FORCE_CLOSE_ACCOUNT_OPCODE: u32 = 0x504d_0015;
+pub const PM_COMPACT_TERMINAL_OPCODE: u32 = 0x504d_0016;
+pub const PM_WITHDRAW_TERMINAL_SURPLUS_OPCODE: u32 = 0x504d_0017;
+pub const PM_PRUNE_OWNER_ORDERS_OPCODE: u32 = 0x504d_0018;
+
+const ORDER_MAGIC: u32 = 0x504f_5231;
+const SIGNED_ORDER_MAGIC: u32 = 0x5053_4f31;
+const ORDER_AUTHORIZATION_MAGIC: u32 = 0x504f_4131;
 
 const CONFIG_MAGIC: u32 = 0x504d_4331;
 const IDENTITY_MAGIC: u32 = 0x504d_4931;
@@ -51,13 +63,57 @@ const NORMAL_RUNTIME_MAGIC: u32 = 0x504d_524e;
 const REVIEW_RUNTIME_MAGIC: u32 = 0x504d_5256;
 const CHALLENGE_RUNTIME_MAGIC: u32 = 0x504d_4332;
 const FINAL_RUNTIME_MAGIC: u32 = 0x504d_4632;
+const OPTIONAL_HASH_NONE_MAGIC: u32 = 0x504d_4f30;
 const DICTIONARIES_MAGIC: u32 = 0x504d_4431;
 const MARKET_ID_DOMAIN: &[u8] = b"TOS_PREDICTION_MARKET_V1";
+const ORDER_DOMAIN: &[u8] = b"TOS_PREDICTION_ORDER_V1";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PredictionOrderActionV1 {
+    Buy = 0,
+    Sell = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PredictionOrderOutcomeV1 {
+    Yes = 0,
+    No = 1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PredictionLiquidityRoleV1 {
+    Maker = 0,
+    Taker = 1,
+}
+
+#[derive(Clone, Debug)]
+pub struct PredictionOrderV1 {
+    pub global_id: i32,
+    pub workchain_id: i8,
+    pub market_address: MsgAddressInt,
+    pub market_config_hash: [u8; 32],
+    pub owner_address: MsgAddressInt,
+    pub key_epoch: u32,
+    pub nonce: u64,
+    pub salt: [u8; 32],
+    pub action: PredictionOrderActionV1,
+    pub outcome: PredictionOrderOutcomeV1,
+    pub liquidity_role: PredictionLiquidityRoleV1,
+    pub quantity_lots: u64,
+    pub min_fill_lots: u64,
+    pub allow_partial: bool,
+    pub limit_price_tick: u16,
+    pub valid_after: u64,
+    pub valid_until: u64,
+    pub optional_counterparty: Option<MsgAddressInt>,
+}
 
 #[derive(Clone, Debug)]
 pub struct PredictionOraclePolicyV1 {
     pub threshold: u8,
-    pub policy_hash: [u8; 32],
     pub reporters: Vec<MsgAddressInt>,
 }
 
@@ -224,35 +280,34 @@ impl PredictionMarketContractV1 {
             .append_u64(0)?
             .checked_append_reference(liabilities.into_cell()?)?;
 
-        let empty = BuilderData::new().into_cell()?;
         let mut normal = BuilderData::new();
         normal
             .append_u32(NORMAL_RUNTIME_MAGIC)?
             .append_raw(&[0; 32], 256)?
             .append_u64(0)?
-            .checked_append_reference(empty.clone())?
+            .append_bit_zero()?
             .append_raw(&[0; 32], 256)?
-            .append_u8(0)?
+            .append_raw(&[0], 2)?
             .append_raw(&[0; 32], 256)?
             .append_u64(0)?
             .append_u64(0)?;
         let mut review = BuilderData::new();
         review
             .append_u32(REVIEW_RUNTIME_MAGIC)?
-            .checked_append_reference(empty)?
+            .append_bit_zero()?
             .append_raw(&[0; 32], 256)?
             .append_raw(&[0; 32], 256)?
             .append_u64(0)?
             .append_u64(0)?;
         let mut challenge = BuilderData::new();
-        challenge.append_u32(CHALLENGE_RUNTIME_MAGIC)?.append_bit_zero()?;
-        init.reserve_recipient.write_to(&mut challenge)?;
-        challenge.append_u8(0)?.append_raw(&[0; 32], 256)?;
-        Coins::new(0).write_to(&mut challenge)?;
+        challenge.append_u32(CHALLENGE_RUNTIME_MAGIC)?;
+        let mut absent_hash = BuilderData::new();
+        absent_hash.append_u32(OPTIONAL_HASH_NONE_MAGIC)?;
+        let absent_hash = absent_hash.into_cell()?;
         let mut final_state = BuilderData::new();
         final_state.append_u32(FINAL_RUNTIME_MAGIC)?.append_u8(0)?.append_u64(0)?;
         for _ in 0..4 {
-            final_state.append_raw(&[0; 32], 256)?;
+            final_state.checked_append_reference(absent_hash.clone())?;
         }
         let mut resolution = BuilderData::new();
         resolution
@@ -356,6 +411,282 @@ impl PredictionMarketContractV1 {
         Coins::new(amount).write_to(&mut body)?;
         Ok(body.into_cell()?)
     }
+
+    pub fn withdraw_challenge_bond(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message_header(PM_WITHDRAW_CHALLENGE_BOND_OPCODE, query_id)?.into_cell()
+    }
+
+    pub fn force_refund_challenge_bond(
+        query_id: u64,
+        challenger: &MsgAddressInt,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_address(challenger, "challenge bond recipient")?;
+        let mut body = message_header(PM_FORCE_REFUND_CHALLENGE_BOND_OPCODE, query_id)?;
+        challenger.write_to(&mut body)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn prune_order(
+        query_id: u64,
+        owner: &MsgAddressInt,
+        epoch: u32,
+        nonce: u64,
+        accept_reward: bool,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_address(owner, "order owner")?;
+        let mut body = message_header(PM_PRUNE_ORDER_OPCODE, query_id)?;
+        owner.write_to(&mut body)?;
+        body.append_u32(epoch)?.append_u64(nonce)?.append_bit_bool(accept_reward)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn prune_owner_orders(
+        query_id: u64,
+        owner: &MsgAddressInt,
+        accept_reward: bool,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_address(owner, "order owner")?;
+        let mut body = message_header(PM_PRUNE_OWNER_ORDERS_OPCODE, query_id)?;
+        owner.write_to(&mut body)?;
+        body.append_bit_bool(accept_reward)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn close_empty_account(
+        query_id: u64,
+        owner: &MsgAddressInt,
+        accept_reward: bool,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_address(owner, "account owner")?;
+        let mut body = message_header(PM_CLOSE_EMPTY_ACCOUNT_OPCODE, query_id)?;
+        owner.write_to(&mut body)?;
+        body.append_bit_bool(accept_reward)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn force_close_account(
+        query_id: u64,
+        owner: &MsgAddressInt,
+        accept_reward: bool,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_address(owner, "account owner")?;
+        let mut body = message_header(PM_FORCE_CLOSE_ACCOUNT_OPCODE, query_id)?;
+        owner.write_to(&mut body)?;
+        body.append_bit_bool(accept_reward)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn compact_terminal(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message_header(PM_COMPACT_TERMINAL_OPCODE, query_id)?.into_cell()
+    }
+
+    pub fn withdraw_terminal_surplus(
+        query_id: u64,
+        amount: u64,
+    ) -> anyhow::Result<chain_block::Cell> {
+        if amount == 0 {
+            anyhow::bail!("terminal surplus withdrawal must be nonzero");
+        }
+        let mut body = message_header(PM_WITHDRAW_TERMINAL_SURPLUS_OPCODE, query_id)?;
+        Coins::new(amount).write_to(&mut body)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn report_result(
+        query_id: u64,
+        round: u8,
+        expected_round_context_hash: [u8; 32],
+        outcome: u8,
+        evidence_root: [u8; 32],
+        statement_created_at: u64,
+        statement_expiry: u64,
+    ) -> anyhow::Result<chain_block::Cell> {
+        if round > 1
+            || outcome > 2
+            || expected_round_context_hash == [0; 32]
+            || evidence_root == [0; 32]
+            || statement_created_at >= statement_expiry
+        {
+            anyhow::bail!("invalid PredictionMarket resolution report");
+        }
+        let mut body = message_header(PM_REPORT_RESULT_OPCODE, query_id)?;
+        body.append_u8(round)?
+            .append_raw(&expected_round_context_hash, 256)?
+            .append_u8(outcome)?
+            .append_raw(&evidence_root, 256)?
+            .append_u64(statement_created_at)?
+            .append_u64(statement_expiry)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn challenge_result(
+        query_id: u64,
+        expected_proposed_statement_hash: [u8; 32],
+        counter_outcome: u8,
+        counter_evidence_root: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        if expected_proposed_statement_hash == [0; 32]
+            || counter_outcome > 2
+            || counter_evidence_root == [0; 32]
+        {
+            anyhow::bail!("invalid PredictionMarket challenge");
+        }
+        let mut body = message_header(PM_CHALLENGE_RESULT_OPCODE, query_id)?;
+        body.append_raw(&expected_proposed_statement_hash, 256)?
+            .append_u8(counter_outcome)?
+            .append_raw(&counter_evidence_root, 256)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn advance_phase(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message_header(PM_ADVANCE_PHASE_OPCODE, query_id)?.into_cell()
+    }
+
+    pub fn finalize_uncontested(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message_header(PM_FINALIZE_UNCONTESTED_OPCODE, query_id)?.into_cell()
+    }
+
+    pub fn finalize_review_timeout(
+        query_id: u64,
+        expected_review_base_context_hash: [u8; 32],
+    ) -> anyhow::Result<chain_block::Cell> {
+        if expected_review_base_context_hash == [0; 32] {
+            anyhow::bail!("review base context hash must be nonzero");
+        }
+        let mut body = message_header(PM_FINALIZE_REVIEW_TIMEOUT_OPCODE, query_id)?;
+        body.append_raw(&expected_review_base_context_hash, 256)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn build_order(order: &PredictionOrderV1) -> anyhow::Result<chain_block::Cell> {
+        validate_order(order)?;
+        let mut market = BuilderData::new();
+        order.market_address.write_to(&mut market)?;
+        market.append_raw(&order.market_config_hash, 256)?;
+        let mut owner = BuilderData::new();
+        order.owner_address.write_to(&mut owner)?;
+        if let Some(counterparty) = &order.optional_counterparty {
+            owner.append_bit_one()?;
+            counterparty.write_to(&mut owner)?;
+        } else {
+            owner.append_bit_zero()?;
+        }
+        let mut root = BuilderData::new();
+        root.append_u32(ORDER_MAGIC)?
+            .append_u16(PREDICTION_MARKET_CODE_VERSION)?
+            .append_i32(order.global_id)?
+            .append_i8(order.workchain_id)?
+            .append_u32(order.key_epoch)?
+            .append_u64(order.nonce)?
+            .append_raw(&order.salt, 256)?
+            .append_u64(order.quantity_lots)?
+            .append_u64(order.min_fill_lots)?
+            .append_u16(order.limit_price_tick)?
+            .append_u64(order.valid_after)?
+            .append_u64(order.valid_until)?
+            .append_u8(order.action as u8)?
+            .append_u8(order.outcome as u8)?
+            .append_u8(order.liquidity_role as u8)?;
+        if order.allow_partial {
+            root.append_bit_one()?;
+        } else {
+            root.append_bit_zero()?;
+        }
+        root.checked_append_reference(market.into_cell()?)?
+            .checked_append_reference(owner.into_cell()?)?;
+        Ok(root.into_cell()?)
+    }
+
+    pub fn order_digest(order: &PredictionOrderV1) -> anyhow::Result<[u8; 32]> {
+        let order_cell = Self::build_order(order)?;
+        let mut binding = BuilderData::new();
+        order.market_address.write_to(&mut binding)?;
+        binding
+            .append_raw(&order.market_config_hash, 256)?
+            .append_raw(order_cell.repr_hash().as_slice(), 256)?;
+        let mut authorization = BuilderData::new();
+        authorization
+            .append_u32(ORDER_AUTHORIZATION_MAGIC)?
+            .append_u16(PREDICTION_MARKET_CODE_VERSION)?
+            .append_raw(Sha256::digest(ORDER_DOMAIN).as_slice(), 256)?
+            .append_i32(order.global_id)?
+            .append_i8(order.workchain_id)?
+            .append_u16(PREDICTION_MARKET_CODE_VERSION)?
+            .checked_append_reference(binding.into_cell()?)?;
+        Ok(*authorization.into_cell()?.repr_hash().as_array())
+    }
+
+    pub fn build_signed_order(
+        order: &PredictionOrderV1,
+        public_key: [u8; 32],
+        signature: [u8; 64],
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_public_key(public_key)?;
+        let digest = Self::order_digest(order)?;
+        let key = VerifyingKey::from_bytes(&public_key)?;
+        key.verify_strict(&digest, &Signature::from_bytes(&signature))
+            .context("invalid PredictionMarket order signature")?;
+        let order_cell = Self::build_order(order)?;
+        let mut signature_cell = BuilderData::new();
+        signature_cell.append_raw(&signature, 512)?;
+        let mut signed = BuilderData::new();
+        signed
+            .append_u32(SIGNED_ORDER_MAGIC)?
+            .append_u16(PREDICTION_MARKET_CODE_VERSION)?
+            .append_raw(&public_key, 256)?
+            .checked_append_reference(order_cell)?
+            .checked_append_reference(signature_cell.into_cell()?)?;
+        Ok(signed.into_cell()?)
+    }
+
+    pub fn cancel_exact(
+        query_id: u64,
+        order: &PredictionOrderV1,
+    ) -> anyhow::Result<chain_block::Cell> {
+        let mut body = message_header(PM_CANCEL_EXACT_OPCODE, query_id)?;
+        body.checked_append_reference(Self::build_order(order)?)?;
+        Ok(body.into_cell()?)
+    }
+
+    pub fn match_pair(
+        query_id: u64,
+        quantity_lots: u64,
+        left_signed_order: chain_block::Cell,
+        right_signed_order: chain_block::Cell,
+    ) -> anyhow::Result<chain_block::Cell> {
+        if quantity_lots == 0 {
+            anyhow::bail!("PredictionMarket match quantity must be nonzero");
+        }
+        let mut body = message_header(PM_MATCH_PAIR_OPCODE, query_id)?;
+        body.append_u64(quantity_lots)?
+            .checked_append_reference(left_signed_order)?
+            .checked_append_reference(right_signed_order)?;
+        Ok(body.into_cell()?)
+    }
+}
+
+fn validate_order(order: &PredictionOrderV1) -> anyhow::Result<()> {
+    validate_address(&order.market_address, "order market")?;
+    validate_address(&order.owner_address, "order owner")?;
+    if let Some(counterparty) = &order.optional_counterparty {
+        validate_address(counterparty, "order counterparty")?;
+    }
+    if order.workchain_id != -1 && order.workchain_id != 0 {
+        anyhow::bail!("unsupported PredictionMarket order workchain");
+    }
+    if order.market_address.workchain_id() != i32::from(order.workchain_id)
+        || order.market_config_hash == [0; 32]
+        || order.salt == [0; 32]
+        || order.quantity_lots == 0
+        || order.min_fill_lots == 0
+        || order.min_fill_lots > order.quantity_lots
+        || order.limit_price_tick == 0
+        || order.limit_price_tick >= PREDICTION_PRICE_SCALE
+        || order.valid_after >= order.valid_until
+    {
+        anyhow::bail!("invalid PredictionMarket order fields");
+    }
+    Ok(())
 }
 
 fn message_header(opcode: u32, query_id: u64) -> anyhow::Result<BuilderData> {
@@ -370,7 +701,6 @@ fn build_policy(policy: &PredictionOraclePolicyV1) -> anyhow::Result<chain_block
         || policy.threshold == 0
         || usize::from(policy.threshold) > policy.reporters.len()
         || usize::from(policy.threshold) * 2 <= policy.reporters.len()
-        || policy.policy_hash == [0; 32]
     {
         anyhow::bail!("invalid PredictionMarket oracle threshold policy");
     }
@@ -397,8 +727,7 @@ fn build_policy(policy: &PredictionOraclePolicyV1) -> anyhow::Result<chain_block
     result
         .append_u32(POLICY_MAGIC)?
         .append_u8(policy.threshold)?
-        .append_u8(u8::try_from(policy.reporters.len())?)?
-        .append_raw(&policy.policy_hash, 256)?;
+        .append_u8(u8::try_from(policy.reporters.len())?)?;
     reporters.write_to(&mut result)?;
     Ok(result.into_cell()?)
 }
@@ -422,12 +751,27 @@ fn validate_init(init: &PredictionMarketInitV1) -> anyhow::Result<()> {
         .checked_add(init.challenge_period)
         .and_then(|value| value.checked_add(init.appeal_period))
         .context("PredictionMarket final deadline overflow")?;
+    const MAX_RESOLUTION_DELAY: u64 = 2_592_000;
+    const MAX_ORACLE_WINDOW: u64 = 2_592_000;
+    const MAX_CHALLENGE_PERIOD: u64 = 604_800;
+    const MAX_APPEAL_PERIOD: u64 = 1_209_600;
+    const MAX_CLAIM_WINDOW: u64 = 15_552_000;
+    let resolution_delay =
+        init.resolve_not_before.checked_sub(init.trade_close).unwrap_or(u64::MAX);
+    let oracle_window =
+        init.oracle_vote_deadline.checked_sub(init.resolve_not_before).unwrap_or(u64::MAX);
+    let claim_window = init.claim_deadline.checked_sub(scheduled).unwrap_or(u64::MAX);
     if init.trade_close > init.resolve_not_before
-        || init.resolve_not_before.checked_add(60) > Some(init.oracle_vote_deadline)
+        || init.resolve_not_before.checked_add(60).unwrap_or(u64::MAX) > init.oracle_vote_deadline
         || init.challenge_period < 60
         || init.appeal_review_delay < 60
         || init.appeal_period.checked_sub(init.appeal_review_delay).unwrap_or(0) < 60
         || init.claim_deadline <= scheduled
+        || resolution_delay > MAX_RESOLUTION_DELAY
+        || oracle_window > MAX_ORACLE_WINDOW
+        || init.challenge_period > MAX_CHALLENGE_PERIOD
+        || init.appeal_period > MAX_APPEAL_PERIOD
+        || claim_window > MAX_CLAIM_WINDOW
     {
         anyhow::bail!("invalid PredictionMarket time windows");
     }
@@ -460,8 +804,8 @@ fn validate_init(init: &PredictionMarketInitV1) -> anyhow::Result<()> {
         || init.operating_reserve_floor < 100_000_000
         || init.terminal_tombstone_reserve == 0
         || init.terminal_tombstone_reserve > init.operating_reserve_floor
-        || init.challenge_bond == 0
-        || init.challenge_processing_fee == 0
+        || !(10_000_000..=1_000_000_000_000).contains(&init.challenge_bond)
+        || !(1_000_000..=100_000_000_000).contains(&init.challenge_processing_fee)
     {
         anyhow::bail!("invalid PredictionMarket fee and reserve profile");
     }
@@ -525,4 +869,69 @@ fn validate_public_key(public_key: [u8; 32]) -> anyhow::Result<()> {
         anyhow::bail!("trading key is non-canonical or small-order");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(value: &str) -> MsgAddressInt {
+        value.parse().expect("canonical address")
+    }
+
+    #[test]
+    fn order_codec_matches_the_independent_protocol_golden_vector() {
+        let order = PredictionOrderV1 {
+            global_id: 42,
+            workchain_id: 0,
+            market_address: addr(
+                "0:1111111111111111111111111111111111111111111111111111111111111111",
+            ),
+            market_config_hash: [0x44; 32],
+            owner_address: addr(
+                "0:2222222222222222222222222222222222222222222222222222222222222222",
+            ),
+            key_epoch: 7,
+            nonce: 19,
+            salt: [0x55; 32],
+            action: PredictionOrderActionV1::Buy,
+            outcome: PredictionOrderOutcomeV1::Yes,
+            liquidity_role: PredictionLiquidityRoleV1::Maker,
+            quantity_lots: 100,
+            min_fill_lots: 10,
+            allow_partial: true,
+            limit_price_tick: 6_250,
+            valid_after: 1_700_000_000,
+            valid_until: 1_700_003_600,
+            optional_counterparty: Some(addr(
+                "0:3333333333333333333333333333333333333333333333333333333333333333",
+            )),
+        };
+        let order_cell = PredictionMarketContractV1::build_order(&order).unwrap();
+        assert_eq!(
+            hex::encode(order_cell.repr_hash().as_slice()),
+            "522c29e58e110437cae43bf8b45467da2836283d573a813a015851ac64fcf950"
+        );
+        assert_eq!(
+            hex::encode(PredictionMarketContractV1::order_digest(&order).unwrap()),
+            "f6ed4e0395a1787d27b90daad080b6977de5ff1ceb95a9386f792e0b3291fa09"
+        );
+        let public_key: [u8; 32] =
+            hex::decode("8b237d788e8eaaef550c6d125823fa45f1fd5fc29b2c88bdf871119471fc1312")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let signature: [u8; 64] = hex::decode(
+            "2330df8f78c3dbce994ef979823f78dbea32165fbe9f502130d6bbbf31030ab705664ba5ce58a4aece4b5b86648cd471436c66518ec0360d321851423fe80709",
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        let signed =
+            PredictionMarketContractV1::build_signed_order(&order, public_key, signature).unwrap();
+        assert_eq!(
+            hex::encode(signed.repr_hash().as_slice()),
+            "870e05091bd091a61296b6226a51f795a49abb6113e21ac794e8fb60a9ee5f97"
+        );
+    }
 }

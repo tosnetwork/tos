@@ -6,14 +6,16 @@ pm_register_deposit#504d0002 query_id:uint64 credited:Grams trading_pubkey:uint2
 pm_deposit#504d0003 query_id:uint64 credited:Grams = InternalMsgBody;
 pm_set_trading_key#504d0004 query_id:uint64 trading_pubkey:uint256 = InternalMsgBody;
 pm_raise_nonce_floor#504d0005 query_id:uint64 new_floor:uint64 = InternalMsgBody;
-pm_cancel_exact#504d0006 query_id:uint64 signed_order:^Cell = InternalMsgBody;
+pm_cancel_exact#504d0006 query_id:uint64 order:^Cell = InternalMsgBody;
 pm_split#504d0007 query_id:uint64 quantity_lots:uint64 = InternalMsgBody;
 pm_merge#504d0008 query_id:uint64 quantity_lots:uint64 = InternalMsgBody;
 pm_match_pair#504d0009 query_id:uint64 quantity_lots:uint64 left:^Cell right:^Cell = InternalMsgBody;
-pm_report_result#504d000a query_id:uint64 statement:^Cell = InternalMsgBody;
-pm_challenge_result#504d000b query_id:uint64 counter_outcome:uint8 evidence:^Cell = InternalMsgBody;
-pm_advance_phase#504d000c query_id:uint64 expected_context_hash:uint256 = InternalMsgBody;
-pm_finalize_uncontested#504d000d query_id:uint64 expected_statement_hash:uint256 = InternalMsgBody;
+pm_report_result#504d000a query_id:uint64 round:uint8 expected_round_context_hash:uint256
+  outcome:uint8 evidence_root:uint256 statement_created_at:uint64 statement_expiry:uint64 = InternalMsgBody;
+pm_challenge_result#504d000b query_id:uint64 expected_proposed_statement_hash:uint256
+  counter_outcome:uint8 counter_evidence_root:uint256 = InternalMsgBody;
+pm_advance_phase#504d000c query_id:uint64 = InternalMsgBody;
+pm_finalize_uncontested#504d000d query_id:uint64 = InternalMsgBody;
 pm_finalize_review_timeout#504d000e query_id:uint64 expected_review_base_hash:uint256 = InternalMsgBody;
 pm_claim#504d000f query_id:uint64 owner:MsgAddressInt = InternalMsgBody;
 pm_withdraw#504d0010 query_id:uint64 amount:Grams = InternalMsgBody;
@@ -24,6 +26,7 @@ pm_close_empty_account#504d0014 query_id:uint64 owner:MsgAddressInt reward_mode:
 pm_force_close_account#504d0015 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
 pm_compact_terminal#504d0016 query_id:uint64 = InternalMsgBody;
 pm_withdraw_terminal_surplus#504d0017 query_id:uint64 amount:Grams = InternalMsgBody;
+pm_prune_owner_orders#504d0018 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
 
 pm_config#504d4331 identity:^PmIdentityV1 times:^PmTimesV1 economics:^PmEconomicsV1 policies:^PmPoliciesV1 = PmConfigV1;
 pm_identity#504d4931 global_id:int32 workchain_id:int8 deployment_salt:uint256
@@ -39,7 +42,7 @@ pm_fees#504d4631 participant_entry_fee:Grams account_cleanup_bounty:Grams order_
   order_cleanup_bounty:Grams operating_reserve_floor:Grams terminal_tombstone_reserve:Grams
   challenge:^PmChallengeFeesV1 = PmFeesV1;
 pm_challenge_fees#504d4643 challenge_bond:Grams challenge_processing_fee:Grams = PmChallengeFeesV1;
-pm_policy#504d5031 threshold:uint8 reporter_count:uint8 policy_hash:uint256
+pm_policy#504d5031 threshold:uint8 reporter_count:uint8
   reporters:(HashmapE 256 MsgAddressInt) = PmPolicyV1;
 pm_policies#504d5032 normal:^PmPolicyV1 appellate:^PmPolicyV1 = PmPoliciesV1;
 
@@ -59,14 +62,20 @@ pm_order_state#504d4f31 order_digest:uint256 quantity_lots:uint64 filled_lots:ui
 
 pm_resolution#504d5230 normal:^PmNormalRuntimeV1 review:^PmReviewRuntimeV1
   challenge:^PmChallengeV1 final:^PmFinalV1 = PmResolutionV1;
-pm_normal_runtime#504d524e normal_round_nonce:uint256 normal_opened_at:uint64 proposal:^Cell
+pm_normal_runtime#504d524e normal_round_nonce:uint256 normal_opened_at:uint64 proposal_present:uint1
+  proposal:(proposal_present ? ^Cell : ())
   proposal_hash:uint256 proposal_outcome:uint2 proposal_evidence:uint256 proposed_at:uint64
   challenge_deadline:uint64 = PmNormalRuntimeV1;
-pm_review_runtime#504d5256 review_base:^Cell review_base_hash:uint256 review_vote_nonce:uint256
+pm_review_runtime#504d5256 base_present:uint1 review_base:(base_present ? ^Cell : ())
+  review_base_hash:uint256 review_vote_nonce:uint256
   review_opened_at:uint64 appeal_deadline:uint64 = PmReviewRuntimeV1;
-pm_challenge#504d4332 present:uint1 challenger:MsgAddressInt counter_outcome:uint2 evidence_root:uint256
+pm_challenge_none#504d4332 = PmChallengeV1;
+pm_challenge_some#504d4333 challenger:MsgAddressInt counter_outcome:uint2 evidence_root:uint256
   refundable_credit:Grams = PmChallengeV1;
-pm_final#504d4632 final_reason:uint8 finalized_at:uint64 statement_hash:uint256 evidence_root:uint256
-  round_context_hash:uint256 review_base_hash:uint256 = PmFinalV1;
+pm_optional_hash_none#504d4f30 = PmOptionalHashV1;
+pm_optional_hash_some#504d4f31 value:uint256 = PmOptionalHashV1;
+pm_final#504d4632 final_reason:uint8 finalized_at:uint64 statement:^PmOptionalHashV1
+  evidence:^PmOptionalHashV1 round_context:^PmOptionalHashV1
+  review_base:^PmOptionalHashV1 = PmFinalV1;
 pm_dictionaries#504d4431 accounts:(HashmapE 256 ^PmAccountV1) normal_votes:(HashmapE 256 ^Cell)
   appellate_votes:(HashmapE 256 ^Cell) statement_counts:(HashmapE 256 uint8) = PmDictionariesV1;
