@@ -238,6 +238,35 @@ fn source_compiles_to_frozen_prediction_market_code() {
 }
 
 #[test]
+fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
+    let mut f = Fixture::new();
+    let owner = f.owner.address().clone();
+    let before = f.bc.get_account(&f.market).unwrap();
+    let before_data_hash = before.get_data_hash().unwrap();
+    let before_balance = before.balance().unwrap().coins.as_u64().unwrap();
+
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::top_up_reserve(77).unwrap())
+        .expect_success()
+        .expect_out_msgs(0);
+
+    let after = f.bc.get_account(&f.market).unwrap();
+    assert_eq!(after.get_data_hash().unwrap(), before_data_hash, "top-up must not mutate state");
+    assert!(
+        after.balance().unwrap().coins.as_u64().unwrap() > before_balance,
+        "the value left after compute fees must remain in the market reserve"
+    );
+
+    f.send(&owner, OPERATION_BUDGET - 1, PredictionMarketContractV1::top_up_reserve(78).unwrap())
+        .expect_exit_code(2412);
+
+    let non_bounce = MessageBuilder::internal(&owner, &f.market, OPERATION_BUDGET)
+        .bounce(false)
+        .body(PredictionMarketContractV1::top_up_reserve(79).unwrap())
+        .build();
+    f.bc.send_message(non_bounce).expect("send non-bounce top-up").expect_exit_code(2405);
+}
+
+#[test]
 fn activate_register_split_merge_and_withdraw_preserve_accounting() {
     let mut f = Fixture::new();
     let pre =

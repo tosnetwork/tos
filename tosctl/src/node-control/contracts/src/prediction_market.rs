@@ -42,6 +42,7 @@ pub const PM_FORCE_CLOSE_ACCOUNT_OPCODE: u32 = 0x504d_0015;
 pub const PM_COMPACT_TERMINAL_OPCODE: u32 = 0x504d_0016;
 pub const PM_WITHDRAW_TERMINAL_SURPLUS_OPCODE: u32 = 0x504d_0017;
 pub const PM_PRUNE_OWNER_ORDERS_OPCODE: u32 = 0x504d_0018;
+pub const PM_TOP_UP_RESERVE_OPCODE: u32 = 0x504d_0019;
 
 const ORDER_MAGIC: u32 = 0x504f_5231;
 const SIGNED_ORDER_MAGIC: u32 = 0x5053_4f31;
@@ -688,6 +689,12 @@ impl PredictionMarketContractV1 {
         Ok(body.into_cell()?)
     }
 
+    /// Builds the typed reserve-donation body used by Agent Account V2 checked
+    /// calls. Direct wallets may continue to top up with an empty body.
+    pub fn top_up_reserve(query_id: u64) -> anyhow::Result<chain_block::Cell> {
+        message_header(PM_TOP_UP_RESERVE_OPCODE, query_id)?.into_cell()
+    }
+
     pub fn report_result(
         query_id: u64,
         round: u8,
@@ -1111,6 +1118,16 @@ mod tests {
 
     fn addr(value: &str) -> MsgAddressInt {
         value.parse().expect("canonical address")
+    }
+
+    #[test]
+    fn reserve_top_up_body_is_typed_and_exact() {
+        let body = PredictionMarketContractV1::top_up_reserve(0x0102_0304_0506_0708).unwrap();
+        let mut slice = SliceData::load_cell(body).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), PM_TOP_UP_RESERVE_OPCODE);
+        assert_eq!(slice.get_next_u64().unwrap(), 0x0102_0304_0506_0708);
+        assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(slice.remaining_references(), 0);
     }
 
     #[test]

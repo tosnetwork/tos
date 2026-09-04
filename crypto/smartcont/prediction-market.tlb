@@ -27,6 +27,7 @@ pm_force_close_account#504d0015 query_id:uint64 owner:MsgAddressInt reward_mode:
 pm_compact_terminal#504d0016 query_id:uint64 = InternalMsgBody;
 pm_withdraw_terminal_surplus#504d0017 query_id:uint64 amount:Grams = InternalMsgBody;
 pm_prune_owner_orders#504d0018 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
+pm_top_up_reserve#504d0019 query_id:uint64 = InternalMsgBody;
 
 pm_config#504d4331 identity:^PmIdentityV1 times:^PmTimesV1 economics:^PmEconomicsV1 policies:^PmPoliciesV1 = PmConfigV1;
 pm_identity#504d4931 global_id:int32 workchain_id:int8 deployment_salt:uint256

@@ -59,6 +59,7 @@ const int op::force_close_account = 0x504d0015;
 const int op::compact_terminal = 0x504d0016;
 const int op::withdraw_terminal_surplus = 0x504d0017;
 const int op::prune_owner_orders = 0x504d0018;
+const int op::top_up_reserve = 0x504d0019;
 
 const int status::trading = 0;
 const int status::reporting = 1;
@@ -1129,6 +1130,18 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   int query_id = in_msg~load_uint(64);
   query_id~impure_touch();
   throw_unless(err::insufficient_value, msg_value >= min_operation_budget);
+
+  ;; Empty-body transfers remain the universal direct reserve-donation path.
+  ;; This typed equivalent exists so Agent Account V2 can authorize the same
+  ;; effect without weakening its checked-call rule that bodies are non-empty.
+  ;; It deliberately performs no state read or write and therefore remains
+  ;; valid before activation and after terminal compaction.
+  if (op == op::top_up_reserve) {
+    in_msg.end_parse();
+    require_bounceable(flags);
+    return ();
+  }
+
   (int activated, int activated_at, int status, int review_reason, int final_outcome,
     int stored_config_hash, int stored_market_id, cell config, cell accounting,
     cell resolution, cell dictionaries) = load_state();
