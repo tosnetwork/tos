@@ -353,7 +353,9 @@ enum OperationJson {
         query_id: u64,
         amount: u64,
     },
-    TopUpReserve,
+    TopUpReserve {
+        query_id: u64,
+    },
 }
 
 struct BuiltOperation {
@@ -1293,7 +1295,12 @@ fn build_operation(
             OPERATION_BUDGET,
             PredictionMarketContractV1::withdraw_terminal_surplus(query_id, amount)?,
         ),
-        OperationJson::TopUpReserve => ("top_up_reserve", false, 0, Cell::default()),
+        OperationJson::TopUpReserve { query_id } => (
+            "top_up_reserve",
+            false,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::top_up_reserve(query_id)?,
+        ),
     };
     Ok(BuiltOperation {
         body,
@@ -1633,6 +1640,12 @@ mod tests {
         .unwrap();
         assert_eq!(challenge.minimum_value, 1_110_000_000);
         assert!(!challenge.risk_increasing);
+
+        let top_up = build_operation(&init, OperationJson::TopUpReserve { query_id: 3 }).unwrap();
+        assert_eq!(top_up.minimum_value, OPERATION_BUDGET);
+        assert_eq!(top_up.body, PredictionMarketContractV1::top_up_reserve(3).unwrap());
+        assert_eq!(top_up.body.references_count(), 0);
+        assert!(!top_up.risk_increasing);
     }
 
     #[test]

@@ -107,8 +107,13 @@ prune_owner_orders | close_empty_account | force_close_account:
     query_id, owner, accept_reward
 compact_terminal: query_id
 withdraw_terminal_surplus: query_id, amount
-top_up_reserve: no additional fields
+top_up_reserve: query_id
 ```
+
+`top_up_reserve` uses the explicit `pm_top_up_reserve#504d0019` body and a
+minimum value of 1 TOS. This is the reserve-donation form that can pass Agent
+Account V2 checked-call authorization; direct wallet transfers with an empty
+body remain supported by the contract for compatibility.
 
 Signed-order BOCs are standard base64 single-root cells. Outcomes are
 `0=YES`, `1=NO`, `2=INVALID`; rounds are `0=NORMAL`, `1=APPEAL`.
