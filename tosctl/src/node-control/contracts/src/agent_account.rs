@@ -12,11 +12,17 @@ use chain_block::{
     MsgAddressExt, MsgAddressInt, Serializable, SliceData, StateInit, base64_decode,
     read_single_root_boc,
 };
+use ed25519_dalek::VerifyingKey;
 use std::collections::HashSet;
 
 use crate::ContractProvider;
 
 pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECFQEABZgAART/APSkE/S88sgLAQIBIAIDAgFIBAUB8vKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxIoIQQUdQBrqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQPAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAJCgGiMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdFUdDIiwQDy1qUihC+88talArny1qXBAfLWpfgAEJsQihB5EGgQZxBWCADYUbrHBfLmpgjT/9EohB+68ta0JoQ/uvLWtfgABqQIpBCbEGoHCVVAyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAIrIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQCAUgLDAIBIA0OAG+2Jb2omh9IGn/6f/pn+mP6Y/9AGpo6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaKqSL4G2IsABrtzS9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+FwAGe5rr7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJIAG+55P7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJBCrXwuAL+gvDt5xWphS+7osPCNO0NJzKa401iY6gs+2IV2ofJFoO0ccjL/1JAyh9SIMoHy/8Sy//J+QABERAt+RDy5qgN0x/SHw+68uasDdM/URq68uau0x/TH1EluvLmqSD4I7zy5qr4Iyigu/LmqiOEH7ry1rQtghBBR1AFuuMC+kD6ABARANI9DNH4J28iMIF1MA7A/x74NlANu/Lmr/gApBCbEIoQeRBoVWDIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQC5CHCAPLmrSBtbVYTwP9WE4IQQUdQBrqONzAlVhTA/5Iwf44ZINcLAcMCkjB/4HLXIdMAAZIwf+DXCgfA/+JWE4IQQUdQA7qVMgPUQUTeUCTjDdFTTbvy5qv4I4IBUYCpBFMIvZM4cDeRMOJTZKAtu/LmqxITAJBsIQLU1Cb6RAFWFroo1wsCwASw8uayI/kAuvLmsCLQ0wEBwADy5rPTAAHy5rPUMdMAAfLms9Qx0wABwADy5rPRItdmwwDy1rMB9vgubxYgbpUwgxSDDJh41yHTH9MfMOIU+UJvpW+hMfLmsVIFu/LmsUA0+DiBdTARE8D/ARETAfg2ARESAaD4J28iMFIyoAG78uav+ABwgBDIywVQBM8WIvoCE8toL4IQQUdQBrqWcwHLARLMlTJwWMsA4i6CEEFHUAO6DxQA6oIQQUdQBrofsZdxUA7LAB7MmD5wUA3LABDN4slz+wABpFDLoBCbEIoQeRBoEGdVQMhQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVA==";
+
+/// Frozen Agent Account V2 code. The legacy `AGENT_ACCOUNT_CODE_B64` remains
+/// available for decoding/auditing already constructed V1 StateInit values;
+/// new deployments use this version.
+pub const AGENT_ACCOUNT_V2_CODE_B64: &str = "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";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
@@ -24,6 +30,8 @@ pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
 pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
 pub const AGENT_DEPLOY_SEND_OPCODE: u32 = 0x4147_5006;
+pub const AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE: u32 = 0x4147_5007;
+pub const AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS: u8 = 3;
 /// Domain tag carried in the referenced body of a generic task-send when the
 /// transfer fulfills one exact sponsorship AgreementPaymentRequestV3.
 pub const AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG: u32 = 0x5350_4e31; // "SPN1"
@@ -78,6 +86,15 @@ pub struct AgentDeploySend {
     pub body: chain_block::Cell,
 }
 
+/// A value-carrying contract call whose outbound message is bounceable and
+/// carries the exact non-empty body by reference.
+#[derive(Clone, Debug)]
+pub struct AgentCheckedContractCallV2 {
+    pub target: MsgAddressInt,
+    pub value: u64,
+    pub body: chain_block::Cell,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentAccountPolicyUpdate {
     pub max_per_tx: u64,
@@ -88,12 +105,22 @@ pub struct AgentAccountPolicyUpdate {
 }
 
 impl AgentAccountContract {
+    /// Frozen V1 deployment code. Prediction integrations opt in to V2.
     pub fn code() -> anyhow::Result<chain_block::Cell> {
         read_single_root_boc(base64_decode(AGENT_ACCOUNT_CODE_B64)?).map_err(Into::into)
     }
 
+    pub fn v1_code() -> anyhow::Result<chain_block::Cell> {
+        Self::code()
+    }
+
+    pub fn v2_code() -> anyhow::Result<chain_block::Cell> {
+        read_single_root_boc(base64_decode(AGENT_ACCOUNT_V2_CODE_B64)?).map_err(Into::into)
+    }
+
     pub fn build_data(init: &AgentAccountInit) -> anyhow::Result<chain_block::Cell> {
         validate_policy(init.max_per_tx, init.daily_limit, init.default_task_timeout_secs)?;
+        validate_controller_public_key(init.controller_pubkey)?;
         if init.deployment_id == [0; 32] {
             anyhow::bail!("Agent Account deployment_id must be nonzero");
         }
@@ -121,8 +148,17 @@ impl AgentAccountContract {
         Ok(StateInit::with_code_and_data(Self::code()?, Self::build_data(init)?))
     }
 
+    pub fn build_v2_state_init(init: &AgentAccountInit) -> anyhow::Result<StateInit> {
+        Ok(StateInit::with_code_and_data(Self::v2_code()?, Self::build_data(init)?))
+    }
+
     pub fn calculate_address(wc: i32, init: &AgentAccountInit) -> anyhow::Result<MsgAddressInt> {
         let state_cell = Self::build_state_init(init)?.write_to_new_cell()?.into_cell()?;
+        Ok(MsgAddressInt::with_params(wc, state_cell.hash(0))?)
+    }
+
+    pub fn calculate_v2_address(wc: i32, init: &AgentAccountInit) -> anyhow::Result<MsgAddressInt> {
+        let state_cell = Self::build_v2_state_init(init)?.write_to_new_cell()?.into_cell()?;
         Ok(MsgAddressInt::with_params(wc, state_cell.hash(0))?)
     }
 
@@ -178,6 +214,7 @@ impl AgentAccountContract {
         query_id: u64,
         controller_pubkey: [u8; 32],
     ) -> anyhow::Result<chain_block::Cell> {
+        validate_controller_public_key(controller_pubkey)?;
         let mut body = BuilderData::new();
         body.append_u32(AGENT_ROTATE_CONTROLLER_OPCODE)?
             .append_u64(query_id)?
@@ -286,6 +323,44 @@ impl AgentAccountContract {
         action.target.write_to(&mut payload)?;
         Coins::new(action.value).write_to(&mut payload)?;
         payload.checked_append_reference(state_init)?;
+        payload.checked_append_reference(action.body.clone())?;
+        payload.into_cell()
+    }
+
+    /// Build a V2 checked contract call. Unlike legacy task-send, this
+    /// transport is always bounceable, carries no StateInit, and requires an
+    /// ordinary non-empty body. The contract repeats every material check
+    /// before consuming seqno.
+    pub fn build_checked_contract_call_v2_payload(
+        network_global_id: i32,
+        controller_epoch: u64,
+        seqno: u32,
+        valid_until: u32,
+        action: &AgentCheckedContractCallV2,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_action_value(action.value)?;
+        let MsgAddressInt::AddrStd(standard) = &action.target else {
+            anyhow::bail!("Agent Account V2 contract-call target must be a standard address");
+        };
+        if standard.anycast.is_some() {
+            anyhow::bail!("Agent Account V2 contract-call target must not carry anycast");
+        }
+        validate_ordinary_cell_tree(&action.body, "V2 contract-call body")?;
+        let body_slice = SliceData::load_cell(action.body.clone())?;
+        if body_slice.remaining_bits() == 0 && body_slice.remaining_references() == 0 {
+            anyhow::bail!("Agent Account V2 contract-call body must be non-empty");
+        }
+
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
+        action.target.write_to(&mut payload)?;
+        Coins::new(action.value).write_to(&mut payload)?;
+        payload.append_u8(AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS)?;
         payload.checked_append_reference(action.body.clone())?;
         payload.into_cell()
     }
@@ -417,6 +492,35 @@ fn validate_action_value(value: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_controller_public_key(public_key: [u8; 32]) -> anyhow::Result<()> {
+    // RFC 8032 encodes y little-endian in the low 255 bits and the sign of x
+    // in the high bit. Reject y >= 2^255-19 explicitly: ed25519-dalek keeps
+    // some historical decoding permissiveness in `from_bytes`.
+    const FIELD_MODULUS: [u8; 32] = [
+        0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x7f,
+    ];
+    let mut y = public_key;
+    y[31] &= 0x7f;
+    if !y
+        .iter()
+        .rev()
+        .zip(FIELD_MODULUS.iter().rev())
+        .find_map(|(left, right)| (left != right).then_some(left < right))
+        .unwrap_or(false)
+    {
+        anyhow::bail!("Agent Account controller public key is not canonical Ed25519");
+    }
+    let key = VerifyingKey::from_bytes(&public_key).map_err(|_| {
+        anyhow::anyhow!("Agent Account controller public key is not canonical Ed25519")
+    })?;
+    if key.is_weak() {
+        anyhow::bail!("Agent Account controller public key must not be a small-order point");
+    }
+    Ok(())
+}
+
 fn validate_ordinary_cell_tree(root: &chain_block::Cell, label: &str) -> anyhow::Result<()> {
     let mut pending = vec![root.clone()];
     let mut visited = HashSet::new();
@@ -533,6 +637,107 @@ mod tests {
             AgentAccountContract::calculate_address(-1, &init).unwrap()
         );
         assert_eq!(AgentAccountContract::build_data(&init).unwrap().references_count(), 1);
+    }
+
+    #[test]
+    fn v1_and_v2_release_identifiers_are_frozen() {
+        let init = valid_init();
+        assert_eq!(
+            hex::encode(AgentAccountContract::v1_code().unwrap().repr_hash()),
+            "0a3ec68933cd9829ab51df02c1e9d7117ee51210e1859fae57c43cdd2ac60482"
+        );
+        assert_eq!(
+            hex::encode(AgentAccountContract::v2_code().unwrap().repr_hash()),
+            "ed05692e549572d97291c591ec9e3dfa06827c1ab28d51c2d0643041e1a864ff"
+        );
+        assert_eq!(
+            hex::encode(
+                AgentAccountContract::build_v2_state_init(&init)
+                    .unwrap()
+                    .write_to_new_cell()
+                    .unwrap()
+                    .into_cell()
+                    .unwrap()
+                    .repr_hash()
+            ),
+            "6986df1a57baa2931575b805ae97e90a5d9af9bb7977d319b3b0adda823e8d9c"
+        );
+        assert_eq!(
+            AgentAccountContract::calculate_v2_address(-1, &init).unwrap().to_string(),
+            "-1:6986df1a57baa2931575b805ae97e90a5d9af9bb7977d319b3b0adda823e8d9c"
+        );
+    }
+
+    #[test]
+    fn controller_key_admission_rejects_all_torsion_and_noncanonical_encodings() {
+        let encodings = [
+            "0100000000000000000000000000000000000000000000000000000000000000",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+            "0000000000000000000000000000000000000000000000000000000000000080",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ];
+        for encoded in encodings {
+            let key: [u8; 32] = hex::decode(encoded).unwrap().try_into().unwrap();
+            let mut init = valid_init();
+            init.controller_pubkey = key;
+            assert!(AgentAccountContract::build_data(&init).is_err(), "accepted {encoded}");
+            assert!(
+                AgentAccountContract::build_rotate_controller_message(1, key).is_err(),
+                "rotation accepted {encoded}"
+            );
+        }
+    }
+
+    #[test]
+    fn checked_contract_call_v2_has_fixed_flags_and_exact_body() {
+        let target = MsgAddressInt::with_standart(None, 0, [0x66; 32].into()).unwrap();
+        let mut body_builder = BuilderData::new();
+        body_builder.append_u32(0x504d_0001).unwrap();
+        let body = body_builder.into_cell().unwrap();
+        let payload = AgentAccountContract::build_checked_contract_call_v2_payload(
+            -3,
+            4,
+            7,
+            2_000_000_000,
+            &AgentCheckedContractCallV2 {
+                target: target.clone(),
+                value: 123_000_000,
+                body: body.clone(),
+            },
+        )
+        .unwrap();
+        let mut fields = SliceData::load_cell(payload).unwrap();
+        assert_eq!(fields.get_next_u32().unwrap(), AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE);
+        assert_eq!(fields.get_next_i32().unwrap(), -3);
+        assert_eq!(fields.get_next_u64().unwrap(), 4);
+        assert_eq!(fields.get_next_u32().unwrap(), 7);
+        assert_eq!(fields.get_next_u32().unwrap(), 2_000_000_000);
+        assert_eq!(MsgAddressInt::construct_from(&mut fields).unwrap(), target);
+        assert_eq!(Coins::construct_from(&mut fields).unwrap().as_u128(), 123_000_000);
+        assert_eq!(fields.get_next_int(8).unwrap() as u8, AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS);
+        assert_eq!(fields.checked_drain_reference().unwrap().repr_hash(), body.repr_hash());
+        assert_eq!(fields.remaining_bits(), 0);
+        assert_eq!(fields.remaining_references(), 0);
+
+        assert!(
+            AgentAccountContract::build_checked_contract_call_v2_payload(
+                -3,
+                4,
+                7,
+                2_000_000_000,
+                &AgentCheckedContractCallV2 {
+                    target,
+                    value: 123_000_000,
+                    body: chain_block::Cell::default(),
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
