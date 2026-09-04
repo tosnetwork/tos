@@ -13,7 +13,10 @@
 
 use super::*;
 use chain_block::CommonMsgInfo;
+use contracts::PredictionMarketContractV1;
+use contracts::chain_provider::{ChainProvider, DefaultChainProvider, MasterchainCheckpoint};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 const SOURCE_REQUEST_SCHEMA: &str = "tosctl.prediction-relay-source-request.v1";
 const SOURCE_EVIDENCE_SCHEMA: &str = "tosctl.prediction-relay-source-evidence.v1";
@@ -21,8 +24,23 @@ const PREDICTION_EFFECT_PROFILE: &str = "tos.prediction.checked-call.v1";
 const NETWORK_DOMAIN_DIGEST_DOMAIN: &str = "tos.agent-relay-network-domain.v1";
 const SOURCE_RECEIPT_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-source-observer.v1\0";
 const SOURCE_VIEW_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-source-finality-view.v1\0";
+const DESTINATION_REQUEST_SCHEMA: &str = "tosctl.prediction-relay-destination-request.v1";
+const DESTINATION_EVIDENCE_SCHEMA: &str = "tosctl.prediction-relay-destination-evidence.v1";
+const DESTINATION_RECEIPT_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-destination-observer.v1\0";
+const DESTINATION_VIEW_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-destination-finality-view.v1\0";
+const NO_BOUNCE_OBSERVATION_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-no-bounce-observation.v1\0";
+const NO_BOUNCE_SET_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-no-bounce-set.v1\0";
+const BOUNCE_CREDIT_REQUEST_SCHEMA: &str = "tosctl.prediction-relay-bounce-credit-request.v1";
+const BOUNCE_CREDIT_EVIDENCE_SCHEMA: &str = "tosctl.prediction-relay-bounce-credit-evidence.v1";
+const BOUNCE_CREDIT_RECEIPT_DIGEST_DOMAIN: &[u8] = b"tosctl.prediction-bounce-credit-observer.v1\0";
+const BOUNCE_CREDIT_VIEW_DIGEST_DOMAIN: &[u8] =
+    b"tosctl.prediction-bounce-credit-finality-view.v1\0";
 const MAX_SOURCE_HISTORY_TRANSACTIONS: u32 = 1_000_000;
 const SOURCE_HISTORY_PAGE_SIZE: u32 = 100;
+const MAX_DESTINATION_MASTERCHAIN_BLOCKS: u32 = 1_000_000;
+const MAX_DESTINATION_TRANSACTIONS: u32 = 1_000_000;
+const DESTINATION_BLOCK_PAGE_SIZE: u32 = 100;
+const MAX_PREDICTION_TRANSACTION_BOC_BYTES: usize = 2 << 20;
 
 #[derive(clap::Args, Clone)]
 #[command(
@@ -50,6 +68,62 @@ pub struct AgentAccountPredictionRelaySourceResolveCmd {
     max_transactions: u32,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Resolve a Prediction destination transaction by scanning forward from its exact pre-broadcast masterchain checkpoint"
+)]
+pub struct AgentAccountPredictionRelayDestinationResolveCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Canonical sha256 stable Prediction action ID")]
+    stable_action_id: String,
+    #[arg(long, help = "Absolute owner-private destination-resolution request JSON")]
+    relay_request: String,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional absolute tosctl configs; all members need distinct endpoint and operator pins"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(
+        long,
+        default_value_t = 100_000,
+        help = "Maximum masterchain checkpoints scanned per observer"
+    )]
+    max_masterchain_blocks: u32,
+    #[arg(
+        long,
+        default_value_t = 1_000_000,
+        help = "Maximum shard-block transactions inspected per observer"
+    )]
+    max_transactions: u32,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Resolve the exact rich-bounce credit at an Agent Account from the destination failure checkpoint"
+)]
+pub struct AgentAccountPredictionRelayBounceCreditResolveCmd {
+    #[arg(short = 'n', long = "wallet")]
+    wallet: String,
+    #[arg(long, help = "Canonical sha256 stable Prediction action ID")]
+    stable_action_id: String,
+    #[arg(long, help = "Absolute owner-private bounce-credit request JSON")]
+    relay_request: String,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional absolute tosctl configs; all members need distinct endpoint and operator pins"
+    )]
+    quorum_configs: Vec<String>,
+    #[arg(long, default_value_t = 100_000)]
+    max_masterchain_blocks: u32,
+    #[arg(long, default_value_t = 1_000_000)]
+    max_transactions: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PredictionRelaySourceRequest {
@@ -59,6 +133,51 @@ struct PredictionRelaySourceRequest {
     submitted_external_message_hash: String,
     pre_broadcast_source_cursor: PredictionAccountCursor,
     pre_broadcast_masterchain_checkpoint: PredictionBlockIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionExpectedContractCall {
+    action_kind: String,
+    stable_action_id: String,
+    target_address: String,
+    value_nanotos: u64,
+    body_boc_base64: String,
+    body_hash: String,
+    #[serde(default)]
+    state_init_boc_base64: String,
+    #[serde(default)]
+    state_init_hash: String,
+    bounce: bool,
+    extra_flags: u64,
+    opcode: u32,
+    success_predicate_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionRelayDestinationRequest {
+    schema: String,
+    action_id: String,
+    profile: PredictionRelayProfile,
+    expected: PredictionExpectedContractCall,
+    pre_broadcast_source_cursor: PredictionAccountCursor,
+    pre_broadcast_masterchain_checkpoint: PredictionBlockIdentity,
+    source_evidence: PredictionSourceTransactionEvidence,
+    actual_outbound: PredictionObservedMessage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionRelayBounceCreditRequest {
+    schema: String,
+    action_id: String,
+    profile: PredictionRelayProfile,
+    expected: PredictionExpectedContractCall,
+    pre_broadcast_source_cursor: PredictionAccountCursor,
+    pre_broadcast_masterchain_checkpoint: PredictionBlockIdentity,
+    source_evidence: PredictionSourceTransactionEvidence,
+    destination_evidence: PredictionDestinationTransactionEvidence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -139,6 +258,43 @@ struct PredictionSourceTransactionEvidence {
     outbound_messages: Vec<PredictionObservedMessage>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionBoundedAbsenceEvidence {
+    scan_start_masterchain_seqno: u32,
+    scan_end_masterchain_seqno: u32,
+    observation_digests: Vec<String>,
+    evidence_set_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionDestinationTransactionEvidence {
+    inbound_message_hash: String,
+    transaction_hash: String,
+    transaction_boc_base64: String,
+    block: PredictionBlockIdentity,
+    finality: PredictionQuorumFinality,
+    next_destination_cursor: PredictionAccountCursor,
+    ordinary: bool,
+    aborted: bool,
+    compute_success: bool,
+    action_success: bool,
+    opcode_success: bool,
+    market_code_hash: String,
+    market_config_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    success_predicate_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounce_message: Option<PredictionObservedMessage>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    rich_bounce_envelope_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    rich_bounce_original_body_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    no_bounce_proof: Option<PredictionBoundedAbsenceEvidence>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct PredictionSourceCandidate {
     transaction_hash: String,
@@ -173,6 +329,99 @@ struct PredictionSourceObserverReceipt {
 struct PredictionSourceObservation {
     candidate: PredictionSourceCandidate,
     receipt: PredictionSourceObserverReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+struct PredictionDestinationCandidate {
+    inbound_message_hash: String,
+    transaction_hash: String,
+    transaction_boc_base64: String,
+    block_workchain: i32,
+    block_shard: i64,
+    block_seqno: u32,
+    block_root_hash: String,
+    block_file_hash: String,
+    observed_masterchain_seqno: u32,
+    next_destination_cursor: PredictionAccountCursor,
+    ordinary: bool,
+    aborted: bool,
+    compute_success: bool,
+    action_success: bool,
+    opcode_success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounce_message: Option<PredictionObservedMessage>,
+}
+
+impl PredictionDestinationCandidate {
+    fn quorum_key(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct PredictionDestinationObserverReceipt {
+    observer_id: String,
+    operator_provenance: String,
+    observed_masterchain: PredictionBlockIdentity,
+    market_code_hash: String,
+    market_config_hash: String,
+    candidate_digest: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    no_bounce_observation_digest: String,
+}
+
+#[derive(Clone, Debug)]
+struct PredictionDestinationObservation {
+    candidate: PredictionDestinationCandidate,
+    receipt: PredictionDestinationObserverReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+struct PredictionBounceCreditCandidate {
+    inbound_bounce_message_hash: String,
+    transaction_hash: String,
+    transaction_boc_base64: String,
+    block_workchain: i32,
+    block_shard: i64,
+    block_seqno: u32,
+    block_root_hash: String,
+    block_file_hash: String,
+    observed_masterchain_seqno: u32,
+    next_source_cursor: PredictionAccountCursor,
+    credited_value_nanotos: u64,
+}
+
+impl PredictionBounceCreditCandidate {
+    fn quorum_key(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct PredictionBounceCreditObserverReceipt {
+    observer_id: String,
+    operator_provenance: String,
+    observed_masterchain: PredictionBlockIdentity,
+    source_agent_account_code_hash: String,
+    candidate_digest: String,
+}
+
+#[derive(Clone, Debug)]
+struct PredictionBounceCreditObservation {
+    candidate: PredictionBounceCreditCandidate,
+    receipt: PredictionBounceCreditObserverReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredictionBounceCreditEvidence {
+    inbound_bounce_message_hash: String,
+    transaction_hash: String,
+    transaction_boc_base64: String,
+    block: PredictionBlockIdentity,
+    finality: PredictionQuorumFinality,
+    next_source_cursor: PredictionAccountCursor,
+    credited_value_nanotos: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -463,6 +712,385 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
     }
 }
 
+impl AgentAccountPredictionRelayDestinationResolveCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
+        anyhow::ensure!(
+            (1..=MAX_DESTINATION_MASTERCHAIN_BLOCKS).contains(&self.max_masterchain_blocks),
+            "max_masterchain_blocks must be between 1 and {MAX_DESTINATION_MASTERCHAIN_BLOCKS}"
+        );
+        anyhow::ensure!(
+            (1..=MAX_DESTINATION_TRANSACTIONS).contains(&self.max_transactions),
+            "max_transactions must be between 1 and {MAX_DESTINATION_TRANSACTIONS}"
+        );
+        let request_path = Path::new(&self.relay_request);
+        anyhow::ensure!(request_path.is_absolute(), "relay-request must be an absolute path");
+        let request_bytes = open_private_snapshot_file(request_path)?;
+        anyhow::ensure!(
+            !request_bytes.is_empty() && request_bytes.len() <= 4 << 20,
+            "Prediction destination request has an invalid size"
+        );
+        let mut decoder = serde_json::Deserializer::from_slice(&request_bytes);
+        let request = PredictionRelayDestinationRequest::deserialize(&mut decoder)
+            .context("decode Prediction destination request")?;
+        decoder.end().context("Prediction destination request has trailing JSON")?;
+        let members = load_economic_payment_corroboration_members(
+            Path::new(config_path),
+            &self.quorum_configs,
+        )?;
+        validate_destination_request(&request, &self.stable_action_id, &members)?;
+
+        let primary = &members[0].config;
+        let agent_wallet = primary
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let journal = open_economic_controller_journal(
+            &members[0].canonical_path,
+            None,
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        let record = journal
+            .find_economic_effect_by_stable_action(&self.stable_action_id)?
+            .context("prepared Prediction effect was not found")?;
+        validate_destination_custody_record(&record, &request)?;
+
+        let expected_network = record
+            .claim
+            .network_domain
+            .as_ref()
+            .context("Prediction custody record has no network-domain pin")?;
+        let market: MsgAddressInt = request.profile.market_address.parse()?;
+        let mut observations = Vec::new();
+        let mut failures = Vec::new();
+        for member in &members {
+            match observe_prediction_destination(
+                member,
+                expected_network,
+                &market,
+                &request,
+                self.max_masterchain_blocks,
+                self.max_transactions,
+            )
+            .await
+            {
+                Ok(observation) => observations.push(observation),
+                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+            }
+        }
+        let mut votes: BTreeMap<String, Vec<&PredictionDestinationObservation>> = BTreeMap::new();
+        for observation in &observations {
+            votes.entry(observation.candidate.quorum_key()?).or_default().push(observation);
+        }
+        let winner = votes
+            .values()
+            .max_by_key(|group| group.len())
+            .filter(|group| group.len() >= request.profile.quorum_threshold as usize)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Prediction destination has no configured exact-evidence quorum; observations={}; failures={}",
+                    observations.len(),
+                    serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
+                )
+            })?;
+        let candidate = winner[0].candidate.clone();
+        let masterchain_seqno = winner
+            .iter()
+            .map(|value| value.receipt.observed_masterchain.sequence_number)
+            .min()
+            .context("Prediction destination quorum has no finality head")?;
+        anyhow::ensure!(
+            masterchain_seqno >= candidate.observed_masterchain_seqno,
+            "Prediction destination quorum head predates the target transaction"
+        );
+        let mut agreeing_ids =
+            winner.iter().map(|value| value.receipt.observer_id.clone()).collect::<Vec<_>>();
+        agreeing_ids.sort();
+        let mut receipts = winner.iter().map(|value| value.receipt.clone()).collect::<Vec<_>>();
+        receipts.sort_by(|left, right| left.observer_id.cmp(&right.observer_id));
+
+        let successful = candidate.ordinary
+            && !candidate.aborted
+            && candidate.compute_success
+            && candidate.action_success
+            && candidate.opcode_success;
+        let no_bounce_proof = if !successful && candidate.bounce_message.is_none() {
+            anyhow::ensure!(
+                u64::from(masterchain_seqno)
+                    >= u64::from(candidate.observed_masterchain_seqno)
+                        + u64::from(request.profile.minimum_no_bounce_masterchain_blocks),
+                "Prediction failure has not crossed the frozen no-bounce observation window"
+            );
+            let mut digests = receipts
+                .iter()
+                .map(|value| value.no_bounce_observation_digest.clone())
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                digests.iter().all(|value| !value.is_empty()),
+                "Prediction no-bounce quorum omitted an observation digest"
+            );
+            digests.sort();
+            let set = recursively_sorted_json(serde_json::json!({
+                "action_id": request.action_id,
+                "inbound_message_hash": request.actual_outbound.message_hash,
+                "destination_transaction_hash": candidate.transaction_hash,
+                "scan_start_masterchain_seqno": candidate.observed_masterchain_seqno,
+                "scan_end_masterchain_seqno": masterchain_seqno,
+                "observation_digests": digests,
+            }));
+            Some(PredictionBoundedAbsenceEvidence {
+                scan_start_masterchain_seqno: candidate.observed_masterchain_seqno,
+                scan_end_masterchain_seqno: masterchain_seqno,
+                evidence_set_digest: economic_payment_observation_digest(
+                    NO_BOUNCE_SET_DIGEST_DOMAIN,
+                    &set,
+                )?,
+                observation_digests: digests,
+            })
+        } else {
+            None
+        };
+        let finality_view = serde_json::json!({
+            "network_domain_hash": request.profile.network_domain_hash,
+            "observer_ids": request.profile.observer_ids,
+            "agreeing_ids": agreeing_ids,
+            "threshold": request.profile.quorum_threshold,
+            "masterchain_seqno": masterchain_seqno,
+            "candidate": candidate,
+            "receipts": receipts,
+            "no_bounce_proof": no_bounce_proof,
+        });
+        let finality_view_id = economic_payment_observation_digest(
+            DESTINATION_VIEW_DIGEST_DOMAIN,
+            &recursively_sorted_json(finality_view),
+        )?;
+        let block = PredictionBlockIdentity {
+            workchain_id: candidate.block_workchain,
+            shard: candidate.block_shard,
+            sequence_number: candidate.block_seqno,
+            root_hash: candidate.block_root_hash.clone(),
+            file_hash: candidate.block_file_hash.clone(),
+            masterchain_sequence_number: candidate.observed_masterchain_seqno,
+        };
+        let finality = PredictionQuorumFinality {
+            network_domain_hash: request.profile.network_domain_hash.clone(),
+            finality_view_id,
+            observer_ids: request.profile.observer_ids.clone(),
+            agreeing_ids,
+            threshold: request.profile.quorum_threshold,
+            masterchain_seqno,
+        };
+        let bounce_message = candidate.bounce_message.clone();
+        let evidence = PredictionDestinationTransactionEvidence {
+            inbound_message_hash: candidate.inbound_message_hash.clone(),
+            transaction_hash: candidate.transaction_hash.clone(),
+            transaction_boc_base64: candidate.transaction_boc_base64.clone(),
+            block,
+            finality,
+            next_destination_cursor: candidate.next_destination_cursor.clone(),
+            ordinary: candidate.ordinary,
+            aborted: candidate.aborted,
+            compute_success: candidate.compute_success,
+            action_success: candidate.action_success,
+            opcode_success: candidate.opcode_success,
+            market_code_hash: request.profile.market_code_hash.clone(),
+            market_config_hash: request.profile.market_config_hash.clone(),
+            success_predicate_digest: successful
+                .then(|| request.expected.success_predicate_digest.clone())
+                .unwrap_or_default(),
+            rich_bounce_envelope_hash: bounce_message
+                .as_ref()
+                .map(|value| value.body_hash.clone())
+                .unwrap_or_default(),
+            rich_bounce_original_body_hash: bounce_message
+                .as_ref()
+                .map(|_| request.expected.body_hash.clone())
+                .unwrap_or_default(),
+            bounce_message,
+            no_bounce_proof,
+        };
+        let state = if successful {
+            "destination_committed"
+        } else if evidence.bounce_message.is_some() {
+            "destination_failed_bounce_created"
+        } else {
+            "destination_failed_no_bounce"
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": DESTINATION_EVIDENCE_SCHEMA,
+                "stable_action_id": self.stable_action_id,
+                "destination_evidence": evidence,
+                "candidate": candidate,
+                "observer_receipts": receipts,
+                "failures": failures,
+                "state": state,
+            })
+        );
+        Ok(())
+    }
+}
+
+impl AgentAccountPredictionRelayBounceCreditResolveCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
+        anyhow::ensure!(
+            (1..=MAX_DESTINATION_MASTERCHAIN_BLOCKS).contains(&self.max_masterchain_blocks)
+                && (1..=MAX_DESTINATION_TRANSACTIONS).contains(&self.max_transactions),
+            "Prediction bounce-credit scan capacity is invalid"
+        );
+        let request_path = Path::new(&self.relay_request);
+        anyhow::ensure!(request_path.is_absolute(), "relay-request must be an absolute path");
+        let request_bytes = open_private_snapshot_file(request_path)?;
+        anyhow::ensure!(
+            !request_bytes.is_empty() && request_bytes.len() <= 4 << 20,
+            "Prediction bounce-credit request has an invalid size"
+        );
+        let mut decoder = serde_json::Deserializer::from_slice(&request_bytes);
+        let request = PredictionRelayBounceCreditRequest::deserialize(&mut decoder)
+            .context("decode Prediction bounce-credit request")?;
+        decoder.end().context("Prediction bounce-credit request has trailing JSON")?;
+        let members = load_economic_payment_corroboration_members(
+            Path::new(config_path),
+            &self.quorum_configs,
+        )?;
+        validate_bounce_credit_request(&request, &self.stable_action_id, &members)?;
+
+        let primary = &members[0].config;
+        let agent_wallet = primary
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let source: MsgAddressInt = request.profile.source_agent_account.parse()?;
+        anyhow::ensure!(
+            agent_wallet.agent_account_address.as_deref()
+                == Some(request.profile.source_agent_account.as_str()),
+            "Prediction bounce source differs from the selected Agent Wallet"
+        );
+        let journal = open_economic_controller_journal(
+            &members[0].canonical_path,
+            None,
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        let record = journal
+            .find_economic_effect_by_stable_action(&self.stable_action_id)?
+            .context("prepared Prediction effect was not found")?;
+        let destination_request = destination_request_from_bounce(&request)?;
+        validate_destination_custody_record(&record, &destination_request)?;
+        let expected_network = record
+            .claim
+            .network_domain
+            .as_ref()
+            .context("Prediction custody record has no network-domain pin")?;
+
+        let mut observations = Vec::new();
+        let mut failures = Vec::new();
+        for member in &members {
+            match observe_prediction_bounce_credit(
+                member,
+                expected_network,
+                &source,
+                &request,
+                self.max_masterchain_blocks,
+                self.max_transactions,
+            )
+            .await
+            {
+                Ok(observation) => observations.push(observation),
+                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+            }
+        }
+        let mut votes: BTreeMap<String, Vec<&PredictionBounceCreditObservation>> = BTreeMap::new();
+        for observation in &observations {
+            votes.entry(observation.candidate.quorum_key()?).or_default().push(observation);
+        }
+        let winner = votes
+            .values()
+            .max_by_key(|group| group.len())
+            .filter(|group| group.len() >= request.profile.quorum_threshold as usize)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Prediction bounce credit has no configured exact-evidence quorum; observations={}; failures={}",
+                    observations.len(),
+                    serde_json::to_string(&failures).unwrap_or_else(|_| "[]".to_owned())
+                )
+            })?;
+        let candidate = winner[0].candidate.clone();
+        let masterchain_seqno = winner
+            .iter()
+            .map(|value| value.receipt.observed_masterchain.sequence_number)
+            .min()
+            .context("Prediction bounce-credit quorum has no finality head")?;
+        anyhow::ensure!(
+            masterchain_seqno >= candidate.observed_masterchain_seqno,
+            "Prediction bounce-credit quorum head predates the credit transaction"
+        );
+        let mut agreeing_ids =
+            winner.iter().map(|value| value.receipt.observer_id.clone()).collect::<Vec<_>>();
+        agreeing_ids.sort();
+        let mut receipts = winner.iter().map(|value| value.receipt.clone()).collect::<Vec<_>>();
+        receipts.sort_by(|left, right| left.observer_id.cmp(&right.observer_id));
+        let finality_view = serde_json::json!({
+            "network_domain_hash": request.profile.network_domain_hash,
+            "observer_ids": request.profile.observer_ids,
+            "agreeing_ids": agreeing_ids,
+            "threshold": request.profile.quorum_threshold,
+            "masterchain_seqno": masterchain_seqno,
+            "candidate": candidate,
+            "receipts": receipts,
+        });
+        let finality_view_id = economic_payment_observation_digest(
+            BOUNCE_CREDIT_VIEW_DIGEST_DOMAIN,
+            &recursively_sorted_json(finality_view),
+        )?;
+        let evidence = PredictionBounceCreditEvidence {
+            inbound_bounce_message_hash: candidate.inbound_bounce_message_hash.clone(),
+            transaction_hash: candidate.transaction_hash.clone(),
+            transaction_boc_base64: candidate.transaction_boc_base64.clone(),
+            block: PredictionBlockIdentity {
+                workchain_id: candidate.block_workchain,
+                shard: candidate.block_shard,
+                sequence_number: candidate.block_seqno,
+                root_hash: candidate.block_root_hash.clone(),
+                file_hash: candidate.block_file_hash.clone(),
+                masterchain_sequence_number: candidate.observed_masterchain_seqno,
+            },
+            finality: PredictionQuorumFinality {
+                network_domain_hash: request.profile.network_domain_hash.clone(),
+                finality_view_id,
+                observer_ids: request.profile.observer_ids.clone(),
+                agreeing_ids,
+                threshold: request.profile.quorum_threshold,
+                masterchain_seqno,
+            },
+            next_source_cursor: candidate.next_source_cursor.clone(),
+            credited_value_nanotos: candidate.credited_value_nanotos,
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": BOUNCE_CREDIT_EVIDENCE_SCHEMA,
+                "stable_action_id": self.stable_action_id,
+                "bounce_credit_evidence": evidence,
+                "candidate": candidate,
+                "observer_receipts": receipts,
+                "failures": failures,
+                "state": "bounce_credited_at_agent",
+            })
+        );
+        Ok(())
+    }
+}
+
 fn validate_source_request(
     request: &PredictionRelaySourceRequest,
     stable_action_id: &str,
@@ -526,16 +1154,288 @@ fn validate_source_request(
     let mut supplied_ids = request.profile.observer_ids.clone();
     supplied_ids.sort();
     anyhow::ensure!(
-        supplied_ids == request.profile.observer_ids
+        members.len() >= 3
+            && members.len() <= 64
+            && supplied_ids == request.profile.observer_ids
             && supplied_ids.windows(2).all(|pair| pair[0] < pair[1])
             && supplied_ids == configured_ids
             && request.profile.quorum_threshold as usize > supplied_ids.len() / 2
             && request.profile.quorum_threshold as usize <= supplied_ids.len(),
-        "Prediction observer set or threshold differs from the frozen RPC capability"
+        "Prediction observer set size or threshold differs from the frozen RPC capability"
     );
     for observer in &supplied_ids {
         validate_sha256_digest("observer_id", observer)?;
     }
+    Ok(())
+}
+
+fn validate_destination_request(
+    request: &PredictionRelayDestinationRequest,
+    stable_action_id: &str,
+    members: &[LoadedEconomicPaymentCorroborationMember],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        request.schema == DESTINATION_REQUEST_SCHEMA && request.action_id == stable_action_id,
+        "Prediction destination request identity is invalid"
+    );
+    let source_request = PredictionRelaySourceRequest {
+        schema: SOURCE_REQUEST_SCHEMA.to_owned(),
+        action_id: request.action_id.clone(),
+        profile: request.profile.clone(),
+        submitted_external_message_hash: request
+            .source_evidence
+            .submitted_external_message_hash
+            .clone(),
+        pre_broadcast_source_cursor: request.pre_broadcast_source_cursor.clone(),
+        pre_broadcast_masterchain_checkpoint: request.pre_broadcast_masterchain_checkpoint.clone(),
+    };
+    validate_source_request(&source_request, stable_action_id, members)?;
+    validate_cell_digest("actual_outbound.message_hash", &request.actual_outbound.message_hash)?;
+    validate_cell_digest("expected.body_hash", &request.expected.body_hash)?;
+    validate_sha256_digest(
+        "expected.success_predicate_digest",
+        &request.expected.success_predicate_digest,
+    )?;
+    anyhow::ensure!(
+        request.expected.stable_action_id == request.action_id
+            && request.expected.target_address == request.profile.market_address
+            && request.expected.value_nanotos > 0
+            && request.expected.bounce
+            && request.expected.extra_flags == 3
+            && request.expected.opcode > 0
+            && request.expected.state_init_boc_base64.is_empty()
+            && request.expected.state_init_hash.is_empty()
+            && request.actual_outbound.source_address == request.profile.source_agent_account
+            && request.actual_outbound.destination_address == request.profile.market_address
+            && request.actual_outbound.value_nanotos == request.expected.value_nanotos
+            && request.actual_outbound.body_boc_base64 == request.expected.body_boc_base64
+            && request.actual_outbound.body_hash == request.expected.body_hash
+            && request.actual_outbound.state_init_boc_base64.is_empty()
+            && request.actual_outbound.state_init_hash.is_empty()
+            && request.actual_outbound.bounce
+            && !request.actual_outbound.bounced
+            && request.actual_outbound.extra_flags == 3
+            && request.source_evidence.outbound_messages.as_slice()
+                == [request.actual_outbound.clone()],
+        "Prediction destination request conflicts with its exact source output"
+    );
+    let body_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&request.expected.body_boc_base64)
+        .context("decode Prediction expected body")?;
+    let body = read_single_root_boc(&body_bytes).context("parse Prediction expected body")?;
+    anyhow::ensure!(
+        write_boc(&body)? == body_bytes
+            && format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)))
+                == request.expected.body_hash,
+        "Prediction expected body is not one canonical hash-bound cell"
+    );
+    let mut slice = chain_block::SliceData::load_cell(body)?;
+    anyhow::ensure!(
+        slice.get_next_u32()? == request.expected.opcode,
+        "Prediction expected opcode differs from the exact body"
+    );
+    let wanted_predicate = prediction_success_predicate_digest(&request.expected)?;
+    anyhow::ensure!(
+        wanted_predicate == request.expected.success_predicate_digest,
+        "Prediction success predicate is not derived from the exact authorized call"
+    );
+    Ok(())
+}
+
+fn prediction_success_predicate_digest(
+    expected: &PredictionExpectedContractCall,
+) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !expected.action_kind.is_empty()
+            && expected.action_kind.len() <= 128
+            && !expected.action_kind.contains('\0'),
+        "Prediction action kind is invalid"
+    );
+    let preimage = format!(
+        "TOS-PREDICTION-CALL-SUCCESS\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        expected.action_kind,
+        expected.stable_action_id,
+        expected.target_address,
+        expected.value_nanotos,
+        expected.body_hash,
+        expected.extra_flags,
+        expected.opcode,
+    );
+    Ok(format!("sha256:{}", hex::encode(Sha256::digest(preimage.as_bytes()))))
+}
+
+fn validate_destination_custody_record(
+    record: &ControllerActionRecord,
+    request: &PredictionRelayDestinationRequest,
+) -> anyhow::Result<()> {
+    let source_request = PredictionRelaySourceRequest {
+        schema: SOURCE_REQUEST_SCHEMA.to_owned(),
+        action_id: request.action_id.clone(),
+        profile: request.profile.clone(),
+        submitted_external_message_hash: request
+            .source_evidence
+            .submitted_external_message_hash
+            .clone(),
+        pre_broadcast_source_cursor: request.pre_broadcast_source_cursor.clone(),
+        pre_broadcast_masterchain_checkpoint: request.pre_broadcast_masterchain_checkpoint.clone(),
+    };
+    validate_prediction_custody_record(record, &source_request)?;
+    anyhow::ensure!(
+        record.status == ControllerActionStatus::Resolved,
+        "Prediction destination cannot be scanned before source finality"
+    );
+    let resolution = record
+        .exact_winner_resolution
+        .as_ref()
+        .context("resolved Prediction source has no durable evidence")?;
+    anyhow::ensure!(
+        resolution.evidence_kind == SOURCE_EVIDENCE_SCHEMA,
+        "Prediction source was resolved under a different evidence profile"
+    );
+    let stored: PredictionSourceTransactionEvidence = serde_json::from_value(
+        resolution
+            .evidence
+            .get("source_evidence")
+            .cloned()
+            .context("durable Prediction source envelope omitted source evidence")?,
+    )
+    .context("decode durable Prediction source evidence")?;
+    anyhow::ensure!(
+        stored == request.source_evidence
+            && stored.outbound_messages.as_slice() == [request.actual_outbound.clone()],
+        "Prediction destination request is not bound to the custody-terminal source evidence"
+    );
+    let authorization = record
+        .economic_effect_authorization
+        .as_ref()
+        .context("Prediction custody record has no economic authorization")?;
+    anyhow::ensure!(
+        authorization.action_kind == request.expected.action_kind
+            && authorization.stable_action_id == request.expected.stable_action_id
+            && authorization.amount_nanotos == request.expected.value_nanotos
+            && authorization.body_hash == request.expected.body_hash,
+        "Prediction expected call differs from the owner-authorized custody effect"
+    );
+    Ok(())
+}
+
+fn destination_request_from_bounce(
+    request: &PredictionRelayBounceCreditRequest,
+) -> anyhow::Result<PredictionRelayDestinationRequest> {
+    let actual_outbound = request
+        .source_evidence
+        .outbound_messages
+        .first()
+        .cloned()
+        .context("Prediction bounce request has no source outbound")?;
+    Ok(PredictionRelayDestinationRequest {
+        schema: DESTINATION_REQUEST_SCHEMA.to_owned(),
+        action_id: request.action_id.clone(),
+        profile: request.profile.clone(),
+        expected: request.expected.clone(),
+        pre_broadcast_source_cursor: request.pre_broadcast_source_cursor.clone(),
+        pre_broadcast_masterchain_checkpoint: request.pre_broadcast_masterchain_checkpoint.clone(),
+        source_evidence: request.source_evidence.clone(),
+        actual_outbound,
+    })
+}
+
+fn validate_bounce_credit_request(
+    request: &PredictionRelayBounceCreditRequest,
+    stable_action_id: &str,
+    members: &[LoadedEconomicPaymentCorroborationMember],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        request.schema == BOUNCE_CREDIT_REQUEST_SCHEMA && request.action_id == stable_action_id,
+        "Prediction bounce-credit request identity is invalid"
+    );
+    let destination_request = destination_request_from_bounce(request)?;
+    validate_destination_request(&destination_request, stable_action_id, members)?;
+    let evidence = &request.destination_evidence;
+    let bounce = evidence
+        .bounce_message
+        .as_ref()
+        .context("Prediction bounce-credit request has no rich bounce")?;
+    anyhow::ensure!(
+        evidence.inbound_message_hash == destination_request.actual_outbound.message_hash
+            && evidence.market_code_hash == request.profile.market_code_hash
+            && evidence.market_config_hash == request.profile.market_config_hash
+            && evidence.success_predicate_digest.is_empty()
+            && evidence.no_bounce_proof.is_none()
+            && evidence.rich_bounce_envelope_hash == bounce.body_hash
+            && evidence.rich_bounce_original_body_hash == request.expected.body_hash
+            && bounce.source_address == request.profile.market_address
+            && bounce.destination_address == request.profile.source_agent_account
+            && bounce.bounced
+            && !bounce.bounce
+            && bounce.value_nanotos <= destination_request.actual_outbound.value_nanotos,
+        "Prediction bounce-credit request is not a terminal rich-bounce failure"
+    );
+    validate_cell_digest("bounce.message_hash", &bounce.message_hash)?;
+    validate_cell_digest("bounce.body_hash", &bounce.body_hash)?;
+    let transaction_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&evidence.transaction_boc_base64)
+        .context("decode Prediction destination transaction")?;
+    anyhow::ensure!(
+        transaction_bytes.len() <= MAX_PREDICTION_TRANSACTION_BOC_BYTES,
+        "Prediction destination transaction exceeds the evidence bound"
+    );
+    let root = read_single_root_boc(&transaction_bytes)?;
+    anyhow::ensure!(
+        write_boc(&root)? == transaction_bytes
+            && format!("sha256:{}", hex::encode(root.hash(0))) == evidence.transaction_hash,
+        "Prediction destination transaction is not canonical or hash-bound"
+    );
+    let transaction = Transaction::construct_from_cell(root)?;
+    let market: MsgAddressInt = request.profile.market_address.parse()?;
+    anyhow::ensure!(
+        transaction.account_id() == market.address()
+            && transaction.logical_time() == evidence.next_destination_cursor.last_logical_time
+            && evidence.next_destination_cursor.account_address == request.profile.market_address
+            && evidence.next_destination_cursor.last_transaction_hash == evidence.transaction_hash,
+        "Prediction destination transaction identity is inconsistent"
+    );
+    let inbound =
+        transaction.in_msg_cell().context("Prediction destination transaction has no inbound")?;
+    let exact_inbound = base64::engine::general_purpose::STANDARD
+        .decode(&destination_request.actual_outbound.exact_message_boc_base64)?;
+    anyhow::ensure!(
+        write_boc(&inbound)? == exact_inbound,
+        "Prediction destination did not consume the exact source output"
+    );
+    let description = transaction.read_description()?;
+    let ordinary = match description {
+        TransactionDescr::Ordinary(value) => value,
+        _ => anyhow::bail!("Prediction destination failure is not an ordinary transaction"),
+    };
+    let compute_success = ordinary.compute_ph.is_success().is_some();
+    let action_success = ordinary.action.as_ref().is_some_and(|phase| {
+        phase.success && phase.valid && !phase.no_funds && phase.result_code == 0
+    });
+    anyhow::ensure!(
+        evidence.ordinary
+            && evidence.aborted == ordinary.aborted
+            && evidence.compute_success == compute_success
+            && evidence.action_success == action_success
+            && !evidence.opcode_success
+            && (ordinary.aborted || !compute_success || !action_success),
+        "Prediction destination failure flags contradict its transaction"
+    );
+    let mut outputs = Vec::new();
+    transaction.iterate_out_msgs(|message| {
+        outputs.push(message);
+        Ok(true)
+    })?;
+    anyhow::ensure!(
+        outputs.len() == 1 && outputs.len() == transaction.msg_count() as usize,
+        "Prediction destination failure has an ambiguous output set"
+    );
+    let bounce_bytes =
+        base64::engine::general_purpose::STANDARD.decode(&bounce.exact_message_boc_base64)?;
+    anyhow::ensure!(
+        write_boc(&outputs[0].serialize()?)? == bounce_bytes,
+        "Prediction destination did not create the declared exact bounce"
+    );
     Ok(())
 }
 
@@ -707,6 +1607,694 @@ async fn observe_prediction_source(
     })
 }
 
+async fn observe_prediction_destination(
+    member: &LoadedEconomicPaymentCorroborationMember,
+    expected_network: &RelayNetworkDomainPin,
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+    maximum_masterchain_blocks: u32,
+    maximum_transactions: u32,
+) -> anyhow::Result<PredictionDestinationObservation> {
+    let rpc = try_create_rpc_client(&member.config).await?;
+    rpc.verify_pinned_primary_network(expected_network).await?;
+    verify_prediction_checkpoint(&rpc, &request.pre_broadcast_masterchain_checkpoint).await?;
+    let master = rpc.get_masterchain_info().await?;
+    let first = request
+        .pre_broadcast_masterchain_checkpoint
+        .sequence_number
+        .checked_add(1)
+        .context("Prediction checkpoint cannot advance")?;
+    anyhow::ensure!(
+        master.last.seqno >= first,
+        "observer masterchain has not advanced past the pre-broadcast checkpoint"
+    );
+    let span = master
+        .last
+        .seqno
+        .checked_sub(first)
+        .and_then(|value| value.checked_add(1))
+        .context("Prediction destination scan span overflow")?;
+    anyhow::ensure!(
+        span <= maximum_masterchain_blocks,
+        "Prediction destination masterchain capacity was exhausted before the observer head"
+    );
+    let observed_masterchain = block_identity_from_rpc(&master.last, master.last.seqno)?;
+    let (market_code_hash, market_config_hash) =
+        verify_prediction_market_identity(&rpc, market, request, &observed_masterchain).await?;
+
+    let mut seen_blocks = BTreeSet::new();
+    let mut inspected_transactions = 0u32;
+    let mut found: Option<PredictionDestinationCandidate> = None;
+    for masterchain_seqno in first..=master.last.seqno {
+        let blocks = if market.workchain_id() == -1 {
+            vec![
+                rpc.lookup_block(
+                    -1,
+                    &request.pre_broadcast_masterchain_checkpoint.shard.to_string(),
+                    masterchain_seqno,
+                )
+                .await?,
+            ]
+        } else {
+            rpc.get_shards(masterchain_seqno)
+                .await?
+                .shards
+                .into_iter()
+                .filter(|block| block.workchain == market.workchain_id() && block.seqno != 0)
+                .collect::<Vec<_>>()
+        };
+        for block in blocks {
+            anyhow::ensure!(
+                block.root_hash.len() == 32 && block.file_hash.len() == 32,
+                "Prediction destination shard descriptor is incomplete"
+            );
+            let block_key = (
+                block.workchain,
+                block.shard,
+                block.seqno,
+                <[u8; 32]>::try_from(block.root_hash.as_slice())
+                    .map_err(|_| anyhow::anyhow!("Prediction shard root hash is malformed"))?,
+                <[u8; 32]>::try_from(block.file_hash.as_slice())
+                    .map_err(|_| anyhow::anyhow!("Prediction shard file hash is malformed"))?,
+            );
+            if !seen_blocks.insert(block_key) {
+                continue;
+            }
+            anyhow::ensure!(
+                seen_blocks.len() <= maximum_transactions as usize,
+                "Prediction destination shard-block capacity was exhausted"
+            );
+            scan_prediction_destination_block(
+                &rpc,
+                market,
+                request,
+                &block,
+                masterchain_seqno,
+                maximum_transactions,
+                &mut inspected_transactions,
+                &mut found,
+            )
+            .await?;
+        }
+    }
+    let candidate = found.context(
+        "exact Prediction outbound has not reached the market after the durable checkpoint",
+    )?;
+    let no_bounce_observation_digest =
+        if !candidate.opcode_success && candidate.bounce_message.is_none() {
+            anyhow::ensure!(
+                u64::from(master.last.seqno)
+                    >= u64::from(candidate.observed_masterchain_seqno)
+                        + u64::from(request.profile.minimum_no_bounce_masterchain_blocks),
+                "Prediction failure has not reached the no-bounce terminal window"
+            );
+            economic_payment_observation_digest(
+                NO_BOUNCE_OBSERVATION_DIGEST_DOMAIN,
+                &recursively_sorted_json(serde_json::json!({
+                    "observer_id": member.locator_identity_digest,
+                    "operator_provenance": member.operator_provenance,
+                    "action_id": request.action_id,
+                    "inbound_message_hash": request.actual_outbound.message_hash,
+                    "destination_transaction_hash": candidate.transaction_hash,
+                    "scan_start_masterchain_seqno": candidate.observed_masterchain_seqno,
+                    "scan_end_masterchain_seqno": master.last.seqno,
+                    "outbound_count": 0,
+                })),
+            )?
+        } else {
+            String::new()
+        };
+    let candidate_digest = economic_payment_observation_digest(
+        DESTINATION_RECEIPT_DIGEST_DOMAIN,
+        &recursively_sorted_json(serde_json::json!({
+            "observer_id": member.locator_identity_digest,
+            "operator_provenance": member.operator_provenance,
+            "observed_masterchain": observed_masterchain,
+            "market_code_hash": market_code_hash,
+            "market_config_hash": market_config_hash,
+            "candidate": candidate,
+            "no_bounce_observation_digest": no_bounce_observation_digest,
+        })),
+    )?;
+    Ok(PredictionDestinationObservation {
+        candidate,
+        receipt: PredictionDestinationObserverReceipt {
+            observer_id: member.locator_identity_digest.clone(),
+            operator_provenance: member.operator_provenance.clone(),
+            observed_masterchain,
+            market_code_hash,
+            market_config_hash,
+            candidate_digest,
+            no_bounce_observation_digest,
+        },
+    })
+}
+
+async fn verify_prediction_market_identity(
+    rpc: &Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+    checkpoint: &PredictionBlockIdentity,
+) -> anyhow::Result<(String, String)> {
+    let info = rpc.get_address_information(market).await?;
+    anyhow::ensure!(
+        info.state == AccountState::Active && info.extra_currencies.is_empty(),
+        "Prediction market is not an active native-TOS account"
+    );
+    let code = info.code.as_ref().context("Prediction market has no code")?;
+    let code = read_single_root_boc(code).context("parse Prediction market code")?;
+    let code_hash = format!("tvm-cell-sha256:{}", hex::encode(code.hash(0)));
+    anyhow::ensure!(
+        code_hash == request.profile.market_code_hash,
+        "Prediction market code differs from the frozen relay profile"
+    );
+    let provider = DefaultChainProvider::new(rpc.clone());
+    let pinned = MasterchainCheckpoint {
+        seqno: checkpoint.sequence_number,
+        root_hash: checkpoint
+            .root_hash
+            .strip_prefix("sha256:")
+            .context("Prediction checkpoint root hash is malformed")?
+            .to_owned(),
+        file_hash: checkpoint
+            .file_hash
+            .strip_prefix("sha256:")
+            .context("Prediction checkpoint file hash is malformed")?
+            .to_owned(),
+    };
+    let state = PredictionMarketContractV1::decode_state(
+        &provider
+            .run_get_method_at(market.to_string(), "get_prediction_state", vec![], &pinned)
+            .await?,
+    )?;
+    let market_id = format!("sha256:{}", hex::encode(state.market_id));
+    let market_config_hash = format!("tvm-cell-sha256:{}", hex::encode(state.market_config_hash));
+    anyhow::ensure!(
+        market_id == request.profile.market_id
+            && market_config_hash == request.profile.market_config_hash,
+        "Prediction market identity differs from the frozen relay profile"
+    );
+    Ok((code_hash, market_config_hash))
+}
+
+async fn scan_prediction_destination_block(
+    rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+    expected_block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    observed_masterchain_seqno: u32,
+    maximum_transactions: u32,
+    inspected_transactions: &mut u32,
+    found: &mut Option<PredictionDestinationCandidate>,
+) -> anyhow::Result<()> {
+    let mut after_lt = None;
+    let mut after_account: Option<String> = None;
+    loop {
+        let page = rpc
+            .get_block_transactions_ext_page(
+                expected_block.workchain,
+                &expected_block.shard.to_string(),
+                expected_block.seqno,
+                after_lt,
+                after_account.as_deref(),
+                DESTINATION_BLOCK_PAGE_SIZE,
+            )
+            .await?;
+        let actual_block =
+            page.id.as_ref().context("Prediction destination block page omitted block identity")?;
+        anyhow::ensure!(
+            actual_block.workchain == expected_block.workchain
+                && actual_block.shard == expected_block.shard
+                && actual_block.seqno == expected_block.seqno
+                && actual_block.root_hash == expected_block.root_hash
+                && actual_block.file_hash == expected_block.file_hash,
+            "Prediction destination block page is from a different fork"
+        );
+        anyhow::ensure!(
+            !page.incomplete || !page.transactions.is_empty(),
+            "Prediction destination block pagination made no progress"
+        );
+        for raw in &page.transactions {
+            *inspected_transactions = inspected_transactions
+                .checked_add(1)
+                .context("Prediction destination transaction count overflow")?;
+            anyhow::ensure!(
+                *inspected_transactions <= maximum_transactions,
+                "Prediction destination transaction capacity was exhausted"
+            );
+            let address =
+                MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
+            if address.as_ref().ok() != Some(market) {
+                continue;
+            }
+            if let Some(candidate) = parse_prediction_destination_candidate(
+                market,
+                request,
+                expected_block,
+                observed_masterchain_seqno,
+                raw,
+            )? {
+                anyhow::ensure!(
+                    found.replace(candidate).is_none(),
+                    "exact Prediction outbound appears in multiple destination transactions"
+                );
+            }
+        }
+        if !page.incomplete {
+            break;
+        }
+        let last = page
+            .transactions
+            .last()
+            .context("Prediction destination block pagination lost its cursor")?;
+        after_lt = Some(last.lt);
+        after_account = Some(last.account.clone());
+    }
+    Ok(())
+}
+
+fn parse_prediction_destination_candidate(
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+    block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    observed_masterchain_seqno: u32,
+    raw: &chain_rpc_client::v2::data_models::BlockTransactionExt,
+) -> anyhow::Result<Option<PredictionDestinationCandidate>> {
+    anyhow::ensure!(!raw.data.is_empty(), "market transaction omitted its BOC");
+    let transaction_boc = base64::engine::general_purpose::STANDARD
+        .decode(&raw.data)
+        .context("decode market transaction BOC")?;
+    anyhow::ensure!(
+        transaction_boc.len() <= MAX_PREDICTION_TRANSACTION_BOC_BYTES,
+        "market transaction BOC exceeds the Prediction evidence bound"
+    );
+    let root = read_single_root_boc(&transaction_boc).context("parse market transaction BOC")?;
+    anyhow::ensure!(
+        write_boc(&root)? == transaction_boc,
+        "market transaction BOC is not canonical"
+    );
+    let transaction = Transaction::construct_from_cell(root.clone())?;
+    let transaction_hash = *root.hash(0).as_slice();
+    let wrapper_hash = base64::engine::general_purpose::STANDARD
+        .decode(&raw.hash)
+        .context("decode market transaction wrapper hash")?;
+    anyhow::ensure!(
+        wrapper_hash.as_slice() == transaction_hash
+            && raw.lt == transaction.logical_time()
+            && raw.utime == transaction.now()
+            && transaction.account_id() == market.address(),
+        "market transaction wrapper contradicts its hash-bound BOC"
+    );
+    let Some(in_cell) = transaction.in_msg_cell() else {
+        return Ok(None);
+    };
+    if format!("tvm-cell-sha256:{}", hex::encode(in_cell.hash(0)))
+        != request.actual_outbound.message_hash
+    {
+        return Ok(None);
+    }
+    let exact_inbound = base64::engine::general_purpose::STANDARD
+        .decode(&request.actual_outbound.exact_message_boc_base64)
+        .context("decode exact Prediction outbound")?;
+    anyhow::ensure!(
+        write_boc(&in_cell)? == exact_inbound,
+        "market transaction inbound differs from the chain-observed source output"
+    );
+    let description = transaction.read_description()?;
+    let (ordinary, aborted, compute_success, action_success) = match description {
+        TransactionDescr::Ordinary(value) => (
+            true,
+            value.aborted,
+            value.compute_ph.is_success().is_some(),
+            value.action.as_ref().is_some_and(|phase| {
+                phase.success && phase.valid && !phase.no_funds && phase.result_code == 0
+            }),
+        ),
+        _ => (false, true, false, false),
+    };
+    let opcode_success = ordinary && !aborted && compute_success && action_success;
+    let mut outputs = Vec::new();
+    transaction.iterate_out_msgs(|message| {
+        outputs.push(message);
+        Ok(true)
+    })?;
+    anyhow::ensure!(
+        outputs.len() == transaction.msg_count() as usize,
+        "market transaction outbound count is inconsistent"
+    );
+    let bounce_message = if opcode_success {
+        None
+    } else {
+        anyhow::ensure!(
+            outputs.len() <= 1,
+            "failed Prediction destination emitted an ambiguous outbound set"
+        );
+        outputs
+            .first()
+            .map(|message| prediction_observed_bounce(market, request, message))
+            .transpose()?
+    };
+    Ok(Some(PredictionDestinationCandidate {
+        inbound_message_hash: request.actual_outbound.message_hash.clone(),
+        transaction_hash: format!("sha256:{}", hex::encode(transaction_hash)),
+        transaction_boc_base64: base64::engine::general_purpose::STANDARD.encode(transaction_boc),
+        block_workchain: block.workchain,
+        block_shard: block.shard,
+        block_seqno: block.seqno,
+        block_root_hash: format!("sha256:{}", hex::encode(&block.root_hash)),
+        block_file_hash: format!("sha256:{}", hex::encode(&block.file_hash)),
+        observed_masterchain_seqno,
+        next_destination_cursor: PredictionAccountCursor {
+            account_address: market.to_string(),
+            last_logical_time: transaction.logical_time(),
+            last_transaction_hash: format!("sha256:{}", hex::encode(transaction_hash)),
+        },
+        ordinary,
+        aborted,
+        compute_success,
+        action_success,
+        opcode_success,
+        bounce_message,
+    }))
+}
+
+fn prediction_observed_bounce(
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+    message: &Message,
+) -> anyhow::Result<PredictionObservedMessage> {
+    let header = match message.header() {
+        CommonMsgInfo::IntMsgInfo(value) => value,
+        _ => anyhow::bail!("Prediction bounce is not internal"),
+    };
+    anyhow::ensure!(
+        header.ihr_disabled
+            && header.bounced
+            && !header.bounce
+            && header.src_ref() == Some(market)
+            && header.dst.to_string() == request.profile.source_agent_account
+            && header.value.other.is_empty()
+            && message.state_init().is_none(),
+        "Prediction failure output is not the protocol bounce for this checked call"
+    );
+    let body = message.body().cloned().context("Prediction bounce has no body")?.into_cell()?;
+    let message_cell = message.serialize()?;
+    Ok(PredictionObservedMessage {
+        message_hash: format!("tvm-cell-sha256:{}", hex::encode(message_cell.hash(0))),
+        exact_message_boc_base64: base64::engine::general_purpose::STANDARD
+            .encode(write_boc(&message_cell)?),
+        source_address: market.to_string(),
+        destination_address: header.dst.to_string(),
+        value_nanotos: header
+            .value
+            .coins
+            .as_u64()
+            .context("Prediction bounce value exceeds u64")?,
+        body_boc_base64: base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?),
+        body_hash: format!("tvm-cell-sha256:{}", hex::encode(body.hash(0))),
+        state_init_boc_base64: String::new(),
+        state_init_hash: String::new(),
+        bounce: header.bounce,
+        bounced: header.bounced,
+        extra_flags: header
+            .extra_flags
+            .as_u64()
+            .context("Prediction bounce extra_flags exceed u64")?,
+    })
+}
+
+async fn observe_prediction_bounce_credit(
+    member: &LoadedEconomicPaymentCorroborationMember,
+    expected_network: &RelayNetworkDomainPin,
+    source: &MsgAddressInt,
+    request: &PredictionRelayBounceCreditRequest,
+    maximum_masterchain_blocks: u32,
+    maximum_transactions: u32,
+) -> anyhow::Result<PredictionBounceCreditObservation> {
+    let rpc = try_create_rpc_client(&member.config).await?;
+    rpc.verify_pinned_primary_network(expected_network).await?;
+    verify_prediction_checkpoint(&rpc, &request.pre_broadcast_masterchain_checkpoint).await?;
+    let info = rpc.get_address_information(source).await?;
+    verify_prediction_source_code(&info, &request.profile.source_agent_account_code_hash)?;
+    let master = rpc.get_masterchain_info().await?;
+    let first = request.destination_evidence.block.masterchain_sequence_number;
+    anyhow::ensure!(
+        first > request.pre_broadcast_masterchain_checkpoint.sequence_number
+            && master.last.seqno >= first,
+        "Prediction bounce-credit lower bound is not a finalized destination checkpoint"
+    );
+    let span = master
+        .last
+        .seqno
+        .checked_sub(first)
+        .and_then(|value| value.checked_add(1))
+        .context("Prediction bounce-credit scan span overflow")?;
+    anyhow::ensure!(
+        span <= maximum_masterchain_blocks,
+        "Prediction bounce-credit masterchain capacity was exhausted"
+    );
+    let observed_masterchain = block_identity_from_rpc(&master.last, master.last.seqno)?;
+    let mut seen_blocks = BTreeSet::new();
+    let mut inspected_transactions = 0u32;
+    let mut found: Option<PredictionBounceCreditCandidate> = None;
+    for masterchain_seqno in first..=master.last.seqno {
+        let blocks = if source.workchain_id() == -1 {
+            vec![
+                rpc.lookup_block(
+                    -1,
+                    &request.pre_broadcast_masterchain_checkpoint.shard.to_string(),
+                    masterchain_seqno,
+                )
+                .await?,
+            ]
+        } else {
+            rpc.get_shards(masterchain_seqno)
+                .await?
+                .shards
+                .into_iter()
+                .filter(|block| block.workchain == source.workchain_id() && block.seqno != 0)
+                .collect::<Vec<_>>()
+        };
+        for block in blocks {
+            anyhow::ensure!(
+                block.root_hash.len() == 32 && block.file_hash.len() == 32,
+                "Prediction bounce-credit shard descriptor is incomplete"
+            );
+            let block_key = (
+                block.workchain,
+                block.shard,
+                block.seqno,
+                <[u8; 32]>::try_from(block.root_hash.as_slice()).map_err(|_| {
+                    anyhow::anyhow!("Prediction bounce shard root hash is malformed")
+                })?,
+                <[u8; 32]>::try_from(block.file_hash.as_slice()).map_err(|_| {
+                    anyhow::anyhow!("Prediction bounce shard file hash is malformed")
+                })?,
+            );
+            if !seen_blocks.insert(block_key) {
+                continue;
+            }
+            anyhow::ensure!(
+                seen_blocks.len() <= maximum_transactions as usize,
+                "Prediction bounce-credit shard-block capacity was exhausted"
+            );
+            scan_prediction_bounce_credit_block(
+                &rpc,
+                source,
+                request,
+                &block,
+                masterchain_seqno,
+                maximum_transactions,
+                &mut inspected_transactions,
+                &mut found,
+            )
+            .await?;
+        }
+    }
+    let candidate = found.context(
+        "exact Prediction rich bounce has not been credited after the destination failure",
+    )?;
+    let candidate_digest = economic_payment_observation_digest(
+        BOUNCE_CREDIT_RECEIPT_DIGEST_DOMAIN,
+        &recursively_sorted_json(serde_json::json!({
+            "observer_id": member.locator_identity_digest,
+            "operator_provenance": member.operator_provenance,
+            "observed_masterchain": observed_masterchain,
+            "source_agent_account_code_hash": request.profile.source_agent_account_code_hash,
+            "candidate": candidate,
+        })),
+    )?;
+    Ok(PredictionBounceCreditObservation {
+        candidate,
+        receipt: PredictionBounceCreditObserverReceipt {
+            observer_id: member.locator_identity_digest.clone(),
+            operator_provenance: member.operator_provenance.clone(),
+            observed_masterchain,
+            source_agent_account_code_hash: request.profile.source_agent_account_code_hash.clone(),
+            candidate_digest,
+        },
+    })
+}
+
+async fn scan_prediction_bounce_credit_block(
+    rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
+    source: &MsgAddressInt,
+    request: &PredictionRelayBounceCreditRequest,
+    expected_block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    observed_masterchain_seqno: u32,
+    maximum_transactions: u32,
+    inspected_transactions: &mut u32,
+    found: &mut Option<PredictionBounceCreditCandidate>,
+) -> anyhow::Result<()> {
+    let mut after_lt = None;
+    let mut after_account: Option<String> = None;
+    loop {
+        let page = rpc
+            .get_block_transactions_ext_page(
+                expected_block.workchain,
+                &expected_block.shard.to_string(),
+                expected_block.seqno,
+                after_lt,
+                after_account.as_deref(),
+                DESTINATION_BLOCK_PAGE_SIZE,
+            )
+            .await?;
+        let actual = page
+            .id
+            .as_ref()
+            .context("Prediction bounce-credit block page omitted block identity")?;
+        anyhow::ensure!(
+            actual.workchain == expected_block.workchain
+                && actual.shard == expected_block.shard
+                && actual.seqno == expected_block.seqno
+                && actual.root_hash == expected_block.root_hash
+                && actual.file_hash == expected_block.file_hash,
+            "Prediction bounce-credit block page is from a different fork"
+        );
+        anyhow::ensure!(
+            !page.incomplete || !page.transactions.is_empty(),
+            "Prediction bounce-credit pagination made no progress"
+        );
+        for raw in &page.transactions {
+            *inspected_transactions = inspected_transactions
+                .checked_add(1)
+                .context("Prediction bounce-credit transaction count overflow")?;
+            anyhow::ensure!(
+                *inspected_transactions <= maximum_transactions,
+                "Prediction bounce-credit transaction capacity was exhausted"
+            );
+            let address =
+                MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
+            if address.as_ref().ok() != Some(source) {
+                continue;
+            }
+            if let Some(candidate) = parse_prediction_bounce_credit_candidate(
+                source,
+                request,
+                expected_block,
+                observed_masterchain_seqno,
+                raw,
+            )? {
+                anyhow::ensure!(
+                    found.replace(candidate).is_none(),
+                    "exact Prediction rich bounce appears in multiple source transactions"
+                );
+            }
+        }
+        if !page.incomplete {
+            break;
+        }
+        let last = page
+            .transactions
+            .last()
+            .context("Prediction bounce-credit pagination lost its cursor")?;
+        after_lt = Some(last.lt);
+        after_account = Some(last.account.clone());
+    }
+    Ok(())
+}
+
+fn parse_prediction_bounce_credit_candidate(
+    source: &MsgAddressInt,
+    request: &PredictionRelayBounceCreditRequest,
+    block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    observed_masterchain_seqno: u32,
+    raw: &chain_rpc_client::v2::data_models::BlockTransactionExt,
+) -> anyhow::Result<Option<PredictionBounceCreditCandidate>> {
+    anyhow::ensure!(!raw.data.is_empty(), "source bounce transaction omitted its BOC");
+    let transaction_boc = base64::engine::general_purpose::STANDARD
+        .decode(&raw.data)
+        .context("decode source bounce transaction BOC")?;
+    anyhow::ensure!(
+        transaction_boc.len() <= MAX_PREDICTION_TRANSACTION_BOC_BYTES,
+        "source bounce transaction BOC exceeds the Prediction evidence bound"
+    );
+    let root = read_single_root_boc(&transaction_boc)?;
+    anyhow::ensure!(
+        write_boc(&root)? == transaction_boc,
+        "source bounce transaction BOC is not canonical"
+    );
+    let transaction = Transaction::construct_from_cell(root.clone())?;
+    let transaction_hash = *root.hash(0).as_slice();
+    let wrapper_hash = base64::engine::general_purpose::STANDARD
+        .decode(&raw.hash)
+        .context("decode source bounce transaction wrapper hash")?;
+    anyhow::ensure!(
+        wrapper_hash.as_slice() == transaction_hash
+            && raw.lt == transaction.logical_time()
+            && raw.utime == transaction.now()
+            && transaction.account_id() == source.address(),
+        "source bounce transaction wrapper contradicts its hash-bound BOC"
+    );
+    let Some(inbound) = transaction.in_msg_cell() else {
+        return Ok(None);
+    };
+    let bounce = request
+        .destination_evidence
+        .bounce_message
+        .as_ref()
+        .context("Prediction bounce-credit request lost its bounce")?;
+    if format!("tvm-cell-sha256:{}", hex::encode(inbound.hash(0))) != bounce.message_hash {
+        return Ok(None);
+    }
+    let exact =
+        base64::engine::general_purpose::STANDARD.decode(&bounce.exact_message_boc_base64)?;
+    anyhow::ensure!(
+        write_boc(&inbound)? == exact,
+        "source transaction did not consume the exact destination bounce"
+    );
+    let description = transaction.read_description()?;
+    let ordinary = match description {
+        TransactionDescr::Ordinary(value) => value,
+        _ => anyhow::bail!("Prediction bounce credit is not an ordinary transaction"),
+    };
+    let credit =
+        ordinary.credit_ph.as_ref().context("Prediction bounce transaction has no credit phase")?;
+    anyhow::ensure!(
+        !ordinary.aborted
+            && credit.credit.other.is_empty()
+            && credit.credit.coins.as_u64() == Some(bounce.value_nanotos),
+        "Prediction bounce transaction did not credit the exact bounced native value"
+    );
+    Ok(Some(PredictionBounceCreditCandidate {
+        inbound_bounce_message_hash: bounce.message_hash.clone(),
+        transaction_hash: format!("sha256:{}", hex::encode(transaction_hash)),
+        transaction_boc_base64: base64::engine::general_purpose::STANDARD.encode(transaction_boc),
+        block_workchain: block.workchain,
+        block_shard: block.shard,
+        block_seqno: block.seqno,
+        block_root_hash: format!("sha256:{}", hex::encode(&block.root_hash)),
+        block_file_hash: format!("sha256:{}", hex::encode(&block.file_hash)),
+        observed_masterchain_seqno,
+        next_source_cursor: PredictionAccountCursor {
+            account_address: source.to_string(),
+            last_logical_time: transaction.logical_time(),
+            last_transaction_hash: format!("sha256:{}", hex::encode(transaction_hash)),
+        },
+        credited_value_nanotos: bounce.value_nanotos,
+    }))
+}
+
 fn parse_prediction_source_history_step(
     account: &MsgAddressInt,
     record: &ControllerActionRecord,
@@ -717,6 +2305,10 @@ fn parse_prediction_source_history_step(
     let transaction_boc = base64::engine::general_purpose::STANDARD
         .decode(&raw.data)
         .context("decode source transaction BOC")?;
+    anyhow::ensure!(
+        transaction_boc.len() <= MAX_PREDICTION_TRANSACTION_BOC_BYTES,
+        "source transaction BOC exceeds the Prediction evidence bound"
+    );
     let root = read_single_root_boc(&transaction_boc).context("parse source transaction BOC")?;
     anyhow::ensure!(
         write_boc(&root)? == transaction_boc,

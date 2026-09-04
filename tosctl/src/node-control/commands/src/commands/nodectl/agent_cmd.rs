@@ -77,7 +77,10 @@ use dual_absence::{
     AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd,
     AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd,
 };
-use prediction_relay::AgentAccountPredictionRelaySourceResolveCmd;
+use prediction_relay::{
+    AgentAccountPredictionRelayBounceCreditResolveCmd,
+    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelaySourceResolveCmd,
+};
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -623,6 +626,10 @@ pub enum AgentAccountAction {
     EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
     /// Resolve a Prediction exact source transaction from a durable pre-broadcast cursor
     PredictionRelaySourceResolve(AgentAccountPredictionRelaySourceResolveCmd),
+    /// Resolve the exact PredictionMarket destination transaction from a durable chain checkpoint
+    PredictionRelayDestinationResolve(AgentAccountPredictionRelayDestinationResolveCmd),
+    /// Resolve the exact rich bounce credit back at the source Agent Account
+    PredictionRelayBounceCreditResolve(AgentAccountPredictionRelayBounceCreditResolveCmd),
     /// Prepare one owner-authorized cancellation for an existing controller action
     CancelPrepare(AgentAccountCancelPrepareCmd),
 }
@@ -1595,6 +1602,12 @@ impl AgentAccountCmd {
             AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelaySourceResolve(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelayDestinationResolve(cmd) => {
+                cmd.run(config_path).await
+            }
+            AgentAccountAction::PredictionRelayBounceCreditResolve(cmd) => {
+                cmd.run(config_path).await
+            }
             AgentAccountAction::CancelPrepare(cmd) => cmd.run(config_path).await,
         }
     }
