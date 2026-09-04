@@ -54,6 +54,8 @@ enum PredictionAction {
     BuildState(PredictionBuildStateCmd),
     /// Build a canonical order authorization or signed-order cell
     BuildOrder(PredictionBuildOrderCmd),
+    /// Build one canonical operation body without signing or chain access
+    BuildOperation(PredictionBuildOperationCmd),
     /// Verify and display deployed market state
     Show(PredictionShowCmd),
     /// Build and durably persist a signed deploy+activate external BOC
@@ -83,6 +85,16 @@ struct PredictionBuildOrderCmd {
     #[arg(long, requires = "public_key", help = "64-byte Ed25519 signature over the digest")]
     signature: Option<String>,
     #[arg(long, help = "Optional raw order/signed-order BOC output path")]
+    output_boc: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Clone)]
+struct PredictionBuildOperationCmd {
+    #[arg(long)]
+    definition: PathBuf,
+    #[arg(long, help = "Strict tagged JSON operation request")]
+    operation: PathBuf,
+    #[arg(long, help = "Optional raw operation-body BOC output path")]
     output_boc: Option<PathBuf>,
 }
 
@@ -359,6 +371,7 @@ impl PredictionCmd {
             PredictionAction::Capabilities => capabilities(),
             PredictionAction::BuildState(cmd) => cmd.run(),
             PredictionAction::BuildOrder(cmd) => cmd.run(),
+            PredictionAction::BuildOperation(cmd) => cmd.run(),
             PredictionAction::Show(cmd) => cmd.run(config_path).await,
             PredictionAction::PrepareDeploy(cmd) => cmd.run(config_path).await,
             PredictionAction::Prepare(cmd) => cmd.run(config_path).await,
@@ -431,6 +444,46 @@ impl PredictionBuildOrderCmd {
                 "digest": format!("tvm-cell-sha256:{}", hex::encode(digest)),
                 "cell_hash": format!("tvm-cell-sha256:{}", hex::encode(cell.repr_hash().as_slice())),
                 "boc_base64": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "output_boc": self.output_boc,
+            }))?
+        );
+        Ok(())
+    }
+}
+
+impl PredictionBuildOperationCmd {
+    fn run(&self) -> anyhow::Result<()> {
+        let init = load_definition(&self.definition)?;
+        let operation: OperationJson = load_json(&self.operation)?;
+        let built = build_operation(&init, operation)?;
+        let address = PredictionMarketContractV1::calculate_address(&init)?;
+        let market_id = PredictionMarketContractV1::market_id(&init)?;
+        let market_config_hash = PredictionMarketContractV1::market_config_hash(&init)?;
+        let market_code_hash = PredictionMarketContractV1::code()?.repr_hash();
+        let source_agent_account_code_hash = AgentAccountContract::v2_code()?.repr_hash();
+        let boc = write_boc(&built.body)?;
+        if let Some(path) = &self.output_boc {
+            persist_exact(path, &boc)?;
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": "tos.prediction-operation-artifact.v1",
+                "operation": built.operation,
+                "custody_action_kind": prediction_semantic_effect_kind(built.operation),
+                "global_id": init.global_id,
+                "workchain_id": init.workchain_id,
+                "market_address": address.to_string(),
+                "market_id": format!("sha256:{}", hex::encode(market_id)),
+                "market_config_hash": format!("tvm-cell-sha256:{}", hex::encode(market_config_hash)),
+                "market_code_hash": format!("tvm-cell-sha256:{}", hex::encode(market_code_hash.as_slice())),
+                "source_agent_account_code_hash": format!("tvm-cell-sha256:{}", hex::encode(source_agent_account_code_hash.as_slice())),
+                "risk_increasing": built.risk_increasing,
+                "credited_amount": built.credited_amount,
+                "state_contribution": built.state_contribution,
+                "minimum_value": built.minimum_value,
+                "body_hash": format!("tvm-cell-sha256:{}", hex::encode(built.body.repr_hash().as_slice())),
+                "body_boc_base64": base64::engine::general_purpose::STANDARD.encode(&boc),
                 "output_boc": self.output_boc,
             }))?
         );

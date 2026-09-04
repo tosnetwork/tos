@@ -113,6 +113,25 @@ top_up_reserve: no additional fields
 Signed-order BOCs are standard base64 single-root cells. Outcomes are
 `0=YES`, `1=NO`, `2=INVALID`; rounds are `0=NORMAL`, `1=APPEAL`.
 
+Before an autonomous owner signs a custody effect, `build-operation` exposes
+the exact canonical message body without reading chain state or any signing
+key:
+
+```sh
+tosctl agent prediction build-operation \
+  --definition /absolute/market.json \
+  --operation /absolute/match.json \
+  --output-boc /absolute/match-body.boc
+```
+
+Its `tos.prediction-operation-artifact.v1` JSON binds the operation and reviewed
+custody action kind to the deterministic market address, market/config/code
+hashes, exact body BOC/hash, and minimum value breakdown. OpenFox must authorize
+that returned body hash and must still call `prepare-agent`, which independently
+rebuilds the same body and checks the deployed source, market, network, value,
+expiry, and owner signature. The pure builder is not evidence that a market is
+deployed or live and never produces a bearer-executable external message.
+
 Example deposit:
 
 ```json
