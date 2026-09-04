@@ -473,6 +473,26 @@ fn closed_empty_account_releases_all_cleanup_credit_without_a_tombstone() {
 }
 
 #[test]
+fn trading_key_and_nonce_floor_freeze_at_trade_close() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x75; 32]);
+    f.register(&owner, &key, 2);
+    f.bc.set_now(f.init.trade_close as u32);
+    let replacement = SigningKey::from_bytes(&[0x76; 32]);
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::set_trading_key(3, replacement.verifying_key().to_bytes())
+            .unwrap(),
+    )
+    .expect_exit_code(2406);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::raise_nonce_floor(4, 1).unwrap())
+        .expect_exit_code(2406);
+}
+
+#[test]
 fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     let mut f = Fixture::new();
     f.activate();
@@ -487,6 +507,10 @@ fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
 
     f.bc.set_now(f.init.resolve_not_before as u32);
     f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    assert_eq!(f.phase().0, 1);
+    assert_eq!(f.phase().3, [0; 32], "phase entry must not also open a round nonce");
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(40).unwrap())
         .expect_success();
     let (status, _, _, normal_context, _, _, _) = f.phase();
     assert_eq!(status, 1);
@@ -593,12 +617,16 @@ fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     assert_eq!(f.accounting()[3], 0);
 
     let reserve = f.reserve.address().clone();
-    let reserve_before =
-        f.bc.get_account(&reserve).unwrap().balance().unwrap().coins.as_u64().unwrap();
-    let result = f.send(
+    f.send(
         &challenger,
         OPERATION_BUDGET,
         PredictionMarketContractV1::withdraw_terminal_surplus(13, TOS).unwrap(),
+    )
+    .expect_exit_code(2407);
+    let result = f.send(
+        &reserve,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::withdraw_terminal_surplus(14, TOS).unwrap(),
     );
     result.expect_success().expect_out_msgs(1);
     let tx = result.first_transaction().unwrap();
@@ -611,9 +639,6 @@ fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     })
     .unwrap();
     assert_eq!(reserve_message_value, TOS);
-    let reserve_after =
-        f.bc.get_account(&reserve).unwrap().balance().unwrap().coins.as_u64().unwrap();
-    assert!(reserve_after > reserve_before);
 }
 
 #[test]
@@ -630,6 +655,9 @@ fn uncontested_normal_quorum_finalizes_only_at_the_frozen_deadline() {
 
     f.bc.set_now(f.init.resolve_not_before as u32);
     f.send(&outsider, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    assert_eq!(f.phase().3, [0; 32], "phase entry must be an independent transition");
+    f.send(&outsider, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(40).unwrap())
         .expect_success();
     let context = f.phase().3;
 
@@ -717,6 +745,9 @@ fn both_frozen_oracle_rounds_timing_out_is_the_only_timeout_that_yields_invalid(
 
     f.bc.set_now(f.init.oracle_vote_deadline as u32);
     f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    assert_eq!(f.phase().0, 1, "late keeper call advances only one phase");
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(40).unwrap())
         .expect_success();
     let (status, reason, _, context, base, _, deadline) = f.phase();
     assert_eq!((status, reason), (3, 0));

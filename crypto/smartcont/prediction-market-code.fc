@@ -785,13 +785,14 @@ load_and_validate_config(cell config, int activation_check, int activated_at,
     (challenge_bond <= max_challenge_bond) &
     (challenge_processing_fee >= min_challenge_processing_fee) &
     (challenge_processing_fee <= max_challenge_processing_fee) &
-    (max_total_liability + reserve_floor <= max_coins) &
-    (max_total_liability + terminal_reserve <= max_coins));
+    (checked_add(max_total_liability, reserve_floor) <= max_coins) &
+    (checked_add(max_total_liability, terminal_reserve) <= max_coins));
   int max_cleanup_liability =
-    max_participants * account_cleanup_bounty +
-    max_live_orders * order_cleanup_bounty;
-  int worst_case_liability = max_total_free + max_locked +
-    challenge_bond + max_cleanup_liability;
+    checked_add(checked_mul(max_participants, account_cleanup_bounty),
+      checked_mul(max_live_orders, order_cleanup_bounty));
+  int worst_case_liability = checked_add(
+    checked_add(max_total_free, max_locked),
+    checked_add(challenge_bond, max_cleanup_liability));
   throw_unless(err::bad_config,
     (max_cleanup_liability <= max_coins) &
     (worst_case_liability <= max_total_liability));
@@ -1108,8 +1109,9 @@ int total_liability(int status, int total_free, int locked, int remaining_payout
   int liability = total_liability(status, total_free, locked, remaining_payout, bond, cleanup);
   throw_unless(err::liability, liability <= max_total_liability);
   [int balance, _] = get_balance();
-  throw_unless(err::liability, balance >= liability + reserve_floor);
-  raw_reserve(liability + reserve_floor, 16);
+  int required = checked_add(liability, reserve_floor);
+  throw_unless(err::liability, balance >= required);
+  raw_reserve(required, 16);
 }
 
 int outbound_priced_as_masterchain(slice target, int my_wc) inline {
@@ -1246,7 +1248,8 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     require_bounceable(flags);
     throw_unless(err::wrong_phase, (status == status::trading) & (now() < trade_close));
     throw_unless(err::bad_amount, credited > 0);
-    throw_unless(err::insufficient_value, msg_value >= credited + min_operation_budget);
+    throw_unless(err::insufficient_value,
+      msg_value >= checked_add(credited, min_operation_budget));
     (cell account_cell, int found) = find_account(accounts, sender);
     throw_unless(err::account_missing, found);
     (slice owner, int key, int epoch, int nonce_floor, int free_balance,
@@ -1277,6 +1280,8 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   if ((op == op::set_trading_key) | (op == op::raise_nonce_floor)) {
     require_bounceable(flags);
     throw_unless(err::insufficient_value, msg_value >= min_operation_budget);
+    throw_unless(err::wrong_phase,
+      (status == status::trading) & (now() < trade_close));
     (cell account_cell, int found) = find_account(accounts, sender);
     throw_unless(err::account_missing, found);
     (slice owner, int key, int epoch, int nonce_floor, int free_balance,
@@ -1629,7 +1634,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     if (op == op::split) {
       throw_unless(err::wrong_phase, (status == status::trading) & (now() < trade_close));
     } else {
-      throw_if(err::wrong_phase, status == status::finalized);
+      throw_unless(err::wrong_phase, status < status::finalized);
     }
     (cell account_cell, int found) = find_account(accounts, sender);
     throw_unless(err::account_missing, found);
@@ -1640,7 +1645,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     int amount = checked_mul(quantity, lot_value);
     if (op == op::split) {
       throw_unless(err::insufficient_free, free_balance >= amount);
-      throw_unless(err::capacity, locked + amount <= max_locked);
+      throw_unless(err::capacity, checked_add(locked, amount) <= max_locked);
       free_balance -= amount;
       total_free -= amount;
       yes_lots = checked_add_u64(yes_lots, quantity);
@@ -1716,6 +1721,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     bond = checked_add(bond, challenge_bond);
     status = status::reviewing;
     review_reason = review::challenge;
+    normal_votes = null();
     review_votes = null();
     statement_counts = null();
     resolution = pack_resolution(normal, review_state, challenge, final_state);
@@ -1895,7 +1901,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       status = status::reporting;
       changed = 1;
     }
-    if (status == status::reporting) {
+    if ((changed == 0) & (status == status::reporting)) {
       if (now() >= oracle_vote_deadline) {
         int review_started = oracle_vote_deadline;
         int vote_not_before = oracle_vote_deadline + appeal_review_delay;
@@ -1907,6 +1913,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
           0, 0, appeal_deadline);
         status = status::reviewing;
         review_reason = review::normal_timeout;
+        normal_votes = null();
         review_votes = null();
         statement_counts = null();
         changed = 1;
@@ -1918,7 +1925,8 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
         changed = 1;
       }
     }
-    if ((status == status::proposed) & (now() >= challenge_deadline)) {
+    if ((changed == 0) & (status == status::proposed) &
+        (now() >= challenge_deadline)) {
       throw_unless(err::malformed, proposal_present);
       final_state = pack_final_runtime(final_reason::normal_uncontested, now(),
         1, proposal_hash, proposal_evidence,
@@ -1932,7 +1940,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       locked = 0;
       changed = 1;
     }
-    if (status == status::reviewing) {
+    if ((changed == 0) & (status == status::reviewing)) {
       (int base_present, cell base, int base_hash, int review_nonce,
         int review_opened_at, int appeal_deadline) = load_review_runtime(review_state);
       throw_unless(err::malformed, base_present);
@@ -2019,7 +2027,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     } elseif (final_outcome == outcome::no) {
       payout = checked_mul(no_lots, lot_value);
     } elseif (final_outcome == outcome::invalid) {
-      payout = checked_mul(yes_lots + no_lots, lot_value / 2);
+      payout = checked_mul(checked_add(yes_lots, no_lots), lot_value / 2);
     } else {
       throw(err::wrong_phase);
     }
@@ -2259,7 +2267,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       (free_balance == 0) & (yes_lots == 0) & (no_lots == 0));
     throw_unless(err::liability,
       (participant_count > 0) & (global_live_orders >= account_live_orders) &
-      (cleanup >= account_cleanup + account_order_cleanup));
+      (cleanup >= checked_add(account_cleanup, account_order_cleanup)));
     if (account_live_orders == 0) {
       throw_unless(err::malformed,
         orders.cell_null?() & (account_order_cleanup == 0));
@@ -2267,7 +2275,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       throw_unless(err::malformed,
         (~ orders.cell_null?()) & (account_order_cleanup > 0));
     }
-    int cleanup_credit = account_cleanup + account_order_cleanup;
+    int cleanup_credit = checked_add(account_cleanup, account_order_cleanup);
     (accounts, int deleted) = accounts.udict_delete?(256, slice_hash(owner));
     throw_unless(err::malformed, deleted);
     participant_count -= 1;
@@ -2325,7 +2333,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     } elseif (final_outcome == outcome::no) {
       position_payout = checked_mul(no_lots, lot_value);
     } elseif (final_outcome == outcome::invalid) {
-      position_payout = checked_mul(yes_lots + no_lots, lot_value / 2);
+      position_payout = checked_mul(checked_add(yes_lots, no_lots), lot_value / 2);
     } else {
       throw(err::wrong_phase);
     }
@@ -2333,9 +2341,9 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       (remaining_payout >= position_payout) &
       (total_free >= free_balance) & (participant_count > 0) &
       (global_live_orders >= account_live_orders) &
-      (cleanup >= account_cleanup + account_order_cleanup));
+      (cleanup >= checked_add(account_cleanup, account_order_cleanup)));
     int principal = checked_add(free_balance, position_payout);
-    int cleanup_credit = account_cleanup + account_order_cleanup;
+    int cleanup_credit = checked_add(account_cleanup, account_order_cleanup);
     remaining_payout -= position_payout;
     claimed = checked_add(claimed, position_payout);
     total_free -= free_balance;
@@ -2415,6 +2423,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     in_msg.end_parse();
     require_bounceable(flags);
     throw_unless(err::wrong_phase, status == status::terminal);
+    throw_unless(err::not_owner, equal_slice_bits(sender, reserve_recipient));
     throw_unless(err::bad_amount, amount > 0);
     throw_unless(err::liability,
       (participant_count == 0) & (global_live_orders == 0) &
@@ -2423,8 +2432,10 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     int forward_fee = get_forward_fee(
       outbound_priced_as_masterchain(reserve_recipient, workchain_id), 0, 0);
     [int balance, _] = get_balance();
+    int required = checked_add(terminal_reserve,
+      checked_add(amount, forward_fee));
     throw_unless(err::liability,
-      balance >= terminal_reserve + amount + forward_fee);
+      balance >= required);
     raw_reserve(terminal_reserve, 16);
     queue_exact_payout(reserve_recipient, amount);
     return ();
