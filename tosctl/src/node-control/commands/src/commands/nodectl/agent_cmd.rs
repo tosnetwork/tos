@@ -20,8 +20,9 @@ use super::utils::{
 use anyhow::Context;
 use base64::Engine;
 use chain_block::{
-    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, IBitstring, Message, MsgAddressInt,
-    Serializable, Transaction, TransactionDescr, read_single_root_boc, write_boc,
+    BuilderData, Cell, Coins, ConfigParamEnum, Deserializable, GasLimitsPrices, IBitstring,
+    Message, MsgAddressInt, MsgForwardPrices, Serializable, SizeLimitsConfig, StorageUsageCalc,
+    Transaction, TransactionDescr, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::client_json_rpc::{
     canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
@@ -41,8 +42,9 @@ use common::{
     time_format,
 };
 use contracts::{
-    AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentAccountInit,
-    AgentAccountPolicyUpdate, ControllerActionClaim, ControllerActionResolutionEvidence,
+    AGENT_ACCOUNT_MAX_ACTION_GAS, AgentAccountContract, AgentAccountCustodyJournal,
+    AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend,
+    ControllerActionClaim, ControllerActionRecord, ControllerActionResolutionEvidence,
     ControllerActionStatus, EconomicActionAuthorization, EconomicEffectAuthorization,
     TaskEscrowContract, TaskEscrowData, TaskEscrowInit, Wallet, agent_account_task_body_hash,
     controller_resolution_evidence_digest,
@@ -77,7 +79,6 @@ use dual_absence::{
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_DEPLOY_GAS: u64 = 1_000_000; // 0.001 TOS
 const AGENT_ACCOUNT_ACTION_GAS: u64 = 1_000_000; // 0.001 TOS
-const AGENT_ACCOUNT_CONTROLLER_FEE_HEADROOM: u64 = 10_000_000; // 0.01 TOS
 const TASK_SEND_FINALIZED_SCHEMA: &str = "tos.agent-account.task-send-finalized.v1";
 
 /// Top-level `tosctl agent` command.
@@ -370,8 +371,12 @@ pub struct AgentTaskCreateCmd {
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
     amount_nanotos: Option<u64>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
-    workchain: i32,
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        help = "Deployment workchain; defaults to the Agent Account workchain, or -1 with --from"
+    )]
+    workchain: Option<i32>,
     #[arg(long)]
     yes: bool,
     #[arg(short, long, default_value = "table")]
@@ -2212,12 +2217,26 @@ impl AgentTaskShowCmd {
     }
 }
 
+fn task_deployment_workchain(
+    requested: Option<i32>,
+    agent_account: Option<&MsgAddressInt>,
+) -> anyhow::Result<i32> {
+    let workchain =
+        requested.or_else(|| agent_account.map(MsgAddressInt::workchain_id)).unwrap_or(-1);
+    if agent_account.is_some_and(|account| account.workchain_id() != workchain) {
+        anyhow::bail!("Task deployment workchain must match the funding Agent Account workchain");
+    }
+    Ok(workchain)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_agent_account_task_create_funding(
     account: &MsgAddressInt,
     creator: &MsgAddressInt,
     data: &AgentAccountData,
     account_balance: u64,
     amount_nanotos: u64,
+    fee_reserve: u64,
     chain_now: u64,
     valid_until: u32,
 ) -> anyhow::Result<()> {
@@ -2235,8 +2254,8 @@ fn validate_agent_account_task_create_funding(
         anyhow::bail!("funding amount exceeds Agent Account remaining daily limit");
     }
     let required_balance = amount_nanotos
-        .checked_add(AGENT_ACCOUNT_CONTROLLER_FEE_HEADROOM)
-        .context("funding amount plus deploy gas overflowed")?;
+        .checked_add(fee_reserve)
+        .context("funding amount plus deployment fees overflowed")?;
     if account_balance < required_balance {
         anyhow::bail!("Agent Account has insufficient balance");
     }
@@ -2250,6 +2269,115 @@ fn validate_agent_account_task_create_funding(
         anyhow::bail!("valid_until exceeds the Agent Account default_task_timeout");
     }
     Ok(())
+}
+
+struct AgentDeployFeeSchedule {
+    gas: GasLimitsPrices,
+    forwarding: MsgForwardPrices,
+    limits: SizeLimitsConfig,
+}
+
+async fn load_agent_deploy_fee_schedule(
+    rpc_client: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
+    account: &MsgAddressInt,
+) -> anyhow::Result<AgentDeployFeeSchedule> {
+    let (gas, forwarding) = if account.is_masterchain() {
+        let gas = match rpc_client.get_config_param(20).await? {
+            ConfigParamEnum::ConfigParam20(value) => value,
+            _ => anyhow::bail!("chain config parameter 20 is not masterchain gas pricing"),
+        };
+        let forwarding = match rpc_client.get_config_param(24).await? {
+            ConfigParamEnum::ConfigParam24(value) => value,
+            _ => anyhow::bail!("chain config parameter 24 is not masterchain forwarding pricing"),
+        };
+        (gas, forwarding)
+    } else {
+        let gas = match rpc_client.get_config_param(21).await? {
+            ConfigParamEnum::ConfigParam21(value) => value,
+            _ => anyhow::bail!("chain config parameter 21 is not workchain gas pricing"),
+        };
+        let forwarding = match rpc_client.get_config_param(25).await? {
+            ConfigParamEnum::ConfigParam25(value) => value,
+            _ => anyhow::bail!("chain config parameter 25 is not workchain forwarding pricing"),
+        };
+        (gas, forwarding)
+    };
+    let limits = match rpc_client.get_config_param(43).await? {
+        ConfigParamEnum::ConfigParam43(value) => value,
+        _ => anyhow::bail!("chain config parameter 43 is not a size-limits configuration"),
+    };
+    Ok(AgentDeployFeeSchedule { gas, forwarding, limits })
+}
+
+fn append_storage_tree(usage: &mut StorageUsageCalc, cell: &Cell) -> anyhow::Result<()> {
+    usage.append_cell(cell, true, &mut 0)?;
+    Ok(())
+}
+
+/// Calculates the balance headroom needed before an external deploy request
+/// is imported. The outbound component intentionally mirrors the contract's
+/// SDATASIZE/GETFORWARDFEE admission gate; the inbound component mirrors the
+/// executor fee that is deducted before the contract observes its balance.
+fn agent_deploy_fee_reserve(
+    state_init: &Cell,
+    body: &Cell,
+    unsigned_external_message: &Cell,
+    schedule: &AgentDeployFeeSchedule,
+) -> anyhow::Result<u64> {
+    let mut outbound = StorageUsageCalc::with_limits(0, 0);
+    append_storage_tree(&mut outbound, state_init)?;
+    append_storage_tree(&mut outbound, body)?;
+    if outbound.cells() > u64::from(schedule.limits.max_msg_cells)
+        || outbound.bits() > u64::from(schedule.limits.max_msg_bits)
+    {
+        anyhow::bail!("Task deployment StateInit and body exceed chain message limits");
+    }
+
+    let mut inbound = StorageUsageCalc::with_limits(0, 0);
+    // The external-message root is covered by the lump price, matching the
+    // executor's import calculation; only its referenced tree is accumulated.
+    inbound.append_cell(unsigned_external_message, false, &mut 0)?;
+    if inbound.cells() > u64::from(schedule.limits.max_msg_cells)
+        || inbound.bits() > u64::from(schedule.limits.max_msg_bits)
+    {
+        anyhow::bail!("signed Task deployment request exceeds chain message limits");
+    }
+
+    let reserve = schedule
+        .gas
+        .calc_gas_fee(AGENT_ACCOUNT_MAX_ACTION_GAS)
+        .checked_add(schedule.forwarding.calc_fwd_fee(outbound.bits(), outbound.cells()))
+        .and_then(|value| {
+            value.checked_add(schedule.forwarding.calc_fwd_fee(inbound.bits(), inbound.cells()))
+        })
+        .context("Task deployment fee reserve overflowed")?;
+    u64::try_from(reserve).context("Task deployment fee reserve exceeds uint64")
+}
+
+fn exact_task_deploy_boc(record: &ControllerActionRecord) -> anyhow::Result<Vec<u8>> {
+    let encoded = record
+        .exact_signed_boc_base64
+        .as_deref()
+        .context("Task deployment custody record has no exact signed BOC")?;
+    let boc = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("decode Task deployment custody BOC")?;
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+    if record.exact_signed_boc_digest.as_deref() != Some(digest.as_str()) {
+        anyhow::bail!("Task deployment custody BOC digest is inconsistent");
+    }
+    validate_exact_boc_before_broadcast(&boc)?;
+    Ok(boc)
+}
+
+fn begin_or_resume_task_deploy_broadcast(
+    journal: &AgentAccountCustodyJournal,
+    record: &ControllerActionRecord,
+    now: u64,
+) -> anyhow::Result<Vec<u8>> {
+    let boc = exact_task_deploy_boc(record)?;
+    journal.begin_or_resume_exact_broadcast(&record.claim, now)?;
+    Ok(boc)
 }
 
 fn task_deploy_valid_until(
@@ -2266,6 +2394,18 @@ fn task_deploy_valid_until(
         return Ok(existing.claim.valid_until);
     }
     Ok(requested.unwrap_or(default))
+}
+
+fn canonical_task_deploy_primary_config(
+    config_path: &Path,
+    working_directory: &Path,
+) -> anyhow::Result<PathBuf> {
+    let candidate = if config_path.is_absolute() {
+        config_path.to_path_buf()
+    } else {
+        working_directory.join(config_path)
+    };
+    fs::canonicalize(candidate).context("canonicalize primary Task deployment RPC config")
 }
 
 fn validate_task_deploy_quorum_configs(
@@ -2346,6 +2486,8 @@ impl AgentTaskCreateCmd {
                     .context("invalid persisted Agent Account address")
             })
             .transpose()?;
+        let deployment_workchain =
+            task_deployment_workchain(self.workchain, agent_account.as_ref())?;
         let creator = match (&self.creator, &agent_account) {
             (Some(value), Some(account)) => {
                 let creator = value.parse::<MsgAddressInt>().context("invalid creator address")?;
@@ -2391,7 +2533,7 @@ impl AgentTaskCreateCmd {
             permission_hash,
             attestor_pubkey,
         };
-        let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
+        let address = TaskEscrowContract::calculate_address(deployment_workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let record_name = self.name.clone().unwrap_or_else(|| {
             let hex = address.to_string();
@@ -2429,8 +2571,14 @@ impl AgentTaskCreateCmd {
                 "--controller-action-id is required for crash-safe Agent Account deployment",
             )?;
             validate_controller_action_id(action_id)?;
+            let working_directory =
+                std::env::current_dir().context("read current working directory")?;
+            let primary_path = canonical_task_deploy_primary_config(path, &working_directory)?;
+            let primary_config_path = primary_path
+                .to_str()
+                .context("primary Task deployment RPC config path is not valid UTF-8")?;
             validate_task_deploy_quorum_configs(
-                config_path,
+                primary_config_path,
                 &self.quorum_configs,
                 self.max_transactions,
             )?;
@@ -2438,7 +2586,7 @@ impl AgentTaskCreateCmd {
             let body_hash = agent_account_task_body_hash(&body);
             let state_cell = state_init.clone().write_to_new_cell()?.into_cell()?;
             let state_init_hash = agent_account_task_body_hash(&state_cell);
-            let journal = open_controller_journal(path)?;
+            let journal = open_controller_journal(&primary_path)?;
             let existing_action = journal.find_action_by_idempotency_key(action_id)?;
             if let Some(existing) = &existing_action {
                 if existing.claim.account != account.to_string()
@@ -2452,12 +2600,57 @@ impl AgentTaskCreateCmd {
                         "controller action id was reused for different Task deployment semantics"
                     );
                 }
+                // Expiry is part of the idempotency contract and must be
+                // checked before every status-specific retry path.
+                task_deploy_valid_until(
+                    self.valid_until,
+                    Some(existing),
+                    existing.claim.valid_until,
+                )?;
+                if existing.status == ControllerActionStatus::Resolved {
+                    return resolve_agent_account_task_deployment(
+                        primary_config_path,
+                        profile,
+                        action_id,
+                        &record_name,
+                        &init,
+                        self.permission_id.as_deref(),
+                        &self.quorum_configs,
+                        self.max_transactions,
+                        self.format.clone(),
+                    )
+                    .await;
+                }
                 if matches!(
                     existing.status,
-                    ControllerActionStatus::Broadcasting | ControllerActionStatus::Resolved
+                    ControllerActionStatus::Signed | ControllerActionStatus::Broadcasting
                 ) {
+                    let network_domain =
+                        existing.claim.network_domain.as_ref().context(
+                            "Task deployment custody claim has no full network-domain pin",
+                        )?;
+                    verify_task_deploy_quorum_network(
+                        primary_config_path,
+                        &self.quorum_configs,
+                        network_domain,
+                    )
+                    .await?;
+                    // This transition is durable before the socket write. A
+                    // retry is allowed to replay only these exact bytes.
+                    let boc = begin_or_resume_task_deploy_broadcast(
+                        &journal,
+                        existing,
+                        time_format::now(),
+                    )?;
+                    if let Err(error) =
+                        rpc_client.submit_exact_boc_pinned(&boc, network_domain).await
+                    {
+                        // A transport error cannot prove non-submission. Keep
+                        // resolving the already-ambiguous exact action.
+                        eprintln!("Task deployment rebroadcast was inconclusive: {error}");
+                    }
                     return resolve_agent_account_task_deployment(
-                        config_path,
+                        primary_config_path,
                         profile,
                         action_id,
                         &record_name,
@@ -2507,15 +2700,6 @@ impl AgentTaskCreateCmd {
                 existing_action.as_ref(),
                 default_valid_until,
             )?;
-            validate_agent_account_task_create_funding(
-                &account,
-                &creator,
-                &data,
-                account_info.balance,
-                amount_nanotos,
-                chain_now,
-                valid_until,
-            )?;
             let secret = profile_config.controller_key.read_secret(Some(vault)).await?;
             let keypair = secret.as_keypair()?;
             let controller_pubkey: [u8; 32] = keypair
@@ -2538,17 +2722,42 @@ impl AgentTaskCreateCmd {
                 zero_state_file_hash: format!("sha256:{}", hex::encode(&zero_state.file_hash)),
                 workchain_id: account.workchain_id(),
             };
-            verify_task_deploy_quorum_network(config_path, &self.quorum_configs, &network_domain)
-                .await?;
+            verify_task_deploy_quorum_network(
+                primary_config_path,
+                &self.quorum_configs,
+                &network_domain,
+            )
+            .await?;
             let payload = AgentAccountContract::build_deploy_send_payload(
                 global_id,
                 data.controller_epoch,
                 data.seqno,
                 valid_until,
-                &address,
+                &AgentDeploySend {
+                    target: address.clone(),
+                    value: amount_nanotos,
+                    state_init,
+                    body: body.clone(),
+                },
+            )?;
+            let unsigned_signed =
+                AgentAccountContract::build_signed_controller_message(payload.clone(), &[0; 64])?;
+            let unsigned_external = AgentAccountContract::build_external_controller_message(
+                account.clone(),
+                unsigned_signed,
+            )?;
+            let fee_schedule = load_agent_deploy_fee_schedule(&rpc_client, &account).await?;
+            let fee_reserve =
+                agent_deploy_fee_reserve(&state_cell, &body, &unsigned_external, &fee_schedule)?;
+            validate_agent_account_task_create_funding(
+                &account,
+                &creator,
+                &data,
+                account_info.balance,
                 amount_nanotos,
-                state_init,
-                body,
+                fee_reserve,
+                chain_now,
+                valid_until,
             )?;
             let hash_to_sign =
                 AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
@@ -2570,7 +2779,7 @@ impl AgentTaskCreateCmd {
             let claim = ControllerActionClaim {
                 account: account.to_string(),
                 network_global_id: global_id,
-                network_domain: Some(network_domain),
+                network_domain: Some(network_domain.clone()),
                 deployment_id: hex::encode(data.deployment_id),
                 controller_epoch: data.controller_epoch,
                 seqno: data.seqno,
@@ -2602,8 +2811,8 @@ impl AgentTaskCreateCmd {
                 time_format::now(),
             )?;
             let (record, _) = journal.claim_primary(claim.clone(), time_format::now())?;
-            let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
-                base64::engine::general_purpose::STANDARD.decode(encoded)?
+            let record = if record.exact_signed_boc_base64.is_some() {
+                record
             } else {
                 let signature: [u8; 64] = keypair
                     .sign(&hash_to_sign)
@@ -2623,14 +2832,14 @@ impl AgentTaskCreateCmd {
                     &base64::engine::general_purpose::STANDARD.encode(&boc),
                     &digest,
                     time_format::now(),
-                )?;
-                boc
+                )?
             };
-            validate_exact_boc_before_broadcast(&boc)?;
-            journal.begin_broadcast(&claim, time_format::now())?;
-            rpc_client.send_boc(&boc).await?;
+            let boc = begin_or_resume_task_deploy_broadcast(&journal, &record, time_format::now())?;
+            if let Err(error) = rpc_client.submit_exact_boc_pinned(&boc, &network_domain).await {
+                eprintln!("Task deployment broadcast was inconclusive: {error}");
+            }
             return resolve_agent_account_task_deployment(
-                config_path,
+                primary_config_path,
                 profile,
                 action_id,
                 &record_name,
@@ -10683,16 +10892,17 @@ fn print_table_summary(view: &AgentWalletView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAccountAction, AgentTaskAction, AgentTaskOperation, ControllerTaskActionContext,
-        ECONOMIC_PAYMENT_CORROBORATION_SCHEMA, ECONOMIC_PAYMENT_FINALIZED_SCHEMA,
-        ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
+        AgentAccountAction, AgentDeployFeeSchedule, AgentTaskAction, AgentTaskOperation,
+        ControllerTaskActionContext, ECONOMIC_PAYMENT_CORROBORATION_SCHEMA,
+        ECONOMIC_PAYMENT_FINALIZED_SCHEMA, ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
         ECONOMIC_PAYMENT_SPONSORSHIP_PROOF_VERIFICATION_SCHEMA, FinalizedEconomicPaymentMatch,
         FinalizedEconomicPaymentObservation, FinalizedTaskSendObservation,
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
         SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, SponsorshipAgreementPaymentRequestV3,
-        SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, canonical_file_digest,
-        canonicalize_chain_rpc_endpoint, chain_query_failure_diagnostic,
-        corroboration_snapshot_handle, decode_exact_protocol_cbor,
+        SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, agent_deploy_fee_reserve,
+        begin_or_resume_task_deploy_broadcast, canonical_file_digest,
+        canonical_task_deploy_primary_config, canonicalize_chain_rpc_endpoint,
+        chain_query_failure_diagnostic, corroboration_snapshot_handle, decode_exact_protocol_cbor,
         economic_payment_corroboration_profile, encode_protocol_json_cbor,
         exact_protocol_action_request_digest, exact_transaction_utime,
         finalized_output_matches_claim, freeze_economic_payment_corroboration_snapshot,
@@ -10701,13 +10911,14 @@ mod tests {
         relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
         rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
-        task_deploy_valid_until, validate_agent_account_task_create_funding,
-        validate_controller_task_action, validate_destination_credit_semantics,
-        validate_exact_sponsorship_top_up_boc, validate_release_profile_rpc_locator,
-        validate_sponsorship_custody_evidence_context, validate_sponsorship_finality_profile,
-        validate_sponsorship_payment_request, validate_task_send_resolution_claim,
-        validate_task_send_resolution_evidence, verify_current_controller_authorization,
-        verify_parsed_controller_authorization, write_private_snapshot_file,
+        task_deploy_valid_until, task_deployment_workchain,
+        validate_agent_account_task_create_funding, validate_controller_task_action,
+        validate_destination_credit_semantics, validate_exact_sponsorship_top_up_boc,
+        validate_release_profile_rpc_locator, validate_sponsorship_custody_evidence_context,
+        validate_sponsorship_finality_profile, validate_sponsorship_payment_request,
+        validate_task_send_resolution_claim, validate_task_send_resolution_evidence,
+        verify_current_controller_authorization, verify_parsed_controller_authorization,
+        write_private_snapshot_file,
     };
     use base64::Engine;
     use chain_block::{
@@ -10718,11 +10929,13 @@ mod tests {
     use chain_rpc_client::v2::data_models::RelayNetworkDomainPin;
     use common::app_config::AppConfig;
     use contracts::{
-        AgentAccountContract, AgentAccountData, ControllerActionClaim, ControllerActionRecord,
-        ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
-        TaskEscrowData, agent_account_task_body_hash, controller_resolution_evidence_digest,
+        AgentAccountContract, AgentAccountCustodyJournal, AgentAccountData, AgentDeploySend,
+        ControllerActionClaim, ControllerActionRecord, ControllerActionResolutionEvidence,
+        ControllerActionStatus, EconomicActionAuthorization, TaskEscrowData,
+        agent_account_task_body_hash, controller_resolution_evidence_digest,
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
     use std::{
         collections::BTreeMap,
         fs,
@@ -11064,6 +11277,7 @@ mod tests {
                 assert!(command.from.is_none());
                 assert_eq!(command.controller_action_id.as_deref(), Some(action_id.as_str()));
                 assert_eq!(command.quorum_configs.len(), 2);
+                assert!(command.workchain.is_none());
             }
             _ => panic!("Agent Account Task creation parsed as another command"),
         }
@@ -11128,6 +11342,7 @@ mod tests {
                 &data,
                 10_010_000_000,
                 2_000_000_000,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11140,6 +11355,7 @@ mod tests {
                 &data,
                 10_010_000_000,
                 2_000_000_000,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11152,6 +11368,7 @@ mod tests {
                 &data,
                 5_009_999_999,
                 5_000_000_000,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11164,6 +11381,7 @@ mod tests {
                 &data,
                 10_010_000_000,
                 5_000_000_001,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11176,6 +11394,7 @@ mod tests {
                 &data,
                 10_010_000_000,
                 2_000_000_001,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11190,6 +11409,7 @@ mod tests {
                 &data,
                 5_010_000_000,
                 5_000_000_000,
+                10_000_000,
                 chain_now,
                 valid_until,
             )
@@ -11217,6 +11437,116 @@ mod tests {
             task_deploy_valid_until(Some(existing.claim.valid_until + 1), Some(&existing), 300,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn task_deploy_defaults_to_the_funding_account_workchain_and_rejects_mismatch() {
+        let account = address(1);
+        assert_eq!(task_deployment_workchain(None, Some(&account)).unwrap(), 0);
+        assert_eq!(task_deployment_workchain(None, None).unwrap(), -1);
+        assert_eq!(task_deployment_workchain(Some(0), Some(&account)).unwrap(), 0);
+        assert!(task_deployment_workchain(Some(-1), Some(&account)).is_err());
+    }
+
+    #[test]
+    fn task_deploy_accepts_a_relative_primary_config_and_canonicalizes_it() {
+        let directory = TemporaryDirectory::create("relative-task-deploy-config");
+        let relative = Path::new("tosctl-config.json");
+        fs::write(directory.0.join(relative), b"{}").unwrap();
+
+        let canonical = canonical_task_deploy_primary_config(relative, &directory.0).unwrap();
+        assert!(canonical.is_absolute());
+        assert_eq!(canonical, directory.0.join(relative).canonicalize().unwrap());
+    }
+
+    #[test]
+    fn task_deploy_fee_preflight_scales_with_the_actual_cell_dag_and_limits() {
+        let state_init = BuilderData::new().into_cell().unwrap();
+        let mut body_builder = BuilderData::new();
+        body_builder.append_raw(&[0x55; 32], 256).unwrap();
+        let body = body_builder.into_cell().unwrap();
+        let mut external_builder = BuilderData::new();
+        external_builder.checked_append_reference(state_init.clone()).unwrap();
+        external_builder.checked_append_reference(body.clone()).unwrap();
+        let external = external_builder.into_cell().unwrap();
+        let mut schedule = AgentDeployFeeSchedule {
+            gas: chain_block::GasLimitsPrices { gas_price: 1 << 16, ..Default::default() },
+            forwarding: chain_block::MsgForwardPrices {
+                lump_price: 100,
+                bit_price: 1 << 16,
+                cell_price: 1 << 16,
+                ..Default::default()
+            },
+            limits: chain_block::SizeLimitsConfig::default(),
+        };
+
+        let reserve = agent_deploy_fee_reserve(&state_init, &body, &external, &schedule).unwrap();
+        assert!(reserve > contracts::AGENT_ACCOUNT_MAX_ACTION_GAS);
+
+        schedule.limits.max_msg_cells = 1;
+        assert!(agent_deploy_fee_reserve(&state_init, &body, &external, &schedule).is_err());
+    }
+
+    #[test]
+    fn task_deploy_exact_boc_resumes_across_both_broadcast_crash_windows() {
+        let directory = TemporaryDirectory::create("task-deploy-broadcast-resume");
+        let journal = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let state_init = StateInit::with_code_and_data(Cell::default(), Cell::default());
+        let state_cell = state_init.clone().write_to_new_cell().unwrap().into_cell().unwrap();
+        let target = MsgAddressInt::with_standart(None, 0, state_cell.hash(0).into()).unwrap();
+        let body = BuilderData::new().into_cell().unwrap();
+        let mut record = task_send_resolution_record();
+        record.claim.target = target.to_string();
+        record.claim.body_hash = Some(agent_account_task_body_hash(&body));
+        record.claim.state_init_hash = Some(agent_account_task_body_hash(&state_cell));
+        record.claim.action_kind = "agent-deploy-send".into();
+        let claim = record.claim;
+        journal.claim_primary(claim.clone(), 10).unwrap();
+        let payload = AgentAccountContract::build_deploy_send_payload(
+            claim.network_global_id,
+            claim.controller_epoch,
+            claim.seqno,
+            claim.valid_until,
+            &AgentDeploySend { target, value: claim.value_atomic, state_init, body },
+        )
+        .unwrap();
+        let signed =
+            AgentAccountContract::build_signed_controller_message(payload, &[0x44; 64]).unwrap();
+        let message = AgentAccountContract::build_external_controller_message(
+            claim.account.parse().unwrap(),
+            signed,
+        )
+        .unwrap();
+        let boc = write_boc(&message).unwrap();
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        let signed_record = journal
+            .attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                11,
+            )
+            .unwrap();
+
+        // Crash before the socket write: Signed becomes Broadcasting and the
+        // only returned bytes are the durable exact BOC.
+        assert_eq!(
+            begin_or_resume_task_deploy_broadcast(&journal, &signed_record, 12).unwrap(),
+            boc
+        );
+        let reopened = AgentAccountCustodyJournal::open(directory.0.clone()).unwrap();
+        let broadcasting = reopened.action_by_idempotency_key(&claim.idempotency_key).unwrap();
+        assert_eq!(broadcasting.status, ControllerActionStatus::Broadcasting);
+
+        // Crash after the durable transition: reopening may replay only the
+        // same exact bytes rather than allocating another controller seqno.
+        assert_eq!(
+            begin_or_resume_task_deploy_broadcast(&reopened, &broadcasting, 13).unwrap(),
+            boc
+        );
+        let mut corrupted = broadcasting;
+        corrupted.exact_signed_boc_digest = Some(format!("sha256:{}", "f".repeat(64)));
+        assert!(begin_or_resume_task_deploy_broadcast(&reopened, &corrupted, 14).is_err());
     }
 
     #[test]

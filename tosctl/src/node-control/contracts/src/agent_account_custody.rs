@@ -1882,8 +1882,10 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         }
     }
     if claim.network_global_id == 0
-        || claim.action_kind.is_empty()
-        || claim.action_kind.len() > 64
+        || !matches!(
+            claim.action_kind.as_str(),
+            "agent-native-send" | "agent-task-send" | "agent-deploy-send"
+        )
         || !valid_idempotency_key(&claim.idempotency_key)
         || !valid_digest(&claim.action_identity)
         || claim.target.is_empty()
@@ -2818,8 +2820,7 @@ mod tests {
     }
 
     fn deploy_claim(seqno: u32) -> (ControllerActionClaim, StateInit, Cell) {
-        let state_init =
-            StateInit::with_code_and_data(Cell::default().as_library_cell(), Cell::default());
+        let state_init = StateInit::with_code_and_data(Cell::default(), Cell::default());
         let state_cell = state_init.clone().write_to_new_cell().unwrap().into_cell().unwrap();
         let target = MsgAddressInt::with_standart(None, 0, state_cell.hash(0).into()).unwrap();
         let body = Cell::default();
@@ -2842,10 +2843,12 @@ mod tests {
             claim.controller_epoch,
             claim.seqno,
             claim.valid_until,
-            &claim.target.parse::<MsgAddressInt>().unwrap(),
-            claim.value_atomic,
-            state_init,
-            body,
+            &crate::AgentDeploySend {
+                target: claim.target.parse::<MsgAddressInt>().unwrap(),
+                value: claim.value_atomic,
+                state_init,
+                body,
+            },
         )
         .unwrap();
         let signed =
@@ -3157,6 +3160,24 @@ mod tests {
         let stored = reopened.action_by_idempotency_key(&action.idempotency_key).unwrap();
         assert_eq!(stored.claim.state_init_hash, action.state_init_hash);
         assert_eq!(stored.exact_signed_boc_base64.as_deref(), Some(boc.as_str()));
+    }
+
+    #[test]
+    fn custody_rejects_unknown_controller_action_kinds_before_persistence() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let mut action = claim(4, 'd');
+        action.action_kind = "future-unsigned-action".into();
+        assert!(journal.claim_primary(action, 10).is_err());
+        let reopened =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        assert!(reopened.find_action_by_idempotency_key(&"1".repeat(64)).unwrap().is_none());
     }
 
     #[test]
