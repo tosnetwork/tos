@@ -28,6 +28,8 @@
 ;;             target:MsgAddressInt value:coins = SignedExternalBody;
 ;;   cancel_seqno#41475005 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             = SignedExternalBody;
+;;   deploy_send#41475006 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
+;;             target:MsgAddressInt value:coins state_init:^Cell body:^Cell = SignedExternalBody;
 
 int get_global_id() asm "GLOBALID";
 
@@ -36,6 +38,7 @@ const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
 const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
 const int op::agent_native_send = 0x41475004;        ;; "AGP\4"
 const int op::agent_cancel_seqno = 0x41475005;       ;; "AGP\5"
+const int op::agent_deploy_send = 0x41475006;        ;; "AGP\6"
 const int max_signed_action_value = 281474976710655; ;; 2^48 - 1 nanoTOS
 
 ;; sha256("tos.agent-account.controller-signature.v1")
@@ -53,15 +56,75 @@ const int err::wrong_network = 1708;
 const int err::bad_value = 1709;
 const int err::stale_controller = 1710;
 const int err::insufficient_balance = 1711;
+const int err::bad_state_init = 1712;
+const int err::message_too_large = 1713;
+const int err::wrong_workchain = 1714;
+const int err::unsupported_state_init = 1715;
+const int err::seqno_exhausted = 1716;
+const int err::controller_epoch_exhausted = 1717;
 
-;; Outbound sends use mode 3 (pay fees separately, ignore action errors), so an
-;; underfunded send would silently skip while the transaction still commits
-;; seqno + 1 and charges the daily limit — an action that consumed its seqno
-;; without producing its output can never be resolved by observers. Reject
-;; underfunded actions in the compute phase instead, before accept_message(),
-;; so the seqno is preserved and the exact signed message stays submittable
-;; once the account is funded. The headroom covers forward and gas fees.
-const int min_fee_headroom = 10000000;  ;; 0.01 TOS
+;; The largest value a uint32 seqno field can hold; one past this can never be
+;; stored back by pack_agent_state(), so every path that increments seqno must
+;; refuse to do so once it is reached -- otherwise the STU inside set_data()
+;; would throw only *after* accept_message(), leaving the signed message
+;; permanently accepted-but-inert: gas is charged, state never advances, so
+;; the same bytes replay successfully (and drain gas) for as long as
+;; valid_until allows.
+const int max_seqno = 4294967295; ;; 2^32 - 1
+const int max_controller_epoch = 18446744073709551615; ;; 2^64 - 1
+
+;; Outbound sends use mode 3 (pay fees separately, ignore action errors): once
+;; an external message is accepted its transaction always commits seqno + 1,
+;; whether the message left or the action phase skipped it, so a signed
+;; message can be included at most once and every later rebroadcast is
+;; rejected before acceptance at no cost to the account. Mode 1 would keep
+;; the seqno on an action failure but leave the signed bytes valid and
+;; replayable by anyone until valid_until, paying compute gas on each
+;; inclusion.
+;;
+;; A skipped action would still consume the seqno and daily spend without any
+;; output, which observers can never resolve. For the ordinary-cell deploy
+;; profile produced by the Rust signing API, every action-phase rejection is
+;; therefore excluded before accept_message(): the destination is a plain
+;; standard address in this account's own workchain, the StateInit has the
+;; plain code+data shape, the message fits the validator's live size limits,
+;; and the balance covers the value, exact forward fee and bounded compute
+;; fee. A controller that bypasses the signing API can still sign exotic
+;; level-zero cells; that controller already has authority to spend the
+;; account, and such payloads are explicitly outside the supported profile.
+;;
+;; Fees and limits come from the TVM configuration primitives (global version
+;; >= 6), pricing the message exactly like the action phase: the forward fee
+;; scales with the distinct cells and bits behind the attached StateInit and
+;; body, both fees depend on the workchain, and the size limits are the live
+;; ConfigParam 43 values. The compute fee is bounded by max_action_gas:
+;; everything before accept_message() must fit in the external-message gas
+;; credit (10k gas by configuration). That pre-accept portion has almost no
+;; headroom left: signature verification, the domain hash, the StateInit
+;; shape check, the size preflight and the fee reserve computation already
+;; consume nearly all of it, confirmed empirically by the sandbox test suite
+;; -- one CLEVEL call fits, a second does not. The 30k figure bounds only the
+;; post-accept tail (building and sending the outbound message plus
+;; re-serializing state), which runs under the full gas_limit once
+;; accept_message() has switched off the credit, and 30k leaves about 2x
+;; margin over that tail alone.
+const int max_action_gas = 30000;
+;; Protocol defaults for max_msg_bits / max_msg_cells, used only while the
+;; network carries no ConfigParam 43.
+const int default_max_msg_bits = 2097152;  ;; 1 << 21
+const int default_max_msg_cells = 8192;    ;; 1 << 13
+
+tuple get_unpacked_config_tuple() asm "UNPACKEDCONFIGTUPLE";
+;; Entry 6 of the unpacked configuration tuple: ConfigParam 43 or null.
+slice size_limits_entry(tuple unpacked_config) asm "6 INDEX";
+int slice_null?(slice s) asm "ISNULL";
+(int, int, int, int) slice_data_size?(slice s, int max_cells) asm "SDATASIZEQ NULLSWAPIFNOT2 NULLSWAPIFNOT";
+;; O(1), and unlike XCTOS does not need to load the cell's content. A nonzero
+;; descendant level propagates through ordinary parents, so this rejects the
+;; common pruned/Merkle cases without walking the tree. Some exotic cells,
+;; including library references and level-zero Merkle proofs, remain level 0;
+;; the Rust signing API recursively rejects all such cells.
+int cell_level(cell c) asm "CLEVEL";
 
 (slice, int, int, int, int, int, int, int, int, int, int, int) load_agent_state() inline {
   slice ds = get_data().begin_parse();
@@ -121,11 +184,6 @@ cell pack_agent_state(
   int metadata_hash,
   int service_endpoint_hash
 ) inline {
-  throw_if(err::invalid_policy, max_per_tx < 0);
-  throw_if(err::invalid_policy, max_per_tx > max_signed_action_value);
-  throw_if(err::invalid_policy, daily_limit < max_per_tx);
-  throw_if(err::invalid_policy, default_task_timeout <= 0);
-
   builder policy = begin_cell()
     .store_coins(max_per_tx)
     .store_coins(daily_limit)
@@ -159,6 +217,32 @@ cell pack_agent_state(
   throw_unless(err::not_owner, equal_slice_bits(sender, owner));
 }
 
+;; Policy invariants are checked where a policy is written, before that
+;; message is accepted. Nothing that runs after accept_message() may throw:
+;; an accepted transaction that fails would leave its external message valid
+;; and replayable, so pack_agent_state() re-stores values without re-checking.
+() require_valid_policy(int max_per_tx, int daily_limit, int default_task_timeout) impure inline {
+  throw_if(err::invalid_policy, max_per_tx < 0);
+  throw_if(err::invalid_policy, max_per_tx > max_signed_action_value);
+  throw_if(err::invalid_policy, daily_limit < max_per_tx);
+  throw_if(err::invalid_policy, default_task_timeout <= 0);
+}
+
+;; Every path that stores seqno + 1 must call this first: pack_agent_state()
+;; runs after accept_message() and must never throw (see above), but
+;; store_uint(seqno + 1, 32) would do exactly that once seqno is already at
+;; its uint32 maximum.
+() require_seqno_not_saturated(int seqno) impure inline {
+  throw_if(err::seqno_exhausted, seqno == max_seqno);
+}
+
+;; Controller rotation advances a separate uint64 generation counter. Its
+;; upper bound needs the same pre-accept treatment as seqno: otherwise the
+;; state serializer would fail after the owner message had been accepted.
+() require_controller_epoch_not_saturated(int controller_epoch) impure inline {
+  throw_if(err::controller_epoch_exhausted, controller_epoch == max_controller_epoch);
+}
+
 ;; Bug fix: this must be called as `in_msg_body~load_maybe_hash()`, not
 ;; `load_maybe_hash(in_msg_body)` -- FunC passes plain (non-`~`) call
 ;; arguments by value, so a version of this helper returning only `int`
@@ -171,6 +255,73 @@ cell pack_agent_state(
     return (body, hash);
   }
   return (body, -1);
+}
+
+;; The action phase prices an outbound message with masterchain forward prices
+;; when either this account or the destination lives in the masterchain.
+;; Destinations that are not plain standard addresses cannot be delivered
+;; anyway; price them conservatively rather than fail here.
+int outbound_priced_as_masterchain(slice target, int my_wc) inline {
+  if (my_wc == -1) {
+    return -1;
+  }
+  if (target.preload_uint(2) != 2) {
+    return -1;
+  }
+  slice rest = target.skip_bits(2);
+  if (rest~load_uint(1)) {
+    return -1;
+  }
+  return rest.preload_int(8) == -1;
+}
+
+;; size_limits_config#01|#02|#03 max_msg_bits:uint32 max_msg_cells:uint32 ...
+;; Read from the unpacked configuration register (entry 6), a tuple access
+;; instead of a dictionary walk through the whole configuration.
+(int, int) outbound_size_limits() inline {
+  slice limits = get_unpacked_config_tuple().size_limits_entry();
+  if (limits.slice_null?()) {
+    return (default_max_msg_bits, default_max_msg_cells);
+  }
+  limits~skip_bits(8);
+  int max_msg_bits = limits~load_uint(32);
+  int max_msg_cells = limits~load_uint(32);
+  return (max_msg_bits, max_msg_cells);
+}
+
+;; Distinct cells and data bits reachable through the references left in
+;; [attachments] — exactly what the action phase charges for the attached
+;; StateInit and body, since the message root itself is never counted.
+;; Throws before accept_message() when the trees exceed the cell limit.
+(int, int) outbound_payload_size(slice attachments, int max_msg_cells) inline {
+  (int cells, int bits, _, int ok) = attachments.slice_data_size?(max_msg_cells);
+  throw_unless(err::message_too_large, ok);
+  return (cells, bits);
+}
+
+;; Cheaply reject any nonzero level visible from the StateInit root. This is a
+;; defense in depth for raw signed payloads, not a complete exotic-cell test:
+;; XCTOS on every reachable code/data cell cannot fit in the fixed pre-accept
+;; gas credit. The Rust signing API performs the complete DAG walk instead.
+() require_zero_cell_level(cell c) impure inline {
+  throw_if(err::unsupported_state_init, c.cell_level() != 0);
+}
+
+;; The supported deploy shape is the plain StateInit the repository contracts
+;; produce: code and data only — no fixed prefix, tick-tock or top-level
+;; libraries. The caller separately applies the zero-level defense-in-depth
+;; check described above.
+() require_supported_state_init(cell state_init) impure inline {
+  slice init = state_init.begin_parse();
+  throw_unless(err::unsupported_state_init, init~load_uint(2) == 0);  ;; fixed_prefix_length, special
+  throw_unless(err::unsupported_state_init, init~load_uint(1));       ;; code present
+  cell code = init~load_ref();
+  code~impure_touch();
+  throw_unless(err::unsupported_state_init, init~load_uint(1));       ;; data present
+  cell data = init~load_ref();
+  data~impure_touch();
+  throw_unless(err::unsupported_state_init, init~load_uint(1) == 0);  ;; library
+  init.end_parse();
 }
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -214,6 +365,7 @@ cell pack_agent_state(
     int new_metadata_hash = in_msg_body~load_maybe_hash();
     int new_service_endpoint_hash = in_msg_body~load_maybe_hash();
     in_msg_body.end_parse();
+    require_valid_policy(new_max_per_tx, new_daily_limit, new_default_task_timeout);
 
     accept_message();
     set_data(pack_agent_state(
@@ -237,6 +389,8 @@ cell pack_agent_state(
     require_owner(sender, owner);
     int new_controller_pubkey = in_msg_body~load_uint(256);
     in_msg_body.end_parse();
+    require_seqno_not_saturated(seqno);
+    require_controller_epoch_not_saturated(controller_epoch);
 
     accept_message();
     set_data(pack_agent_state(
@@ -282,6 +436,7 @@ cell pack_agent_state(
   throw_unless(err::unknown_op,
     (header_op == op::agent_task_send) |
     (header_op == op::agent_native_send) |
+    (header_op == op::agent_deploy_send) |
     (header_op == op::agent_cancel_seqno));
   int msg_global_id = header~load_int(32);
   throw_unless(err::wrong_network, msg_global_id == get_global_id());
@@ -311,9 +466,21 @@ cell pack_agent_state(
   throw_unless(err::bad_seqno, request_seqno == seqno);
   throw_unless(err::expired, valid_until > now());
   throw_unless(err::expired, valid_until <= now() + default_task_timeout);
+  ;; Every branch below stores seqno + 1; covering both here keeps the check
+  ;; ahead of both accept_message() call sites that follow.
+  require_seqno_not_saturated(seqno);
 
   if (op == op::agent_cancel_seqno) {
     signed_body.end_parse();
+    ;; A cancel has no action-phase fee, but its post-accept state update still
+    ;; consumes compute gas. Without this reserve, a nearly empty account
+    ;; could accept and then run out of gas before advancing seqno, leaving
+    ;; the same public signed BOC replayable until expiry.
+    [int balance, _] = get_balance();
+    throw_unless(
+      err::insufficient_balance,
+      get_compute_fee(wc == -1, max_action_gas) <= balance
+    );
     accept_message();
     set_data(pack_agent_state(
       owner,
@@ -335,9 +502,26 @@ cell pack_agent_state(
   slice target = signed_body~load_msg_addr();
   int value = signed_body~load_coins();
   throw_unless(err::bad_value, value > 0);
+  ;; Only references remain: the StateInit and body the outbound message will carry.
+  slice attachments = signed_body;
   cell body = null();
-  if (op == op::agent_task_send) {
+  cell state_init = null();
+  ;; A deploy stays in this account's workchain, so masterchain forward prices
+  ;; apply exactly when the account itself lives in the masterchain.
+  int priced_as_masterchain = wc == -1;
+  if (op == op::agent_deploy_send) {
+    state_init = signed_body~load_ref();
     body = signed_body~load_ref();
+    (int target_wc, int target_address) = target.parse_std_addr();
+    throw_unless(err::wrong_workchain, (target_wc == wc) & (target.preload_uint(3) == 4));
+    throw_unless(err::bad_state_init, target_address == cell_hash(state_init));
+    require_supported_state_init(state_init);
+    require_zero_cell_level(state_init);
+  } else {
+    priced_as_masterchain = outbound_priced_as_masterchain(target, wc);
+    if (op == op::agent_task_send) {
+      body = signed_body~load_ref();
+    }
   }
   signed_body.end_parse();
   throw_unless(err::policy_exceeded, value <= max_per_tx);
@@ -347,16 +531,28 @@ cell pack_agent_state(
     spent_today = 0;
   }
   throw_unless(err::policy_exceeded, spent_today + value <= daily_limit);
+
+  (int max_msg_bits, int max_msg_cells) = outbound_size_limits();
+  (int msg_cells, int msg_bits) = outbound_payload_size(attachments, max_msg_cells);
+  throw_unless(err::message_too_large, msg_bits <= max_msg_bits);
+  int fee_reserve = get_forward_fee(priced_as_masterchain, msg_bits, msg_cells)
+    + get_compute_fee(wc == -1, max_action_gas);
   [int balance, _] = get_balance();
-  throw_unless(err::insufficient_balance, value + min_fee_headroom <= balance);
+  throw_unless(err::insufficient_balance, value + fee_reserve <= balance);
 
   accept_message();
   builder outbound = begin_cell()
     .store_uint(0x10, 6)
     .store_slice(target)
     .store_tomis(value)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1);
-  if (op == op::agent_task_send) {
+    .store_uint(0, 1 + 4 + 4 + 64 + 32);
+  if (op == op::agent_deploy_send) {
+    ;; init:(Maybe (Either StateInit ^StateInit)) = present, right/reference.
+    outbound = outbound.store_uint(3, 2).store_ref(state_init);
+  } else {
+    outbound = outbound.store_uint(0, 1);
+  }
+  if ((op == op::agent_task_send) | (op == op::agent_deploy_send)) {
     outbound = outbound.store_uint(1, 1).store_ref(body);
   } else {
     outbound = outbound.store_uint(0, 1);

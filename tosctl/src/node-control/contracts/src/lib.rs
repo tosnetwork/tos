@@ -42,8 +42,9 @@ pub mod task_escrow;
 pub mod wallet;
 
 pub use agent_account::{
-    AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE, AgentAccountContract,
-    AgentAccountData, AgentAccountInit, AgentAccountPolicyUpdate,
+    AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_DEPLOY_SEND_OPCODE,
+    AGENT_UPDATE_POLICY_OPCODE, AgentAccountContract, AgentAccountData, AgentAccountInit,
+    AgentAccountPolicyUpdate, AgentDeploySend,
 };
 pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,

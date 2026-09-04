@@ -356,6 +356,15 @@ impl BlockchainConfig {
         self.raw_config.set_config(ConfigParamEnum::ConfigParam12(workchains))
     }
 
+    /// Replace the live message-size limits used by executor tests. Write the
+    /// raw configuration first so a serialization error cannot leave the
+    /// cached limits out of sync with c7.
+    pub fn set_size_limits_config(&mut self, limits: SizeLimitsConfig) -> Result<()> {
+        self.raw_config.set_config(ConfigParamEnum::ConfigParam43(limits.clone()))?;
+        self.limits = limits;
+        Ok(())
+    }
+
     pub fn has_capability(&self, capability: GlobalCapabilities) -> bool {
         (self.capabilities & (capability as u64)) != 0
     }

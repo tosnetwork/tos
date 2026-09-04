@@ -23,6 +23,10 @@ agent_native_send#41475004 global_id:int32 controller_epoch:uint64 seqno:uint32 
 agent_cancel_seqno#41475005 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
   = ExternalMsgBody;
 
+agent_deploy_send#41475006 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
+  target:MsgAddressInt value:Grams state_init:^Cell body:^Cell
+  = ExternalMsgBody;
+
 _ owner:MsgAddress
   controller_pubkey:uint256
   deployment_id:uint256

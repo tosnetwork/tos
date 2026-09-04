@@ -12,22 +12,27 @@ use chain_block::{
     MsgAddressExt, MsgAddressInt, Serializable, SliceData, StateInit, base64_decode,
     read_single_root_boc,
 };
+use std::collections::HashSet;
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6cckECEgEABGUAART/APSkE/S88sgLAQIBIAIDAgFIBAUB4PKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQOAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAICQFuMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdH4ABCbEIoQeRBoEGcQVhEA7lG6xwXy5qYI0//R+AAGpAikEJsQagcJVUAkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAgFICgsCASAMDQBvtiW9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BtiLAAa7c0vaiaH0gaf/p/+mf6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvhcABnua6+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABvueT+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQq18LgC/ILw7ecVqYUvu6LDwjTtDScymuNNYmOoLPtiFdqHyRaDtHHIy/9SQMofEsoHy//L/8n5AFQQ/PkQ8uaoDNMf0h8PuvLmrA3TP1EZuvLmrtMf0x9RJLry5qkg+CO88uaq+CMnoLvy5qotghBBR1AFuuMC+kD6ACHCAPLmrW1WEA8QANw9DNH4AKQQmxCKEHkQaFVgJMEA8talJIQvvPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVAH0ghBBR1ADupMw1AHeAdFTGbvy5qv4I4IBUYCpBFMEvZM0cD+RMOJT4aApu/Lmq/gnbyIwIoIImJaAoAG78uav+ABwgBDIywVQBM8WIvoCE8tpD4IQQUdQA7qWcVAPywDMlXAyDssA4slz+wABpFC8oBCbEIoQeRBoVUARALwkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1Uu8/TqA==";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECFQEABZgAART/APSkE/S88sgLAQIBIAIDAgFIBAUB8vKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxIoIQQUdQBrqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQPAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAJCgGiMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdFUdDIiwQDy1qUihC+88talArny1qXBAfLWpfgAEJsQihB5EGgQZxBWCADYUbrHBfLmpgjT/9EohB+68ta0JoQ/uvLWtfgABqQIpBCbEGoHCVVAyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAIrIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQCAUgLDAIBIA0OAG+2Jb2omh9IGn/6f/pn+mP6Y/9AGpo6H0AfQBpn7+A6YAAyZjp/+8/gOmAAMmY6f/vaKqSL4G2IsABrtzS9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+FwAGe5rr7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJIAG+55P7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJBCrXwuAL+gvDt5xWphS+7osPCNO0NJzKa401iY6gs+2IV2ofJFoO0ccjL/1JAyh9SIMoHy/8Sy//J+QABERAt+RDy5qgN0x/SHw+68uasDdM/URq68uau0x/TH1EluvLmqSD4I7zy5qr4Iyigu/LmqiOEH7ry1rQtghBBR1AFuuMC+kD6ABARANI9DNH4J28iMIF1MA7A/x74NlANu/Lmr/gApBCbEIoQeRBoVWDIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQC5CHCAPLmrSBtbVYTwP9WE4IQQUdQBrqONzAlVhTA/5Iwf44ZINcLAcMCkjB/4HLXIdMAAZIwf+DXCgfA/+JWE4IQQUdQA7qVMgPUQUTeUCTjDdFTTbvy5qv4I4IBUYCpBFMIvZM4cDeRMOJTZKAtu/LmqxITAJBsIQLU1Cb6RAFWFroo1wsCwASw8uayI/kAuvLmsCLQ0wEBwADy5rPTAAHy5rPUMdMAAfLms9Qx0wABwADy5rPRItdmwwDy1rMB9vgubxYgbpUwgxSDDJh41yHTH9MfMOIU+UJvpW+hMfLmsVIFu/LmsUA0+DiBdTARE8D/ARETAfg2ARESAaD4J28iMFIyoAG78uav+ABwgBDIywVQBM8WIvoCE8toL4IQQUdQBrqWcwHLARLMlTJwWMsA4i6CEEFHUAO6DxQA6oIQQUdQBrofsZdxUA7LAB7MmD5wUA3LABDN4slz+wABpFDLoBCbEIoQeRBoEGdVQMhQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVA==";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
 pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
+pub const AGENT_DEPLOY_SEND_OPCODE: u32 = 0x4147_5006;
 /// Domain tag carried in the referenced body of a generic task-send when the
 /// transfer fulfills one exact sponsorship AgreementPaymentRequestV3.
 pub const AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG: u32 = 0x5350_4e31; // "SPN1"
 /// Largest Coins value whose controller payload still fits beside the
 /// 512-bit signature in the frozen single-cell external-message layout.
 pub const AGENT_ACCOUNT_MAX_ACTION_VALUE: u64 = (1u64 << 48) - 1;
+/// Compute-gas reserve used by the on-chain controller-action admission gate.
+/// Off-chain callers that preflight account funding must use this same bound.
+pub const AGENT_ACCOUNT_MAX_ACTION_GAS: u64 = 30_000;
 pub const AGENT_CONTROLLER_SIGNATURE_DOMAIN: &str =
     "ede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471";
 
@@ -60,6 +65,17 @@ pub struct AgentAccountData {
     pub default_task_timeout_secs: u64,
     pub metadata_hash: Option<[u8; 32]>,
     pub service_endpoint_hash: Option<[u8; 32]>,
+}
+
+/// Deploy-and-fund action signed by the controller: the exact StateInit to
+/// install at `target` (which must be its standard address) plus the funding
+/// value and the inbound body delivered to the freshly deployed account.
+#[derive(Clone, Debug)]
+pub struct AgentDeploySend {
+    pub target: MsgAddressInt,
+    pub value: u64,
+    pub state_init: StateInit,
+    pub body: chain_block::Cell,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -216,6 +232,64 @@ impl AgentAccountContract {
         Ok(payload.into_cell()?)
     }
 
+    /// Build a controller payload that atomically deploys and funds a
+    /// deterministic account. The destination must be the standard address
+    /// derived from the exact StateInit; the contract enforces the same
+    /// invariant before consuming the controller sequence.
+    pub fn build_deploy_send_payload(
+        network_global_id: i32,
+        controller_epoch: u64,
+        seqno: u32,
+        valid_until: u32,
+        action: &AgentDeploySend,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_action_value(action.value)?;
+        // The contract derives the deploy address with REWRITESTDADDR, which
+        // only admits a plain standard address on current TVM versions; reject
+        // anything else here so a signed action is never rejected on-chain.
+        let MsgAddressInt::AddrStd(standard) = &action.target else {
+            anyhow::bail!("Agent Account deploy target must be a standard 256-bit address");
+        };
+        if standard.anycast.is_some() {
+            anyhow::bail!("Agent Account deploy target must not carry an anycast prefix");
+        }
+        // The contract only deploys the plain code+data shape the repository
+        // contracts produce; other StateInit layouts are refused on-chain too.
+        if action.state_init.fixed_prefix_length.is_some()
+            || action.state_init.special.is_some()
+            || !action.state_init.library.is_empty()
+            || action.state_init.code.is_none()
+            || action.state_init.data.is_none()
+        {
+            anyhow::bail!("Agent Account deploy supports only a plain code+data StateInit");
+        }
+        let state_init = action.state_init.write_to_new_cell()?.into_cell()?;
+        // The on-chain CLEVEL gate rejects pruned/Merkle descendants but cannot
+        // distinguish a level-zero library-reference cell within its fixed
+        // pre-accept gas credit. The signing API has no such constraint, so
+        // walk each distinct cell once and reject every exotic type, including
+        // a library reference nested below an otherwise ordinary code/data/body
+        // root. This keeps all normal signing callers inside the contract's
+        // provably deliverable subset.
+        validate_ordinary_cell_tree(&state_init, "StateInit")?;
+        validate_ordinary_cell_tree(&action.body, "body")?;
+        if standard.address.get_bytestring(0).as_slice() != state_init.hash(0).as_slice() {
+            anyhow::bail!("Agent Account deploy target must match the StateInit address hash");
+        }
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(AGENT_DEPLOY_SEND_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
+        action.target.write_to(&mut payload)?;
+        Coins::new(action.value).write_to(&mut payload)?;
+        payload.checked_append_reference(state_init)?;
+        payload.checked_append_reference(action.body.clone())?;
+        payload.into_cell()
+    }
+
     /// Build the exact domain-separated body used by sponsorship payments.
     /// The enclosing generic task-send signature thereby commits the chain
     /// effect to one PaymentRequestV3 and one stable semantic action.
@@ -339,6 +413,23 @@ fn validate_action_value(value: u64) -> anyhow::Result<()> {
             "Agent Account action value must be between 1 and {}",
             AGENT_ACCOUNT_MAX_ACTION_VALUE
         );
+    }
+    Ok(())
+}
+
+fn validate_ordinary_cell_tree(root: &chain_block::Cell, label: &str) -> anyhow::Result<()> {
+    let mut pending = vec![root.clone()];
+    let mut visited = HashSet::new();
+    while let Some(cell) = pending.pop() {
+        if !visited.insert(cell.repr_hash().clone()) {
+            continue;
+        }
+        if cell.cell_type() != chain_block::CellType::Ordinary {
+            anyhow::bail!("Agent Account deploy {label} must contain only ordinary cells");
+        }
+        for index in 0..cell.references_count() {
+            pending.push(cell.reference(index)?);
+        }
     }
     Ok(())
 }
@@ -481,6 +572,56 @@ mod tests {
         init.max_per_tx = AGENT_ACCOUNT_MAX_ACTION_VALUE + 1;
         init.daily_limit = init.max_per_tx;
         assert!(AgentAccountContract::build_data(&init).is_err());
+    }
+
+    #[test]
+    fn deploy_payload_binds_the_exact_state_init_to_its_standard_address() {
+        let init = valid_init();
+        let state_init = AgentAccountContract::build_state_init(&init).unwrap();
+        let state_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+        let target = AgentAccountContract::calculate_address(0, &init).unwrap();
+        let body = AgentAccountContract::build_sponsorship_payment_commitment(
+            &format!("sha256:{}", "a".repeat(64)),
+            &format!("sha256:{}", "b".repeat(64)),
+        )
+        .unwrap();
+        let build = |target: &MsgAddressInt, value: u64| {
+            AgentAccountContract::build_deploy_send_payload(
+                -3,
+                0,
+                0,
+                2_000_000_000,
+                &AgentDeploySend {
+                    target: target.clone(),
+                    value,
+                    state_init: state_init.clone(),
+                    body: body.clone(),
+                },
+            )
+        };
+
+        let payload = build(&target, 1_000_000_000).unwrap();
+        assert_eq!(payload.references_count(), 2);
+        assert_eq!(payload.reference(0).unwrap().repr_hash(), state_cell.repr_hash());
+        assert_eq!(payload.reference(1).unwrap().repr_hash(), body.repr_hash());
+        let mut fields = SliceData::load_cell(payload).unwrap();
+        assert_eq!(fields.get_next_u32().unwrap(), AGENT_DEPLOY_SEND_OPCODE);
+
+        // Any destination other than the exact StateInit address is refused
+        // before signing, as is any address the contract cannot rewrite.
+        let other = MsgAddressInt::with_standart(None, 0, [0x66; 32].into()).unwrap();
+        assert!(build(&other, 1_000_000_000).is_err());
+        let anycast = MsgAddressInt::with_standart(
+            Some(chain_block::AnycastInfo::with_rewrite_pfx(SliceData::new(vec![0xc0])).unwrap()),
+            0,
+            target.address().clone(),
+        )
+        .unwrap();
+        assert!(build(&anycast, 1_000_000_000).is_err());
+        let variable = MsgAddressInt::with_params(300, state_cell.hash(0)).unwrap();
+        assert!(matches!(variable, MsgAddressInt::AddrVar(_)));
+        assert!(build(&variable, 1_000_000_000).is_err());
+        assert!(build(&target, 0).is_err());
     }
 
     #[test]

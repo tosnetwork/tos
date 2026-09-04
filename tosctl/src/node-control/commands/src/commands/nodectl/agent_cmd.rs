@@ -1471,6 +1471,7 @@ struct AgentAccountTemplateView {
     task_send_opcode: String,
     native_send_opcode: String,
     cancel_seqno_opcode: String,
+    deploy_send_opcode: String,
     get_methods: Vec<&'static str>,
     code_hash: String,
     code_boc: String,
@@ -8897,6 +8898,7 @@ impl AgentAccountShowTemplateCmd {
             task_send_opcode: "0x41475003".to_string(),
             native_send_opcode: "0x41475004".to_string(),
             cancel_seqno_opcode: "0x41475005".to_string(),
+            deploy_send_opcode: "0x41475006".to_string(),
             get_methods: vec![
                 "get_agent_account_data",
                 "get_owner",
@@ -8921,6 +8923,7 @@ impl AgentAccountShowTemplateCmd {
         println!("  Task send opcode:         {}", view.task_send_opcode);
         println!("  Native send opcode:       {}", view.native_send_opcode);
         println!("  Cancel seqno opcode:      {}", view.cancel_seqno_opcode);
+        println!("  Deploy send opcode:       {}", view.deploy_send_opcode);
         println!("  Get methods:              {}", view.get_methods.join(", "));
         println!("  Code hash:                {}", view.code_hash);
         Ok(())
