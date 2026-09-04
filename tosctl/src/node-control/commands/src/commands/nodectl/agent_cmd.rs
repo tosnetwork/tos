@@ -219,7 +219,7 @@ pub struct AgentTaskSendCmd {
     #[arg(
         long,
         conflicts_with = "attestation_signature",
-        help = "Sign the on-chain result_hash with this vault key instead of passing --attestation-signature directly"
+        help = "Sign the contract-bound settle/resolve domain hash with this vault key instead of passing --attestation-signature directly"
     )]
     signer_vault_key: Option<String>,
     #[arg(
@@ -351,11 +351,15 @@ enum AgentTaskOperation {
 }
 
 impl AgentTaskOperation {
-    fn resolved_status(&self) -> anyhow::Result<u8> {
+    fn accepts_resolved_status(&self, status: u8) -> anyhow::Result<bool> {
         match self {
-            Self::Accept | Self::Claim => Ok(1),
-            Self::Result => Ok(2),
-            Self::Reject => Ok(6),
+            Self::Accept | Self::Claim => Ok(status == 1),
+            Self::Result => Ok(status == 2),
+            Self::Settle | Self::Resolve => Ok(status == 3),
+            Self::Cancel => Ok(status == 4),
+            Self::Timeout => Ok(matches!(status, 3 | 5)),
+            Self::Reject => Ok(status == 6),
+            Self::Dispute => Ok(status == 7),
             _ => {
                 anyhow::bail!("this Task operation is not supported through Agent Account custody")
             }
@@ -1632,19 +1636,110 @@ fn validate_controller_task_action(
     task: &TaskEscrowData,
     agent_account: &MsgAddressInt,
     permission_hash: [u8; 32],
+    context: &ControllerTaskActionContext<'_>,
 ) -> anyhow::Result<()> {
     if task.permission_hash != permission_hash {
         anyhow::bail!("local permission ID does not match the Task Escrow on-chain hash");
     }
-    let (expected_status, expected_name) = match operation {
-        AgentTaskOperation::Accept => (0, "open"),
-        AgentTaskOperation::Claim => (0, "open"),
-        AgentTaskOperation::Reject => (0, "open"),
-        AgentTaskOperation::Result => (1, "accepted"),
-        _ => anyhow::bail!(
-            "--via-agent-account supports only claim, accept, reject and result operations"
-        ),
-    };
+    match operation {
+        AgentTaskOperation::Accept | AgentTaskOperation::Reject => {
+            require_task_status(task, 0, "open")?;
+            if task.assigned_agent.as_ref() != Some(agent_account) {
+                anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
+            }
+        }
+        AgentTaskOperation::Claim => {
+            require_task_status(task, 0, "open")?;
+            if task.assigned_agent.is_some() {
+                anyhow::bail!("Task Escrow is already assigned and cannot be claimed");
+            }
+        }
+        AgentTaskOperation::Result => {
+            require_task_status(task, 1, "accepted")?;
+            if task.assigned_agent.as_ref() != Some(agent_account) {
+                anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
+            }
+        }
+        AgentTaskOperation::Settle => {
+            require_task_status(task, 2, "result_submitted")?;
+            if &task.creator != agent_account && task.verifier.as_ref() != Some(agent_account) {
+                anyhow::bail!(
+                    "Task Escrow settlement requires its creator or designated verifier Agent Account"
+                );
+            }
+            if context.now > task.review_deadline {
+                anyhow::bail!("Task Escrow review deadline has passed");
+            }
+            validate_controller_task_payout(task, context)?;
+            validate_controller_task_attestation(operation, task, context)?;
+        }
+        AgentTaskOperation::Cancel => {
+            require_task_status(task, 0, "open")?;
+            if &task.creator != agent_account {
+                anyhow::bail!("Task Escrow cancellation requires its creator Agent Account");
+            }
+        }
+        AgentTaskOperation::Timeout => match task.status {
+            0 | 1 if context.now < task.deadline => {
+                anyhow::bail!("Task Escrow task deadline has not passed")
+            }
+            2 if context.now < task.review_deadline => {
+                anyhow::bail!("Task Escrow review deadline has not passed")
+            }
+            0..=2 => {}
+            _ => anyhow::bail!(
+                "Task Escrow must be open, accepted or result_submitted for timeout (current status: {})",
+                task_status_name(task.status)
+            ),
+        },
+        AgentTaskOperation::Dispute => {
+            require_task_status(task, 2, "result_submitted")?;
+            if &task.creator != agent_account {
+                anyhow::bail!("Task Escrow dispute requires its creator Agent Account");
+            }
+            if task.verifier.is_none() {
+                anyhow::bail!("Task Escrow dispute requires a designated verifier");
+            }
+            if context.now > task.review_deadline {
+                anyhow::bail!("Task Escrow review deadline has passed");
+            }
+            let dispute_hash =
+                context.dispute_hash.context("controller Task dispute requires --dispute-hash")?;
+            if dispute_hash == [0; 32] {
+                anyhow::bail!("Task Escrow dispute hash must not be zero");
+            }
+        }
+        AgentTaskOperation::Resolve => {
+            require_task_status(task, 7, "disputed")?;
+            if task.verifier.as_ref() != Some(agent_account) {
+                anyhow::bail!(
+                    "Task Escrow resolution requires its designated verifier Agent Account"
+                );
+            }
+            validate_controller_task_payout(task, context)?;
+            validate_controller_task_attestation(operation, task, context)?;
+        }
+        AgentTaskOperation::RotateAttestorKey | AgentTaskOperation::RevokeAttestor => {
+            anyhow::bail!("this Task operation is not supported through Agent Account custody")
+        }
+    }
+    Ok(())
+}
+
+struct ControllerTaskActionContext<'a> {
+    task_address: &'a MsgAddressInt,
+    now: u64,
+    payout: Option<u64>,
+    dispute_hash: Option<[u8; 32]>,
+    attestation_signature: Option<&'a [u8; 64]>,
+    available_balance: u64,
+}
+
+fn require_task_status(
+    task: &TaskEscrowData,
+    expected_status: u8,
+    expected_name: &str,
+) -> anyhow::Result<()> {
     if task.status != expected_status {
         anyhow::bail!(
             "Task Escrow must be {} for this controller action (current status: {})",
@@ -1652,23 +1747,63 @@ fn validate_controller_task_action(
             task_status_name(task.status)
         );
     }
-    match operation {
-        AgentTaskOperation::Claim if task.assigned_agent.is_some() => {
-            anyhow::bail!("Task Escrow is already assigned and cannot be claimed")
-        }
-        AgentTaskOperation::Claim => {}
-        _ if task.assigned_agent.as_ref() != Some(agent_account) => {
-            anyhow::bail!("Task Escrow is not assigned to the selected Agent Account")
-        }
-        _ => {}
+    Ok(())
+}
+
+fn validate_controller_task_payout(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    let payout = context.payout.context("controller Task action requires an exact payout")?;
+    if payout > task.budget {
+        anyhow::bail!("Task Escrow payout exceeds its remaining budget");
+    }
+    if payout > context.available_balance {
+        anyhow::bail!("Task Escrow payout exceeds its available balance");
     }
     Ok(())
+}
+
+fn validate_controller_task_attestation(
+    operation: &AgentTaskOperation,
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    let Some(attestor_pubkey) = task.attestor_pubkey else {
+        if context.attestation_signature.is_some() {
+            anyhow::bail!("Task Escrow has no attestor but an attestation signature was provided");
+        }
+        return Ok(());
+    };
+    let signature =
+        context.attestation_signature.context("Task Escrow requires an attestation signature")?;
+    let domain_hash = match operation {
+        AgentTaskOperation::Settle => contracts::settle_domain_hash(
+            context.task_address,
+            &task.result_hash,
+            context.payout.context("settle requires payout")?,
+        )?,
+        AgentTaskOperation::Resolve => contracts::resolve_domain_hash(
+            context.task_address,
+            &task.result_hash,
+            &task.dispute_hash,
+            context.payout.context("resolve requires payout")?,
+        )?,
+        _ => anyhow::bail!("attestation validation is only defined for settle and resolve"),
+    };
+    let key = VerifyingKey::from_bytes(&attestor_pubkey)
+        .context("Task Escrow attestor public key is invalid")?;
+    key.verify_strict(&domain_hash, &Ed25519Signature::from_bytes(signature))
+        .context("Task Escrow attestation signature does not match its on-chain domain")
 }
 
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let amount_nanotos =
             resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.01))?;
+        let mut payout_nanotos = None;
+        let mut dispute_hash = None;
+        let mut attestation_signature = None;
         let mut body: Option<Cell> = match self.operation {
             AgentTaskOperation::Accept => Some(TaskEscrowContract::accept(self.query_id)?),
             AgentTaskOperation::Claim => Some(TaskEscrowContract::claim(self.query_id)?),
@@ -1678,16 +1813,18 @@ impl AgentTaskSendCmd {
                 parse_required_hash("result-hash", &self.result_hash)?,
                 parse_required_hash("evidence-hash", &self.evidence_hash)?,
             )?),
-            AgentTaskOperation::Dispute => Some(TaskEscrowContract::dispute(
-                self.query_id,
-                parse_required_hash("dispute-hash", &self.dispute_hash)?,
-            )?),
+            AgentTaskOperation::Dispute => {
+                let hash = parse_required_hash("dispute-hash", &self.dispute_hash)?;
+                dispute_hash = Some(hash);
+                Some(TaskEscrowContract::dispute(self.query_id, hash)?)
+            }
             AgentTaskOperation::Resolve => {
                 let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
-                match parse_optional_signature(
-                    "attestation-signature",
-                    &self.attestation_signature,
-                )? {
+                payout_nanotos = Some(payout);
+                let signature =
+                    parse_optional_signature("attestation-signature", &self.attestation_signature)?;
+                attestation_signature = signature;
+                match signature {
                     Some(signature) => {
                         Some(TaskEscrowContract::resolve_signed(self.query_id, payout, &signature)?)
                     }
@@ -1699,10 +1836,11 @@ impl AgentTaskSendCmd {
             }
             AgentTaskOperation::Settle => {
                 let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
-                match parse_optional_signature(
-                    "attestation-signature",
-                    &self.attestation_signature,
-                )? {
+                payout_nanotos = Some(payout);
+                let signature =
+                    parse_optional_signature("attestation-signature", &self.attestation_signature)?;
+                attestation_signature = signature;
+                match signature {
                     Some(signature) => {
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?)
                     }
@@ -1733,10 +1871,13 @@ impl AgentTaskSendCmd {
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
         if body.is_none() {
-            let vault_key = self.signer_vault_key.as_deref().expect("checked above");
+            let vault_key = self
+                .signer_vault_key
+                .as_deref()
+                .context("deferred Task body requires --signer-vault-key")?;
             match self.operation {
                 AgentTaskOperation::Settle => {
-                    let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
+                    let payout = payout_nanotos.context("settle requires payout")?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1749,11 +1890,12 @@ impl AgentTaskSendCmd {
                     )?;
                     let signature =
                         sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
+                    attestation_signature = Some(signature);
                     body =
                         Some(TaskEscrowContract::settle_signed(self.query_id, payout, &signature)?);
                 }
                 AgentTaskOperation::Resolve => {
-                    let payout = resolve_payout_nanotos(self.payout, self.payout_nanotos)?;
+                    let payout = payout_nanotos.context("resolve requires payout")?;
                     let provider = contracts::contract_provider!(rpc_client.clone());
                     let stack = provider
                         .get_method(destination.to_string(), "get_task_data", vec![])
@@ -1767,6 +1909,7 @@ impl AgentTaskSendCmd {
                     )?;
                     let signature =
                         sign_hash_with_vault_key(vault_key, &domain_hash, vault.clone()).await?;
+                    attestation_signature = Some(signature);
                     body = Some(TaskEscrowContract::resolve_signed(
                         self.query_id,
                         payout,
@@ -1777,15 +1920,13 @@ impl AgentTaskSendCmd {
                     let pubkey =
                         resolve_attestor_pubkey(&None, &Some(vault_key.to_owned()), vault.clone())
                             .await?
-                            .expect("vault key provided");
+                            .context("vault key did not resolve to an attestor public key")?;
                     body = Some(TaskEscrowContract::rotate_attestor_key(self.query_id, pubkey)?);
                 }
-                _ => unreachable!(
-                    "only settle, resolve and rotate-attestor-key defer body resolution"
-                ),
+                _ => anyhow::bail!("Task operation unexpectedly deferred body resolution"),
             }
         }
-        let body = body.expect("body resolved for every operation");
+        let body = body.context("Task body was not resolved")?;
         if let Some(agent_wallet) = &self.via_agent_account {
             if self.quorum_configs.len() < 2 {
                 anyhow::bail!(
@@ -1842,11 +1983,53 @@ impl AgentTaskSendCmd {
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
             let chain_task = TaskEscrowContract::decode_data(&stack)?;
+            let validation_now = if matches!(
+                self.operation,
+                AgentTaskOperation::Settle
+                    | AgentTaskOperation::Timeout
+                    | AgentTaskOperation::Dispute
+            ) {
+                let master = rpc_client.get_masterchain_info().await?;
+                let header = rpc_client
+                    .get_block_header(
+                        master.last.workchain,
+                        &master.last.shard.to_string(),
+                        master.last.seqno,
+                    )
+                    .await?;
+                if header.gen_utime == 0 {
+                    anyhow::bail!("latest masterchain block has no generation time");
+                }
+                u64::from(header.gen_utime)
+            } else {
+                0
+            };
+            let available_balance = if matches!(
+                self.operation,
+                AgentTaskOperation::Settle | AgentTaskOperation::Resolve
+            ) {
+                provider
+                    .balance(&destination)
+                    .await?
+                    .checked_add(amount_nanotos)
+                    .context("Task Escrow balance plus attached value overflowed")?
+            } else {
+                u64::MAX
+            };
+            let validation_context = ControllerTaskActionContext {
+                task_address: &destination,
+                now: validation_now,
+                payout: payout_nanotos,
+                dispute_hash,
+                attestation_signature: attestation_signature.as_ref(),
+                available_balance,
+            };
             validate_controller_task_action(
                 &self.operation,
                 &chain_task,
                 &account,
                 permission_id_hash(record.permission_id.as_deref()),
+                &validation_context,
             )?;
             let body_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&body)?);
             AgentAccountTaskSendCmd {
@@ -4911,8 +5094,6 @@ async fn resolve_agent_account_task_action(
         anyhow::bail!("Task action is not one unresolved exact broadcast");
     }
     let account = record.claim.account.parse::<MsgAddressInt>()?;
-    let expected_status = operation.resolved_status()?;
-
     let primary_bytes = fs::read(primary_path).context("read primary RPC config")?;
     let primary = AppConfig::load_bytes(
         &primary_bytes,
@@ -4963,11 +5144,10 @@ async fn resolve_agent_account_task_action(
     }
     let threshold = members.len() / 2 + 1;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    type TaskActionResolutionVote =
+        (FinalizedEconomicPaymentObservation, u64, u32, u8, [u8; 32], [u8; 32]);
     loop {
-        let mut votes: BTreeMap<
-            String,
-            Vec<(FinalizedEconomicPaymentObservation, u64, u32, [u8; 32], [u8; 32])>,
-        > = BTreeMap::new();
+        let mut votes: BTreeMap<String, Vec<TaskActionResolutionVote>> = BTreeMap::new();
         for (config, _endpoint, display_origin, locator_identity_digest) in &members {
             let observation = observe_finalized_economic_payment(
                 config,
@@ -4987,7 +5167,7 @@ async fn resolve_agent_account_task_action(
                 &provider.get_method(task_address.to_string(), "get_task_data", vec![]).await?,
             )?;
             let agent = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
-            if task.status != expected_status
+            if !operation.accepts_resolved_status(task.status)?
                 || (agent.controller_epoch, agent.seqno)
                     <= (record.claim.controller_epoch, record.claim.seqno)
             {
@@ -5006,12 +5186,14 @@ async fn resolve_agent_account_task_action(
                 observation,
                 agent.controller_epoch,
                 agent.seqno,
+                task.status,
                 task.result_hash,
                 task.evidence_hash,
             ));
         }
         if let Some(winner) = votes.values().find(|group| group.len() >= threshold) {
-            let (observation, controller_epoch, seqno, result_hash, evidence_hash) = &winner[0];
+            let (observation, controller_epoch, seqno, task_status, result_hash, evidence_hash) =
+                &winner[0];
             let output = serde_json::json!({
                 "schema": "tos.agent-account.task-action-finalized.v1",
                 "wallet": wallet,
@@ -5019,7 +5201,7 @@ async fn resolve_agent_account_task_action(
                 "operation": operation.as_str(),
                 "source_account": account.to_string(),
                 "task_address": task_address.to_string(),
-                "task_status": task_status_name(expected_status),
+                "task_status": task_status_name(*task_status),
                 "task_result_hash": format!("sha256:{}", hex::encode(result_hash)),
                 "task_evidence_hash": format!("sha256:{}", hex::encode(evidence_hash)),
                 "network_domain": expected_network,
@@ -9775,8 +9957,9 @@ fn print_table_summary(view: &AgentWalletView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAccountAction, AgentTaskOperation, ECONOMIC_PAYMENT_CORROBORATION_SCHEMA,
-        ECONOMIC_PAYMENT_FINALIZED_SCHEMA, ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
+        AgentAccountAction, AgentTaskOperation, ControllerTaskActionContext,
+        ECONOMIC_PAYMENT_CORROBORATION_SCHEMA, ECONOMIC_PAYMENT_FINALIZED_SCHEMA,
+        ECONOMIC_PAYMENT_SPONSORSHIP_FINALITY_SCHEMA,
         ECONOMIC_PAYMENT_SPONSORSHIP_PROOF_VERIFICATION_SCHEMA, FinalizedEconomicPaymentMatch,
         FinalizedEconomicPaymentObservation, FinalizedTaskSendObservation,
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
@@ -10058,6 +10241,17 @@ mod tests {
             permission_hash: permission_id_hash(Some("bounded-task")),
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+        }
+    }
+
+    fn controller_task_context(task_address: &MsgAddressInt) -> ControllerTaskActionContext<'_> {
+        ControllerTaskActionContext {
+            task_address,
+            now: 100,
+            payout: Some(500_000_000),
+            dispute_hash: Some([7; 32]),
+            attestation_signature: None,
+            available_balance: 1_000_000_000,
         }
     }
 
@@ -11552,11 +11746,14 @@ mod tests {
     #[test]
     fn validates_controller_task_authority_and_lifecycle() {
         let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let context = controller_task_context(&task_address);
         validate_controller_task_action(
             &AgentTaskOperation::Accept,
             &controller_task(0),
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap();
         validate_controller_task_action(
@@ -11564,6 +11761,7 @@ mod tests {
             &controller_task(0),
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap();
         let mut open_task = controller_task(0);
@@ -11573,6 +11771,7 @@ mod tests {
             &open_task,
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap();
         validate_controller_task_action(
@@ -11580,6 +11779,7 @@ mod tests {
             &controller_task(1),
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap();
 
@@ -11588,6 +11788,7 @@ mod tests {
             &controller_task(0),
             &address(4),
             permission_hash,
+            &context,
         )
         .unwrap_err();
         assert!(wrong_account.to_string().contains("not assigned"));
@@ -11597,6 +11798,7 @@ mod tests {
             &controller_task(0),
             &address(2),
             [9; 32],
+            &context,
         )
         .unwrap_err();
         assert!(wrong_permission.to_string().contains("permission ID"));
@@ -11606,6 +11808,7 @@ mod tests {
             &controller_task(0),
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap_err();
         assert!(wrong_status.to_string().contains("must be accepted"));
@@ -11615,8 +11818,493 @@ mod tests {
             &controller_task(0),
             &address(2),
             permission_hash,
+            &context,
         )
         .unwrap_err();
         assert!(assigned_claim.to_string().contains("already assigned"));
+    }
+
+    #[test]
+    fn controller_settle_matches_contract_state_authority_and_limits() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let context = controller_task_context(&task_address);
+        let mut task = controller_task(2);
+        task.review_deadline = 100;
+        task.verifier = Some(address(3));
+
+        for authorized in [address(1), address(3)] {
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &authorized,
+                permission_hash,
+                &context,
+            )
+            .unwrap();
+        }
+
+        let mut wrong_status = task.clone();
+        wrong_status.status = 1;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &wrong_status,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("must be result_submitted")
+        );
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(2),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("creator or designated verifier")
+        );
+
+        let mut expired = controller_task_context(&task_address);
+        expired.now = 101;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &expired,
+            )
+            .is_err()
+        );
+        let mut excessive = controller_task_context(&task_address);
+        excessive.payout = Some(task.budget + 1);
+        excessive.available_balance = task.budget + 1;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &excessive,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("remaining budget")
+        );
+        let mut insufficient_balance = controller_task_context(&task_address);
+        insufficient_balance.available_balance = 499_999_999;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &insufficient_balance,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("available balance")
+        );
+    }
+
+    #[test]
+    fn controller_timeout_matches_contract_deadlines_and_has_no_sender_restriction() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut context = controller_task_context(&task_address);
+        context.now = 100;
+
+        for status in [0, 1] {
+            let mut task = controller_task(status);
+            task.deadline = 100;
+            validate_controller_task_action(
+                &AgentTaskOperation::Timeout,
+                &task,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap();
+        }
+        let mut submitted = controller_task(2);
+        submitted.review_deadline = 100;
+        validate_controller_task_action(
+            &AgentTaskOperation::Timeout,
+            &submitted,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        let mut too_early = controller_task(0);
+        too_early.deadline = 101;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Timeout,
+                &too_early,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("has not passed")
+        );
+        let mut review_too_early = controller_task(2);
+        review_too_early.review_deadline = 101;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Timeout,
+                &review_too_early,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("review deadline has not passed")
+        );
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Timeout,
+                &controller_task(3),
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("open, accepted or result_submitted")
+        );
+    }
+
+    #[test]
+    fn controller_dispute_matches_contract_state_authority_and_window() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let context = controller_task_context(&task_address);
+        let mut task = controller_task(2);
+        task.verifier = Some(address(3));
+        task.review_deadline = 100;
+        validate_controller_task_action(
+            &AgentTaskOperation::Dispute,
+            &task,
+            &address(1),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        let mut wrong_status = task.clone();
+        wrong_status.status = 1;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &wrong_status,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &task,
+                &address(3),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("creator Agent Account")
+        );
+        let mut no_verifier = task.clone();
+        no_verifier.verifier = None;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &no_verifier,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+        let mut zero_hash = controller_task_context(&task_address);
+        zero_hash.dispute_hash = Some([0; 32]);
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &task,
+                &address(1),
+                permission_hash,
+                &zero_hash,
+            )
+            .is_err()
+        );
+        let mut expired = controller_task_context(&task_address);
+        expired.now = 101;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &task,
+                &address(1),
+                permission_hash,
+                &expired,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("review deadline has passed")
+        );
+    }
+
+    #[test]
+    fn controller_resolve_matches_contract_state_authority_and_limits() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let context = controller_task_context(&task_address);
+        let mut task = controller_task(7);
+        task.verifier = Some(address(3));
+        validate_controller_task_action(
+            &AgentTaskOperation::Resolve,
+            &task,
+            &address(3),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        let mut wrong_status = task.clone();
+        wrong_status.status = 2;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Resolve,
+                &wrong_status,
+                &address(3),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Resolve,
+                &task,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("designated verifier")
+        );
+        let mut insufficient_balance = controller_task_context(&task_address);
+        insufficient_balance.available_balance = 499_999_999;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Resolve,
+                &task,
+                &address(3),
+                permission_hash,
+                &insufficient_balance,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("available balance")
+        );
+        let mut excessive = controller_task_context(&task_address);
+        excessive.payout = Some(task.budget + 1);
+        excessive.available_balance = task.budget + 1;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Resolve,
+                &task,
+                &address(3),
+                permission_hash,
+                &excessive,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("remaining budget")
+        );
+    }
+
+    #[test]
+    fn controller_cancel_matches_contract_state_and_creator_authority() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let context = controller_task_context(&task_address);
+        validate_controller_task_action(
+            &AgentTaskOperation::Cancel,
+            &controller_task(0),
+            &address(1),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Cancel,
+                &controller_task(1),
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Cancel,
+                &controller_task(0),
+                &address(2),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("creator Agent Account")
+        );
+    }
+
+    #[test]
+    fn controller_attestation_is_bound_to_task_state_and_payout() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let signing_key = SigningKey::from_bytes(&[42; 32]);
+        let mut task = controller_task(2);
+        task.review_deadline = 100;
+        task.result_hash = [8; 32];
+        task.attestor_pubkey = Some(signing_key.verifying_key().to_bytes());
+        let domain =
+            contracts::settle_domain_hash(&task_address, &task.result_hash, 500_000_000).unwrap();
+        let signature = signing_key.sign(&domain).to_bytes();
+        let mut context = controller_task_context(&task_address);
+        context.attestation_signature = Some(&signature);
+        validate_controller_task_action(
+            &AgentTaskOperation::Settle,
+            &task,
+            &address(1),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        let mut task_without_attestor = task.clone();
+        task_without_attestor.attestor_pubkey = None;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task_without_attestor,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("has no attestor")
+        );
+
+        let missing = controller_task_context(&task_address);
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &missing,
+            )
+            .is_err()
+        );
+        let mut changed_payout = controller_task_context(&task_address);
+        changed_payout.payout = Some(400_000_000);
+        changed_payout.attestation_signature = Some(&signature);
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &changed_payout,
+            )
+            .is_err()
+        );
+        let other_task_address = address(10);
+        let mut other_task = controller_task_context(&other_task_address);
+        other_task.attestation_signature = Some(&signature);
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &task,
+                &address(1),
+                permission_hash,
+                &other_task,
+            )
+            .is_err()
+        );
+
+        let mut disputed = task.clone();
+        disputed.status = 7;
+        disputed.verifier = Some(address(3));
+        disputed.dispute_hash = [11; 32];
+        let resolve_domain = contracts::resolve_domain_hash(
+            &task_address,
+            &disputed.result_hash,
+            &disputed.dispute_hash,
+            500_000_000,
+        )
+        .unwrap();
+        let resolve_signature = signing_key.sign(&resolve_domain).to_bytes();
+        let mut resolve_context = controller_task_context(&task_address);
+        resolve_context.attestation_signature = Some(&resolve_signature);
+        validate_controller_task_action(
+            &AgentTaskOperation::Resolve,
+            &disputed,
+            &address(3),
+            permission_hash,
+            &resolve_context,
+        )
+        .unwrap();
+
+        disputed.dispute_hash = [12; 32];
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Resolve,
+                &disputed,
+                &address(3),
+                permission_hash,
+                &resolve_context,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn controller_resolution_accepts_every_contract_terminal_state() {
+        for (operation, accepted) in [
+            (AgentTaskOperation::Dispute, vec![7]),
+            (AgentTaskOperation::Resolve, vec![3]),
+            (AgentTaskOperation::Settle, vec![3]),
+            (AgentTaskOperation::Cancel, vec![4]),
+            (AgentTaskOperation::Timeout, vec![3, 5]),
+        ] {
+            for status in 0..=7 {
+                assert_eq!(
+                    operation.accepts_resolved_status(status).unwrap(),
+                    accepted.contains(&status),
+                    "{} status {}",
+                    operation.as_str(),
+                    status
+                );
+            }
+        }
     }
 }
