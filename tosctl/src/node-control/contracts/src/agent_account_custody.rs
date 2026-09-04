@@ -859,6 +859,65 @@ impl AgentAccountCustodyJournal {
         })
     }
 
+    /// Find one generic economic effect by its owner-wide stable identity,
+    /// including a compacted permanent tombstone. Prediction relay recovery
+    /// uses this after source finality, when the hot journal is allowed to
+    /// discard old terminal BOC material but the semantic replay fence is not.
+    pub fn find_economic_effect_by_stable_action(
+        &self,
+        stable_action_id: &str,
+    ) -> anyhow::Result<Option<ControllerActionRecord>> {
+        if !valid_digest(stable_action_id) {
+            anyhow::bail!("invalid economic effect lookup");
+        }
+        self.with_document(|document| {
+            let mut matches = document.records.iter().filter(|record| {
+                record
+                    .economic_effect_authorization
+                    .as_ref()
+                    .is_some_and(|authorization| authorization.stable_action_id == stable_action_id)
+            });
+            let first = matches.next().cloned();
+            if matches.next().is_some() {
+                anyhow::bail!("custody journal repeats an economic effect stable identity");
+            }
+            let tombstone = self.read_economic_action_tombstone(stable_action_id)?;
+            match (first, tombstone) {
+                (Some(hot), Some(tombstone)) => {
+                    let stored = tombstone.record;
+                    if stored.economic_effect_authorization.is_none()
+                        || hot.claim != stored.claim
+                        || !same_optional_economic_effect(
+                            hot.economic_effect_authorization.as_ref(),
+                            stored.economic_effect_authorization.as_ref(),
+                        )
+                    {
+                        anyhow::bail!(
+                            "custody hot journal conflicts with its economic effect tombstone"
+                        );
+                    }
+                    Ok(Some(
+                        if action_status_rank(&stored.status) >= action_status_rank(&hot.status) {
+                            stored
+                        } else {
+                            hot
+                        },
+                    ))
+                }
+                (None, Some(tombstone))
+                    if tombstone.record.economic_effect_authorization.is_some() =>
+                {
+                    Ok(Some(tombstone.record))
+                }
+                (None, Some(_)) => {
+                    anyhow::bail!("stable action belongs to an economic payment")
+                }
+                (Some(hot), None) => Ok(Some(hot)),
+                (None, None) => Ok(None),
+            }
+        })
+    }
+
     pub fn attach_signed_boc(
         &self,
         claim: &ControllerActionClaim,
@@ -3538,6 +3597,38 @@ mod tests {
         competing.idempotency_key = "f".repeat(64);
         competing.action_identity = format!("sha256:{}", "f".repeat(64));
         assert!(journal.claim_primary(competing, 2_000_000_001).is_err());
+
+        let found = journal
+            .find_economic_effect_by_stable_action(&authorization.stable_action_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.claim, record.claim);
+        journal.begin_or_resume_exact_broadcast(&record.claim, 2_000_000_002).unwrap();
+        let evidence_value = serde_json::json!({
+            "schema": "tosctl.prediction-relay-source-evidence.v1",
+            "stable_action_id": authorization.stable_action_id,
+        });
+        let evidence = ControllerActionResolutionEvidence {
+            evidence_kind: "tosctl.prediction-relay-source-evidence.v1".into(),
+            evidence_digest: controller_resolution_evidence_digest(
+                "tosctl.prediction-relay-source-evidence.v1",
+                &evidence_value,
+            )
+            .unwrap(),
+            evidence: evidence_value,
+        };
+        journal
+            .resolve_exact_winner(&record.claim, &boc_digest, 3, 5, evidence, 2_000_000_003)
+            .unwrap();
+        let reopened =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let terminal = reopened
+            .find_economic_effect_by_stable_action(&authorization.stable_action_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.status, ControllerActionStatus::Resolved);
+        assert!(terminal.exact_signed_boc_base64.is_none());
+        assert!(terminal.exact_winner_resolution.is_some());
     }
 
     #[test]

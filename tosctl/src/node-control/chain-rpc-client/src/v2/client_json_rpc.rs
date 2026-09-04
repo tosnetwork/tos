@@ -8,7 +8,7 @@
  */
 use crate::v2::data_models::{
     AccountAgentCapability, AccountCapabilityRes, AccountDelegationGrant, AccountSessionCapability,
-    ExactBocSubmissionResult, ExactBocSubmissionStatus, GetAddressInformationRes,
+    BlockIdExt, ExactBocSubmissionResult, ExactBocSubmissionStatus, GetAddressInformationRes,
     GetBlockHeaderRes, GetBlockTransactionsExtRes, GetBlockTransactionsRes,
     GetExtendedAddressInformationRes, GetMasterchainInfoRes, GetShardsRes, GetTransactionsRes,
     GetWalletInformationRes, LifecycleGrantRequest, LifecycleMutationResultRes,
@@ -755,6 +755,29 @@ impl ClientJsonRpc {
             .json_rpc_read("shards", serde_json::json!({"seqno": seqno}))
             .await
             .context("shards")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    /// Resolve one exact block identity by coordinate. Recovery code uses
+    /// this before walking an account history so a persisted checkpoint from
+    /// another fork cannot silently become the scan boundary.
+    pub async fn lookup_block(
+        &self,
+        workchain: i32,
+        shard: &str,
+        seqno: u32,
+    ) -> anyhow::Result<BlockIdExt> {
+        let res = self
+            .json_rpc_read(
+                "lookupBlock",
+                serde_json::json!({
+                    "workchain": workchain,
+                    "shard": shard,
+                    "seqno": seqno,
+                }),
+            )
+            .await
+            .context("lookupBlock")?;
         Ok(serde_json::from_value(res)?)
     }
 
