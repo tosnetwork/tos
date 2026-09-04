@@ -15,13 +15,14 @@ use chain_block::{
 
 use crate::ContractProvider;
 
-pub const AGENT_ACCOUNT_CODE_B64: &str = "te6cckECEgEABGUAART/APSkE/S88sgLAQIBIAIDAgFIBAUB4PKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQOAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAICQFuMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdH4ABCbEIoQeRBoEGcQVhEA7lG6xwXy5qYI0//R+AAGpAikEJsQagcJVUAkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAgFICgsCASAMDQBvtiW9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BtiLAAa7c0vaiaH0gaf/p/+mf6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvhcABnua6+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABvueT+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQq18LgC/ILw7ecVqYUvu6LDwjTtDScymuNNYmOoLPtiFdqHyRaDtHHIy/9SQMofEsoHy//L/8n5AFQQ/PkQ8uaoDNMf0h8PuvLmrA3TP1EZuvLmrtMf0x9RJLry5qkg+CO88uaq+CMnoLvy5qotghBBR1AFuuMC+kD6ACHCAPLmrW1WEA8QANw9DNH4AKQQmxCKEHkQaFVgJMEA8talJIQvvPLWpVM0ufLWpSLBAfLWpchQBfoCUAP6Ass/IcEAlHAyywCWcQHLAMv/4iHBAJRwMssAlnEBywDL/+LJyFAIzxYWy/8Uy/8Syz/LH8sfAfoCzMntVAH0ghBBR1ADupMw1AHeAdFTGbvy5qv4I4IBUYCpBFMEvZM0cD+RMOJT4aApu/Lmq/gnbyIwIoIImJaAoAG78uav+ABwgBDIywVQBM8WIvoCE8tpD4IQQUdQA7qWcVAPywDMlXAyDssA4slz+wABpFC8oBCbEIoQeRBoVUARALwkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1Uu8/TqA==";
+pub const AGENT_ACCOUNT_CODE_B64: &str = "te6ccgECFAEABLUAART/APSkE/S88sgLAQIBIAIDAgFIBAUB8vKDCNcY7UTQ+kDT/9P/0z/TH9Mf+gDU0dD6APoA0z9/AdMAAZMx0//efwHTAAGTMdP/3tFVJCzTHyGCEEFHUAO6IoIQQUdQBLqxIoIQQUdQBrqxAoIQQUdQBboSsfLmp9If+DVSILry5qzTPzAquvLmri35Afgo+kQOAsjQMtDTAwFxsJFb4PpAMCHHAJFb4O1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQN0x/TPzEhghBBR1ABuuMCO4IQQUdQArrjAl8N8sanBgcCASAICQFuMWwzMzNRdscF8uam+gD6ANM/0wABk9P/AZF/4gHTAAGT0/8BkX/iAdH4ABCbEIoQeRBoEGcQVhMA7lG6xwXy5qYI0//R+AAGpAikEJsQagcJVUAkwQDy1qUkhC+88talUzS58talIsEB8talyFAF+gJQA/oCyz8hwQCUcDLLAJZxAcsAy//iIcEAlHAyywCWcQHLAMv/4snIUAjPFhbL/xTL/xLLP8sfyx8B+gLMye1UAgFICgsCASAMDQBvtiW9qJofSBp/+n/6Z/pj+mP/QBqaOh9AH0AaZ+/gOmAAMmY6f/vP4DpgADJmOn/72iqki+BtiLAAa7c0vaiaH0gaf/p/+mf6Y/pj/0AamjofQB9AGmfv4DpgADJmOn/7z+A6YAAyZjp/+9oqpIvhcABnua6+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSSABvueT+1E0PpA0//T/9M/0x/TH/oA1NHQ+gD6ANM/fwHTAAGTMdP/3n8B0wABkzHT/97RVSQQq18LgC/oLw7ecVqYUvu6LDwjTtDScymuNNYmOoLPtiFdqHyRaDtHHIy/9SQMofEsoHy//L/8n5AFQQ/PkQ8uaoDNMf0h8PuvLmrA3TP1EZuvLmrtMf0x9RJLry5qkg+CO88uaq+CMnoLvy5qotghBBR1AFuuMC+kD6ACHCAPLmrW1tVhEPEADcPQzR+ACkEJsQihB5EGhVYCTBAPLWpSSEL7zy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQC/oIQQUdQBrqeW9TUJPpEMSP5ALry5rCOEFYRghBBR1ADupQxAdQC3gLi0VMqu/Lmq/gjggFRgKkEUwW9lDVwVxCRMOJT8qAqu/Lmq/gnbyIwI4IImJaAoAG78uav+ABwgBDIywVQBc8WI/oCFMtoVhCCEEFHUAa6lHAyywDjDS8REgAKcwHLAcwBbIIQQUdQA7oREIIQQUdQBroBERABsZZxUA/LAMyVcDIOywDiyXP7AAGkULygEJsQihB5EGhVQBMAvCTBAPLWpSSEL7zy1qVTNLny1qUiwQHy1qXIUAX6AlAD+gLLPyHBAJRwMssAlnEBywDL/+IhwQCUcDLLAJZxAcsAy//iychQCM8WFsv/FMv/Ess/yx/LHwH6AszJ7VQ=";
 
 pub const AGENT_UPDATE_POLICY_OPCODE: u32 = 0x4147_5001;
 pub const AGENT_ROTATE_CONTROLLER_OPCODE: u32 = 0x4147_5002;
 pub const AGENT_TASK_SEND_OPCODE: u32 = 0x4147_5003;
 pub const AGENT_NATIVE_SEND_OPCODE: u32 = 0x4147_5004;
 pub const AGENT_CANCEL_SEQNO_OPCODE: u32 = 0x4147_5005;
+pub const AGENT_DEPLOY_SEND_OPCODE: u32 = 0x4147_5006;
 /// Domain tag carried in the referenced body of a generic task-send when the
 /// transfer fulfills one exact sponsorship AgreementPaymentRequestV3.
 pub const AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG: u32 = 0x5350_4e31; // "SPN1"
@@ -213,6 +214,39 @@ impl AgentAccountContract {
             .append_u32(valid_until)?;
         target.write_to(&mut payload)?;
         Coins::new(value).write_to(&mut payload)?;
+        Ok(payload.into_cell()?)
+    }
+
+    /// Build a controller payload that atomically deploys and funds a
+    /// deterministic account. The destination must be the standard address
+    /// derived from the exact StateInit; the contract enforces the same
+    /// invariant before consuming the controller sequence.
+    pub fn build_deploy_send_payload(
+        network_global_id: i32,
+        controller_epoch: u64,
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+        state_init: StateInit,
+        body: chain_block::Cell,
+    ) -> anyhow::Result<chain_block::Cell> {
+        validate_action_value(value)?;
+        let state_init = state_init.write_to_new_cell()?.into_cell()?;
+        if target.address().get_bytestring(0).as_slice() != state_init.hash(0).as_slice() {
+            anyhow::bail!("Agent Account deploy target must match the StateInit address hash");
+        }
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(AGENT_DEPLOY_SEND_OPCODE)?
+            .append_i32(network_global_id)?
+            .append_u64(controller_epoch)?
+            .append_u32(seqno)?
+            .append_u32(valid_until)?;
+        target.write_to(&mut payload)?;
+        Coins::new(value).write_to(&mut payload)?;
+        payload.checked_append_reference(state_init)?;
+        payload.checked_append_reference(body)?;
         Ok(payload.into_cell()?)
     }
 

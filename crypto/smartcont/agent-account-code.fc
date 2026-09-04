@@ -28,6 +28,8 @@
 ;;             target:MsgAddressInt value:coins = SignedExternalBody;
 ;;   cancel_seqno#41475005 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             = SignedExternalBody;
+;;   deploy_send#41475006 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
+;;             target:MsgAddressInt value:coins state_init:^Cell body:^Cell = SignedExternalBody;
 
 int get_global_id() asm "GLOBALID";
 
@@ -36,6 +38,7 @@ const int op::agent_rotate_controller = 0x41475002;  ;; "AGP\2"
 const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
 const int op::agent_native_send = 0x41475004;        ;; "AGP\4"
 const int op::agent_cancel_seqno = 0x41475005;       ;; "AGP\5"
+const int op::agent_deploy_send = 0x41475006;        ;; "AGP\6"
 const int max_signed_action_value = 281474976710655; ;; 2^48 - 1 nanoTOS
 
 ;; sha256("tos.agent-account.controller-signature.v1")
@@ -53,6 +56,7 @@ const int err::wrong_network = 1708;
 const int err::bad_value = 1709;
 const int err::stale_controller = 1710;
 const int err::insufficient_balance = 1711;
+const int err::bad_state_init = 1712;
 
 ;; Outbound sends use mode 3 (pay fees separately, ignore action errors), so an
 ;; underfunded send would silently skip while the transaction still commits
@@ -282,6 +286,7 @@ cell pack_agent_state(
   throw_unless(err::unknown_op,
     (header_op == op::agent_task_send) |
     (header_op == op::agent_native_send) |
+    (header_op == op::agent_deploy_send) |
     (header_op == op::agent_cancel_seqno));
   int msg_global_id = header~load_int(32);
   throw_unless(err::wrong_network, msg_global_id == get_global_id());
@@ -336,7 +341,14 @@ cell pack_agent_state(
   int value = signed_body~load_coins();
   throw_unless(err::bad_value, value > 0);
   cell body = null();
-  if (op == op::agent_task_send) {
+  cell state_init = null();
+  if (op == op::agent_deploy_send) {
+    state_init = signed_body~load_ref();
+    body = signed_body~load_ref();
+    (int target_wc, int target_address) = target.parse_std_addr();
+    target_wc~impure_touch();
+    throw_unless(err::bad_state_init, target_address == cell_hash(state_init));
+  } elseif (op == op::agent_task_send) {
     body = signed_body~load_ref();
   }
   signed_body.end_parse();
@@ -355,8 +367,14 @@ cell pack_agent_state(
     .store_uint(0x10, 6)
     .store_slice(target)
     .store_tomis(value)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1);
-  if (op == op::agent_task_send) {
+    .store_uint(0, 1 + 4 + 4 + 64 + 32);
+  if (op == op::agent_deploy_send) {
+    ;; init:(Maybe (Either StateInit ^StateInit)) = present, right/reference.
+    outbound = outbound.store_uint(3, 2).store_ref(state_init);
+  } else {
+    outbound = outbound.store_uint(0, 1);
+  }
+  if ((op == op::agent_task_send) | (op == op::agent_deploy_send)) {
     outbound = outbound.store_uint(1, 1).store_ref(body);
   } else {
     outbound = outbound.store_uint(0, 1);

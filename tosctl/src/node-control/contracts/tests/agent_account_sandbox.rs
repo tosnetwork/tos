@@ -161,6 +161,30 @@ impl Fixture {
         self.sign_payload(secret, global_id, payload)
     }
 
+    fn signed_deploy(
+        &self,
+        secret: &[u8; 32],
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+        state_init: chain_block::StateInit,
+        body: Cell,
+    ) -> Cell {
+        let payload = AgentAccountContract::build_deploy_send_payload(
+            GLOBAL_ID,
+            self.controller_epoch() as u64,
+            seqno,
+            valid_until,
+            target,
+            value,
+            state_init,
+            body,
+        )
+        .expect("deploy payload");
+        self.sign_payload(secret, GLOBAL_ID, payload)
+    }
+
     fn signed_cancel(
         &self,
         secret: &[u8; 32],
@@ -260,6 +284,115 @@ fn native_send_is_one_bodyless_non_bouncing_transfer() {
             .body()
             .is_none_or(|body| body.remaining_bits() == 0 && body.remaining_references() == 0)
     );
+}
+
+#[test]
+fn deploy_send_atomically_installs_exact_state_init_and_funds_task() {
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: 2 * TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x31; 32],
+        permission_hash: [0x32; 32],
+        attestor_pubkey: None,
+    };
+    let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let expected_state_hash = state_init
+        .write_to_new_cell()
+        .expect("serialize StateInit")
+        .into_cell()
+        .expect("StateInit cell")
+        .hash(0);
+    let action = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        3 * TOS,
+        state_init,
+        Cell::default(),
+    );
+    let result = fixture.send_external(action).expect("deploy send");
+    result.expect_success().expect_out_msgs(1);
+
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), 3 * TOS as i128);
+    let target_tx = result
+        .transactions_for(&target)
+        .into_iter()
+        .next()
+        .expect("deployed task must receive the transfer");
+    let inbound = target_tx.read_in_msg().expect("read inbound").expect("inbound message");
+    let deployed_state = inbound.state_init().expect("deploy send must carry StateInit");
+    assert_eq!(
+        deployed_state
+            .write_to_new_cell()
+            .expect("serialize deployed StateInit")
+            .into_cell()
+            .expect("deployed StateInit cell")
+            .hash(0),
+        expected_state_hash
+    );
+    assert_eq!(
+        fixture
+            .bc
+            .run_get_method(&target, "get_task_data", vec![])
+            .expect("task data")
+            .expect_success()
+            .int_at(7),
+        0
+    );
+}
+
+#[test]
+fn deploy_send_rejects_a_state_init_for_another_destination_without_consuming_seqno() {
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x41; 32],
+        permission_hash: [0x42; 32],
+        attestor_pubkey: None,
+    };
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let wrong_target = fixture.target.address().clone();
+    let payload = {
+        let state_cell = state_init
+            .write_to_new_cell()
+            .expect("serialize StateInit")
+            .into_cell()
+            .expect("StateInit cell");
+        let mut payload = BuilderData::new();
+        payload
+            .append_u32(contracts::AGENT_DEPLOY_SEND_OPCODE)
+            .expect("opcode")
+            .append_i32(GLOBAL_ID)
+            .expect("network")
+            .append_u64(0)
+            .expect("epoch")
+            .append_u32(0)
+            .expect("seqno")
+            .append_u32(fixture.bc.now() + 300)
+            .expect("expiry");
+        wrong_target.write_to(&mut payload).expect("target");
+        Coins::new(TOS).write_to(&mut payload).expect("value");
+        payload.checked_append_reference(state_cell).expect("StateInit ref");
+        payload.checked_append_reference(Cell::default()).expect("body ref");
+        payload.into_cell().expect("payload")
+    };
+    let action = fixture.sign_payload(&fixture.controller_secret, GLOBAL_ID, payload);
+    fixture.expect_external_exit(action, 1712);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
 }
 
 #[test]
