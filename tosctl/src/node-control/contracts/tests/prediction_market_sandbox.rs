@@ -315,6 +315,29 @@ fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     let result =
         f.send(&a, 2 * TOS, PredictionMarketContractV1::match_pair(4, 2, buy_yes, buy_no).unwrap());
     assert_success("complementary buy", &result);
+    let owner_cell = a.write_to_new_cell().unwrap().into_cell().unwrap();
+    let owner_slice = SliceData::load_cell(owner_cell).unwrap();
+    let bound_order =
+        f.bc.run_get_method(
+            &f.market,
+            "get_prediction_order",
+            vec![StackItem::Slice(owner_slice.clone()), StackItem::int(0), StackItem::int(1)],
+        )
+        .expect("bound order getter");
+    bound_order.expect_success();
+    assert_eq!(bound_order.int_at(0), 1);
+    assert_eq!(bound_order.int_at(2), 4);
+    assert_eq!(bound_order.int_at(3), 2);
+    assert_eq!(bound_order.int_at(5), 0);
+    let unused_order =
+        f.bc.run_get_method(
+            &f.market,
+            "get_prediction_order",
+            vec![StackItem::Slice(owner_slice), StackItem::int(0), StackItem::int(99)],
+        )
+        .expect("unused order getter");
+    unused_order.expect_success();
+    assert_eq!(unused_order.int_at(0), 0);
     assert_eq!(f.accounting()[0..6], [2, 2, 1, 2, 18 * TOS as i128, 2 * TOS as i128]);
     assert_eq!(&f.account(&a)[1..3], &[2, 0]);
     assert_eq!(&f.account(&b)[1..3], &[0, 2]);

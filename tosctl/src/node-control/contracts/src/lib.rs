@@ -83,8 +83,11 @@ pub use nominator_pool::{
 };
 pub use prediction_market::{
     PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
-    PredictionMarketContractV1, PredictionMarketInitV1, PredictionOraclePolicyV1,
-    PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
+    PredictionMarketAccountV1, PredictionMarketAccountingV1, PredictionMarketContractV1,
+    PredictionMarketInitV1, PredictionMarketPhaseV1, PredictionMarketStateV1,
+    PredictionMarketStatusV1, PredictionOraclePolicyV1, PredictionOrderActionV1,
+    PredictionOrderOutcomeV1, PredictionOrderStateV1, PredictionOrderV1,
+    PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

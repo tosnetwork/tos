@@ -5,9 +5,10 @@
 
 use anyhow::Context;
 use chain_block::{
-    BuilderData, Coins, HashmapE, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
-    base64_decode, read_single_root_boc,
+    BuilderData, Coins, Deserializable, HashmapE, IBitstring, MsgAddressInt, Serializable,
+    SliceData, StateInit, base64_decode, read_single_root_boc,
 };
+use common::tvm_stack_parser::TvmStackParser;
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -156,6 +157,118 @@ pub struct PredictionMarketInitV1 {
 }
 
 pub struct PredictionMarketContractV1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PredictionMarketStatusV1 {
+    Trading = 0,
+    Reporting = 1,
+    Proposed = 2,
+    Reviewing = 3,
+    Finalized = 4,
+    Terminal = 5,
+}
+
+impl TryFrom<u64> for PredictionMarketStatusV1 {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Trading),
+            1 => Ok(Self::Reporting),
+            2 => Ok(Self::Proposed),
+            3 => Ok(Self::Reviewing),
+            4 => Ok(Self::Finalized),
+            5 => Ok(Self::Terminal),
+            _ => anyhow::bail!("unknown PredictionMarket status {value}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PredictionResolutionOutcomeV1 {
+    Yes = 0,
+    No = 1,
+    Invalid = 2,
+}
+
+impl TryFrom<u64> for PredictionResolutionOutcomeV1 {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Yes),
+            1 => Ok(Self::No),
+            2 => Ok(Self::Invalid),
+            _ => anyhow::bail!("unknown PredictionMarket outcome {value}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionMarketStateV1 {
+    pub activated: bool,
+    pub activated_at: u64,
+    pub status: PredictionMarketStatusV1,
+    pub review_reason: u8,
+    /// Meaningful only once `status >= Finalized`.
+    pub final_outcome: PredictionResolutionOutcomeV1,
+    pub market_config_hash: [u8; 32],
+    pub market_id: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionMarketAccountingV1 {
+    pub participants: u32,
+    pub live_orders: u32,
+    pub fill_count: u64,
+    pub complete_sets: u64,
+    pub total_free: u64,
+    pub locked: u64,
+    pub final_backing: u64,
+    pub remaining_payout: u64,
+    pub claimed: u64,
+    pub challenge_bond: u64,
+    pub cleanup_liability: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionMarketAccountV1 {
+    pub owner: MsgAddressInt,
+    pub trading_pubkey: [u8; 32],
+    pub key_epoch: u32,
+    pub nonce_floor: u64,
+    pub free_balance: u64,
+    pub yes_lots: u64,
+    pub no_lots: u64,
+    pub live_orders: u32,
+    pub account_cleanup_credit: u64,
+    pub order_cleanup_credit: u64,
+    /// Opaque dictionary root. Use `get_prediction_order` for individual records.
+    pub orders: chain_block::Cell,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionOrderStateV1 {
+    pub digest: [u8; 32],
+    pub quantity_lots: u64,
+    pub filled_lots: u64,
+    pub valid_until: u64,
+    pub cancelled: bool,
+    pub cleanup_credit: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionMarketPhaseV1 {
+    pub status: PredictionMarketStatusV1,
+    pub review_reason: u8,
+    pub final_outcome: PredictionResolutionOutcomeV1,
+    pub current_context_hash: [u8; 32],
+    pub review_base_context_hash: [u8; 32],
+    pub proposed_statement_hash: [u8; 32],
+    pub next_deadline: u64,
+}
 
 impl PredictionMarketContractV1 {
     pub fn code() -> anyhow::Result<chain_block::Cell> {
@@ -347,6 +460,89 @@ impl PredictionMarketContractV1 {
     pub fn calculate_address(init: &PredictionMarketInitV1) -> anyhow::Result<MsgAddressInt> {
         let state = Self::build_state_init(init)?.write_to_new_cell()?.into_cell()?;
         Ok(MsgAddressInt::with_params(i32::from(init.workchain_id), state.hash(0))?)
+    }
+
+    pub fn decode_state(stack: &TvmStackParser) -> anyhow::Result<PredictionMarketStateV1> {
+        require_stack_len(stack, 7, "get_prediction_state")?;
+        Ok(PredictionMarketStateV1 {
+            activated: stack.bool(0)?,
+            activated_at: stack.u64(1)?,
+            status: stack.u64(2)?.try_into()?,
+            review_reason: narrow_u8(stack, 3, "review_reason")?,
+            final_outcome: stack.u64(4)?.try_into()?,
+            market_config_hash: parse_hash(stack, 5)?,
+            market_id: parse_hash(stack, 6)?,
+        })
+    }
+
+    pub fn decode_accounting(
+        stack: &TvmStackParser,
+    ) -> anyhow::Result<PredictionMarketAccountingV1> {
+        require_stack_len(stack, 11, "get_prediction_accounting")?;
+        Ok(PredictionMarketAccountingV1 {
+            participants: narrow_u32(stack, 0, "participants")?,
+            live_orders: narrow_u32(stack, 1, "live_orders")?,
+            fill_count: stack.u64(2)?,
+            complete_sets: stack.u64(3)?,
+            total_free: stack.u64(4)?,
+            locked: stack.u64(5)?,
+            final_backing: stack.u64(6)?,
+            remaining_payout: stack.u64(7)?,
+            claimed: stack.u64(8)?,
+            challenge_bond: stack.u64(9)?,
+            cleanup_liability: stack.u64(10)?,
+        })
+    }
+
+    pub fn decode_account(stack: &TvmStackParser) -> anyhow::Result<PredictionMarketAccountV1> {
+        require_stack_len(stack, 11, "get_prediction_account")?;
+        let mut owner = stack.slice(0)?;
+        Ok(PredictionMarketAccountV1 {
+            owner: MsgAddressInt::construct_from(&mut owner)?,
+            trading_pubkey: parse_hash(stack, 1)?,
+            key_epoch: narrow_u32(stack, 2, "key_epoch")?,
+            nonce_floor: stack.u64(3)?,
+            free_balance: stack.u64(4)?,
+            yes_lots: stack.u64(5)?,
+            no_lots: stack.u64(6)?,
+            live_orders: narrow_u32(stack, 7, "live_orders")?,
+            account_cleanup_credit: stack.u64(8)?,
+            order_cleanup_credit: stack.u64(9)?,
+            orders: stack.cell(10)?,
+        })
+    }
+
+    pub fn decode_order_state(
+        stack: &TvmStackParser,
+    ) -> anyhow::Result<Option<PredictionOrderStateV1>> {
+        require_stack_len(stack, 7, "get_prediction_order")?;
+        if !stack.bool(0)? {
+            return Ok(None);
+        }
+        let quantity_lots = stack.u64(2)?;
+        let filled_lots = stack.u64(3)?;
+        anyhow::ensure!(filled_lots <= quantity_lots, "order fill exceeds quantity");
+        Ok(Some(PredictionOrderStateV1 {
+            digest: parse_hash(stack, 1)?,
+            quantity_lots,
+            filled_lots,
+            valid_until: stack.u64(4)?,
+            cancelled: stack.bool(5)?,
+            cleanup_credit: stack.u64(6)?,
+        }))
+    }
+
+    pub fn decode_phase(stack: &TvmStackParser) -> anyhow::Result<PredictionMarketPhaseV1> {
+        require_stack_len(stack, 7, "get_market_phase")?;
+        Ok(PredictionMarketPhaseV1 {
+            status: stack.u64(0)?.try_into()?,
+            review_reason: narrow_u8(stack, 1, "review_reason")?,
+            final_outcome: stack.u64(2)?.try_into()?,
+            current_context_hash: parse_hash(stack, 3)?,
+            review_base_context_hash: parse_hash(stack, 4)?,
+            proposed_statement_hash: parse_hash(stack, 5)?,
+            next_deadline: stack.u64(6)?,
+        })
     }
 
     pub fn activate(query_id: u64) -> anyhow::Result<chain_block::Cell> {
@@ -665,6 +861,30 @@ impl PredictionMarketContractV1 {
     }
 }
 
+fn require_stack_len(stack: &TvmStackParser, expected: usize, method: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        stack.stack.len() == expected,
+        "{method} returned {} entries, expected {expected}",
+        stack.stack.len()
+    );
+    Ok(())
+}
+
+fn parse_hash(stack: &TvmStackParser, index: usize) -> anyhow::Result<[u8; 32]> {
+    stack
+        .number_bytes(index, 32)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("stack entry {index} is not a 256-bit value"))
+}
+
+fn narrow_u32(stack: &TvmStackParser, index: usize, field: &str) -> anyhow::Result<u32> {
+    u32::try_from(stack.u64(index)?).with_context(|| format!("{field} exceeds uint32"))
+}
+
+fn narrow_u8(stack: &TvmStackParser, index: usize, field: &str) -> anyhow::Result<u8> {
+    u8::try_from(stack.u64(index)?).with_context(|| format!("{field} exceeds uint8"))
+}
+
 fn validate_order(order: &PredictionOrderV1) -> anyhow::Result<()> {
     validate_address(&order.market_address, "order market")?;
     validate_address(&order.owner_address, "order owner")?;
@@ -874,6 +1094,20 @@ fn validate_public_key(public_key: [u8; 32]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::tvm_stack_parser::TvmStackParser;
+    use tl_api::tos::tvm::{
+        Number, StackEntry, numberdecimal::NumberDecimal, stackentry::StackEntryNumber,
+    };
+
+    fn number(value: impl Into<String>) -> StackEntry {
+        StackEntry::Tvm_StackEntryNumber(StackEntryNumber {
+            number: Number::Tvm_NumberDecimal(NumberDecimal { number: value.into() }),
+        })
+    }
+
+    fn hash_number(value: [u8; 32]) -> StackEntry {
+        number(format!("0x{}", hex::encode(value)))
+    }
 
     fn addr(value: &str) -> MsgAddressInt {
         value.parse().expect("canonical address")
@@ -933,5 +1167,98 @@ mod tests {
             hex::encode(signed.repr_hash().as_slice()),
             "870e05091bd091a61296b6226a51f795a49abb6113e21ac794e8fb60a9ee5f97"
         );
+    }
+
+    #[test]
+    fn decodes_strict_market_state_accounting_order_and_phase_stacks() {
+        let state = PredictionMarketContractV1::decode_state(&TvmStackParser::new(vec![
+            number("-1"),
+            number("1700000000"),
+            number("4"),
+            number("1"),
+            number("2"),
+            hash_number([0x11; 32]),
+            hash_number([0x22; 32]),
+        ]))
+        .unwrap();
+        assert!(state.activated);
+        assert_eq!(state.status, PredictionMarketStatusV1::Finalized);
+        assert_eq!(state.final_outcome, PredictionResolutionOutcomeV1::Invalid);
+
+        let accounting = PredictionMarketContractV1::decode_accounting(&TvmStackParser::new(
+            (1u64..=11).map(|value| number(value.to_string())).collect(),
+        ))
+        .unwrap();
+        assert_eq!(accounting.participants, 1);
+        assert_eq!(accounting.complete_sets, 4);
+        assert_eq!(accounting.cleanup_liability, 11);
+
+        let order = PredictionMarketContractV1::decode_order_state(&TvmStackParser::new(vec![
+            number("1"),
+            hash_number([0x33; 32]),
+            number("10"),
+            number("6"),
+            number("1700003600"),
+            number("-1"),
+            number("1000000"),
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(order.filled_lots, 6);
+        assert!(order.cancelled);
+        assert_eq!(order.cleanup_credit, 1_000_000);
+
+        let absent = PredictionMarketContractV1::decode_order_state(&TvmStackParser::new(vec![
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+            number("0"),
+        ]))
+        .unwrap();
+        assert_eq!(absent, None);
+
+        let phase = PredictionMarketContractV1::decode_phase(&TvmStackParser::new(vec![
+            number("3"),
+            number("1"),
+            number("0"),
+            hash_number([0x44; 32]),
+            hash_number([0x55; 32]),
+            hash_number([0x66; 32]),
+            number("1700007200"),
+        ]))
+        .unwrap();
+        assert_eq!(phase.status, PredictionMarketStatusV1::Reviewing);
+        assert_eq!(phase.current_context_hash, [0x44; 32]);
+    }
+
+    #[test]
+    fn rejects_abi_drift_and_impossible_order_state() {
+        let short = TvmStackParser::new(vec![number("0")]);
+        assert!(PredictionMarketContractV1::decode_state(&short).is_err());
+
+        let overfilled = TvmStackParser::new(vec![
+            number("1"),
+            hash_number([0x33; 32]),
+            number("5"),
+            number("6"),
+            number("1700003600"),
+            number("0"),
+            number("1000000"),
+        ]);
+        assert!(PredictionMarketContractV1::decode_order_state(&overfilled).is_err());
+
+        let unknown_status = TvmStackParser::new(vec![
+            number("1"),
+            number("1700000000"),
+            number("6"),
+            number("0"),
+            number("0"),
+            hash_number([0x11; 32]),
+            hash_number([0x22; 32]),
+        ]);
+        assert!(PredictionMarketContractV1::decode_state(&unknown_status).is_err());
     }
 }

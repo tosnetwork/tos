@@ -2445,6 +2445,30 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   return unpack_account(account);
 }
 
+;; Return a nonce record without making absence exceptional. Recovery and
+;; independent matchers must be able to distinguish an unused nonce from a
+;; bound/cancelled/partially-filled one using chain state alone.
+(int, int, int, int, int, int, int) get_prediction_order(slice owner, int epoch, int nonce) method_id {
+  require_standard_address(owner);
+  throw_unless(err::bad_nonce,
+    (epoch >= 0) & (epoch < (1 << 32)) & (nonce >= 0) & (nonce < (1 << 64)));
+  var (_, _, _, _, _, _, _, _, _, _, cell dictionaries) = load_state();
+  var (accounts, _, _, _) = load_dictionaries(dictionaries);
+  (cell account, int account_found) = find_account(accounts, owner);
+  if (~ account_found) {
+    return (0, 0, 0, 0, 0, 0, 0);
+  }
+  var (_, _, _, _, _, _, _, _, _, _, cell orders) = unpack_account(account);
+  (cell order_state, int order_found) =
+    orders.udict_get_ref?(96, order_key(epoch, nonce));
+  if (~ order_found) {
+    return (0, 0, 0, 0, 0, 0, 0);
+  }
+  (int digest, int quantity, int filled, int valid_until,
+    int cancelled, int cleanup_credit) = load_order_state(order_state);
+  return (1, digest, quantity, filled, valid_until, cancelled, cleanup_credit);
+}
+
 (int, int, int, int, int, int, int) get_market_phase() method_id {
   var (_, _, status, review_reason, final_outcome, _, market_id,
     cell config, _, cell resolution, _) = load_state();
