@@ -2302,9 +2302,10 @@ async fn load_agent_deploy_fee_schedule(
         };
         (gas, forwarding)
     };
-    let limits = match rpc_client.get_config_param(43).await? {
-        ConfigParamEnum::ConfigParam43(value) => value,
-        _ => anyhow::bail!("chain config parameter 43 is not a size-limits configuration"),
+    let limits = match rpc_client.get_optional_config_param(43).await? {
+        Some(ConfigParamEnum::ConfigParam43(value)) => value,
+        Some(_) => anyhow::bail!("chain config parameter 43 is not a size-limits configuration"),
+        None => SizeLimitsConfig::default(),
     };
     Ok(AgentDeployFeeSchedule { gas, forwarding, limits })
 }
