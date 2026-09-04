@@ -691,7 +691,7 @@ impl PredictionPrepareAgentCmd {
 
         let init = load_definition(&self.definition)?;
         let operation: OperationJson = load_json(&self.operation)?;
-        let built = build_operation(&init, operation)?;
+        let built = build_operation(&init, operation.clone())?;
         let semantic_kind =
             prediction_semantic_effect_kind(built.operation).with_context(|| {
                 format!("{} has no reviewed Prediction custody action", built.operation)
@@ -707,7 +707,7 @@ impl PredictionPrepareAgentCmd {
             format!("tvm-cell-sha256:{}", hex::encode(built.body.repr_hash().as_slice()));
         let path = Path::new(config_path);
         let (config, vault, rpc) = load_config_vault_rpc_client(path).await?;
-        let (market, _, _) = preflight_market(&rpc, &init, built.risk_increasing).await?;
+        let (market, _, checkpoint) = preflight_market(&rpc, &init, built.risk_increasing).await?;
         let market_code_hash = format!(
             "tvm-cell-sha256:{}",
             hex::encode(PredictionMarketContractV1::code()?.repr_hash().as_slice())
@@ -744,6 +744,16 @@ impl PredictionPrepareAgentCmd {
             .as_ref()
             .context("Agent Account is not deployed for this wallet")?
             .parse::<MsgAddressInt>()?;
+        validate_autonomous_operation_at_checkpoint(
+            &rpc,
+            &market,
+            &account,
+            &init,
+            &operation,
+            &checkpoint,
+            now,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc.clone());
         let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
         anyhow::ensure!(
@@ -1042,6 +1052,113 @@ async fn preflight_market(
         "deployed market id does not match --definition"
     );
     Ok((address, version, checkpoint))
+}
+
+async fn validate_autonomous_operation_at_checkpoint(
+    rpc: &Arc<ClientJsonRpc>,
+    market: &MsgAddressInt,
+    source: &MsgAddressInt,
+    init: &PredictionMarketInitV1,
+    operation: &OperationJson,
+    checkpoint: &MasterchainCheckpoint,
+    now: u64,
+) -> anyhow::Result<()> {
+    if !matches!(
+        operation,
+        OperationJson::ReportResult { .. }
+            | OperationJson::ChallengeResult { .. }
+            | OperationJson::FinalizeUncontested { .. }
+            | OperationJson::FinalizeReviewTimeout { .. }
+    ) {
+        return Ok(());
+    }
+    let provider = DefaultChainProvider::new(rpc.clone());
+    let phase = PredictionMarketContractV1::decode_phase(
+        &provider
+            .run_get_method_at(market.to_string(), "get_market_phase", vec![], checkpoint)
+            .await?,
+    )?;
+    validate_autonomous_operation_phase(source, init, operation, &phase, now)
+}
+
+fn validate_autonomous_operation_phase(
+    source: &MsgAddressInt,
+    init: &PredictionMarketInitV1,
+    operation: &OperationJson,
+    phase: &contracts::PredictionMarketPhaseV1,
+    now: u64,
+) -> anyhow::Result<()> {
+    match operation {
+        OperationJson::ReportResult {
+            round,
+            expected_round_context_hash,
+            statement_created_at,
+            statement_expiry,
+            ..
+        } => {
+            let expected = parse_hash("expected_round_context_hash", expected_round_context_hash)?;
+            anyhow::ensure!(
+                phase.current_context_hash != [0; 32] && phase.current_context_hash == expected,
+                "report authorization requires the exact opened round context"
+            );
+            let (wanted_status, reporters) = match round {
+                0 => (
+                    contracts::PredictionMarketStatusV1::Reporting,
+                    &init.normal_oracle_policy.reporters,
+                ),
+                1 => (
+                    contracts::PredictionMarketStatusV1::Reviewing,
+                    &init.appellate_oracle_policy.reporters,
+                ),
+                _ => anyhow::bail!("report round must be NORMAL=0 or APPEAL=1"),
+            };
+            anyhow::ensure!(
+                phase.status == wanted_status && reporters.iter().any(|value| value == source),
+                "source Agent Account is not an admitted reporter for the current round"
+            );
+            anyhow::ensure!(
+                *statement_created_at <= now
+                    && now < *statement_expiry
+                    && *statement_expiry <= phase.next_deadline,
+                "report statement time is outside the opened round"
+            );
+        }
+        OperationJson::ChallengeResult { expected_proposed_statement_hash, .. } => {
+            anyhow::ensure!(
+                phase.status == contracts::PredictionMarketStatusV1::Proposed
+                    && phase.proposed_statement_hash != [0; 32]
+                    && phase.proposed_statement_hash
+                        == parse_hash(
+                            "expected_proposed_statement_hash",
+                            expected_proposed_statement_hash,
+                        )?
+                    && now < phase.next_deadline,
+                "challenge authorization requires the exact live proposal"
+            );
+        }
+        OperationJson::FinalizeUncontested { .. } => {
+            anyhow::ensure!(
+                phase.status == contracts::PredictionMarketStatusV1::Proposed
+                    && now >= phase.next_deadline,
+                "uncontested finalize authorization is not yet executable"
+            );
+        }
+        OperationJson::FinalizeReviewTimeout { expected_review_base_context_hash, .. } => {
+            anyhow::ensure!(
+                phase.status == contracts::PredictionMarketStatusV1::Reviewing
+                    && phase.review_base_context_hash != [0; 32]
+                    && phase.review_base_context_hash
+                        == parse_hash(
+                            "expected_review_base_context_hash",
+                            expected_review_base_context_hash,
+                        )?
+                    && now >= phase.next_deadline,
+                "review-timeout finalize authorization requires the exact expired review"
+            );
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn build_operation(
@@ -1646,6 +1763,142 @@ mod tests {
         assert_eq!(top_up.body, PredictionMarketContractV1::top_up_reserve(3).unwrap());
         assert_eq!(top_up.body.references_count(), 0);
         assert!(!top_up.risk_increasing);
+    }
+
+    fn test_phase(
+        status: contracts::PredictionMarketStatusV1,
+    ) -> contracts::PredictionMarketPhaseV1 {
+        contracts::PredictionMarketPhaseV1 {
+            status,
+            review_reason: 0,
+            final_outcome: contracts::PredictionResolutionOutcomeV1::Invalid,
+            current_context_hash: [0x44; 32],
+            review_base_context_hash: [0x55; 32],
+            proposed_statement_hash: [0x66; 32],
+            next_deadline: 200,
+        }
+    }
+
+    fn report_operation(round: u8, context: [u8; 32]) -> OperationJson {
+        OperationJson::ReportResult {
+            query_id: 1,
+            round,
+            expected_round_context_hash: hex::encode(context),
+            outcome: 0,
+            evidence_root: "77".repeat(32),
+            statement_created_at: 140,
+            statement_expiry: 190,
+        }
+    }
+
+    #[test]
+    fn autonomous_report_authorization_is_bound_to_open_round_and_reporter() {
+        let init = test_init();
+        let normal = &init.normal_oracle_policy.reporters[0];
+        let appellate = &init.appellate_oracle_policy.reporters[0];
+        let reporting = test_phase(contracts::PredictionMarketStatusV1::Reporting);
+        let report = report_operation(0, [0x44; 32]);
+
+        validate_autonomous_operation_phase(normal, &init, &report, &reporting, 150).unwrap();
+        assert!(
+            validate_autonomous_operation_phase(appellate, &init, &report, &reporting, 150)
+                .is_err()
+        );
+        assert!(
+            validate_autonomous_operation_phase(
+                normal,
+                &init,
+                &report_operation(0, [0x45; 32]),
+                &reporting,
+                150
+            )
+            .is_err()
+        );
+
+        let mut unopened = reporting.clone();
+        unopened.current_context_hash = [0; 32];
+        assert!(
+            validate_autonomous_operation_phase(normal, &init, &report, &unopened, 150).is_err()
+        );
+
+        let mut bad_time = report_operation(0, [0x44; 32]);
+        if let OperationJson::ReportResult { statement_created_at, .. } = &mut bad_time {
+            *statement_created_at = 151;
+        }
+        assert!(
+            validate_autonomous_operation_phase(normal, &init, &bad_time, &reporting, 150).is_err()
+        );
+        let mut bad_expiry = report_operation(0, [0x44; 32]);
+        if let OperationJson::ReportResult { statement_expiry, .. } = &mut bad_expiry {
+            *statement_expiry = 201;
+        }
+        assert!(
+            validate_autonomous_operation_phase(normal, &init, &bad_expiry, &reporting, 150)
+                .is_err()
+        );
+
+        let reviewing = test_phase(contracts::PredictionMarketStatusV1::Reviewing);
+        validate_autonomous_operation_phase(
+            appellate,
+            &init,
+            &report_operation(1, [0x44; 32]),
+            &reviewing,
+            150,
+        )
+        .unwrap();
+        assert!(
+            validate_autonomous_operation_phase(
+                normal,
+                &init,
+                &report_operation(1, [0x44; 32]),
+                &reviewing,
+                150,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn autonomous_resolution_authorization_enforces_time_and_hash_boundaries() {
+        let init = test_init();
+        let source = &init.normal_oracle_policy.reporters[0];
+        let proposed = test_phase(contracts::PredictionMarketStatusV1::Proposed);
+        let challenge = OperationJson::ChallengeResult {
+            query_id: 2,
+            expected_proposed_statement_hash: "66".repeat(32),
+            counter_outcome: 1,
+            counter_evidence_root: "77".repeat(32),
+        };
+        validate_autonomous_operation_phase(source, &init, &challenge, &proposed, 199).unwrap();
+        assert!(
+            validate_autonomous_operation_phase(source, &init, &challenge, &proposed, 200).is_err()
+        );
+
+        let finalize = OperationJson::FinalizeUncontested { query_id: 3 };
+        assert!(
+            validate_autonomous_operation_phase(source, &init, &finalize, &proposed, 199).is_err()
+        );
+        validate_autonomous_operation_phase(source, &init, &finalize, &proposed, 200).unwrap();
+
+        let reviewing = test_phase(contracts::PredictionMarketStatusV1::Reviewing);
+        let review_timeout = OperationJson::FinalizeReviewTimeout {
+            query_id: 4,
+            expected_review_base_context_hash: "55".repeat(32),
+        };
+        assert!(
+            validate_autonomous_operation_phase(source, &init, &review_timeout, &reviewing, 199,)
+                .is_err()
+        );
+        validate_autonomous_operation_phase(source, &init, &review_timeout, &reviewing, 200)
+            .unwrap();
+        let wrong_review = OperationJson::FinalizeReviewTimeout {
+            query_id: 5,
+            expected_review_base_context_hash: "56".repeat(32),
+        };
+        assert!(
+            validate_autonomous_operation_phase(source, &init, &wrong_review, &reviewing, 200,)
+                .is_err()
+        );
     }
 
     #[test]
