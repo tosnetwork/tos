@@ -5711,7 +5711,7 @@ impl AgentAccountEconomicEffectBroadcastCmd {
             .context("custody effect has no full network-domain pin")?;
         validate_exact_boc_before_broadcast(&boc)?;
         rpc_client.verify_pinned_primary_network(network_domain).await?;
-        journal.begin_broadcast(&record.claim, time_format::now())?;
+        journal.begin_or_resume_exact_broadcast(&record.claim, time_format::now())?;
         let submission = rpc_client.submit_exact_boc_pinned(&boc, network_domain).await?;
         if submission.status == ExactBocSubmissionStatus::Accepted {
             println!(
@@ -9447,7 +9447,7 @@ fn open_controller_journal(config_path: &Path) -> anyhow::Result<AgentAccountCus
     AgentAccountCustodyJournal::open(directory)
 }
 
-fn open_economic_controller_journal(
+pub(crate) fn open_economic_controller_journal(
     _config_path: &Path,
     explicit_directory: Option<&str>,
     pinned_directory: Option<&str>,

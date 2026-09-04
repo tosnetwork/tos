@@ -130,6 +130,40 @@ contribution, operation budget, and any excess reserve donation. First-time
 order-record contribution; if records already exist, the disclosed excess is
 a reserve donation.
 
+## Agent Account V2 custody path
+
+Autonomous OpenFox execution uses `prepare-agent`, not the direct-wallet
+`prepare` output. The command accepts the dedicated
+`PredictionCustodyEffectAuthorizationV1` JSON, checks its owner-pinned authority
+signature in the shared controller custody journal, and requires the deployed
+source to have the audited Agent Account V2 code hash. It also verifies the
+full network domain, deployed market code, market ID/config hash, exact body
+cell hash, value, action kind and expiry before reserving the controller seqno.
+
+```sh
+tosctl agent prediction prepare-agent \
+  --definition /absolute/market.json \
+  --operation /absolute/match.json \
+  --wallet solver-agent \
+  --amount-nanotos 1000000000 \
+  --fee-reserve-nanotos 100000000 \
+  --valid-until 1800000000 \
+  --authorization-file /absolute/prediction-custody-authorization.json \
+  --output-boc /absolute/prediction-action.boc \
+  --yes
+```
+
+The signed payload is always `checked_contract_call_v2` (`0x41475007`) with
+flags `3`, one exact body reference, and no StateInit. The exact external BOC is
+persisted in custody before it is exposed. Prediction and Agreement actions use
+the same journal and therefore cannot reserve the same Agent Account seqno.
+
+The closed custody action mapping rejects pruning and account-force-close
+operations because no corresponding V1 semantic action is frozen for them.
+They remain permissionless/manual keeper operations; a future autonomous
+mapping requires a reviewed additive semantic entry rather than prefix-based
+acceptance.
+
 ## Order authorization
 
 `build-order` requires the market definition, so the global ID, workchain,

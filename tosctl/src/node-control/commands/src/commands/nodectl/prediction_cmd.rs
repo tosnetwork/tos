@@ -9,7 +9,7 @@
 //! durable before any optional broadcast so the same bytes can be retried
 //! after a crash without rebuilding against a different wallet seqno.
 
-use super::agent_cmd::build_wallet_message_boc;
+use super::agent_cmd::{build_wallet_message_boc, confirm, open_economic_controller_journal};
 use super::utils::{get_wallet_config, load_config_vault_rpc_client, make_wallet, wallet_info};
 use anyhow::Context;
 use base64::Engine;
@@ -17,14 +17,18 @@ use chain_block::{
     Cell, ConfigParamEnum, MsgAddressInt, Serializable, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountState};
+use common::time_format;
 use contracts::{
-    ChainProvider, DefaultChainProvider, MasterchainCheckpoint, PREDICTION_MARKET_CODE_VERSION,
-    PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1, PredictionMarketContractV1,
-    PredictionMarketInitV1, PredictionOraclePolicyV1, PredictionOrderActionV1,
-    PredictionOrderOutcomeV1, PredictionOrderV1, Wallet,
+    AgentAccountContract, AgentCheckedContractCallV2, ChainProvider, ControllerActionClaim,
+    ControllerActionStatus, DefaultChainProvider, EconomicEffectAuthorization,
+    MasterchainCheckpoint, PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE,
+    PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
+    PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
+    Wallet,
 };
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::ErrorKind,
@@ -56,6 +60,8 @@ enum PredictionAction {
     PrepareDeploy(PredictionPrepareDeployCmd),
     /// Build and durably persist a signed operation external BOC
     Prepare(PredictionPrepareCmd),
+    /// Prepare a custody-authorized Agent Account V2 checked call
+    PrepareAgent(PredictionPrepareAgentCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -112,6 +118,30 @@ struct PredictionPrepareCmd {
     amount_nanotos: u64,
     #[arg(long, help = "New or byte-identical raw external-message BOC path")]
     output_boc: PathBuf,
+}
+
+#[derive(clap::Args, Clone)]
+struct PredictionPrepareAgentCmd {
+    #[arg(long)]
+    definition: PathBuf,
+    #[arg(long)]
+    operation: PathBuf,
+    #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
+    wallet: String,
+    #[arg(long, help = "Exact message value in nanoTOS")]
+    amount_nanotos: u64,
+    #[arg(long, help = "Conservative Agent Account source fee reserve")]
+    fee_reserve_nanotos: u64,
+    #[arg(long)]
+    valid_until: u32,
+    #[arg(long = "authorization-file", help = "Absolute Prediction custody authorization JSON")]
+    authorization_file: PathBuf,
+    #[arg(long, help = "New or byte-identical raw external-message BOC path")]
+    output_boc: PathBuf,
+    #[arg(long)]
+    yes: bool,
+    #[arg(long, help = "Optional explicit owner-private custody journal directory")]
+    journal_directory: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -332,6 +362,7 @@ impl PredictionCmd {
             PredictionAction::Show(cmd) => cmd.run(config_path).await,
             PredictionAction::PrepareDeploy(cmd) => cmd.run(config_path).await,
             PredictionAction::Prepare(cmd) => cmd.run(config_path).await,
+            PredictionAction::PrepareAgent(cmd) => cmd.run(config_path).await,
         }
     }
 }
@@ -572,6 +603,315 @@ impl PredictionPrepareCmd {
             &boc,
             &self.output_boc,
         )
+    }
+}
+
+impl PredictionPrepareAgentCmd {
+    async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let now = time_format::now();
+        anyhow::ensure!(
+            now <= u64::from(u32::MAX),
+            "current chain-operation time cannot be represented by Agent Account V2"
+        );
+        anyhow::ensure!(
+            self.valid_until > now as u32,
+            "valid_until must be a future Unix timestamp"
+        );
+        anyhow::ensure!(
+            self.authorization_file.is_absolute(),
+            "authorization-file must be absolute"
+        );
+        let metadata = fs::symlink_metadata(&self.authorization_file)
+            .context("inspect Prediction custody authorization file")?;
+        anyhow::ensure!(
+            metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && metadata.len() > 0
+                && metadata.len() <= 64 << 10,
+            "Prediction custody authorization must be a bounded regular file"
+        );
+        let authorization: EconomicEffectAuthorization =
+            serde_json::from_slice(&fs::read(&self.authorization_file)?)
+                .context("decode PredictionCustodyEffectAuthorizationV1")?;
+
+        let init = load_definition(&self.definition)?;
+        let operation: OperationJson = load_json(&self.operation)?;
+        let built = build_operation(&init, operation)?;
+        let semantic_kind =
+            prediction_semantic_effect_kind(built.operation).with_context(|| {
+                format!("{} has no reviewed Prediction custody action", built.operation)
+            })?;
+        anyhow::ensure!(
+            self.amount_nanotos >= built.minimum_value,
+            "message value {} is below {} minimum {}",
+            self.amount_nanotos,
+            built.operation,
+            built.minimum_value
+        );
+        let body_hash =
+            format!("tvm-cell-sha256:{}", hex::encode(built.body.repr_hash().as_slice()));
+        let path = Path::new(config_path);
+        let (config, vault, rpc) = load_config_vault_rpc_client(path).await?;
+        let (market, _, _) = preflight_market(&rpc, &init, built.risk_increasing).await?;
+        let market_code_hash = format!(
+            "tvm-cell-sha256:{}",
+            hex::encode(PredictionMarketContractV1::code()?.repr_hash().as_slice())
+        );
+        let market_config_hash = format!(
+            "tvm-cell-sha256:{}",
+            hex::encode(PredictionMarketContractV1::market_config_hash(&init)?)
+        );
+        let market_id =
+            format!("sha256:{}", hex::encode(PredictionMarketContractV1::market_id(&init)?));
+
+        let agent_wallet = config
+            .agent_wallets
+            .get(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let runtime = agent_wallet
+            .runtime
+            .as_ref()
+            .context("Agent Wallet has no owner-pinned runtime authority")?;
+        let expected_authority_id = runtime
+            .economic_authority_id
+            .as_deref()
+            .context("runtime has no economic_authority_id")?;
+        let expected_key: [u8; 32] = hex::decode(
+            runtime
+                .economic_authority_public_key_hex
+                .as_deref()
+                .context("runtime has no economic_authority_public_key")?,
+        )?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("pinned economic authority key must be 32 bytes"))?;
+        let account = agent_wallet
+            .agent_account_address
+            .as_ref()
+            .context("Agent Account is not deployed for this wallet")?
+            .parse::<MsgAddressInt>()?;
+        let provider = contracts::contract_provider!(rpc.clone());
+        let data = AgentAccountContract::get_data(provider.as_ref(), &account).await?;
+        anyhow::ensure!(
+            u128::from(self.valid_until)
+                <= u128::from(now) + u128::from(data.default_task_timeout_secs),
+            "valid_until exceeds the Agent Account default_task_timeout"
+        );
+        let spent_after = data
+            .spent_today
+            .checked_add(self.amount_nanotos)
+            .context("Agent Account daily spend would overflow")?;
+        anyhow::ensure!(
+            self.amount_nanotos <= data.max_per_tx && spent_after <= data.daily_limit,
+            "Prediction effect exceeds Agent Account policy limits"
+        );
+        let required_source_balance = self
+            .amount_nanotos
+            .checked_add(self.fee_reserve_nanotos)
+            .context("Prediction effect source balance requirement overflows")?;
+        let account_info = rpc.get_address_information(&account).await?;
+        anyhow::ensure!(
+            account_info.state == AccountState::Active
+                && account_info.balance >= required_source_balance,
+            "Agent Account is inactive or lacks effect value plus fee reserve"
+        );
+        let deployed_source_code =
+            account_info.code.as_ref().context("Agent Account has no deployed code")?;
+        let source_code = read_single_root_boc(deployed_source_code)?;
+        let expected_source_code = AgentAccountContract::v2_code()?;
+        anyhow::ensure!(
+            source_code.repr_hash() == expected_source_code.repr_hash(),
+            "Prediction custody requires the audited Agent Account V2 code"
+        );
+        let source_code_hash =
+            format!("tvm-cell-sha256:{}", hex::encode(expected_source_code.repr_hash().as_slice()));
+        let global_id = match rpc.get_config_param(19).await? {
+            ConfigParamEnum::ConfigParam19(value) => value as i32,
+            _ => anyhow::bail!("chain config parameter 19 is not a global ID"),
+        };
+        let network = authorization
+            .network_domain
+            .as_ref()
+            .context("Prediction custody authorization has no network-domain pin")?;
+        anyhow::ensure!(
+            network.global_id == global_id
+                && network.workchain_id == account.workchain_id()
+                && market.workchain_id() == network.workchain_id,
+            "Prediction custody network domain conflicts with source or market"
+        );
+        rpc.verify_pinned_primary_network(network).await?;
+        anyhow::ensure!(
+            authorization.profile == "tos.prediction.checked-call.v1"
+                && authorization.authority_id == expected_authority_id
+                && authorization.public_key == format!("ed25519:{}", hex::encode(expected_key))
+                && authorization.source_account == account.to_string()
+                && authorization.source_agent_account_code_hash == source_code_hash
+                && authorization.action_kind == semantic_kind
+                && authorization.effect_kind == semantic_kind
+                && authorization.destination == market.to_string()
+                && authorization.market_address == market.to_string()
+                && authorization.market_id == market_id
+                && authorization.market_config_hash == market_config_hash
+                && authorization.market_code_hash == market_code_hash
+                && authorization.amount_nanotos == self.amount_nanotos
+                && authorization.body_hash == body_hash
+                && authorization.expires_at_unix >= u64::from(self.valid_until),
+            "command effect differs from the owner-pinned Prediction authorization"
+        );
+
+        let secret = agent_wallet.controller_key.read_secret(Some(vault)).await?;
+        let keypair = secret.as_keypair()?;
+        let controller_pubkey: [u8; 32] = keypair
+            .public_key()
+            .await?
+            .context("controller secret has no public key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("controller public key must be 32 bytes"))?;
+        anyhow::ensure!(
+            controller_pubkey == data.controller_pubkey,
+            "configured controller key does not match the Agent Account"
+        );
+        let stable_hex = authorization
+            .stable_action_id
+            .strip_prefix("sha256:")
+            .context("Prediction stable action ID is not canonical")?;
+        parse_fixed_hex::<32>("stable_action_id", stable_hex)?;
+        if !self.yes
+            && !confirm(&format!(
+                "Authorize Prediction effect {} ({}) from {} to {}?",
+                authorization.stable_action_id, semantic_kind, account, market
+            ))?
+        {
+            anyhow::bail!("owner declined Prediction effect authorization");
+        }
+        let journal = open_economic_controller_journal(
+            path,
+            self.journal_directory.as_deref(),
+            runtime.economic_custody_journal_directory.as_deref(),
+        )?;
+        let deployment_id = hex::encode(data.deployment_id);
+        journal.reconcile_finalized_state(
+            &account.to_string(),
+            global_id,
+            &deployment_id,
+            data.controller_epoch,
+            data.seqno,
+            now,
+        )?;
+        let claim = ControllerActionClaim {
+            account: account.to_string(),
+            network_global_id: global_id,
+            network_domain: Some(network.clone()),
+            deployment_id,
+            controller_epoch: data.controller_epoch,
+            seqno: data.seqno,
+            target: market.to_string(),
+            value_atomic: self.amount_nanotos,
+            body_hash: Some(body_hash.clone()),
+            state_init_hash: None,
+            action_kind: "agent-checked-contract-call-v2".into(),
+            idempotency_key: stable_hex.to_owned(),
+            action_identity: authorization.stable_action_id.clone(),
+            valid_until: self.valid_until,
+        };
+        let (record, _) = journal.claim_prediction_effect(
+            claim.clone(),
+            authorization.clone(),
+            expected_authority_id,
+            expected_key,
+            now,
+        )?;
+        anyhow::ensure!(
+            record.status != ControllerActionStatus::Resolved,
+            "Prediction effect sequence was consumed; resolve before retry"
+        );
+        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
+            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        } else {
+            let payload = AgentAccountContract::build_checked_contract_call_v2_payload(
+                global_id,
+                data.controller_epoch,
+                data.seqno,
+                self.valid_until,
+                &AgentCheckedContractCallV2 {
+                    target: market.clone(),
+                    value: self.amount_nanotos,
+                    body: built.body,
+                },
+            )?;
+            let hash =
+                AgentAccountContract::controller_hash_to_sign(&account, global_id, &payload)?;
+            let signature: [u8; 64] = keypair
+                .sign(&hash)
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("controller signature must be 64 bytes"))?;
+            let signed =
+                AgentAccountContract::build_signed_controller_message(payload, &signature)?;
+            let message =
+                AgentAccountContract::build_external_controller_message(account.clone(), signed)?;
+            let boc = write_boc(&message)?;
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            journal.attach_signed_boc(
+                &claim,
+                &base64::engine::general_purpose::STANDARD.encode(&boc),
+                &digest,
+                now,
+            )?;
+            boc
+        };
+        persist_exact(&self.output_boc, &boc)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "schema": "tosctl.prediction-agent-effect-prepared.v1",
+                "stable_action_id": authorization.stable_action_id,
+                "action_kind": authorization.action_kind,
+                "source": account.to_string(),
+                "source_agent_account_code_hash": source_code_hash,
+                "destination": market.to_string(),
+                "market_id": market_id,
+                "market_config_hash": market_config_hash,
+                "market_code_hash": market_code_hash,
+                "amount_nanotos": self.amount_nanotos,
+                "body_hash": body_hash,
+                "controller_epoch": data.controller_epoch,
+                "seqno": data.seqno,
+                "valid_until": self.valid_until,
+                "network_domain": network,
+                "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
+                "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
+                "output_boc": self.output_boc,
+                "broadcast": false,
+            }))?
+        );
+        Ok(())
+    }
+}
+
+fn prediction_semantic_effect_kind(operation: &str) -> Option<&'static str> {
+    match operation {
+        "register_and_deposit" | "deposit" => Some("prediction.collateral.deposit"),
+        "set_trading_key" => Some("prediction.trading-key.rotate"),
+        "raise_nonce_floor" => Some("prediction.order.nonce-floor.raise"),
+        "cancel_exact" => Some("prediction.order.cancel-exact"),
+        "split" => Some("prediction.position.split"),
+        "merge" => Some("prediction.position.merge"),
+        "match_pair" => Some("prediction.match.submit"),
+        "report_result" => Some("prediction.resolution.report"),
+        "challenge_result" => Some("prediction.resolution.challenge"),
+        "advance_phase" => Some("prediction.market.advance-phase"),
+        "finalize_uncontested" | "finalize_review_timeout" => {
+            Some("prediction.resolution.finalize")
+        }
+        "claim" => Some("prediction.position.claim"),
+        "withdraw" => Some("prediction.collateral.withdraw"),
+        "withdraw_challenge_bond" | "force_refund_challenge_bond" => {
+            Some("prediction.challenge-bond.withdraw")
+        }
+        "compact_terminal" => Some("prediction.market.compact"),
+        "withdraw_terminal_surplus" => Some("prediction.terminal-surplus.withdraw"),
+        "top_up_reserve" => Some("prediction.reserve.top-up"),
+        _ => None,
     }
 }
 
@@ -1272,6 +1612,21 @@ mod tests {
         assert!(validate_global_version(15, true).is_ok());
         assert!(validate_global_version(16, true).is_err());
         assert!(validate_global_version(16, false).is_ok());
+    }
+
+    #[test]
+    fn custody_action_dispatch_is_closed_and_never_prefix_based() {
+        assert_eq!(prediction_semantic_effect_kind("match_pair"), Some("prediction.match.submit"));
+        assert_eq!(
+            prediction_semantic_effect_kind("register_and_deposit"),
+            Some("prediction.collateral.deposit")
+        );
+        assert_eq!(
+            prediction_semantic_effect_kind("finalize_review_timeout"),
+            Some("prediction.resolution.finalize")
+        );
+        assert_eq!(prediction_semantic_effect_kind("prune_order"), None);
+        assert_eq!(prediction_semantic_effect_kind("prediction.future.action"), None);
     }
 
     #[test]
