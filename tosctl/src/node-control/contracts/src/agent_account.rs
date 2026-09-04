@@ -30,6 +30,9 @@ pub const AGENT_SPONSORSHIP_PAYMENT_COMMITMENT_TAG: u32 = 0x5350_4e31; // "SPN1"
 /// Largest Coins value whose controller payload still fits beside the
 /// 512-bit signature in the frozen single-cell external-message layout.
 pub const AGENT_ACCOUNT_MAX_ACTION_VALUE: u64 = (1u64 << 48) - 1;
+/// Compute-gas reserve used by the on-chain controller-action admission gate.
+/// Off-chain callers that preflight account funding must use this same bound.
+pub const AGENT_ACCOUNT_MAX_ACTION_GAS: u64 = 30_000;
 pub const AGENT_CONTROLLER_SIGNATURE_DOMAIN: &str =
     "ede715a9852fbba2c3c234ed0d27329ae34d6263a82cfb6215da87c91683b471";
 

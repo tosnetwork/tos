@@ -11,9 +11,9 @@ use chain_block::{
     ed25519_create_private_key,
 };
 use contracts::{
-    AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE, AgentAccountContract,
-    AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend, TaskEscrowContract,
-    TaskEscrowInit,
+    AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE,
+    AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend,
+    TaskEscrowContract, TaskEscrowInit,
 };
 use tos_sandbox::{
     Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
@@ -21,11 +21,6 @@ use tos_sandbox::{
 
 const TOS: u64 = 1_000_000_000;
 const GLOBAL_ID: i32 = 42;
-/// Compute-gas budget the contract reserves for one controller action
-/// (`max_action_gas` in the FunC source). Tests pin that real executions stay
-/// well inside it, otherwise the fee reserve would no longer be a guarantee.
-const MAX_ACTION_GAS: u64 = 30_000;
-
 fn compute_gas_used(result: &SendResult) -> u64 {
     match result.read_primary_description().compute_ph {
         TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
@@ -510,7 +505,7 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     result.expect_success().expect_out_msgs(1);
     let gas_used = compute_gas_used(&result);
     assert!(
-        gas_used * 3 <= MAX_ACTION_GAS * 2,
+        gas_used * 3 <= AGENT_ACCOUNT_MAX_ACTION_GAS * 2,
         "reserved compute budget must keep at least 1.5x margin over real usage ({gas_used} gas)"
     );
     assert_eq!(fixture.seqno(), 1);
