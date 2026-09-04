@@ -14,7 +14,8 @@ use std::mem;
 
 use chain_block::{
     tos_method_id, Account, ConfigParams, CurrencyCollection, Deserializable, McStateExtra,
-    MerkleProof, Message, MsgAddressInt, Serializable, ShardIdent, ShardStateUnsplit, Transaction,
+    MerkleProof, Message, MsgAddressInt, Serializable, ShardIdent, ShardStateUnsplit,
+    SizeLimitsConfig, Transaction,
 };
 use tos_executor::{
     BlockchainConfig, ExecuteParams, OrdinaryTransactionExecutor, TransactionExecutor,
@@ -168,6 +169,19 @@ impl Blockchain {
     /// action code 36; masterchain (`-1`) destinations skip that check.
     pub fn set_workchain(&mut self, workchain: i8) {
         self.workchain = workchain;
+    }
+
+    /// Replace the message-size limits on the running chain. Later
+    /// transactions see the new value in both executor caches and c7.
+    pub fn set_size_limits_config(&mut self, limits: SizeLimitsConfig) -> SandboxResult<()> {
+        let mut config = self.config.clone();
+        config
+            .set_size_limits_config(limits)
+            .map_err(|e| SandboxError::ConfigError(format!("failed to set size limits: {e}")))?;
+        let mc_state_cell = Self::build_mc_state_cell(config.raw_config())?;
+        self.config = config;
+        self.mc_state_cell = mc_state_cell;
+        Ok(())
     }
 
     pub fn treasury(&mut self, name: &str, balance: u64) -> SandboxResult<Treasury> {

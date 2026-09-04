@@ -6,12 +6,14 @@
  */
 
 use chain_block::{
-    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData,
+    BuilderData, Cell, Coins, CurrencyCollection, Deserializable, IBitstring, MerkleProof,
+    MsgAddressInt, Serializable, SizeLimitsConfig, SliceData, TickTock, TrComputePhase,
     ed25519_create_private_key,
 };
 use contracts::{
     AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE, AgentAccountContract,
-    AgentAccountInit, AgentAccountPolicyUpdate, TaskEscrowContract, TaskEscrowInit,
+    AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend, TaskEscrowContract,
+    TaskEscrowInit,
 };
 use tos_sandbox::{
     Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
@@ -19,6 +21,49 @@ use tos_sandbox::{
 
 const TOS: u64 = 1_000_000_000;
 const GLOBAL_ID: i32 = 42;
+/// Compute-gas budget the contract reserves for one controller action
+/// (`max_action_gas` in the FunC source). Tests pin that real executions stay
+/// well inside it, otherwise the fee reserve would no longer be a guarantee.
+const MAX_ACTION_GAS: u64 = 30_000;
+
+fn compute_gas_used(result: &SendResult) -> u64 {
+    match result.read_primary_description().compute_ph {
+        TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
+        TrComputePhase::Skipped(skipped) => {
+            panic!("compute phase was skipped: {:?}", skipped.reason)
+        }
+    }
+}
+
+/// Builds a deploy-send payload without the client-side shape validation of
+/// `AgentAccountContract::build_deploy_send_payload`, to exercise the
+/// contract's own rejection of unsupported requests.
+fn raw_deploy_payload(
+    seqno: u32,
+    valid_until: u32,
+    target: &MsgAddressInt,
+    value: u64,
+    state_cell: Cell,
+    body: Cell,
+) -> Cell {
+    let mut payload = BuilderData::new();
+    payload
+        .append_u32(contracts::AGENT_DEPLOY_SEND_OPCODE)
+        .expect("opcode")
+        .append_i32(GLOBAL_ID)
+        .expect("network")
+        .append_u64(0)
+        .expect("epoch")
+        .append_u32(seqno)
+        .expect("seqno")
+        .append_u32(valid_until)
+        .expect("expiry");
+    target.write_to(&mut payload).expect("target");
+    Coins::new(value).write_to(&mut payload).expect("value");
+    payload.checked_append_reference(state_cell).expect("StateInit ref");
+    payload.checked_append_reference(body).expect("body ref");
+    payload.into_cell().expect("payload")
+}
 
 #[test]
 fn source_compiles_to_the_embedded_final_interface() {
@@ -56,8 +101,18 @@ impl Fixture {
     /// different values here to actually deploy to different addresses,
     /// which the cross-account replay test below depends on.
     fn with_controller_and_limit(controller_secret: [u8; 32], max_per_tx: u64) -> Self {
-        // Agent Account pins the minimum supported TVM global version.
-        let mut bc = Blockchain::with_global_version(4).expect("blockchain");
+        Self::with_controller_limit_and_funding(controller_secret, max_per_tx, 20 * TOS)
+    }
+
+    fn with_controller_limit_and_funding(
+        controller_secret: [u8; 32],
+        max_per_tx: u64,
+        funding: u64,
+    ) -> Self {
+        // Agent Account pins the minimum supported TVM global version: the
+        // fee reserve relies on the version-6 GETFORWARDFEE / GETGASFEE
+        // primitives (the genesis configuration activates version 14).
+        let mut bc = Blockchain::with_global_version(6).expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
         let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
@@ -74,7 +129,7 @@ impl Fixture {
             service_endpoint_hash: None,
         };
         let account = AgentAccountContract::calculate_address(-1, &init).expect("address");
-        let deploy = MessageBuilder::internal(owner.address(), &account, 20 * TOS)
+        let deploy = MessageBuilder::internal(owner.address(), &account, funding)
             .bounce(false)
             .state_init(AgentAccountContract::build_state_init(&init).expect("state init"))
             .body(Cell::default())
@@ -176,10 +231,7 @@ impl Fixture {
             self.controller_epoch() as u64,
             seqno,
             valid_until,
-            target,
-            value,
-            state_init,
-            body,
+            &AgentDeploySend { target: target.clone(), value, state_init, body },
         )
         .expect("deploy payload");
         self.sign_payload(secret, GLOBAL_ID, payload)
@@ -206,6 +258,13 @@ impl Fixture {
         let body = SliceData::load_cell(body).expect("body slice");
         let message = MessageBuilder::external(&self.account).body_slice(body).build();
         self.bc.send_message(message)
+    }
+
+    fn expect_external_rejected(&mut self, body: Cell) {
+        assert!(
+            self.send_external(body).is_err(),
+            "external message must be rejected before acceptance"
+        );
     }
 
     fn expect_external_exit(&mut self, body: Cell, exit_code: i32) {
@@ -243,6 +302,13 @@ impl Fixture {
             .int_at(11)
     }
 
+    fn balance(&self) -> u64 {
+        self.bc
+            .get_account(&self.account)
+            .and_then(|account| account.balance().and_then(|balance| balance.coins.as_u64()))
+            .expect("agent account balance")
+    }
+
     fn policy(&self) -> (u64, u64) {
         let binding = self
             .bc
@@ -250,6 +316,53 @@ impl Fixture {
             .expect("get_agent_policy");
         let stack = binding.expect_success();
         (stack.int_at(0) as u64, stack.int_at(1) as u64)
+    }
+
+    /// Rewrites the deployed account's own persistent data to force an
+    /// arbitrary seqno, without going through 2^32 real increments. Every
+    /// other field is round-tripped unchanged from the live data cell.
+    fn force_counters(&mut self, seqno: u32, controller_epoch: u64) {
+        let mut account = self.bc.get_account(&self.account).cloned().expect("account exists");
+        let data_cell = account.get_data().expect("account has data");
+        let mut slice = SliceData::load_cell(data_cell).expect("data slice");
+        let owner = MsgAddressInt::construct_from(&mut slice).expect("owner");
+        let controller_pubkey = slice.get_next_bytes(32).expect("controller pubkey");
+        let deployment_id = slice.get_next_bytes(32).expect("deployment id");
+        let _old_controller_epoch = slice.get_next_u64().expect("controller epoch");
+        let _old_seqno = slice.get_next_u32().expect("seqno");
+        let spend_day = slice.get_next_u32().expect("spend day");
+        let spent_today = Coins::construct_from(&mut slice).expect("spent today");
+        let policy = slice.reference(0).expect("policy ref");
+
+        let mut builder = BuilderData::new();
+        owner.write_to(&mut builder).expect("owner");
+        builder.append_raw(&controller_pubkey, 256).expect("pubkey");
+        builder.append_raw(&deployment_id, 256).expect("deployment id");
+        builder.append_u64(controller_epoch).expect("epoch");
+        builder.append_u32(seqno).expect("forced seqno");
+        builder.append_u32(spend_day).expect("spend day");
+        spent_today.write_to(&mut builder).expect("spent today");
+        builder.checked_append_reference(policy).expect("policy ref");
+        let new_data = builder.into_cell().expect("data cell");
+
+        account.set_data(new_data);
+        self.bc.set_account(self.account.clone(), account);
+    }
+
+    fn force_seqno(&mut self, seqno: u32) {
+        let controller_epoch = self.controller_epoch() as u64;
+        self.force_counters(seqno, controller_epoch);
+    }
+
+    fn force_controller_epoch(&mut self, controller_epoch: u64) {
+        let seqno = self.seqno() as u32;
+        self.force_counters(seqno, controller_epoch);
+    }
+
+    fn force_balance(&mut self, balance: u64) {
+        let mut account = self.bc.get_account(&self.account).cloned().expect("account exists");
+        account.set_balance(CurrencyCollection::with_coins(balance));
+        self.bc.set_account(self.account.clone(), account);
     }
 }
 
@@ -350,6 +463,125 @@ fn deploy_send_atomically_installs_exact_state_init_and_funds_task() {
 }
 
 #[test]
+fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
+    // A deploy carries the whole StateInit, so its forward fee is an order of
+    // magnitude above what a bodyless transfer costs. The compute phase must
+    // reserve the fee for the actual message size and fee schedule before
+    // accepting: an underfunded action is then rejected without gas or a
+    // replayable transaction, and the identical signed bytes stay submittable.
+    let mut fixture = Fixture::with_controller_limit_and_funding([0x51; 32], 5 * TOS, 3 * TOS);
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x51; 32],
+        permission_hash: [0x52; 32],
+        attestor_pubkey: None,
+    };
+    let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    // Leave 0.05 TOS above the transfer: several times a bodyless send's fee,
+    // but far below the masterchain forward fee of a ~2 KB StateInit.
+    let value = fixture.balance() - TOS / 20;
+    let action = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        value,
+        state_init,
+        Cell::default(),
+    );
+    fixture.expect_external_exit(action.clone(), 1711);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
+    assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
+
+    // Fund the account, then resubmit the very same signed bytes.
+    let top_up = MessageBuilder::internal(fixture.owner.address(), &fixture.account, 2 * TOS)
+        .bounce(false)
+        .body(Cell::default())
+        .build();
+    fixture.bc.send_message(top_up).expect("top up").expect_success();
+    let result = fixture.send_external(action).expect("funded resend");
+    result.expect_success().expect_out_msgs(1);
+    let gas_used = compute_gas_used(&result);
+    assert!(
+        gas_used * 3 <= MAX_ACTION_GAS * 2,
+        "reserved compute budget must keep at least 1.5x margin over real usage ({gas_used} gas)"
+    );
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), value as i128);
+    let target_tx = result
+        .transactions_for(&target)
+        .into_iter()
+        .next()
+        .expect("deployed task must receive the transfer");
+    let inbound = target_tx.read_in_msg().expect("read inbound").expect("inbound message");
+    assert!(inbound.state_init().is_some(), "deploy send must carry the StateInit");
+    assert_eq!(
+        inbound.int_header().expect("internal header").value.coins.as_u64(),
+        Some(value),
+        "fees are paid by the account, the target receives the full signed value"
+    );
+}
+
+#[test]
+fn deploy_send_is_bound_by_policy_and_cannot_be_replayed() {
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x61; 32],
+        permission_hash: [0x62; 32],
+        attestor_pubkey: None,
+    };
+    let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let valid_until = fixture.bc.now() + 300;
+
+    // Above max_per_tx: rejected before acceptance, nothing consumed.
+    let oversized = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        valid_until,
+        &target,
+        6 * TOS,
+        state_init.clone(),
+        Cell::default(),
+    );
+    fixture.expect_external_exit(oversized, 1707);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
+
+    // Within policy: deploys exactly once and charges the daily budget.
+    let action = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        valid_until,
+        &target,
+        2 * TOS,
+        state_init,
+        Cell::default(),
+    );
+    fixture.send_external(action.clone()).expect("deploy").expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), 2 * TOS as i128);
+
+    // The identical signed bytes are dead afterwards.
+    fixture.expect_external_exit(action, 1705);
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), 2 * TOS as i128);
+}
+
+#[test]
 fn deploy_send_rejects_a_state_init_for_another_destination_without_consuming_seqno() {
     let mut fixture = Fixture::new();
     let init = TaskEscrowInit {
@@ -406,6 +638,111 @@ fn cancel_consumes_seqno_without_spend_or_outbound_message() {
 }
 
 #[test]
+fn underfunded_cancel_is_rejected_before_acceptance_and_remains_resubmittable() {
+    let mut fixture = Fixture::new();
+    let cancel =
+        fixture.signed_cancel(&fixture.controller_secret, GLOBAL_ID, 0, fixture.bc.now() + 300);
+    // The masterchain import fee is below 0.1 TOS, while the contract's
+    // conservative 30k-gas reserve is about 0.3 TOS under the sandbox fee
+    // schedule. This reaches the contract and fails its own pre-accept gate.
+    fixture.force_balance(TOS / 10);
+
+    fixture.expect_external_exit(cancel.clone(), 1711);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.balance(), TOS / 10, "a pre-accept rejection must not charge the account");
+
+    fixture.force_balance(TOS);
+    fixture.send_external(cancel).expect("funded retry").expect_success().expect_out_msgs(0);
+    assert_eq!(fixture.seqno(), 1);
+}
+
+#[test]
+fn a_saturated_seqno_is_rejected_before_acceptance_on_every_external_path() {
+    // Every external op stores seqno + 1 through the same two accept_message()
+    // call sites (recv_external's cancel branch and its shared tail for
+    // task/native/deploy send). At seqno = u32::MAX, storing seqno + 1 back
+    // through pack_agent_state's store_uint(_, 32) would throw only *after*
+    // accept_message(): the transaction would still be valid and charged, but
+    // the state mutation would never commit, leaving the exact same signed
+    // bytes accepted-but-inert and resubmittable for as long as valid_until
+    // allows. require_seqno_not_saturated must catch this before acceptance
+    // on both call sites, for every op, so nothing is ever consumed.
+    let mut fixture = Fixture::new();
+    fixture.force_seqno(u32::MAX);
+    let balance = fixture.balance();
+    let target = fixture.target.address().clone();
+    let valid_until = fixture.bc.now() + 300;
+
+    let cancel =
+        fixture.signed_cancel(&fixture.controller_secret, GLOBAL_ID, u32::MAX, valid_until);
+    fixture.expect_external_exit(cancel, 1716);
+    assert_eq!(fixture.seqno(), u32::MAX as i128);
+    assert_eq!(fixture.balance(), balance);
+
+    let native = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID,
+        u32::MAX,
+        valid_until,
+        &target,
+        TOS,
+    );
+    fixture.expect_external_exit(native, 1716);
+    assert_eq!(fixture.seqno(), u32::MAX as i128);
+    assert_eq!(fixture.balance(), balance);
+    assert_eq!(fixture.spent_today(), 0);
+}
+
+#[test]
+fn owner_rotation_is_rejected_before_acceptance_when_seqno_is_saturated() {
+    // agent_rotate_controller is internal, not external, but it stores
+    // seqno + 1 through the exact same pack_agent_state() call after its own
+    // accept_message(). Without the guard, a rotation submitted at
+    // seqno = u32::MAX would still be "accepted" by the network (the owner's
+    // message value pays for it) but the compute phase would abort inside
+    // set_data() -- silently leaving the old, possibly-compromised
+    // controller key in force while the owner believes the rotation
+    // succeeded, since nothing about an internal message's own success tells
+    // the owner the state mutation was actually committed.
+    let mut fixture = Fixture::new();
+    fixture.force_seqno(u32::MAX);
+    let owner_addr = fixture.owner.address().clone();
+    let new_secret = [0x99; 32];
+    let new_pubkey = ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
+    let rotate_body = AgentAccountContract::build_rotate_controller_message(1, new_pubkey).unwrap();
+
+    fixture.send_internal(&owner_addr, rotate_body).expect_aborted().expect_exit_code(1716);
+    assert_eq!(fixture.seqno(), u32::MAX as i128);
+    assert_eq!(fixture.controller_epoch(), 0, "rotation must not have taken effect");
+
+    // The old controller key must still be the one in force.
+    let valid_until = fixture.bc.now() + 300;
+    let old_key_action = fixture.signed_native(
+        &fixture.controller_secret,
+        GLOBAL_ID,
+        1,
+        valid_until,
+        fixture.target.address(),
+        TOS,
+    );
+    fixture.expect_external_exit(old_key_action, 1705); // seqno mismatch: still at u32::MAX, not 1
+}
+
+#[test]
+fn owner_rotation_rejects_a_saturated_controller_epoch_before_acceptance() {
+    let mut fixture = Fixture::new();
+    fixture.force_controller_epoch(u64::MAX);
+    let owner_addr = fixture.owner.address().clone();
+    let new_secret = [0x9a; 32];
+    let new_pubkey = ed25519_create_private_key(&new_secret).expect("new key").verifying_key();
+    let rotate_body = AgentAccountContract::build_rotate_controller_message(1, new_pubkey).unwrap();
+
+    fixture.send_internal(&owner_addr, rotate_body).expect_aborted().expect_exit_code(1717);
+    assert_eq!(fixture.controller_epoch(), u64::MAX as i128);
+    assert_eq!(fixture.seqno(), 0, "failed rotation must not consume seqno");
+}
+
+#[test]
 fn controller_message_rejects_wrong_network_and_payload_tampering() {
     let mut fixture = Fixture::new();
     let valid_until = fixture.bc.now() + 300;
@@ -457,12 +794,201 @@ fn ignored_native_send_action_still_consumes_seqno_and_daily_budget() {
         TOS,
     );
     fixture
-        .send_external(action)
+        .send_external(action.clone())
         .expect("mode 3 keeps compute/state successful when the send action is invalid")
         .expect_success()
         .expect_out_msgs(0);
     assert_eq!(fixture.seqno(), 1);
     assert_eq!(fixture.spent_today(), TOS as i128);
+
+    // The identical bytes are dead afterwards: rejected before acceptance, so a
+    // public rebroadcast cannot charge the account again.
+    let balance = fixture.balance();
+    fixture.expect_external_exit(action, 1705);
+    assert_eq!(fixture.balance(), balance);
+}
+
+#[test]
+fn deploy_send_outside_the_account_workchain_is_rejected_before_acceptance() {
+    // Destination validity is decided by the action phase from ConfigParam 12,
+    // which the compute phase cannot afford to consult. Deploys are therefore
+    // confined to the account's own workchain, where delivery is guaranteed,
+    // and anything else is refused before acceptance instead of being skipped
+    // with seqno and daily spend consumed.
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x81; 32],
+        permission_hash: [0x82; 32],
+        attestor_pubkey: None,
+    };
+    let target = TaskEscrowContract::calculate_address(0, &init).expect("task address");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let action = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        2 * TOS,
+        state_init,
+        Cell::default(),
+    );
+    fixture.expect_external_exit(action, 1714);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
+    assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
+}
+
+#[test]
+fn deploy_send_above_the_configured_message_limit_is_rejected_before_acceptance() {
+    // The size preflight reads the live ConfigParam 43 through the unpacked
+    // configuration register, so a network that tightens the limits below the
+    // protocol defaults refuses the deploy up front instead of letting the
+    // action phase skip it after seqno and daily spend were committed.
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x91; 32],
+        permission_hash: [0x92; 32],
+        attestor_pubkey: None,
+    };
+    let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let action = fixture.signed_deploy(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        2 * TOS,
+        state_init,
+        Cell::default(),
+    );
+
+    let tightened = SizeLimitsConfig { max_msg_cells: 8, ..SizeLimitsConfig::default() };
+    fixture.bc.set_size_limits_config(tightened).expect("tighten");
+    fixture.expect_external_exit(action.clone(), 1713);
+    assert_eq!(fixture.seqno(), 0);
+    assert_eq!(fixture.spent_today(), 0);
+    assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
+
+    // Once the limit allows the message again, the identical signed bytes go
+    // through: nothing was consumed by the rejection.
+    fixture.bc.set_size_limits_config(SizeLimitsConfig::default()).expect("restore");
+    let result = fixture.send_external(action).expect("same bytes after the fix");
+    result.expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), 2 * TOS as i128);
+    assert!(fixture.bc.get_account(&target).is_some(), "the deploy reached the target");
+}
+
+#[test]
+fn deploy_send_rejects_unsupported_state_init_shapes_before_acceptance() {
+    // Only the plain code+data StateInit the repository contracts produce is
+    // supported. Libraries, tick-tock flags and exotic root cells could all
+    // make the action phase or the receiving account reject the deploy, so
+    // they are refused before acceptance rather than skipped or replayed.
+    let mut fixture = Fixture::new();
+    let init = TaskEscrowInit {
+        creator: fixture.account.clone(),
+        assigned_agent: None,
+        verifier: None,
+        budget: TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0xa1; 32],
+        permission_hash: [0xa2; 32],
+        attestor_pubkey: None,
+    };
+    let plain = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let plain_cell = plain.write_to_new_cell().expect("serialize").into_cell().expect("cell");
+    let valid_until = fixture.bc.now() + 300;
+
+    let mut with_library = plain.clone();
+    with_library.set_library_code(Cell::default(), true).expect("library");
+    let mut with_special = plain.clone();
+    with_special.set_special(TickTock::with_values(true, false));
+    let exotic_root =
+        MerkleProof::create(&plain_cell, |_| true).expect("proof").serialize().expect("proof cell");
+    // A level-zero Merkle proof nested as code is not distinguishable with
+    // CLEVEL alone. It is outside the on-chain supported profile, and the
+    // recursive client-side validation below must reject it before signing.
+    let mut with_exotic_code = plain.clone();
+    let exotic_code = MerkleProof::create(&Cell::default(), |_| true)
+        .expect("proof")
+        .serialize()
+        .expect("proof cell");
+    with_exotic_code.code = Some(exotic_code);
+
+    let variants = [
+        (
+            with_library.write_to_new_cell().expect("serialize").into_cell().expect("cell"),
+            Some(1715),
+        ),
+        (
+            with_special.write_to_new_cell().expect("serialize").into_cell().expect("cell"),
+            Some(1715),
+        ),
+        (exotic_root, None),
+    ];
+    for (state_cell, expected_exit) in variants {
+        let target = MsgAddressInt::with_params(-1, state_cell.hash(0)).expect("target");
+        let payload = raw_deploy_payload(0, valid_until, &target, TOS, state_cell, Cell::default());
+        let action = fixture.sign_payload(&fixture.controller_secret, GLOBAL_ID, payload);
+        match expected_exit {
+            Some(exit_code) => fixture.expect_external_exit(action, exit_code),
+            None => fixture.expect_external_rejected(action),
+        }
+        assert_eq!(fixture.seqno(), 0);
+        assert_eq!(fixture.spent_today(), 0);
+    }
+
+    // The client-side builder refuses the same shapes before anything is signed.
+    let target = MsgAddressInt::with_params(-1, plain_cell.hash(0)).expect("target");
+    assert!(
+        AgentAccountContract::build_deploy_send_payload(
+            GLOBAL_ID,
+            0,
+            0,
+            valid_until,
+            &AgentDeploySend {
+                target: target.clone(),
+                value: TOS,
+                state_init: with_special,
+                body: Cell::default(),
+            },
+        )
+        .is_err()
+    );
+    let exotic_state_cell =
+        with_exotic_code.write_to_new_cell().expect("serialize").into_cell().expect("cell");
+    let exotic_target = MsgAddressInt::with_params(-1, exotic_state_cell.hash(0)).expect("target");
+    let error = AgentAccountContract::build_deploy_send_payload(
+        GLOBAL_ID,
+        0,
+        0,
+        valid_until,
+        &AgentDeploySend {
+            target: exotic_target,
+            value: TOS,
+            state_init: with_exotic_code,
+            body: Cell::default(),
+        },
+    )
+    .expect_err("the client-side builder must reject a Merkle-proof-wrapped code cell");
+    assert!(
+        error.to_string().contains("ordinary cells"),
+        "the rejection must come from recursive exotic-cell validation: {error}"
+    );
 }
 
 #[test]
