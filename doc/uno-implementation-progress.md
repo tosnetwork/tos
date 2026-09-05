@@ -33,7 +33,7 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (twelve cases) and the full `validator-engine` target build
+- `test-workchain-block` (fourteen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -57,6 +57,24 @@ Base node revision: `5a6145cce`.
   scope. A syntactically valid batch transaction is rejected by the emulator
   before changing the account. A test invokes that real emulator entry point,
   checks the exact scope error and verifies unchanged account time.
+- The native `Transaction` now has a staged block-batch type, reusing native
+  account state-limit checks, storage statistics, serialization, commit and
+  `AccountBlock` creation. Preparation checks the full prior account wrapper,
+  previous transaction link and shard time, and derives the batch description
+  from the supplied input/effects. Commit remains a separate step.
+- State-only batch round-trip tests execute 40 -> 42 from a native shard,
+  serialize the synthetic transaction, independently replay its description,
+  commit the account, validate the resulting `AccountBlock`, rebuild the shard
+  account dictionary and restore its BoC to read 42. Native balance remains zero;
+  transaction LT is 10 and the new account end LT is 11.
+- This initial wrapper rejects nonempty or malformed outbound-message maps,
+  account execution phases and Native value changes. It cannot yet settle
+  bridge messages, forwarding fees or operating budgets. Empty engine outbound
+  messages now use the one-bit empty HashmapE encoding. Size-limit failure does
+  not authorize serialization; changing staged engine data also rejects it.
+- Mutation checks: disabling batch serialization fails the commit/reload test;
+  removing the unsettled-message rejection fails the exact rejection test.
+  Both changes were restored.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.
@@ -74,7 +92,8 @@ checks the input commitment before executing, independently computes the effects
 and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
-Witness placement and final transaction/account/shard wrapping remain pending.
+Native state-only transaction/account wrapping is implemented; live witness
+placement, full shard wrapping, queue settlement and collator wiring remain pending.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.

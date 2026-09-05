@@ -4361,17 +4361,65 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
 }
 
 /**
- * Serializes the transaction object using Transaction TLB-scheme.
- *
- * Updates root.
- *
- * @param cfg The configuration for the serialization.
- *
- * @returns True if the serialization is successful, False otherwise.
+ * Stages a state-only batch using the native account serializer. Does not commit the account.
  */
+td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
+                                               const SerializeConfig& cfg) {
+  if (trans_type != tr_workchain_batch || account.status != Account::acc_active || account.workchain < 0 ||
+      account.now_ != now || start_lt >= end_lt || root.not_null() || new_total_state.not_null() ||
+      batch_description.not_null()) {
+    return td::Status::Error("invalid batch transaction preparation context");
+  }
+  TRY_RESULT(previous_data, extract_workchain_engine_state(input.previous_shard_state, account.workchain, account.addr));
+  if (account.data.is_null() || previous_data->get_hash() != account.data->get_hash()) {
+    return td::Status::Error("batch account differs from committed input state");
+  }
+  gen::ShardStateUnsplit::Record previous;
+  gen::ShardAccount::Record previous_account;
+  if (!tlb::unpack_cell(input.previous_shard_state, previous)) {
+    return td::Status::Error("invalid batch input shard state");
+  }
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(previous.accounts), 256, block::tlb::aug_ShardAccounts);
+  if (!tlb::csr_unpack(accounts.lookup(account.addr), previous_account) || account.total_state.is_null() ||
+      previous_account.account->get_hash() != account.total_state->get_hash() ||
+      previous_account.last_trans_hash != account.last_trans_hash_ || previous_account.last_trans_lt != account.last_trans_lt_) {
+    return td::Status::Error("batch account wrapper differs from committed input state");
+  }
+  if (start_lt < previous.gen_lt || now < previous.gen_utime) {
+    return td::Status::Error("batch transaction time precedes shard state");
+  }
+  TRY_RESULT(description, make_workchain_batch_description(input, effects));
+  bool special_messages = false;
+  auto messages = vm::load_cell_slice_special(effects.outbound_messages, special_messages);
+  if (special_messages || messages.size_ext() != 1 || messages.prefetch_ulong(1) != 0) {
+    return td::Status::Error("batch native message settlement is not implemented");
+  }
+  if (in_msg.not_null() || !out_msgs.empty() || compute_phase || action_phase || storage_phase || credit_phase ||
+      bounce_phase || balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero()) {
+    return td::Status::Error("batch state preparation cannot mix account phases or native value flow");
+  }
+  new_data = effects.new_engine_state;
+  auto limits = check_state_limits(cfg.size_limits, cfg.global_version);
+  if (limits.is_error()) {
+    new_data = account.data;
+    return limits;
+  }
+  batch_engine_state = new_data;
+  batch_description = encode_workchain_batch_description(description);
+  return td::Status::OK();
+}
+
 bool Transaction::serialize(const SerializeConfig& cfg) {
   if (root.not_null()) {
     return true;
+  }
+  if (trans_type == tr_workchain_batch &&
+      (batch_description.is_null() || batch_engine_state.is_null() || new_data.is_null() ||
+       batch_engine_state->get_hash() != new_data->get_hash() || in_msg.not_null() || !out_msgs.empty() ||
+       compute_phase || action_phase || storage_phase || credit_phase || bounce_phase ||
+       balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero() ||
+       acc_status != Account::acc_active || start_lt >= end_lt)) {
+    return false;
   }
   if (!compute_state(cfg)) {
     return false;
@@ -4405,6 +4453,9 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
   }
 
   switch (trans_type) {
+    case tr_workchain_batch:
+      FAIL_UNLESS(cb.store_ref_bool(batch_description) && cb.finalize_to(root));
+      break;
     case tr_tick:  // fallthrough
     case tr_tock: {
       vm::CellBuilder cb3;

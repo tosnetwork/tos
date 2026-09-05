@@ -48,7 +48,7 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
     }
     block::WorkchainBlockResult result;
     result.new_engine_state = number(value + increment);
-    result.outbound_messages = number(0);
+    result.outbound_messages = vm::CellBuilder().store_long(0, 1).finalize();
     result.actions = input.candidate;
     result.receipts = result.new_engine_state;
     result.events = number(increment);
@@ -135,6 +135,98 @@ TEST(WorkchainBlock, CounterReplay) {
   ASSERT_TRUE(validated.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
   auto previous = block::extract_workchain_engine_state(in.previous_shard_state, 2, td::Bits256::zero()).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(previous).fetch_ulong(64), 40u);
+}
+
+TEST(WorkchainBlock, BatchAccountCommitAndReload) {
+  CounterEngine engine;
+  auto in = input();
+  auto effects = engine.execute_block(in).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto load = [&]() {
+    block::Account account(2, td::Bits256::zero().bits());
+    ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+    return account;
+  };
+  block::SerializeConfig cfg;
+  auto account = load();
+  auto old_account = account.total_state;
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(!tx.serialize(cfg));
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  ASSERT_TRUE(tx.serialize(cfg));
+  ASSERT_TRUE(account.total_state->get_hash() == old_account->get_hash());
+  block::gen::Transaction::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(tx.root, record));
+  ASSERT_EQ(record.lt, 10u);
+  ASSERT_EQ(record.now, 10u);
+  ASSERT_EQ(record.outmsg_cnt, 0);
+  ASSERT_TRUE(block::replay_workchain_batch(engine, in, record.description).is_ok());
+  auto committed = tx.commit(account);
+  ASSERT_TRUE(committed.not_null());
+  ASSERT_TRUE(account.balance.is_zero());
+  ASSERT_TRUE(account.storage_used.cells > 0);
+  ASSERT_EQ(account.last_trans_lt_, 10u);
+  ASSERT_EQ(account.last_trans_end_lt_, 11u);
+  ASSERT_EQ(vm::load_cell_slice(account.data).fetch_ulong(64), 42u);
+  vm::CellBuilder account_block;
+  ASSERT_TRUE(account.create_account_block(account_block));
+  auto block_root = account_block.finalize();
+  ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(10000, block_root));
+  ASSERT_TRUE(block::tlb::t_AccountBlock.validate_ref(10000, block_root));
+  vm::CellBuilder entry;
+  entry.store_ref(account.total_state).store_bits(account.last_trans_hash_.bits(), 256)
+      .store_long(account.last_trans_lt_, 64);
+  ASSERT_TRUE(accounts.set_builder(td::Bits256::zero(), entry));
+  state.accounts = accounts.get_wrapped_dict_root();
+  state.seq_no = 2;
+  state.gen_lt = 11;
+  state.gen_utime = 10;
+  td::Ref<vm::Cell> next;
+  ASSERT_TRUE(tlb::pack_cell(next, state));
+  auto wire = vm::std_boc_serialize(next).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  auto new_data = block::extract_workchain_engine_state(restored, 2, td::Bits256::zero()).move_as_ok();
+  ASSERT_EQ(vm::load_cell_slice(new_data).fetch_ulong(64), 42u);
+}
+
+TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
+  CounterEngine engine;
+  auto in = input();
+  auto effects = engine.execute_block(in).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  block::SerializeConfig cfg;
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  auto altered = effects;
+  altered.outbound_messages = number(0);
+  auto unsettled = tx.prepare_workchain_batch(in, altered, cfg);
+  ASSERT_TRUE(unsettled.is_error());
+  ASSERT_EQ(unsettled.error().message(), "batch native message settlement is not implemented");
+  tx.balance = block::CurrencyCollection(1);
+  auto value = tx.prepare_workchain_batch(in, effects, cfg);
+  ASSERT_TRUE(value.is_error());
+  ASSERT_EQ(value.error().message(), "batch state preparation cannot mix account phases or native value flow");
+  tx.balance = account.balance;
+  auto previous_hash = account.last_trans_hash_;
+  account.last_trans_hash_ = number(99)->get_hash().bits();
+  auto wrapper = tx.prepare_workchain_batch(in, effects, cfg);
+  ASSERT_TRUE(wrapper.is_error());
+  ASSERT_EQ(wrapper.error().message(), "batch account wrapper differs from committed input state");
+  account.last_trans_hash_ = previous_hash;
+  auto limited_cfg = cfg;
+  limited_cfg.size_limits.max_acc_state_cells = 0;
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, limited_cfg).is_error());
+  ASSERT_TRUE(!tx.serialize(cfg));
+  ASSERT_TRUE(tx.new_data->get_hash() == account.data->get_hash());
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  tx.new_data = number(99);
+  ASSERT_TRUE(!tx.serialize(cfg));
+  ASSERT_TRUE(account.total_state->get_hash() == account.orig_total_state->get_hash());
 }
 
 TEST(WorkchainBlock, BatchCommitmentReplay) {

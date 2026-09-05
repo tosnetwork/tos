@@ -42,6 +42,8 @@ using LtCellRef = std::pair<tos::LogicalTime, Ref<vm::Cell>>;
 
 struct Account;
 class WorkchainExecutionRegistry;
+struct WorkchainBlockInput;
+struct WorkchainBlockResult;
 
 namespace transaction {
 struct Transaction;
@@ -377,7 +379,8 @@ struct Transaction {
     tr_split_prepare,
     tr_split_install,
     tr_merge_prepare,
-    tr_merge_install
+    tr_merge_install,
+    tr_workchain_batch
   };
   int trans_type{tr_none};
   bool was_deleted{false};
@@ -413,6 +416,10 @@ struct Transaction {
   block::CurrencyCollection blackhole_burned{0};
   tos::UnixTime last_paid;
   Ref<vm::Cell> root;
+ private:
+  Ref<vm::Cell> batch_description;
+  Ref<vm::Cell> batch_engine_state;
+ public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;
   Ref<vm::CellSlice> new_inner_state;
@@ -454,6 +461,9 @@ struct Transaction {
   td::Status check_state_limits(const SizeLimitsConfig& size_limits, int global_version, bool is_account_stat = true);
   bool prepare_bounce_phase(const ActionPhaseConfig& cfg);
   bool compute_state(const SerializeConfig& cfg);
+  // Stages engine state only; native queue settlement must be supplied separately before supporting messages.
+  td::Status prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
+                                    const SerializeConfig& cfg);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;
