@@ -1182,3 +1182,31 @@ are logged and retained for inspection.
 This does not register the canonical block-state root, commit an authenticated
 checkpoint, release the lease as a successful root-store operation, prove crash
 recovery, or transport anything over the network. Those remain separate work.
+
+### Encoding-aware import spool reservation
+
+The default-ratio failure above is now addressed without raising the default
+ratio or disk caps. BoC references are compact indices; CellDb records instead
+contain each child's level mask, hashes and depths, plus a record header and
+refcount. The rollback manifest can duplicate every new-cell record. A checked
+conservative bound is therefore `2 * (file_bytes + 588 * cell_count)` for the
+current Cell traits and non-BoC CellStorer encoding. The 588 is computed from
+those traits in `streaming-import-budget.h`, not assumed from measured ratios.
+
+The actor reads at most 256 header bytes, checks the header count against the
+requested/default cell limit, and reserves the larger of the configured ratio
+and this bound, capped by the existing per-import limit. If the conservative
+bound exceeds that limit, the import may still proceed within the limit and
+the existing per-record checks remain authoritative. Global reservation checks
+are unchanged. This can reserve more disk capacity than actually needed; it is
+not a claim about optimal concurrency or large-state performance.
+
+The 4096-nullifier actor test now succeeds at the default 300% ratio, without
+the prior 2000% override. It separately verifies an explicitly tiny per-import
+cap rejects, restores the ordinary cap, rejects a wrong expected root and then
+imports the same bytes successfully. Ignoring the encoding bound fails on that
+valid import, not on an exact rejection string. The mutation was restored.
+Arithmetic tests cover the 9977114-byte bound for the 168133-byte/8198-cell
+fixture, zero inputs and multiplication/addition/doubling overflow boundaries.
+Removing the rollback-copy factor fails the arithmetic test (688 instead of
+1376 for its small fixture); that mutation was restored too.

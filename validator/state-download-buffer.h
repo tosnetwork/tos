@@ -344,6 +344,8 @@ struct PersistentStateBudgetConfig {
   // closed.
   td::uint64 max_spool_bytes_per_import = 48ULL << 30;
   td::uint64 max_total_spool_bytes = 96ULL << 30;
+  // Minimum reservation ratio; actor imports also reserve the conservative
+  // CellDb encoding plus rollback bound derived from the BoC cell count.
   td::uint32 spool_reservation_ratio_percent = 300;
   // H-02/tos30 long-term feature flag. When enabled, OnDisk catch-up may
   // parse a state whose `file.size` exceeds

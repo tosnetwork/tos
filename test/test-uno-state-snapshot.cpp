@@ -10,6 +10,7 @@
 #include "uno/core/used-nullifiers.h"
 #include "validator/downloaders/download-state.hpp"
 #include "validator/state-serializer.hpp"
+#include "validator/streaming-import-budget.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 
@@ -45,10 +46,10 @@ class SnapshotImportActor final : public td::actor::Actor {
     ASSERT_TRUE(result.is_error());
     if (attempt_++ == 0) {
       ASSERT_TRUE(result.error().message().str().find("spool budget exceeded") != std::string::npos);
-      // Pin the default-budget failure instead of silently hiding it. A
-      // separate explicit test budget lets the remaining import path run.
+      // Restore the ordinary per-import cap after testing explicit rejection.
       auto config = tos::validator::fullnode::persistent_state_budget_config();
-      config.spool_reservation_ratio_percent = 2000;
+      config.max_spool_bytes_per_import =
+          tos::validator::fullnode::PersistentStateBudgetConfig{}.max_spool_bytes_per_import;
       tos::validator::fullnode::configure_persistent_state_budgets(config);
       auto wrong = request_;
       wrong.expected_root_hash.as_slice()[0] ^= 1;
@@ -59,7 +60,8 @@ class SnapshotImportActor final : public td::actor::Actor {
           });
       return;
     }
-    ASSERT_TRUE(result.error().message().str().find("root hash mismatch") != std::string::npos);
+    // The following successful import of the identical bytes and budgets
+    // rules out fixture/budget rejection without relying on error wording.
     td::actor::send_closure(
         database_, &tos::validator::CellDb::import_persistent_state_streaming, request_,
         [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> imported) mutable {
@@ -112,6 +114,7 @@ void actor_import_snapshot(td::Ref<vm::Cell> state, td::Ref<vm::Cell> payload, c
   auto saved_budget = tos::validator::fullnode::persistent_state_budget_config();
   auto default_ratio = saved_budget;
   default_ratio.spool_reservation_ratio_percent = 300;
+  default_ratio.max_spool_bytes_per_import = 1;
   tos::validator::fullnode::configure_persistent_state_budgets(default_ratio);
   std::atomic<bool> completed{false};
   td::actor::Scheduler scheduler({2});
@@ -204,6 +207,18 @@ td::Ref<vm::Cell> single_account_state(td::Ref<vm::Cell> engine) {
   return root;
 }
 }  // namespace
+
+TEST(UnoStateSnapshot, EncodingBudgetCheckedArithmetic) {
+  using tos::validator::streaming_import_encoding_bound;
+  ASSERT_EQ(streaming_import_encoding_bound(100, 1).move_as_ok(), 1376u);
+  ASSERT_EQ(streaming_import_encoding_bound(168133, 8198).move_as_ok(), 9977114u);
+  ASSERT_TRUE(streaming_import_encoding_bound(0, 1).is_error());
+  ASSERT_TRUE(streaming_import_encoding_bound(1, 0).is_error());
+  constexpr auto max = std::numeric_limits<td::uint64>::max();
+  ASSERT_TRUE(streaming_import_encoding_bound(1, max).is_error());
+  ASSERT_TRUE(streaming_import_encoding_bound(max, 1).is_error());
+  ASSERT_TRUE(streaming_import_encoding_bound(max / 2, 1).is_error());
+}
 
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
   // Reproducible synthetic keys, not cryptographic test vectors. Random-looking

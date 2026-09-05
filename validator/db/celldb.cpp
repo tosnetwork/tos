@@ -39,6 +39,7 @@
 #include "files-async.hpp"
 #include "rootdb.hpp"
 #include "state-download-buffer.h"
+#include "streaming-import-budget.h"
 #include "td/utils/PathView.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/FileFd.h"
@@ -1816,7 +1817,8 @@ td::Status write_streaming_import_adopted_marker(const std::string& manifest_pat
   return td::Status::OK();
 }
 
-td::Result<td::uint64> streaming_import_spool_reservation_bytes(td::uint64 file_size) {
+td::Result<td::uint64> streaming_import_spool_reservation_bytes(const PersistentStateImportRequest& request) {
+  auto file_size = request.file_size;
   auto cfg = fullnode::persistent_state_budget_config();
   if (file_size == 0) {
     return td::Status::Error("streaming import spool reservation requires a non-zero file size");
@@ -1828,6 +1830,25 @@ td::Result<td::uint64> streaming_import_spool_reservation_bytes(td::uint64 file_
                                        << " ratio_percent=" << cfg.spool_reservation_ratio_percent);
   }
   auto reservation_bytes = (file_size * ratio + 99) / 100;
+  // Read only a bounded header probe here. Full validation remains on the
+  // worker; malformed or changed files cannot exceed the reserved spool cap.
+  TRY_RESULT(file, td::FileFd::open(request.tempfile_path, td::FileFd::Flags::Read));
+  std::array<char, 256> probe{};
+  auto probe_size = static_cast<size_t>(std::min<td::uint64>(file_size, probe.size()));
+  TRY_RESULT(read, file.pread(td::MutableSlice(probe.data(), probe_size), 0));
+  vm::BagOfCells::Info info;
+  auto declared = info.parse_serialized_header(td::Slice(probe.data(), read));
+  auto max_cells = request.opts.max_cells ? request.opts.max_cells : vm::kDefaultStreamingBocMaxCells;
+  if (declared <= 0 || static_cast<td::uint64>(declared) > file_size || info.cell_count <= 0 ||
+      static_cast<td::uint64>(info.cell_count) > max_cells || info.root_count <= 0 ||
+      static_cast<td::uint64>(info.root_count) > request.opts.max_roots) {
+    return td::Status::Error("invalid or over-budget streaming import header");
+  }
+  TRY_RESULT(encoding_bound, streaming_import_encoding_bound(file_size, info.cell_count));
+  // A conservative bound above the configured cap is not proof the actual
+  // spool will exceed it. Reserve up to that cap and keep per-record checks;
+  // do not reject an otherwise admissible import solely for overestimation.
+  reservation_bytes = std::max(reservation_bytes, std::min(encoding_bound, cfg.max_spool_bytes_per_import));
   if (reservation_bytes > cfg.max_spool_bytes_per_import) {
     return td::Status::Error(PSTRING() << "streaming import spool budget exceeded before import: "
                                        << "file_size=" << file_size
@@ -2619,7 +2640,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     return;
   }
 
-  auto r_spool_reservation_bytes = streaming_import_spool_reservation_bytes(request.file_size);
+  auto r_spool_reservation_bytes = streaming_import_spool_reservation_bytes(request);
   if (r_spool_reservation_bytes.is_error()) {
     promise.set_error(r_spool_reservation_bytes.move_as_error());
     return;
