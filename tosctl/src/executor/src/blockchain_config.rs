@@ -38,9 +38,13 @@ impl DefaultConfig for MsgForwardPrices {
 
     fn default_wc() -> Self {
         MsgForwardPrices {
-            lump_price: 1000000,
-            bit_price: 65536000,
-            cell_price: 6553600000,
+            // Keep the sandbox's basechain table byte-for-byte aligned with
+            // crypto/smartcont/gen-zerostate.fif. Contracts use ConfigParam
+            // 25 directly through GETFORWARDFEE, so an upstream-like default
+            // here would invalidate production-contract fee/reserve tests.
+            lump_price: 400000,
+            bit_price: 26214400,
+            cell_price: 2621440000,
             ihr_price_factor: 98304,
             first_frac: 21845,
             next_frac: 21845,
@@ -127,9 +131,12 @@ impl DefaultConfig for GasLimitsPrices {
 
     fn default_wc() -> Self {
         GasLimitsPrices {
-            gas_price: 65536000,
+            // ConfigParam 21 from the canonical basechain zero state. This
+            // yields 400 nanotomi/gas beyond the flat segment, not the
+            // masterchain-derived 1,000 nanotomi/gas sandbox value.
+            gas_price: 26214400,
             flat_gas_limit: 100,
-            flat_gas_price: 100000,
+            flat_gas_price: 40000,
             gas_limit: 1000000,
             special_gas_limit: 1000000,
             gas_credit: 10000,

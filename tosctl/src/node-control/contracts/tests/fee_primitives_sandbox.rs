@@ -105,3 +105,55 @@ fn v6_fee_primitives_execute_against_the_default_sandbox_config() {
         );
     }
 }
+
+#[test]
+fn basechain_compute_fee_uses_the_basechain_price_table() {
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let deployer = bc.treasury("basechain-fee-probe", 1_000 * TOS).expect("deployer");
+    let si = StateInit::with_code_and_data(probe_code(), Cell::default());
+    let addr_hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
+    let addr = MsgAddressInt::with_params(-1, addr_hash).unwrap();
+    let deploy = MessageBuilder::internal(deployer.address(), &addr, 2 * TOS)
+        .bounce(false)
+        .state_init(si)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+
+    // ConfigParam 21's basechain gas_price is 26,214,400. The VM's basechain
+    // schedule charges 400 nanotomi per gas here, so 380,000 gas costs
+    // 152,000,000 nanotomi (0.152 TOS), not the masterchain-derived 3.8 TOS
+    // figure.
+    let result = bc
+        .run_get_method(&addr, "compute_fee", vec![StackItem::int(0), StackItem::int(380_000)])
+        .expect("get basechain compute fee");
+    let res = result.expect_success();
+    let fee: u64 = res
+        .stack
+        .last()
+        .expect("basechain compute fee result")
+        .as_integer_value(0..=u64::MAX)
+        .expect("basechain compute fee is a u64");
+    assert_eq!(fee, 152_000_000);
+
+    // A plain payout has no StateInit/body DAG. GETFORWARDFEE therefore sees
+    // zero priced attachment bits/cells and must return the basechain lump
+    // price from ConfigParam 25. This is the reserve input used by the market's
+    // strict native payout paths.
+    let forward = bc
+        .run_get_method(
+            &addr,
+            "forward_fee",
+            vec![StackItem::int(0), StackItem::int(0), StackItem::int(0)],
+        )
+        .expect("get basechain forward fee");
+    let forward = forward.expect_success();
+    let forward_fee: u64 = forward
+        .stack
+        .last()
+        .expect("basechain forward fee result")
+        .as_integer_value(0..=u64::MAX)
+        .expect("basechain forward fee is a u64");
+    assert_eq!(forward_fee, 400_000);
+}
