@@ -1440,6 +1440,94 @@ fn normal_reporter_window_closes_at_the_frozen_deadline() {
 }
 
 #[test]
+fn appellate_reporter_window_opens_after_delay_and_closes_at_deadline() {
+    for (offset, accepted) in [(-1_i64, true), (0, false), (1, false)] {
+        let mut f = Fixture::new();
+        f.activate();
+        let normal = f.normal.address().clone();
+        let appellate = f.appellate.address().clone();
+        let challenger = f.trader_b.address().clone();
+        f.bc.set_now(f.init.resolve_not_before as u32);
+        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+            .expect_success();
+        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+            .expect_success();
+        let normal_context = f.phase().3;
+        let report_at = u64::from(f.bc.now());
+        f.send(
+            &normal,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                3,
+                0,
+                normal_context,
+                0,
+                [0xc1; 32],
+                report_at,
+                f.init.oracle_vote_deadline,
+            )
+            .unwrap(),
+        )
+        .expect_success();
+        let proposal = f.phase().5;
+        f.send(
+            &challenger,
+            OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+            PredictionMarketContractV1::challenge_result(4, proposal, 1, [0xc2; 32]).unwrap(),
+        )
+        .expect_success();
+        let review_base = f.phase().4;
+        assert_ne!(review_base, [0; 32]);
+        assert_eq!(f.phase().3, [0; 32], "challenge must not open the appeal nonce early");
+
+        let vote_not_before = f.init.resolve_not_before + f.init.appeal_review_delay;
+        f.bc.set_now((vote_not_before - 1) as u32);
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                5,
+                1,
+                review_base,
+                1,
+                [0xc3; 32],
+                vote_not_before - 1,
+                vote_not_before,
+            )
+            .unwrap(),
+        )
+        .expect_exit_code(2426);
+
+        f.bc.set_now(vote_not_before as u32);
+        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(6).unwrap())
+            .expect_success();
+        let appeal_context = f.phase().3;
+        assert_ne!(appeal_context, [0; 32], "review delay expiry must open the appeal nonce");
+        let deadline = f.phase().6;
+        let vote_at = u64::try_from(i128::from(deadline) + i128::from(offset)).unwrap();
+        f.bc.set_now(vote_at as u32);
+        let body = PredictionMarketContractV1::report_result(
+            7,
+            1,
+            appeal_context,
+            1,
+            [0xc4; 32],
+            vote_at,
+            vote_at + 1,
+        )
+        .unwrap();
+        let result = f.send(&appellate, OPERATION_BUDGET, body);
+        if accepted {
+            result.expect_success();
+            assert_eq!(f.phase().0, 4, "deadline-1 appeal report must finalize");
+        } else {
+            result.expect_exit_code(2425);
+            assert_eq!(f.phase().0, 3, "late appeal report must preserve review state");
+        }
+    }
+}
+
+#[test]
 fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
     let mut f = Fixture::new();
     f.activate();
