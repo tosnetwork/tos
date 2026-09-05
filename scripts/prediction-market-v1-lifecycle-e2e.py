@@ -48,6 +48,7 @@ TOS = 1_000_000_000
 OPERATION_BUDGET = TOS
 WALLET_NAMES = ("owner", "normal_one", "normal_two", "appeal_one", "appeal_two", "reserve")
 NORMAL_SCENARIO_FUNDED_WALLETS = ("owner", "normal_one", "normal_two", "reserve")
+MATCH_SCENARIO_FUNDED_WALLETS = NORMAL_SCENARIO_FUNDED_WALLETS
 CHALLENGED_SCENARIO_FUNDED_WALLETS = WALLET_NAMES
 TRADING_PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
@@ -244,6 +245,58 @@ class Lifecycle:
             f"source wallet {sender} seqno advancement for operation {sequence}",
         )
 
+    def signed_order(self, order: dict[str, Any], label: str, seed: bytes) -> str:
+        """Build and verify one canonical signed order using an ephemeral key."""
+        order_path = self.workdir / f"order-{label}.json"
+        unsigned_path = self.workdir / f"order-{label}-unsigned.boc"
+        signed_path = self.workdir / f"order-{label}-signed.boc"
+        order_path.write_text(json.dumps(order))
+        order_path.chmod(0o600)
+        artifact = json.loads(self.tosctl_call(
+            "agent", "prediction", "build-order", "--definition", str(self.definition),
+            "--order", str(order_path), "--output-boc", str(unsigned_path),
+        ))
+        digest = artifact["digest"].removeprefix("tvm-cell-sha256:")
+        if len(digest) != 64:
+            raise RuntimeError(f"canonical order digest has invalid shape for {label}")
+        # Node's RFC 8032 implementation accepts a raw 32-byte seed when it
+        # is wrapped in the standard PKCS#8 Ed25519 prefix. The seed stays in
+        # this owner-private process environment only; tosctl independently
+        # verifies the resulting signature before writing the signed BOC.
+        signer = (
+            "const c=require('crypto');"
+            "const seed=Buffer.from(process.env.PREDICTION_TEST_SEED,'hex');"
+            "const msg=Buffer.from(process.env.PREDICTION_TEST_DIGEST,'hex');"
+            "const key=c.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed]),format:'der',type:'pkcs8'});"
+            "const pub=c.createPublicKey(key).export({format:'der',type:'spki'}).subarray(-32);"
+            "process.stdout.write(JSON.stringify({public_key:pub.toString('hex'),signature:c.sign(null,msg,key).toString('hex')}));"
+        )
+        signer_env = dict(self.env)
+        signer_env.update({"PREDICTION_TEST_SEED": seed.hex(), "PREDICTION_TEST_DIGEST": digest})
+        completed = subprocess.run(
+            ["node", "-e", signer], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=signer_env, check=False, timeout=30,
+        )
+        if completed.returncode:
+            raise RuntimeError(f"ephemeral Ed25519 signer failed for {label}: {completed.stderr.decode()}")
+        signature = json.loads(completed.stdout)
+        self.tosctl_call(
+            "agent", "prediction", "build-order", "--definition", str(self.definition),
+            "--order", str(order_path), "--public-key", signature["public_key"],
+            "--signature", signature["signature"], "--output-boc", str(signed_path),
+        )
+        return base64.b64encode(signed_path.read_bytes()).decode()
+
+    def ed25519_public_key(self, seed: bytes) -> str:
+        script = (
+            "const c=require('crypto');const s=Buffer.from(process.env.PREDICTION_TEST_SEED,'hex');"
+            "const k=c.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),s]),format:'der',type:'pkcs8'});"
+            "process.stdout.write(c.createPublicKey(k).export({format:'der',type:'spki'}).subarray(-32).toString('hex'));"
+        )
+        env = dict(self.env)
+        env["PREDICTION_TEST_SEED"] = seed.hex()
+        return subprocess.check_output(["node", "-e", script], env=env, timeout=30).decode()
+
     def show_quorum(self) -> dict[str, Any]:
         original = self.config.read_text()
         def semantic_view(value: dict[str, Any]) -> dict[str, Any]:
@@ -351,6 +404,52 @@ class Lifecycle:
         withdrawn = self.show_quorum()
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"withdraw did not exhaust the owner's free collateral: {withdrawn}")
+
+    def run_signed_match_lifecycle(self) -> None:
+        """Prove a two-owner complementary BUY match from exact signed BOCs."""
+        definition = self.write_definition()
+        state = json.loads(self.tosctl_call(
+            "agent", "prediction", "build-state", "--definition", str(self.definition),
+        ))
+        market = state["address"]
+        config_hash = state["market_config_hash"].removeprefix("tvm-cell-sha256:")
+        deploy = self.workdir / "deploy.boc"
+        self.tosctl_call("agent", "prediction", "prepare-deploy", "--definition", str(self.definition),
+                         "--from", "owner", "--amount-nanotos", str(2 * TOS), "--output-boc", str(deploy))
+        prior = self.wallet_seqno("owner")
+        self.broadcast_file(deploy)
+        wait_until(lambda: self.wallet_seqno("owner") > prior, "match deploy seqno advancement")
+        self.wait_status("trading")
+        credited = TOS
+        contribution = definition["participant_entry_fee"] + definition["account_cleanup_bounty"]
+        seeds = {"normal_one": bytes([1]) * 32, "normal_two": bytes([2]) * 32}
+        for sequence, wallet in ((1, "normal_one"), (2, "normal_two")):
+            key = self.ed25519_public_key(seeds[wallet])
+            self.prepare_and_send(wallet, {
+                "operation": "register_and_deposit", "query_id": sequence,
+                "credited_amount": credited, "trading_pubkey": key,
+            }, credited + contribution + OPERATION_BUDGET, sequence)
+        valid_after = int(time.time())
+        common = {
+            "global_id": 3, "workchain_id": 0, "market_address": market,
+            "market_config_hash": config_hash, "key_epoch": 0, "nonce": 1,
+            "quantity_lots": 1, "min_fill_lots": 1, "allow_partial": False,
+            "valid_after": valid_after, "valid_until": definition["trade_close"],
+            "optional_counterparty": None,
+        }
+        yes = self.signed_order({**common, "owner_address": self.addresses["normal_one"],
+                                 "salt": "71" * 32, "action": "buy", "outcome": "yes",
+                                 "liquidity_role": "maker", "limit_price_tick": 6_000}, "yes", seeds["normal_one"])
+        no = self.signed_order({**common, "owner_address": self.addresses["normal_two"],
+                                "salt": "72" * 32, "action": "buy", "outcome": "no",
+                                "liquidity_role": "taker", "limit_price_tick": 4_000}, "no", seeds["normal_two"])
+        order_contribution = 2 * (definition["order_entry_fee"] + definition["order_cleanup_bounty"])
+        self.prepare_and_send("owner", {"operation": "match_pair", "query_id": 3, "quantity_lots": 1,
+                                        "left_signed_order_boc": yes, "right_signed_order_boc": no},
+                              order_contribution + OPERATION_BUDGET, 3)
+        matched = self.show_quorum()
+        if matched["complete_sets"] != 1 or matched["locked"] != TOS or matched["fill_count"] != 1:
+            raise RuntimeError(f"signed match did not create one conserved complete set: {matched}")
 
     def run_challenged_lifecycle(self, appellate_outcome: int | None) -> None:
         """Exercise appellate quorum or timeout after a hash-bound challenge."""
@@ -557,7 +656,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
+        "--scenario", choices=("normal", "signed-match", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -605,6 +704,10 @@ def main() -> int:
                 "PredictionMarket normal "
                 f"{args.normal_outcome.upper()} direct-wallet three-node lifecycle: PASS"
             )
+        elif args.scenario == "signed-match":
+            lifecycle.provision_wallets(MATCH_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_signed_match_lifecycle()
+            print("PredictionMarket two-party signed-order match three-node lifecycle: PASS")
         elif args.scenario == "challenged-appellate":
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle(1)
