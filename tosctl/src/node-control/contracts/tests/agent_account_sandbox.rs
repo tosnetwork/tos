@@ -415,7 +415,7 @@ fn native_send_is_one_bodyless_non_bouncing_transfer() {
     let action = fixture.signed_native(
         &fixture.controller_secret,
         GLOBAL_ID,
-        u64::from(contracts::AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS),
+        0,
         fixture.bc.now() + 300,
         &target,
         TOS,
@@ -472,7 +472,7 @@ fn checked_contract_call_v2_is_one_bounceable_exact_body_transfer() {
     assert!(header.bounce, "V2 checked contract calls must be bounceable");
     assert_eq!(
         header.extra_flags.as_u64().expect("V2 extra flags fit u64"),
-        0,
+        u64::from(contracts::AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS),
         "V2 checked calls must request the rich bounce envelope"
     );
     assert!(inbound.state_init().is_none(), "V2 calls must never carry StateInit");
