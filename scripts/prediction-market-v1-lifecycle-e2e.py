@@ -513,7 +513,9 @@ class Lifecycle:
             if completed.returncode:
                 raise RuntimeError(f"OpenFox accepted-wager gate failed:\n{completed.stdout.decode()}")
             exported = self.evidence_dir / "openfox-reports"
-            exported.mkdir(mode=0o700)
+            exported.mkdir(mode=0o700, exist_ok=True)
+            if not exported.is_dir() or exported.is_symlink():
+                raise RuntimeError("OpenFox report export root is not a directory")
             exported.chmod(0o700)
             for prefix in ("accepted-wager-", "future-block-lock-", "future-block-reveal-"):
                 reports = sorted(report_dir.glob(prefix + "*.json"))
