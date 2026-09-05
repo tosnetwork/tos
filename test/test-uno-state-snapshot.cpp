@@ -18,12 +18,14 @@ namespace {
 class SnapshotImportActor final : public td::actor::Actor {
  public:
   SnapshotImportActor(std::string directory, tos::validator::PersistentStateImportRequest request,
-                      td::Bits256 expected_payload, std::vector<td::Bits256> keys, std::atomic<bool>& completed)
+                      td::Bits256 expected_payload, std::vector<td::Bits256> keys, std::atomic<bool>& completed,
+                      bool reopen = false)
       : directory_(std::move(directory))
       , request_(std::move(request))
       , expected_payload_(expected_payload)
       , keys_(std::move(keys))
-      , completed_(completed) {
+      , completed_(completed)
+      , reopen_(reopen) {
   }
 
   void start_up() override {
@@ -34,6 +36,13 @@ class SnapshotImportActor final : public td::actor::Actor {
     options.write().set_disable_rocksdb_stats(true);
     database_ = td::actor::create_actor<tos::validator::CellDb>(
         "uno-snapshot-celldb", td::actor::ActorId<tos::validator::RootDb>{}, directory_, options);
+    if (reopen_) {
+      td::actor::send_closure(database_, &tos::validator::CellDb::load_cell, request_.expected_root_hash,
+                              [self = actor_id(this)](td::Result<td::Ref<vm::DataCell>> root) mutable {
+                                td::actor::send_closure(self, &SnapshotImportActor::reloaded, std::move(root));
+                              });
+      return;
+    }
     auto wrong = request_;
     wrong.expected_root_hash.as_slice()[0] ^= 1;
     td::actor::send_closure(
@@ -73,14 +82,57 @@ class SnapshotImportActor final : public td::actor::Actor {
     ASSERT_TRUE(imported.cells_persisted > keys_.size());
     ASSERT_TRUE(imported.gc_lease != nullptr);
     ASSERT_TRUE(td::Bits256(imported.hash_only_root->get_hash().bits()) == request_.expected_root_hash);
-    auto payload = block::extract_workchain_engine_state(imported.hash_only_root, 2, td::Bits256::zero()).move_as_ok();
+    verify_root(imported.hash_only_root);
+    lease_ = std::move(imported.gc_lease);
+    // Synthetic block identity: exercise CellDb root registration, without
+    // claiming validation of a block header or a network checkpoint.
+    tos::BlockIdExt block_id{tos::BlockId{2, tos::shardIdAll, 1}};
+    td::actor::send_closure(database_, &tos::validator::CellDb::store_cell, block_id,
+                            std::move(imported.hash_only_root), vm::StoreCellHint{},
+                            [self = actor_id(this)](td::Result<td::Ref<vm::DataCell>> root) mutable {
+                              td::actor::send_closure(self, &SnapshotImportActor::stored, std::move(root));
+                            });
+  }
+  void verify_root(td::Ref<vm::Cell> root) {
+    ASSERT_TRUE(td::Bits256(root->get_hash().bits()) == request_.expected_root_hash);
+    auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
     ASSERT_TRUE(td::Bits256(payload->get_hash().bits()) == expected_payload_);
     vm::Dictionary dictionary(payload, 256);
     for (const auto& key : keys_) {
       ASSERT_TRUE(dictionary.lookup(key).not_null());
     }
-    // Keep the GC lease through all lazy reads. This fixture does not register
-    // a canonical block-state root or authorize a network checkpoint.
+  }
+  void stored(td::Result<td::Ref<vm::DataCell>> result) {
+    verify_root(result.move_as_ok());
+    ASSERT_TRUE(lease_->active());
+    lease_->release_after_root_store_committed();
+    ASSERT_TRUE(!lease_->active());
+    // The reader request forwards through the same inner actor after release,
+    // so its callback is also a barrier for the adoption/lease-release message.
+    td::actor::send_closure(database_, &tos::validator::CellDb::get_cell_db_reader,
+                            [self = actor_id(this)](td::Result<std::shared_ptr<vm::CellDbReader>> reader) mutable {
+                              td::actor::send_closure(self, &SnapshotImportActor::read_after_release,
+                                                      std::move(reader));
+                            });
+  }
+  void read_after_release(td::Result<std::shared_ptr<vm::CellDbReader>> result) {
+    auto reader = result.move_as_ok();
+    verify_root(reader->load_cell(request_.expected_root_hash.as_slice()).move_as_ok());
+    check_registration();
+  }
+  void reloaded(td::Result<td::Ref<vm::DataCell>> result) {
+    verify_root(result.move_as_ok());
+    check_registration();
+  }
+  void check_registration() {
+    td::actor::send_closure(database_, &tos::validator::CellDb::get_registered_state_root,
+                            tos::BlockIdExt{tos::BlockId{2, tos::shardIdAll, 1}},
+                            [self = actor_id(this)](td::Result<tos::RootHash> root) mutable {
+                              td::actor::send_closure(self, &SnapshotImportActor::registered, std::move(root));
+                            });
+  }
+  void registered(td::Result<tos::RootHash> result) {
+    ASSERT_TRUE(result.move_as_ok() == request_.expected_root_hash);
     completed_.store(true);
     td::actor::SchedulerContext::get().stop();
   }
@@ -95,6 +147,8 @@ class SnapshotImportActor final : public td::actor::Actor {
   std::vector<td::Bits256> keys_;
   std::atomic<bool>& completed_;
   unsigned attempt_ = 0;
+  bool reopen_ = false;
+  std::unique_ptr<tos::validator::CellDbGcPauseLease> lease_;
   td::actor::ActorOwn<tos::validator::CellDb> database_;
 };
 
@@ -116,15 +170,17 @@ void actor_import_snapshot(td::Ref<vm::Cell> state, td::Ref<vm::Cell> payload, c
   default_ratio.spool_reservation_ratio_percent = 300;
   default_ratio.max_spool_bytes_per_import = 1;
   tos::validator::fullnode::configure_persistent_state_budgets(default_ratio);
-  std::atomic<bool> completed{false};
-  td::actor::Scheduler scheduler({2});
-  td::actor::ActorOwn<SnapshotImportActor> actor;
-  scheduler.run_in_context([&] {
-    actor = td::actor::create_actor<SnapshotImportActor>("uno-snapshot-import", directory, request,
-                                                         td::Bits256(payload->get_hash().bits()), keys, completed);
-  });
-  scheduler.run();
-  ASSERT_TRUE(completed.load());
+  for (bool reopen : {false, true}) {
+    std::atomic<bool> completed{false};
+    td::actor::Scheduler scheduler({2});
+    td::actor::ActorOwn<SnapshotImportActor> actor;
+    scheduler.run_in_context([&] {
+      actor = td::actor::create_actor<SnapshotImportActor>(
+          "uno-snapshot-import", directory, request, td::Bits256(payload->get_hash().bits()), keys, completed, reopen);
+    });
+    scheduler.run();
+    ASSERT_TRUE(completed.load());
+  }
   tos::validator::fullnode::configure_persistent_state_budgets(saved_budget);
 }
 

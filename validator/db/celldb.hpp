@@ -272,6 +272,7 @@ class CellDbIn : public CellDbBase {
 
   std::vector<std::pair<std::string, std::string>> prepare_stats();
   void load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promise);
+  void get_registered_state_root(BlockIdExt block_id, td::Promise<RootHash> promise);
   void store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::StoreCellHint hint,
                   td::Promise<td::Ref<vm::DataCell>> promise);
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise);
@@ -599,6 +600,7 @@ class CellDb : public CellDbBase {
  public:
   void prepare_stats(td::Promise<std::vector<std::pair<std::string, std::string>>> promise);
   td::actor::Task<Ref<vm::DataCell>> load_cell(RootHash hash);
+  void get_registered_state_root(BlockIdExt block_id, td::Promise<RootHash> promise);
   td::actor::Task<Ref<vm::DataCell>> store_cell(BlockIdExt block_id, Ref<vm::Cell> cell, vm::StoreCellHint hint);
   td::actor::Task<Ref<vm::DataCell>> store_block_state_permanent(Ref<BlockData> block);
   td::actor::Task<std::map<BlockIdExt, RootHash>> store_block_state_permanent_bulk(std::vector<Ref<BlockData>> blocks);

@@ -1210,3 +1210,29 @@ Arithmetic tests cover the 9977114-byte bound for the 168133-byte/8198-cell
 fixture, zero inputs and multiplication/addition/doubling overflow boundaries.
 Removing the rollback-copy factor fails the arithmetic test (688 instead of
 1376 for its small fixture); that mutation was restored too.
+
+### Root registration, lease release and database reopening
+
+The actor fixture now follows successful import with the real `CellDb::store_cell`
+root-registration path under a synthetic wc2 block ID. It holds the GC lease
+until the store callback, releases it as committed, then requests a fresh inner
+reader as a barrier and verifies the complete engine dictionary. A new read-only
+`get_registered_state_root` actor query verifies the block-ID-to-root metadata,
+not merely the existence of cells by hash.
+
+The first scheduler and database actors are then destroyed. A new scheduler
+opens the same RocksDB directory and loads the root without importing the
+snapshot again. Both the registered metadata and every nullifier are checked.
+Bypassing root registration while returning the already imported cell makes
+the metadata query fail; the mutation was restored. This prevents raw cell
+availability from masquerading as successful root registration.
+
+The standalone fixture deliberately has no RootDb GC policy controller. CellDb
+now retains state when that actor handle is absent instead of dereferencing an
+empty handle upon lease release. Production nodes still consult their real
+controller; no GC authorization is granted by this fallback.
+
+This proves clean database reopening within one process, not process-crash
+recovery, cold OS-cache performance, active GC, signed block acceptance,
+authenticated checkpoint registration or network synchronization. The block ID
+is synthetic and no full RootDb/validator manager is present in this fixture.

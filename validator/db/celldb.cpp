@@ -525,6 +525,19 @@ void CellDbIn::start_up() {
   }
 }
 
+void CellDbIn::get_registered_state_root(BlockIdExt block_id, td::Promise<RootHash> promise) {
+  if (!block_id.is_valid()) {
+    promise.set_error(td::Status::Error("invalid registered state block ID"));
+    return;
+  }
+  auto entry = get_block(get_key_hash(block_id));
+  if (entry.is_error()) {
+    promise.set_error(entry.move_as_error());
+    return;
+  }
+  promise.set_value(entry.move_as_ok().root_hash);
+}
+
 void CellDbIn::load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promise) {
   if (db_busy_) {
     ++action_queue_cnt_load_;
@@ -923,7 +936,10 @@ void CellDbIn::alarm() {
   // of trying to advance the desc-list. This prevents the imported-
   // but-not-yet-recorded cells from being torn down by gc_cont2
   // before the canonical block-state desc-list entry references them.
-  if (gc_pause_count_ > 0) {
+  if (gc_pause_count_ > 0 || root_db_.empty()) {
+    // A standalone CellDb has no authority to collect registered roots.
+    // Missing GC authorization must retain state, not dereference an empty
+    // actor handle. Normal nodes supply their RootDb policy controller.
     skip_gc();
     return;
   }
@@ -1259,6 +1275,10 @@ void CellDb::flush_db_stats(std::string stats) {
 
 void CellDb::alarm() {
   send_closure(cell_db_, &CellDbIn::prepare_stats, td::promise_send_closure(actor_id(this), &CellDb::update_stats));
+}
+
+void CellDb::get_registered_state_root(BlockIdExt block_id, td::Promise<RootHash> promise) {
+  td::actor::send_closure(cell_db_, &CellDbIn::get_registered_state_root, block_id, std::move(promise));
 }
 
 td::actor::Task<Ref<vm::DataCell>> CellDb::load_cell(RootHash hash) {
