@@ -893,3 +893,13 @@ review links are in its README. This is not a production dependency approval,
 full security/license audit, VK identity manifest or proof verifier; no engine
 registration, FFI or mainnet activation was added. Real proofs/signatures, pinned
 VK reconstruction and complete TOS authorization/profile integration remain M2.
+
+The Rust prototype now includes an allocation-free proof-shape precheck for
+the pinned circuit: exact length, nonempty action set, explicit configured
+action/byte limits, and checked length multiplication/addition. Its positive
+sizes are compared against the actual pinned dependency. Removing each of four
+rejection branches, or replacing either checked operation with wrapping math,
+produces an erroneous Ok result and fails the targeted test. Overflow fixtures
+supply the wrapped length deliberately, so a different error cannot conceal
+the bypass. All mutations were restored and locked offline tests pass. Actual
+proof verification and wiring this check before allocation remain unfinished.

@@ -30,6 +30,13 @@ This function checks selectors only. It does not build or fingerprint a VK,
 validate a bundle, prove ownership, or bind a supplied VK to those selectors.
 It must not be exposed as a transaction-verification API.
 
+`validate_proof_shape` is a separate allocation-free precheck for the pinned
+profile. It requires nonzero configured action/byte limits and an exact proof
+length of `2720 + 2272 * actions`, computed with checked arithmetic. Tests compare
+against the pinned dependency for 1–32 actions and reject short/padded proofs,
+empty bundles and resource/overflow boundaries. This checks lengths, not proof
+contents, and must follow profile selection before expensive verification.
+
 ## Source review, 2026-09-05
 
 - [Pinned bundle version implementation](https://github.com/zcash/orchard/blob/29d1d55db62153dcaeef8ef631c8991c53ed1248/src/bundle.rs)
