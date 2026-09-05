@@ -2,7 +2,8 @@ name: Source hygiene
 
 on:
   pull_request:
-    branches: [master, testnet, main]
+    # feature/** keeps stacked PRs covered; see contract-sandboxes.yml.
+    branches: [master, testnet, main, 'feature/**']
   push:
     branches: [master, testnet, main]
   workflow_dispatch:
