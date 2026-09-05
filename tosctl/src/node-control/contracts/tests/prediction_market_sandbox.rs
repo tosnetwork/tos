@@ -1310,6 +1310,45 @@ fn participant_cap_rejects_a_new_account_without_mutating_accounting() {
 }
 
 #[test]
+fn maximum_participant_state_rejects_the_ninth_account_atomically() {
+    const MAX_PARTICIPANTS: u8 = 8;
+    let mut f = Fixture::new_with(|init, _, _| init.max_participants = u32::from(MAX_PARTICIPANTS));
+    f.activate();
+    let owner = f.owner.address().clone();
+    let trader = f.trader_b.address().clone();
+    f.register(&owner, &SigningKey::from_bytes(&[0x81; 32]), 2);
+    f.register(&trader, &SigningKey::from_bytes(&[0x82; 32]), 3);
+
+    for index in 0..usize::from(MAX_PARTICIPANTS - 2) {
+        let participant =
+            f.bc.treasury(&format!("prediction-max-participant-{index}"), 25_000 * TOS)
+                .expect("participant treasury");
+        let address = participant.address().clone();
+        f.register(&address, &SigningKey::from_bytes(&[0x83 + index as u8; 32]), 4 + index as u64);
+    }
+    assert_eq!(f.accounting()[0], i128::from(MAX_PARTICIPANTS));
+
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+    let ninth =
+        f.bc.treasury("prediction-ninth-participant", 25_000 * TOS).expect("ninth treasury");
+    let ninth_address = ninth.address().clone();
+    f.send(
+        &ninth_address,
+        10 * TOS + f.init.participant_entry_fee + f.init.account_cleanup_bounty + OPERATION_BUDGET,
+        PredictionMarketContractV1::register_and_deposit(
+            20,
+            10 * TOS,
+            SigningKey::from_bytes(&[0x90; 32]).verifying_key().to_bytes(),
+        )
+        .unwrap(),
+    )
+    .expect_exit_code(2413);
+    assert_eq!(f.data_hash(), before_data_hash, "ninth participant changed maximum-state data");
+    assert_eq!(f.accounting(), before_accounting, "ninth participant changed liabilities");
+}
+
+#[test]
 fn owner_order_and_global_live_order_caps_fail_closed() {
     fn matched_buy_pair(
         fixture: &mut Fixture,
