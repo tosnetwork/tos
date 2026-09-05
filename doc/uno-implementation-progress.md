@@ -1536,3 +1536,37 @@ UNO slot selection, timer-driven production, checkpoints, or system-message
 funding. Its elapsed runtime is not a slot-length measurement. The next service
 policy work must supply those missing scheduling/finality paths; an empty-action
 host batch is only their execution prerequisite.
+
+### Deterministic scheduling-epoch arithmetic prototype
+
+`uno/core/slot-epoch.h` implements immutable, duration-parameterized scheduling
+arithmetic without a wall clock or default duration. Genesis starts at slot zero;
+times before the epoch and zero durations fail. Successor validation requires
+exactly one height increment, a strictly greater slot, and equality with the slot
+derived from the supplied authenticated time. Missed slots remain legal; claiming
+an old slot at a later observation is not. Height exhaustion fails without wrapping.
+
+The candidate epoch-change rule permits a later old-epoch slot boundary and
+carries that boundary's slot number into the new epoch. Both shorter and longer
+durations preserve continuity. This is an unactivated arithmetic proposal, not a
+ConfigV2 wire definition or an accepted migration policy. The caller must select
+the authoritative epoch for the observation, retain history for replay, authenticate
+the configuration and predecessor, and enforce masterchain reference lag. An old
+epoch object does not itself know that governance has replaced it.
+
+Four unit cases cover boundary rounding, alternate durations, skipped slots,
+duplicate/backfilled/future slots, height gaps, epoch continuity, and full-width
+time. Private construction preserves `first_slot <= start_time` and duration at
+least one, so computed slot cannot exceed the supplied time; no unreachable slot
+overflow branch is installed. Three independent temporary mutations reset the
+epoch slot offset, removed strict slot advancement, and removed the pre-epoch
+time check. Each made its targeted test fail, and all were restored. An initial
+dotted test filter selected zero cases and was discarded; the corrected filter
+actually ran and failed the epoch-continuity case.
+After restoration, the full `test-uno-amount` CTest group passed three consecutive
+runs (0.03 seconds total).
+
+This helper is not connected to a production engine or collator timer. It neither
+authenticates a finality reference nor enforces the idle/checkpoint service policy,
+and does not measure or freeze the slot duration. The full UNO execution and
+configuration integration remains required.

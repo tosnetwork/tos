@@ -627,7 +627,8 @@ add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 add_executable(test-workchain-block test/test-td-main.cpp crypto/test/test-workchain-block.cpp)
 target_link_libraries(test-workchain-block PRIVATE tos_crypto emulator_static)
 add_executable(test-uno-amount test/test-td-main.cpp uno/test/test-amount.cpp uno/test/test-accounting.cpp
-  uno/test/test-leaf-budget.cpp uno/test/test-transition-budget.cpp uno/test/test-bundle-context.cpp)
+  uno/test/test-leaf-budget.cpp uno/test/test-transition-budget.cpp uno/test/test-bundle-context.cpp
+  uno/test/test-slot-epoch.cpp)
 target_include_directories(test-uno-amount PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(test-uno-amount PRIVATE UNO_CONTEXT_VECTORS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uno/testdata/public-context-v1.txt")
 target_link_libraries(test-uno-amount PRIVATE tdutils)
