@@ -600,7 +600,12 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     .store_uint(checked_call ? 0x18 : 0x10, 6)
     .store_slice(target)
     .store_tomis(value)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32);
+    ;; Empty ExtraCurrencyCollection. A checked V2 call must opt in to the
+    ;; rich bounce envelope, while frozen legacy operations retain zero.
+    .store_uint(0, 1)
+    .store_tomis(checked_call ? checked_contract_call_v2_flags : 0)
+    .store_tomis(0)
+    .store_uint(0, 64 + 32);
   if (op == op::agent_deploy_send) {
     ;; init:(Maybe (Either StateInit ^StateInit)) = present, right/reference.
     outbound = outbound.store_uint(3, 2).store_ref(state_init);

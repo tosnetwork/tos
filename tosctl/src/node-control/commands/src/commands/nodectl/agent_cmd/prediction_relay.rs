@@ -2606,11 +2606,10 @@ fn prediction_observed_checked_call(
         state_init_hash: String::new(),
         bounce: header.bounce,
         bounced: header.bounced,
-        // `3` is the Agent Account V2 `send_raw_message` mode, not the
-        // internal-message header's `extra_flags` (which is normally zero).
-        // The source code hash is verified before this parser runs, and that
-        // audited code binds every checked-call V2 outbound to this mode.
-        extra_flags: 3,
+        extra_flags: header
+            .extra_flags
+            .as_u64()
+            .context("Prediction source output extra_flags exceed u64")?,
     })
 }
 
