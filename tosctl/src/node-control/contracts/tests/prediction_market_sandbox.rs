@@ -1119,6 +1119,88 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
+
+    // Finish the same randomized state through a production resolution, then
+    // claim in the reverse participant order and withdraw every remaining free
+    // balance.  The pre-final Q invariant deliberately no longer applies here:
+    // the terminal invariant is remaining payout plus claimed payout.
+    let keeper = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2_000).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2_001).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            2_002,
+            0,
+            normal_context,
+            0,
+            [0xd1; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let finalization_deadline = f.phase().6;
+    f.bc.set_now(finalization_deadline as u32);
+    f.send(
+        &keeper,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::finalize_uncontested(2_003).unwrap(),
+    )
+    .expect_success();
+
+    let final_backing = model.complete_sets.checked_mul(f.init.lot_value).unwrap();
+    let accounting = f.accounting();
+    assert_eq!(accounting[5], 0, "finalization must clear locked backing");
+    assert_eq!(accounting[6], final_backing as i128, "final backing diverged from the model");
+    assert_eq!(accounting[7], final_backing as i128, "all final backing must begin as payout liability");
+    assert_eq!(accounting[8], 0, "no claim may be recorded before a claim");
+
+    let mut cumulative_claimed = 0_u64;
+    for index in [1_usize, 0] {
+        let payout = model.accounts[index].yes.checked_mul(f.init.lot_value).unwrap();
+        f.send(
+            &keeper,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::claim(2_010 + index as u64, &owners[index]).unwrap(),
+        )
+        .expect_success();
+        model.accounts[index].free = model.accounts[index].free.checked_add(payout).unwrap();
+        model.accounts[index].yes = 0;
+        model.accounts[index].no = 0;
+        cumulative_claimed = cumulative_claimed.checked_add(payout).unwrap();
+        let accounting = f.accounting();
+        assert_eq!(
+            accounting[7] as u64 + cumulative_claimed,
+            final_backing,
+            "remaining payout plus cumulative claims must equal final backing"
+        );
+        assert_eq!(f.account(&owners[index])[0] as u64, model.accounts[index].free);
+    }
+    assert_eq!(f.accounting()[7], 0, "all payout liability must be exhausted after both claims");
+    assert_eq!(f.accounting()[8], final_backing as i128);
+
+    for index in [0_usize, 1] {
+        let amount = model.accounts[index].free;
+        if amount > 0 {
+            f.send(
+                &owners[index],
+                OPERATION_BUDGET,
+                PredictionMarketContractV1::withdraw(2_020 + index as u64, amount).unwrap(),
+            )
+            .expect_success();
+        }
+        model.accounts[index].free = 0;
+        assert_eq!(f.account(&owners[index])[0], 0, "withdraw must exhaust modeled free balance");
+    }
+    assert_eq!(f.accounting()[4], 0, "all participant free liability must be withdrawn");
 }
 
 fn run_partitioned_fill(parts: u64) -> ([i128; 3], [i128; 3], [i128; 4]) {
