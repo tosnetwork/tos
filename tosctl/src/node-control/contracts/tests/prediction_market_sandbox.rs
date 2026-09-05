@@ -27,6 +27,29 @@ fn assert_success(label: &str, result: &SendResult) {
     }
 }
 
+fn assert_state_init_activation_aborts(label: &str, data: Cell) {
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury(&format!("invalid-init-{label}"), 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "{label} must not activate the market");
+}
+
 fn compute_gas_used(result: &SendResult) -> u64 {
     match result.read_primary_description().compute_ph {
         TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
@@ -653,26 +676,7 @@ fn zero_oracle_threshold_in_a_structurally_valid_config_cannot_activate() {
     root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
     let invalid_data = root_builder.into_cell().unwrap();
 
-    let mut bc = Blockchain::with_global_version(14).unwrap();
-    bc.set_workchain(-1);
-    let owner = bc.treasury("zero-threshold-owner", 25_000 * TOS).unwrap();
-    let state_init =
-        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), invalid_data);
-    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
-    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
-    let result = bc
-        .send_message(
-            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
-                .bounce(true)
-                .state_init(state_init)
-                .body(PredictionMarketContractV1::activate(1).unwrap())
-                .build(),
-        )
-        .unwrap();
-    result.expect_aborted();
-    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-    state.expect_success();
-    assert_eq!(state.int_at(0), 0, "zero threshold must not activate the market");
+    assert_state_init_activation_aborts("zero-threshold", invalid_data);
 }
 
 #[test]
@@ -693,26 +697,28 @@ fn overlapping_normal_and_appellate_reporter_sets_cannot_activate() {
     root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
     let invalid_data = root_builder.into_cell().unwrap();
 
-    let mut bc = Blockchain::with_global_version(14).unwrap();
-    bc.set_workchain(-1);
-    let owner = bc.treasury("overlapping-policy-owner", 25_000 * TOS).unwrap();
-    let state_init =
-        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), invalid_data);
-    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
-    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
-    let result = bc
-        .send_message(
-            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
-                .bounce(true)
-                .state_init(state_init)
-                .body(PredictionMarketContractV1::activate(1).unwrap())
-                .build(),
-        )
-        .unwrap();
-    result.expect_aborted();
-    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
-    state.expect_success();
-    assert_eq!(state.int_at(0), 0, "overlapping committees must not activate the market");
+    assert_state_init_activation_aborts("overlapping-policy", invalid_data);
+}
+
+#[test]
+fn zero_immutable_rules_hash_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let identity = config.reference(0).unwrap();
+    let mut identity_builder = BuilderData::from_cell(&identity).unwrap();
+    let mut identity_data = identity_builder.data().to_vec();
+    // identity is magic:uint32, global_id:int32, workchain_id:int8,
+    // deployment_salt:uint256, rules_hash:uint256, metadata_hash:uint256.
+    assert_eq!(&identity_data[41..73], template.init.rules_hash.as_slice());
+    identity_data[41..73].fill(0);
+    identity_builder.replace_data(identity_data, identity.bit_length());
+
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(0, identity_builder.into_cell().unwrap());
+    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
+    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts("zero-rules-hash", root_builder.into_cell().unwrap());
 }
 
 #[test]
