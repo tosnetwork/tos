@@ -84,6 +84,16 @@ def wait_until(predicate, description: str, timeout: float = 90.0) -> Any:
     raise RuntimeError(f"timed out waiting for {description}{suffix}")
 
 
+def canonical_raw_address(value: str) -> str:
+    """Convert a user-friendly TOS address to its canonical raw form."""
+    encoded = value.strip().replace("-", "+").replace("_", "/")
+    raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
+    if len(raw) != 36:
+        raise RuntimeError("wallet address has invalid friendly-address length")
+    workchain = int.from_bytes(raw[1:2], "big", signed=True)
+    return f"{workchain}:{raw[2:34].hex()}"
+
+
 class Lifecycle:
     def __init__(self, workdir: Path, tosctl: Path, rpc_urls: list[str], control_url: str,
                  evidence_dir: Path | None = None, openfox_root: Path | None = None):
@@ -271,7 +281,7 @@ class Lifecycle:
                                         "chain_rpc": {"urls": [endpoint + "/"]}, "http": {},
                                         "master_wallet": None, "tick_interval": 40, "log": None}, indent=2))
             path.chmod(0o600)
-        manifest = {"schema": "tos.prediction-match-evidence.v1", "source_address": self.addresses["owner"],
+        manifest = {"schema": "tos.prediction-match-evidence.v1", "source_address": canonical_raw_address(self.addresses["owner"]),
                     "scan_start_masterchain_seqno": scan_start}
         (self.evidence_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
         (self.evidence_dir / "manifest.json").chmod(0o600)
