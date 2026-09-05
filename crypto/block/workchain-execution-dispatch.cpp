@@ -66,6 +66,61 @@ td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(
   }
 }
 
+td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
+    const std::vector<WorkchainNativeIngressPolicy>& policies) {
+  vm::Dictionary dictionary(32);
+  for (const auto& policy : policies) {
+    TRY_RESULT(encoded, encode_workchain_native_ingress_policy(policy));
+    td::BitArray<32> key(static_cast<std::uint64_t>(policy.workchain_id));
+    if (!dictionary.set_ref(key, encoded, vm::Dictionary::SetMode::Add)) {
+      return td::Status::Error("duplicate native ingress workchain");
+    }
+  }
+  vm::CellBuilder cb;
+  if (!cb.store_long_bool(0x57495431, 32) || !std::move(dictionary).append_dict_to_bool(cb)) {
+    return td::Status::Error("cannot encode native ingress table");
+  }
+  return cb.finalize();
+}
+
+td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing native ingress table");
+  }
+  try {
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special || cs.size() != 33 || cs.fetch_ulong(32) != 0x57495431 ||
+        cs.size_refs() != cs.prefetch_ulong(1)) {
+      return td::Status::Error("invalid native ingress table encoding");
+    }
+    vm::Dictionary dictionary(cs, 32);
+    WorkchainNativeIngressTable table;
+    if (!dictionary.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int) {
+          if (value->size_ext() != 0x10000) {
+            return false;
+          }
+          auto decoded = decode_workchain_native_ingress_policy(value->prefetch_ref());
+          if (decoded.is_error()) {
+            return false;
+          }
+          auto policy = decoded.move_as_ok();
+          if (key.get_int(32) != policy.workchain_id) {
+            return false;
+          }
+          auto id = policy.workchain_id;
+          return table.emplace(id, std::move(policy)).second;
+        })) {
+      return td::Status::Error("invalid native ingress table entry or key");
+    }
+    return table;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid native ingress table cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete native ingress table proof");
+  }
+}
+
 td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
                                                     const WorkchainExecutionDescriptor& descriptor) {
   TRY_STATUS(check_ingress_policy(policy));

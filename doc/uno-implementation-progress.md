@@ -559,3 +559,12 @@ failures, selector bounds, missing fields, trailing bits and uint64 mode values.
 Removing the mode binding makes the mismatch assertion fail; it was restored.
 This is not yet a configuration table, sender filter or activation/migration
 gate: those remain required to address invalid-destination liveness.
+
+The shared policy table codec now uses tag 57495431 and HashmapE 32 reference
+entries. It preserves deterministic encoding independent of insertion order,
+supports an explicit empty table and rejects duplicate IDs, malformed roots and
+key/entry identity mismatches. The tests round-trip the table through BoC and
+show that a wrong-key fixture passes structural TL-B validation but fails the
+semantic decoder. Removing key/identity comparison makes that rejection fail;
+the comparison was restored. Configuration slot lookup and native admission
+enforcement are still pending; this codec alone does not fix queue liveness.

@@ -1,6 +1,6 @@
 # Native ingress policy for block-transition workchains
 
-Status: entry codec implemented; table/admission/transition enforcement pending.
+Status: entry/table codecs implemented; configuration/admission/transition enforcement pending.
 Not an activated consensus rule.
 
 ## Implemented entry codec
@@ -22,6 +22,15 @@ so closing admission does not invalidate an otherwise unchanged policy binding.
 This record does not replace descriptor finality or bind a masterchain state by
 itself. Table ownership, configuration lookup, activation and sender/receiver
 enforcement remain to be implemented before it has any admission effect.
+
+The table codec has tag `0x57495431` followed by a HashmapE with 32-bit workchain
+keys and reference-valued policy entries. Its root is 33 bits and zero/one
+references. Empty tables are explicit, not interchangeable with a missing root.
+Encoding rejects repeated workchain IDs and is independent of insertion order.
+Decoding rejects malformed entry wrappers and a dictionary key that differs
+from the enclosed policy's workchain ID, even if generated TL-B validation
+accepts the structure. The table codec still does not assign a configuration
+slot, authenticate a configuration state, or enforce message admission.
 
 ## Problem demonstrated by the current host
 

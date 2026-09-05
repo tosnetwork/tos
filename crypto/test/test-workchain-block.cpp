@@ -1281,6 +1281,40 @@ TEST(WorkchainBlock, PublicIngressPolicyCodecAndDescriptorBinding) {
   ASSERT_TRUE(block::decode_workchain_native_ingress_policy(extra).is_error());
 }
 
+TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
+  block::WorkchainNativeIngressPolicy first;
+  first.workchain_id = 2;
+  first.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  first.executor_address.set_zero();
+  first.engine_configuration = number(1);
+  auto second = first;
+  second.workchain_id = 3;
+  second.engine_configuration = number(2);
+  auto encoded = block::encode_workchain_native_ingress_table({first, second}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressTable.validate_ref(10000, encoded));
+  auto reversed = block::encode_workchain_native_ingress_table({second, first}).move_as_ok();
+  ASSERT_TRUE(encoded->get_hash() == reversed->get_hash());
+  auto wire = vm::std_boc_serialize(encoded).move_as_ok();
+  auto decoded = block::decode_workchain_native_ingress_table(vm::std_boc_deserialize(wire.as_slice()).move_as_ok())
+      .move_as_ok();
+  ASSERT_EQ(decoded.size(), 2u);
+  ASSERT_TRUE(decoded.at(3).engine_configuration->get_hash() == second.engine_configuration->get_hash());
+  auto empty = block::encode_workchain_native_ingress_table({}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressTable.validate_ref(10000, empty));
+  ASSERT_TRUE(block::decode_workchain_native_ingress_table(empty).move_as_ok().empty());
+  ASSERT_TRUE(block::encode_workchain_native_ingress_table({first, first}).is_error());
+  vm::Dictionary wrong(32);
+  ASSERT_TRUE(wrong.set_ref(td::BitArray<32>(3u), block::encode_workchain_native_ingress_policy(first).move_as_ok()));
+  vm::CellBuilder cb;
+  cb.store_long(0x57495431, 32);
+  ASSERT_TRUE(std::move(wrong).append_dict_to_bool(cb));
+  auto wrong_key = cb.finalize();
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressTable.validate_ref(10000, wrong_key));
+  ASSERT_TRUE(block::decode_workchain_native_ingress_table(wrong_key).is_error());
+  ASSERT_TRUE(block::decode_workchain_native_ingress_table({}).is_error());
+  ASSERT_TRUE(block::decode_workchain_native_ingress_table(number(0)).is_error());
+}
+
 TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
   auto configuration_owner = block_configuration();
   auto& configuration = *configuration_owner;

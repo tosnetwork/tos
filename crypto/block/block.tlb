@@ -1,4 +1,6 @@
 unit$_ = Unit;
+workchain_native_ingress_table_v1#57495431 policies:(HashmapE 32 ^WorkchainNativeIngressPolicy)
+  = WorkchainNativeIngressTable;
 workchain_native_ingress_v1#57495031 workchain_id:int32 extended:Bool
   engine_selector:int64 vm_mode:uint64 descriptor_version:uint32 executor_address:bits256
   engine_configuration:^Cell = WorkchainNativeIngressPolicy;

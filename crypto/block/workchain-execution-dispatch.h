@@ -98,6 +98,10 @@ td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const Workc
 td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root);
 td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
                                                     const WorkchainExecutionDescriptor& descriptor);
+using WorkchainNativeIngressTable = std::map<tos::WorkchainId, WorkchainNativeIngressPolicy>;
+td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
+    const std::vector<WorkchainNativeIngressPolicy>& policies);
+td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(const td::Ref<vm::Cell>& root);
 WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecutionDescriptor& descriptor);
 td::Status validate_workchain_execution_descriptor_transitions(
     const WorkchainSet& old_workchains, const WorkchainSet& new_workchains);
