@@ -5,12 +5,16 @@
 
 //! Production-BOC state-transition tests for PredictionMarket V1.
 
-use chain_block::{Cell, MsgAddressInt, Serializable, SliceData, TrComputePhase};
+use chain_block::{
+    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
+    TrComputePhase,
+};
 use contracts::{
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
 };
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury, compile_func_with_stdlib};
 use tos_vm::stack::StackItem;
 
@@ -24,6 +28,77 @@ fn assert_success(label: &str, result: &SendResult) {
     }
 }
 
+fn assert_state_init_activation_aborts(label: &str, data: Cell) {
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury(&format!("invalid-init-{label}"), 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "{label} must not activate the market");
+}
+
+fn initial_state_with_rebound_config(
+    valid_initial_data: &Cell,
+    init: &PredictionMarketInitV1,
+    config: Cell,
+) -> Cell {
+    let config_hash = *config.repr_hash().as_array();
+    let mut market_id = Sha256::new();
+    market_id.update(b"TOS_PREDICTION_MARKET_V1");
+    market_id.update(init.global_id.to_be_bytes());
+    market_id.update(init.workchain_id.to_be_bytes());
+    market_id.update(init.deployment_salt);
+    market_id.update(config_hash);
+    let market_id: [u8; 32] = market_id.finalize().into();
+
+    // Updating a config requires rebinding both derived identity fields. This
+    // lets negative tests reach their specific config invariant instead of
+    // stopping at the earlier stale-identity guard.
+    let mut state = BuilderData::new();
+    state
+        .append_u32(0x504d_5331)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_bit_zero()
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .append_u8(0)
+        .unwrap()
+        .append_raw(&[0], 2)
+        .unwrap()
+        .append_raw(&[0], 2)
+        .unwrap()
+        .append_raw(&config_hash, 256)
+        .unwrap()
+        .append_raw(&market_id, 256)
+        .unwrap()
+        .checked_append_reference(config)
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(1).unwrap())
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(2).unwrap())
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(3).unwrap())
+        .unwrap();
+    state.into_cell().unwrap()
+}
+
 fn compute_gas_used(result: &SendResult) -> u64 {
     match result.read_primary_description().compute_ph {
         TrComputePhase::Vm(vm) => vm.gas_used.as_u64(),
@@ -31,6 +106,20 @@ fn compute_gas_used(result: &SendResult) -> u64 {
             panic!("compute phase was skipped: {:?}", skipped.reason)
         }
     }
+}
+
+fn always_abort_recipient_code() -> Cell {
+    let source = std::env::temp_dir().join("prediction_market_always_abort_recipient.fc");
+    std::fs::write(
+        &source,
+        r#"
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  throw(777);
+}
+"#,
+    )
+    .expect("write aborting recipient source");
+    compile_func_with_stdlib(&[source]).expect("compile aborting recipient")
 }
 
 const TOS: u64 = 1_000_000_000;
@@ -247,7 +336,14 @@ impl Fixture {
     }
 
     fn new_with(configure: impl FnOnce(&mut PredictionMarketInitV1)) -> Self {
-        let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
+        Self::new_with_global_version(14, configure)
+    }
+
+    fn new_with_global_version(
+        global_version: u32,
+        configure: impl FnOnce(&mut PredictionMarketInitV1),
+    ) -> Self {
+        let mut bc = Blockchain::with_global_version(global_version).expect("blockchain");
         bc.set_workchain(-1);
         let treasury_balance = 25_000_u64.checked_mul(TOS).unwrap();
         let owner = bc.treasury("prediction-owner", treasury_balance).expect("owner");
@@ -451,6 +547,343 @@ fn source_compiles_to_frozen_prediction_market_code() {
 }
 
 #[test]
+fn global_version_gate_rejects_v13_and_admits_v14_v15_activation() {
+    let mut v13 = Fixture::new_with_global_version(13, |_| {});
+    let owner = v13.owner.address().clone();
+    v13.send(
+        &owner,
+        v13.init.operating_reserve_floor + OPERATION_BUDGET,
+        PredictionMarketContractV1::activate(1).unwrap(),
+    )
+    .expect_exit_code(2404);
+
+    for version in [14, 15] {
+        let mut fixture = Fixture::new_with_global_version(version, |_| {});
+        fixture.activate();
+        assert_eq!(fixture.phase().0, 0, "v{version} activation must retain the trading phase");
+    }
+}
+
+#[test]
+fn malformed_state_init_data_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let code = PredictionMarketContractV1::code().unwrap();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut bad_magic_builder = BuilderData::from_cell(&valid_data).unwrap();
+    let mut bad_magic = bad_magic_builder.data().to_vec();
+    bad_magic[0] ^= 0x80;
+    bad_magic_builder.replace_data(bad_magic, valid_data.bit_length());
+    let bad_magic = bad_magic_builder.into_cell().unwrap();
+    let mut truncated_builder = BuilderData::from_cell(&valid_data).unwrap();
+    truncated_builder.trunc(16).unwrap();
+    let truncated = truncated_builder.into_cell().unwrap();
+
+    for (label, data) in
+        [("empty", Cell::default()), ("truncated", truncated), ("bad magic", bad_magic)]
+    {
+        let mut bc = Blockchain::with_global_version(14).unwrap();
+        bc.set_workchain(-1);
+        let owner = bc.treasury(&format!("malformed-init-{label}"), 25_000 * TOS).unwrap();
+        let state_init = StateInit::with_code_and_data(code.clone(), data);
+        let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+        let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+        let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+            .bounce(true)
+            .state_init(state_init)
+            .body(PredictionMarketContractV1::activate(1).unwrap())
+            .build();
+        let result = bc.send_message(deploy).unwrap();
+        result.expect_aborted();
+        let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+        assert_ne!(
+            state.exit_code, 0,
+            "{label} StateInit must not become a parseable active market state"
+        );
+    }
+}
+
+#[test]
+fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut builder = BuilderData::from_cell(&valid_data).unwrap();
+    let mut bytes = builder.data().to_vec();
+    // Root layout is magic:uint32, version:uint16, activated:1,
+    // activated_at:uint64. Set the low bit of activated_at without changing
+    // config, accounting, resolution, or dictionary references.
+    bytes[14] |= 0x80;
+    builder.replace_data(bytes, valid_data.bit_length());
+    let prepopulated_data = builder.into_cell().unwrap();
+    let mut decoded = SliceData::load_cell(prepopulated_data.clone()).unwrap();
+    decoded.get_next_u32().unwrap();
+    decoded.get_next_u16().unwrap();
+    decoded.get_next_bit().unwrap();
+    assert_eq!(decoded.get_next_u64().unwrap(), 1, "test mutation must set activated_at");
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("prepopulated-init-owner", 25_000 * TOS).unwrap();
+    let state_init = StateInit::with_code_and_data(
+        PredictionMarketContractV1::code().unwrap(),
+        prepopulated_data,
+    );
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "pre-populated runtime must not activate the market");
+    assert_eq!(state.int_at(1), 1, "failed activation must not rewrite the supplied runtime");
+}
+
+#[test]
+fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut liabilities = BuilderData::new();
+    liabilities.append_u32(0x504d_4c31).unwrap();
+    for _ in 0..7 {
+        Coins::new(0).write_to(&mut liabilities).unwrap();
+    }
+    let mut accounting = BuilderData::new();
+    accounting
+        .append_u32(0x504d_4131)
+        .unwrap()
+        .append_u32(1)
+        .unwrap() // participant_count
+        .append_u32(0)
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .checked_append_reference(liabilities.into_cell().unwrap())
+        .unwrap();
+    let mut root = BuilderData::from_cell(&valid_data).unwrap();
+    root.replace_reference_cell(1, accounting.into_cell().unwrap());
+    let prepopulated_data = root.into_cell().unwrap();
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("prepopulated-liability-owner", 25_000 * TOS).unwrap();
+    let state_init = StateInit::with_code_and_data(
+        PredictionMarketContractV1::code().unwrap(),
+        prepopulated_data,
+    );
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let accounting = bc.run_get_method(&market, "get_prediction_accounting", vec![]).unwrap();
+    accounting.expect_success();
+    assert_eq!(accounting.int_at(0), 1, "failed activation must not normalize seeded liabilities");
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "seeded liability must not activate the market");
+}
+
+#[test]
+fn zero_oracle_threshold_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+
+    // Preserve the canonical reporter dictionary and every surrounding cell;
+    // mutate only normal_policy.threshold. This bypasses the Rust-side builder
+    // validation and proves the production contract rejects the economic
+    // invariant itself while parsing a structurally valid StateInit DAG.
+    let config = valid_data.reference(0).unwrap();
+    let policies = config.reference(3).unwrap();
+    let normal_policy = policies.reference(0).unwrap();
+    let mut normal_builder = BuilderData::from_cell(&normal_policy).unwrap();
+    let mut normal_data = normal_builder.data().to_vec();
+    assert_eq!(normal_data[4], template.init.normal_oracle_policy.threshold);
+    normal_data[4] = 0;
+    normal_builder.replace_data(normal_data, normal_policy.bit_length());
+
+    let mut policies_builder = BuilderData::from_cell(&policies).unwrap();
+    policies_builder.replace_reference_cell(0, normal_builder.into_cell().unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
+    let invalid_data = initial_state_with_rebound_config(
+        &valid_data,
+        &template.init,
+        config_builder.into_cell().unwrap(),
+    );
+
+    assert_state_init_activation_aborts("zero-threshold", invalid_data);
+}
+
+#[test]
+fn overlapping_normal_and_appellate_reporter_sets_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let policies = config.reference(3).unwrap();
+
+    // Keep each individual policy canonical and quorum-valid, but make both
+    // roles use the exact same reporter set. The only invalidity is the
+    // cross-policy independence invariant checked by the deployed contract.
+    let mut policies_builder = BuilderData::from_cell(&policies).unwrap();
+    policies_builder.replace_reference_cell(1, policies.reference(0).unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
+    let invalid_data = initial_state_with_rebound_config(
+        &valid_data,
+        &template.init,
+        config_builder.into_cell().unwrap(),
+    );
+
+    assert_state_init_activation_aborts("overlapping-policy", invalid_data);
+}
+
+#[test]
+fn zero_immutable_rules_hash_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let identity = config.reference(0).unwrap();
+    let mut identity_builder = BuilderData::from_cell(&identity).unwrap();
+    let mut identity_data = identity_builder.data().to_vec();
+    // identity is magic:uint32, global_id:int32, workchain_id:int8,
+    // deployment_salt:uint256, rules_hash:uint256, metadata_hash:uint256.
+    assert_eq!(&identity_data[41..73], template.init.rules_hash.as_slice());
+    identity_data[41..73].fill(0);
+    identity_builder.replace_data(identity_data, identity.bit_length());
+
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(0, identity_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "zero-rules-hash",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
+}
+
+#[test]
+fn rebound_derived_ids_allow_a_different_canonical_market_config() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let identity = config.reference(0).unwrap();
+    let mut identity_builder = BuilderData::from_cell(&identity).unwrap();
+    let mut identity_data = identity_builder.data().to_vec();
+    // Change the first byte of deployment_salt only. The configuration remains
+    // valid, but both derived fields must be recomputed for activation.
+    identity_data[9] ^= 0x01;
+    identity_builder.replace_data(identity_data, identity.bit_length());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(0, identity_builder.into_cell().unwrap());
+    let data = initial_state_with_rebound_config(
+        &valid_data,
+        &PredictionMarketInitV1 {
+            deployment_salt: {
+                let mut salt = template.init.deployment_salt;
+                salt[0] ^= 0x01;
+                salt
+            },
+            ..template.init.clone()
+        },
+        config_builder.into_cell().unwrap(),
+    );
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("rebound-config-owner", 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    bc.send_message(
+        MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+            .bounce(true)
+            .state_init(state_init)
+            .body(PredictionMarketContractV1::activate(1).unwrap())
+            .build(),
+    )
+    .unwrap()
+    .expect_success();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 1, "a correctly rebound canonical config must activate");
+}
+
+#[test]
+fn inverted_trade_and_resolution_times_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let times = config.reference(1).unwrap();
+    let mut times_builder = BuilderData::from_cell(&times).unwrap();
+    let mut times_data = times_builder.data().to_vec();
+    // times is magic:uint32 followed by trade_close and resolve_not_before.
+    times_data[4..12].copy_from_slice(&(template.init.resolve_not_before + 1).to_be_bytes());
+    times_builder.replace_data(times_data, times.bit_length());
+
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(1, times_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "inverted-times",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
+}
+
+#[test]
+fn zero_challenge_bond_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let economics = config.reference(2).unwrap();
+    let fees = economics.reference(0).unwrap();
+
+    // Re-encode only the nested challenge-fee cell. Its shape is canonical,
+    // but a zero bond violates the contract's immutable anti-grief floor.
+    let mut invalid_challenge_fees = BuilderData::new();
+    invalid_challenge_fees.append_u32(0x504d_4643).unwrap();
+    Coins::new(0).write_to(&mut invalid_challenge_fees).unwrap();
+    Coins::new(template.init.challenge_processing_fee)
+        .write_to(&mut invalid_challenge_fees)
+        .unwrap();
+    let mut fees_builder = BuilderData::from_cell(&fees).unwrap();
+    fees_builder.replace_reference_cell(0, invalid_challenge_fees.into_cell().unwrap());
+    let mut economics_builder = BuilderData::from_cell(&economics).unwrap();
+    economics_builder.replace_reference_cell(0, fees_builder.into_cell().unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(2, economics_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "zero-challenge-bond",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
+}
+
+#[test]
 fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
@@ -585,6 +1018,97 @@ fn activate_register_split_merge_and_withdraw_preserve_accounting() {
     assert_eq!(f.accounting()[4], 3 * TOS as i128);
     let after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
     assert!(after > before, "strict payout must reach the owner treasury");
+}
+
+#[test]
+fn maximum_free_withdrawal_survives_real_storage_rent_collection() {
+    let mut f = Fixture::new_with(|init| {
+        // Keep the withdrawal window open while the executor advances far enough
+        // to collect a material, nonzero storage fee from the market account.
+        init.claim_deadline = init.trade_close + 100 * 24 * 60 * 60;
+        init.operating_reserve_floor = 100 * TOS;
+    });
+    f.activate();
+    let owner = f.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x5a; 32]);
+    f.register(&owner, &key, 2);
+    // Storage rent is paid from physical operating funds, not participant
+    // liabilities. Fund the selected horizon explicitly before advancing time.
+    f.send(&owner, 50 * TOS, PredictionMarketContractV1::top_up_reserve(3).unwrap())
+        .expect_success();
+
+    let withdrawable = f.account(&owner)[0] as u64;
+    assert!(withdrawable > 0, "fixture must create a positive free balance");
+    f.bc.set_now(f.bc.now() + 30 * 24 * 60 * 60);
+
+    let owner_before = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let result = f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::withdraw(4, withdrawable).unwrap(),
+    );
+    assert_success("maximum free withdrawal after rent", &result);
+    result.expect_out_msgs(1);
+    let description = result.read_primary_description();
+    let storage = description
+        .storage_ph
+        .as_ref()
+        .expect("ordinary market transaction must have a storage phase");
+    assert!(
+        storage.storage_fees_collected.as_u128() > 0,
+        "the delayed withdrawal must collect actual market storage rent"
+    );
+    assert_eq!(f.account(&owner)[0], 0, "the complete recorded free balance was not withdrawn");
+    let owner_after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    assert!(owner_after > owner_before, "strict payout must still reach the owner after rent");
+}
+
+#[test]
+fn no_bounce_withdrawal_credits_an_aborting_recipient_without_a_market_bounce() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x5b; 32]);
+    f.register(&owner, &key, 2);
+
+    let mut recipient = f.bc.get_account(&owner).cloned().expect("owner account");
+    assert!(recipient.set_code(always_abort_recipient_code()), "owner must remain active");
+    f.bc.set_account(owner.clone(), recipient);
+
+    let amount = TOS;
+    let free_before = f.account(&owner)[0] as u64;
+    let recipient_before =
+        f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let result =
+        f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::withdraw(3, amount).unwrap());
+    result.expect_success().expect_out_msgs(1);
+    let recipient_transactions = result.transactions_for(&owner);
+    assert_eq!(
+        recipient_transactions.len(),
+        1,
+        "withdrawal must create exactly one recipient delivery"
+    );
+    let recipient_description = match recipient_transactions[0].read_description().unwrap() {
+        chain_block::TransactionDescr::Ordinary(description) => description,
+        other => panic!("expected ordinary recipient transaction, got {other:?}"),
+    };
+    assert!(recipient_description.aborted, "recipient probe must abort its compute phase");
+    assert_eq!(
+        result.transactions_for(&f.market).len(),
+        1,
+        "a non-bounce payout must not create a late bounce back to the market"
+    );
+    assert_eq!(
+        f.account(&owner)[0] as u64,
+        free_before - amount,
+        "aborting recipient must not restore free balance"
+    );
+    let recipient_after =
+        f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    assert!(
+        recipient_after > recipient_before,
+        "non-bounce payout did not credit the recipient account"
+    );
 }
 
 #[test]
@@ -999,6 +1523,91 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
+
+    // Finish the same randomized state through a production resolution, then
+    // claim in the reverse participant order and withdraw every remaining free
+    // balance.  The pre-final Q invariant deliberately no longer applies here:
+    // the terminal invariant is remaining payout plus claimed payout.
+    let keeper = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2_000).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2_001).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            2_002,
+            0,
+            normal_context,
+            0,
+            [0xd1; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let finalization_deadline = f.phase().6;
+    f.bc.set_now(finalization_deadline as u32);
+    f.send(
+        &keeper,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::finalize_uncontested(2_003).unwrap(),
+    )
+    .expect_success();
+
+    let final_backing = model.complete_sets.checked_mul(f.init.lot_value).unwrap();
+    let accounting = f.accounting();
+    assert_eq!(accounting[5], 0, "finalization must clear locked backing");
+    assert_eq!(accounting[6], final_backing as i128, "final backing diverged from the model");
+    assert_eq!(
+        accounting[7], final_backing as i128,
+        "all final backing must begin as payout liability"
+    );
+    assert_eq!(accounting[8], 0, "no claim may be recorded before a claim");
+
+    let mut cumulative_claimed = 0_u64;
+    for index in [1_usize, 0] {
+        let payout = model.accounts[index].yes.checked_mul(f.init.lot_value).unwrap();
+        f.send(
+            &keeper,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::claim(2_010 + index as u64, &owners[index]).unwrap(),
+        )
+        .expect_success();
+        model.accounts[index].free = model.accounts[index].free.checked_add(payout).unwrap();
+        model.accounts[index].yes = 0;
+        model.accounts[index].no = 0;
+        cumulative_claimed = cumulative_claimed.checked_add(payout).unwrap();
+        let accounting = f.accounting();
+        assert_eq!(
+            accounting[7] as u64 + cumulative_claimed,
+            final_backing,
+            "remaining payout plus cumulative claims must equal final backing"
+        );
+        assert_eq!(f.account(&owners[index])[0] as u64, model.accounts[index].free);
+    }
+    assert_eq!(f.accounting()[7], 0, "all payout liability must be exhausted after both claims");
+    assert_eq!(f.accounting()[8], final_backing as i128);
+
+    for index in [0_usize, 1] {
+        let amount = model.accounts[index].free;
+        if amount > 0 {
+            f.send(
+                &owners[index],
+                OPERATION_BUDGET,
+                PredictionMarketContractV1::withdraw(2_020 + index as u64, amount).unwrap(),
+            )
+            .expect_success();
+        }
+        model.accounts[index].free = 0;
+        assert_eq!(f.account(&owners[index])[0], 0, "withdraw must exhaust modeled free balance");
+    }
+    assert_eq!(f.accounting()[4], 0, "all participant free liability must be withdrawn");
 }
 
 fn run_partitioned_fill(parts: u64) -> ([i128; 3], [i128; 3], [i128; 4]) {
@@ -1395,6 +2004,260 @@ fn uncontested_normal_quorum_finalizes_only_at_the_frozen_deadline() {
 }
 
 #[test]
+fn normal_reporter_window_closes_at_the_frozen_deadline() {
+    // Each case has its own production contract because a threshold-one
+    // report at deadline-1 changes state to PROPOSED. The exact deadline and
+    // later cases must remain REPORTING so that their rejection proves the
+    // report gate itself, not a later phase's unrelated invariant.
+    for (offset, accepted) in [(-1_i64, true), (0, false), (1, false)] {
+        let mut f = Fixture::new();
+        f.activate();
+        let reporter = f.normal.address().clone();
+        let keeper = f.trader_b.address().clone();
+        let now = f.init.resolve_not_before as u32;
+        f.bc.set_now(now);
+        f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+            .expect_success();
+        f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+            .expect_success();
+        let context = f.phase().3;
+        let deadline = f.init.oracle_vote_deadline;
+        let report_at = u64::try_from(i128::from(deadline) + i128::from(offset)).unwrap();
+        f.bc.set_now(report_at as u32);
+        // Keep this statement intrinsically valid at every tested instant.
+        // The contract must therefore reach its phase/deadline gate rather
+        // than reject it earlier as malformed.
+        let body = PredictionMarketContractV1::report_result(
+            3,
+            0,
+            context,
+            0,
+            [0xb1; 32],
+            report_at,
+            report_at + 1,
+        )
+        .unwrap();
+        let result = f.send(&reporter, OPERATION_BUDGET, body);
+        if accepted {
+            result.expect_success();
+            assert_eq!(f.phase().0, 2, "deadline-1 report must create a proposal");
+        } else {
+            result.expect_exit_code(2425);
+            assert_eq!(f.phase().0, 1, "late report must not change the reporting state");
+        }
+    }
+}
+
+#[test]
+fn appellate_reporter_window_opens_after_delay_and_closes_at_deadline() {
+    for (offset, accepted) in [(-1_i64, true), (0, false), (1, false)] {
+        let mut f = Fixture::new();
+        f.activate();
+        let normal = f.normal.address().clone();
+        let appellate = f.appellate.address().clone();
+        let challenger = f.trader_b.address().clone();
+        f.bc.set_now(f.init.resolve_not_before as u32);
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(1).unwrap(),
+        )
+        .expect_success();
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(2).unwrap(),
+        )
+        .expect_success();
+        let normal_context = f.phase().3;
+        let report_at = u64::from(f.bc.now());
+        f.send(
+            &normal,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                3,
+                0,
+                normal_context,
+                0,
+                [0xc1; 32],
+                report_at,
+                f.init.oracle_vote_deadline,
+            )
+            .unwrap(),
+        )
+        .expect_success();
+        let proposal = f.phase().5;
+        f.send(
+            &challenger,
+            OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+            PredictionMarketContractV1::challenge_result(4, proposal, 1, [0xc2; 32]).unwrap(),
+        )
+        .expect_success();
+        let review_base = f.phase().4;
+        assert_ne!(review_base, [0; 32]);
+        assert_eq!(f.phase().3, [0; 32], "challenge must not open the appeal nonce early");
+
+        let vote_not_before = f.init.resolve_not_before + f.init.appeal_review_delay;
+        f.bc.set_now((vote_not_before - 1) as u32);
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                5,
+                1,
+                review_base,
+                1,
+                [0xc3; 32],
+                vote_not_before - 1,
+                vote_not_before,
+            )
+            .unwrap(),
+        )
+        .expect_exit_code(2426);
+
+        f.bc.set_now(vote_not_before as u32);
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(6).unwrap(),
+        )
+        .expect_success();
+        let appeal_context = f.phase().3;
+        assert_ne!(appeal_context, [0; 32], "review delay expiry must open the appeal nonce");
+        let deadline = f.phase().6;
+        let vote_at = u64::try_from(i128::from(deadline) + i128::from(offset)).unwrap();
+        f.bc.set_now(vote_at as u32);
+        let body = PredictionMarketContractV1::report_result(
+            7,
+            1,
+            appeal_context,
+            1,
+            [0xc4; 32],
+            vote_at,
+            vote_at + 1,
+        )
+        .unwrap();
+        let result = f.send(&appellate, OPERATION_BUDGET, body);
+        if accepted {
+            result.expect_success();
+            assert_eq!(f.phase().0, 4, "deadline-1 appeal report must finalize");
+        } else {
+            result.expect_exit_code(2425);
+            assert_eq!(f.phase().0, 3, "late appeal report must preserve review state");
+        }
+    }
+}
+
+#[test]
+fn normal_oracle_requires_exact_threshold_without_duplicate_counting() {
+    let mut f = Fixture::new_with(|init| {
+        init.normal_oracle_policy.threshold = 2;
+        init.normal_oracle_policy.reporters.push(init.reserve_recipient.clone());
+    });
+    f.activate();
+    let first = f.normal.address().clone();
+    let second = f.reserve.address().clone();
+    let keeper = f.trader_b.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    let now = u64::from(f.bc.now());
+    let deadline = f.init.oracle_vote_deadline;
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id, 0, context, 0, [0xd1; 32], now, deadline,
+        )
+        .unwrap()
+    };
+
+    f.send(&first, OPERATION_BUDGET, report(3)).expect_success();
+    assert_eq!(f.phase().0, 1, "M-1 reports must not create a proposal");
+    f.send(&first, OPERATION_BUDGET, report(4)).expect_success();
+    assert_eq!(f.phase().0, 1, "duplicate reporter vote must be idempotent");
+    f.send(
+        &first,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(5, 0, context, 1, [0xd2; 32], now, deadline)
+            .unwrap(),
+    )
+    .expect_exit_code(2429);
+    assert_eq!(f.phase().0, 1, "equivocation must not create a proposal");
+    f.send(&second, OPERATION_BUDGET, report(6)).expect_success();
+    assert_eq!(f.phase().0, 2, "exactly M independent reporters must create a proposal");
+}
+
+#[test]
+fn appellate_oracle_requires_exact_threshold_without_duplicate_counting() {
+    let mut f = Fixture::new_with(|init| {
+        init.appellate_oracle_policy.threshold = 2;
+        init.appellate_oracle_policy.reporters.push(init.reserve_recipient.clone());
+    });
+    f.activate();
+    let normal = f.normal.address().clone();
+    let first = f.appellate.address().clone();
+    let second = f.reserve.address().clone();
+    let challenger = f.trader_b.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    let normal_now = u64::from(f.bc.now());
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            3,
+            0,
+            normal_context,
+            0,
+            [0xe1; 32],
+            normal_now,
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(4, f.phase().5, 1, [0xe2; 32]).unwrap(),
+    )
+    .expect_success();
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    let now = u64::from(f.bc.now());
+    let deadline = f.phase().6;
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id, 1, context, 1, [0xe3; 32], now, deadline,
+        )
+        .unwrap()
+    };
+
+    f.send(&first, OPERATION_BUDGET, report(6)).expect_success();
+    assert_eq!(f.phase().0, 3, "M-1 appellate votes must not finalize");
+    f.send(&first, OPERATION_BUDGET, report(7)).expect_success();
+    assert_eq!(f.phase().0, 3, "duplicate appellate vote must be idempotent");
+    f.send(
+        &first,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(8, 1, context, 2, [0xe4; 32], now, deadline)
+            .unwrap(),
+    )
+    .expect_exit_code(2429);
+    assert_eq!(f.phase().0, 3, "appellate equivocation must not finalize");
+    f.send(&second, OPERATION_BUDGET, report(9)).expect_success();
+    assert_eq!(f.phase().0, 4, "exactly M appellate reporters must finalize");
+}
+
+#[test]
 fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
     let mut f = Fixture::new();
     f.activate();
@@ -1442,6 +2305,121 @@ fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
         .expect_success();
     assert_eq!(f.accounting()[4], 10 * TOS as i128, "INVALID must pay a full set exactly once");
     assert_eq!(f.accounting()[7], 0, "claim must exhaust the finalized payout liability");
+}
+
+#[test]
+fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
+    for (outcome, claim_order) in [(0_u8, [1_usize, 0]), (1, [0, 1]), (2, [1, 0])] {
+        let mut f = Fixture::new();
+        f.activate();
+        let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
+        let keys = [
+            SigningKey::from_bytes(&[0x80 + outcome; 32]),
+            SigningKey::from_bytes(&[0x90 + outcome; 32]),
+        ];
+        let normal = f.normal.address().clone();
+        f.register(&owners[0], &keys[0], 2);
+        f.register(&owners[1], &keys[1], 3);
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::split(4, 3).unwrap())
+            .expect_success();
+        f.send(&owners[1], OPERATION_BUDGET, PredictionMarketContractV1::split(5, 2).unwrap())
+            .expect_success();
+
+        // Move one YES lot only. The two accounts now have asymmetric YES/NO
+        // positions, so all three outcomes exercise different individual payouts.
+        let sell_yes = f.signed_order(
+            &owners[0],
+            &keys[0],
+            1,
+            PredictionOrderActionV1::Sell,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Maker,
+            5_000,
+            1,
+        );
+        let buy_yes = f.signed_order(
+            &owners[1],
+            &keys[1],
+            1,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Taker,
+            5_000,
+            1,
+        );
+        f.send(
+            &owners[1],
+            2 * TOS,
+            PredictionMarketContractV1::match_pair(6, 1, sell_yes, buy_yes).unwrap(),
+        )
+        .expect_success();
+
+        f.bc.set_now(f.init.resolve_not_before as u32);
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(7).unwrap())
+            .expect_success();
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+            .expect_success();
+        let context = f.phase().3;
+        f.send(
+            &normal,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                9,
+                0,
+                context,
+                outcome,
+                [0xb0 + outcome; 32],
+                u64::from(f.bc.now()),
+                f.init.oracle_vote_deadline,
+            )
+            .unwrap(),
+        )
+        .expect_success();
+        let finalization_deadline = f.phase().6;
+        f.bc.set_now(finalization_deadline as u32);
+        f.send(
+            &owners[0],
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::finalize_uncontested(10).unwrap(),
+        )
+        .expect_success();
+
+        let final_backing = 5 * TOS;
+        assert_eq!(f.accounting()[6], final_backing as i128, "outcome {outcome}: final backing");
+        let mut claimed = 0_u64;
+        for index in claim_order {
+            let account_before = f.account(&owners[index]);
+            let expected_payout = match outcome {
+                0 => (account_before[1] as u64).checked_mul(TOS).unwrap(),
+                1 => (account_before[2] as u64).checked_mul(TOS).unwrap(),
+                2 => (account_before[1] as u64 + account_before[2] as u64)
+                    .checked_mul(TOS / 2)
+                    .unwrap(),
+                _ => unreachable!(),
+            };
+            f.send(
+                &owners[1 - index],
+                OPERATION_BUDGET,
+                PredictionMarketContractV1::claim(20 + index as u64, &owners[index]).unwrap(),
+            )
+            .expect_success();
+            let account_after = f.account(&owners[index]);
+            assert_eq!(
+                account_after[0] as u64 - account_before[0] as u64,
+                expected_payout,
+                "outcome {outcome}: claim payout diverged for participant {index}"
+            );
+            claimed = claimed.checked_add(expected_payout).unwrap();
+            let accounting = f.accounting();
+            assert_eq!(
+                accounting[7] as u64 + claimed,
+                final_backing,
+                "outcome {outcome}: remaining plus claimed payout diverged"
+            );
+        }
+        assert_eq!(claimed, final_backing, "outcome {outcome}: total payout must equal backing");
+        assert_eq!(f.accounting()[7], 0, "outcome {outcome}: payout liability remains");
+    }
 }
 
 #[test]

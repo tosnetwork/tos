@@ -79,7 +79,8 @@ use dual_absence::{
 };
 use prediction_relay::{
     AgentAccountPredictionRelayBounceCreditResolveCmd,
-    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelaySourceResolveCmd,
+    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelayProfileCmd,
+    AgentAccountPredictionRelaySourceResolveCmd,
 };
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -626,6 +627,8 @@ pub enum AgentAccountAction {
     EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
     /// Resolve a Prediction exact source transaction from a durable pre-broadcast cursor
     PredictionRelaySourceResolve(AgentAccountPredictionRelaySourceResolveCmd),
+    /// Preflight and describe a pinned Prediction relay observer quorum
+    PredictionRelayProfile(AgentAccountPredictionRelayProfileCmd),
     /// Resolve the exact PredictionMarket destination transaction from a durable chain checkpoint
     PredictionRelayDestinationResolve(AgentAccountPredictionRelayDestinationResolveCmd),
     /// Resolve the exact rich bounce credit back at the source Agent Account
@@ -678,7 +681,10 @@ pub struct AgentAccountDeployCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show an Agent Account by its chain address")]
 pub struct AgentAccountShowCmd {
-    #[arg(short, long, help = "Agent Account address")]
+    // A canonical masterchain raw address starts with `-1:`.  Accept it as
+    // the value of this option instead of letting clap reinterpret it as a
+    // second option.
+    #[arg(short, long, allow_hyphen_values = true, help = "Agent Account address")]
     address: String,
 
     #[arg(short, long, default_value = "table")]
@@ -1599,6 +1605,7 @@ impl AgentAccountCmd {
             }
             AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelayProfile(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelaySourceResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelayDestinationResolve(cmd) => {
                 cmd.run(config_path).await
@@ -10983,6 +10990,28 @@ mod tests {
         action: AgentTaskAction,
     }
 
+    #[test]
+    fn agent_account_show_cli_accepts_canonical_masterchain_address() {
+        use clap::Parser;
+
+        let address = masterchain_address(7).to_string();
+        let parsed = AccountActionParser::try_parse_from([
+            "agent-account",
+            "show",
+            "--address",
+            address.as_str(),
+            "--format",
+            "json",
+        ])
+        .expect("canonical masterchain address must be one --address value");
+        match parsed.action {
+            AgentAccountAction::Show(command) => {
+                assert_eq!(command.address, address);
+            }
+            _ => panic!("agent account show parsed as another command"),
+        }
+    }
+
     struct TemporaryDirectory(PathBuf);
 
     impl TemporaryDirectory {
@@ -11093,6 +11122,7 @@ mod tests {
             cancellation_boc_base64: None,
             economic_authorization: None,
             economic_effect_authorization: None,
+            prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
             created_at_unix: 1,
             updated_at_unix: 2,
@@ -12765,6 +12795,7 @@ mod tests {
             cancellation_boc_base64: None,
             economic_authorization: Some(authorization.clone()),
             economic_effect_authorization: None,
+            prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
             created_at_unix: 1,
             updated_at_unix: 1,
