@@ -1432,6 +1432,51 @@ TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
   }
 }
 
+TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  auto configuration = [](td::Ref<vm::Cell> table) {
+    vm::Dictionary config(32);
+    vm::CellBuilder version;
+    CHECK(block::gen::t_GlobalVersion.pack_capabilities(version, 15, tos::capBlockTransition));
+    CHECK(config.set_ref(td::BitArray<32>{8}, version.finalize()));
+    if (table.not_null()) {
+      CHECK(config.set_ref(td::BitArray<32>{84}, table));
+    }
+    return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+                                       block::Config::needCapabilities).move_as_ok();
+  };
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address.set_zero();
+  policy.engine_configuration = number(0);
+  auto resolve = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
+    auto cfg = configuration(block::encode_workchain_native_ingress_table(policies).move_as_ok());
+    return registry.resolve_block(descriptor, *cfg);
+  };
+  ASSERT_TRUE(resolve({policy}).is_ok());
+  auto missing = configuration({});
+  ASSERT_TRUE(registry.resolve_block(descriptor, *missing).is_error());
+  ASSERT_TRUE(resolve({}).is_error());
+  auto wrong = policy;
+  wrong.workchain_id = 3;
+  ASSERT_TRUE(resolve({wrong}).is_error());
+  wrong = policy;
+  wrong.descriptor_version = 1;
+  ASSERT_TRUE(resolve({wrong}).is_error());
+  wrong = policy;
+  wrong.executor_address = td::Bits256::ones();
+  ASSERT_TRUE(resolve({wrong}).is_error());
+  auto malformed = configuration(number(0));
+  ASSERT_TRUE(registry.resolve_block(descriptor, *malformed).is_error());
+  ASSERT_TRUE(resolve({policy}).is_ok());
+}
+
 TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   block::WorkchainExecutionRegistry registry;
   ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());

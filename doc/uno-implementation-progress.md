@@ -588,7 +588,7 @@ Verification after restoration: create-state, test-workchain-block,
 test-tos-collator and validator-engine build with -j48; all seven targeted CTest
 cases pass three consecutive runs (21 executions).
 
-Remaining ingress work includes negative configuration lookup/engine-agreement
+Remaining ingress work includes negative sender configuration lookup
 coverage, a wrong-address Native wallet disk scenario, explicit alternate-address
 encoding coverage, and authenticated activation/queue migration enforcement.
 The referenced engine payload is not yet consumed as engine configuration.
@@ -628,3 +628,13 @@ the intended reason and both checks were restored. These are isolated transition
 tests, not proof of full valid configurations or successful network upgrades.
 New-entry activation, engine configuration transitions, validator readiness and
 authenticated queue migration remain required; production activation is not enabled.
+
+Receiver configuration agreement now has direct registry-resolution coverage:
+matching policy succeeds; missing/empty/malformed tables, another workchain's
+entry, descriptor-version mismatch and executor-address mismatch reject.
+The test uses structurally encoded configuration cells and the real Counter
+registration path. Removing the receiver's address comparison accepts the wrong
+address; removing its descriptor-binding call accepts the wrong version. Each
+mutation fails the corresponding status assertion, without matching error text;
+both checks were restored. This covers receiver resolution, not sender lookup
+without an engine, validator rollout readiness or engine-specific payload use.
