@@ -1,8 +1,9 @@
 use orchard::Bundle;
 pub mod decode;
 use orchard::{
-    bundle::{Authorized, BundleVersion},
+    bundle::{Authorized, BundleVersion, Flags},
     circuit::{OrchardCircuitVersion, VerifyingKey},
+    tree::Anchor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub struct KeyConstructionFailed;
 pub enum VerificationError {
     Profile,
     Shape(ProofShapeError),
+    NonCanonicalAnchor,
     Proof,
     SpendSignature,
     BindingSignature,
@@ -54,6 +56,9 @@ impl FixedVerifier {
             max_proof_bytes,
         )
         .map_err(VerificationError::Shape)?;
+        if !has_canonical_output_only_anchor(bundle.flags(), bundle.anchor()) {
+            return Err(VerificationError::NonCanonicalAnchor);
+        }
         bundle.verify_proof(&self.key).map_err(|_| VerificationError::Proof)?;
         for action in bundle.actions() {
             action
@@ -67,6 +72,11 @@ impl FixedVerifier {
             .map_err(|_| VerificationError::BindingSignature)?;
         Ok(())
     }
+}
+
+// The flag is public; real versus dummy note values are not available here.
+fn has_canonical_output_only_anchor(flags: &Flags, anchor: &Anchor) -> bool {
+    flags.spends_enabled() || *anchor == Anchor::empty_tree()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +289,51 @@ mod tests {
         assert_eq!(
             verifier.verify_bundle(&bad_binding, &digest, 2, 7264),
             Err(VerificationError::BindingSignature)
+        );
+    }
+
+    #[test]
+    fn valid_proof_does_not_authorize_noncanonical_output_only_anchor() {
+        use orchard::{
+            builder::{Builder, BundleType},
+            circuit::ProvingKey,
+            keys::{FullViewingKey, Scope, SpendingKey},
+            value::NoteValue,
+        };
+        let mut rng = rand::rngs::OsRng;
+        let sk = SpendingKey::from_bytes([0; 32]).expect("test spending key");
+        let recipient = FullViewingKey::from(&sk).address_at(0u32, Scope::External);
+        let wrong_anchor = Option::<Anchor>::from(Anchor::from_bytes([0; 32])).expect("field zero");
+        assert_ne!(wrong_anchor, Anchor::empty_tree());
+        let mut builder = Builder::new(
+            BundleType::DEFAULT,
+            BundleVersion::orchard_v2(),
+            Flags::SPENDS_DISABLED,
+            wrong_anchor,
+        )
+        .expect("output-only builder");
+        builder.add_output(None, recipient, NoteValue::from_raw(5000), [0; 512]).expect("output");
+        let (unsigned, _) = builder.build::<i64>(&mut rng).expect("build").expect("nonempty");
+        let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
+        let digest = [42; 32];
+        let bundle = unsigned
+            .create_proof(&pk, &mut rng)
+            .expect("proof")
+            .apply_signatures(&mut rng, digest, &[])
+            .expect("signatures");
+        let verifier = FixedVerifier::new().expect("fixed key");
+        assert_eq!(*bundle.anchor(), wrong_anchor);
+        assert!(bundle.verify_proof(&verifier.key).is_ok());
+        for action in bundle.actions() {
+            assert!(action.rk().verify(&digest, action.authorization()).is_ok());
+        }
+        assert!(bundle
+            .binding_validating_key()
+            .verify(&digest, bundle.authorization().binding_signature())
+            .is_ok());
+        assert_eq!(
+            verifier.verify_bundle(&bundle, &digest, 2, 7264),
+            Err(VerificationError::NonCanonicalAnchor)
         );
     }
 

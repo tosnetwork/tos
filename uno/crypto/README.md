@@ -86,8 +86,17 @@ profile, flags, balance and resource tests were mutation-checked; bypasses yield
 successful decoding of invalid inputs. Clearing ciphertext bytes failed the
 preservation assertion. These mutations were restored. Limits on allocation in
 this function do not bound the caller's earlier wire parsing or the entire process.
-The TOS Cell schema, profile-tag mapping, contextual flags/empty-anchor policy,
+The TOS Cell schema, profile-tag mapping, contextual flags policy,
 hybrid ciphertext envelope and external authorization digest remain separate work.
+
+When the public spend-enable flag is false, both the decoder and typed verifier
+require `Anchor::empty_tree()`. A generated output-only bundle using field zero
+as its anchor passes the underlying proof, spend signatures and binding signature,
+but is explicitly rejected by this UNO rule. Bypassing either entry point's
+check independently makes its negative test accept the bundle; both were restored.
+With spends enabled this rule does not authenticate an anchor against host state
+or distinguish real from dummy inputs. Transaction-kind flags and host anchor
+membership remain required, separate checks.
 
 ## Source review, 2026-09-05
 

@@ -950,3 +950,14 @@ identity rejection and ciphertext preservation: invalid inputs become accepted,
 or preserved bytes change, and the matching tests fail. All mutations were
 restored. No outer Cell schema/profile-tag assignment, hybrid envelope, TOS
 sighash, host-context authorization or production activation is implied.
+
+Enforced the specification's canonical empty-tree anchor for disabled-spend
+bundles at both primitive decoding and direct typed verification. A fresh real
+output-only proof using field-zero anchor passes the underlying proof and all
+signatures, demonstrating that cryptographic validity alone does not enforce
+this UNO rule. The typed entry point rejects that otherwise-valid bundle; the
+decoder tests both spend-flag settings with empty and nonempty anchors. Removing
+either entry-point guard independently accepts the invalid case and fails its
+test. Both guards were restored. This uses the public spend-enable flag, not
+hidden real/dummy note classification, and does not replace transaction-kind
+flags validation or authenticated host anchor membership.

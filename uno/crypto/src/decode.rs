@@ -9,7 +9,7 @@ use orchard::{
     Action, Bundle, Proof,
 };
 
-use crate::{validate_proof_shape, ProofShapeError};
+use crate::{has_canonical_output_only_anchor, validate_proof_shape, ProofShapeError};
 
 #[derive(Clone)]
 pub struct EncodedAction {
@@ -40,6 +40,7 @@ pub enum DecodeError {
     Flags,
     ValueBalance,
     Anchor,
+    NonCanonicalAnchor,
     ValueCommitment,
     Nullifier,
     RandomizedKey,
@@ -67,6 +68,9 @@ pub fn decode_bundle(
     }
     let anchor =
         Option::<Anchor>::from(Anchor::from_bytes(encoded.anchor)).ok_or(DecodeError::Anchor)?;
+    if !has_canonical_output_only_anchor(&flags, &anchor) {
+        return Err(DecodeError::NonCanonicalAnchor);
+    }
     let mut actions = Vec::new();
     actions.try_reserve_exact(encoded.actions.len()).map_err(|_| DecodeError::Allocation)?;
     for raw in encoded.actions {
@@ -210,6 +214,27 @@ mod tests {
             Some(DecodeError::Shape(ProofShapeError::ActionLimit))
         );
         assert!(decode_bundle(&pair_raw, 2, 7264).is_ok());
+    }
+
+    #[test]
+    fn disabled_spends_require_empty_tree_anchor() {
+        let actions = [action()];
+        let proof = [59; 4992];
+        let mut raw = bundle(&actions, &proof);
+        for flags in 0..=3 {
+            raw.flags = flags;
+            raw.anchor = Anchor::empty_tree().to_bytes();
+            assert!(decode_bundle(&raw, 1, 4992).is_ok());
+            raw.anchor = [0; 32];
+            if flags & 1 == 0 {
+                assert_eq!(
+                    decode_bundle(&raw, 1, 4992).err(),
+                    Some(DecodeError::NonCanonicalAnchor)
+                );
+            } else {
+                assert!(decode_bundle(&raw, 1, 4992).is_ok());
+            }
+        }
     }
 
     #[test]
