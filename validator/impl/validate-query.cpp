@@ -5718,18 +5718,114 @@ static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Recor
          td::cmp(extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK), extra_flags) == 0;
 }
 
-/**
- * Checks the validity of a single transaction for a given account.
- * Performs transaction execution.
- *
- * @param account The account of the transaction.
- * @param lt The logical time of the transaction.
- * @param trans_root The root of the transaction.
- * @param is_first Flag indicating if this is the first transaction of the account.
- * @param is_last Flag indicating if this is the last transaction of the account.
- *
- * @returns True if the transaction is valid, false otherwise.
- */
+// Shared by account execution and independently replayed block batches.
+bool ValidateQuery::CheckAccountTxs::check_outbound_messages(
+    Ref<vm::Cell> trans_root, const td::optional<block::MsgMetadata>& new_msg_metadata,
+    block::CurrencyCollection& money_exported) {
+  block::gen::Transaction::Record trans;
+  REJECT_UNLESS(tlb::unpack_cell(trans_root, trans));
+  const auto lt = trans.lt;
+  const auto& addr = address_;
+  vm::Dictionary out_dict{trans.r1.out_msgs, 15};
+  for (int i = 0; i < trans.outmsg_cnt; i++) {
+    auto out_msg_root = out_dict.lookup_ref(td::BitArray<15>{i});
+    REJECT_UNLESS(out_msg_root.not_null());  // we have pre-checked this
+    auto out_descr_cs = vq_.out_msg_dict_->lookup(out_msg_root->get_hash().as_bitslice());
+    if (out_descr_cs.is_null()) {
+      return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
+                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
+                                    << addr.to_hex() << " does not have a corresponding OutMsg record");
+    }
+    auto tag = block::gen::t_OutMsg.get_tag(*out_descr_cs);
+    if (tag != block::gen::OutMsg::msg_export_ext && tag != block::gen::OutMsg::msg_export_new &&
+        tag != block::gen::OutMsg::msg_export_imm && tag != block::gen::OutMsg::msg_export_new_defer) {
+      return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
+                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
+                                    << addr.to_hex()
+                                    << " has an invalid OutMsg record (not one of msg_export_ext, msg_export_new, "
+                                       "msg_export_imm or msg_export_new_defer)");
+    }
+    // once we know there is an OutMsg with correct hash, we already know that it contains a message with this hash
+    // (by the verification of OutMsg), so it is our message
+    // have still to check its source address, lt and imported value
+    // and that it refers to this transaction as its origin
+    Ref<vm::CellSlice> src;
+    LogicalTime message_lt;
+    if (tag == block::gen::OutMsg::msg_export_ext) {
+      block::gen::CommonMsgInfo::Record_ext_out_msg_info info;
+      REJECT_UNLESS(tlb::unpack_cell_inexact(out_msg_root, info));
+      src = std::move(info.src);
+      message_lt = info.created_lt;
+    } else {
+      block::gen::CommonMsgInfo::Record_int_msg_info info;
+      REJECT_UNLESS(tlb::unpack_cell_inexact(out_msg_root, info));
+      src = std::move(info.src);
+      message_lt = info.created_lt;
+      block::tlb::MsgEnvelope::Record_std msg_env;
+      REJECT_UNLESS(tlb::unpack_cell(out_descr_cs->prefetch_ref(), msg_env));
+      // unpack exported message value (from this transaction)
+      block::CurrencyCollection msg_export_value;
+      REJECT_UNLESS(msg_export_value.unpack(info.value));
+      auto ihr_fee = get_ihr_fee(info, vq_.global_version_);
+      REJECT_UNLESS(ihr_fee.not_null());
+      msg_export_value += ihr_fee;
+      msg_export_value += msg_env.fwd_fee_remaining;
+      REJECT_UNLESS(msg_export_value.is_valid());
+      money_exported += msg_export_value;
+      if (msg_env.metadata != new_msg_metadata) {
+        return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
+                                      << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
+                                      << addr.to_hex() << " has invalid metadata in an OutMsg record: expected "
+                                      << (new_msg_metadata ? new_msg_metadata.value().to_str() : "<none>") << ", found "
+                                      << (msg_env.metadata ? msg_env.metadata.value().to_str() : "<none>"));
+      }
+    }
+    WorkchainId s_wc;
+    StdSmcAddress ss_addr;  // s_addr is some macros in Windows
+    REJECT_UNLESS(block::tlb::t_MsgAddressInt.extract_std_address(src, s_wc, ss_addr));
+    if (s_wc != vq_.workchain() || ss_addr != addr) {
+      return reject_query(PSTRING() << "outbound message #" << i + 1 << " of transaction " << lt << " of account "
+                                    << addr.to_hex() << " has a different source address " << s_wc << ":"
+                                    << ss_addr.to_hex());
+    }
+    auto out_msg_trans = out_descr_cs->prefetch_ref(1);  // trans:^Transaction
+    REJECT_UNLESS(out_msg_trans.not_null());
+    if (out_msg_trans->get_hash() != trans_root->get_hash()) {
+      return reject_query(PSTRING() << "OutMsg record for outbound message #" << i + 1 << " with hash "
+                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
+                                    << addr.to_hex() << " refers to a different processing transaction");
+    }
+    if (tag != block::gen::OutMsg::msg_export_ext) {
+      bool is_deferred = tag == block::gen::OutMsg::msg_export_new_defer;
+      if (ctx_.defer_all_messages && !is_deferred) {
+        return reject_query(
+            PSTRING() << "outbound message #" << i + 1 << " on account " << vq_.workchain() << ":" << ss_addr.to_hex()
+                      << " must be deferred because this account has earlier messages in DispatchQueue");
+      }
+      if (is_deferred) {
+        LOG(INFO) << "message from account " << vq_.workchain() << ":" << ss_addr.to_hex() << " with lt " << message_lt
+                  << " was deferred";
+        if (!vq_.deferring_messages_enabled_ && !ctx_.defer_all_messages) {
+          return reject_query(PSTRING() << "outbound message #" << i + 1 << " on account " << vq_.workchain() << ":"
+                                        << ss_addr.to_hex() << " is deferred, but deferring messages is disabled");
+        }
+        if (i == 0 && !ctx_.defer_all_messages) {
+          return reject_query(PSTRING() << "outbound message #1 on account " << vq_.workchain() << ":"
+                                        << ss_addr.to_hex()
+                                        << " must not be deferred (the first message cannot be deferred unless some "
+                                           "prevoius messages are deferred)");
+        }
+        ctx_.defer_all_messages = true;
+      }
+    }
+  }
+  if (!money_exported.is_valid()) {
+    return reject_query("invalid value of total money exported");
+  }
+  return true;
+}
+
+// Checks native transaction semantics and executes the account computation.
 bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& account, tos::LogicalTime lt,
                                                            Ref<vm::Cell> trans_root, bool is_first, bool is_last) {
   if (vq_.timeout && vq_.timeout.is_in_past()) {
@@ -5842,101 +5938,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
       ++new_msg_metadata.value().depth;
     }
   }
-  vm::Dictionary out_dict{trans.r1.out_msgs, 15};
-  for (int i = 0; i < trans.outmsg_cnt; i++) {
-    auto out_msg_root = out_dict.lookup_ref(td::BitArray<15>{i});
-    REJECT_UNLESS(out_msg_root.not_null());  // we have pre-checked this
-    auto out_descr_cs = vq_.out_msg_dict_->lookup(out_msg_root->get_hash().as_bitslice());
-    if (out_descr_cs.is_null()) {
-      return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
-                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
-                                    << addr.to_hex() << " does not have a corresponding OutMsg record");
-    }
-    auto tag = block::gen::t_OutMsg.get_tag(*out_descr_cs);
-    if (tag != block::gen::OutMsg::msg_export_ext && tag != block::gen::OutMsg::msg_export_new &&
-        tag != block::gen::OutMsg::msg_export_imm && tag != block::gen::OutMsg::msg_export_new_defer) {
-      return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
-                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
-                                    << addr.to_hex()
-                                    << " has an invalid OutMsg record (not one of msg_export_ext, msg_export_new, "
-                                       "msg_export_imm or msg_export_new_defer)");
-    }
-    // once we know there is an OutMsg with correct hash, we already know that it contains a message with this hash
-    // (by the verification of OutMsg), so it is our message
-    // have still to check its source address, lt and imported value
-    // and that it refers to this transaction as its origin
-    Ref<vm::CellSlice> src;
-    LogicalTime message_lt;
-    if (tag == block::gen::OutMsg::msg_export_ext) {
-      block::gen::CommonMsgInfo::Record_ext_out_msg_info info;
-      REJECT_UNLESS(tlb::unpack_cell_inexact(out_msg_root, info));
-      src = std::move(info.src);
-      message_lt = info.created_lt;
-    } else {
-      block::gen::CommonMsgInfo::Record_int_msg_info info;
-      REJECT_UNLESS(tlb::unpack_cell_inexact(out_msg_root, info));
-      src = std::move(info.src);
-      message_lt = info.created_lt;
-      block::tlb::MsgEnvelope::Record_std msg_env;
-      REJECT_UNLESS(tlb::unpack_cell(out_descr_cs->prefetch_ref(), msg_env));
-      // unpack exported message value (from this transaction)
-      block::CurrencyCollection msg_export_value;
-      REJECT_UNLESS(msg_export_value.unpack(info.value));
-      auto ihr_fee = get_ihr_fee(info, vq_.global_version_);
-      REJECT_UNLESS(ihr_fee.not_null());
-      msg_export_value += ihr_fee;
-      msg_export_value += msg_env.fwd_fee_remaining;
-      REJECT_UNLESS(msg_export_value.is_valid());
-      money_exported += msg_export_value;
-      if (msg_env.metadata != new_msg_metadata) {
-        return reject_query(PSTRING() << "outbound message #" << i + 1 << " with hash "
-                                      << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
-                                      << addr.to_hex() << " has invalid metadata in an OutMsg record: expected "
-                                      << (new_msg_metadata ? new_msg_metadata.value().to_str() : "<none>") << ", found "
-                                      << (msg_env.metadata ? msg_env.metadata.value().to_str() : "<none>"));
-      }
-    }
-    WorkchainId s_wc;
-    StdSmcAddress ss_addr;  // s_addr is some macros in Windows
-    REJECT_UNLESS(block::tlb::t_MsgAddressInt.extract_std_address(src, s_wc, ss_addr));
-    if (s_wc != vq_.workchain() || ss_addr != addr) {
-      return reject_query(PSTRING() << "outbound message #" << i + 1 << " of transaction " << lt << " of account "
-                                    << addr.to_hex() << " has a different source address " << s_wc << ":"
-                                    << ss_addr.to_hex());
-    }
-    auto out_msg_trans = out_descr_cs->prefetch_ref(1);  // trans:^Transaction
-    REJECT_UNLESS(out_msg_trans.not_null());
-    if (out_msg_trans->get_hash() != trans_root->get_hash()) {
-      return reject_query(PSTRING() << "OutMsg record for outbound message #" << i + 1 << " with hash "
-                                    << out_msg_root->get_hash().to_hex() << " of transaction " << lt << " of account "
-                                    << addr.to_hex() << " refers to a different processing transaction");
-    }
-    if (tag != block::gen::OutMsg::msg_export_ext) {
-      bool is_deferred = tag == block::gen::OutMsg::msg_export_new_defer;
-      if (ctx_.defer_all_messages && !is_deferred) {
-        return reject_query(
-            PSTRING() << "outbound message #" << i + 1 << " on account " << vq_.workchain() << ":" << ss_addr.to_hex()
-                      << " must be deferred because this account has earlier messages in DispatchQueue");
-      }
-      if (is_deferred) {
-        LOG(INFO) << "message from account " << vq_.workchain() << ":" << ss_addr.to_hex() << " with lt " << message_lt
-                  << " was deferred";
-        if (!vq_.deferring_messages_enabled_ && !ctx_.defer_all_messages) {
-          return reject_query(PSTRING() << "outbound message #" << i + 1 << " on account " << vq_.workchain() << ":"
-                                        << ss_addr.to_hex() << " is deferred, but deferring messages is disabled");
-        }
-        if (i == 0 && !ctx_.defer_all_messages) {
-          return reject_query(PSTRING() << "outbound message #1 on account " << vq_.workchain() << ":"
-                                        << ss_addr.to_hex()
-                                        << " must not be deferred (the first message cannot be deferred unless some "
-                                           "prevoius messages are deferred)");
-        }
-        ctx_.defer_all_messages = true;
-      }
-    }
-  }
-  if (!money_exported.is_valid()) {
-    return reject_query("invalid value of total money exported");
+  if (!check_outbound_messages(trans_root, new_msg_metadata, money_exported)) {
+    return false;
   }
   // check general transaction data
   block::CurrencyCollection old_balance{account.get_balance()};
@@ -6488,7 +6491,7 @@ bool ValidateQuery::check_transactions() {
   if (resolved.ok().has_value() &&
       std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
     const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
-    if (!in_msg_dict_->is_empty() || !out_msg_dict_->is_empty()) {
+    if (!in_msg_dict_->is_empty()) {
       return reject_query("block batch message settlement is not implemented");
     }
     block::WorkchainBlockReplayContext context{prev_state_root_, config_->get_root_cell(), mc_state_root_};
@@ -6501,11 +6504,28 @@ bool ValidateQuery::check_transactions() {
           found = true;
           auto account_block = vm::CellBuilder().append_cellslice(value).finalize();
           auto status = block::replay_resolved_workchain_account_block(
-              execution, context, state_root_, account_block, now_, serialize_cfg_);
+              execution, context, state_root_, account_block, now_, serialize_cfg_, &action_phase_cfg_);
           if (status.is_error()) {
             return reject_query(status.move_as_error_prefix("block execution replay: ").to_string());
           }
-          return true;
+          block::gen::AccountBlock::Record record;
+          REJECT_UNLESS(tlb::unpack_cell(account_block, record));
+          vm::AugmentedDictionary transactions(vm::DictNonEmpty(), record.transactions, 64,
+                                                block::tlb::aug_AccountTransactions);
+          const auto& address = execution.policy.executor_address;
+          CheckAccountTxs checker(*this, actor_id(this), address, value,
+                                   load_check_account_transactions_context(address));
+          bool exports_valid = transactions.check_for_each_extra(
+              [&](Ref<vm::CellSlice> transaction, Ref<vm::CellSlice>, td::ConstBitPtr lt, int) {
+                td::optional<block::MsgMetadata> metadata;
+                if (msg_metadata_enabled_) {
+                  metadata = block::MsgMetadata{0, workchain(), address, lt.get_uint(64)};
+                }
+                block::CurrencyCollection exported(0);
+                return checker.check_outbound_messages(transaction->prefetch_ref(), metadata, exported);
+              });
+          save_account_transactions_context(address, checker.extract_context());
+          return check_account_failures() && exports_valid;
         });
     return valid && (found || reject_query("missing block executor AccountBlock"));
   }

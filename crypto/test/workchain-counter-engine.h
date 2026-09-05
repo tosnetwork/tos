@@ -5,12 +5,28 @@
 #include "block/workchain-execution-dispatch.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
+#include "vm/dict.h"
 
 namespace block::test {
 
 // Deterministic test engine only; never registered by production node startup.
 inline td::Ref<vm::Cell> counter_number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
+}
+
+// Two funded service messages exercise native forwarding and transaction linking.
+inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment) {
+  auto message = vm::CellBuilder().store_long(6, 4).store_zeroes(2)
+      .store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
+      .store_long(1, 4).store_long(100, 8).store_long(0, 1)
+      .store_zeroes(8).store_zeroes(96).store_zeroes(2).finalize();
+  vm::Dictionary dict(15);
+  for (unsigned index = 0; index < 2; ++index) {
+    CHECK(dict.set_ref(td::BitArray<15>(index), message));
+  }
+  vm::CellBuilder cb;
+  CHECK(std::move(dict).append_dict_to_bool(cb));
+  return vm::CellBuilder().store_long(increment, 64).store_ref(cb.finalize()).finalize();
 }
 
 class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
@@ -42,7 +58,7 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
     TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, 2, td::Bits256::zero()));
     auto state = vm::load_cell_slice(engine_state);
     auto candidate = vm::load_cell_slice(input.candidate);
-    if (state.size() != 64 || state.size_refs() != 0 || candidate.size() != 64 || candidate.size_refs() != 0) {
+    if (state.size() != 64 || state.size_refs() != 0 || candidate.size() != 64 || candidate.size_refs() > 1) {
       return td::Status::Error("counter input shape");
     }
     const auto value = state.fetch_ulong(64);
@@ -52,7 +68,8 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
     }
     block::WorkchainBlockResult result;
     result.new_engine_state = counter_number(value + increment);
-    result.outbound_messages = vm::CellBuilder().store_long(0, 1).finalize();
+    result.outbound_messages = candidate.size_refs() ? candidate.fetch_ref()
+        : vm::CellBuilder().store_long(0, 1).finalize();
     result.actions = input.candidate;
     result.receipts = result.new_engine_state;
     result.events = counter_number(increment);
@@ -67,4 +84,3 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
 };
 
 }  // namespace block::test
-

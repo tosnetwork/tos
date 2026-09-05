@@ -66,14 +66,24 @@ function(run_node label expected_status expected_text)
   endif()
 endfunction()
 
+function(require_log label expected)
+  file(READ "${fixture}/${label}.log" log)
+  string(FIND "${log}" "${expected}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "${label}: missing '${expected}'; see ${fixture}/${label}.log")
+  endif()
+endfunction()
+
 run_node(bootstrap 0 "saved to disk" -w -1)
 file(COPY "${fixture}/db" DESTINATION "${fixture}/peer")
 file(READ "${fixture}/counter-state.rhash" counter_root HEX)
 file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
 set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
 set(zero_block "${previous}")
-run_node(counter1 0 "(2,8000000000000000,1)" --counter-increment 2 -w 2 -T "${previous}"
+run_node(counter1 0 "(2,8000000000000000,1)" --counter-send-increment 2 -w 2 -T "${previous}"
   --export-candidate "${fixture}/counter1.candidate")
+require_log(counter1 "from_prev_blk:1000ng to_next_blk:600ng imported:0ng exported:334ng fees_collected:66ng")
+require_log(counter1 "outbound message queue size: 0 -> 2")
 set(previous "${last_block}")
 set(node_db "${fixture}/peer/db")
 run_node(wrong_import_shard 2 "imported candidate differs from requested shard"
@@ -89,6 +99,15 @@ endif()
 # Fresh processes reopen the same database. These adjacent limits prove the
 # restored value is exactly 42, without trusting a private cache or an RPC claim.
 run_node(overflow 2 "counter overflow" --counter-increment 18446744073709551574 -w 2 -T "${previous}")
-run_node(counter2 0 "(2,8000000000000000,2)" --counter-increment 18446744073709551573 -w 2 -T "${previous}")
+run_node(counter2_send 0 "(2,8000000000000000,2)" --counter-send-increment 0 -w 2 -T "${previous}")
+require_log(counter2_send "from_prev_blk:600ng to_next_blk:200ng imported:0ng exported:334ng fees_collected:66ng")
+require_log(counter2_send "outbound message queue size: 2 -> 4")
+set(previous "${last_block}")
+# Four messages have consumed 800 of the 1000 operating atoms. The next pair
+# must reject atomically, including the first message that could still be paid.
+run_node(insufficient_budget 2 "batch native message send failed" --counter-send-increment 0 -w 2 -T "${previous}")
+run_node(counter3 0 "(2,8000000000000000,3)" --counter-increment 18446744073709551573 -w 2 -T "${previous}")
+require_log(counter3 "from_prev_blk:200ng to_next_blk:200ng imported:0ng exported:0ng fees_collected:0ng")
+require_log(counter3 "outbound message queue size: 4 -> 4")
 run_node(max_overflow 2 "counter overflow" --counter-increment 1 -w 2 -T "${last_block}")
 message(STATUS "Counter collate/validate/restart checks passed; artifacts: ${fixture}")

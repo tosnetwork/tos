@@ -2457,7 +2457,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
   if (block_execution) {
-    if (after_split_ || before_split_ || after_merge_ || !dispatch_queue_->is_empty() || !out_msg_queue_->is_empty() ||
+    if (after_split_ || before_split_ || after_merge_ || !dispatch_queue_->is_empty() ||
         !nb_out_msgs_->is_eof() || !in_msg_dict->is_empty() || !out_msg_dict->is_empty()) {
       co_return td::Status::Error("block batch collation requires unsplit state without native message settlement");
     }
@@ -2465,6 +2465,10 @@ td::actor::Task<> Collator::do_collate_inner() {
     allow_repeat_collation_ = false;
     if (!create_workchain_batch_transaction(*block_execution, params_.workchain_block_candidate)) {
       co_return td::Status::Error("cannot create workchain batch transaction");
+    }
+    bool enqueue_only = true;
+    if (!process_new_messages(enqueue_only)) {
+      co_return td::Status::Error("cannot enqueue workchain batch messages");
     }
   } else {
     // 2-. take messages from dispatch queue
@@ -3428,7 +3432,7 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
   block::WorkchainBlockInput input{prev_state_root_, std::move(candidate), config_->get_root_cell(), mc_state_root};
   set_current_tx_storage_dict(*account);
   auto staged = block::prepare_resolved_workchain_batch_transaction(
-      execution, input, *account, start_lt + 1, now_, serialize_cfg_);
+      execution, input, *account, start_lt + 1, now_, serialize_cfg_, &action_phase_cfg_);
   if (staged.is_error()) {
     return fatal_error(staged.move_as_error_prefix("cannot stage workchain batch: "));
   }
@@ -3444,6 +3448,8 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
   }
   update_account_storage_dict_info(*batch);
   update_max_lt(account->last_trans_end_lt_);
+  block::MsgMetadata metadata{0, account->workchain, account->addr, batch->start_lt};
+  register_new_msgs(*batch, std::move(metadata));
   ++stats_.transactions;
   return true;
 }

@@ -17,6 +17,8 @@ Base node revision: `5a6145cce`.
   unit tests and the manual disk-backed collator tool. `test-tos-collator
   --counter-increment <uint64> -w 2 ...` explicitly registers it only in that test
   process and passes the candidate through the disk manager to real collation.
+  `--counter-send-increment <uint64>` additionally supplies two native outgoing
+  requests in the public candidate; the shared test engine returns these effects.
   The existing disk-manager flow then validates the candidate and writes it.
   Production startup does not include/register this fixture. The admission CTest
   checks wrong-shard rejection and full uint64 parsing followed by missing-config
@@ -24,13 +26,16 @@ Base node revision: `5a6145cce`.
   MC/shard states in a fresh database, as described below.
   Removing the tool's workchain guard changes the exact error and fails the
   admission CTest; the guard was restored.
-- `test-counter-disk-integration` generates zero-balance test genesis states on
+- `test-counter-disk-integration` generates isolated test genesis states on
   global ID -23901, boots the disk manager, collates/validates/persists MC block 1
   to register workchain shards, then collates/validates/persists Counter block 1.
+  The Counter executor has 1000 native operating atoms; other genesis accounts
+  remain unfunded. This is not a private asset or Reserve allocation.
   Fresh processes reopen the same database for each subsequent candidate.
   Increment `UINT64_MAX - 41` is rejected, while `UINT64_MAX - 42` succeeds as
-  Counter block 2, proving the restored prior value is exactly 42. Increment 1
-  from block 2 then overflows. Rejected runs must not report a persisted block.
+  Counter block 3 after a zero-increment message batch at block 2, proving the
+  restored prior value is exactly 42. Increment 1 from block 3 then overflows.
+  Rejected runs must not report a persisted block.
   The initial value is 40 and the first increment is 2. Test logs and databases
   remain under unique `build/counter-integration-*` directories for inspection.
 - The disk tool can export a validated candidate and import it without collation,
@@ -128,9 +133,12 @@ Base node revision: `5a6145cce`.
   Account collation rejects unexpected candidates; block collation requires one.
   Removing candidate/scope matching accepts a missing block candidate and fails
   the rejection assertion; the check was restored.
-  This initial branch rejects split/merge and nonempty native queues/message
-  descriptors. The default registry still has no block engine; automatic candidate
-  production, native message settlement and end-to-end tests are pending.
+  This branch still rejects split/merge, pending incoming messages and an existing
+  dispatch queue. Persisted outbound queues are now supported. Native dequeue
+  descriptors produced during cleanup still prevent this branch from proceeding;
+  delivered-message cleanup and deferred-queue progress need further integration.
+  The default registry still has no block engine; automatic candidate production
+  remains pending. The disk fixture tests outbound native settlement end to end.
   Removing the exact staging-LT check silently advances an invalid requested LT
   and fails the rejection test; the check was restored.
 - State-only batch round-trip tests execute 40 -> 42 from a native shard,
@@ -157,8 +165,8 @@ Base node revision: `5a6145cce`.
   reject preparation without publishing earlier messages or changing the account.
   Serialization checks staged balance, fees, messages and end LT against tampering.
   Plain transaction/state replay accepts the same host-supplied pricing and
-  reconstructs native settlement. Live registry/collator/validator plumbing still
-  declines nonempty messages; queue insertion and full-block value flow are next.
+  reconstructs native settlement. Registry staging and replay now carry the same
+  authenticated native action configuration through to this helper.
 - The funded Counter unit fixture starts with 1000 operating atoms. Two messages
   each carry 100 and cost 100 forwarding atoms, leaving 600; 100 fee atoms are
   collected locally and 100 remain in the messages. Tests check source, amount,
@@ -169,6 +177,29 @@ Base node revision: `5a6145cce`.
   than 600) and remove the contiguous-index check (the rejection test accepts a
   map starting at index 1). Both mutations fail the funded settlement test and
   are restored before the passing verification run.
+- Live batch collation registers normalized outputs with the native message
+  scheduler, then processes them in enqueue-only mode. It supplies origin metadata
+  using the executor address and batch LT. No output is re-executed as an ordinary
+  account transaction in the batch block. Native queues, descriptors, block value
+  flow and shard serialization remain the host's responsibility.
+- Validator batch replay recomputes messages and fees from authenticated pricing.
+  Afterwards it shares the existing account outbound-message checks: every output
+  must have a permitted OutMsg record with the right source transaction and origin
+  metadata, and obey deferred-message ordering. The normal OutMsg/queue checks
+  still verify the reverse transaction reference and queue state update. Native
+  incoming message settlement is still rejected.
+- The disk test now sends two messages carrying 100 atoms each to workchain 0.
+  Fixture forwarding prices charge 100 per message: 33 collected locally and 67
+  retained for forwarding. Block 1 asserts 1000 -> 600 balance, 334 exported, 66
+  collected and queue size 0 -> 2. An independent database imports this block.
+  After restart it sends another pair (600 -> 200, queue 2 -> 4), rejects a third
+  pair for insufficient budget, then creates a no-output block that preserves
+  balance 200 and queue size 4. This tests complete outgoing block value flow and
+  failure atomicity across restart, not receiving-chain execution or bridge finality.
+- Live outbound mutation checks omit batch output registration (collation rejects
+  unbalanced block value flow) and change validator-expected metadata depth from
+  0 to 1 (shared outbound checking rejects mismatched metadata). Both fail the
+  disk integration test at block 1 and are restored before final verification.
 - Mutation checks: disabling batch serialization fails the commit/reload test;
   removing the unsettled-message rejection fails the exact rejection test.
   Both changes were restored.
@@ -225,8 +256,9 @@ and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
 Native transaction/account wrapping, witness storage and transaction-level outbound
-settlement are implemented. Live state-only full-shard acceptance is tested;
-nonempty queue settlement and full-block message value flow remain pending.
+settlement are implemented. Live full-shard acceptance, outbound queue persistence
+and outgoing block value flow are tested. Incoming/deferred messages and delivered
+queue cleanup remain incomplete.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.
@@ -257,9 +289,9 @@ binds input context; neither authenticates the context by itself.
   registry contains no block engine and advertised capabilities remain unchanged.
   Reinstating account-only rejection in required-workchain validation fails the
   registered Counter acceptance test; scoped validation was restored.
-- `ValidateQuery::check_transactions` now has a separate state-only block branch,
+- `ValidateQuery::check_transactions` now has a separate block branch,
   requiring exactly the configured executor AccountBlock, rejecting native
-  inbound/outbound message descriptors, and replaying from the previous shard,
+  inbound message descriptors, and replaying from the previous shard,
   selected MC configuration root and MC state root. The helper validates the
   AccountBlock identity, augmented transaction dictionary, exactly one batch and
   matching AccountBlock/transaction state updates before persisted-state replay.
@@ -278,9 +310,10 @@ binds input context; neither authenticates the context by itself.
 
 ## Remaining requirements
 
-This is partial M1, not an enabled privacy workchain. State-only Counter collation,
-validation and disk restart now have end-to-end test evidence. Both block branches
-still require an explicitly registered engine; message settlement, distributed
+This is partial M1, not an enabled privacy workchain. Counter collation, outgoing
+native settlement, independent database replay and disk restart have end-to-end
+test evidence. Both block branches still require an explicitly registered engine;
+incoming/deferred message settlement, delivered queue cleanup, distributed
 consensus and network synchronization have not been accepted.
 Context cells are not authentication proofs by themselves.
 

@@ -100,6 +100,9 @@ class TestNode : public td::actor::Actor {
   void set_counter_increment(td::uint64 increment) {
     block_candidate_ = block::test::counter_number(increment);
   }
+  void set_counter_send_increment(td::uint64 increment) {
+    block_candidate_ = block::test::counter_message_candidate(increment);
+  }
   void set_export_candidate(std::string path) {
     export_candidate_ = std::move(path);
   }
@@ -460,6 +463,12 @@ int main(int argc, char *argv[]) {
                        [&](td::Slice arg) {
                          TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));
                          td::actor::send_closure(x, &TestNode::set_counter_increment, increment);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option(0, "counter-send-increment", "test-only: increment Counter and send two native messages",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));
+                         td::actor::send_closure(x, &TestNode::set_counter_send_increment, increment);
                          return td::Status::OK();
                        });
   p.add_checked_option('T', "top-block", "BlockIdExt of top block (new block will be generated atop of it)",

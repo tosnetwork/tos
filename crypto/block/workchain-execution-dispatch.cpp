@@ -248,7 +248,8 @@ td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
 
 td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input, Account& account,
-    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg) {
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg,
+    const ActionPhaseConfig* message_cfg) {
   if (account.workchain != execution.descriptor.workchain_id || account.addr != execution.policy.executor_address) {
     return td::Status::Error("batch staging account differs from configured executor");
   }
@@ -258,7 +259,7 @@ td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain
   if (batch->start_lt != expected_lt) {
     return td::Status::Error("batch staging logical time differs from requested time");
   }
-  TRY_STATUS(batch->prepare_workchain_batch(input, effects, cfg));
+  TRY_STATUS(batch->prepare_workchain_batch(input, effects, cfg, message_cfg));
   if (!batch->serialize(cfg)) {
     return td::Status::Error("cannot serialize staged block batch transaction");
   }
@@ -268,7 +269,8 @@ td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain
 td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
-    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg) {
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg,
+    const ActionPhaseConfig* message_cfg) {
   class ConfiguredEngine final : public WorkchainBlockEngine {
    public:
     explicit ConfiguredEngine(const ResolvedWorkchainBlockExecution& execution) : execution_(execution) {
@@ -281,13 +283,13 @@ td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
   } engine(execution);
   return replay_workchain_batch_state(engine, context, claimed_shard, claimed_transaction,
                                       execution.descriptor.workchain_id, execution.policy.executor_address,
-                                      expected_lt, expected_utime, cfg);
+                                      expected_lt, expected_utime, cfg, message_cfg);
 }
 
 td::Status replay_resolved_workchain_account_block(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& account_block,
-    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
   try {
     gen::AccountBlock::Record record;
     if (account_block.is_null() || !gen::t_AccountBlock.validate_ref(4096, account_block) ||
@@ -316,7 +318,7 @@ td::Status replay_resolved_workchain_account_block(
       return td::Status::Error("AccountBlock state update differs from its batch transaction");
     }
     TRY_RESULT(replayed, replay_resolved_workchain_batch_state(
-        execution, context, claimed_shard, transaction, lt, expected_utime, cfg));
+        execution, context, claimed_shard, transaction, lt, expected_utime, cfg, message_cfg));
     return td::Status::OK();
   } catch (vm::VmError&) {
     return td::Status::Error("invalid block executor AccountBlock cells");

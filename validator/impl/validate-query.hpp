@@ -427,6 +427,9 @@ class ValidateQuery : public td::actor::Actor {
                     Ref<vm::CellSlice> acc_tr, Context ctx);
 
     bool try_check();
+    bool check_outbound_messages(Ref<vm::Cell> trans_root,
+                                 const td::optional<block::MsgMetadata>& metadata,
+                                 block::CurrencyCollection& money_exported);
     Context extract_context();
 
    private:
