@@ -1575,6 +1575,74 @@ fn normal_oracle_requires_exact_threshold_without_duplicate_counting() {
 }
 
 #[test]
+fn appellate_oracle_requires_exact_threshold_without_duplicate_counting() {
+    let mut f = Fixture::new_with(|init| {
+        init.appellate_oracle_policy.threshold = 2;
+        init.appellate_oracle_policy.reporters.push(init.reserve_recipient.clone());
+    });
+    f.activate();
+    let normal = f.normal.address().clone();
+    let first = f.appellate.address().clone();
+    let second = f.reserve.address().clone();
+    let challenger = f.trader_b.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    let normal_now = u64::from(f.bc.now());
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            3,
+            0,
+            normal_context,
+            0,
+            [0xe1; 32],
+            normal_now,
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(4, f.phase().5, 1, [0xe2; 32]).unwrap(),
+    )
+    .expect_success();
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    let now = u64::from(f.bc.now());
+    let deadline = f.phase().6;
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id, 1, context, 1, [0xe3; 32], now, deadline,
+        )
+        .unwrap()
+    };
+
+    f.send(&first, OPERATION_BUDGET, report(6)).expect_success();
+    assert_eq!(f.phase().0, 3, "M-1 appellate votes must not finalize");
+    f.send(&first, OPERATION_BUDGET, report(7)).expect_success();
+    assert_eq!(f.phase().0, 3, "duplicate appellate vote must be idempotent");
+    f.send(
+        &first,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(8, 1, context, 2, [0xe4; 32], now, deadline)
+            .unwrap(),
+    )
+    .expect_exit_code(2429);
+    assert_eq!(f.phase().0, 3, "appellate equivocation must not finalize");
+    f.send(&second, OPERATION_BUDGET, report(9)).expect_success();
+    assert_eq!(f.phase().0, 4, "exactly M appellate reporters must finalize");
+}
+
+#[test]
 fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
     let mut f = Fixture::new();
     f.activate();
