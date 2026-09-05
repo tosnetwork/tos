@@ -870,3 +870,15 @@ through the real `t_Tomis` codec, with independent decimal controls. Removing
 the outgoing bound, widening the incoming bound to 128 bits, or dropping high
 bytes independently makes the relevant test fail; mutations were restored.
 These conversion helpers are not yet wired into a Reserve contract or bridge.
+
+Added logical bundle-context validation for Transfer, ShieldClaim, Unshield,
+WithdrawalRefund, Genesis and private fee distribution. It checks the prescribed
+public value balance and decoded spend/output permissions using checked wide
+addition and symmetric i64 narrowing. Transfer accepts no separate principal;
+output-only settlement accepts no separate fee in this API. Unknown contexts
+fail closed. Tests cover all six contexts, wrong magnitudes/signs/permissions,
+irrelevant public fields and range errors. Bypassing each rejection category,
+dropping the output permission requirement or reversing the output-only sign
+makes the matching assertion fail; changes were restored. This is not a wire-tag
+assignment, canonical flags decoder, proof/signature verifier or authorization
+for output-only issuance. Those must be connected at the real bundle boundary.
