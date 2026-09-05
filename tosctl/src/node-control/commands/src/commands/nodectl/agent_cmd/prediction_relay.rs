@@ -621,6 +621,19 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .find_economic_effect_by_stable_action(&self.stable_action_id)?
             .context("prepared Prediction effect was not found")?;
         validate_prediction_custody_record(&record, &request)?;
+
+        // A terminal record contains immutable, custody-bound evidence.  It
+        // remains safe to replay even if it predates the recovery-boundary
+        // field: replay does not inspect history, broadcast, or alter custody.
+        // Check it before requiring a boundary, whose purpose is only to bind
+        // a new non-terminal history scan.
+        if let Some(evidence) = resolved_prediction_source_evidence(
+            &record.status,
+            record.exact_winner_resolution.as_ref(),
+        )? {
+            println!("{evidence}");
+            return Ok(());
+        }
         let boundary = record
             .prediction_relay_recovery_boundary
             .as_ref()
@@ -630,17 +643,6 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             "Prediction resolver request conflicts with its durable recovery boundary"
         );
 
-        if record.status == ControllerActionStatus::Resolved {
-            let resolution = record
-                .exact_winner_resolution
-                .context("resolved Prediction source has no replayable evidence")?;
-            anyhow::ensure!(
-                resolution.evidence_kind == SOURCE_EVIDENCE_SCHEMA,
-                "Prediction action was resolved under a different evidence profile"
-            );
-            println!("{}", resolution.evidence);
-            return Ok(());
-        }
         anyhow::ensure!(
             record.status == ControllerActionStatus::Broadcasting,
             "only an ambiguously broadcast Prediction action may resolve its source"
@@ -784,6 +786,21 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
         );
         Ok(())
     }
+}
+
+fn resolved_prediction_source_evidence(
+    status: &ControllerActionStatus,
+    resolution: Option<&ControllerActionResolutionEvidence>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    if status != &ControllerActionStatus::Resolved {
+        return Ok(None);
+    }
+    let resolution = resolution.context("resolved Prediction source has no replayable evidence")?;
+    anyhow::ensure!(
+        resolution.evidence_kind == SOURCE_EVIDENCE_SCHEMA,
+        "Prediction action was resolved under a different evidence profile"
+    );
+    Ok(Some(resolution.evidence.clone()))
 }
 
 impl AgentAccountPredictionRelayDestinationResolveCmd {
@@ -1735,7 +1752,7 @@ async fn observe_prediction_destination(
     rpc.verify_pinned_primary_network(expected_network).await?;
     verify_prediction_checkpoint(&rpc, &request.pre_broadcast_masterchain_checkpoint).await?;
     let master = rpc.get_masterchain_info().await?;
-    let first = prediction_destination_scan_first(market, request)?;
+    let first = prediction_destination_scan_first(request)?;
     anyhow::ensure!(
         first > request.pre_broadcast_masterchain_checkpoint.sequence_number
             && master.last.seqno >= first,
@@ -1872,38 +1889,25 @@ async fn observe_prediction_destination(
     })
 }
 
-// A masterchain source and its masterchain destination may be executed in the
-// same block.  The source evidence's finality head is deliberately a later
-// observer head, so using it as this cursor would skip that block (and the
-// exact inbound we are trying to prove).  The source transaction's own block
-// is the durable inclusive lower bound for a masterchain market.
+// Source resolution can occur after the market has already consumed the
+// outbound message.  Its observer finality head is therefore not a safe lower
+// bound for either a masterchain or workchain market.  The checkpoint persisted
+// immediately before the externally signed BOC is the authenticated common
+// boundary: scanning from the next masterchain block includes every possible
+// source-to-market delivery without admitting pre-broadcast history.
 fn prediction_destination_scan_first(
-    market: &MsgAddressInt,
     request: &PredictionRelayDestinationRequest,
 ) -> anyhow::Result<u32> {
-    prediction_destination_scan_first_for_workchain(
-        market.workchain_id(),
-        request.source_evidence.block.workchain_id,
-        request.source_evidence.block.sequence_number,
-        request.source_evidence.block.masterchain_sequence_number,
-    )
+    prediction_scan_first_after_checkpoint(&request.pre_broadcast_masterchain_checkpoint)
 }
 
-fn prediction_destination_scan_first_for_workchain(
-    market_workchain: i32,
-    source_block_workchain: i32,
-    source_block_sequence_number: u32,
-    source_finality_masterchain_sequence_number: u32,
+fn prediction_scan_first_after_checkpoint(
+    checkpoint: &PredictionBlockIdentity,
 ) -> anyhow::Result<u32> {
-    if market_workchain == -1 {
-        anyhow::ensure!(
-            source_block_workchain == -1,
-            "Prediction masterchain market has non-masterchain source evidence"
-        );
-        Ok(source_block_sequence_number)
-    } else {
-        Ok(source_finality_masterchain_sequence_number)
-    }
+    checkpoint
+        .sequence_number
+        .checked_add(1)
+        .context("Prediction pre-broadcast checkpoint sequence number overflow")
 }
 
 async fn verify_prediction_market_identity(
@@ -2216,7 +2220,7 @@ async fn observe_prediction_bounce_credit(
     let info = rpc.get_address_information(source).await?;
     verify_prediction_source_code(&info, &request.profile.source_agent_account_code_hash)?;
     let master = rpc.get_masterchain_info().await?;
-    let first = prediction_bounce_credit_scan_first(source, request)?;
+    let first = prediction_bounce_credit_scan_first(request)?;
     anyhow::ensure!(
         first > request.pre_broadcast_masterchain_checkpoint.sequence_number
             && master.last.seqno >= first,
@@ -2322,37 +2326,14 @@ async fn observe_prediction_bounce_credit(
     })
 }
 
-// As with the source-to-market leg, a masterchain market failure and the
-// Agent Account's bounce-credit transaction can be in the same masterchain
-// block. The destination evidence finality head is only an observation point,
-// not a safe exclusive scan cursor.
+// The market failure may be observed after its rich bounce has already been
+// credited.  As on the source-to-market leg, only the durable pre-broadcast
+// checkpoint is a safe common lower bound; a later destination finality head
+// can skip the exact credit transaction.
 fn prediction_bounce_credit_scan_first(
-    source: &MsgAddressInt,
     request: &PredictionRelayBounceCreditRequest,
 ) -> anyhow::Result<u32> {
-    prediction_bounce_credit_scan_first_for_workchain(
-        source.workchain_id(),
-        request.destination_evidence.block.workchain_id,
-        request.destination_evidence.block.sequence_number,
-        request.destination_evidence.block.masterchain_sequence_number,
-    )
-}
-
-fn prediction_bounce_credit_scan_first_for_workchain(
-    source_workchain: i32,
-    destination_block_workchain: i32,
-    destination_block_sequence_number: u32,
-    destination_finality_masterchain_sequence_number: u32,
-) -> anyhow::Result<u32> {
-    if source_workchain == -1 {
-        anyhow::ensure!(
-            destination_block_workchain == -1,
-            "Prediction masterchain bounce has non-masterchain destination evidence"
-        );
-        Ok(destination_block_sequence_number)
-    } else {
-        Ok(destination_finality_masterchain_sequence_number)
-    }
+    prediction_scan_first_after_checkpoint(&request.pre_broadcast_masterchain_checkpoint)
 }
 
 async fn scan_prediction_bounce_credit_block(
@@ -2823,20 +2804,50 @@ mod tests {
     }
 
     #[test]
-    fn destination_scan_includes_the_source_masterchain_block() {
-        // Finality is normally observed after the source transaction.  Starting
-        // at that later head would miss a destination transaction in the same
-        // masterchain block as the source checked call.
-        assert_eq!(prediction_destination_scan_first_for_workchain(-1, -1, 42, 99).unwrap(), 42);
-        assert!(prediction_destination_scan_first_for_workchain(-1, 0, 42, 99).is_err());
-        assert_eq!(prediction_destination_scan_first_for_workchain(0, 0, 42, 99).unwrap(), 99);
+    fn destination_and_bounce_scans_start_after_the_durable_checkpoint() {
+        // The source/destination quorum may observe a later head after the
+        // target transaction was already delivered.  The durable checkpoint,
+        // not either later head, is the safe shared lower bound.
+        let checkpoint = PredictionBlockIdentity {
+            workchain_id: -1,
+            shard: -1,
+            sequence_number: 41,
+            root_hash: format!("sha256:{}", "1".repeat(64)),
+            file_hash: format!("sha256:{}", "2".repeat(64)),
+            masterchain_sequence_number: 41,
+        };
+        assert_eq!(prediction_scan_first_after_checkpoint(&checkpoint).unwrap(), 42);
+        let overflow = PredictionBlockIdentity { sequence_number: u32::MAX, ..checkpoint };
+        assert!(prediction_scan_first_after_checkpoint(&overflow).is_err());
     }
 
     #[test]
-    fn bounce_credit_scan_includes_the_destination_masterchain_block() {
-        assert_eq!(prediction_bounce_credit_scan_first_for_workchain(-1, -1, 42, 99).unwrap(), 42);
-        assert!(prediction_bounce_credit_scan_first_for_workchain(-1, 0, 42, 99).is_err());
-        assert_eq!(prediction_bounce_credit_scan_first_for_workchain(0, 0, 42, 99).unwrap(), 99);
+    fn terminal_source_evidence_replays_without_a_recovery_boundary() {
+        let expected = serde_json::json!({"state": "source_finalized"});
+        let resolution = ControllerActionResolutionEvidence {
+            evidence_kind: SOURCE_EVIDENCE_SCHEMA.into(),
+            evidence_digest: format!("sha256:{}", "a".repeat(64)),
+            evidence: expected.clone(),
+        };
+        assert_eq!(
+            resolved_prediction_source_evidence(
+                &ControllerActionStatus::Resolved,
+                Some(&resolution),
+            )
+            .unwrap(),
+            Some(expected)
+        );
+        assert!(
+            resolved_prediction_source_evidence(
+                &ControllerActionStatus::Broadcasting,
+                Some(&resolution),
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            resolved_prediction_source_evidence(&ControllerActionStatus::Resolved, None).is_err()
+        );
     }
 
     fn test_hash(index: u32) -> [u8; 32] {
