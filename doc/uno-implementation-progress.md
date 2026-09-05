@@ -1045,3 +1045,19 @@ length overflow. All were restored. The real CMake-linked fixture test also
 exercises the adapter on valid proofs, corrupted proofs and changed digests.
 This prepares a host call boundary but does not add a node/engine call site,
 wire decoder, settlement authorization or state transition.
+
+### Persistent used-nullifier primitive
+
+Added `uno/core/used-nullifiers.h`, a 256-bit Cell dictionary used-set with
+immutable staged batch insertion and no deletion API. Duplicate keys in the
+batch or history reject without publishing a partially updated root. The set
+does not special-case zero keys or dummy actions. Tests cover retained history,
+late rejection, same-batch duplicates, empty batches and insertion-order root
+equivalence. Changing dictionary insertion from Add to Set made the historical
+duplicate rejection assertion fail; the mutation was restored.
+
+This is a state building block, not full admission or StateV2 persistence:
+untrusted root loading, owner-bound refund reservations (including cmx),
+cryptographic admission, resource limits and atomic block integration remain
+required. Only internally constructed roots can enter this class; dictionary
+runtime exceptions are not converted into transaction rejection here.
