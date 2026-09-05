@@ -720,6 +720,30 @@ TEST(WorkchainBlock, BatchCommitmentReplay) {
   }
 }
 
+TEST(WorkchainBlock, NativeQueueViewIsBoundToInput) {
+  auto in = input();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  auto queue = block::extract_workchain_native_queue_state(in).move_as_ok();
+  ASSERT_TRUE(queue->get_hash() == state.out_msg_queue_info->get_hash());
+  auto before = block::encode_workchain_block_input(in).move_as_ok();
+  // Empty queue with explicit dispatch metadata, rather than absent metadata.
+  auto changed_queue = vm::CellBuilder().store_zeroes(66).store_long(1, 1)
+      .store_zeroes(4 + 65).store_long(1, 1).store_zeroes(48).finalize();
+  ASSERT_TRUE(block::gen::t_OutMsgQueueInfo.validate_ref(10000, changed_queue));
+  state.out_msg_queue_info = changed_queue;
+  auto changed = in;
+  ASSERT_TRUE(tlb::pack_cell(changed.previous_shard_state, state));
+  ASSERT_TRUE(block::gen::t_ShardStateUnsplit.validate_ref(10000, changed.previous_shard_state));
+  ASSERT_TRUE(block::extract_workchain_native_queue_state(changed).move_as_ok()->get_hash() == changed_queue->get_hash());
+  ASSERT_TRUE(block::encode_workchain_block_input(changed).move_as_ok()->get_hash() != before->get_hash());
+  auto invalid = in;
+  invalid.previous_shard_state = {};
+  ASSERT_TRUE(block::extract_workchain_native_queue_state(invalid).is_error());
+  invalid.previous_shard_state = number(0);
+  ASSERT_TRUE(block::extract_workchain_native_queue_state(invalid).is_error());
+}
+
 TEST(WorkchainBlock, UnmatchedBatchInputDoesNotInvokeEngine) {
   class CountingEngine final : public block::WorkchainBlockEngine {
    public:

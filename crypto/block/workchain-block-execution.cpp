@@ -392,6 +392,23 @@ td::Result<WorkchainBlockResult> replay_workchain_block(const WorkchainBlockEngi
   return replay_workchain_block(engine, input, claimed);
 }
 
+td::Result<td::Ref<vm::Cell>> extract_workchain_native_queue_state(const WorkchainBlockInput& input) {
+  if (input.previous_shard_state.is_null()) {
+    return td::Status::Error("missing previous shard state for native queue view");
+  }
+  try {
+    gen::ShardStateUnsplit::Record state;
+    if (!tlb::unpack_cell(input.previous_shard_state, state)) {
+      return td::Status::Error("invalid previous shard header for native queue view");
+    }
+    return state.out_msg_queue_info;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid previous shard cells for native queue view");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete previous shard proof for native queue view");
+  }
+}
+
 td::Result<td::Ref<vm::Cell>> encode_workchain_block_input(const WorkchainBlockInput& input) {
   if (input.previous_shard_state.is_null() || input.candidate.is_null() || input.configuration.is_null() ||
       input.finality_context.is_null()) {

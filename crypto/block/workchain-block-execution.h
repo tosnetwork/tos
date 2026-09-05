@@ -21,6 +21,7 @@ inline constexpr bool kWorkchainExecutorIsSpecial = false;
 // The host authenticates configuration and finality before constructing this input.
 // Engines receive immutable cells and never own database or message-queue handles.
 struct WorkchainBlockInput {
+  // Commits native queues, processed-up-to and dispatch state as well as accounts.
   td::Ref<vm::Cell> previous_shard_state;
   td::Ref<vm::Cell> candidate;
   td::Ref<vm::Cell> configuration;
@@ -28,6 +29,12 @@ struct WorkchainBlockInput {
   // Nonempty canonical envelope list, authenticated by native queue validation.
   td::Ref<vm::Cell> inbound_messages = {};
 };
+
+// Read-only view of OutMsgQueueInfo from the committed previous shard header.
+// No duplicate queue input: host queue proofs, routing, dequeue/enqueue and
+// processed-up-to validation remain mandatory. This does not authenticate cells
+// or traverse queue contents, and engines cannot return a replacement queue.
+td::Result<td::Ref<vm::Cell>> extract_workchain_native_queue_state(const WorkchainBlockInput& input);
 
 // Candidate data is recovered from the claimed state, never supplied by a local cache.
 struct WorkchainBlockReplayContext {

@@ -698,3 +698,18 @@ after the negative-workchain check: that sentinel is INT32_MIN. Unique executor,
 dictionary-key/address binding, structural validation and full replay remain.
 No security coverage is attributed to these unreachable branches and no new
 negative test is claimed for their removal.
+
+The queue interface now has a named read-only accessor,
+`extract_workchain_native_queue_state(input)`, returning OutMsgQueueInfo directly
+from the committed previous shard header. No independent queue field or new wire
+format is introduced. It exposes outbound queue, processed-up-to and dispatch
+state together; header extraction does not authenticate or traverse those queues.
+Native queue proofs, routing, enqueue/dequeue and final queue/value-flow validation
+remain host responsibilities. Engines emit outbound requests, never a replacement
+native queue. Counter itself does not need to read the queue.
+
+The accessor test compares the exact queue cell, changes only valid queue metadata
+and observes a different input commitment, and rejects missing/malformed headers.
+Returning the candidate instead of the queue makes the exact-cell assertion fail;
+the accessor was restored. The full previous shard was already committed before
+this change: this clarifies access and ownership, not a previously missing hash.
