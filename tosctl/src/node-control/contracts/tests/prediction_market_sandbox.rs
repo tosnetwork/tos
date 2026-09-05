@@ -722,6 +722,52 @@ fn zero_immutable_rules_hash_in_a_structurally_valid_config_cannot_activate() {
 }
 
 #[test]
+fn inverted_trade_and_resolution_times_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let times = config.reference(1).unwrap();
+    let mut times_builder = BuilderData::from_cell(&times).unwrap();
+    let mut times_data = times_builder.data().to_vec();
+    // times is magic:uint32 followed by trade_close and resolve_not_before.
+    times_data[4..12].copy_from_slice(&(template.init.resolve_not_before + 1).to_be_bytes());
+    times_builder.replace_data(times_data, times.bit_length());
+
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(1, times_builder.into_cell().unwrap());
+    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
+    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts("inverted-times", root_builder.into_cell().unwrap());
+}
+
+#[test]
+fn zero_challenge_bond_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let economics = config.reference(2).unwrap();
+    let fees = economics.reference(0).unwrap();
+
+    // Re-encode only the nested challenge-fee cell. Its shape is canonical,
+    // but a zero bond violates the contract's immutable anti-grief floor.
+    let mut invalid_challenge_fees = BuilderData::new();
+    invalid_challenge_fees.append_u32(0x504d_4643).unwrap();
+    Coins::new(0).write_to(&mut invalid_challenge_fees).unwrap();
+    Coins::new(template.init.challenge_processing_fee)
+        .write_to(&mut invalid_challenge_fees)
+        .unwrap();
+    let mut fees_builder = BuilderData::from_cell(&fees).unwrap();
+    fees_builder.replace_reference_cell(0, invalid_challenge_fees.into_cell().unwrap());
+    let mut economics_builder = BuilderData::from_cell(&economics).unwrap();
+    economics_builder.replace_reference_cell(0, fees_builder.into_cell().unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(2, economics_builder.into_cell().unwrap());
+    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
+    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts("zero-challenge-bond", root_builder.into_cell().unwrap());
+}
+
+#[test]
 fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
