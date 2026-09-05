@@ -722,8 +722,9 @@ impl PredictionMarketContractV1 {
         Ok(body.into_cell()?)
     }
 
-    /// Builds the typed reserve-donation body used by Agent Account V2 checked
-    /// calls. Direct wallets may continue to top up with an empty body.
+    /// Builds the typed reserve-donation body used by the Agent Account
+    /// checked-contract-call v2 action. Direct wallets may continue to top up
+    /// with an empty body.
     pub fn top_up_reserve(query_id: u64) -> anyhow::Result<chain_block::Cell> {
         message_header(PM_TOP_UP_RESERVE_OPCODE, query_id)?.into_cell()
     }
