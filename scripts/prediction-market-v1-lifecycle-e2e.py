@@ -300,7 +300,7 @@ class Lifecycle:
             "OPENFOX_PREDICTION_MARKET_DEFINITION": str(self.evidence_dir / "market.json"),
             "OPENFOX_PREDICTION_MATCH_EXTERNAL_BOC": str(self.evidence_dir / "match-external.boc"),
             "OPENFOX_PREDICTION_MATCH_BODY_BOC": str(self.evidence_dir / "match-body.boc"),
-            "OPENFOX_PREDICTION_MATCH_SOURCE_ADDRESS": self.addresses["owner"],
+            "OPENFOX_PREDICTION_MATCH_SOURCE_ADDRESS": canonical_raw_address(self.addresses["owner"]),
             "OPENFOX_PREDICTION_MATCH_SCAN_START_MC_SEQNO": str(json.loads((self.evidence_dir / "manifest.json").read_text())["scan_start_masterchain_seqno"]),
             "OPENFOX_PREDICTION_TOSCTL_CONFIG_1": str(self.evidence_dir / "node-1.json"),
             "OPENFOX_PREDICTION_TOSCTL_CONFIG_2": str(self.evidence_dir / "node-2.json"),
