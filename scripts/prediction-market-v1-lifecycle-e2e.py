@@ -315,11 +315,6 @@ class Lifecycle:
             "OPENFOX_PREDICTION_WORKCHAIN_ID": "0", "OPENFOX_PREDICTION_ZERO_STATE_ROOT_HASH": initial["root_hash"],
             "OPENFOX_PREDICTION_ZERO_STATE_FILE_HASH": initial["file_hash"],
             "OPENFOX_PREDICTION_EVIDENCE_DIRECTORY": str(report_dir),
-            # `prediction show` currently builds tosctl's Vault client even
-            # though it performs no signing. OpenFox intentionally launches
-            # tosctl with an empty inherited environment, so provide only this
-            # disposable test-Vault capability explicitly.
-            "OPENFOX_PREDICTION_VAULT_URL": self.vault_url,
         })
         try:
             completed = subprocess.run(["go", "test", "./pkg/earning", "-run",
