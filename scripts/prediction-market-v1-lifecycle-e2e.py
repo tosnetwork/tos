@@ -352,8 +352,8 @@ class Lifecycle:
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"withdraw did not exhaust the owner's free collateral: {withdrawn}")
 
-    def run_challenged_lifecycle(self) -> None:
-        """Prove a challenged normal proposal can be overturned by appellate quorum."""
+    def run_challenged_lifecycle(self, appellate_outcome: int | None) -> None:
+        """Exercise appellate quorum or timeout after a hash-bound challenge."""
         definition = self.write_definition()
         deploy = self.workdir / "deploy.boc"
         self.tosctl_call(
@@ -412,39 +412,65 @@ class Lifecycle:
         if not isinstance(appeal_deadline, int) or appeal_deadline <= int(time.time()):
             raise RuntimeError(f"challenge did not expose a future appeal deadline: {reviewing}")
 
-        # The phase getter exposes the terminal appeal deadline, not the
-        # earlier review-vote opening time. The challenge is already observed
-        # in all three nodes; wait a conservative real-time margin beyond the
-        # frozen configured delay before the separate opening transaction.
-        review_entered_at = int(time.time())
-        wait_until(
-            lambda: int(time.time()) >= review_entered_at + definition["appeal_review_delay"] + 2,
-            "appeal review vote opening time", definition["appeal_review_delay"] + 90,
-        )
-        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 8}, OPERATION_BUDGET, 8)
-        review_round = self.wait_status("reviewing")
-        appeal_context = review_round["current_context_hash"]
-        appeal_created_at = int(time.time())
-        if not isinstance(appeal_context, str) or appeal_context == "00" * 32:
-            raise RuntimeError(f"appellate round was not opened after delay: {review_round}")
-        for sequence, reporter in ((9, "appeal_one"), (10, "appeal_two")):
-            self.prepare_and_send(reporter, {
-                "operation": "report_result", "query_id": sequence, "round": 1,
-                "expected_round_context_hash": appeal_context, "outcome": 1,
-                "evidence_root": "66" * 32, "statement_created_at": appeal_created_at,
-                "statement_expiry": appeal_deadline,
-            }, OPERATION_BUDGET, sequence)
-        finalized = self.wait_status("finalized")
-        if finalized["final_outcome"] != "no" or finalized["remaining_payout"] != TOS:
-            raise RuntimeError(f"appellate quorum did not overturn normal proposal: {finalized}")
+        if appellate_outcome is None:
+            # A challenged valid normal proposal is still authoritative if
+            # the appellate set is unavailable. Do not open a review round:
+            # the stable base context alone authorizes the timeout finalizer.
+            wait_until(
+                lambda: int(time.time()) >= appeal_deadline,
+                "appellate Oracle deadline", definition["appeal_period"] + 90,
+            )
+            self.prepare_and_send("owner", {
+                "operation": "finalize_review_timeout", "query_id": 8,
+                "expected_review_base_context_hash": review_base,
+            }, OPERATION_BUDGET, 8)
+            finalized = self.wait_status("finalized")
+            if finalized["final_outcome"] != "yes" or finalized["remaining_payout"] != TOS:
+                raise RuntimeError(f"appellate timeout did not preserve normal proposal: {finalized}")
+            claim_query, bond_query, withdraw_query = 9, 10, 11
+        else:
+            # The phase getter exposes the terminal appeal deadline, not the
+            # earlier review-vote opening time. The challenge is already
+            # observed in all three nodes; wait beyond the frozen delay before
+            # the separate opening transaction.
+            review_entered_at = int(time.time())
+            wait_until(
+                lambda: int(time.time()) >= review_entered_at + definition["appeal_review_delay"] + 2,
+                "appeal review vote opening time", definition["appeal_review_delay"] + 90,
+            )
+            self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 8}, OPERATION_BUDGET, 8)
+            review_round = self.wait_status("reviewing")
+            appeal_context = review_round["current_context_hash"]
+            appeal_created_at = int(time.time())
+            if not isinstance(appeal_context, str) or appeal_context == "00" * 32:
+                raise RuntimeError(f"appellate round was not opened after delay: {review_round}")
+            for sequence, reporter in ((9, "appeal_one"), (10, "appeal_two")):
+                self.prepare_and_send(reporter, {
+                    "operation": "report_result", "query_id": sequence, "round": 1,
+                    "expected_round_context_hash": appeal_context, "outcome": appellate_outcome,
+                    "evidence_root": "66" * 32, "statement_created_at": appeal_created_at,
+                    "statement_expiry": appeal_deadline,
+                }, OPERATION_BUDGET, sequence)
+            finalized = self.wait_status("finalized")
+            if finalized["final_outcome"] != "no" or finalized["remaining_payout"] != TOS:
+                raise RuntimeError(f"appellate quorum did not overturn normal proposal: {finalized}")
+            claim_query, bond_query, withdraw_query = 11, 12, 13
 
         self.prepare_and_send("owner", {
-            "operation": "claim", "query_id": 11, "owner": self.addresses["owner"],
-        }, OPERATION_BUDGET, 11)
+            "operation": "claim", "query_id": claim_query, "owner": self.addresses["owner"],
+        }, OPERATION_BUDGET, claim_query)
         claimed = self.show_quorum()
         if claimed["remaining_payout"] != 0 or claimed["claimed"] != TOS:
             raise RuntimeError(f"challenged claim did not exhaust payout liability: {claimed}")
-        self.prepare_and_send("owner", {"operation": "withdraw", "query_id": 12, "amount": 2 * TOS}, OPERATION_BUDGET, 12)
+        self.prepare_and_send("owner", {
+            "operation": "withdraw_challenge_bond", "query_id": bond_query,
+        }, OPERATION_BUDGET, bond_query)
+        refunded = self.show_quorum()
+        if refunded["challenge_bond"] != 0:
+            raise RuntimeError(f"challenge bond was not refunded under fixed timeout rules: {refunded}")
+        self.prepare_and_send("owner", {
+            "operation": "withdraw", "query_id": withdraw_query, "amount": 2 * TOS,
+        }, OPERATION_BUDGET, withdraw_query)
         withdrawn = self.show_quorum()
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"challenged withdrawal did not exhaust free collateral: {withdrawn}")
@@ -531,7 +557,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "challenged-appellate", "double-timeout"), default="normal",
+        "--scenario", choices=("normal", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -581,8 +607,12 @@ def main() -> int:
             )
         elif args.scenario == "challenged-appellate":
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
-            lifecycle.run_challenged_lifecycle()
+            lifecycle.run_challenged_lifecycle(1)
             print("PredictionMarket challenged appellate direct-wallet three-node lifecycle: PASS")
+        elif args.scenario == "challenged-timeout":
+            lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_challenged_lifecycle(None)
+            print("PredictionMarket challenged appellate-timeout direct-wallet three-node lifecycle: PASS")
         else:
             lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_double_timeout_lifecycle()
