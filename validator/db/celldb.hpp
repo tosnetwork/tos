@@ -348,6 +348,7 @@ class CellDbIn : public CellDbBase {
   //     import can claim the single production slot.
   void import_persistent_state_streaming(PersistentStateImportRequest request,
                                          td::Promise<PersistentStateImportResult> promise);
+  void poll_streaming_import_worker();
 
   // tos27 P0-2 / tos29 High-1: continuation entry point posted from the
   // worker thread after the off-actor BoC parse + root verification
@@ -367,8 +368,8 @@ class CellDbIn : public CellDbBase {
 
   // tos29 High-1: actor-only CellDb write stage. Drains the verified
   // worker-created import spool through bounded KeyValue write batches.
-  // The worker never calls this directly; it posts only
-  // `continue_import_after_worker`, and that actor continuation owns the
+  // The worker never calls this directly; the actor-local completion poll
+  // invokes `continue_import_after_worker`, and that continuation owns the
   // transition into this method.
   void commit_streaming_import_spool_batch();
 

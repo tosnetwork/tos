@@ -1640,12 +1640,9 @@ struct StreamingImportJob {
   td::uint64 spool_budget_bytes = 0;
   vm::Cell::Hash expected_hash{};
 
-  // Off-actor result fields. The worker writes these before posting
-  // the completion message; the actor reads them after join. Using
-  // plain members (not atomics) is safe because the actor's
-  // continuation runs strictly AFTER the worker has finished
-  // populating them — the send_closure -> message dispatch ordering
-  // synchronizes the writes.
+  // Publish completion with release/acquire ordering. Raw worker threads have
+  // no scheduler context and cannot deliver actor messages directly.
+  std::atomic<bool> worker_done{false};
   td::Status worker_status = td::Status::OK();
   td::Ref<vm::Cell> hash_only_root;
   td::uint64 cells_persisted = 0;
@@ -2703,30 +2700,41 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // Spawn the off-actor worker. The CellDbIn actor's message loop is
   // free to interleave any other operation while the worker runs.
   auto* job_ptr = streaming_job_.get();
-  auto self_actor = actor_id(this);
-  streaming_job_->worker = td::thread([job_ptr, sink_keepalive = std::move(shared_sink), self_actor]() mutable {
+  streaming_job_->worker = td::thread([job_ptr, sink_keepalive = std::move(shared_sink)]() mutable {
     // The worker drives begin / parse / verify / spool-seal against
     // `sink_keepalive`. On any error path the worker calls sink->abort()
     // before stashing worker_status; the continuation handles
     // resume_gc + promise.set_* on the actor.
     run_streaming_import_worker(job_ptr, sink_keepalive.get());
-    // Post a single completion message back to the actor. The
-    // continuation will join this thread and tear down the job.
-    td::actor::send_closure(self_actor, &CellDbIn::continue_import_after_worker);
+    job_ptr->worker_done.store(true, std::memory_order_release);
   });
+  poll_streaming_import_worker();
 }
 
-// tos27/tos29: completion message posted by the worker thread.
+void CellDbIn::poll_streaming_import_worker() {
+  if (streaming_job_ == nullptr || streaming_job_->worker_joined) {
+    return;
+  }
+  if (streaming_job_->worker_done.load(std::memory_order_acquire)) {
+    continue_import_after_worker();
+    return;
+  }
+  // Schedule from the actor context; do not block its message loop while the
+  // worker parses. Each import has at most one outstanding completion poll.
+  delay_action([self = actor_id(this)] {
+    td::actor::send_closure(self, &CellDbIn::poll_streaming_import_worker);
+  }, td::Timestamp::in(0.01));
+}
+
+// Completion dispatched by the actor-local poll after publication.
 // Runs on the CellDbIn actor's serialized loop; joins the worker and
 // starts the actor-side CellDb write stage. The promise is resolved only
 // by finish_streaming_import_after_actor_commit / fail_streaming_import.
 //
 // The worker thread has already populated `streaming_job_->worker_status`
 // and (on success) `hash_only_root`, `cells_persisted`, `parsed_hash`,
-// `committed`. We read those without synchronization because the
-// actor message dispatch happens-after the worker's last write to
-// these fields (the worker's final action is `send_closure` which
-// crosses the synchronization barrier).
+// `committed`. The acquire load of completion publishes all preceding worker
+// writes to this actor; joining also completes worker teardown.
 void CellDbIn::continue_import_after_worker() {
   if (streaming_job_ == nullptr) {
     LOG(ERROR) << "CellDbIn::continue_import_after_worker: no streaming job in flight; "
@@ -2734,8 +2742,7 @@ void CellDbIn::continue_import_after_worker() {
     return;
   }
 
-  // Join the worker thread. The worker's final action was
-  // send_closure to this method, so the thread is done with all its
+  // Join the worker thread. Completion is published, so it is done with its
   // observable side-effects and we can join without blocking on
   // useful work. td::thread::join() is safe to call on an
   // already-joined / uninitialized thread (no-ops).

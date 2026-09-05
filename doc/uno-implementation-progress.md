@@ -1152,3 +1152,33 @@ The test uses the small 4096-key state, keeps the source fixture in memory, and
 does not measure peak RSS. It exercises the bounded parser, not the actor-local
 CellDb commit/rollback path, authenticated network checkpoint acquisition or a
 cold node's end-to-end synchronization. Those remain required.
+
+### Real CellDb actor import exposed a completion-loss bug
+
+The UNO snapshot test now starts a real `CellDb` / `CellDbIn` on a two-worker
+actor scheduler with an isolated RocksDB directory. The initial run timed out
+after the import worker rejected its spool: a raw `td::thread` called
+`send_closure` without a scheduler context, and `send_immediate` silently
+discarded the completion message. This affected both success and failure
+handoffs, not just this snapshot's contents.
+
+Worker completion now publishes an atomic release flag; an actor-local 10 ms
+timer checks it with acquire ordering and invokes the existing continuation.
+The actor remains responsive and joins only after completion is published.
+The pre-fix test timed out at 30 seconds; the fixed full test completes in
+approximately 0.4 seconds on this host. This is regression evidence for actual
+worker-to-actor completion, beyond the earlier parser-only tests.
+
+A second concrete limitation remains: this 168133-byte snapshot exceeds the
+default 300% spool reservation (504399 bytes) before finishing parse. The test
+explicitly requires that budget rejection, then uses a test-only 2000% ratio
+to exercise wrong-root rejection and successful retry on the same database.
+Production defaults are unchanged; a suitable bounded reservation policy for
+this state shape remains unresolved. The successful import recorded 8198
+persisted cells in nine actor-side batches, returned a GC lease and allowed
+all 4096 nullifiers to be lazily read from the resulting state. Database paths
+are logged and retained for inspection.
+
+This does not register the canonical block-state root, commit an authenticated
+checkpoint, release the lease as a successful root-store operation, prove crash
+recovery, or transport anything over the network. Those remain separate work.

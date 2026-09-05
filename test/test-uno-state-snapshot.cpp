@@ -1,8 +1,10 @@
+#include <atomic>
 #include <random>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/workchain-block-execution.h"
+#include "td/actor/actor.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "uno/core/used-nullifiers.h"
@@ -12,6 +14,117 @@
 #include "vm/cells/MerkleProof.h"
 
 namespace {
+class SnapshotImportActor final : public td::actor::Actor {
+ public:
+  SnapshotImportActor(std::string directory, tos::validator::PersistentStateImportRequest request,
+                      td::Bits256 expected_payload, std::vector<td::Bits256> keys, std::atomic<bool>& completed)
+      : directory_(std::move(directory))
+      , request_(std::move(request))
+      , expected_payload_(expected_payload)
+      , keys_(std::move(keys))
+      , completed_(completed) {
+  }
+
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(30);
+    auto options = tos::validator::ValidatorManagerOptions::create({}, {});
+    options.write().set_celldb_in_memory(false);
+    options.write().set_celldb_v2(false);
+    options.write().set_disable_rocksdb_stats(true);
+    database_ = td::actor::create_actor<tos::validator::CellDb>(
+        "uno-snapshot-celldb", td::actor::ActorId<tos::validator::RootDb>{}, directory_, options);
+    auto wrong = request_;
+    wrong.expected_root_hash.as_slice()[0] ^= 1;
+    td::actor::send_closure(
+        database_, &tos::validator::CellDb::import_persistent_state_streaming, std::move(wrong),
+        [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> result) mutable {
+          td::actor::send_closure(self, &SnapshotImportActor::rejected, std::move(result));
+        });
+  }
+  void rejected(td::Result<tos::validator::PersistentStateImportResult> result) {
+    ASSERT_TRUE(result.is_error());
+    if (attempt_++ == 0) {
+      ASSERT_TRUE(result.error().message().str().find("spool budget exceeded") != std::string::npos);
+      // Pin the default-budget failure instead of silently hiding it. A
+      // separate explicit test budget lets the remaining import path run.
+      auto config = tos::validator::fullnode::persistent_state_budget_config();
+      config.spool_reservation_ratio_percent = 2000;
+      tos::validator::fullnode::configure_persistent_state_budgets(config);
+      auto wrong = request_;
+      wrong.expected_root_hash.as_slice()[0] ^= 1;
+      td::actor::send_closure(
+          database_, &tos::validator::CellDb::import_persistent_state_streaming, std::move(wrong),
+          [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> retried) mutable {
+            td::actor::send_closure(self, &SnapshotImportActor::rejected, std::move(retried));
+          });
+      return;
+    }
+    ASSERT_TRUE(result.error().message().str().find("root hash mismatch") != std::string::npos);
+    td::actor::send_closure(
+        database_, &tos::validator::CellDb::import_persistent_state_streaming, request_,
+        [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> imported) mutable {
+          td::actor::send_closure(self, &SnapshotImportActor::accepted, std::move(imported));
+        });
+  }
+  void accepted(td::Result<tos::validator::PersistentStateImportResult> result) {
+    auto imported = result.move_as_ok();
+    ASSERT_TRUE(imported.cells_persisted > keys_.size());
+    ASSERT_TRUE(imported.gc_lease != nullptr);
+    ASSERT_TRUE(td::Bits256(imported.hash_only_root->get_hash().bits()) == request_.expected_root_hash);
+    auto payload = block::extract_workchain_engine_state(imported.hash_only_root, 2, td::Bits256::zero()).move_as_ok();
+    ASSERT_TRUE(td::Bits256(payload->get_hash().bits()) == expected_payload_);
+    vm::Dictionary dictionary(payload, 256);
+    for (const auto& key : keys_) {
+      ASSERT_TRUE(dictionary.lookup(key).not_null());
+    }
+    // Keep the GC lease through all lazy reads. This fixture does not register
+    // a canonical block-state root or authorize a network checkpoint.
+    completed_.store(true);
+    td::actor::SchedulerContext::get().stop();
+  }
+  void alarm() override {
+    ASSERT_TRUE(false);
+  }
+
+ private:
+  std::string directory_;
+  tos::validator::PersistentStateImportRequest request_;
+  td::Bits256 expected_payload_;
+  std::vector<td::Bits256> keys_;
+  std::atomic<bool>& completed_;
+  unsigned attempt_ = 0;
+  td::actor::ActorOwn<tos::validator::CellDb> database_;
+};
+
+void actor_import_snapshot(td::Ref<vm::Cell> state, td::Ref<vm::Cell> payload, const std::vector<td::Bits256>& keys) {
+  auto bytes = vm::std_boc_serialize(state).move_as_ok();
+  auto temporary = td::mkstemp("/tmp").move_as_ok();
+  temporary.first.write_all(bytes.as_slice()).ensure();
+  temporary.first.close();
+  tos::validator::fullnode::BudgetedStateFile file(temporary.second, bytes.size(), {});
+  auto directory = td::mkdtemp("/tmp", "uno-snapshot-celldb-").move_as_ok();
+  LOG(INFO) << "UNO actor import database retained at " << directory;
+  tos::validator::PersistentStateImportRequest request;
+  request.tempfile_path = file.path;
+  request.file_size = file.size;
+  request.expected_root_hash = state->get_hash().bits();
+  request.opts.max_resident_bytes = 16ULL << 20;
+  auto saved_budget = tos::validator::fullnode::persistent_state_budget_config();
+  auto default_ratio = saved_budget;
+  default_ratio.spool_reservation_ratio_percent = 300;
+  tos::validator::fullnode::configure_persistent_state_budgets(default_ratio);
+  std::atomic<bool> completed{false};
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<SnapshotImportActor> actor;
+  scheduler.run_in_context([&] {
+    actor = td::actor::create_actor<SnapshotImportActor>("uno-snapshot-import", directory, request,
+                                                         td::Bits256(payload->get_hash().bits()), keys, completed);
+  });
+  scheduler.run();
+  ASSERT_TRUE(completed.load());
+  tos::validator::fullnode::configure_persistent_state_budgets(saved_budget);
+}
+
 td::Ref<vm::Cell> import_snapshot_part(td::Ref<vm::Cell> cell) {
   auto bytes = vm::std_boc_serialize(cell).move_as_ok();
   auto temporary = td::mkstemp("/tmp").move_as_ok();
@@ -104,6 +217,7 @@ TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
   }
   auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
   auto state = single_account_state(used.root());
+  actor_import_snapshot(state, used.root(), keys);
   auto unsplit = tos::validator::split_shard_state(tos::shardIdAll, state, 0);
   ASSERT_EQ(unsplit.size(), 1u);
   ASSERT_TRUE(unsplit[0].type.has<tos::validator::UnsplitStateType>());
