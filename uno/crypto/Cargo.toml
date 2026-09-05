@@ -8,6 +8,7 @@ publish = false
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+incrementalmerkletree = "=0.8.2"
 nonempty = "=0.11.0"
 orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153dcaeef8ef631c8991c53ed1248", default-features = false, features = ["circuit", "multicore", "std"] }
 
@@ -18,5 +19,4 @@ cbindgen = { version = "=0.29.0", default-features = false }
 
 [dev-dependencies]
 blake2b_simd = "=1.0.5"
-incrementalmerkletree = "=0.8.2"
 rand = "=0.8.8"

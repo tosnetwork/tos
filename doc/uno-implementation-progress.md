@@ -1704,3 +1704,43 @@ These are still isolated state primitives. Boolean query methods retain their
 VM exception contract; the outer engine must guard them and distinguish local
 resource failure from invalid consensus input. No OOM recovery, production gas
 schedule, complete StateV2 transaction or authenticated settlement is claimed.
+
+### Actual note-tree frontier and complete-action spend witness
+
+`uno/crypto/src/tree.rs` now supplies a depth-32 note-tree frontier using the
+pinned Sinsemilla node hashing, canonical field encoding and empty roots. It
+does not substitute a generic hash or revive the retired tree. The existing
+incrementalmerkletree 0.8.2 dependency moved from dev to runtime without changing
+Cargo.lock or any version. Ordered batch append stages a private frontier and
+checks capacity after caller-supplied refund reservations. A malformed late leaf
+does not publish preceding staged additions. Full capacity permits an empty
+batch but never another leaf, and position never wraps.
+
+The bounded Rust snapshot representation contains the next position, optional
+last leaf and at most 32 prior subtree hashes. Restoration rejects inconsistent
+empty/nonempty shapes, noncanonical nodes, wrong prior-subtree counts and excess
+depth. This is not a frozen StateV2 wire/Cell codec or an authenticated history.
+The outer state must authenticate the snapshot and reservation budget and retain
+full output/ciphertext history; the frontier alone cannot serve wallet scanning
+or historical witnesses. Duplicate-cmx policy remains an outer freeze item.
+
+The existing real-spend crypto fixture now uses both output Actions, including
+padding, to construct the tree. Its witness uses the actual randomized output
+position and sibling; the witness anchor must equal both the frontier root and
+its restored root. A genuine spend proof is then produced and fully verified
+against this anchor, and both spend outputs append to the restored frontier
+(position 2 to 4). This replaces the previous single-real-leaf test witness,
+without claiming a production wallet or C++ tree adapter.
+
+Unit tests compare incremental carry behavior with independent full-layer
+reduction at every size from 1 to 65 and round-trip every frontier. Synthetic
+near-capacity snapshots exercise the final leaf and reservation boundary without
+claiming billions of historical outputs were generated. Independent mutations
+skipped append, ignored reservations and reversed batch order; each failed a
+different assertion (position, capacity rejection, or resulting root). All were
+restored. Remaining work includes the tree ABI, canonical Cell storage, anchors,
+authenticated combined state transition and actual append/serialization profiling.
+After restoration, the full Rust and linked C++ real-ABI CTest cases each passed
+twice (49.90 seconds total). The Rust suite contains 20 passing tests and one
+intentionally ignored diagnostic export. Generated-header comparison stayed
+unchanged; no new C ABI declaration or frozen verifying-key digest was introduced.

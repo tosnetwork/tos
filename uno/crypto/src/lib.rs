@@ -2,6 +2,7 @@ use orchard::Bundle;
 pub mod context;
 pub mod decode;
 pub mod ffi;
+pub mod tree;
 #[cfg(test)]
 mod vk_snapshot;
 use orchard::{
@@ -374,7 +375,8 @@ mod tests {
             Err(VerificationError::Context(ContextError::ValueBalance))
         );
 
-        // Recover an actual nonzero output and spend it from a single-leaf tree.
+        // Recover an actual output and spend it from the complete action tree,
+        // including the padded output at its real position.
         // This uses the dependency's test encryption, not the required hybrid profile.
         let fvk = FullViewingKey::from(&sk);
         let (note, _, _) = bundle
@@ -384,13 +386,24 @@ mod tests {
             )
             .expect("recover real note");
         assert_eq!(note.value(), NoteValue::from_raw(5000));
+        let commitments: Vec<_> = bundle.actions().iter().map(|action| action.cmx().to_bytes()).collect();
+        let note_tree = tree::NoteTree::default().append_batch(&commitments, 0).expect("action tree");
+        assert_eq!(note_tree.next_position(), 2);
+        let real_output_index = metadata.output_action_index(0).expect("output position");
+        assert!(real_output_index < 2);
+        let sibling = MerkleHashOrchard::from_cmx(bundle.actions()[real_output_index ^ 1].cmx());
         let path = MerklePath::from_parts(
-            0,
+            u32::try_from(real_output_index).expect("output index"),
             std::array::from_fn(|level| {
-                MerkleHashOrchard::empty_root(u8::try_from(level).expect("tree level").into())
+                if level == 0 { sibling } else {
+                    MerkleHashOrchard::empty_root(u8::try_from(level).expect("tree level").into())
+                }
             }),
         );
         let anchor = path.root(note.commitment().into());
+        assert_eq!(anchor.to_bytes(), note_tree.root());
+        let restored_tree = tree::NoteTree::restore(&note_tree.snapshot()).expect("restore action tree");
+        assert_eq!(restored_tree.root(), anchor.to_bytes());
         let mut spender = Builder::new(
             BundleType::DEFAULT,
             BundleVersion::orchard_v2(),
@@ -413,6 +426,11 @@ mod tests {
             .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
             .expect("real spend authorization");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        let spend_outputs: Vec<_> = spent.actions().iter().map(|action| action.cmx().to_bytes()).collect();
+        let next_tree = restored_tree.append_batch(&spend_outputs, 0).expect("spend output append");
+        assert_eq!(next_tree.next_position(), 4);
+        assert_eq!(tree::NoteTree::restore(&next_tree.snapshot()).expect("next tree").root(), next_tree.root());
+        assert_eq!(restored_tree.next_position(), 2);
         measure_proofs("spend", proving_samples, &verifier, || {
             let unproven = unsigned_spend.clone();
             let start = std::time::Instant::now();

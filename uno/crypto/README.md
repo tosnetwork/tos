@@ -188,3 +188,27 @@ starts, maximum-action bundles or memory measurements. The fixtures do not use
 the planned hybrid encryption. Record hardware, source revision, dependency lock
 and runtime thread configuration. Client proving occurs before submission, so
 these numbers inform wallet/expiry budgeting, not a serial block-slot deadline.
+
+## Note-tree frontier prototype
+
+`tree::NoteTree` reuses the pinned depth-32 Sinsemilla tree implementation and
+canonical node encoding. Ordered `append_batch` stages a private frontier, checks
+remaining capacity including caller-supplied refund reservations, and rejects
+noncanonical nodes without modifying the source. `snapshot`/`restore` preserve
+the last leaf, its position and at most 32 prior subtree roots. This is a Rust
+in-memory representation, not a frozen wire or Cell StateV2 encoding.
+
+The real-spend fixture now builds its anchor from the complete two-Action output
+tree, including the padded output, and checks its witness root against the
+restored frontier before generating a valid spend proof. Both subsequent spend
+outputs are then appended. Full-layer reduction tests independently check the
+frontier's carry logic through 65 leaves; synthetic near-capacity snapshots test
+the final leaf, reserved space and exhaustion without allocating billions of
+leaves. These synthetic snapshots do not authenticate historical commitments.
+
+The caller must authenticate the snapshot and reservation count, enforce the
+eventual cmx duplicate policy, and retain full output/ciphertext history for
+wallet scanning and witnesses. A frontier is insufficient for that history.
+There is no tree C ABI, host Cell persistence, anchor-window integration or
+production engine registration yet. The existing locked incrementalmerkletree
+0.8.2 dependency moved from test-only to runtime; no dependency revision changed.
