@@ -1,0 +1,50 @@
+name: PredictionMarket release-scale sandbox
+
+# The 10,000-fill equivalence test executes real production BOCs and therefore
+# belongs to a deliberate release gate, not every ordinary pull request.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/prediction-market-release-scale.yml"
+      - "crypto/smartcont/prediction-market-code.fc"
+      - "crypto/smartcont/prediction-market.tlb"
+      - "tosctl/src/node-control/contracts/src/prediction_market.rs"
+      - "tosctl/src/node-control/contracts/tests/prediction_market_sandbox.rs"
+  workflow_dispatch:
+
+concurrency:
+  group: prediction-market-release-scale-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ten-thousand-fill-equivalence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build FunC and Fift
+        run: cmake --build build --target func fift -j2
+
+      - name: Verify one, ten, and ten-thousand partial fills
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: >-
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts
+          --test prediction_market_sandbox
+          one_ten_and_ten_thousand_partial_fills_are_economically_identical
+          -- --ignored --exact
+
+      - name: Frozen BOCs match their sources
+        run: git diff --exit-code
