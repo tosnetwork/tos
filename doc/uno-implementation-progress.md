@@ -836,3 +836,17 @@ product, replacing multiplication with the input loses the carry, and removing
 zero handling reaches the underlying division-by-zero check; each mutation makes
 the test fail and was restored. No supply scale, fee schedule or wire encoding
 is inferred from this arithmetic operation.
+
+Added aggregate refund leaf budgeting for the depth-32 tree. Valid counts obey
+`next + reserved <= 2^32`; `2^32` represents exhaustion, never an insertion index.
+Ordinary appends cannot consume reserved leaves. Preparation returns a new budget
+only when both main outputs and refund reservation fit; refund consumes its
+reservation while appending, and Paid releases capacity without appending.
+Counts include dummy leaves, which must be supplied from verified bundle data.
+Boundary tests fill all unreserved space and still append the reserved refund,
+reject over-capacity/underflow inputs and preserve pre-state on failed prepare.
+Bypassing capacity/admission/reservation rejection or skipping reservation,
+release or refund append makes the corresponding test fail; mutations were
+restored. This is aggregate arithmetic, not a tree implementation or proof of
+reservation ownership. Per-withdrawal records, atomic N/F/W plus tree commit,
+full refund data, and safe tree-capacity migration remain required.
