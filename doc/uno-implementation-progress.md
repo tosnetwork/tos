@@ -677,3 +677,15 @@ Amount terminology follows Native: TOS is the display coin, Tomis the protocol
 type, and nanotomi the base unit (1 TOS = 10^9 nanotomi). UNO uses the same base
 unit. The design document now makes that scale explicit rather than presenting
 10^18 as a parallel example. No wallet-layer legacy identifiers were renamed.
+
+Executor monetary policy is explicit for this host version:
+`kWorkchainExecutorIsSpecial=false` names the common extraction/replay choice,
+and batch preparation rejects an account with a different special flag before
+settlement. This preserves ordinary Native message charges against the operating
+balance; it is not a ConfigParam 31 exemption. The batch path has no StoragePhase,
+so neither storage-rent collection nor eventual rent freezing follows from that
+flag. Persistent tree/nullifier resource funding remains an activation requirement.
+The special-account negative test fails when the new guard is bypassed, because
+batch preparation succeeds; the guard was restored. Existing fee/value-flow
+tests continue to cover nonzero native message charges. This fixed version policy
+is not a configurable fee waiver; changes require an explicit protocol revision.

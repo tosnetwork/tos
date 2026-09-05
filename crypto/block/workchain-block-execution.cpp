@@ -145,7 +145,7 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
       return td::Status::Error("block workchain must contain exactly its executor account");
     }
     Account account(workchain_id, executor_address.bits());
-    if (!account.unpack(executor, state.gen_utime, false)) {
+    if (!account.unpack(executor, state.gen_utime, kWorkchainExecutorIsSpecial)) {
       return td::Status::Error("invalid block executor account");
     }
     if (account.status != Account::acc_active || account.data.is_null() || account.addr_rewrite_length != 0) {
@@ -515,7 +515,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     }
     vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(previous.accounts), 256, block::tlb::aug_ShardAccounts);
     Account account(workchain_id, executor_address.bits());
-    if (!account.unpack(accounts.lookup(executor_address), expected_utime, false)) {
+    if (!account.unpack(accounts.lookup(executor_address), expected_utime, kWorkchainExecutorIsSpecial)) {
       return td::Status::Error("invalid batch replay account");
     }
     TRY_RESULT(effects, replay_workchain_batch(engine, input, record.description));
@@ -551,7 +551,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
     }
     vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
     Account account(workchain_id, executor_address.bits());
-    if (!account.unpack(accounts.lookup(executor_address), expected_utime, false)) {
+    if (!account.unpack(accounts.lookup(executor_address), expected_utime, kWorkchainExecutorIsSpecial)) {
       return td::Status::Error("invalid claimed batch executor account");
     }
     if (account.last_trans_hash_ != claimed_transaction->get_hash().bits() || account.last_trans_lt_ != expected_lt) {

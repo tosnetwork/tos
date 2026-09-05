@@ -521,6 +521,13 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   block::Account account(2, td::Bits256::zero().bits());
   ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
   block::SerializeConfig cfg;
+  account.is_special = true;
+  block::transaction::Transaction special(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(special.prepare_workchain_batch(in, effects, cfg).is_error());
+  ASSERT_TRUE(special.out_msgs.empty());
+  ASSERT_TRUE(special.total_fees.is_zero());
+  ASSERT_TRUE(!special.serialize(cfg));
+  account.is_special = false;
   block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
   auto altered = effects;
   altered.outbound_messages = number(0);

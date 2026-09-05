@@ -14,6 +14,10 @@ struct ActionPhaseConfig;
 
 enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1 };
 
+// This host version pays ordinary native message fees from its operating balance.
+// Batch execution has no StoragePhase; this flag is not a storage-rent exemption.
+inline constexpr bool kWorkchainExecutorIsSpecial = false;
+
 // The host authenticates configuration and finality before constructing this input.
 // Engines receive immutable cells and never own database or message-queue handles.
 struct WorkchainBlockInput {
