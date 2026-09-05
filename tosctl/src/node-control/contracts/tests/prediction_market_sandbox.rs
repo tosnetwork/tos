@@ -47,6 +47,200 @@ struct Fixture {
     init: PredictionMarketInitV1,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct ReferenceAccount {
+    free: u64,
+    yes: u64,
+    no: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReferenceMarket {
+    accounts: [ReferenceAccount; 2],
+    complete_sets: u64,
+    locked: u64,
+    fill_count: u64,
+    order_records: u32,
+}
+
+impl ReferenceMarket {
+    fn split(&mut self, owner: usize, quantity: u64, lot_value: u64) -> bool {
+        let Some(amount) = quantity.checked_mul(lot_value) else {
+            return false;
+        };
+        if self.accounts[owner].free < amount {
+            return false;
+        }
+        self.accounts[owner].free = self.accounts[owner].free.checked_sub(amount).unwrap();
+        self.accounts[owner].yes = self.accounts[owner].yes.checked_add(quantity).unwrap();
+        self.accounts[owner].no = self.accounts[owner].no.checked_add(quantity).unwrap();
+        self.complete_sets = self.complete_sets.checked_add(quantity).unwrap();
+        self.locked = self.locked.checked_add(amount).unwrap();
+        true
+    }
+
+    fn merge(&mut self, owner: usize, quantity: u64, lot_value: u64) -> bool {
+        let Some(amount) = quantity.checked_mul(lot_value) else {
+            return false;
+        };
+        if self.accounts[owner].yes < quantity || self.accounts[owner].no < quantity {
+            return false;
+        }
+        self.accounts[owner].yes = self.accounts[owner].yes.checked_sub(quantity).unwrap();
+        self.accounts[owner].no = self.accounts[owner].no.checked_sub(quantity).unwrap();
+        self.accounts[owner].free = self.accounts[owner].free.checked_add(amount).unwrap();
+        self.complete_sets = self.complete_sets.checked_sub(quantity).unwrap();
+        self.locked = self.locked.checked_sub(amount).unwrap();
+        true
+    }
+
+    fn complementary_buy(
+        &mut self,
+        yes_owner: usize,
+        no_owner: usize,
+        quantity: u64,
+        lot_value: u64,
+        yes_price_tick: u16,
+    ) -> bool {
+        let unit = lot_value.checked_div(10_000).unwrap();
+        let Some(notional) = quantity.checked_mul(lot_value) else {
+            return false;
+        };
+        let Some(yes_value) = quantity
+            .checked_mul(unit)
+            .and_then(|value| value.checked_mul(u64::from(yes_price_tick)))
+        else {
+            return false;
+        };
+        let no_value = notional.checked_sub(yes_value).unwrap();
+        if self.accounts[yes_owner].free < yes_value || self.accounts[no_owner].free < no_value {
+            return false;
+        }
+        self.accounts[yes_owner].free =
+            self.accounts[yes_owner].free.checked_sub(yes_value).unwrap();
+        self.accounts[no_owner].free = self.accounts[no_owner].free.checked_sub(no_value).unwrap();
+        self.accounts[yes_owner].yes = self.accounts[yes_owner].yes.checked_add(quantity).unwrap();
+        self.accounts[no_owner].no = self.accounts[no_owner].no.checked_add(quantity).unwrap();
+        self.complete_sets = self.complete_sets.checked_add(quantity).unwrap();
+        self.locked = self.locked.checked_add(notional).unwrap();
+        self.record_fill();
+        true
+    }
+
+    fn transfer_yes(
+        &mut self,
+        seller: usize,
+        buyer: usize,
+        quantity: u64,
+        lot_value: u64,
+        yes_price_tick: u16,
+    ) -> bool {
+        let unit = lot_value.checked_div(10_000).unwrap();
+        let Some(value) = quantity
+            .checked_mul(unit)
+            .and_then(|amount| amount.checked_mul(u64::from(yes_price_tick)))
+        else {
+            return false;
+        };
+        if self.accounts[seller].yes < quantity || self.accounts[buyer].free < value {
+            return false;
+        }
+        self.accounts[seller].yes = self.accounts[seller].yes.checked_sub(quantity).unwrap();
+        self.accounts[buyer].yes = self.accounts[buyer].yes.checked_add(quantity).unwrap();
+        self.accounts[seller].free = self.accounts[seller].free.checked_add(value).unwrap();
+        self.accounts[buyer].free = self.accounts[buyer].free.checked_sub(value).unwrap();
+        self.record_fill();
+        true
+    }
+
+    fn complementary_sell(
+        &mut self,
+        yes_owner: usize,
+        no_owner: usize,
+        quantity: u64,
+        lot_value: u64,
+        yes_price_tick: u16,
+    ) -> bool {
+        let unit = lot_value.checked_div(10_000).unwrap();
+        let Some(notional) = quantity.checked_mul(lot_value) else {
+            return false;
+        };
+        let Some(yes_value) = quantity
+            .checked_mul(unit)
+            .and_then(|value| value.checked_mul(u64::from(yes_price_tick)))
+        else {
+            return false;
+        };
+        let no_value = notional.checked_sub(yes_value).unwrap();
+        if self.accounts[yes_owner].yes < quantity || self.accounts[no_owner].no < quantity {
+            return false;
+        }
+        self.accounts[yes_owner].yes = self.accounts[yes_owner].yes.checked_sub(quantity).unwrap();
+        self.accounts[no_owner].no = self.accounts[no_owner].no.checked_sub(quantity).unwrap();
+        self.accounts[yes_owner].free =
+            self.accounts[yes_owner].free.checked_add(yes_value).unwrap();
+        self.accounts[no_owner].free = self.accounts[no_owner].free.checked_add(no_value).unwrap();
+        self.complete_sets = self.complete_sets.checked_sub(quantity).unwrap();
+        self.locked = self.locked.checked_sub(notional).unwrap();
+        self.record_fill();
+        true
+    }
+
+    fn record_fill(&mut self) {
+        self.fill_count = self.fill_count.checked_add(1).unwrap();
+        self.order_records = self.order_records.checked_add(2).unwrap();
+    }
+
+    fn assert_matches(&self, fixture: &Fixture, owners: [&MsgAddressInt; 2]) {
+        let accounting = fixture.accounting();
+        let total_free = self.accounts[0].free.checked_add(self.accounts[1].free).unwrap();
+        let cleanup = 2_u64
+            .checked_mul(fixture.init.account_cleanup_bounty)
+            .and_then(|value| {
+                u64::from(self.order_records)
+                    .checked_mul(fixture.init.order_cleanup_bounty)
+                    .and_then(|orders| value.checked_add(orders))
+            })
+            .unwrap();
+        assert_eq!(accounting[0], 2, "participant count drifted");
+        assert_eq!(accounting[1], i128::from(self.order_records), "order records drifted");
+        assert_eq!(accounting[2], i128::from(self.fill_count), "fill count drifted");
+        assert_eq!(accounting[3], i128::from(self.complete_sets), "complete sets drifted");
+        assert_eq!(accounting[4], i128::from(total_free), "total free drifted");
+        assert_eq!(accounting[5], i128::from(self.locked), "locked backing drifted");
+        assert_eq!(accounting[10], i128::from(cleanup), "cleanup liability drifted");
+        let mut total_yes = 0_u64;
+        let mut total_no = 0_u64;
+        for (index, owner) in owners.into_iter().enumerate() {
+            let chain = fixture.account(owner);
+            assert_eq!(chain[0], i128::from(self.accounts[index].free));
+            assert_eq!(chain[1], i128::from(self.accounts[index].yes));
+            assert_eq!(chain[2], i128::from(self.accounts[index].no));
+            total_yes = total_yes.checked_add(self.accounts[index].yes).unwrap();
+            total_no = total_no.checked_add(self.accounts[index].no).unwrap();
+        }
+        assert_eq!(total_yes, self.complete_sets, "YES supply no longer equals Q");
+        assert_eq!(total_no, self.complete_sets, "NO supply no longer equals Q");
+        let liabilities = total_free
+            .checked_add(self.locked)
+            .and_then(|value| value.checked_add(cleanup))
+            .unwrap();
+        let physical = fixture
+            .bc
+            .get_account(&fixture.market)
+            .unwrap()
+            .balance()
+            .unwrap()
+            .coins
+            .as_u64()
+            .unwrap();
+        assert!(
+            physical >= liabilities.checked_add(fixture.init.operating_reserve_floor).unwrap(),
+            "physical balance fell below liabilities plus reserve"
+        );
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
@@ -80,8 +274,8 @@ impl Fixture {
             max_total_free_balance: 100 * TOS,
             max_total_liability: 300 * TOS,
             max_participants: 8,
-            max_orders_per_participant: 8,
-            max_live_order_records: 16,
+            max_orders_per_participant: 128,
+            max_live_order_records: 256,
             participant_entry_fee: TOS / 1_000,
             account_cleanup_bounty: TOS / 1_000,
             order_entry_fee: TOS / 1_000,
@@ -461,6 +655,158 @@ fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     assert_eq!(f.accounting()[1], 0);
     assert_eq!(f.account(&a)[3..6], [0, TOS as i128 / 1_000, 0]);
     assert_eq!(f.account(&b)[3..6], [0, TOS as i128 / 1_000, 0]);
+}
+
+#[test]
+fn deterministic_random_sequences_match_an_independent_conservation_model() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
+    let keys = [SigningKey::from_bytes(&[0x41; 32]), SigningKey::from_bytes(&[0x42; 32])];
+    f.register(&owners[0], &keys[0], 2);
+    f.register(&owners[1], &keys[1], 3);
+    let mut model = ReferenceMarket {
+        accounts: [
+            ReferenceAccount { free: 10 * TOS, ..Default::default() },
+            ReferenceAccount { free: 10 * TOS, ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    for (index, owner) in owners.iter().enumerate() {
+        assert!(model.split(index, 3, f.init.lot_value));
+        f.send(
+            owner,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::split(10 + index as u64, 3).unwrap(),
+        )
+        .expect_success();
+    }
+    model.assert_matches(&f, [&owners[0], &owners[1]]);
+
+    let mut seed = 0x8f3d_9a21_4c77_b105_u64;
+    let mut nonce = 10_u64;
+    let mut exercised = 0_u8;
+    for step in 0_u64..50 {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let quantity = 1 + ((seed >> 33) % 2);
+        let first = usize::from(((seed >> 17) & 1) != 0);
+        let second = 1 - first;
+        let price = 2_500_u16 + u16::try_from((seed >> 29) % 5_001).unwrap();
+        let query_id = 1_000_u64.checked_add(step).unwrap();
+        match step % 5 {
+            0 if model.split(first, quantity, f.init.lot_value) => {
+                f.send(
+                    &owners[first],
+                    OPERATION_BUDGET,
+                    PredictionMarketContractV1::split(query_id, quantity).unwrap(),
+                )
+                .expect_success();
+                exercised |= 1;
+            }
+            1 if model.merge(first, quantity, f.init.lot_value) => {
+                f.send(
+                    &owners[first],
+                    OPERATION_BUDGET,
+                    PredictionMarketContractV1::merge(query_id, quantity).unwrap(),
+                )
+                .expect_success();
+                exercised |= 2;
+            }
+            2 if model.complementary_buy(first, second, quantity, f.init.lot_value, price) => {
+                let yes = f.signed_order(
+                    &owners[first],
+                    &keys[first],
+                    nonce,
+                    PredictionOrderActionV1::Buy,
+                    PredictionOrderOutcomeV1::Yes,
+                    PredictionLiquidityRoleV1::Maker,
+                    price,
+                    quantity,
+                );
+                let no = f.signed_order(
+                    &owners[second],
+                    &keys[second],
+                    nonce.checked_add(1).unwrap(),
+                    PredictionOrderActionV1::Buy,
+                    PredictionOrderOutcomeV1::No,
+                    PredictionLiquidityRoleV1::Taker,
+                    10_000_u16.checked_sub(price).unwrap(),
+                    quantity,
+                );
+                nonce = nonce.checked_add(2).unwrap();
+                f.send(
+                    &owners[first],
+                    2 * TOS,
+                    PredictionMarketContractV1::match_pair(query_id, quantity, yes, no).unwrap(),
+                )
+                .expect_success();
+                exercised |= 4;
+            }
+            3 if model.transfer_yes(first, second, quantity, f.init.lot_value, price) => {
+                let sell = f.signed_order(
+                    &owners[first],
+                    &keys[first],
+                    nonce,
+                    PredictionOrderActionV1::Sell,
+                    PredictionOrderOutcomeV1::Yes,
+                    PredictionLiquidityRoleV1::Maker,
+                    price,
+                    quantity,
+                );
+                let buy = f.signed_order(
+                    &owners[second],
+                    &keys[second],
+                    nonce.checked_add(1).unwrap(),
+                    PredictionOrderActionV1::Buy,
+                    PredictionOrderOutcomeV1::Yes,
+                    PredictionLiquidityRoleV1::Taker,
+                    price,
+                    quantity,
+                );
+                nonce = nonce.checked_add(2).unwrap();
+                f.send(
+                    &owners[second],
+                    2 * TOS,
+                    PredictionMarketContractV1::match_pair(query_id, quantity, sell, buy).unwrap(),
+                )
+                .expect_success();
+                exercised |= 8;
+            }
+            4 if model.complementary_sell(first, second, quantity, f.init.lot_value, price) => {
+                let yes = f.signed_order(
+                    &owners[first],
+                    &keys[first],
+                    nonce,
+                    PredictionOrderActionV1::Sell,
+                    PredictionOrderOutcomeV1::Yes,
+                    PredictionLiquidityRoleV1::Maker,
+                    price,
+                    quantity,
+                );
+                let no = f.signed_order(
+                    &owners[second],
+                    &keys[second],
+                    nonce.checked_add(1).unwrap(),
+                    PredictionOrderActionV1::Sell,
+                    PredictionOrderOutcomeV1::No,
+                    PredictionLiquidityRoleV1::Taker,
+                    10_000_u16.checked_sub(price).unwrap(),
+                    quantity,
+                );
+                nonce = nonce.checked_add(2).unwrap();
+                f.send(
+                    &owners[first],
+                    2 * TOS,
+                    PredictionMarketContractV1::match_pair(query_id, quantity, yes, no).unwrap(),
+                )
+                .expect_success();
+                exercised |= 16;
+            }
+            _ => {}
+        }
+        model.assert_matches(&f, [&owners[0], &owners[1]]);
+    }
+    assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
 }
 
 #[test]
