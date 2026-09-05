@@ -1032,3 +1032,16 @@ actual files; C++ rejection is propagated. All three tests passed twice. A no-op
 generator that returned success without files and a deliberately failing C++
 caller both caused wrapper failure. Cargo tests share a resource lock. This adds
 test targets only, not node linkage, workchain activation or config installation.
+
+Added an owning C++ bundle adapter around the prototype ABI. It reuses existing
+Amount/BundleContext checks, validates exact bounded proof shape before backend
+invocation, maps contexts explicitly instead of enum casts, and preserves local
+ABI/key/panic/unknown-status errors separately from invalid-bundle results.
+Stub-only unit tests cover all six contexts and statuses; invalid public values
+and lengths require zero backend calls even when the stub would also reject.
+Removing either precheck fails specifically on an unexpected backend call. Three
+other mutations detect enum-order drift, downgraded key failures and resource
+length overflow. All were restored. The real CMake-linked fixture test also
+exercises the adapter on valid proofs, corrupted proofs and changed digests.
+This prepares a host call boundary but does not add a node/engine call site,
+wire decoder, settlement authorization or state transition.

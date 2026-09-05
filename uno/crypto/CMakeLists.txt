@@ -30,6 +30,10 @@ foreach(kind smoke real)
   add_dependencies(all-tests test-uno-crypto-abi-${kind})
 endforeach()
 
+target_compile_definitions(test-uno-crypto-abi-real PRIVATE UNO_TEST_HOST_ADAPTER=1)
+target_include_directories(test-uno-crypto-abi-real PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+target_link_libraries(test-uno-crypto-abi-real PRIVATE tdutils)
+
 add_test(NAME test-uno-crypto-rust
   COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
     ${UNO_CRYPTO_CARGO} test --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS} --lib)

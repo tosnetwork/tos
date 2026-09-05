@@ -104,3 +104,28 @@ passed; a no-op generator and a failing C++ caller each caused the wrapper to fa
 Generated-header consistency on other platforms, sanitizer/fuzz coverage and
 actual node/UNO engine integration remain acceptance requirements before
 production use. The CMake option does not activate a workchain or install config.
+
+## C++ host adapter
+
+`uno/core/crypto-verifier.h` provides an owning `CryptoBundle` container and
+`verify_crypto_bundle`. The call borrows its vectors only for the duration of
+verification; callers must not mutate them concurrently. It reuses the C++ public
+amount/context checks, validates proof shape without allocating, explicitly maps
+logical contexts to ABI tags, and constructs the raw request internally.
+
+The result is `td::Result<bool>`: true means cryptography/context passed, false
+means invalid bundle data. Unconfigured limits, unknown context, unexpected ABI
+argument rejection, key construction failure, panic and unknown status are
+**local errors**, not ordinary transaction-invalid results. Callers must preserve
+this distinction when deciding whether local validation can proceed. Success
+still does not authorize issuance, settlement, or a host state transition.
+
+`test-uno-crypto-adapter` uses a separate stub backend to test all context/status
+mappings and require zero backend calls on invalid public inputs or proof shape.
+Removing either precheck still gives the same rejection result from the stub,
+but fails the zero-call assertion. Other mutations detect an enum-order cast,
+key failure incorrectly downgraded to invalid input, and size arithmetic wrap.
+All were restored. The CMake real-fixture test additionally compiles with the
+adapter and validates real positive, corrupted-proof and wrong-digest bundles
+against the actual Rust library. The stub is never linked into that real test
+or node binaries. No node/engine call site uses the adapter yet.

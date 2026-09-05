@@ -3,6 +3,41 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#ifdef UNO_TEST_HOST_ADAPTER
+#include "uno/core/crypto-verifier.h"
+#endif
+
+#ifdef UNO_TEST_HOST_ADAPTER
+bool host_fixture(const UnoCryptoVerifyRequest& request) {
+  using namespace uno_workchain;
+  CryptoBundle bundle;
+  bundle.flags = request.flags;
+  bundle.value_balance = request.value_balance;
+  std::copy(std::begin(request.anchor), std::end(request.anchor), bundle.anchor.begin());
+  std::copy(std::begin(request.binding_signature), std::end(request.binding_signature), bundle.binding_signature.begin());
+  bundle.actions.assign(request.actions, request.actions + request.action_count);
+  bundle.proof.assign(request.proof, request.proof + request.proof_bytes);
+  std::array<td::uint8, 32> digest;
+  std::copy(std::begin(request.sighash), std::end(request.sighash), digest.begin());
+  const auto context = request.context == UNO_SHIELD_CLAIM ? BundleContext::ShieldClaim : BundleContext::Transfer;
+  const auto principal = Amount::from_words(request.principal_hi, request.principal_lo);
+  const auto fee = Amount::from_words(request.fee_hi, request.fee_lo);
+  auto verify = [&] { return verify_crypto_bundle(bundle, context, principal, fee, digest,
+                                                  {request.max_actions, request.max_proof_bytes}); };
+  auto valid = verify();
+  if (valid.is_error() || !valid.ok()) return false;
+  bundle.proof[0] ^= 1;
+  auto invalid = verify();
+  if (invalid.is_error() || invalid.ok()) return false;
+  bundle.proof[0] ^= 1;
+  digest[0] ^= 1;
+  auto wrong_digest = verify();
+  if (wrong_digest.is_error() || wrong_digest.ok()) return false;
+  digest[0] ^= 1;
+  auto restored = verify();
+  return restored.is_ok() && restored.ok();
+}
+#endif
 
 template <size_t N>
 bool read_bytes(std::istream& input, uint8_t (&bytes)[N]) {
@@ -72,6 +107,12 @@ bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fe
   if (!check("wide public amount", uno_crypto_verify_v0(&request),
              context == UNO_TRANSFER ? UNO_CRYPTO_ARGUMENTS : UNO_CRYPTO_VERIFY)) return false;
   request.principal_hi = 0;
+#ifdef UNO_TEST_HOST_ADAPTER
+  if (!host_fixture(request)) {
+    std::cerr << "host adapter fixture failed\n";
+    return false;
+  }
+#endif
   return check("restored valid", uno_crypto_verify_v0(&request), UNO_CRYPTO_OK);
 }
 
