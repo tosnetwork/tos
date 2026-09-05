@@ -74,6 +74,7 @@ td::Result<WorkchainBatchDescription> make_workchain_batch_description(const Wor
                                                                      const WorkchainBlockResult& effects);
 // Scope check only; callers must separately validate the full transaction encoding.
 td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& description, WorkchainExecutionScope scope);
+td::Status validate_workchain_candidate_scope(const td::Ref<vm::Cell>& candidate, WorkchainExecutionScope scope);
 
 class WorkchainBlockEngine {
  public:

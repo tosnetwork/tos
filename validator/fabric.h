@@ -49,6 +49,9 @@ struct CollateParams {
   // If not empty, should be the same size as prev
   std::vector<Ref<BlockData>> prev_block_data = {};
   std::vector<Ref<vm::Cell>> prev_block_state_roots = {};
+  // Untrusted engine-specific candidate data; configuration/finality are loaded by the host.
+  // Required only for block-transition collation. It is persisted for independent replay.
+  td::Ref<vm::Cell> workchain_block_candidate = {};
 };
 
 struct ValidateParams {

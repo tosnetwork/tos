@@ -107,6 +107,14 @@ td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& descrip
   return td::Status::Error("transaction description does not match execution scope");
 }
 
+td::Status validate_workchain_candidate_scope(const td::Ref<vm::Cell>& candidate, WorkchainExecutionScope scope) {
+  if ((scope == WorkchainExecutionScope::BlockTransition && candidate.not_null()) ||
+      (scope == WorkchainExecutionScope::AccountCompute && candidate.is_null())) {
+    return td::Status::OK();
+  }
+  return td::Status::Error("workchain candidate does not match configured execution scope");
+}
+
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result) {
   if (result.new_engine_state.is_null() ||
       result.outbound_messages.is_null() || result.actions.is_null() || result.receipts.is_null() ||

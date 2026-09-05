@@ -705,6 +705,19 @@ TEST(WorkchainBlock, RejectOverflowAndMissingContext) {
   ASSERT_EQ(missing.error().message(), "block replay requires state, candidate, configuration and finality");
 }
 
+TEST(WorkchainBlock, CollationCandidateScope) {
+  using Scope = block::WorkchainExecutionScope;
+  ASSERT_TRUE(block::validate_workchain_candidate_scope({}, Scope::AccountCompute).is_ok());
+  ASSERT_TRUE(block::validate_workchain_candidate_scope(number(2), Scope::BlockTransition).is_ok());
+  auto missing = block::validate_workchain_candidate_scope({}, Scope::BlockTransition);
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().message(), "workchain candidate does not match configured execution scope");
+  auto unexpected = block::validate_workchain_candidate_scope(number(2), Scope::AccountCompute);
+  ASSERT_TRUE(unexpected.is_error());
+  ASSERT_EQ(unexpected.error().message(), missing.error().message());
+  ASSERT_TRUE(block::validate_workchain_candidate_scope({}, static_cast<Scope>(255)).is_error());
+}
+
 TEST(WorkchainBlock, RegistryScopeIsolation) {
   block::WorkchainExecutionRegistry registry;
   CounterEngine counter;

@@ -2413,6 +2413,20 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!fetch_config_params()) {
     co_return td::Status::Error("cannot fetch required configuration parameters from masterchain state");
   }
+  auto execution_result = block::default_workchain_execution_registry().resolve_scoped_workchain(
+      config_->get_workchain_list(), workchain(), *config_);
+  if (execution_result.is_error()) {
+    co_return execution_result.move_as_error();
+  }
+  auto execution = execution_result.move_as_ok();
+  const auto* block_execution = execution.has_value()
+      ? std::get_if<block::ResolvedWorkchainBlockExecution>(&*execution) : nullptr;
+  auto candidate_status = block::validate_workchain_candidate_scope(
+      params_.workchain_block_candidate, block_execution ? block::WorkchainExecutionScope::BlockTransition
+                                                         : block::WorkchainExecutionScope::AccountCompute);
+  if (candidate_status.is_error()) {
+    co_return candidate_status;
+  }
   LOG(DEBUG) << "config parameters fetched, creating message dictionaries";
   aug_InMsgDescr.global_version = aug_OutMsgDescr.global_version = global_version_;
   in_msg_dict = std::make_unique<vm::AugmentedDictionary>(256, aug_InMsgDescr);
@@ -2441,66 +2455,78 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!init_value_create()) {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
-  // 2-. take messages from dispatch queue
-  LOG(INFO) << "process dispatch queue";
-  if (!process_dispatch_queue()) {
-    co_return td::Status::Error("cannot process dispatch queue");
+  if (block_execution) {
+    if (after_split_ || before_split_ || after_merge_ || !dispatch_queue_->is_empty() || !out_msg_queue_->is_empty() ||
+        !nb_out_msgs_->is_eof() || !in_msg_dict->is_empty() || !out_msg_dict->is_empty()) {
+      co_return td::Status::Error("block batch collation requires unsplit state without native message settlement");
+    }
+    inbound_queues_empty_ = true;
+    allow_repeat_collation_ = false;
+    if (!create_workchain_batch_transaction(*block_execution, params_.workchain_block_candidate)) {
+      co_return td::Status::Error("cannot create workchain batch transaction");
+    }
+  } else {
+    // 2-. take messages from dispatch queue
+    LOG(INFO) << "process dispatch queue";
+    if (!process_dispatch_queue()) {
+      co_return td::Status::Error("cannot process dispatch queue");
+    }
+    // 2. tick transactions
+    LOG(INFO) << "create tick transactions";
+    if (!create_ticktock_transactions(2)) {
+      co_return td::Status::Error("cannot generate tick transactions");
+    }
+    if (is_masterchain() && !create_special_transactions()) {
+      co_return td::Status::Error("cannot generate special transactions");
+    }
+    if (after_merge_) {
+      // 3. merge prepare / merge install for large smart contracts
+      // tr_merge_prepare / tr_merge_install transactions are globally
+      // disabled: Transaction::serialize() has no case for these types
+      // (falls through to default:return false), and validate-query
+      // unconditionally rejects them.  Emitting them here would produce
+      // a block that every validator rejects.  This hook point exists so
+      // that the logic can be added once V-002, V-003, and the missing
+      // Transaction::serialize cases are implemented.
+      // See V-011.
+      LOG(DEBUG) << "skipping merge prepare/install for large smart contracts"
+                 << " (globally disabled; see V-011/V-002/V-003)";
+    }
+    // 4. import inbound internal messages, process or transit
+    LOG(INFO) << "process inbound internal messages";
+    if (!process_inbound_internal_messages()) {
+      co_return td::Status::Error("cannot process inbound internal messages");
+    }
+    timer_guard.reset();
+    // 5-6. import inbound external messages and process newly created messages (if space&gas left)
+    co_await process_external_and_new_messages();
+    timer_guard = WorkTimerGuard(work_timer_);
+    if (before_split_) {
+      // 7. split prepare / split install for large smart contracts
+      // tr_split_prepare / tr_split_install transactions are globally
+      // disabled: Transaction::serialize() has no case for these types
+      // (falls through to default:return false), and validate-query
+      // unconditionally rejects them.  Emitting them here would produce
+      // a block that every validator rejects.  This hook point exists so
+      // that the logic can be added once V-004, V-005, and the missing
+      // Transaction::serialize cases are implemented.
+      // See V-012.
+      LOG(DEBUG) << "skipping split prepare/install for large smart contracts"
+                 << " (globally disabled; see V-012/V-004/V-005)";
+    }
+    // 8. tock transactions
+    LOG(INFO) << "create tock transactions";
+    if (!create_ticktock_transactions(1)) {
+      co_return td::Status::Error("cannot generate tock transactions");
+    }
+    // 9. process newly-generated messages (only by including them into output queue)
+    LOG(INFO) << "enqueue newly-generated messages";
+    bool enqueue_only = true;
+    if (!process_new_messages(enqueue_only)) {
+      co_return td::Status::Error("cannot process newly-generated outbound messages");
+    }
   }
-  // 2. tick transactions
-  LOG(INFO) << "create tick transactions";
-  if (!create_ticktock_transactions(2)) {
-    co_return td::Status::Error("cannot generate tick transactions");
-  }
-  if (is_masterchain() && !create_special_transactions()) {
-    co_return td::Status::Error("cannot generate special transactions");
-  }
-  if (after_merge_) {
-    // 3. merge prepare / merge install for large smart contracts
-    // tr_merge_prepare / tr_merge_install transactions are globally
-    // disabled: Transaction::serialize() has no case for these types
-    // (falls through to default:return false), and validate-query
-    // unconditionally rejects them.  Emitting them here would produce
-    // a block that every validator rejects.  This hook point exists so
-    // that the logic can be added once V-002, V-003, and the missing
-    // Transaction::serialize cases are implemented.
-    // See V-011.
-    LOG(DEBUG) << "skipping merge prepare/install for large smart contracts"
-               << " (globally disabled; see V-011/V-002/V-003)";
-  }
-  // 4. import inbound internal messages, process or transit
-  LOG(INFO) << "process inbound internal messages";
-  if (!process_inbound_internal_messages()) {
-    co_return td::Status::Error("cannot process inbound internal messages");
-  }
-  timer_guard.reset();
-  // 5-6. import inbound external messages and process newly created messages (if space&gas left)
-  co_await process_external_and_new_messages();
-  timer_guard = WorkTimerGuard(work_timer_);
   auto post_ext_token = perf_log_.start_action("post_ext_processing");
-  if (before_split_) {
-    // 7. split prepare / split install for large smart contracts
-    // tr_split_prepare / tr_split_install transactions are globally
-    // disabled: Transaction::serialize() has no case for these types
-    // (falls through to default:return false), and validate-query
-    // unconditionally rejects them.  Emitting them here would produce
-    // a block that every validator rejects.  This hook point exists so
-    // that the logic can be added once V-004, V-005, and the missing
-    // Transaction::serialize cases are implemented.
-    // See V-012.
-    LOG(DEBUG) << "skipping split prepare/install for large smart contracts"
-               << " (globally disabled; see V-012/V-004/V-005)";
-  }
-  // 8. tock transactions
-  LOG(INFO) << "create tock transactions";
-  if (!create_ticktock_transactions(1)) {
-    co_return td::Status::Error("cannot generate tock transactions");
-  }
-  // 9. process newly-generated messages (only by including them into output queue)
-  LOG(INFO) << "enqueue newly-generated messages";
-  bool enqueue_only = true;
-  if (!process_new_messages(enqueue_only)) {
-    co_return td::Status::Error("cannot process newly-generated outbound messages");
-  }
   // 10. check block overload/underload
   LOG(DEBUG) << "check block overload/underload";
   if (!check_block_overload()) {

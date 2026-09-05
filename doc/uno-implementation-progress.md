@@ -45,7 +45,7 @@ Base node revision: `5a6145cce`.
   activated for these entry points.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (eighteen cases) and the full `validator-engine` target build
+- `test-workchain-block` (nineteen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -80,8 +80,16 @@ Base node revision: `5a6145cce`.
   transaction list, wrong executor, a requested LT below the prior account end,
   and resource-limit rejection. `Collator::create_workchain_batch_transaction`
   uses this helper, native size/storage estimates, account commit and LT/statistics
-  updates. It is not yet invoked by candidate scheduling; candidate ingress and
-  full collator control-flow selection remain pending.
+  updates. `Collator::do_collate_inner` now selects this path for block execution
+  using `CollateParams::workchain_block_candidate`, bypasses account transaction
+  scheduling, and then joins native AccountBlock/shard/block serialization.
+  The supplied candidate is untrusted engine data, not configuration or finality.
+  Account collation rejects unexpected candidates; block collation requires one.
+  Removing candidate/scope matching accepts a missing block candidate and fails
+  the rejection assertion; the check was restored.
+  This initial branch rejects split/merge and nonempty native queues/message
+  descriptors. The configuration gate still prevents activation; automatic
+  candidate production, native message settlement and end-to-end tests are pending.
   Removing the exact staging-LT check silently advances an invalid requested LT
   and fails the rejection test; the check was restored.
 - State-only batch round-trip tests execute 40 -> 42 from a native shard,
@@ -150,7 +158,7 @@ and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
 Native state-only transaction/account wrapping and witness storage are implemented;
-full shard wrapping, queue settlement and collator wiring remain pending.
+live full-shard acceptance and queue settlement remain pending.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.
@@ -187,7 +195,7 @@ binds input context; neither authenticates the context by itself.
   state-update comparison accepts a forged wrapper and fails its rejection test;
   the comparison was restored. The earlier configuration gate still prevents node
   activation; this is not evidence of end-to-end validator acceptance.
-- The collator block path must replace per-account transaction processing and supply
+- The collator block path now bypasses per-account processing but still must supply
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
   insufficient and would not constitute M1.
@@ -197,9 +205,9 @@ binds input context; neither authenticates the context by itself.
 
 ## Remaining requirements
 
-This is the beginning of M1, not an enabled workchain. The collator is not wired;
-the validator branch remains behind the configuration gate. Context cells are
-not authentication proofs by themselves.
+This is the beginning of M1, not an enabled workchain. Both block branches remain
+behind the configuration gate and have no end-to-end acceptance evidence yet.
+Context cells are not authentication proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
    the descriptor registry; integrate persisted witnesses with live block processing.
