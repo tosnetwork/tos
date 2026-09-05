@@ -794,6 +794,14 @@ add_test(NAME test-counter-config-binding
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-config-binding PROPERTIES TIMEOUT 90)
 
+add_test(NAME test-counter-engine-config
+  COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
+    -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
+    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+    -DACTIVATION_MODE=engine_payload
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+set_tests_properties(test-counter-engine-config PROPERTIES TIMEOUT 90)
+
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)
 

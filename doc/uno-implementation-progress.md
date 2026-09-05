@@ -778,3 +778,13 @@ binding check. Replacing the supplied payload with an empty cell makes the
 nonempty-payload rejection test fail; the actual payload forwarding was restored.
 This leaves engine-specific configuration parsing out of Native sender lookup.
 It does not define the UNO configuration schema or authorize its future changes.
+
+The disk harness now also installs a structurally valid public ingress entry
+whose Counter payload contains an unsupported bit. Generic configuration
+validation and a Native masterchain bootstrap succeed without interpreting the
+foreign payload; Counter collation must then reject before batch staging and
+without reporting a persisted block. Substituting an empty payload at the host
+callback makes the same test produce and persist a workchain block (exit 0 rather
+than the required exit 2), so the negative test fails for the intended reason.
+The substitution was restored. This is same-binary mock-engine evidence, not a
+deployment genesis or independent validation of an adversarial imported block.
