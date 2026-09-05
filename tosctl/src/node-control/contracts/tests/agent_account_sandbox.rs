@@ -1338,6 +1338,35 @@ fn checked_contract_call_v2_rejected_by_target_bounces_without_restoring_authori
 }
 
 #[test]
+fn checked_contract_call_v2_action_skip_consumes_the_exact_signed_request() {
+    // V2 deliberately uses send mode 3. An action-stage routing failure must
+    // therefore consume the controller authorization exactly once, without a
+    // target delivery or a fabricated bounce that could make the request look
+    // retryable. This is distinct from a valid route whose target aborts and
+    // can return a real rich bounce.
+    let mut fixture = Fixture::new();
+    let invalid_workchain = MsgAddressInt::with_params(1, [0x66; 32]).expect("invalid target");
+    let mut body = BuilderData::new();
+    body.append_u32(0x504d_0001).expect("operation");
+    let action = fixture.signed_checked_call(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &invalid_workchain,
+        TOS,
+        body.into_cell().expect("body"),
+    );
+    fixture
+        .send_external(action.clone())
+        .expect("V2 mode 3 must keep the source transaction successful when routing is invalid")
+        .expect_success()
+        .expect_out_msgs(0);
+    assert_eq!(fixture.seqno(), 1, "action skip must consume the signed seqno");
+    assert_eq!(fixture.spent_today(), TOS as i128, "action skip must retain daily spend");
+    fixture.expect_external_exit(action, 1705);
+}
+
+#[test]
 fn a_bounced_message_is_ignored_rather_than_parsed_as_a_real_operation() {
     // If this were *not* filtered, a bounced message carrying an
     // update_policy body sent from `owner` (the exact sender update_policy
