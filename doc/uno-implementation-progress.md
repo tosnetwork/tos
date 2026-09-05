@@ -788,3 +788,15 @@ callback makes the same test produce and persist a workchain block (exit 0 rathe
 than the required exit 2), so the negative test fails for the intended reason.
 The substitution was restored. This is same-binary mock-engine evidence, not a
 deployment genesis or independent validation of an adversarial imported block.
+
+Started the new UNO monetary core with `uno/core/amount.h`, a value type using
+the candidate unsigned 128-bit accounting range in nanotomi. It reuses the
+platform wide-integer implementation, provides checked addition/subtraction and
+explicit Note u64 / symmetric bundle i64 narrowing. It does not restore the old
+u64 aggregate counters or mining state. The four rejection guards were separately
+bypassed: overflow, underflow, oversized Note value and oversized bundle magnitude
+each made its own assertion fail; all guards were restored. Boundary controls
+exercise carry/borrow across 64 bits and the 10^17 nanotomi allocation magnitude.
+This is not an allocation authorization, proof implementation, state codec or
+registered engine. Final amount width/codec still requires the Native monetary
+authority decision; multiplication and the N/F/W transition layer remain work.
