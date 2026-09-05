@@ -8,3 +8,6 @@ publish = false
 orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153dcaeef8ef631c8991c53ed1248", default-features = false, features = ["circuit", "multicore", "std"] }
 
 [workspace]
+
+[dev-dependencies]
+rand = "=0.8.8"

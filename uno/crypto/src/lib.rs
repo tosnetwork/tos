@@ -1,5 +1,6 @@
+use orchard::Bundle;
 use orchard::{
-    bundle::BundleVersion,
+    bundle::{Authorized, BundleVersion},
     circuit::{OrchardCircuitVersion, VerifyingKey},
 };
 
@@ -9,8 +10,17 @@ pub struct UnsupportedProfile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyConstructionFailed;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationError {
+    Profile,
+    Shape(ProofShapeError),
+    Proof,
+    SpendSignature,
+    BindingSignature,
+}
+
 // The key cannot be supplied or replaced by a bundle or FFI caller.
-// Full proof/signature verification is not exposed by this prototype yet.
+// This verifies cryptography, not the caller's transaction authorization policy.
 pub struct FixedVerifier {
     key: VerifyingKey,
 }
@@ -25,6 +35,36 @@ impl FixedVerifier {
 
     pub fn check_bundle_profile(&self, bundle: BundleVersion) -> Result<(), UnsupportedProfile> {
         validate_profile(bundle, self.key.circuit_version())
+    }
+
+    pub fn verify_bundle(
+        &self,
+        bundle: &Bundle<Authorized, i64>,
+        sighash: &[u8; 32],
+        max_actions: usize,
+        max_proof_bytes: usize,
+    ) -> Result<(), VerificationError> {
+        self.check_bundle_profile(bundle.bundle_version())
+            .map_err(|_| VerificationError::Profile)?;
+        validate_proof_shape(
+            bundle.actions().len(),
+            bundle.authorization().proof().as_ref().len(),
+            max_actions,
+            max_proof_bytes,
+        )
+        .map_err(VerificationError::Shape)?;
+        bundle.verify_proof(&self.key).map_err(|_| VerificationError::Proof)?;
+        for action in bundle.actions() {
+            action
+                .rk()
+                .verify(sighash, action.authorization())
+                .map_err(|_| VerificationError::SpendSignature)?;
+        }
+        bundle
+            .binding_validating_key()
+            .verify(sighash, bundle.authorization().binding_signature())
+            .map_err(|_| VerificationError::BindingSignature)?;
+        Ok(())
     }
 }
 
@@ -78,6 +118,71 @@ pub fn validate_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_bundle_requires_proof_and_signatures() {
+        use orchard::{
+            builder::{Builder, BundleType},
+            bundle::Flags,
+            circuit::ProvingKey,
+            keys::{FullViewingKey, Scope, SpendingKey},
+            tree::Anchor,
+            value::NoteValue,
+            Proof,
+        };
+        let mut rng = rand::rngs::OsRng;
+        let sk = SpendingKey::from_bytes([0; 32]).expect("test spending key");
+        let recipient = FullViewingKey::from(&sk).address_at(0u32, Scope::External);
+        let mut builder = Builder::new(
+            BundleType::DEFAULT,
+            BundleVersion::orchard_v2(),
+            Flags::SPENDS_DISABLED,
+            Anchor::empty_tree(),
+        )
+        .expect("test builder");
+        builder
+            .add_output(None, recipient, NoteValue::from_raw(5000), [0; 512])
+            .expect("test output");
+        let (unsigned, _) = builder.build::<i64>(&mut rng).expect("build").expect("nonempty");
+        let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
+        let digest = [42; 32];
+        let bundle = unsigned
+            .create_proof(&pk, &mut rng)
+            .expect("proof")
+            .apply_signatures(&mut rng, digest, &[])
+            .expect("signatures");
+        let verifier = FixedVerifier::new().expect("fixed key");
+        assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
+        assert!(verifier.verify_bundle(&bundle, &[43; 32], 2, 7264).is_err());
+        let bad_spend =
+            bundle.clone().map_authorization(&mut (), |_, _, _| [0; 64].into(), |_, auth| auth);
+        assert_eq!(
+            verifier.verify_bundle(&bad_spend, &digest, 2, 7264),
+            Err(VerificationError::SpendSignature)
+        );
+        let bad_proof = bundle.clone().map_authorization(
+            &mut (),
+            |_, _, sig| sig,
+            |_, auth| {
+                let mut bytes = auth.proof().as_ref().to_vec();
+                bytes[0] ^= 1;
+                Authorized::from_parts(Proof::new(bytes), auth.binding_signature().clone())
+            },
+        );
+        assert_eq!(
+            verifier.verify_bundle(&bad_proof, &digest, 2, 7264),
+            Err(VerificationError::Proof)
+        );
+        let bad_binding = bundle.map_authorization(
+            &mut (),
+            |_, _, sig| sig,
+            |_, auth| Authorized::from_parts(auth.proof().clone(), [0; 64].into()),
+        );
+        assert_eq!(
+            verifier.verify_bundle(&bad_binding, &digest, 2, 7264),
+            Err(VerificationError::BindingSignature)
+        );
+    }
 
     #[test]
     fn constructed_key_is_bound_to_fixed_profile() {

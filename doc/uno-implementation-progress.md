@@ -912,3 +912,17 @@ selected construction variant to the historical circuit makes the actual
 key-version assertion fail. The fixed selector was restored. No canonical VK
 fingerprint/reconstruction manifest, proof or signature verification, external
 FFI or host registration is claimed by this step.
+
+The Rust prototype now verifies typed authorized bundles with the internally
+constructed fixed VK: profile and proof-shape checks precede proof verification,
+all action spend signatures and the bundle-derived binding signature. Both
+signature classes use the same supplied digest. A real generated output-only
+proof/signature fixture passes; changed digest, damaged proof, zeroed spend
+signatures and zeroed binding signature fail. Independently removing each of
+the three cryptographic checks makes its isolated invalid fixture return Ok
+and fail the test, rather than merely changing rejection wording. All three
+mutations were restored. The fixture digest is not yet a TOS core digest and
+the already allocated typed input is not a bounded wire ingress. This is not
+output-only issuance authorization, stateful anchor/nullifier validation, a
+canonical VK manifest, FFI or host integration; those remain required for M2
+and the actual UNO engine.
