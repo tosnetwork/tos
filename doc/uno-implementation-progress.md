@@ -800,3 +800,18 @@ exercise carry/borrow across 64 bits and the 10^17 nanotomi allocation magnitude
 This is not an allocation authorization, proof implementation, state codec or
 registered engine. Final amount width/codec still requires the Native monetary
 authority decision; multiplication and the N/F/W transition layer remain work.
+
+The first N/F/W accounting transitions now use those checked amounts: transfer
+fee moves N to F; withdrawal preparation debits principal plus fee from N and
+credits F/W separately; Paid Ack removes W without creating Notes; refund moves
+only principal from W to N. Each function returns a new value and leaves input
+untouched, including failures after an earlier calculation succeeded. Tests
+check exact balances, principal-only refunds, wide-pool borrow and isolated
+overflow/underflow at every arithmetic site. Skipping each transition result or
+individual checked step makes the corresponding balance/rejection assertion
+fail; swallowing the principal-plus-fee overflow was also detected. All temporary
+mutations were restored. These are accounting calculations, not authorization:
+receipt finality, permanent IDs/tombstones, proof verification, refund reservation
+consumption and atomic state/queue commits remain required before engine use.
+Shield claims, fee distribution and authenticated R/P/D reconciliation are not
+implemented by this layer yet.
