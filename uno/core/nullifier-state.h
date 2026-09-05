@@ -10,6 +10,73 @@ namespace uno_workchain {
 // records remain as tombstones; no timeout or deletion reopens an owner ID.
 class NullifierState {
  public:
+  struct LoadLimits {
+    std::uint64_t used_entries = 0;
+    std::uint64_t reserved_entries = 0;
+    std::uint64_t owners = 0;
+    std::uint64_t total_manifest_entries = 0;
+  };
+
+  // Restore-time consistency validation, not authentication of a checkpoint or
+  // its terminal receipts. The outer loader must authenticate all three roots
+  // as one committed state and supply explicit resource limits.
+  static td::Result<NullifierState> from_roots(td::Ref<vm::Cell> used_root,
+                                            td::Ref<vm::Cell> reserved_root,
+                                            td::Ref<vm::Cell> owners_root, LoadLimits limits) {
+    TRY_RESULT(used, UsedNullifiers::from_root(std::move(used_root), limits.used_entries));
+    try {
+      if (!detail::validate_state_dictionary(reserved_root, 256, limits.reserved_entries,
+            [](const vm::CellSlice& value) { return value.size() == 256 && value.size_refs() == 0; }) ||
+          !detail::validate_state_dictionary(owners_root, 256, limits.owners,
+            [&](const vm::CellSlice& record) {
+              return record.size() == 2 && record.size_refs() == 1 && record.prefetch_ulong(2) < 3 &&
+                     detail::validate_state_dictionary(record.prefetch_ref(), 256, limits.total_manifest_entries,
+                       [](const vm::CellSlice& value) { return value.empty_ext(); });
+            })) {
+        return td::Status::Error("UNO invalid reservation dictionaries or load limit exceeded");
+      }
+      vm::Dictionary reserved(reserved_root, 256), owners(owners_root, 256);
+      // Check the forward relation for every pending manifest and the permanent
+      // used-set obligation for refunded manifests. Paid keys may be reused.
+      if (!owners.check_for_each([&](td::Ref<vm::CellSlice> record, td::ConstBitPtr owner_bits, int) {
+            td::Bits256 owner(owner_bits);
+            auto status = record->prefetch_ulong(2);
+            vm::Dictionary manifest(record->prefetch_ref(), 256);
+            return manifest.check_for_each([&](td::Ref<vm::CellSlice>, td::ConstBitPtr key_bits, int) {
+              td::Bits256 key(key_bits);
+              if (status == 2) return used.contains(key);
+              if (status == 1) return true;
+              auto binding = reserved.lookup(key);
+              return !used.contains(key) && binding.not_null() && td::Bits256(binding->data_bits()) == owner;
+            });
+          })) {
+        return td::Status::Error("UNO owner manifest does not match nullifier state");
+      }
+      // The reverse check excludes extra reservations, terminal owners and
+      // ownership bindings that no pending manifest actually contains.
+      if (!reserved.check_for_each([&](td::Ref<vm::CellSlice> binding, td::ConstBitPtr key_bits, int) {
+            td::Bits256 key(key_bits), owner(binding->data_bits());
+            auto record = owners.lookup(owner);
+            if (used.contains(key) || record.is_null() || record->prefetch_ulong(2) != 0) return false;
+            vm::Dictionary manifest(record->prefetch_ref(), 256);
+            return manifest.lookup(key).not_null();
+          })) {
+        return td::Status::Error("UNO orphaned or conflicting nullifier reservation");
+      }
+      NullifierState result;
+      result.used_ = std::move(used);
+      result.reserved_ = std::move(reserved_root);
+      result.owners_ = std::move(owners_root);
+      return result;
+    } catch (vm::VmError&) {
+      return td::Status::Error("UNO malformed reservation cells");
+    } catch (vm::VmVirtError&) {
+      return td::Status::Error("UNO incomplete reservation proof");
+    } catch (vm::VmNoGas&) {
+      return td::Status::Error("UNO reservation loading exhausted execution budget");
+    }
+  }
+
   td::Ref<vm::Cell> used_root() const {
     return used_.root();
   }

@@ -1450,3 +1450,57 @@ also passed twice (72.81 seconds total). A load-counter test additionally proves
 that a zero entry budget touches no cell and that an execution-budget exception
 becomes an error, with a successful load of the same fixture as positive control.
 These timings are test wall times, not isolated loader or slot measurements.
+
+### Joint reservation-state restoration
+
+`NullifierState::from_roots` now reconstructs used, reserved and owner state
+together. Its explicit load limits cover used keys, reserved keys, owners and
+the aggregate number of manifest entries across all owner records. Shared
+manifest Cells are charged for every logical occurrence, not deduplicated into
+an unbounded work allowance. The strict non-resolving dictionary walker is
+shared with `UsedNullifiers`; marker, binding and owner record shapes remain
+unchanged from the existing primitive encodings.
+
+Before publishing an object, loading checks both directions of the pending
+owner/manifest/reservation relation and requires used/reserved disjointness.
+Every refunded manifest key must remain used. Paid owner manifests are retained
+as tombstones, but their keys may subsequently be spent or reserved by another
+owner; rejecting that legitimate reuse would make a valid persisted state
+unloadable. Unknown statuses, extra binding data and malformed manifest markers
+are rejected. No implicit library resolution is permitted in any component.
+
+Round-trip tests restore mixed pending/paid/refunded histories and continue
+refunds, compare resulting roots with uninterrupted execution, preserve the
+original roots, and reject reuse of terminal owner IDs. Limit tests exercise
+each independent cap, including the total across multiple manifests. Independent
+mutations removing forward ownership matching, reverse manifest membership and
+the refunded-used obligation each caused a different inconsistent fixture to
+be accepted and its test to fail. All mutations were restored.
+The nullifier and ordinary snapshot CTest groups each passed three consecutive
+runs (84.74 seconds total). Default-constructed load limits are all zero;
+nonempty restoration requires an explicit caller-supplied budget.
+
+The outer StateV2 loader must authenticate these roots together as one committed
+state and validate amounts, note tree, bridge records and receipt authority.
+This API does not authenticate terminal events, define StateV2 serialization,
+or enable an engine. The joint loader has unit/BoC round-trip evidence here;
+the previously recorded large database experiment covered the used-set loader,
+not a large mixed reservation history.
+
+### Idle service policy measurement requirement
+
+Freeze idle cadence together with slot length and anchor/expiry windows, not as
+an omitted implementation default. The preferred unmeasured candidate is one
+block-production attempt per eligible slot even without paying transactions;
+this is an obligation under normal liveness assumptions, not a reason to reject
+a legal successor after missed slots. Measure idle storage/bandwidth/CPU/I/O cost,
+system-message service budgets and funding, expected maximum silence, and
+checkpoint submission/retry delay before selecting and recording exact values.
+If configurable, defaults, allowed ranges and activation/epoch boundaries must
+be explicit. No idle-cadence value or ConfigV2 field is activated by this entry.
+
+Checkpoint submission for an already locally finalized block must not wait for
+a new user transaction or successor block. Ordinary 64-height transaction expiry
+is not a refund timer and cannot substitute for authenticated terminal settlement.
+An empty-block heartbeat exposes lack of progress, not proof against selective
+censorship. No measured idle service policy has been accepted yet.

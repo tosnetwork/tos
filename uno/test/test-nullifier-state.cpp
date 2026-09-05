@@ -1,5 +1,6 @@
 #include "td/utils/tests.h"
 #include "uno/core/nullifier-state.h"
+#include "vm/boc.h"
 
 using namespace uno_workchain;
 
@@ -9,7 +10,109 @@ td::Bits256 key(int last) {
   value.as_slice()[31] = static_cast<char>(last);
   return value;
 }
+
+td::Ref<vm::Cell> persisted(td::Ref<vm::Cell> root) {
+  if (root.is_null()) return {};
+  return vm::std_boc_deserialize(vm::std_boc_serialize(root).move_as_ok().as_slice()).move_as_ok();
+}
+
+td::Result<NullifierState> restore(const NullifierState& state,
+                                 NullifierState::LoadLimits limits = {20, 20, 20, 20}) {
+  return NullifierState::from_roots(persisted(state.used_root()), persisted(state.reserved_root()),
+                                   persisted(state.owners_root()), limits);
+}
 }  // namespace
+
+TEST(UnoNullifierState, RestoreJointStateAndContinue) {
+  ASSERT_TRUE(restore(NullifierState{}, {0, 0, 0, 0}).is_ok());
+  auto pending = NullifierState{}.with_used({key(1)}).move_as_ok()
+                     .reserve(key(10), {key(0), key(2)}).move_as_ok()
+                     .reserve(key(11), {key(3)}).move_as_ok();
+  ASSERT_TRUE(restore(pending, {0, 3, 2, 3}).is_error());
+  ASSERT_TRUE(restore(pending, {1, 2, 2, 3}).is_error());
+  ASSERT_TRUE(restore(pending, {1, 3, 1, 3}).is_error());
+  ASSERT_TRUE(restore(pending, {1, 3, 2, 2}).is_error());
+  auto loaded = restore(pending, {1, 3, 2, 3}).move_as_ok();
+  ASSERT_TRUE(loaded.used_root()->get_hash() == pending.used_root()->get_hash());
+  ASSERT_TRUE(loaded.owners_root()->get_hash() == pending.owners_root()->get_hash());
+  ASSERT_TRUE(loaded.with_used({key(2)}).is_error());
+  ASSERT_TRUE(loaded.reserve(key(10), {key(4)}).is_error());
+  auto refunded = loaded.refund(key(10)).move_as_ok();
+  ASSERT_TRUE(refunded.used_root()->get_hash() == pending.refund(key(10)).move_as_ok().used_root()->get_hash());
+  ASSERT_TRUE(loaded.reserved_root()->get_hash() == pending.reserved_root()->get_hash());
+
+  // Historical paid manifests may overlap keys later spent or reserved by a
+  // different owner. They are tombstones, not ongoing locks on those keys.
+  auto mixed = pending.paid(key(10)).move_as_ok().with_used({key(0)}).move_as_ok()
+                   .reserve(key(12), {key(2)}).move_as_ok().refund(key(11)).move_as_ok();
+  auto resumed = restore(mixed).move_as_ok();
+  for (auto owner : {key(10), key(11)}) {
+    ASSERT_TRUE(resumed.paid(owner).is_error());
+    ASSERT_TRUE(resumed.refund(owner).is_error());
+    ASSERT_TRUE(resumed.reserve(owner, {key(5)}).is_error());
+  }
+  auto next = resumed.refund(key(12)).move_as_ok();
+  ASSERT_TRUE(next.reserved_root().is_null());
+  ASSERT_TRUE(next.used_root()->get_hash() == mixed.refund(key(12)).move_as_ok().used_root()->get_hash());
+  ASSERT_TRUE(next.owners_root()->get_hash() == mixed.refund(key(12)).move_as_ok().owners_root()->get_hash());
+  ASSERT_TRUE(restore(next).is_ok());
+}
+
+TEST(UnoNullifierState, RejectInconsistentRoots) {
+  auto pending = NullifierState{}.reserve(key(10), {key(2)}).move_as_ok();
+  auto load = [&](td::Ref<vm::Cell> used, td::Ref<vm::Cell> reserved, td::Ref<vm::Cell> owners) {
+    return NullifierState::from_roots(used, reserved, owners, {20, 20, 20, 20});
+  };
+  ASSERT_TRUE(load({}, {}, pending.owners_root()).is_error());
+  ASSERT_TRUE(load({}, pending.reserved_root(), {}).is_error());
+  auto spent = UsedNullifiers{}.with_used({key(2)}).move_as_ok();
+  ASSERT_TRUE(load(spent.root(), pending.reserved_root(), pending.owners_root()).is_error());
+
+  vm::Dictionary reserved(pending.reserved_root(), 256);
+  vm::CellBuilder binding;
+  binding.store_bits(key(10).bits(), 256);
+  ASSERT_TRUE(reserved.set_builder(key(3), binding));
+  ASSERT_TRUE(load({}, reserved.get_root_cell(), pending.owners_root()).is_error());
+  reserved = vm::Dictionary(pending.reserved_root(), 256);
+  vm::CellBuilder wrong;
+  wrong.store_bits(key(11).bits(), 256);
+  ASSERT_TRUE(reserved.set_builder(key(2), wrong));
+  ASSERT_TRUE(load({}, reserved.get_root_cell(), pending.owners_root()).is_error());
+
+  vm::Dictionary duplicate_claims(pending.owners_root(), 256);
+  auto claimed = duplicate_claims.lookup(key(10));
+  vm::CellBuilder duplicate_record;
+  duplicate_record.store_long(0, 2).store_ref(claimed->prefetch_ref());
+  ASSERT_TRUE(duplicate_claims.set_builder(key(11), duplicate_record));
+  ASSERT_TRUE(load({}, pending.reserved_root(), duplicate_claims.get_root_cell()).is_error());
+
+  auto refunded = pending.refund(key(10)).move_as_ok();
+  ASSERT_TRUE(load({}, {}, refunded.owners_root()).is_error());
+  ASSERT_TRUE(load(refunded.used_root(), {}, refunded.owners_root()).is_ok());
+  auto paid = pending.paid(key(10)).move_as_ok();
+  ASSERT_TRUE(load({}, pending.reserved_root(), paid.owners_root()).is_error());
+  ASSERT_TRUE(load({}, {}, paid.owners_root()).is_ok());
+
+  vm::Dictionary owners(pending.owners_root(), 256);
+  vm::Dictionary manifest(256);
+  vm::CellBuilder marker;
+  ASSERT_TRUE(manifest.set_builder(key(2), marker));
+  vm::CellBuilder unknown;
+  unknown.store_long(3, 2).store_ref(manifest.get_root_cell());
+  ASSERT_TRUE(owners.set_builder(key(10), unknown));
+  ASSERT_TRUE(load({}, pending.reserved_root(), owners.get_root_cell()).is_error());
+  vm::CellBuilder extra;
+  extra.store_bits(key(10).bits(), 256).store_long(0, 1);
+  ASSERT_TRUE(reserved.set_builder(key(2), extra));
+  ASSERT_TRUE(load({}, reserved.get_root_cell(), pending.owners_root()).is_error());
+  vm::CellBuilder nonempty;
+  nonempty.store_long(0, 1);
+  ASSERT_TRUE(manifest.set_builder(key(2), nonempty));
+  vm::CellBuilder malformed_manifest;
+  malformed_manifest.store_long(0, 2).store_ref(manifest.get_root_cell());
+  ASSERT_TRUE(owners.set_builder(key(10), malformed_manifest));
+  ASSERT_TRUE(load({}, pending.reserved_root(), owners.get_root_cell()).is_error());
+}
 
 TEST(UnoNullifierState, ReservationConflictAndAtomicity) {
   NullifierState empty;
