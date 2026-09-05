@@ -388,17 +388,18 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
     return td::Status::Error("descriptor has no registered block engine");
   }
   TRY_STATUS(validate_workchain_block_activation(configuration));
-  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration));
-  if (!config) {
-    return td::Status::Error("block engine returned null configuration");
-  }
-  TRY_RESULT(policy, it->second->block_policy(descriptor, *config));
   TRY_RESULT(ingress_table, load_workchain_native_ingress_table(configuration));
   auto ingress = ingress_table.find(descriptor.workchain_id);
   if (ingress == ingress_table.end()) {
     return td::Status::Error("block workchain has no public native ingress policy");
   }
   TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
+                                                           ingress->second.engine_configuration));
+  if (!config) {
+    return td::Status::Error("block engine returned null configuration");
+  }
+  TRY_RESULT(policy, it->second->block_policy(descriptor, *config));
   if (ingress->second.executor_address != policy.executor_address) {
     return td::Status::Error("engine executor differs from public native ingress policy");
   }

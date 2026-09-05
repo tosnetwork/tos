@@ -767,3 +767,14 @@ account; reopening admission accepts the same destination. Bypassing the native
 destination admission check makes the closed case succeed and fails the status
 assertion. The check was restored. This exercises the existing settlement gate,
 not a new receiver-side ban on consuming messages already committed to queues.
+
+Block-engine configuration resolution now receives the exact `engine_configuration`
+Cell from the public ingress entry as an explicit argument. Host activation and
+descriptor binding run before the engine callback; the engine must validate its
+complete payload format. Counter defines an empty-cell configuration and rejects
+payload bits or references. The tests preserve a descriptor-bound null-config
+control and now expect invalid split descriptors to fail in the earlier host
+binding check. Replacing the supplied payload with an empty cell makes the
+nonempty-payload rejection test fail; the actual payload forwarding was restored.
+This leaves engine-specific configuration parsing out of Native sender lookup.
+It does not define the UNO configuration schema or authorize its future changes.

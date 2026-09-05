@@ -21,7 +21,8 @@ td::Ref<vm::Cell> number(std::uint64_t value) {
 using CounterEngine = block::test::CounterEngine;
 
 std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
-                                                 td::uint64 capabilities = tos::capBlockTransition) {
+                                                 td::uint64 capabilities = tos::capBlockTransition,
+                                                 td::uint64 vm_mode = 0) {
   vm::CellBuilder param;
   CHECK(block::gen::t_GlobalVersion.pack_capabilities(param, version, capabilities));
   vm::Dictionary config(32);
@@ -29,8 +30,9 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
   block::WorkchainNativeIngressPolicy policy;
   policy.workchain_id = 2;
   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.vm_mode = vm_mode;
   policy.executor_address.set_zero();
-  policy.engine_configuration = number(0);
+  policy.engine_configuration = vm::CellBuilder().finalize();
   CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
   return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
                                      block::Config::needCapabilities).move_as_ok();
@@ -1212,10 +1214,11 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   descriptor.max_split = 1;
   auto split = registry.resolve_block(descriptor, configuration);
   ASSERT_TRUE(split.is_error());
-  ASSERT_EQ(split.error().message(), "counter requires an unsplit workchain");
+  ASSERT_EQ(split.error().message(), "native ingress policy differs from execution descriptor");
   descriptor.max_split = 0;
   descriptor.vm_mode = 1;
-  auto null_config = registry.resolve_block(descriptor, configuration);
+  auto mode_configuration = block_configuration(block::kBlockTransitionMinGlobalVersion, tos::capBlockTransition, 1);
+  auto null_config = registry.resolve_block(descriptor, *mode_configuration);
   ASSERT_TRUE(null_config.is_error());
   ASSERT_EQ(null_config.error().message(), "block engine returned null configuration");
   descriptor.active = false;
@@ -1515,7 +1518,7 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
   policy.workchain_id = 2;
   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
   policy.executor_address.set_zero();
-  policy.engine_configuration = number(0);
+  policy.engine_configuration = vm::CellBuilder().finalize();
   auto resolve = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
     auto cfg = configuration(block::encode_workchain_native_ingress_table(policies).move_as_ok());
     return registry.resolve_block(descriptor, *cfg);
@@ -1532,6 +1535,11 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
   ASSERT_TRUE(resolve({wrong}).is_error());
   wrong = policy;
   wrong.executor_address = td::Bits256::ones();
+  ASSERT_TRUE(resolve({wrong}).is_error());
+  wrong = policy;
+  wrong.engine_configuration = number(0);
+  ASSERT_TRUE(resolve({wrong}).is_error());
+  wrong.engine_configuration = vm::CellBuilder().store_ref(policy.engine_configuration).finalize();
   ASSERT_TRUE(resolve({wrong}).is_error());
   auto malformed = configuration(number(0));
   ASSERT_TRUE(registry.resolve_block(descriptor, *malformed).is_error());
@@ -1621,10 +1629,10 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   workchains[2].write().max_split = 1;
   auto split = registry.resolve_scoped_workchain(workchains, 2, configuration);
   ASSERT_TRUE(split.is_error());
-  ASSERT_EQ(split.error().message(), "counter requires an unsplit workchain");
+  ASSERT_EQ(split.error().message(), "native ingress policy differs from execution descriptor");
   auto invalid_required = registry.validate_required_workchains(workchains, configuration, roles);
   ASSERT_TRUE(invalid_required.is_error());
-  ASSERT_EQ(invalid_required.error().message(), "counter requires an unsplit workchain");
+  ASSERT_EQ(invalid_required.error().message(), "native ingress policy differs from execution descriptor");
   workchains[2].write().max_split = 0;
   workchains[2].write().workchain = 3;
   auto mismatch = registry.resolve_scoped_workchain(workchains, 2, configuration);

@@ -48,7 +48,12 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   }
 
   td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
-      const block::WorkchainExecutionDescriptor& descriptor, const block::Config&) const override {
+      const block::WorkchainExecutionDescriptor& descriptor, const block::Config&,
+      const td::Ref<vm::Cell>& engine_configuration) const override {
+    if (engine_configuration.is_null() ||
+        engine_configuration->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
+      return td::Status::Error("counter requires an empty engine configuration");
+    }
     if (descriptor.min_split != 0 || descriptor.max_split != 0) {
       return td::Status::Error("counter requires an unsplit workchain");
     }

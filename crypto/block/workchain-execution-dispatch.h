@@ -238,8 +238,11 @@ struct WorkchainBlockPolicy {
 class RegisteredWorkchainBlockEngine : public WorkchainBlockEngine {
  public:
   virtual WorkchainEngineKey engine_key() const = 0;
+  // The host supplies the payload from the descriptor-bound public ingress entry.
+  // Engines must validate their complete configuration format and reject unsupported versions.
   virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
-      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const = 0;
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration,
+      const td::Ref<vm::Cell>& engine_configuration) const = 0;
   virtual td::Result<WorkchainBlockPolicy> block_policy(
       const WorkchainExecutionDescriptor& descriptor, const WorkchainEngineConfig& configuration) const = 0;
 };

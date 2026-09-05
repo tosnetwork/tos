@@ -91,7 +91,11 @@ Native normalization of a 256-bit addr_var into addr_std remains supported.
 Receiver engine resolution requires a matching table entry and executor address.
 Complete `valid_config_data` also runs the common resolver for present tables,
 rejecting semantic table/descriptor mismatches before configuration acceptance.
-The opaque engine-configuration payload is not yet an input to engine execution.
+After host binding validation, block-engine configuration resolution receives
+the entry's exact engine-configuration Cell explicitly. Each engine must validate
+its complete payload format; Counter accepts only an empty cell. Native senders
+do not interpret that payload or require the destination engine. UNO's payload
+schema and permitted configuration transitions remain to be implemented.
 
 Reject a new invalid destination using the native invalid-destination action
 path, including existing send-mode and fee semantics. Do not enqueue a message
