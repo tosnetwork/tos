@@ -3,6 +3,7 @@ pub mod context;
 pub mod decode;
 pub mod ffi;
 pub mod tree;
+pub mod tree_ffi;
 #[cfg(test)]
 mod vk_snapshot;
 use orchard::{

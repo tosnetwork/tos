@@ -1744,3 +1744,42 @@ After restoration, the full Rust and linked C++ real-ABI CTest cases each passed
 twice (49.90 seconds total). The Rust suite contains 20 passing tests and one
 intentionally ignored diagnostic export. Generated-header comparison stayed
 unchanged; no new C ABI declaration or frozen verifying-key digest was introduced.
+
+### Borrowed tree transition C ABI and real spend-anchor binding
+
+`uno_crypto_tree_append_v0` now exposes the actual tree transition through the
+generated header. Its fixed-size input frontier contains a position, last leaf,
+prior-subtree count and 32 zero-padded node slots. Its caller-owned output contains
+the successor frontier and root. This is ABI version 0/profile 1, not a canonical
+Cell or StateV2 wire encoding. No pointers are retained or allocated buffers
+returned. The existing proof-verification ABI is unchanged.
+
+The boundary validates version/profile, count limit, numeric spans/alignment,
+canonical unused slots and input/output non-overlap. Empty batches permit a null
+commitment pointer. Parsing, staging and root hashing all finish before publishing
+output; returned errors and caught panics leave caller output unchanged. The
+caller must still guarantee valid allocations, exclusive output access and
+authenticated state/limits/reservations. Aborts and OOM are not recovered.
+
+A linked C++ test compares batch versus repeated append, restores with an empty
+batch, rejects a malformed late leaf, checks unchanged sentinel output, reserved
+capacity, count/profile bounds, padding, null spans, overlap and recovery. The
+real C++ crypto fixture additionally computes the complete output Action tree via
+this export and requires that root to equal its paired spend fixture's anchor.
+Both fixtures are freshly generated; old single-leaf witness pairs are not reused.
+
+Rust injects a panic immediately before publication and an overflowing span,
+checking unchanged output and a subsequent successful call. Two independent
+temporary mutations wrote output before validation or suppressed publication
+entirely; the C++ test failed with exit 8 or 4 respectively. Both were restored.
+The C header was regenerated explicitly, its ordinary build drift check passed,
+and C11 syntax validation passed. The Rust tree implementation and VK fingerprint
+were not changed. Host Cell persistence, combined state execution, anchors and
+production activation remain required.
+
+Final verification: Rust, C++ smoke and tree CTest groups each passed twice. The
+real-ABI group's first pass succeeded, but its next fixture generation failed
+with ENOSPC before C++ verification. A subsequent filesystem check showed 1.1 GiB
+available without deleting artifacts; rerunning that group then passed twice
+(23.86 seconds). The failed run is not counted as success. Disk headroom remains
+low and needs attention before another large snapshot experiment.

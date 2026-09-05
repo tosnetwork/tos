@@ -21,7 +21,7 @@ add_custom_target(uno-crypto-rust
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   VERBATIM)
 
-foreach(kind smoke real)
+foreach(kind smoke real tree)
   add_executable(test-uno-crypto-abi-${kind} tests/abi-${kind}.cpp)
   target_include_directories(test-uno-crypto-abi-${kind} PRIVATE include)
   target_compile_features(test-uno-crypto-abi-${kind} PRIVATE cxx_std_17)
@@ -40,6 +40,7 @@ add_test(NAME test-uno-crypto-rust
 set_tests_properties(test-uno-crypto-rust PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)
 add_test(NAME test-uno-crypto-abi-smoke COMMAND test-uno-crypto-abi-smoke)
+add_test(NAME test-uno-crypto-abi-tree COMMAND test-uno-crypto-abi-tree)
 add_test(NAME test-uno-crypto-abi-real
   COMMAND ${CMAKE_COMMAND}
     "-DUNO_CRYPTO_CARGO=${UNO_CRYPTO_CARGO}"

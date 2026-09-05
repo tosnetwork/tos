@@ -209,6 +209,7 @@ leaves. These synthetic snapshots do not authenticate historical commitments.
 The caller must authenticate the snapshot and reservation count, enforce the
 eventual cmx duplicate policy, and retain full output/ciphertext history for
 wallet scanning and witnesses. A frontier is insufficient for that history.
-There is no tree C ABI, host Cell persistence, anchor-window integration or
-production engine registration yet. The existing locked incrementalmerkletree
+The [tree C ABI prototype](ABI.md#tree-transition-abi-prototype) now exposes this
+transition to linked C++ callers. Host Cell persistence, anchor-window integration
+and production engine registration remain absent. The existing locked incrementalmerkletree
 0.8.2 dependency moved from test-only to runtime; no dependency revision changed.

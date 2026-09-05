@@ -64,7 +64,7 @@ fn context(request: &VerifyRequest) -> Result<PublicContext, AbiStatus> {
     }
 }
 
-fn bounded_span<T>(pointer: *const T, count: usize) -> bool {
+pub(crate) fn bounded_span<T>(pointer: *const T, count: usize) -> bool {
     !pointer.is_null()
         && (pointer as usize) % mem::align_of::<T>() == 0
         && count.checked_mul(mem::size_of::<T>()).is_some_and(|bytes| {
@@ -136,7 +136,7 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         .map_err(|_| AbiStatus::UNO_CRYPTO_VERIFY)
 }
 
-fn contain_unwind(f: impl FnOnce() -> Result<(), AbiStatus> + std::panic::UnwindSafe) -> u32 {
+pub(crate) fn contain_unwind(f: impl FnOnce() -> Result<(), AbiStatus> + std::panic::UnwindSafe) -> u32 {
     match catch_unwind(f) {
         Ok(Ok(())) => AbiStatus::UNO_CRYPTO_OK as u32,
         Ok(Err(error)) => error as u32,

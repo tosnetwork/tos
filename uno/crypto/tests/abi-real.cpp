@@ -4,6 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string_view>
@@ -82,7 +83,8 @@ bool measure(const char* label, const UnoCryptoVerifyRequest& request, uint32_t 
   return true;
 }
 
-bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fee, int64_t balance, size_t samples) {
+bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fee, int64_t balance, size_t samples,
+             const uint8_t* expected_anchor, uint8_t* produced_anchor) {
   std::ifstream input(path, std::ios::binary);
   std::array<char, 8> magic{};
   if (!input.read(magic.data(), magic.size()) || magic != std::array<char, 8>{'U','N','O','A','B','I','T','0'}) return false;
@@ -117,6 +119,21 @@ bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fe
   request.proof_bytes = sizeof(proof);
   request.max_actions = 2;
   request.max_proof_bytes = sizeof(proof);
+  if (expected_anchor && std::memcmp(request.anchor, expected_anchor, 32)) return false;
+  if (produced_anchor) {
+    UnoTreeFrontier empty{};
+    UnoTreeRequest tree{};
+    tree.profile = UNO_CRYPTO_FIXED_PROFILE;
+    tree.frontier = &empty;
+    uint8_t commitments[2][32];
+    for (unsigned i = 0; i < 2; ++i) std::memcpy(commitments[i], actions[i].cmx, 32);
+    tree.commitments = commitments;
+    tree.commitment_count = tree.max_commitments = 2;
+    UnoTreeResult result{};
+    if (!check("real output tree", uno_crypto_tree_append_v0(&tree, &result), UNO_CRYPTO_OK) ||
+        result.frontier.next_position != 2) return false;
+    std::memcpy(produced_anchor, result.root, 32);
+  }
   auto first_start = std::chrono::steady_clock::now();
   auto first_status = uno_crypto_verify_v0(&request);
   auto first_stop = std::chrono::steady_clock::now();
@@ -175,8 +192,9 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
-  if (!fixture(argv[1], UNO_SHIELD_CLAIM, 5000, 0, -5000, samples)) return 2;
-  if (!fixture(argv[2], UNO_TRANSFER, 0, 100, 100, samples)) return 3;
+  uint8_t output_anchor[32];
+  if (!fixture(argv[1], UNO_SHIELD_CLAIM, 5000, 0, -5000, samples, nullptr, output_anchor)) return 2;
+  if (!fixture(argv[2], UNO_TRANSFER, 0, 100, 100, samples, output_anchor, nullptr)) return 3;
   std::cout << "Both real ABI fixtures and their mutations passed\n";
   return 0;
 }

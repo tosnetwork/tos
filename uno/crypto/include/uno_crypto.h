@@ -73,6 +73,28 @@ typedef struct {
   size_t max_proof_bytes;
 } UnoCryptoVerifyRequest;
 
+typedef struct {
+  uint64_t next_position;
+  uint8_t leaf[32];
+  uint64_t ommer_count;
+  uint8_t ommers[32][32];
+} UnoTreeFrontier;
+
+typedef struct {
+  uint32_t abi_version;
+  uint32_t profile;
+  const UnoTreeFrontier *frontier;
+  const uint8_t (*commitments)[32];
+  size_t commitment_count;
+  size_t max_commitments;
+  uint64_t reserved_leaves;
+} UnoTreeRequest;
+
+typedef struct {
+  UnoTreeFrontier frontier;
+  uint8_t root[32];
+} UnoTreeResult;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -87,6 +109,18 @@ extern "C" {
  * crosses the ABI; process aborts, OOM and invalid caller memory are not recoverable.
  */
 uint32_t uno_crypto_verify_v0(const UnoCryptoVerifyRequest *request);
+
+/**
+ * Restore a canonical frontier and stage ordered commitment append into caller storage.
+ *
+ * # Safety
+ * Inputs must be aligned, initialized, readable for their declared lengths and
+ * immutable until return. Output must be aligned and writable for one TreeResult,
+ * and must not overlap any input. Null commitments are allowed only at count zero.
+ * Output is unchanged on nonzero status. No pointer is retained. Numeric checks
+ * do not establish allocation validity; aborts/OOM/invalid memory are unrecoverable.
+ */
+uint32_t uno_crypto_tree_append_v0(const UnoTreeRequest *request, UnoTreeResult *output);
 
 #ifdef __cplusplus
 }  // extern "C"

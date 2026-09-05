@@ -16,3 +16,6 @@ item_types = ["constants", "enums", "structs", "functions"]
 EncodedAction = "UnoCryptoAction"
 VerifyRequest = "UnoCryptoVerifyRequest"
 AbiStatus = "UnoCryptoStatus"
+TreeFrontier = "UnoTreeFrontier"
+TreeRequest = "UnoTreeRequest"
+TreeResult = "UnoTreeResult"

@@ -208,3 +208,42 @@ these same fixtures gives warm-cache observations, not workload diversity or
 maximum-block costs. Wrong digest is one rejection path, not a worst-case bound.
 Record the source revision, locked dependencies, hardware, concurrency/load and
 sample count with any results. Do not infer an achievable slot from this output.
+
+## Tree transition ABI prototype
+
+`uno_crypto_tree_append_v0` restores a `UnoTreeFrontier`, appends an ordered array
+of 32-byte commitments, and writes one `UnoTreeResult` into caller-owned storage.
+It uses the current prototype ABI version 0 and fixed profile 1; these are not
+StateV2 wire tags. All declarations are generated with the existing drift check.
+
+The frontier is fixed-size (1072 bytes): next position, a 32-byte last leaf,
+64-bit prior-subtree count and 32 slots of 32 bytes each. Unused slots must be
+zero; the empty frontier requires zero position/count/leaf. The result adds a
+32-byte root (1104 bytes total). This native-layout ABI is not portable serialized
+storage: Cell/endian encoding and authenticated snapshot binding remain separate.
+
+Inputs are borrowed for the call; output storage remains owned by the caller.
+No allocation is returned and no free function is needed. Output must not overlap
+the request, input frontier or nonempty commitments array; numeric overlap is
+rejected. Null commitments are allowed only for an empty batch. Pointer alignment,
+span overflow and configured count bounds are checked before slice construction,
+but allocation validity and exclusive access remain caller obligations.
+
+Successful return publishes the new frontier/root only after all parsing,
+appending and root hashing finish. Every nonzero status preserves output.
+ARGUMENTS means ABI/profile/count/pointer/range/overlap failure; DECODE means
+noncanonical frontier/leaf or unavailable tree capacity (including reservations);
+PANIC means a caught unwind. OOM, process abort and invalid caller memory are not
+recoverable. These prototype statuses do not classify local resource failure as
+consensus-invalid input. The caller authenticates limits and reservations and
+commits the output together with the rest of engine state.
+
+The linked C++ tree test checks batch versus incremental results, no-op restore,
+late-invalid-leaf rollback, reserved capacity, count/profile rejection, canonical
+padding, null input, overlap and subsequent recovery. The real-ABI test computes
+the output tree in C++ through this export and requires its root to match the
+generated spend fixture's anchor before verifying that spend. Older single-leaf
+spend fixtures are not valid for this paired test; regenerate both fixtures
+together. Rust tests inject a panic immediately before publication and numeric
+span overflow, requiring unchanged output in both cases. No production host
+or Cell codec is enabled by these tests.
