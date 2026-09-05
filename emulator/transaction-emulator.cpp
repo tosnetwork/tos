@@ -1,5 +1,7 @@
 #include <string>
 
+#include "block/workchain-block-execution.h"
+
 #include "crypto/common/refcnt.hpp"
 #include "tdutils/td/utils/Time.h"
 #include "vm/vm.h"
@@ -88,6 +90,8 @@ td::Result<TransactionEmulator::EmulationSuccess> TransactionEmulator::emulate_t
   if (!tlb::unpack_cell(original_trans, record_trans)) {
     return td::Status::Error("Failed to unpack Transaction");
   }
+  TRY_STATUS(block::validate_transaction_execution_scope(
+      record_trans.description, block::WorkchainExecutionScope::AccountCompute));
 
   tos::LogicalTime lt = record_trans.lt;
   tos::UnixTime utime = record_trans.now;

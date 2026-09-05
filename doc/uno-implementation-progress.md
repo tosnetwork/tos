@@ -19,7 +19,7 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (six cases) and the full `validator-engine` target build
+- `test-workchain-block` (nine cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` and `WorkchainBlockOutputs` TL-B envelopes
   carry all seven output references and three uint64 resource counters. The
@@ -33,6 +33,25 @@ Base node revision: `5a6145cce`.
 - Mutation checks: relaxing the exact root bit count makes the rejection test
   fail; swapping receipt/event serialization makes round-trip replay fail.
   Both mutations were restored.
+- Synthetic `trans_workchain_batch_v1$1000` description: two 256-bit
+  input/effects commitments and three uint64 resource counters, exactly 708 bits
+  with no references. Both generated and handwritten transaction parsers
+  recognize it, including transaction-wrapper validation and storage-fee
+  extraction (no native storage phase in this descriptor).
+- Account transaction replay and the account emulator explicitly check execution
+  scope. A syntactically valid batch transaction is rejected by the emulator
+  before changing the account. A test invokes that real emulator entry point,
+  checks the exact scope error and verifies unchanged account time.
+- Mutation checks for the descriptor remove handwritten validation support,
+  relax its exact bit length, and remove the real account-emulator scope call.
+  Each produces the expected test failure; all three changes were restored.
+
+The batch commitments must be computed before the final transaction/shard
+wrapper. In particular, effects cannot hash the full `WorkchainBlockResult`:
+that includes the transaction itself and the final shard state, whose account
+dictionary contains its transaction hash. The canonical commitment preimages,
+engine-state versus shard-state separation and witness placement still need
+host implementation. The descriptor codec alone does not authenticate hashes.
 
 The result envelope is not a `TransactionDescr` constructor or a replacement
 for native `Transaction` validation. It is not yet inserted into block-extra;
@@ -51,11 +70,9 @@ still authenticate the input independently and select the correct engine.
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
   insufficient and would not constitute M1.
-- `block::tlb::TransactionDescr` has handwritten tag/skip/storage-fee logic in
-  `block-parse.cpp`, alongside the generated TL-B implementation. Both must
-  recognize a synthetic descriptor. `CheckAccountTxs::check_one_transaction`
-  currently reconstructs a per-account `Transaction`; adding a schema tag alone
-  does not supply block replay and must not enable acceptance on account chains.
+- `CheckAccountTxs::check_one_transaction` still reconstructs a per-account
+  `Transaction` after its scope check. Block execution needs a separate host
+  path, not removal of that rejection.
 
 ## Remaining requirements
 
@@ -64,7 +81,7 @@ called by the collator or validator and its context cells are not authentication
 proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
-   the descriptor registry; define the synthetic transaction encoding.
+   the descriptor registry; finish synthetic transaction commitments and wrapping.
 2. Integrate real collate/validate, message queues, value flow, resource limits,
    atomic publication, capability gating, restart and state synchronization.
 3. Lock the payment proof dependency, circuit/VK, signature and encryption

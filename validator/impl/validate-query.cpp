@@ -5749,6 +5749,11 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   auto td_cs = vm::load_cell_slice(trans.description);
   int tag = block::gen::t_TransactionDescr.get_tag(td_cs);
   REJECT_UNLESS(tag >= 0);  // we have already validated the serialization of all Transactions
+  auto scope_status = block::validate_transaction_execution_scope(
+      trans.description, block::WorkchainExecutionScope::AccountCompute);
+  if (scope_status.is_error()) {
+    return reject_query(scope_status.move_as_error_prefix("account transaction scope: ").to_string());
+  }
   td::optional<block::MsgMetadata> in_msg_metadata;
   if (in_msg_root.not_null()) {
     auto in_descr_cs = vq_.in_msg_dict_->lookup(in_msg_root->get_hash().as_bitslice());

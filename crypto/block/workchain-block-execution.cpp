@@ -14,6 +14,52 @@ bool same_cell(const td::Ref<vm::Cell>& a, const td::Ref<vm::Cell>& b) {
 
 }  // namespace
 
+td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description) {
+  return vm::CellBuilder().store_long(8, 4)
+      .store_bits(description.input_hash.bits(), 256).store_bits(description.effects_hash.bits(), 256)
+      .store_long(description.usage.wire_bytes, 64).store_long(description.usage.verification_units, 64)
+      .store_long(description.usage.written_cells, 64).finalize();
+}
+
+td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing batch transaction description");
+  }
+  bool special = false;
+  auto cs = vm::load_cell_slice_special(root, special);
+  if (special || cs.size() != 708 || cs.size_refs() != 0 || cs.fetch_ulong(4) != 8) {
+    return td::Status::Error("invalid batch transaction description");
+  }
+  WorkchainBatchDescription description;
+  if (!cs.fetch_bits_to(description.input_hash) || !cs.fetch_bits_to(description.effects_hash)) {
+    return td::Status::Error("incomplete batch transaction commitments");
+  }
+  description.usage = {cs.fetch_ulong(64), cs.fetch_ulong(64), cs.fetch_ulong(64)};
+  return description;
+}
+
+td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& description, WorkchainExecutionScope scope) {
+  if (description.is_null()) {
+    return td::Status::Error("missing transaction description for execution scope");
+  }
+  bool special = false;
+  auto cs = vm::load_cell_slice_special(description, special);
+  if (special || cs.size() < 4) {
+    return td::Status::Error("invalid transaction description for execution scope");
+  }
+  auto tag = cs.fetch_ulong(4);
+  if (tag > 8) {
+    return td::Status::Error("unknown transaction description for execution scope");
+  }
+  if (scope == WorkchainExecutionScope::AccountCompute && tag < 8) {
+    return td::Status::OK();
+  }
+  if (scope == WorkchainExecutionScope::BlockTransition && tag == 8) {
+    return td::Status::OK();
+  }
+  return td::Status::Error("transaction description does not match execution scope");
+}
+
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result) {
   if (result.new_shard_state.is_null() || result.batch_transaction.is_null() ||
       result.outbound_messages.is_null() || result.actions.is_null() || result.receipts.is_null() ||

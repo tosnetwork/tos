@@ -1468,6 +1468,8 @@ const SplitMergeInfo t_SplitMergeInfo;
 
 bool TransactionDescr::skip(vm::CellSlice& cs) const {
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v1:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:
       return cs.advance(4 + 1)                          // trans_ord$0000 storage_first:Bool
              && Maybe<TrStoragePhase>{}.skip(cs)        // storage_ph:(Maybe TrStoragePhase)
@@ -1518,6 +1520,8 @@ bool TransactionDescr::skip(vm::CellSlice& cs) const {
 
 bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v1:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:
       return cs.advance(4 + 1)                                              // trans_ord$0000 credit_first:Bool
              && Maybe<TrStoragePhase>{}.validate_skip(ops, cs, weak)        // storage_ph:(Maybe TrStoragePhase)
@@ -1568,12 +1572,14 @@ bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) con
 
 int TransactionDescr::get_tag(const vm::CellSlice& cs) const {
   int t = (int)cs.prefetch_ulong(4);
-  return (t >= 0 && t <= 7) ? (t == 3 ? 2 : t) : -1;
+  return (t >= 0 && t <= 8) ? (t == 3 ? 2 : t) : -1;
 }
 
 bool TransactionDescr::skip_to_storage_phase(vm::CellSlice& cs, bool& found) const {
   found = false;
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v1:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:
       return cs.advance(4 + 1)            // trans_ord$0000 storage_first:Bool
              && cs.fetch_bool_to(found);  // storage_ph:(Maybe TrStoragePhase)

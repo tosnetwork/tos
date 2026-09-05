@@ -620,7 +620,7 @@ endif()
 
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 add_executable(test-workchain-block test/test-td-main.cpp crypto/test/test-workchain-block.cpp)
-target_link_libraries(test-workchain-block PRIVATE tos_crypto)
+target_link_libraries(test-workchain-block PRIVATE tos_crypto emulator_static)
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
 

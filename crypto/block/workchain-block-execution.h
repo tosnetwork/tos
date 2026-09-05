@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "td/utils/Status.h"
+#include "td/utils/bits.h"
 #include "vm/cells/Cell.h"
 
 namespace block {
@@ -36,6 +37,18 @@ struct WorkchainBlockResult {
   td::Ref<vm::Cell> data_availability;
   WorkchainBlockResourceUsage usage;
 };
+
+// Neither hash may depend on this transaction or the final shard wrapper.
+struct WorkchainBatchDescription {
+  td::Bits256 input_hash{td::Bits256::zero()};
+  td::Bits256 effects_hash{td::Bits256::zero()};
+  WorkchainBlockResourceUsage usage;
+};
+
+td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description);
+td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const td::Ref<vm::Cell>& root);
+// Scope check only; callers must separately validate the full transaction encoding.
+td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& description, WorkchainExecutionScope scope);
 
 class WorkchainBlockEngine {
  public:

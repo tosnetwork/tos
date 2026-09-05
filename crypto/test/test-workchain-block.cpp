@@ -8,6 +8,8 @@
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "emulator/transaction-emulator.h"
 
 namespace {
 
@@ -71,6 +73,88 @@ TEST(WorkchainBlock, CounterReplay) {
   auto validated = block::replay_workchain_block(engine, in, produced).move_as_ok();
   ASSERT_TRUE(validated.new_shard_state->get_hash() == produced.new_shard_state->get_hash());
   ASSERT_EQ(vm::load_cell_slice(in.previous_shard_state).fetch_ulong(64), 40u);
+}
+
+TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
+  block::WorkchainBatchDescription description;
+  description.input_hash = number(11)->get_hash().bits();
+  description.effects_hash = number(12)->get_hash().bits();
+  description.usage = {13, 14, std::numeric_limits<std::uint64_t>::max()};
+  auto root = block::encode_workchain_batch_description(description);
+  ASSERT_EQ(vm::load_cell_slice(root).size(), 708u);
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, root));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, root));
+  block::gen::TransactionDescr::Record_trans_workchain_batch_v1 generated;
+  ASSERT_TRUE(tlb::unpack_cell(root, generated));
+  ASSERT_TRUE(generated.input_hash == description.input_hash);
+  ASSERT_TRUE(generated.effects_hash == description.effects_hash);
+  ASSERT_EQ(generated.wire_bytes, description.usage.wire_bytes);
+  ASSERT_EQ(generated.verification_units, description.usage.verification_units);
+  ASSERT_EQ(generated.written_cells, description.usage.written_cells);
+  auto decoded = block::decode_workchain_batch_description(root).move_as_ok();
+  ASSERT_TRUE(decoded.input_hash == description.input_hash);
+  ASSERT_TRUE(decoded.effects_hash == description.effects_hash);
+  ASSERT_TRUE(decoded.usage == description.usage);
+  auto cs = vm::load_cell_slice(root);
+  ASSERT_EQ(block::tlb::t_TransactionDescr.get_tag(cs), block::tlb::TransactionDescr::trans_workchain_batch_v1);
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.skip(cs));
+  ASSERT_TRUE(cs.empty_ext());
+  td::RefInt256 storage_fees;
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.get_storage_fees(root, storage_fees));
+  ASSERT_EQ(td::sgn(storage_fees), 0);
+  ASSERT_TRUE(block::validate_transaction_execution_scope(root, block::WorkchainExecutionScope::BlockTransition).is_ok());
+  auto wrong_scope = block::validate_transaction_execution_scope(root, block::WorkchainExecutionScope::AccountCompute);
+  ASSERT_TRUE(wrong_scope.is_error());
+  ASSERT_EQ(wrong_scope.error().message(), "transaction description does not match execution scope");
+  // Storage-only transaction: zero collected fees, no due fees, unchanged status.
+  auto account = vm::CellBuilder().store_long(1, 4).store_long(0, 6).finalize();
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, account));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, account));
+  ASSERT_TRUE(block::validate_transaction_execution_scope(account, block::WorkchainExecutionScope::AccountCompute).is_ok());
+  ASSERT_TRUE(block::validate_transaction_execution_scope(account, block::WorkchainExecutionScope::BlockTransition).is_error());
+  for (unsigned tag = 9; tag < 16; ++tag) {
+    auto future = vm::CellBuilder().store_long(tag, 4).finalize();
+    ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, future));
+    ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, future));
+    auto scope = block::validate_transaction_execution_scope(future, block::WorkchainExecutionScope::AccountCompute);
+    ASSERT_TRUE(scope.is_error());
+    ASSERT_EQ(scope.error().message(), "unknown transaction description for execution scope");
+  }
+}
+
+TEST(WorkchainBlock, RejectMalformedBatchDescription) {
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    vm::CellBuilder cb;
+    cb.store_long(8, 4).store_zeroes(mutation == 0 ? 703 : mutation == 1 ? 705 : 704);
+    if (mutation == 2) cb.store_ref(number(0));
+    auto root = cb.finalize();
+    ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, root));
+    ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, root));
+    auto decoded = block::decode_workchain_batch_description(root);
+    ASSERT_TRUE(decoded.is_error());
+    ASSERT_EQ(decoded.error().message(), "invalid batch transaction description");
+  }
+}
+
+TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {
+  block::WorkchainBatchDescription description;
+  description.input_hash.set_zero();
+  description.effects_hash.set_zero();
+  auto messages = vm::CellBuilder().store_long(0, 2).finalize();
+  auto update = vm::CellBuilder().store_long(0x72, 8).store_zeroes(512).finalize();
+  auto transaction = vm::CellBuilder().store_long(7, 4).store_zeroes(256).store_long(1, 64)
+      .store_zeroes(256).store_long(0, 64).store_long(1, 32).store_long(0, 15)
+      .store_long(0, 4).store_ref(messages).store_long(0, 5).store_ref(update)
+      .store_ref(block::encode_workchain_batch_description(description)).finalize();
+  ASSERT_TRUE(block::gen::t_Transaction.validate_ref(10000, transaction));
+  ASSERT_TRUE(block::tlb::t_Transaction.validate_ref(10000, transaction));
+  emulator::TransactionEmulator emulator(std::make_shared<block::Config>(0));
+  block::Account account(2, td::Bits256::zero().bits());
+  account.now_ = 17;
+  auto result = emulator.emulate_transaction(std::move(account), transaction);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.error().message(), "transaction description does not match execution scope");
+  ASSERT_EQ(account.now_, 17u);
 }
 
 TEST(WorkchainBlock, ResultWireRoundTrip) {
