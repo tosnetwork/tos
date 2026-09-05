@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import secrets
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -86,6 +88,11 @@ def wait_until(predicate, description: str, timeout: float = 90.0) -> Any:
 
 def canonical_raw_address(value: str) -> str:
     """Convert a user-friendly TOS address to its canonical raw form."""
+    if value.count(":") == 1:
+        workchain, account = value.split(":", 1)
+        if workchain in ("-1", "0") and len(account) == 64 and all(item in "0123456789abcdef" for item in account):
+            return value
+        raise RuntimeError("raw wallet address is not canonical")
     encoded = value.strip().replace("-", "+").replace("_", "/")
     raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
     if len(raw) != 36:
@@ -112,6 +119,12 @@ class Lifecycle:
         self.env = dict(os.environ)
         self.env["VAULT_URL"] = self.vault_url
         self.addresses: dict[str, str] = {}
+        self.agent_authority_seed = secrets.token_bytes(32)
+        self.agent_authority_public_key = self.ed25519_public_key(self.agent_authority_seed)
+        self.agent_account_address: str | None = None
+        self.agent_account_code_hash: str | None = None
+        self.match_source_address: str | None = None
+        self.match_source_code_hash: str | None = None
         self.evidence_dir = evidence_dir
         self.openfox_root = openfox_root
 
@@ -184,6 +197,94 @@ class Lifecycle:
                 lambda a=address: rpc(self.rpc_urls[0], "getAddressState", address=a).get("result") == "active",
                 f"active wallet {name}",
             )
+
+    def provision_prediction_agent_account(self) -> str:
+        """Create the production checked-call source with an owner-pinned authority."""
+        journal = self.workdir / "prediction-agent-custody"
+        journal.mkdir(mode=0o700)
+        journal.chmod(0o700)
+        self.tosctl_call(
+            "agent", "wallet", "create", "--name", "prediction-solver", "-v", "V5R1", "-w", "0",
+            "--max-per-tx", "2", "--daily-limit", "10",
+        )
+        self.tosctl_call(
+            "agent", "wallet", "bind-runtime", "--name", "prediction-solver",
+            "--runner-id", "local-prediction-acceptance", "--endpoint", "local://prediction-acceptance",
+            "--economic-authority-id", "local-prediction-authority",
+            "--economic-authority-public-key", self.agent_authority_public_key,
+            "--economic-custody-journal-directory", str(journal),
+        )
+        deployed = self.json_call(
+            "agent", "account", "deploy", "--wallet", "prediction-solver", "--from", "owner",
+            "-w", "0", "--amount", "4", "--yes",
+        )
+        address = canonical_raw_address(str(deployed["address"]))
+        wait_until(
+            lambda: rpc(self.rpc_urls[0], "getAddressState", address=address).get("result") == "active",
+            "active Prediction Agent Account",
+        )
+        view = self.json_call("agent", "account", "show", "--address", address)
+        code_hash = view.get("code_hash")
+        if isinstance(code_hash, str) and len(code_hash) == 64 and all(item in "0123456789abcdef" for item in code_hash):
+            code_hash = "tvm-cell-sha256:" + code_hash
+        if not isinstance(code_hash, str) or not code_hash.startswith("tvm-cell-sha256:"):
+            raise RuntimeError(f"Prediction Agent Account code hash is not canonical: {view}")
+        self.agent_account_address, self.agent_account_code_hash = address, code_hash
+        return address
+
+    def prediction_custody_authorization(self, *, market: str, market_id: str,
+                                         market_config_hash: str, market_code_hash: str,
+                                         amount: int, body_hash: str, valid_until: int) -> dict[str, Any]:
+        """Build the exact V1 PCEA preimage specified by the shared protocol."""
+        if self.agent_account_address is None or self.agent_account_code_hash is None:
+            raise RuntimeError("Prediction Agent Account has not been provisioned")
+        master = rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]
+        initial = master["init"]
+        network = {
+            "network_id": "tos:local-three-node", "global_id": 3,
+            "zero_state_root_hash": self._rpc_hash_to_digest(initial["root_hash"]),
+            "zero_state_file_hash": self._rpc_hash_to_digest(initial["file_hash"]), "workchain_id": 0,
+        }
+        market_raw = canonical_raw_address(market)
+        action_id = self._sha256_digest("prediction-agent-match-action")
+        authorization: dict[str, Any] = {
+            "schema_version": 1, "profile": "tos.prediction.checked-call.v1",
+            "authority_id": "local-prediction-authority", "owner_id": "local-owner",
+            "agent_id": "local-prediction-solver", "source_account": self.agent_account_address,
+            "network_domain": network, "action_kind": "prediction.match.submit",
+            "effect_kind": "prediction.match.submit", "stable_action_id": action_id,
+            "exact_request_digest": self._sha256_digest("prediction-agent-match-request"),
+            "writer_generation": 1, "writer_fence_digest": self._sha256_digest("prediction-agent-match-fence"),
+            "policy_revision": 1, "mandate_digest": self._sha256_digest("prediction-agent-match-mandate"),
+            "approval_digest_or_zero": "sha256:" + "0" * 64,
+            "market_id": market_id, "market_address": market_raw, "destination": market_raw,
+            "market_config_hash": market_config_hash, "market_code_hash": market_code_hash,
+            "amount_nanotos": amount, "body_hash": body_hash, "expires_at_unix": valid_until,
+            "source_agent_account_code_hash": self.agent_account_code_hash,
+            "public_key": "", "proof": "",
+        }
+        output = bytearray(b"TOS-PCEA\0")
+        output.extend(struct.pack(">H", authorization["schema_version"]))
+        for field in ("profile", "authority_id", "owner_id", "agent_id", "source_account", "source_agent_account_code_hash"):
+            output.extend(self._lp32(authorization[field]))
+        output.extend(self._lp32(network["network_id"]))
+        output.extend(struct.pack(">i", network["global_id"]))
+        output.extend(self._lp32(network["zero_state_root_hash"]))
+        output.extend(self._lp32(network["zero_state_file_hash"]))
+        output.extend(struct.pack(">i", network["workchain_id"]))
+        for field in ("action_kind", "effect_kind", "stable_action_id", "exact_request_digest"):
+            output.extend(self._lp32(authorization[field]))
+        output.extend(struct.pack(">Q", authorization["writer_generation"]))
+        output.extend(self._lp32(authorization["writer_fence_digest"]))
+        output.extend(struct.pack(">Q", authorization["policy_revision"]))
+        for field in ("mandate_digest", "approval_digest_or_zero", "market_id", "market_address", "market_config_hash", "market_code_hash"):
+            output.extend(self._lp32(authorization[field]))
+        output.extend(struct.pack(">Q", amount))
+        output.extend(self._lp32(body_hash))
+        output.extend(struct.pack(">Q", valid_until))
+        authorization["public_key"] = "ed25519:" + self.agent_authority_public_key
+        authorization["proof"] = "ed25519:" + self.sign_ed25519_digest(hashlib.sha256(output).digest())
+        return authorization
 
     def write_definition(self) -> dict[str, Any]:
         now = int(time.time())
@@ -259,6 +360,52 @@ class Lifecycle:
         )
         return boc_path
 
+    def prepare_and_send_agent(self, operation: dict[str, Any], amount: int, sequence: int,
+                               market_state: dict[str, Any]) -> Path:
+        """Use tosctl's real custody journal to prepare one checked-call V2 BOC."""
+        if self.agent_account_address is None:
+            raise RuntimeError("Prediction Agent Account is unavailable")
+        operation_path = self.workdir / f"agent-operation-{sequence}.json"
+        body_path = self.workdir / f"agent-operation-{sequence}.boc"
+        authorization_path = self.workdir / f"agent-authorization-{sequence}.json"
+        boc_path = self.workdir / f"agent-message-{sequence}.boc"
+        operation_path.write_text(json.dumps(operation))
+        operation_path.chmod(0o600)
+        self.tosctl_call(
+            "agent", "prediction", "build-operation", "--definition", str(self.definition),
+            "--operation", str(operation_path), "--output-boc", str(body_path),
+        )
+        artifact = json.loads(self.tosctl_call(
+            "agent", "prediction", "build-operation", "--definition", str(self.definition),
+            "--operation", str(operation_path),
+        ))
+        body_hash = artifact.get("body_hash")
+        if not isinstance(body_hash, str) or not body_hash.startswith("tvm-cell-sha256:"):
+            raise RuntimeError(f"Prediction operation artifact has no canonical body hash: {artifact}")
+        valid_until = int(time.time()) + 300
+        authorization = self.prediction_custody_authorization(
+            market=str(market_state["address"]), market_id=str(market_state["market_id"]),
+            market_config_hash=str(market_state["market_config_hash"]), market_code_hash=str(market_state["code_hash"]),
+            amount=amount, body_hash=body_hash, valid_until=valid_until,
+        )
+        authorization_path.write_text(json.dumps(authorization))
+        authorization_path.chmod(0o600)
+        self.tosctl_call(
+            "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
+            "--operation", str(operation_path), "--wallet", "prediction-solver",
+            "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
+            "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
+            "--output-boc", str(boc_path), "--yes",
+        )
+        before = self.json_call("agent", "account", "show", "--address", self.agent_account_address)
+        prior_seqno = int(before["seqno"])
+        self.broadcast_file(boc_path)
+        wait_until(
+            lambda: int(self.json_call("agent", "account", "show", "--address", self.agent_account_address)["seqno"]) > prior_seqno,
+            f"Prediction Agent Account seqno advancement for operation {sequence}",
+        )
+        return boc_path
+
     def export_match_evidence(self, external_boc: Path, operation: dict[str, Any], scan_start: int) -> None:
         """Export bounded public inputs for the OpenFox live acceptance gate."""
         if self.evidence_dir is None:
@@ -306,7 +453,7 @@ class Lifecycle:
             "OPENFOX_PREDICTION_MARKET_DEFINITION": str(self.evidence_dir / "market.json"),
             "OPENFOX_PREDICTION_MATCH_EXTERNAL_BOC": str(self.evidence_dir / "match-external.boc"),
             "OPENFOX_PREDICTION_MATCH_BODY_BOC": str(self.evidence_dir / "match-body.boc"),
-            "OPENFOX_PREDICTION_MATCH_SOURCE_ADDRESS": canonical_raw_address(self.addresses["owner"]),
+            "OPENFOX_PREDICTION_MATCH_SOURCE_ADDRESS": self.match_source_address or canonical_raw_address(self.addresses["owner"]),
             "OPENFOX_PREDICTION_MATCH_SCAN_START_MC_SEQNO": str(json.loads((self.evidence_dir / "manifest.json").read_text())["scan_start_masterchain_seqno"]),
             "OPENFOX_PREDICTION_TOSCTL_CONFIG_1": str(self.evidence_dir / "node-1.json"),
             "OPENFOX_PREDICTION_TOSCTL_CONFIG_2": str(self.evidence_dir / "node-2.json"),
@@ -316,6 +463,9 @@ class Lifecycle:
             "OPENFOX_PREDICTION_ZERO_STATE_FILE_HASH": initial["file_hash"],
             "OPENFOX_PREDICTION_EVIDENCE_DIRECTORY": str(report_dir),
         })
+        if self.match_source_code_hash is not None:
+            env["OPENFOX_PREDICTION_SUBMISSION_PROFILE"] = "agent-account-checked-call-v2"
+            env["OPENFOX_PREDICTION_SOURCE_AGENT_CODE_HASH"] = self.match_source_code_hash
         try:
             completed = subprocess.run(["go", "test", "./pkg/earning", "-run",
                                        "TestPredictionAcceptedWagerAndFutureRevealThreeNodeContractGate", "-count=1", "-v"],
@@ -377,6 +527,45 @@ class Lifecycle:
         env = dict(self.env)
         env["PREDICTION_TEST_SEED"] = seed.hex()
         return subprocess.check_output(["node", "-e", script], env=env, timeout=30).decode()
+
+    def sign_ed25519_digest(self, digest: bytes) -> str:
+        if len(digest) != 32:
+            raise RuntimeError("Prediction authority digest must be 32 bytes")
+        script = (
+            "const c=require('crypto');const s=Buffer.from(process.env.PREDICTION_TEST_SEED,'hex');"
+            "const d=Buffer.from(process.env.PREDICTION_TEST_DIGEST,'hex');"
+            "const k=c.createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),s]),format:'der',type:'pkcs8'});"
+            "process.stdout.write(c.sign(null,d,k).toString('hex'));"
+        )
+        env = dict(self.env)
+        env["PREDICTION_TEST_SEED"] = self.agent_authority_seed.hex()
+        env["PREDICTION_TEST_DIGEST"] = digest.hex()
+        result = subprocess.check_output(["node", "-e", script], env=env, timeout=30).decode()
+        if len(result) != 128:
+            raise RuntimeError("Prediction authority signature is not canonical Ed25519")
+        return result
+
+    @staticmethod
+    def _lp32(value: str) -> bytes:
+        encoded = value.encode()
+        return struct.pack(">I", len(encoded)) + encoded
+
+    @staticmethod
+    def _sha256_digest(label: str) -> str:
+        return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+
+    @staticmethod
+    def _rpc_hash_to_digest(value: str) -> str:
+        if value.startswith("sha256:"):
+            encoded = value.removeprefix("sha256:")
+            if len(encoded) == 64 and all(item in "0123456789abcdef" for item in encoded):
+                return value
+            raise RuntimeError("RPC zero-state digest is not canonical lowercase SHA-256")
+        encoded = value.replace("-", "+").replace("_", "/")
+        raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
+        if len(raw) != 32:
+            raise RuntimeError("RPC zero-state hash is not 32 bytes")
+        return "sha256:" + raw.hex()
 
     def show_quorum(self) -> dict[str, Any]:
         original = self.config.read_text()
@@ -486,7 +675,7 @@ class Lifecycle:
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"withdraw did not exhaust the owner's free collateral: {withdrawn}")
 
-    def run_signed_match_lifecycle(self) -> None:
+    def run_signed_match_lifecycle(self, agent_source: bool = False) -> None:
         """Prove a two-owner complementary BUY match from exact signed BOCs."""
         definition = self.write_definition()
         state = json.loads(self.tosctl_call(
@@ -501,6 +690,8 @@ class Lifecycle:
         self.broadcast_file(deploy)
         wait_until(lambda: self.wallet_seqno("owner") > prior, "match deploy seqno advancement")
         self.wait_status("trading")
+        if agent_source:
+            self.provision_prediction_agent_account()
         credited = TOS
         contribution = definition["participant_entry_fee"] + definition["account_cleanup_bounty"]
         seeds = {"normal_one": bytes([1]) * 32, "normal_two": bytes([2]) * 32}
@@ -528,7 +719,15 @@ class Lifecycle:
         match_operation = {"operation": "match_pair", "query_id": 3, "quantity_lots": 1,
                            "left_signed_order_boc": yes, "right_signed_order_boc": no}
         scan_start = int(rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]["last"]["seqno"])
-        external_boc = self.prepare_and_send("owner", match_operation, order_contribution + OPERATION_BUDGET, 3)
+        amount = order_contribution + OPERATION_BUDGET
+        if agent_source:
+            external_boc = self.prepare_and_send_agent(match_operation, amount, 3, state)
+            self.match_source_address = self.agent_account_address
+            self.match_source_code_hash = self.agent_account_code_hash
+        else:
+            external_boc = self.prepare_and_send("owner", match_operation, amount, 3)
+            self.match_source_address = canonical_raw_address(self.addresses["owner"])
+            self.match_source_code_hash = None
         matched = self.show_quorum()
         if matched["complete_sets"] != 1 or matched["locked"] != TOS or matched["fill_count"] != 1:
             raise RuntimeError(f"signed match did not create one conserved complete set: {matched}")
@@ -742,7 +941,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "signed-match", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
+        "--scenario", choices=("normal", "signed-match", "agent-signed-match", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -798,6 +997,10 @@ def main() -> int:
             lifecycle.provision_wallets(MATCH_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_signed_match_lifecycle()
             print("PredictionMarket two-party signed-order match three-node lifecycle: PASS")
+        elif args.scenario == "agent-signed-match":
+            lifecycle.provision_wallets(MATCH_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_signed_match_lifecycle(agent_source=True)
+            print("PredictionMarket Agent Account signed-order match three-node lifecycle: PASS")
         elif args.scenario == "challenged-appellate":
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle(1)
