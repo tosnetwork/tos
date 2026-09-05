@@ -1,7 +1,10 @@
 name: DNS contract upstream parity
 
 on:
+  # branches: keeps a push to a PR branch from firing here as well as through
+  # pull_request, which ran the same SHA twice. See contract-sandboxes.yml.
   push:
+    branches: [main, master, testnet]
     paths:
       - "crypto/smartcont/dns/**"
   pull_request:

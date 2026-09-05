@@ -20,7 +20,13 @@ on:
       - "scripts/update-*-code.py"
       - ".github/workflows/contract-sandboxes.yml"
     types: [opened, reopened, synchronize, ready_for_review]
+  # Restricted to the integration branches on purpose. Without this, a push to
+  # a PR branch fires here *and* through pull_request, running the same SHA
+  # twice — 82cc8238 and 078d2491 each burned a duplicate ~12-minute job. PRs
+  # are covered by the pull_request trigger above; this one exists so a merge
+  # commit is verified on the branch it landed on.
   push:
+    branches: [main, master, testnet]
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
