@@ -1797,6 +1797,24 @@ async fn verify_prediction_market_identity(
     Ok((code_hash, market_config_hash))
 }
 
+// Destination and bounce recovery scan untrusted chain history. Keep the
+// counter update in one fail-closed primitive so the configured bound applies
+// equally across pagination and cannot silently wrap after a long outage.
+fn consume_prediction_scan_transaction(
+    inspected_transactions: &mut u32,
+    maximum_transactions: u32,
+    subject: &str,
+) -> anyhow::Result<()> {
+    *inspected_transactions = inspected_transactions
+        .checked_add(1)
+        .with_context(|| format!("{subject} transaction count overflow"))?;
+    anyhow::ensure!(
+        *inspected_transactions <= maximum_transactions,
+        "{subject} transaction capacity was exhausted"
+    );
+    Ok(())
+}
+
 async fn scan_prediction_destination_block(
     rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
     market: &MsgAddressInt,
@@ -1835,13 +1853,11 @@ async fn scan_prediction_destination_block(
             "Prediction destination block pagination made no progress"
         );
         for raw in &page.transactions {
-            *inspected_transactions = inspected_transactions
-                .checked_add(1)
-                .context("Prediction destination transaction count overflow")?;
-            anyhow::ensure!(
-                *inspected_transactions <= maximum_transactions,
-                "Prediction destination transaction capacity was exhausted"
-            );
+            consume_prediction_scan_transaction(
+                inspected_transactions,
+                maximum_transactions,
+                "Prediction destination",
+            )?;
             let address =
                 MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
             if address.as_ref().ok() != Some(market) {
@@ -2176,13 +2192,11 @@ async fn scan_prediction_bounce_credit_block(
             "Prediction bounce-credit pagination made no progress"
         );
         for raw in &page.transactions {
-            *inspected_transactions = inspected_transactions
-                .checked_add(1)
-                .context("Prediction bounce-credit transaction count overflow")?;
-            anyhow::ensure!(
-                *inspected_transactions <= maximum_transactions,
-                "Prediction bounce-credit transaction capacity was exhausted"
-            );
+            consume_prediction_scan_transaction(
+                inspected_transactions,
+                maximum_transactions,
+                "Prediction bounce-credit",
+            )?;
             let address =
                 MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
             if address.as_ref().ok() != Some(source) {
@@ -2593,6 +2607,34 @@ mod tests {
         assert!(walk.reached_boundary);
         assert_eq!(walk.inspected, 10_001);
         assert!(walk.found.is_some());
+    }
+
+    #[test]
+    fn destination_and_bounce_counters_cross_ten_thousand_without_wrapping() {
+        const RECOVERY_DEPTH: u32 = 10_001;
+        for subject in ["Prediction destination", "Prediction bounce-credit"] {
+            let mut inspected = 0;
+            for _ in 0..RECOVERY_DEPTH {
+                consume_prediction_scan_transaction(&mut inspected, RECOVERY_DEPTH, subject)
+                    .unwrap();
+            }
+            assert_eq!(inspected, RECOVERY_DEPTH, "{subject} lost a scanned transaction");
+            assert!(
+                consume_prediction_scan_transaction(&mut inspected, RECOVERY_DEPTH, subject)
+                    .is_err(),
+                "{subject} accepted a transaction beyond its durable scan capacity"
+            );
+        }
+        let mut overflowing = u32::MAX;
+        assert!(
+            consume_prediction_scan_transaction(
+                &mut overflowing,
+                u32::MAX,
+                "Prediction destination"
+            )
+            .is_err(),
+            "destination scan counter wrapped"
+        );
     }
 
     #[test]
