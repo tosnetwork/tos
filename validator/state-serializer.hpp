@@ -33,6 +33,9 @@ struct SerializablePart {
   td::Ref<vm::Cell> cell;
 };
 
+// Internal serializer primitive; input must be a validated unsplit shard state.
+std::vector<SerializablePart> split_shard_state(ShardId shard_id, td::Ref<vm::Cell> shard_state_cell, int split_depth);
+
 class AsyncStateSerializer : public td::actor::Actor {
  private:
   td::uint32 attempt_ = 0;

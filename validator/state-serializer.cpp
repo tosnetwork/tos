@@ -533,8 +533,6 @@ void AsyncStateSerializer::got_shard_handle(BlockHandle handle) {
   td::actor::send_closure(manager_, &ValidatorManager::get_shard_state_from_db, handle, std::move(P));
 }
 
-namespace {
-
 // Expects `ShardStateUnsplit` as `shard_state_cell`.
 std::vector<SerializablePart> split_shard_state(ShardId shard_id, td::Ref<vm::Cell> shard_state_cell, int split_depth) {
   CHECK(split_depth <= 63);
@@ -592,8 +590,6 @@ std::vector<SerializablePart> split_shard_state(ShardId shard_id, td::Ref<vm::Ce
 
   return result;
 }
-
-}  // namespace
 
 void AsyncStateSerializer::got_shard_state(BlockHandle handle, td::Ref<ShardState> state,
                                            std::shared_ptr<vm::CellDbReader> cell_db_reader) {

@@ -1113,3 +1113,23 @@ receiver-side batch replay; separately, persistent-state acquisition/import,
 resource measurements, catch-up and GC with the monolithic engine-state shape.
 These are priority M1 prerequisites before freezing StateV2, not gates already
 implemented by the disk harness.
+
+### Snapshot shape: single executor account
+
+Exposed the existing internal `split_shard_state` serializer function for a
+direct regression test without changing its algorithm. A valid wc2 shard with
+one executor account holds a Cell dictionary of 4096 deterministic synthetic
+nullifiers. At snapshot split depths 1, 4 and 8, the real serializer produces
+exactly one account-data part plus one header proof, not multiple pieces of
+the account's data. The test independently BOC-round-trips both parts, verifies
+the virtualized header root, reconstructs the shard from that header and the
+account part, compares the complete state root, extracts the executor payload
+and looks up every nullifier. Depth zero preserves the unsplit state.
+
+Forcing the serializer to bypass splitting fails on the missing account/header
+parts (one instead of two); the mutation was restored. This establishes the
+account-prefix splitting limitation and a small in-memory serialization
+round-trip, not scalable state synchronization. It does not exercise network
+download, the production persistent-state importer, database reopening, peak
+memory at large state sizes, catch-up, GC or note-tree retention. Increasing
+account split depth cannot be assumed to reduce the single-account payload.
