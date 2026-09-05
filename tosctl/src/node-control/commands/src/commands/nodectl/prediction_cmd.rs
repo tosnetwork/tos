@@ -393,6 +393,10 @@ fn capabilities() -> anyhow::Result<()> {
             "minimum_global_version": 14,
             "full_risk_global_versions": AUDITED_GLOBAL_VERSIONS,
             "prepared_artifact": "exact-signed-external-message-boc",
+            "agent_relay_preparation": {
+                "schema": "tosctl.prediction-agent-effect-prepared.v1",
+                "pre_broadcast_recovery_boundary": "pinned-rpc"
+            },
             "get_methods": [
                 "get_prediction_state", "get_prediction_accounting",
                 "get_prediction_account", "get_prediction_order", "get_market_phase",
