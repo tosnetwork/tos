@@ -6,6 +6,10 @@ on:
   pull_request:
     paths:
       - ".github/workflows/prediction-market-release-scale.yml"
+      - "crypto/smartcont/prediction-market-code.fc"
+      - "crypto/smartcont/prediction-market.tlb"
+      - "tosctl/src/node-control/contracts/src/prediction_market.rs"
+      - "tosctl/src/node-control/contracts/tests/prediction_market_sandbox.rs"
   workflow_dispatch:
 
 concurrency:
