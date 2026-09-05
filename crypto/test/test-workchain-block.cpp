@@ -163,6 +163,37 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   ASSERT_EQ(record.now, 10u);
   ASSERT_EQ(record.outmsg_cnt, 0);
   ASSERT_TRUE(block::replay_workchain_batch(engine, in, record.description).is_ok());
+  auto replayed_account = block::replay_workchain_batch_transaction(
+      engine, in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(replayed_account->get_hash() == tx.new_total_state->get_hash());
+  ASSERT_TRUE(account.total_state->get_hash() == old_account->get_hash());
+  for (int mutation = 0; mutation < 8; ++mutation) {
+    auto changed = record;
+    if (mutation == 0) changed.prev_trans_hash = number(99)->get_hash().bits();
+    if (mutation == 1) changed.prev_trans_lt = 5;
+    if (mutation == 2) changed.now = 11;
+    if (mutation == 3) changed.lt = 11;
+    if (mutation == 4) changed.total_fees = vm::CellBuilder().store_long(1, 4).store_long(1, 8)
+        .store_long(0, 1).as_cellslice_ref();
+    if (mutation == 5) changed.orig_status = block::gen::AccountStatus::acc_state_frozen;
+    if (mutation == 6) changed.state_update = vm::CellBuilder().store_long(0x72, 8).store_zeroes(512).finalize();
+    if (mutation == 7) changed.account_addr = number(99)->get_hash().bits();
+    td::Ref<vm::Cell> messages;
+    ASSERT_TRUE(tlb::pack_cell(messages, changed.r1));
+    auto altered = vm::CellBuilder().store_long(7, 4).store_bits(changed.account_addr.bits(), 256)
+        .store_long(changed.lt, 64).store_bits(changed.prev_trans_hash.bits(), 256)
+        .store_long(changed.prev_trans_lt, 64).store_long(changed.now, 32).store_long(changed.outmsg_cnt, 15)
+        .store_long(changed.orig_status, 2).store_long(changed.end_status, 2).store_ref(messages)
+        .append_cellslice(changed.total_fees).store_ref(changed.state_update).store_ref(changed.description).finalize();
+    ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, altered));
+    auto rejected = block::replay_workchain_batch_transaction(
+        engine, in, altered, 2, td::Bits256::zero(), 10, 10, cfg);
+    ASSERT_TRUE(rejected.is_error());
+    auto expected = mutation == 2 || mutation == 3 || mutation == 7
+        ? td::Slice("batch transaction identity or time differs from host context")
+        : td::Slice("batch transaction wrapper differs from replay");
+    ASSERT_EQ(rejected.error().message(), expected);
+  }
   auto committed = tx.commit(account);
   ASSERT_TRUE(committed.not_null());
   ASSERT_TRUE(account.balance.is_zero());

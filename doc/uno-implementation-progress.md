@@ -75,6 +75,16 @@ Base node revision: `5a6145cce`.
 - Mutation checks: disabling batch serialization fails the commit/reload test;
   removing the unsettled-message rejection fails the exact rejection test.
   Both changes were restored.
+- `replay_workchain_batch_transaction` independently reloads the prior account,
+  re-executes the engine, reconstructs the complete native batch transaction and
+  compares its hash, returning the reconstructed Account without committing.
+  Host-supplied executor identity, LT, timestamp and serialization configuration
+  are separate from the untrusted transaction. Tests mutate the prior transaction
+  hash/LT, timestamp/LT, fees, original account status, account update hashes and
+  executor address while preserving valid transaction syntax.
+- Removing the complete-transaction hash comparison accepts a forged wrapper
+  and fails the rejection assertion. The comparison was restored. This helper
+  is not yet called by the live validator's block-execution path.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.

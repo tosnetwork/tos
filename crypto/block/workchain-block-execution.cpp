@@ -213,4 +213,47 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
   return effects;
 }
 
+td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
+    const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
+    std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
+    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+  if (claimed.is_null()) {
+    return td::Status::Error("missing batch transaction");
+  }
+  try {
+    gen::Transaction::Record record;
+    if (!gen::t_Transaction.validate_ref(4096, claimed) || !tlb::unpack_cell(claimed, record)) {
+      return td::Status::Error("invalid batch transaction encoding");
+    }
+    TRY_STATUS(validate_transaction_execution_scope(record.description, WorkchainExecutionScope::BlockTransition));
+    if (record.account_addr != executor_address || record.lt != expected_lt || record.now != expected_utime) {
+      return td::Status::Error("batch transaction identity or time differs from host context");
+    }
+    TRY_RESULT(previous_data, extract_workchain_engine_state(input.previous_shard_state, workchain_id, executor_address));
+    gen::ShardStateUnsplit::Record previous;
+    if (!tlb::unpack_cell(input.previous_shard_state, previous)) {
+      return td::Status::Error("invalid batch replay shard state");
+    }
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(previous.accounts), 256, block::tlb::aug_ShardAccounts);
+    Account account(workchain_id, executor_address.bits());
+    if (!account.unpack(accounts.lookup(executor_address), expected_utime, false)) {
+      return td::Status::Error("invalid batch replay account");
+    }
+    TRY_RESULT(effects, replay_workchain_batch(engine, input, record.description));
+    transaction::Transaction actual(account, transaction::Transaction::tr_workchain_batch, expected_lt, expected_utime);
+    TRY_STATUS(actual.prepare_workchain_batch(input, effects, cfg));
+    if (actual.start_lt != expected_lt || !actual.serialize(cfg)) {
+      return td::Status::Error("cannot reconstruct batch transaction");
+    }
+    if (actual.root->get_hash() != claimed->get_hash()) {
+      return td::Status::Error("batch transaction wrapper differs from replay");
+    }
+    return actual.new_total_state;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid batch transaction replay cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete batch transaction replay proof");
+  }
+}
+
 }  // namespace block

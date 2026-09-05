@@ -8,6 +8,8 @@
 
 namespace block {
 
+struct SerializeConfig;
+
 enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1 };
 
 // The host authenticates configuration and finality before constructing this input.
@@ -67,6 +69,12 @@ class WorkchainBlockEngine {
 td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngine& engine,
                                                       const WorkchainBlockInput& input,
                                                       const td::Ref<vm::Cell>& description);
+
+// Returns reconstructed Account state without committing. Identity, time and config come from the host.
+td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
+    const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
+    std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
+    std::uint32_t expected_utime, const SerializeConfig& cfg);
 
 // These helpers never commit state. The host may commit only after replay succeeds.
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result);
