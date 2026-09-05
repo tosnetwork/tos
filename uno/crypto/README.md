@@ -112,8 +112,9 @@ express Transfer fee, Unshield amount plus fee, and the four output-only amounts
 All amounts are u128 nanotomi; addition is checked before symmetric i64 narrowing.
 The typed variants cannot carry an unrelated Transfer principal or settlement fee.
 Their equations match the existing C++ `uno/core/bundle-context.h` prototype;
-cross-language binding/conformance remains to be integrated, not inferred from
-separate tests. These Rust variants are not wire discriminants.
+an initial [shared 26-case corpus](../testdata/README.md) now checks both implementations
+against the same acceptance oracle. This is not exhaustive equivalence or FFI
+integration. These Rust variants are not wire discriminants.
 
 The six-context permission/value matrix and wide arithmetic boundaries pass.
 Real generated bundles pass matching contexts and reject a changed public amount;

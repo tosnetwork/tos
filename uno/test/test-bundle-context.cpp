@@ -1,7 +1,43 @@
 #include "uno/core/bundle-context.h"
 #include "td/utils/tests.h"
+#include <fstream>
+#include <sstream>
+#include <string>
 
 using namespace uno_workchain;
+
+TEST(UnoBundleContext, SharedCrossLanguageVectors) {
+  std::ifstream input(UNO_CONTEXT_VECTORS_PATH);
+  ASSERT_TRUE(input.is_open());
+  std::string line;
+  unsigned count = 0;
+  while (std::getline(input, line)) {
+    std::istringstream row(line);
+    std::string name, kind, extra;
+    td::uint64 principal_hi, principal_lo, fee_hi, fee_lo;
+    td::int64 balance;
+    unsigned spends, outputs, accepted;
+    ASSERT_TRUE(static_cast<bool>(row >> name >> kind >> principal_hi >> principal_lo >> fee_hi >> fee_lo
+                                     >> balance >> spends >> outputs >> accepted));
+    ASSERT_TRUE(!(row >> extra));
+    ASSERT_TRUE(spends <= 1 && outputs <= 1 && accepted <= 1);
+    BundleContext context;
+    if (kind == "Transfer") { context = BundleContext::Transfer; }
+    else if (kind == "Unshield") { context = BundleContext::Unshield; }
+    else if (kind == "ShieldClaim") { context = BundleContext::ShieldClaim; }
+    else if (kind == "WithdrawalRefund") { context = BundleContext::WithdrawalRefund; }
+    else if (kind == "Genesis") { context = BundleContext::Genesis; }
+    else if (kind == "PrivateFeeDistribution") { context = BundleContext::PrivateFeeDistribution; }
+    else { ASSERT_TRUE(false); return; }
+    auto result = validate_bundle_context(context, balance, spends != 0, outputs != 0,
+                                         Amount::from_words(principal_hi, principal_lo),
+                                         Amount::from_words(fee_hi, fee_lo));
+    ASSERT_EQ(result.is_ok(), accepted != 0);
+    ++count;
+  }
+  ASSERT_TRUE(input.eof());
+  ASSERT_EQ(count, 26u);
+}
 
 TEST(UnoBundleContext, BindPublicValuesAndPermissions) {
   struct Case { BundleContext kind; td::uint64 principal; td::uint64 fee; td::int64 balance; bool spends; };

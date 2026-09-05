@@ -56,6 +56,52 @@ mod tests {
     use orchard::bundle::BundleVersion;
 
     #[test]
+    fn shared_cross_language_vectors() {
+        let corpus = include_str!("../../testdata/public-context-v1.txt");
+        let mut count = 0usize;
+        for line in corpus.lines() {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 10, "{line}");
+            let word = |index: usize| fields[index].parse::<u64>().expect("u64 fixture word");
+            let amount = (u128::from(word(2)) << 64) | u128::from(word(3));
+            let fee = (u128::from(word(4)) << 64) | u128::from(word(5));
+            let context = match fields[1] {
+                "Transfer" => {
+                    assert_eq!(amount, 0);
+                    PublicContext::Transfer { fee }
+                }
+                "Unshield" => PublicContext::Unshield { amount, fee },
+                kind => {
+                    assert_eq!(fee, 0);
+                    match kind {
+                        "ShieldClaim" => PublicContext::ShieldClaim { amount },
+                        "WithdrawalRefund" => PublicContext::WithdrawalRefund { amount },
+                        "Genesis" => PublicContext::Genesis { amount },
+                        "PrivateFeeDistribution" => {
+                            PublicContext::PrivateFeeDistribution { amount }
+                        }
+                        _ => panic!("unknown fixture context"),
+                    }
+                }
+            };
+            let bit = |index: usize| match fields[index] {
+                "0" => false,
+                "1" => true,
+                _ => panic!("invalid fixture bit"),
+            };
+            let flags = Flags::from_byte(
+                u8::from(bit(7)) | (u8::from(bit(8)) << 1),
+                BundleVersion::orchard_v2(),
+            )
+            .expect("fixture flags");
+            let balance = fields[6].parse::<i64>().expect("i64 fixture balance");
+            assert_eq!(check_context(context, balance, &flags).is_ok(), bit(9), "{}", fields[0]);
+            count = count.checked_add(1).expect("fixture count");
+        }
+        assert_eq!(count, 26);
+    }
+
+    #[test]
     fn public_context_requires_value_and_permissions() {
         let contexts = [
             (PublicContext::Transfer { fee: 100 }, 100, true),

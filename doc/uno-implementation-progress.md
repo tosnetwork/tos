@@ -986,3 +986,13 @@ text relabelled as fixed still has a different digest. Replacing hashing with a
 constant makes that test fail; selecting the historical constructor fails the
 frozen digest assertion. Both mutations were restored. An independent skill
 hash backend matched the Rust digest over the exported 907512-byte preimage.
+
+Added one shared 26-case public-context corpus consumed by both the C++ host
+helper tests and the Rust verifier-context tests. It covers six logical kinds,
+zero/max values, sign and fee mismatches, spend/output permissions, high-word
+amounts, u128 addition overflow and symmetric i64 bounds. Both readers require
+all rows and compare to the same reviewed acceptance oracle. Removing each
+implementation's balance comparison makes the wrong-fee case accepted; flipping
+the first valid case's expected result fails both readers. All mutations were
+restored. This provides agreement evidence for those inputs, not exhaustive
+language equivalence, serialized wire conformance or an FFI boundary.
