@@ -86,7 +86,7 @@ def wait_until(predicate, description: str, timeout: float = 90.0) -> Any:
 
 class Lifecycle:
     def __init__(self, workdir: Path, tosctl: Path, rpc_urls: list[str], control_url: str,
-                 evidence_dir: Path | None = None):
+                 evidence_dir: Path | None = None, openfox_root: Path | None = None):
         self.workdir = workdir
         self.tosctl = tosctl
         self.rpc_urls = rpc_urls
@@ -103,6 +103,7 @@ class Lifecycle:
         self.env["VAULT_URL"] = self.vault_url
         self.addresses: dict[str, str] = {}
         self.evidence_dir = evidence_dir
+        self.openfox_root = openfox_root
 
     def write_config(self, rpc_url: str | None = None) -> None:
         self.config.write_text(json.dumps({
@@ -274,6 +275,37 @@ class Lifecycle:
                     "scan_start_masterchain_seqno": scan_start}
         (self.evidence_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
         (self.evidence_dir / "manifest.json").chmod(0o600)
+
+    def run_openfox_accepted_wager_gate(self) -> None:
+        if self.openfox_root is None or self.evidence_dir is None:
+            return
+        report_dir = self.workdir / "openfox-evidence"
+        report_dir.mkdir(mode=0o700)
+        info = rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]
+        initial = info["init"]
+        env = dict(os.environ)
+        env.update({
+            "GOWORK": "off", "OPENFOX_PREDICTION_ACCEPTED_WAGER_CONTRACT_THREE_NODE_E2E": "1",
+            "OPENFOX_PREDICTION_TOSCTL": str(self.tosctl),
+            "OPENFOX_PREDICTION_MARKET_DEFINITION": str(self.evidence_dir / "market.json"),
+            "OPENFOX_PREDICTION_MATCH_EXTERNAL_BOC": str(self.evidence_dir / "match-external.boc"),
+            "OPENFOX_PREDICTION_MATCH_BODY_BOC": str(self.evidence_dir / "match-body.boc"),
+            "OPENFOX_PREDICTION_MATCH_SOURCE_ADDRESS": self.addresses["owner"],
+            "OPENFOX_PREDICTION_MATCH_SCAN_START_MC_SEQNO": str(json.loads((self.evidence_dir / "manifest.json").read_text())["scan_start_masterchain_seqno"]),
+            "OPENFOX_PREDICTION_TOSCTL_CONFIG_1": str(self.evidence_dir / "node-1.json"),
+            "OPENFOX_PREDICTION_TOSCTL_CONFIG_2": str(self.evidence_dir / "node-2.json"),
+            "OPENFOX_PREDICTION_TOSCTL_CONFIG_3": str(self.evidence_dir / "node-3.json"),
+            "OPENFOX_PREDICTION_NETWORK_ID": "tos:local-three-node", "OPENFOX_PREDICTION_GLOBAL_ID": "3",
+            "OPENFOX_PREDICTION_WORKCHAIN_ID": "0", "OPENFOX_PREDICTION_ZERO_STATE_ROOT_HASH": initial["root_hash"],
+            "OPENFOX_PREDICTION_ZERO_STATE_FILE_HASH": initial["file_hash"],
+            "OPENFOX_PREDICTION_EVIDENCE_DIRECTORY": str(report_dir),
+        })
+        completed = subprocess.run(["go", "test", "./pkg/earning", "-run",
+                                   "TestPredictionAcceptedWagerAndFutureRevealThreeNodeContractGate", "-count=1", "-v"],
+                                  cwd=self.openfox_root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  timeout=300, check=False)
+        if completed.returncode:
+            raise RuntimeError(f"OpenFox accepted-wager gate failed:\n{completed.stdout.decode()}")
 
     def signed_order(self, order: dict[str, Any], label: str, seed: bytes) -> str:
         """Build and verify one canonical signed order using an ephemeral key."""
@@ -482,6 +514,7 @@ class Lifecycle:
         if matched["complete_sets"] != 1 or matched["locked"] != TOS or matched["fill_count"] != 1:
             raise RuntimeError(f"signed match did not create one conserved complete set: {matched}")
         self.export_match_evidence(external_boc, match_operation, scan_start)
+        self.run_openfox_accepted_wager_gate()
 
     def run_challenged_lifecycle(self, appellate_outcome: int | None) -> None:
         """Exercise appellate quorum or timeout after a hash-bound challenge."""
@@ -684,6 +717,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tosctl", type=Path, default=REPO / "tosctl/src/target/debug/tosctl")
     parser.add_argument("--base-port", type=int, default=21600)
     parser.add_argument("--evidence-dir", type=Path, help="owner-private export for OpenFox match acceptance")
+    parser.add_argument("--openfox-root", type=Path, help="run OpenFox accepted-wager gate before localnet teardown")
     parser.add_argument(
         "--normal-outcome", choices=("yes", "no", "invalid"), default="yes",
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
@@ -697,6 +731,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.openfox_root and not args.evidence_dir:
+        raise RuntimeError("--openfox-root requires --evidence-dir for exact match inputs")
     if not args.tosctl.is_file() or not os.access(args.tosctl, os.X_OK):
         raise RuntimeError(f"tosctl binary is not executable: {args.tosctl}")
     parent = args.workdir.resolve() if args.workdir else Path(tempfile.gettempdir())
@@ -728,7 +764,8 @@ def main() -> int:
             60,
         )
         lifecycle = Lifecycle(workdir, args.tosctl.resolve(), rpc_urls, control_url,
-                              args.evidence_dir.resolve() if args.evidence_dir else None)
+                              args.evidence_dir.resolve() if args.evidence_dir else None,
+                              args.openfox_root.resolve() if args.openfox_root else None)
         lifecycle.write_config()
         if args.scenario == "normal":
             lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
