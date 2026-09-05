@@ -16,9 +16,9 @@ inline td::Ref<vm::Cell> counter_number(std::uint64_t value) {
 
 // Non-bouncing transfers to an uninitialized native recipient exercise delivery
 // without requiring a return-message handler in the test block engine.
-inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment) {
+inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment, bool to_executor = false) {
   auto message = vm::CellBuilder().store_long(4, 4).store_zeroes(2)
-      .store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
+      .store_long(4, 3).store_long(to_executor ? 2 : 0, 8).store_zeroes(255).store_long(to_executor ? 0 : 1, 1)
       .store_long(1, 4).store_long(100, 8).store_long(0, 1)
       .store_zeroes(8).store_zeroes(96).store_zeroes(2).finalize();
   vm::Dictionary dict(15);

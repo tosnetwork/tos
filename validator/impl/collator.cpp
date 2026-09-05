@@ -2457,14 +2457,17 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
   if (block_execution) {
-    if (after_split_ || before_split_ || after_merge_ ||
-        !nb_out_msgs_->is_eof() || !in_msg_dict->is_empty()) {
-      co_return td::Status::Error("block batch collation requires unsplit state without incoming account messages");
+    if (after_split_ || before_split_ || after_merge_ || !in_msg_dict->is_empty()) {
+      co_return td::Status::Error("block batch collation requires unsplit state");
     }
-    inbound_queues_empty_ = true;
+    collect_batch_imports_ = true;
+    batch_executor_address_ = block_execution->policy.executor_address;
     allow_repeat_collation_ = false;
     if (!process_dispatch_queue()) {
       co_return td::Status::Error("cannot advance workchain batch dispatch queue");
+    }
+    if (!process_inbound_internal_messages()) {
+      co_return td::Status::Error("cannot collect workchain batch incoming messages");
     }
     if (!create_workchain_batch_transaction(*block_execution, params_.workchain_block_candidate)) {
       co_return td::Status::Error("cannot create workchain batch transaction");
@@ -3433,6 +3436,17 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
     return fatal_error("missing block executor account");
   }
   block::WorkchainBlockInput input{prev_state_root_, std::move(candidate), config_->get_root_cell(), mc_state_root};
+  if (!batch_imports_.empty()) {
+    std::vector<Ref<vm::Cell>> envelopes;
+    for (const auto& imported : batch_imports_) {
+      envelopes.push_back(imported.envelope);
+    }
+    auto inbox = block::encode_workchain_batch_inbound(envelopes);
+    if (inbox.is_error()) {
+      return fatal_error(inbox.move_as_error());
+    }
+    input.inbound_messages = inbox.move_as_ok();
+  }
   auto after_lt = start_lt;
   auto emitted = last_dispatch_queue_emitted_lt_.find(account->addr);
   if (emitted != last_dispatch_queue_emitted_lt_.end()) {
@@ -3451,6 +3465,27 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
     return fatal_error(staged.move_as_error_prefix("cannot stage workchain batch: "));
   }
   auto batch = staged.move_as_ok();
+  for (const auto& imported : batch_imports_) {
+    block::tlb::MsgEnvelope::Record_std envelope;
+    if (!tlb::unpack_cell(imported.envelope, envelope)) {
+      return fatal_error("cannot unpack staged batch import");
+    }
+    vm::CellBuilder cb;
+    if (!cb.store_long_bool(4, 3) || !cb.store_ref_bool(imported.envelope) ||
+        !cb.store_ref_bool(batch->root) || !block::tlb::t_Tomis.store_integer_ref(cb, envelope.fwd_fee_remaining)) {
+      return fatal_error("cannot encode final batch import");
+    }
+    auto in_msg = cb.finalize();
+    if (imported.from_own_queue) {
+      if (!cb.store_long_bool(4, 3) || !cb.store_ref_bool(imported.envelope) || !cb.store_ref_bool(in_msg) ||
+          !insert_out_msg(cb.finalize()) || !delete_out_msg_queue_msg(imported.queue_key.cbits())) {
+        return fatal_error("cannot dequeue batch message from own queue");
+      }
+    }
+    if (!insert_in_msg(in_msg)) {
+      return fatal_error("cannot publish final batch import");
+    }
+  }
   if (!batch->update_limits(*block_limit_status_, false)) {
     return fatal_error("cannot account for workchain batch block size");
   }
@@ -4247,6 +4282,19 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
     return !our || delete_out_msg_queue_msg(key);
   }
   // destination is in our shard
+  if (collect_batch_imports_) {
+    WorkchainId destination_wc;
+    StdSmcAddress destination;
+    if (!block::tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_wc, destination) ||
+        destination_wc != workchain() || destination != batch_executor_address_) {
+      return fatal_error("batch message destination is not the configured executor");
+    }
+    batch_imports_.push_back({msg_env, our, td::BitArray<352>(key)});
+    if (!block_limit_status_->add_cell(msg_env)) {
+      return fatal_error("cannot account for incoming batch envelope");
+    }
+    return true;
+  }
   // process the message by an ordinary transaction similarly to process_one_new_message()
   //
   // 8. create a Transaction processing this Message
@@ -4321,6 +4369,9 @@ bool Collator::process_inbound_internal_messages() {
     stats_.load_fraction_internals = block_limit_status_->load_fraction(block::ParamLimits::cl_normal);
   };
   while (!nb_out_msgs_->is_eof()) {
+    if (collect_batch_imports_ && batch_imports_.size() >= 32767) {
+      break;
+    }
     block_full_ = !block_limit_status_->fits(block::ParamLimits::cl_normal);
     auto kv = nb_out_msgs_->extract_cur();
     CHECK(kv && kv->msg.not_null());

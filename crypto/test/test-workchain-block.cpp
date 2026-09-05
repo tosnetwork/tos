@@ -897,10 +897,12 @@ TEST(WorkchainBlock, InboxReconstructedFromNativeImports) {
   auto deferred = vm::CellBuilder().store_long(4, 5).store_ref(second).store_ref(transaction)
       .store_long(1, 4).store_long(67, 8).finalize();
   auto transit = vm::CellBuilder().store_long(5, 5).store_ref(first).store_ref(first).finalize();
+  auto routed = vm::CellBuilder().store_long(5, 3).store_ref(first).store_ref(first).store_long(0, 4).finalize();
   ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, final));
   ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, deferred));
   ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, transit));
-  auto rebuilt = block::workchain_batch_inbound_from_imports({deferred, transit, final}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, routed));
+  auto rebuilt = block::workchain_batch_inbound_from_imports({deferred, transit, routed, final}).move_as_ok();
   ASSERT_TRUE(rebuilt->get_hash() == expected->get_hash());
   ASSERT_TRUE(block::workchain_batch_inbound_from_imports({transit}).move_as_ok().is_null());
   ASSERT_TRUE(block::workchain_batch_inbound_from_imports({}).move_as_ok().is_null());

@@ -124,6 +124,14 @@ class Collator final : public td::actor::Actor {
  private:
   bool create_workchain_batch_transaction(const block::ResolvedWorkchainBlockExecution& execution,
                                           Ref<vm::Cell> candidate);
+  struct BatchImport {
+    Ref<vm::Cell> envelope;
+    bool from_own_queue;
+    td::BitArray<352> queue_key;
+  };
+  bool collect_batch_imports_{false};
+  StdSmcAddress batch_executor_address_;
+  std::vector<BatchImport> batch_imports_;
   void start_up() override;
   void load_prev_states_blocks();
   void alarm() override;

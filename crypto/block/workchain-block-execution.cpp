@@ -186,6 +186,13 @@ td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
           envelopes.push_back(record.in_msg);
           break;
         }
+        case gen::InMsg::msg_import_tr: {
+          gen::InMsg::Record_msg_import_tr record;
+          if (!tlb::unpack_cell(root, record)) {
+            return td::Status::Error("invalid native transit batch import");
+          }
+          break;
+        }
         case gen::InMsg::msg_import_deferred_tr: {
           gen::InMsg::Record_msg_import_deferred_tr record;
           if (!tlb::unpack_cell(root, record)) {

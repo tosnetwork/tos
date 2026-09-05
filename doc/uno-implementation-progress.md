@@ -133,7 +133,8 @@ Base node revision: `5a6145cce`.
   Account collation rejects unexpected candidates; block collation requires one.
   Removing candidate/scope matching accepts a missing block candidate and fails
   the rejection assertion; the check was restored.
-  This branch still rejects split/merge and pending incoming account messages.
+  This branch still rejects split/merge; incoming messages to its configured
+  executor are collected for the batch through native queue processing.
   Persisted outbound queues, dispatch queue advancement and native dequeue
   descriptors from the existing cleanup pass are supported. Non-bouncing Native
   delivery and processed-upto-driven cleanup now have disk integration evidence.
@@ -195,7 +196,7 @@ Base node revision: `5a6145cce`.
   must have a permitted OutMsg record with the right source transaction and origin
   metadata, and obey deferred-message ordering. The normal OutMsg/queue checks
   still verify the reverse transaction reference and queue state update. Native
-  incoming queue consumption is still rejected by the collator; deferred host transit
+  incoming queue consumption now builds the batch inbox; deferred host transit
   does not execute a recipient account in this block.
 - The disk test now sends two messages carrying 100 atoms each to workchain 0.
   Fixture forwarding prices charge 100 per message: 33 collected locally and 67
@@ -307,7 +308,7 @@ Base node revision: `5a6145cce`.
   equal-LT hash tie-breaking, duplicate original messages, count/key mismatches,
   malformed envelopes, input/list commitment substitution and positive/negative
   native membership. Native batch preparation now stages incoming value credit;
-  collator queue consumption and end-to-end inbound value-flow tests remain pending.
+  collator queue consumption and self-queue inbound value-flow tests are integrated.
 - Inbound mutation checks omit the exposed-list comparison during replay (a
   substituted membership list is accepted) and omit dictionary-key/message-hash
   checking (a falsely indexed envelope is accepted). Each fails its targeted
@@ -344,8 +345,8 @@ the input test. Both guards were restored.
 The result envelope is not a `TransactionDescr` constructor or a replacement
 for native `Transaction` validation. The host inserts the synthetic batch transaction
 into AccountBlock/block-extra and persists the result witness in executor data;
-outgoing and deferred host LT/value-flow paths are tested, while incoming account
-message semantics remain pending.
+outgoing, deferred host and executor self-queue inbound LT/value-flow paths are
+tested. Cross-workchain inbound and invalid-destination recovery remain pending.
 The effect envelope alone binds output data, while its batch description also
 binds input context; neither authenticates the context by itself.
 
@@ -507,6 +508,24 @@ account state, full native wrapper replay, rejection of late input times, a
 successful incoming-funded outgoing message with independent replay, and an
 insufficient second outgoing message leaving no partial credit/fee/output.
 Omitting the credit update makes the balance-200 assertion fail; it was restored.
-These are transaction-layer tests. Live collator inbox collection, native InMsg
-publication, processed-up-to updates and incoming multi-node integration remain
-required before claiming full M1 incoming support.
+These are transaction-layer tests; the integration below extends them to native
+queue consumption and incoming candidate replay, not yet cross-workchain funding.
+
+Collator now collects executor-bound neighbor/own-queue deliveries after native
+route/key/fee/processed-up-to checks. It commits their canonical inbox to the
+batch, then publishes final InMsg records pointing to the serialized transaction.
+Own-queue imports reuse native dequeue-immediate OutMsg and queue deletion.
+Ordinary/deferred transit remains host-owned and contributes no engine input.
+Collection respects native queue stop conditions and the 32767-envelope format
+bound. Invalid executor destinations still reject; a live-chain recovery/bounce
+policy is required so a protocol-valid wrong-address message cannot stall input
+progress. This is an explicit remaining liveness issue, not activation-ready.
+
+The new self-delivery disk test sends two 100-atom messages, with one deferred,
+then reopens nodes to receive them over two batches. Exact balances are
+1000 -> 600 -> 700 -> 800; sender fees total 66 and import fees total 134.
+The final empty batch preserves 800 with no duplicate input. An independent DB
+snapshot imports the first receiving candidate through real ValidateQuery.
+Omitting final InMsg publication makes the first receiving block fail native
+value-flow conservation (in != out); publication was restored. Consensus
+acceptance in this harness still uses the existing fake committee mechanism.

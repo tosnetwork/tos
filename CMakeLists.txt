@@ -751,6 +751,12 @@ add_test(NAME test-counter-disk-integration
     -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-disk-integration PROPERTIES TIMEOUT 180)
+add_test(NAME test-counter-self-delivery
+  COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
+    -DCREATE_STATE=$<TARGET_FILE:create-state> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR} -DSELF_DELIVERY=ON
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+set_tests_properties(test-counter-self-delivery PROPERTIES TIMEOUT 90)
 foreach(activation_mode missing_capability old_version)
   add_test(NAME test-counter-activation-${activation_mode}
     COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
