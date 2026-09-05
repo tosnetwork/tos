@@ -270,6 +270,44 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
       engine, recovered_input, committed, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
   ASSERT_TRUE(replayed_from_storage->get_hash() == recovered_account.total_state->get_hash());
   ASSERT_TRUE(recovered_witness.effects->get_hash() == stored.effects->get_hash());
+  block::WorkchainBlockReplayContext context{in.previous_shard_state, in.configuration, in.finality_context};
+  auto state_replay = block::replay_workchain_batch_state(
+      engine, context, restored, committed, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(state_replay->get_hash() == recovered_account.total_state->get_hash());
+  block::gen::ShardStateUnsplit::Record original_state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, original_state));
+  vm::AugmentedDictionary original_accounts(vm::load_cell_slice_ref(original_state.accounts), 256,
+                                             block::tlb::aug_ShardAccounts);
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    block::Account altered_account(2, td::Bits256::zero().bits());
+    ASSERT_TRUE(altered_account.unpack(original_accounts.lookup(td::Bits256::zero()), 10, false));
+    auto altered_effects = effects;
+    auto altered_input = in;
+    if (mutation == 1) altered_effects.receipts = number(99);
+    if (mutation == 2) altered_input.candidate = number(3);
+    block::transaction::Transaction altered_tx(
+        altered_account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+    auto prepared = altered_tx.prepare_workchain_batch(altered_input, altered_effects, cfg);
+    ASSERT_TRUE(prepared.is_ok());
+    ASSERT_TRUE(altered_tx.serialize(cfg));
+    vm::CellBuilder altered_entry;
+    altered_entry.store_ref(altered_tx.new_total_state)
+        .store_bits((mutation == 0 ? number(99)->get_hash() : committed->get_hash()).bits(), 256)
+        .store_long(10, 64);
+    vm::AugmentedDictionary altered_accounts(256, block::tlb::aug_ShardAccounts);
+    ASSERT_TRUE(altered_accounts.set_builder(td::Bits256::zero(), altered_entry));
+    auto altered_state = recovered_state;
+    altered_state.accounts = altered_accounts.get_wrapped_dict_root();
+    td::Ref<vm::Cell> altered_root;
+    ASSERT_TRUE(tlb::pack_cell(altered_root, altered_state));
+    auto rejected = block::replay_workchain_batch_state(
+        engine, context, altered_root, committed, 2, td::Bits256::zero(), 10, 10, cfg);
+    ASSERT_TRUE(rejected.is_error());
+    const td::Slice expected[] = {"claimed executor transaction link differs from batch",
+                                  "claimed executor account differs from batch replay",
+                                  "batch transaction input commitment differs from authenticated context"};
+    ASSERT_EQ(rejected.error().message(), expected[mutation]);
+  }
 }
 
 TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {

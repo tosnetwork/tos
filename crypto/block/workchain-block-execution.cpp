@@ -310,4 +310,45 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
   }
 }
 
+td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
+    const WorkchainBlockEngine& engine, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
+    std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
+    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+  if (claimed_transaction.is_null()) {
+    return td::Status::Error("missing batch transaction");
+  }
+  try {
+    TRY_RESULT(engine_state, extract_workchain_engine_state(claimed_shard, workchain_id, executor_address));
+    gen::ShardStateUnsplit::Record state;
+    if (!tlb::unpack_cell(claimed_shard, state)) {
+      return td::Status::Error("invalid claimed batch shard state");
+    }
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    Account account(workchain_id, executor_address.bits());
+    if (!account.unpack(accounts.lookup(executor_address), expected_utime, false)) {
+      return td::Status::Error("invalid claimed batch executor account");
+    }
+    if (account.last_trans_hash_ != claimed_transaction->get_hash().bits() || account.last_trans_lt_ != expected_lt) {
+      return td::Status::Error("claimed executor transaction link differs from batch");
+    }
+    TRY_RESULT(witness, decode_workchain_executor_state(account.data));
+    if (witness.candidate.is_null()) {
+      return td::Status::Error("claimed executor state is missing batch witness");
+    }
+    WorkchainBlockInput input{context.previous_shard_state, witness.candidate,
+                              context.configuration, context.finality_context};
+    TRY_RESULT(reconstructed, replay_workchain_batch_transaction(
+        engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg));
+    if (!same_cell(reconstructed, account.total_state)) {
+      return td::Status::Error("claimed executor account differs from batch replay");
+    }
+    return reconstructed;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid batch state replay cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete batch state replay proof");
+  }
+}
+
 }  // namespace block

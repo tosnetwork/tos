@@ -100,6 +100,16 @@ Base node revision: `5a6145cce`.
   never wallet secrets or private proving inputs.
 - Removing the persisted engine/effects equality check accepts an inconsistent
   witness and fails its rejection assertion. The check was restored.
+- `replay_workchain_batch_state` recovers public candidate data from the claimed
+  singleton executor state. Its context contains only previous shard, configuration
+  and finality roots supplied by the host. It checks the final transaction link,
+  independently reconstructs the transaction and compares the complete Account,
+  including the persisted effects, without publishing state. BoC recovery tests
+  exercise this entry and reject altered transaction links, receipts and candidates.
+  Removing the final Account comparison accepts altered stored receipts and makes
+  the rejection assertion fail; the comparison was restored.
+  This is an account/witness replay helper, not full shard validation: authenticated
+  context, block headers, queues, value flow and live dispatch remain host duties.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.

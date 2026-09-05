@@ -21,6 +21,13 @@ struct WorkchainBlockInput {
   td::Ref<vm::Cell> finality_context;
 };
 
+// Candidate data is recovered from the claimed state, never supplied by a local cache.
+struct WorkchainBlockReplayContext {
+  td::Ref<vm::Cell> previous_shard_state;
+  td::Ref<vm::Cell> configuration;
+  td::Ref<vm::Cell> finality_context;
+};
+
 struct WorkchainBlockResourceUsage {
   std::uint64_t wire_bytes{0};
   std::uint64_t verification_units{0};
@@ -82,6 +89,14 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
 // Returns reconstructed Account state without committing. Identity, time and config come from the host.
 td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
+    std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
+    std::uint32_t expected_utime, const SerializeConfig& cfg);
+
+// Checks the persisted witness, reconstructed Account and final transaction link.
+// The host separately authenticates context and validates shard header/queues/value flow.
+td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
+    const WorkchainBlockEngine& engine, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
     std::uint32_t expected_utime, const SerializeConfig& cfg);
 
