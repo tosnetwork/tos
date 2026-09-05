@@ -10,6 +10,7 @@
 use super::capability_registry_cmd::CapabilityRegistryCmd;
 use super::dispute_cmd::DisputeCmd;
 use super::output_format::OutputFormat;
+use super::prediction_cmd::PredictionCmd;
 use super::proof_attestation_cmd::ProofAttestationCmd;
 use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
@@ -66,6 +67,7 @@ use std::{
 };
 
 mod dual_absence;
+mod prediction_relay;
 use dual_absence::{
     AgentAccountEconomicPaymentRelayTransactionComponentAbsenceCmd,
     AgentAccountEconomicPaymentRelayTransactionComponentAbsenceProofVerifyCmd,
@@ -74,6 +76,10 @@ use dual_absence::{
     AgentAccountEconomicPaymentSponsorshipDualAbsenceCapabilityCmd,
     AgentAccountEconomicPaymentSponsorshipDualAbsenceCmd,
     AgentAccountEconomicPaymentSponsorshipDualAbsenceProofVerifyCmd,
+};
+use prediction_relay::{
+    AgentAccountPredictionRelayBounceCreditResolveCmd,
+    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelaySourceResolveCmd,
 };
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -115,6 +121,8 @@ pub enum AgentAction {
     Dispute(DisputeCmd),
     /// Proof Attestation (ed25519 signature adapter) operations
     Attestation(ProofAttestationCmd),
+    /// PredictionMarket V1 deployment, inspection and exact-message preparation
+    Prediction(PredictionCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -616,6 +624,12 @@ pub enum AgentAccountAction {
     EconomicEffectPrepare(AgentAccountEconomicEffectPrepareCmd),
     /// Broadcast the exact previously prepared Agreement contract effect
     EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
+    /// Resolve a Prediction exact source transaction from a durable pre-broadcast cursor
+    PredictionRelaySourceResolve(AgentAccountPredictionRelaySourceResolveCmd),
+    /// Resolve the exact PredictionMarket destination transaction from a durable chain checkpoint
+    PredictionRelayDestinationResolve(AgentAccountPredictionRelayDestinationResolveCmd),
+    /// Resolve the exact rich bounce credit back at the source Agent Account
+    PredictionRelayBounceCreditResolve(AgentAccountPredictionRelayBounceCreditResolveCmd),
     /// Prepare one owner-authorized cancellation for an existing controller action
     CancelPrepare(AgentAccountCancelPrepareCmd),
 }
@@ -1538,6 +1552,7 @@ impl AgentCmd {
             AgentAction::Service(cmd) => cmd.run(&self.config).await,
             AgentAction::Dispute(cmd) => cmd.run(&self.config).await,
             AgentAction::Attestation(cmd) => cmd.run(&self.config).await,
+            AgentAction::Prediction(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -1586,6 +1601,13 @@ impl AgentAccountCmd {
             }
             AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelaySourceResolve(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelayDestinationResolve(cmd) => {
+                cmd.run(config_path).await
+            }
+            AgentAccountAction::PredictionRelayBounceCreditResolve(cmd) => {
+                cmd.run(config_path).await
+            }
             AgentAccountAction::CancelPrepare(cmd) => cmd.run(config_path).await,
         }
     }
@@ -5707,7 +5729,7 @@ impl AgentAccountEconomicEffectBroadcastCmd {
             .context("custody effect has no full network-domain pin")?;
         validate_exact_boc_before_broadcast(&boc)?;
         rpc_client.verify_pinned_primary_network(network_domain).await?;
-        journal.begin_broadcast(&record.claim, time_format::now())?;
+        journal.begin_or_resume_exact_broadcast(&record.claim, time_format::now())?;
         let submission = rpc_client.submit_exact_boc_pinned(&boc, network_domain).await?;
         if submission.status == ExactBocSubmissionStatus::Accepted {
             println!(
@@ -9443,7 +9465,7 @@ fn open_controller_journal(config_path: &Path) -> anyhow::Result<AgentAccountCus
     AgentAccountCustodyJournal::open(directory)
 }
 
-fn open_economic_controller_journal(
+pub(crate) fn open_economic_controller_journal(
     _config_path: &Path,
     explicit_directory: Option<&str>,
     pinned_directory: Option<&str>,

@@ -480,6 +480,70 @@ fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
 }
 
 #[test]
+fn bounceable_state_init_message_can_deploy_and_activate_atomically() {
+    let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("atomic-deploy-owner", 100 * TOS).expect("owner");
+    let normal = bc.treasury("atomic-deploy-normal", 10 * TOS).expect("normal");
+    let appellate = bc.treasury("atomic-deploy-appellate", 10 * TOS).expect("appellate");
+    let reserve = bc.treasury("atomic-deploy-reserve", 10 * TOS).expect("reserve");
+    let now = u64::from(bc.now());
+    let init = PredictionMarketInitV1 {
+        global_id: 42,
+        workchain_id: -1,
+        deployment_salt: [0x91; 32],
+        rules_hash: [0x92; 32],
+        metadata_hash: [0x93; 32],
+        reserve_recipient: reserve.address().clone(),
+        trade_close: now + 1_000,
+        resolve_not_before: now + 1_100,
+        oracle_vote_deadline: now + 1_300,
+        challenge_period: 120,
+        appeal_review_delay: 60,
+        appeal_period: 180,
+        claim_deadline: now + 2_000,
+        lot_value: TOS,
+        min_price_tick: 100,
+        min_fill_lots: 1,
+        max_order_lots: 10,
+        max_locked_collateral: 10 * TOS,
+        max_account_free_balance: 10 * TOS,
+        max_total_free_balance: 10 * TOS,
+        max_total_liability: 30 * TOS,
+        max_participants: 2,
+        max_orders_per_participant: 2,
+        max_live_order_records: 4,
+        participant_entry_fee: TOS / 1_000,
+        account_cleanup_bounty: TOS / 1_000,
+        order_entry_fee: TOS / 1_000,
+        order_cleanup_bounty: TOS / 1_000,
+        operating_reserve_floor: TOS,
+        terminal_tombstone_reserve: TOS / 10,
+        challenge_bond: TOS / 10,
+        challenge_processing_fee: TOS / 100,
+        normal_oracle_policy: PredictionOraclePolicyV1 {
+            threshold: 1,
+            reporters: vec![normal.address().clone()],
+        },
+        appellate_oracle_policy: PredictionOraclePolicyV1 {
+            threshold: 1,
+            reporters: vec![appellate.address().clone()],
+        },
+    };
+    let market = PredictionMarketContractV1::calculate_address(&init).unwrap();
+    let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+        .bounce(true)
+        .state_init(PredictionMarketContractV1::build_state_init(&init).unwrap())
+        .body(PredictionMarketContractV1::activate(7).unwrap())
+        .build();
+    bc.send_message(deploy).unwrap().expect_success();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 1);
+    assert_eq!(state.int_at(2), 0);
+}
+
+#[test]
 fn activate_register_split_merge_and_withdraw_preserve_accounting() {
     let mut f = Fixture::new();
     let pre =

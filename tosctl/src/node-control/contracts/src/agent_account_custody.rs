@@ -21,9 +21,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::agent_account::{
-    AGENT_CANCEL_SEQNO_OPCODE, AGENT_DEPLOY_SEND_OPCODE, AGENT_NATIVE_SEND_OPCODE,
-    AGENT_TASK_SEND_OPCODE,
+    AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_CANCEL_SEQNO_OPCODE,
+    AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS, AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE,
+    AGENT_DEPLOY_SEND_OPCODE, AGENT_NATIVE_SEND_OPCODE, AGENT_TASK_SEND_OPCODE,
 };
+
+const PREDICTION_CUSTODY_EFFECT_PROFILE_V1: &str = "tos.prediction.checked-call.v1";
 
 const SCHEMA: &str = "tos.agent-account.controller-journal.v2";
 const JOURNAL_FILE: &str = "controller-actions.json";
@@ -138,15 +141,21 @@ pub struct EconomicActionAuthorization {
 #[serde(deny_unknown_fields)]
 pub struct EconomicEffectAuthorization {
     pub schema_version: u16,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
     pub authority_id: String,
     pub owner_id: String,
     pub agent_id: String,
     pub source_account: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub network_id: String,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub network_global_id: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_domain: Option<RelayNetworkDomainPin>,
     pub action_kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effect_kind: String,
     pub stable_action_id: String,
     pub exact_request_digest: String,
     pub writer_generation: u64,
@@ -154,15 +163,32 @@ pub struct EconomicEffectAuthorization {
     pub policy_revision: u64,
     pub mandate_digest: String,
     pub approval_digest_or_zero: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub agreement_body_digest: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub obligation_id: String,
     pub destination: String,
     pub amount_nanotos: u64,
     pub body_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub state_init_hash_or_zero: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_agent_account_code_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub market_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub market_address: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub market_config_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub market_code_hash: String,
     pub expires_at_unix: u64,
     pub public_key: String,
     pub proof: String,
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -606,6 +632,151 @@ impl AgentAccountCustodyJournal {
         })
     }
 
+    /// Admit one exact PredictionMarket call through the V2 checked-bounceable
+    /// transport. Prediction and Agreement effects share this journal so they
+    /// cannot independently reserve the same controller sequence.
+    pub fn claim_prediction_effect(
+        &self,
+        claim: ControllerActionClaim,
+        authorization: EconomicEffectAuthorization,
+        expected_authority_id: &str,
+        expected_authority_public_key: [u8; 32],
+        now: u64,
+    ) -> anyhow::Result<(ControllerActionRecord, bool)> {
+        validate_claim(&claim)?;
+        validate_economic_effect_authorization(
+            &authorization,
+            expected_authority_id,
+            expected_authority_public_key,
+            now,
+        )?;
+        if authorization.profile != PREDICTION_CUSTODY_EFFECT_PROFILE_V1 {
+            anyhow::bail!("prediction custody requires its dedicated effect profile");
+        }
+        let idempotency = authorization
+            .stable_action_id
+            .strip_prefix("sha256:")
+            .context("prediction effect identity has no sha256 prefix")?;
+        let network = authorization
+            .network_domain
+            .as_ref()
+            .context("prediction effect has no full network-domain pin")?;
+        if claim.action_kind != "agent-checked-contract-call-v2"
+            || claim.account != authorization.source_account
+            || claim.network_global_id != network.global_id
+            || claim.network_domain.as_ref() != Some(network)
+            || claim.target != authorization.market_address
+            || claim.target != authorization.destination
+            || claim.value_atomic != authorization.amount_nanotos
+            || claim.body_hash.as_deref() != Some(authorization.body_hash.as_str())
+            || claim.state_init_hash.is_some()
+            || claim.action_identity != authorization.stable_action_id
+            || claim.idempotency_key != idempotency
+            || u64::from(claim.valid_until) > authorization.expires_at_unix
+        {
+            anyhow::bail!("custody claim does not match its prediction effect authorization");
+        }
+        self.with_document(|document| {
+            admit_economic_high_water(
+                document,
+                &authorization.owner_id,
+                &authorization.agent_id,
+                &authorization.authority_id,
+                &authorization.public_key,
+                authorization.writer_generation,
+                &authorization.writer_fence_digest,
+                expected_authority_id,
+                expected_authority_public_key,
+            )?;
+            if let Some(tombstone) =
+                self.read_economic_action_tombstone(&authorization.stable_action_id)?
+            {
+                let mut stored = tombstone.record;
+                let prior = stored
+                    .economic_effect_authorization
+                    .as_ref()
+                    .context("stable action belongs to a different economic effect")?;
+                if stored.claim != claim || !same_economic_effect(prior, &authorization) {
+                    anyhow::bail!(
+                        "prediction stable action was already bound to a different source or effect"
+                    );
+                }
+                if prior != &authorization {
+                    if stored.status == ControllerActionStatus::Resolved
+                        || authorization.writer_generation <= prior.writer_generation
+                    {
+                        anyhow::bail!(
+                            "terminal or non-increasing prediction authorization cannot replace a stable action"
+                        );
+                    }
+                    stored.economic_effect_authorization = Some(authorization);
+                    stored.updated_at_unix = now;
+                    self.persist_economic_action_tombstone(&stored)?;
+                }
+                restore_hot_economic_record(document, &stored)?;
+                return Ok((stored, false));
+            }
+            let generation = generation_key(&claim);
+            if let Some(target) = document.records.iter_mut().find(|record| {
+                generation_key(&record.claim) == generation
+                    && record.claim.idempotency_key == claim.idempotency_key
+            }) {
+                if target.claim == claim
+                    && target.economic_effect_authorization.as_ref() == Some(&authorization)
+                {
+                    return Ok((target.clone(), false));
+                }
+                let same_effect_takeover = target.status != ControllerActionStatus::Broadcasting
+                    && target.status != ControllerActionStatus::Resolved
+                    && target.cancellation_identity.is_none()
+                    && target.cancellation_boc_base64.is_none()
+                    && target.economic_authorization.is_none()
+                    && target.economic_effect_authorization.as_ref().is_some_and(|prior| {
+                        authorization.writer_generation > prior.writer_generation
+                            && same_economic_effect(prior, &authorization)
+                    })
+                    && same_unsigned_claim(&target.claim, &claim);
+                if !same_effect_takeover {
+                    anyhow::bail!("changed prediction effect conflicts with custody journal");
+                }
+                if target.status == ControllerActionStatus::Claimed {
+                    if target.exact_signed_boc_base64.is_some()
+                        || target.exact_signed_boc_digest.is_some()
+                    {
+                        anyhow::bail!("unsigned prediction custody action contains signed bytes");
+                    }
+                    target.claim = claim;
+                } else if target.status != ControllerActionStatus::Signed
+                    || target.exact_signed_boc_base64.is_none()
+                    || target.exact_signed_boc_digest.is_none()
+                {
+                    anyhow::bail!("prediction effect cannot be taken over in its current state");
+                }
+                target.economic_effect_authorization = Some(authorization);
+                target.updated_at_unix = now;
+                return Ok((target.clone(), false));
+            }
+            let (record, created) = admit_claim(document, claim, None, now)?;
+            let target = document
+                .records
+                .iter_mut()
+                .find(|candidate| candidate.claim == record.claim)
+                .context("new prediction custody record disappeared")?;
+            if let Some(existing) = &target.economic_effect_authorization {
+                if existing != &authorization {
+                    anyhow::bail!("changed prediction effect conflicts with custody journal");
+                }
+            } else if target.economic_authorization.is_some() {
+                anyhow::bail!("custody action is already a payment");
+            } else {
+                target.economic_effect_authorization = Some(authorization);
+            }
+            let output = target.clone();
+            self.persist_economic_action_tombstone(&output)?;
+            Ok((output, created))
+        })
+    }
+
     pub fn find_primary(
         &self,
         account: &str,
@@ -681,6 +852,65 @@ impl AgentAccountCustodyJournal {
                 }
                 (None, Some(_)) => {
                     anyhow::bail!("stable action belongs to a non-payment economic effect")
+                }
+                (Some(hot), None) => Ok(Some(hot)),
+                (None, None) => Ok(None),
+            }
+        })
+    }
+
+    /// Find one generic economic effect by its owner-wide stable identity,
+    /// including a compacted permanent tombstone. Prediction relay recovery
+    /// uses this after source finality, when the hot journal is allowed to
+    /// discard old terminal BOC material but the semantic replay fence is not.
+    pub fn find_economic_effect_by_stable_action(
+        &self,
+        stable_action_id: &str,
+    ) -> anyhow::Result<Option<ControllerActionRecord>> {
+        if !valid_digest(stable_action_id) {
+            anyhow::bail!("invalid economic effect lookup");
+        }
+        self.with_document(|document| {
+            let mut matches = document.records.iter().filter(|record| {
+                record
+                    .economic_effect_authorization
+                    .as_ref()
+                    .is_some_and(|authorization| authorization.stable_action_id == stable_action_id)
+            });
+            let first = matches.next().cloned();
+            if matches.next().is_some() {
+                anyhow::bail!("custody journal repeats an economic effect stable identity");
+            }
+            let tombstone = self.read_economic_action_tombstone(stable_action_id)?;
+            match (first, tombstone) {
+                (Some(hot), Some(tombstone)) => {
+                    let stored = tombstone.record;
+                    if stored.economic_effect_authorization.is_none()
+                        || hot.claim != stored.claim
+                        || !same_optional_economic_effect(
+                            hot.economic_effect_authorization.as_ref(),
+                            stored.economic_effect_authorization.as_ref(),
+                        )
+                    {
+                        anyhow::bail!(
+                            "custody hot journal conflicts with its economic effect tombstone"
+                        );
+                    }
+                    Ok(Some(
+                        if action_status_rank(&stored.status) >= action_status_rank(&hot.status) {
+                            stored
+                        } else {
+                            hot
+                        },
+                    ))
+                }
+                (None, Some(tombstone))
+                    if tombstone.record.economic_effect_authorization.is_some() =>
+                {
+                    Ok(Some(tombstone.record))
+                }
+                (None, Some(_)) => {
+                    anyhow::bail!("stable action belongs to an economic payment")
                 }
                 (Some(hot), None) => Ok(Some(hot)),
                 (None, None) => Ok(None),
@@ -1844,6 +2074,7 @@ fn same_economic_effect(
     right: &EconomicEffectAuthorization,
 ) -> bool {
     left.schema_version == right.schema_version
+        && left.profile == right.profile
         && left.authority_id == right.authority_id
         && left.owner_id == right.owner_id
         && left.agent_id == right.agent_id
@@ -1852,6 +2083,7 @@ fn same_economic_effect(
         && left.network_global_id == right.network_global_id
         && left.network_domain == right.network_domain
         && left.action_kind == right.action_kind
+        && left.effect_kind == right.effect_kind
         && left.stable_action_id == right.stable_action_id
         && left.exact_request_digest == right.exact_request_digest
         && left.policy_revision == right.policy_revision
@@ -1863,6 +2095,11 @@ fn same_economic_effect(
         && left.amount_nanotos == right.amount_nanotos
         && left.body_hash == right.body_hash
         && left.state_init_hash_or_zero == right.state_init_hash_or_zero
+        && left.source_agent_account_code_hash == right.source_agent_account_code_hash
+        && left.market_id == right.market_id
+        && left.market_address == right.market_address
+        && left.market_config_hash == right.market_config_hash
+        && left.market_code_hash == right.market_code_hash
         && left.expires_at_unix == right.expires_at_unix
         && left.public_key == right.public_key
 }
@@ -1884,7 +2121,10 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
     if claim.network_global_id == 0
         || !matches!(
             claim.action_kind.as_str(),
-            "agent-native-send" | "agent-task-send" | "agent-deploy-send"
+            "agent-native-send"
+                | "agent-task-send"
+                | "agent-deploy-send"
+                | "agent-checked-contract-call-v2"
         )
         || !valid_idempotency_key(&claim.idempotency_key)
         || !valid_digest(&claim.action_identity)
@@ -1897,6 +2137,8 @@ fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
         || (claim.action_kind == "agent-native-send" && claim.body_hash.is_some())
         || (claim.action_kind == "agent-native-send" && claim.state_init_hash.is_some())
         || (claim.action_kind == "agent-task-send"
+            && (claim.body_hash.is_none() || claim.state_init_hash.is_some()))
+        || (claim.action_kind == "agent-checked-contract-call-v2"
             && (claim.body_hash.is_none() || claim.state_init_hash.is_some()))
         || (claim.action_kind == "agent-deploy-send"
             && (claim.body_hash.is_none() || claim.state_init_hash.is_none()))
@@ -2180,6 +2422,11 @@ fn validate_economic_effect_authorization(
         .proof
         .strip_prefix("ed25519:")
         .context("economic effect proof has no Ed25519 prefix")?;
+    if proof_hex.len() != 128
+        || proof_hex.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+    {
+        anyhow::bail!("economic effect proof is not canonical lowercase Ed25519 hex");
+    }
     let signature =
         Signature::from_slice(&hex::decode(proof_hex).context("decode economic effect proof")?)
             .context("economic effect proof must be 64 bytes")?;
@@ -2190,7 +2437,27 @@ fn validate_economic_effect_authorization(
     Ok(())
 }
 
+fn effect_network_global_id(authorization: &EconomicEffectAuthorization) -> anyhow::Result<i32> {
+    if authorization.profile == PREDICTION_CUSTODY_EFFECT_PROFILE_V1 {
+        return Ok(authorization
+            .network_domain
+            .as_ref()
+            .context("prediction effect has no network domain")?
+            .global_id);
+    }
+    Ok(authorization.network_global_id)
+}
+
 fn economic_effect_authorization_preimage(
+    authorization: &EconomicEffectAuthorization,
+) -> anyhow::Result<Vec<u8>> {
+    if authorization.profile == PREDICTION_CUSTODY_EFFECT_PROFILE_V1 {
+        return prediction_effect_authorization_preimage(authorization);
+    }
+    agreement_effect_authorization_preimage(authorization)
+}
+
+fn agreement_effect_authorization_preimage(
     authorization: &EconomicEffectAuthorization,
 ) -> anyhow::Result<Vec<u8>> {
     let digests = [
@@ -2208,6 +2475,7 @@ fn economic_effect_authorization_preimage(
         .context("economic effect has no full network-domain pin")?;
     validate_network_domain(network_domain)?;
     if authorization.schema_version != 2
+        || !authorization.profile.is_empty()
         || authorization.authority_id.is_empty()
         || authorization.authority_id.len() > 256
         || authorization.owner_id.is_empty()
@@ -2233,6 +2501,12 @@ fn economic_effect_authorization_preimage(
         || !(valid_cell_digest(&authorization.state_init_hash_or_zero)
             || authorization.state_init_hash_or_zero == no_state_init)
         || authorization.expires_at_unix == 0
+        || !authorization.effect_kind.is_empty()
+        || !authorization.source_agent_account_code_hash.is_empty()
+        || !authorization.market_id.is_empty()
+        || !authorization.market_address.is_empty()
+        || !authorization.market_config_hash.is_empty()
+        || !authorization.market_code_hash.is_empty()
         || digests.iter().any(|value| !valid_digest(value))
     {
         anyhow::bail!("economic effect authorization body is invalid");
@@ -2274,6 +2548,125 @@ fn economic_effect_authorization_preimage(
     for value in [&authorization.body_hash, &authorization.state_init_hash_or_zero] {
         write_lp32(&mut output, value.as_bytes())?;
     }
+    output.extend_from_slice(&authorization.expires_at_unix.to_be_bytes());
+    Ok(output)
+}
+
+fn prediction_effect_authorization_preimage(
+    authorization: &EconomicEffectAuthorization,
+) -> anyhow::Result<Vec<u8>> {
+    let network = authorization
+        .network_domain
+        .as_ref()
+        .context("prediction custody effect has no full network-domain pin")?;
+    validate_network_domain(network)?;
+    let source = authorization
+        .source_account
+        .parse::<MsgAddressInt>()
+        .context("prediction custody source account is invalid")?;
+    let market = authorization
+        .market_address
+        .parse::<MsgAddressInt>()
+        .context("prediction custody market address is invalid")?;
+    let canonical_address = |raw: &str, parsed: &MsgAddressInt| parsed.to_string() == raw;
+    let allowed_kind = matches!(
+        authorization.action_kind.as_str(),
+        "prediction.collateral.deposit"
+            | "prediction.reserve.top-up"
+            | "prediction.trading-key.rotate"
+            | "prediction.order.cancel-exact"
+            | "prediction.order.nonce-floor.raise"
+            | "prediction.match.submit"
+            | "prediction.position.split"
+            | "prediction.position.merge"
+            | "prediction.position.claim"
+            | "prediction.collateral.withdraw"
+            | "prediction.resolution.report"
+            | "prediction.resolution.challenge"
+            | "prediction.resolution.finalize"
+            | "prediction.challenge-bond.withdraw"
+            | "prediction.market.advance-phase"
+            | "prediction.market.compact"
+            | "prediction.terminal-surplus.withdraw"
+    );
+    if authorization.schema_version != 1
+        || authorization.profile != PREDICTION_CUSTODY_EFFECT_PROFILE_V1
+        || authorization.authority_id.is_empty()
+        || authorization.authority_id.len() > 256
+        || authorization.owner_id.is_empty()
+        || authorization.owner_id.len() > 256
+        || authorization.agent_id.is_empty()
+        || authorization.agent_id.len() > 256
+        || !canonical_address(&authorization.source_account, &source)
+        || !canonical_address(&authorization.market_address, &market)
+        || source.workchain_id() != network.workchain_id
+        || market.workchain_id() != network.workchain_id
+        || source == market
+        || !authorization.network_id.is_empty()
+        || authorization.network_global_id != 0
+        || !allowed_kind
+        || authorization.effect_kind != authorization.action_kind
+        || authorization.writer_generation == 0
+        || authorization.policy_revision == 0
+        || !authorization.agreement_body_digest.is_empty()
+        || !authorization.obligation_id.is_empty()
+        || authorization.destination != authorization.market_address
+        || authorization.amount_nanotos == 0
+        || authorization.amount_nanotos > AGENT_ACCOUNT_MAX_ACTION_VALUE
+        || !authorization.state_init_hash_or_zero.is_empty()
+        || authorization.expires_at_unix == 0
+        || !valid_digest(&authorization.stable_action_id)
+        || !valid_digest(&authorization.exact_request_digest)
+        || !valid_digest(&authorization.writer_fence_digest)
+        || !valid_digest(&authorization.mandate_digest)
+        || !valid_digest(&authorization.approval_digest_or_zero)
+        || !valid_digest(&authorization.market_id)
+        || authorization.market_id[7..].bytes().all(|byte| byte == b'0')
+        || !valid_cell_digest(&authorization.source_agent_account_code_hash)
+        || !valid_cell_digest(&authorization.market_config_hash)
+        || !valid_cell_digest(&authorization.market_code_hash)
+        || !valid_cell_digest(&authorization.body_hash)
+    {
+        anyhow::bail!("prediction custody effect authorization body is invalid");
+    }
+
+    let mut output = Vec::new();
+    output.extend_from_slice(b"TOS-PCEA\0");
+    output.extend_from_slice(&authorization.schema_version.to_be_bytes());
+    for value in [
+        &authorization.profile,
+        &authorization.authority_id,
+        &authorization.owner_id,
+        &authorization.agent_id,
+        &authorization.source_account,
+        &authorization.source_agent_account_code_hash,
+    ] {
+        write_lp32(&mut output, value.as_bytes())?;
+    }
+    write_network_domain(&mut output, network)?;
+    for value in [
+        &authorization.action_kind,
+        &authorization.effect_kind,
+        &authorization.stable_action_id,
+        &authorization.exact_request_digest,
+    ] {
+        write_lp32(&mut output, value.as_bytes())?;
+    }
+    output.extend_from_slice(&authorization.writer_generation.to_be_bytes());
+    write_lp32(&mut output, authorization.writer_fence_digest.as_bytes())?;
+    output.extend_from_slice(&authorization.policy_revision.to_be_bytes());
+    for value in [
+        &authorization.mandate_digest,
+        &authorization.approval_digest_or_zero,
+        &authorization.market_id,
+        &authorization.market_address,
+        &authorization.market_config_hash,
+        &authorization.market_code_hash,
+    ] {
+        write_lp32(&mut output, value.as_bytes())?;
+    }
+    output.extend_from_slice(&authorization.amount_nanotos.to_be_bytes());
+    write_lp32(&mut output, authorization.body_hash.as_bytes())?;
     output.extend_from_slice(&authorization.expires_at_unix.to_be_bytes());
     Ok(output)
 }
@@ -2414,6 +2807,9 @@ fn validate_signed_boc(
         ExpectedAction::Primary if claim.action_kind == "agent-native-send" => {
             AGENT_NATIVE_SEND_OPCODE
         }
+        ExpectedAction::Primary if claim.action_kind == "agent-checked-contract-call-v2" => {
+            AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE
+        }
         ExpectedAction::Primary => anyhow::bail!("unsupported controller action kind"),
     };
     if opcode != expected_opcode
@@ -2436,12 +2832,20 @@ fn validate_signed_boc(
         let expected_refs = match claim.action_kind.as_str() {
             "agent-task-send" => 1,
             "agent-deploy-send" => 2,
+            "agent-checked-contract-call-v2" => 1,
             _ => 0,
         };
+        if claim.action_kind == "agent-checked-contract-call-v2"
+            && body.get_next_int(8)? as u8 != AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS
+        {
+            anyhow::bail!("stored Agent Account checked call has invalid extra flags");
+        }
         if body.remaining_bits() != 0 || body.remaining_references() != expected_refs {
             anyhow::bail!("stored Agent Account BOC has unexpected trailing action data");
         }
-        if claim.action_kind == "agent-task-send" {
+        if claim.action_kind == "agent-task-send"
+            || claim.action_kind == "agent-checked-contract-call-v2"
+        {
             let task_body = body.checked_drain_reference()?;
             let actual = agent_account_task_body_hash(&task_body);
             if claim.body_hash.as_deref() != Some(actual.as_str()) {
@@ -2542,7 +2946,7 @@ fn validate_document(document: &JournalDocument) -> anyhow::Result<()> {
                     && !high.writer_fence_digest.is_empty()
                     && authorization.writer_fence_digest != high.writer_fence_digest)
                 || record.claim.account != authorization.source_account
-                || record.claim.network_global_id != authorization.network_global_id
+                || record.claim.network_global_id != effect_network_global_id(authorization)?
                 || record.claim.network_domain != authorization.network_domain
                 || record.claim.target != authorization.destination
                 || record.claim.value_atomic != authorization.amount_nanotos
@@ -2662,7 +3066,9 @@ fn valid_idempotency_key(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chain_block::{Cell, MsgAddressInt, Serializable, StateInit, base64_encode, write_boc};
+    use chain_block::{
+        Cell, IBitstring, MsgAddressInt, Serializable, StateInit, base64_encode, write_boc,
+    };
     use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
@@ -2907,6 +3313,7 @@ mod tests {
     ) -> EconomicEffectAuthorization {
         let mut authorization = EconomicEffectAuthorization {
             schema_version: 2,
+            profile: String::new(),
             authority_id: "authority:owner".into(),
             owner_id: "owner:1".into(),
             agent_id: "agent:buyer".into(),
@@ -2915,6 +3322,7 @@ mod tests {
             network_global_id: claim.network_global_id,
             network_domain: claim.network_domain.clone(),
             action_kind: "escrow.accept".into(),
+            effect_kind: String::new(),
             stable_action_id: claim.action_identity.clone(),
             exact_request_digest: format!("sha256:{}", "2".repeat(64)),
             writer_generation: generation,
@@ -2928,6 +3336,11 @@ mod tests {
             amount_nanotos: claim.value_atomic,
             body_hash: claim.body_hash.clone().unwrap(),
             state_init_hash_or_zero: format!("sha256:{}", "0".repeat(64)),
+            source_agent_account_code_hash: String::new(),
+            market_id: String::new(),
+            market_address: String::new(),
+            market_config_hash: String::new(),
+            market_code_hash: String::new(),
             expires_at_unix: u64::from(claim.valid_until),
             public_key: format!("ed25519:{}", hex::encode(key.verifying_key().to_bytes())),
             proof: String::new(),
@@ -3004,6 +3417,7 @@ mod tests {
 
         let effect = EconomicEffectAuthorization {
             schema_version: 2,
+            profile: String::new(),
             authority_id: "authority:one".into(),
             owner_id: "owner:one".into(),
             agent_id: "agent:buyer".into(),
@@ -3018,6 +3432,7 @@ mod tests {
                 workchain_id: 0,
             }),
             action_kind: "escrow.accept".into(),
+            effect_kind: String::new(),
             stable_action_id: format!("sha256:{}", "2".repeat(64)),
             exact_request_digest: format!("sha256:{}", "3".repeat(64)),
             writer_generation: 4,
@@ -3031,6 +3446,11 @@ mod tests {
             amount_nanotos: 100_000_000,
             body_hash: format!("tvm-cell-sha256:{}", "8".repeat(64)),
             state_init_hash_or_zero: format!("sha256:{}", "0".repeat(64)),
+            source_agent_account_code_hash: String::new(),
+            market_id: String::new(),
+            market_address: String::new(),
+            market_config_hash: String::new(),
+            market_code_hash: String::new(),
             expires_at_unix: 2_000_000_060,
             public_key: String::new(),
             proof: String::new(),
@@ -3039,6 +3459,176 @@ mod tests {
             hex::encode(Sha256::digest(economic_effect_authorization_preimage(&effect).unwrap())),
             "fe281488a120f3a60e0d7584f5f9a286071df82e7a477acd990d067fc3f8ca47"
         );
+    }
+
+    #[test]
+    fn prediction_effect_matches_go_vector_and_shares_controller_sequence() {
+        let key = SigningKey::from_bytes(&[0x75; 32]);
+        let network = RelayNetworkDomainPin {
+            network_id: "tos:test".into(),
+            global_id: -3,
+            zero_state_root_hash: format!("sha256:{}", "3".repeat(64)),
+            zero_state_file_hash: format!("sha256:{}", "4".repeat(64)),
+            workchain_id: 0,
+        };
+        let mut authorization = EconomicEffectAuthorization {
+            schema_version: 1,
+            profile: PREDICTION_CUSTODY_EFFECT_PROFILE_V1.into(),
+            authority_id: "authority:one".into(),
+            owner_id: "owner:one".into(),
+            agent_id: "agent:solver".into(),
+            source_account: format!("0:{}", "1".repeat(64)),
+            network_id: String::new(),
+            network_global_id: 0,
+            network_domain: Some(network.clone()),
+            action_kind: "prediction.match.submit".into(),
+            effect_kind: "prediction.match.submit".into(),
+            stable_action_id: format!("sha256:{}", "5".repeat(64)),
+            exact_request_digest: format!("sha256:{}", "6".repeat(64)),
+            writer_generation: 7,
+            writer_fence_digest: format!("sha256:{}", "7".repeat(64)),
+            policy_revision: 8,
+            mandate_digest: format!("sha256:{}", "8".repeat(64)),
+            approval_digest_or_zero: format!("sha256:{}", "0".repeat(64)),
+            agreement_body_digest: String::new(),
+            obligation_id: String::new(),
+            destination: format!("0:{}", "a".repeat(64)),
+            amount_nanotos: 900_000_000,
+            body_hash: format!("tvm-cell-sha256:{}", "d".repeat(64)),
+            state_init_hash_or_zero: String::new(),
+            source_agent_account_code_hash: format!("tvm-cell-sha256:{}", "2".repeat(64)),
+            market_id: format!("sha256:{}", "9".repeat(64)),
+            market_address: format!("0:{}", "a".repeat(64)),
+            market_config_hash: format!("tvm-cell-sha256:{}", "b".repeat(64)),
+            market_code_hash: format!("tvm-cell-sha256:{}", "c".repeat(64)),
+            expires_at_unix: 2_000_000_060,
+            public_key: format!("ed25519:{}", hex::encode(key.verifying_key().to_bytes())),
+            proof: String::new(),
+        };
+        let digest =
+            Sha256::digest(economic_effect_authorization_preimage(&authorization).unwrap());
+        assert_eq!(
+            hex::encode(digest),
+            "e33e7e0d50a63acc05a0396c17ab5359a451a62b689cdf3a288e467f61978346"
+        );
+        authorization.proof = format!("ed25519:{}", hex::encode(key.sign(&digest).to_bytes()));
+        validate_economic_effect_authorization(
+            &authorization,
+            "authority:one",
+            key.verifying_key().to_bytes(),
+            2_000_000_000,
+        )
+        .unwrap();
+
+        let mut body_builder = chain_block::BuilderData::new();
+        body_builder.append_u32(0x504d_0008).unwrap();
+        let exact_body = body_builder.into_cell().unwrap();
+        authorization.body_hash = agent_account_task_body_hash(&exact_body);
+        let updated_digest =
+            Sha256::digest(economic_effect_authorization_preimage(&authorization).unwrap());
+        authorization.proof =
+            format!("ed25519:{}", hex::encode(key.sign(&updated_digest).to_bytes()));
+
+        let claim = ControllerActionClaim {
+            account: authorization.source_account.clone(),
+            network_global_id: network.global_id,
+            network_domain: Some(network.clone()),
+            deployment_id: "e".repeat(64),
+            controller_epoch: 3,
+            seqno: 4,
+            target: authorization.destination.clone(),
+            value_atomic: authorization.amount_nanotos,
+            body_hash: Some(authorization.body_hash.clone()),
+            state_init_hash: None,
+            action_kind: "agent-checked-contract-call-v2".into(),
+            idempotency_key: "5".repeat(64),
+            action_identity: authorization.stable_action_id.clone(),
+            valid_until: 2_000_000_050,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let journal =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let (record, created) = journal
+            .claim_prediction_effect(
+                claim.clone(),
+                authorization.clone(),
+                "authority:one",
+                key.verifying_key().to_bytes(),
+                2_000_000_000,
+            )
+            .unwrap();
+        assert!(created);
+        assert_eq!(record.economic_effect_authorization, Some(authorization.clone()));
+        let payload =
+            crate::agent_account::AgentAccountContract::build_checked_contract_call_v2_payload(
+                network.global_id,
+                claim.controller_epoch,
+                claim.seqno,
+                claim.valid_until,
+                &crate::agent_account::AgentCheckedContractCallV2 {
+                    target: claim.target.parse().unwrap(),
+                    value: claim.value_atomic,
+                    body: exact_body,
+                },
+            )
+            .unwrap();
+        let signed = crate::agent_account::AgentAccountContract::build_signed_controller_message(
+            payload,
+            &[0x42; 64],
+        )
+        .unwrap();
+        let message =
+            crate::agent_account::AgentAccountContract::build_external_controller_message(
+                claim.account.parse().unwrap(),
+                signed,
+            )
+            .unwrap();
+        let boc = write_boc(&message).unwrap();
+        let encoded = base64_encode(boc.clone());
+        let boc_digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+        journal.attach_signed_boc(&claim, &encoded, &boc_digest, 2_000_000_001).unwrap();
+
+        let mut competing = claim;
+        competing.idempotency_key = "f".repeat(64);
+        competing.action_identity = format!("sha256:{}", "f".repeat(64));
+        assert!(journal.claim_primary(competing, 2_000_000_001).is_err());
+
+        let found = journal
+            .find_economic_effect_by_stable_action(&authorization.stable_action_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.claim, record.claim);
+        journal.begin_or_resume_exact_broadcast(&record.claim, 2_000_000_002).unwrap();
+        let evidence_value = serde_json::json!({
+            "schema": "tosctl.prediction-relay-source-evidence.v1",
+            "stable_action_id": authorization.stable_action_id,
+        });
+        let evidence = ControllerActionResolutionEvidence {
+            evidence_kind: "tosctl.prediction-relay-source-evidence.v1".into(),
+            evidence_digest: controller_resolution_evidence_digest(
+                "tosctl.prediction-relay-source-evidence.v1",
+                &evidence_value,
+            )
+            .unwrap(),
+            evidence: evidence_value,
+        };
+        journal
+            .resolve_exact_winner(&record.claim, &boc_digest, 3, 5, evidence, 2_000_000_003)
+            .unwrap();
+        let reopened =
+            AgentAccountCustodyJournal::open(directory.path().canonicalize().unwrap()).unwrap();
+        let terminal = reopened
+            .find_economic_effect_by_stable_action(&authorization.stable_action_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.status, ControllerActionStatus::Resolved);
+        assert!(terminal.exact_signed_boc_base64.is_none());
+        assert!(terminal.exact_winner_resolution.is_some());
     }
 
     #[test]
