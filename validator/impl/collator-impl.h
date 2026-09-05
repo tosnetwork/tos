@@ -26,6 +26,7 @@
 #include "block/mc-config.h"
 #include "block/output-queue-merger.h"
 #include "block/transaction.h"
+#include "block/workchain-execution-dispatch.h"
 #include "common/global-version.h"
 #include "common/refcnt.hpp"
 #include "interfaces/validator-manager.h"
@@ -120,6 +121,8 @@ class Collator final : public td::actor::Actor {
       LogicalTime after_lt, CollationStats* stats = nullptr);
 
  private:
+  bool create_workchain_batch_transaction(const block::ResolvedWorkchainBlockExecution& execution,
+                                          Ref<vm::Cell> candidate);
   void start_up() override;
   void load_prev_states_blocks();
   void alarm() override;

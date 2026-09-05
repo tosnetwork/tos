@@ -7,6 +7,7 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/transaction.h"
 #include "td/utils/logging.h"
 
 namespace block {
@@ -243,6 +244,25 @@ td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
     return td::Status::Error("block execution exceeds configured resource limits");
   }
   return result;
+}
+
+td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input, Account& account,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg) {
+  if (account.workchain != execution.descriptor.workchain_id || account.addr != execution.policy.executor_address) {
+    return td::Status::Error("batch staging account differs from configured executor");
+  }
+  TRY_RESULT(effects, execute_resolved_workchain_block(execution, input));
+  auto batch = std::make_unique<transaction::Transaction>(
+      account, transaction::Transaction::tr_workchain_batch, expected_lt, expected_utime);
+  if (batch->start_lt != expected_lt) {
+    return td::Status::Error("batch staging logical time differs from requested time");
+  }
+  TRY_STATUS(batch->prepare_workchain_batch(input, effects, cfg));
+  if (!batch->serialize(cfg)) {
+    return td::Status::Error("cannot serialize staged block batch transaction");
+  }
+  return batch;
 }
 
 td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(

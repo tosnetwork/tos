@@ -45,7 +45,7 @@ Base node revision: `5a6145cce`.
   activated for these entry points.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (seventeen cases) and the full `validator-engine` target build
+- `test-workchain-block` (eighteen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -74,6 +74,16 @@ Base node revision: `5a6145cce`.
   `AccountBlock` creation. Preparation checks the full prior account wrapper,
   previous transaction link and shard time, and derives the batch description
   from the supplied input/effects. Commit remains a separate step.
+- `prepare_resolved_workchain_batch_transaction` executes under the resolved
+  identity/resource policy, stages and serializes a native transaction without
+  committing. Tests check independent replay, unchanged original account and
+  transaction list, wrong executor, a requested LT below the prior account end,
+  and resource-limit rejection. `Collator::create_workchain_batch_transaction`
+  uses this helper, native size/storage estimates, account commit and LT/statistics
+  updates. It is not yet invoked by candidate scheduling; candidate ingress and
+  full collator control-flow selection remain pending.
+  Removing the exact staging-LT check silently advances an invalid requested LT
+  and fails the rejection test; the check was restored.
 - State-only batch round-trip tests execute 40 -> 42 from a native shard,
   serialize the synthetic transaction, independently replay its description,
   commit the account, validate the resulting `AccountBlock`, rebuild the shard

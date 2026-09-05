@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cassert>
 #include <ctime>
+#include <limits>
 
 #include "adnl/utils.hpp"
 #include "block/block-auto.h"
@@ -3379,6 +3380,43 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   update_max_lt(acc->last_trans_end_lt_);
   block::MsgMetadata new_msg_metadata{0, acc->workchain, acc->addr, trans->start_lt};
   register_new_msgs(*trans, std::move(new_msg_metadata));
+  ++stats_.transactions;
+  return true;
+}
+
+bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchainBlockExecution& execution,
+                                                 Ref<vm::Cell> candidate) {
+  if (execution.descriptor.workchain_id != workchain() || !accounts.empty() ||
+      start_lt == std::numeric_limits<tos::LogicalTime>::max()) {
+    return fatal_error("invalid block batch collation context");
+  }
+  auto account_result = make_account(execution.policy.executor_address.cbits(), false);
+  if (account_result.is_error()) {
+    return fatal_error(account_result.move_as_error());
+  }
+  auto* account = account_result.move_as_ok();
+  if (!account) {
+    return fatal_error("missing block executor account");
+  }
+  block::WorkchainBlockInput input{prev_state_root_, std::move(candidate), config_->get_root_cell(), mc_state_root};
+  set_current_tx_storage_dict(*account);
+  auto staged = block::prepare_resolved_workchain_batch_transaction(
+      execution, input, *account, start_lt + 1, now_, serialize_cfg_);
+  if (staged.is_error()) {
+    return fatal_error(staged.move_as_error_prefix("cannot stage workchain batch: "));
+  }
+  auto batch = staged.move_as_ok();
+  if (!batch->update_limits(*block_limit_status_, false)) {
+    return fatal_error("cannot account for workchain batch block size");
+  }
+  if (batch->commit(*account).is_null()) {
+    return fatal_error("cannot commit workchain batch executor state");
+  }
+  if (!update_account_dict_estimation(*batch)) {
+    return fatal_error("cannot account for workchain batch dictionary size");
+  }
+  update_account_storage_dict_info(*batch);
+  update_max_lt(account->last_trans_end_lt_);
   ++stats_.transactions;
   return true;
 }

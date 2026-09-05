@@ -28,6 +28,11 @@
 
 namespace block {
 
+struct Account;
+namespace transaction {
+struct Transaction;
+}
+
 enum class WorkchainFormat {
   Basic,
   Extended
@@ -224,6 +229,9 @@ struct ResolvedWorkchainBlockExecution {
 
 td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input);
+td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input, Account& account,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg);
 td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,

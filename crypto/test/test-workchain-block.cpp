@@ -361,6 +361,45 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   }
 }
 
+TEST(WorkchainBlock, ResolvedBatchStaging) {
+  auto in = input();
+  block::Config configuration(0);
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  auto resolved = registry.resolve_block(descriptor, configuration).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  auto original = account.total_state;
+  block::SerializeConfig cfg;
+  auto staged = block::prepare_resolved_workchain_batch_transaction(resolved, in, account, 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(staged->root.not_null());
+  ASSERT_TRUE(account.total_state->get_hash() == original->get_hash());
+  ASSERT_TRUE(account.transactions.empty());
+  auto replayed = block::replay_workchain_batch_transaction(
+      *resolved.executor, in, staged->root, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(replayed->get_hash() == staged->new_total_state->get_hash());
+  auto early = block::prepare_resolved_workchain_batch_transaction(resolved, in, account, 1, 10, cfg);
+  ASSERT_TRUE(early.is_error());
+  ASSERT_EQ(early.error().message(), "batch staging logical time differs from requested time");
+  block::Account other(2, number(99)->get_hash().bits());
+  auto wrong = block::prepare_resolved_workchain_batch_transaction(resolved, in, other, 10, 10, cfg);
+  ASSERT_TRUE(wrong.is_error());
+  ASSERT_EQ(wrong.error().message(), "batch staging account differs from configured executor");
+  resolved.policy.limits.wire_bytes = 7;
+  auto limited = block::prepare_resolved_workchain_batch_transaction(resolved, in, account, 10, 10, cfg);
+  ASSERT_TRUE(limited.is_error());
+  ASSERT_EQ(limited.error().message(), "block execution exceeds configured resource limits");
+  ASSERT_TRUE(account.total_state->get_hash() == original->get_hash());
+  ASSERT_TRUE(account.transactions.empty());
+}
+
 TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   CounterEngine engine;
   auto in = input();
