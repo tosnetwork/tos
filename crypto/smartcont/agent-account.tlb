@@ -1,8 +1,8 @@
 // TOS Agent Account MVP wire schema.
 
 agent_update_policy#41475001 query_id:uint64
-  max_per_tx:Grams
-  daily_limit:Grams
+  max_per_tx:Tomis
+  daily_limit:Tomis
   default_task_timeout:uint64
   metadata_hash:(Maybe uint256)
   service_endpoint_hash:(Maybe uint256)
@@ -13,18 +13,18 @@ agent_rotate_controller#41475002 query_id:uint64
   = InternalMsgBody;
 
 agent_task_send#41475003 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
-  target:MsgAddressInt value:Grams body:^Cell
+  target:MsgAddressInt value:Tomis body:^Cell
   = ExternalMsgBody;
 
 agent_native_send#41475004 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
-  target:MsgAddressInt value:Grams
+  target:MsgAddressInt value:Tomis
   = ExternalMsgBody;
 
 agent_cancel_seqno#41475005 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
   = ExternalMsgBody;
 
 agent_deploy_send#41475006 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
-  target:MsgAddressInt value:Grams state_init:^Cell body:^Cell
+  target:MsgAddressInt value:Tomis state_init:^Cell body:^Cell
   = ExternalMsgBody;
 
 agent_checked_contract_call_v2#41475007 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
@@ -37,13 +37,13 @@ _ owner:MsgAddress
   controller_epoch:uint64
   seqno:uint32
   spend_day:uint32
-  spent_today:Grams
+  spent_today:Tomis
   policy:^AgentAccountPolicy
   = AgentAccountData;
 
 _
-  max_per_tx:Grams
-  daily_limit:Grams
+  max_per_tx:Tomis
+  daily_limit:Tomis
   default_task_timeout:uint64
   metadata_hash:(Maybe uint256)
   service_endpoint_hash:(Maybe uint256)
