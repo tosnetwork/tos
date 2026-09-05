@@ -1407,3 +1407,46 @@ reported a 279.6 ms slice. These are diagnostic observations requiring targeted
 measurement, not an accepted scheduler bound. The result closes the split
 between large file transport and large dictionary import evidence, but does not
 close M1 network/consensus acceptance or M2 performance gates.
+
+### Reconstructing the used-nullifier object after restart
+
+Previously the primitive could only start from an empty set, while snapshot
+tests inspected the persisted dictionary directly. `UsedNullifiers::from_root`
+now validates and reconstructs the immutable object with an explicit maximum
+entry count. Zero permits only the empty root. Validation reuses the native
+dictionary label parser and strict fork checks, enforces empty leaf markers
+(no bits or refs), and decreases the remaining key width at each fork. Recursion
+is bounded by the 256-bit key width; the entry cap also bounds traversal of
+shared subtrees as logical entries. This is a restore-time full scan, not a
+per-transaction operation or a measured RSS/deadline bound.
+
+Every dictionary node is loaded without implicit library resolution and special
+cells are rejected. This matters even under an active VM context: the generic
+dictionary reader can resolve library references. A test installs a working
+library resolver, proves ordinary dictionary lookup invokes it, and requires
+the persisted-state loader to reject both root and nested references without
+calling it. Malformed cells, incomplete proofs and VM execution-budget exhaustion
+return errors instead of producing an object.
+
+Tests cover BoC round-trip, exact/insufficient entry limits, malformed forks,
+nonempty bit/ref markers, pruned cells, duplicate rejection after restore and
+deterministic immutable continuation. Independently removing the entry bound,
+empty-marker check or non-resolving cell load made the corresponding tests fail;
+all mutations were restored.
+
+The database-reopening fixture now constructs this object from the reopened
+account payload, rejects an existing nullifier and stages a new one while
+preserving the original root. This stages a used-set update only; it does not
+commit a new host block. Root authentication, complete StateV2 decoding and the
+reservation/owner/amount/tree cross-field invariants remain separate requirements.
+In particular, `NullifierState` still needs its own validated multi-root loader;
+this API does not bypass refund reservations or authorize spending.
+
+The final strict loader passed the explicit 2,000,000-key experiment in 207.0
+seconds, including reopening, full validation, historical duplicate rejection and
+staging a fresh key; its database is retained at
+`/tmp/uno-snapshot-celldb-mYs19E`. The ordinary snapshot and nullifier CTest groups
+also passed twice (72.81 seconds total). A load-counter test additionally proves
+that a zero entry budget touches no cell and that an execution-budget exception
+becomes an error, with a successful load of the same fixture as positive control.
+These timings are test wall times, not isolated loader or slot measurements.

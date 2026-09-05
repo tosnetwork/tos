@@ -123,7 +123,17 @@ class SnapshotImportActor final : public td::actor::Actor {
     check_registration();
   }
   void reloaded(td::Result<td::Ref<vm::DataCell>> result) {
-    verify_root(result.move_as_ok());
+    auto root = result.move_as_ok();
+    verify_root(root);
+    auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
+    auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys_.size()).move_as_ok();
+    ASSERT_TRUE(restored.with_used({keys_.front()}).is_error());
+    auto fresh = td::Bits256::zero();
+    ASSERT_TRUE(!restored.contains(fresh));
+    auto next = restored.with_used({fresh}).move_as_ok();
+    ASSERT_TRUE(next.contains(fresh));
+    ASSERT_TRUE(!restored.contains(fresh));
+    ASSERT_TRUE(restored.root()->get_hash() == payload->get_hash());
     check_registration();
   }
   void check_registration() {
