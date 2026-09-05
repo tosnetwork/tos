@@ -1959,6 +1959,20 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
                       "cannot unpack old workchain list (ConfigParam 12): ");
     TRY_RESULT_PREFIX(new_workchains, Config::unpack_workchain_list(new_dict.lookup_ref(td::BitArray<32>{12})),
                       "cannot unpack new workchain list (ConfigParam 12): ");
+    auto new_ingress_root = new_dict.lookup_ref(td::BitArray<32>{kWorkchainNativeIngressConfigParam});
+    if (new_ingress_root.not_null()) {
+      TRY_RESULT(new_ingress, decode_workchain_native_ingress_table(new_ingress_root));
+      WorkchainNativeIngressTable old_ingress;
+      if (old_ingress_root.not_null()) {
+        TRY_RESULT(decoded, decode_workchain_native_ingress_table(old_ingress_root));
+        old_ingress = std::move(decoded);
+      }
+      for (const auto& [id, policy] : new_ingress) {
+        if (!old_ingress.count(id) && old_workchains.count(id)) {
+          return td::Status::Error("existing workchain adds native ingress restriction without an explicit migration rule");
+        }
+      }
+    }
     TRY_STATUS_PREFIX(validate_workchain_execution_descriptor_transitions(old_workchains, new_workchains),
                       "invalid workchain execution descriptor transition: ");
   } catch (vm::VmError& err) {

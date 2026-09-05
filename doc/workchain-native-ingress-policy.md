@@ -168,6 +168,14 @@ validity or activation authorization. New entries, engine-configuration changes,
 readiness and the authenticated in-flight migration protocol still need their
 own rules and end-to-end configuration-update acceptance tests.
 
+First-policy insertion into an existing workchain is now also rejected by the
+shared transition predicate. This holds even when its old public table was empty:
+the configuration pair alone cannot establish absence of historical messages in
+foreign queues. Current admission closure is not a substitute for that proof.
+Fresh descriptors are not rejected by this continuity check, but still require
+the independent configuration and activation conditions; this is not deployment
+authorization or an implementation of the missing migration protocol.
+
 ## Required implementation and evidence
 
 1. Freeze and implement the common configuration codec, descriptor binding and

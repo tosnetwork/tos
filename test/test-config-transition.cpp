@@ -217,3 +217,26 @@ TEST(ConfigTransition, ingress_destination_continuity) {
   ASSERT_TRUE(block::valid_config_transition(original, with_policies({extra, changed})).is_error());
   ASSERT_TRUE(original->get_hash() == hash);
 }
+
+TEST(ConfigTransition, existing_workchain_cannot_add_ingress_restriction) {
+  WorkchainSpec existing;
+  existing.id = 2;
+  auto old_config = make_config({existing});
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, -1};
+  policy.descriptor_version = 1;
+  policy.executor_address.set_zero();
+  policy.engine_configuration = vm::CellBuilder().finalize();
+  vm::Dictionary next(old_config, 32);
+  ASSERT_TRUE(next.set_ref(td::BitArray<32>{84},
+      block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+  ASSERT_TRUE(block::valid_config_transition(old_config, next.get_root_cell()).is_error());
+  vm::Dictionary empty_policy(old_config, 32);
+  ASSERT_TRUE(empty_policy.set_ref(td::BitArray<32>{84},
+      block::encode_workchain_native_ingress_table({}).move_as_ok()));
+  ASSERT_TRUE(block::valid_config_transition(empty_policy.get_root_cell(), next.get_root_cell()).is_error());
+  expect_ok(block::valid_config_transition(next.get_root_cell(), next.get_root_cell()));
+  // Isolated transition control; full configuration validity and activation are separate checks.
+  expect_ok(block::valid_config_transition(make_config({}), next.get_root_cell()));
+}

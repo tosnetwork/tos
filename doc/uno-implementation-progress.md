@@ -739,3 +739,13 @@ descriptor version. create-state rejects it before publishing a zerostate.
 Bypassing the added semantic-validation block lets that configuration succeed and
 fails the test; the check was restored. This does not prove all-validator readiness
 or authorize adding new policies to existing workchains with pending traffic.
+
+Configuration transitions now reject adding a first ingress restriction to an
+already listed workchain, whether the old table was absent or explicitly empty.
+An old descriptor with admission currently closed does not establish that foreign
+queues never held other destinations; the current transition API has no queue
+reconciliation proof. No implicit migration override is allowed. Isolated tests
+cover both rejection cases, unchanged policy and a newly introduced workchain
+as controls. Bypassing this guard accepts the unsafe existing-workchain transition
+and fails the assertion; the guard was restored. Fresh-workchain activation,
+validator readiness and an authenticated migration protocol remain separate work.
