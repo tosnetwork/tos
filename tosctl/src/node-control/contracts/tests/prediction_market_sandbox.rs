@@ -1395,6 +1395,51 @@ fn uncontested_normal_quorum_finalizes_only_at_the_frozen_deadline() {
 }
 
 #[test]
+fn normal_reporter_window_closes_at_the_frozen_deadline() {
+    // Each case has its own production contract because a threshold-one
+    // report at deadline-1 changes state to PROPOSED. The exact deadline and
+    // later cases must remain REPORTING so that their rejection proves the
+    // report gate itself, not a later phase's unrelated invariant.
+    for (offset, accepted) in [(-1_i64, true), (0, false), (1, false)] {
+        let mut f = Fixture::new();
+        f.activate();
+        let reporter = f.normal.address().clone();
+        let keeper = f.trader_b.address().clone();
+        let now = f.init.resolve_not_before as u32;
+        f.bc.set_now(now);
+        f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+            .expect_success();
+        f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+            .expect_success();
+        let context = f.phase().3;
+        let deadline = f.init.oracle_vote_deadline;
+        let report_at = u64::try_from(i128::from(deadline) + i128::from(offset)).unwrap();
+        f.bc.set_now(report_at as u32);
+        // Keep this statement intrinsically valid at every tested instant.
+        // The contract must therefore reach its phase/deadline gate rather
+        // than reject it earlier as malformed.
+        let body = PredictionMarketContractV1::report_result(
+            3,
+            0,
+            context,
+            0,
+            [0xb1; 32],
+            report_at,
+            report_at + 1,
+        )
+        .unwrap();
+        let result = f.send(&reporter, OPERATION_BUDGET, body);
+        if accepted {
+            result.expect_success();
+            assert_eq!(f.phase().0, 2, "deadline-1 report must create a proposal");
+        } else {
+            result.expect_exit_code(2425);
+            assert_eq!(f.phase().0, 1, "late report must not change the reporting state");
+        }
+    }
+}
+
+#[test]
 fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
     let mut f = Fixture::new();
     f.activate();
