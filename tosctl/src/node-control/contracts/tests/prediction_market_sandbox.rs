@@ -504,7 +504,16 @@ impl Fixture {
     }
 
     fn register(&mut self, owner: &MsgAddressInt, key: &SigningKey, query_id: u64) {
-        let credited = 10 * TOS;
+        self.register_with_credit(owner, key, query_id, 10 * TOS);
+    }
+
+    fn register_with_credit(
+        &mut self,
+        owner: &MsgAddressInt,
+        key: &SigningKey,
+        query_id: u64,
+        credited: u64,
+    ) {
         let value = credited
             + self.init.participant_entry_fee
             + self.init.account_cleanup_bounty
@@ -1394,6 +1403,101 @@ fn owner_order_and_global_live_order_caps_fail_closed() {
         "global live-order cap admitted excess records"
     );
     assert_eq!(global.accounting(), before, "failed global order admission mutated accounting");
+}
+
+#[test]
+fn maximum_live_order_state_has_bounded_gas_and_rejects_the_next_admission() {
+    const ORDERS_PER_OWNER: u64 = 128;
+    // The frozen production BOC measures 113,464 gas at this state. Keep a
+    // substantial regression envelope while making gas growth observable.
+    const MAX_MATCH_GAS_AT_FULL_ORDER_STATE: u64 = 200_000;
+    let mut f = Fixture::new_with(|init, _, _| {
+        init.max_order_lots = 1;
+        init.max_locked_collateral = 200 * TOS;
+        init.max_account_free_balance = 150 * TOS;
+        init.max_total_free_balance = 300 * TOS;
+        init.max_total_liability = 600 * TOS;
+        init.max_orders_per_participant = ORDERS_PER_OWNER as u32;
+        init.max_live_order_records = (2 * ORDERS_PER_OWNER) as u32;
+    });
+    f.activate();
+    let owner = f.owner.address().clone();
+    let trader = f.trader_b.address().clone();
+    let owner_key = SigningKey::from_bytes(&[0x64; 32]);
+    let trader_key = SigningKey::from_bytes(&[0x65; 32]);
+    f.register_with_credit(&owner, &owner_key, 2, 130 * TOS);
+    f.register_with_credit(&trader, &trader_key, 3, 130 * TOS);
+
+    let mut max_gas = 0;
+    for nonce in 1..=ORDERS_PER_OWNER {
+        let yes = f.signed_order(
+            &owner,
+            &owner_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Maker,
+            6_000,
+            1,
+        );
+        let no = f.signed_order(
+            &trader,
+            &trader_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::No,
+            PredictionLiquidityRoleV1::Taker,
+            4_000,
+            1,
+        );
+        let result = f.send(
+            &owner,
+            2 * TOS,
+            PredictionMarketContractV1::match_pair(nonce + 1_000, 1, yes, no).unwrap(),
+        );
+        max_gas = max_gas.max(compute_gas_used(&result));
+        result.expect_success();
+    }
+    assert_eq!(f.accounting()[1], i128::from(2 * ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[2], i128::from(ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[3], i128::from(ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[5], i128::from(ORDERS_PER_OWNER * TOS));
+    assert!(
+        max_gas <= MAX_MATCH_GAS_AT_FULL_ORDER_STATE,
+        "maximum-state match used {max_gas} gas, exceeding the {MAX_MATCH_GAS_AT_FULL_ORDER_STATE} gas budget"
+    );
+
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+    let next_nonce = ORDERS_PER_OWNER + 1;
+    let yes = f.signed_order(
+        &owner,
+        &owner_key,
+        next_nonce,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        1,
+    );
+    let no = f.signed_order(
+        &trader,
+        &trader_key,
+        next_nonce,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        1,
+    );
+    f.send(
+        &owner,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(next_nonce + 1_000, 1, yes, no).unwrap(),
+    )
+    .expect_exit_code(2413);
+    assert_eq!(f.data_hash(), before_data_hash, "capacity rejection changed maximum-state data");
+    assert_eq!(f.accounting(), before_accounting, "capacity rejection changed liabilities");
 }
 
 #[test]
