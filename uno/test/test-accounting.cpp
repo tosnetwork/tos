@@ -66,3 +66,36 @@ TEST(UnoAccounting, WidePoolAndZeroArithmetic) {
   expect_state(before.checked_paid_ack(amount(0)).move_as_ok(), before);
   expect_state(before.checked_refund(amount(0)).move_as_ok(), before);
 }
+
+TEST(UnoAccounting, ClaimAndFeeDistribution) {
+  const Accounting before{amount(100), amount(20), amount(7)};
+  expect_state(before.checked_shield_claim(amount(11)).move_as_ok(), {amount(111), amount(20), amount(7)});
+  expect_state(before.checked_private_fee_distribution(amount(11)).move_as_ok(),
+               {amount(111), amount(9), amount(7)});
+  auto pending = before.checked_native_fee_distribution(amount(11)).move_as_ok();
+  expect_state(pending, {amount(100), amount(9), amount(18)});
+  expect_state(pending.checked_paid_ack(amount(11)).move_as_ok(), {amount(100), amount(9), amount(7)});
+  expect_state(before, {amount(100), amount(20), amount(7)});
+  expect_state(before.checked_shield_claim(amount(0)).move_as_ok(), before);
+  expect_state(before.checked_private_fee_distribution(amount(0)).move_as_ok(), before);
+  expect_state(before.checked_native_fee_distribution(amount(0)).move_as_ok(), before);
+  const Accounting wide{Amount::from_words(1, 0), Amount::from_words(1, 0), Amount::from_words(1, 0)};
+  expect_state(wide.checked_private_fee_distribution(amount(1)).move_as_ok(),
+               {Amount::from_words(1, 1), amount(18446744073709551615ULL), Amount::from_words(1, 0)});
+}
+
+TEST(UnoAccounting, ClaimAndDistributionRejectInvalidAmounts) {
+  const auto max = std::numeric_limits<td::uint64>::max();
+  const auto wide_max = Amount::from_words(max, max);
+  const Accounting full_notes{wide_max, amount(20), amount(7)};
+  ASSERT_TRUE(full_notes.checked_shield_claim(amount(1)).is_error());
+  ASSERT_TRUE(full_notes.checked_private_fee_distribution(amount(1)).is_error());
+  const Accounting full_withdrawals{amount(0), amount(20), wide_max};
+  ASSERT_TRUE(full_withdrawals.checked_native_fee_distribution(amount(1)).is_error());
+  const Accounting insufficient_fees{amount(100), amount(20), amount(7)};
+  ASSERT_TRUE(insufficient_fees.checked_private_fee_distribution(amount(21)).is_error());
+  ASSERT_TRUE(insufficient_fees.checked_native_fee_distribution(amount(21)).is_error());
+  expect_state(full_notes, {wide_max, amount(20), amount(7)});
+  expect_state(full_withdrawals, {amount(0), amount(20), wide_max});
+  expect_state(insufficient_fees, {amount(100), amount(20), amount(7)});
+}

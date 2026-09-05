@@ -13,6 +13,25 @@ struct Accounting {
   Amount fees;
   Amount withdrawals;
 
+  // Only after the matching authenticated deposit is consumed exactly once.
+  td::Result<Accounting> checked_shield_claim(const Amount& deposit) const {
+    TRY_RESULT(claimed_notes, notes.checked_add(deposit));
+    return Accounting{claimed_notes, fees, withdrawals};
+  }
+
+  td::Result<Accounting> checked_private_fee_distribution(const Amount& reward) const {
+    TRY_RESULT(remaining_fees, fees.checked_sub(reward));
+    TRY_RESULT(rewarded_notes, notes.checked_add(reward));
+    return Accounting{rewarded_notes, remaining_fees, withdrawals};
+  }
+
+  // Native rewards create withdrawal liabilities, not completed payments.
+  td::Result<Accounting> checked_native_fee_distribution(const Amount& reward) const {
+    TRY_RESULT(remaining_fees, fees.checked_sub(reward));
+    TRY_RESULT(rewarded_withdrawals, withdrawals.checked_add(reward));
+    return Accounting{notes, remaining_fees, rewarded_withdrawals};
+  }
+
   td::Result<Accounting> checked_transfer_fee(const Amount& fee) const {
     TRY_RESULT(next_notes, notes.checked_sub(fee));
     TRY_RESULT(next_fees, fees.checked_add(fee));

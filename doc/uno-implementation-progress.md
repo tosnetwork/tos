@@ -815,3 +815,15 @@ receipt finality, permanent IDs/tombstones, proof verification, refund reservati
 consumption and atomic state/queue commits remain required before engine use.
 Shield claims, fee distribution and authenticated R/P/D reconciliation are not
 implemented by this layer yet.
+
+Accounting now also calculates ShieldClaim's N credit and the two fee-pool
+distribution branches: private rewards move F to N, Native rewards move F to W
+and require the later payout state machine. Exact-balance, zero and wide-borrow
+controls cover these paths. Isolated tests reject N/W overflow and insufficient
+F without changing the input. Replacing each of the three results with the old
+state, and bypassing each of the five checked arithmetic sites, separately made
+the matching assertion fail; all mutations were restored. ShieldClaim here is
+not a runtime mint entry point: authenticated deposit consumption, the matching
+D decrease at a reconciled cut, output bundle verification and permanent IDs
+are still required outside these calculations. Fee distribution authorization,
+unique distribution IDs and authenticated R/P/D reconciliation remain unfinished.
