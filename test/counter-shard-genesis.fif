@@ -1,0 +1,14 @@
+"TosUtil.fif" include
+"Asm.fif" include
+"Lists.fif" include
+
+// Isolated host fixture: no private asset, reserve or spendable balance.
+-23901 setglobalid
+2 setworkchain
+empty_cell
+<b x{57424531} s, 0 1 u, <b 40 64 u, b> ref, b>
+empty_cell 0 0 0 0 6 register_smc drop
+create_state
+dup 31 boc+>B dup "counter-state.boc" B>file
+Bhashu 256 u>B "counter-state.fhash" B>file
+hashu 256 u>B "counter-state.rhash" B>file

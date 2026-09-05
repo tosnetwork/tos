@@ -28,6 +28,7 @@
 #include "fabric.h"
 #include "manager-disk.hpp"
 #include "manager.h"
+#include "impl/out-msg-queue-proof.hpp"
 #include "validator-group.hpp"
 
 namespace tos {
@@ -93,6 +94,19 @@ void ValidatorManagerImpl::wait_state_by_prev_blocks(BlockIdExt block_id, std::v
   LOG(DEBUG) << "Requesting merged state for prev blocks " << prev_blocks[0].to_str() << " and "
              << prev_blocks[1].to_str() << " for " << block_id.to_str();
   wait_block_state_merge(prev_blocks[0], prev_blocks[1], 0, td::Timestamp::in(10.0), std::move(promise));
+}
+
+void ValidatorManagerImpl::wait_neighbor_msg_queue_proofs(
+    ShardIdFull dst_shard, std::vector<BlockIdExt> blocks, td::Timestamp timeout,
+    td::Promise<std::map<BlockIdExt, td::Ref<OutMsgQueueProof>>> promise) {
+  if (out_msg_queue_importer_.empty()) {
+    auto local_options = opts_;
+    local_options.write().set_shard_check_function([](ShardIdFull, BlockSeqno) { return true; });
+    out_msg_queue_importer_ = td::actor::create_actor<OutMsgQueueImporter>(
+        "disk-outmsgqueueimporter", actor_id(this), std::move(local_options), last_masterchain_state_);
+  }
+  td::actor::send_closure(out_msg_queue_importer_, &OutMsgQueueImporter::get_neighbor_msg_queue_proofs,
+                          dst_shard, std::move(blocks), timeout, std::move(promise));
 }
 
 void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {

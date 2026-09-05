@@ -1,0 +1,79 @@
+find_program(BASE64 base64)
+if(NOT BASE64 OR NOT DEFINED CREATE_STATE OR NOT DEFINED COLLATOR OR NOT DEFINED SOURCE_DIR OR NOT DEFINED BUILD_DIR)
+  message(FATAL_ERROR "Counter integration requires base64, CREATE_STATE, COLLATOR, SOURCE_DIR and BUILD_DIR")
+endif()
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef suffix)
+set(fixture "${BUILD_DIR}/counter-integration-${suffix}")
+file(MAKE_DIRECTORY "${fixture}/db/static")
+string(TIMESTAMP epoch "%s" UTC)
+set(includes "${SOURCE_DIR}/crypto/fift/lib:${BUILD_DIR}/crypto/smartcont:${SOURCE_DIR}/crypto/smartcont")
+foreach(script counter-shard-genesis counter-masterchain-genesis)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E env "SOURCE_DATE_EPOCH=${epoch}"
+    "${CREATE_STATE}" -I "${includes}" "${SOURCE_DIR}/test/${script}.fif"
+    WORKING_DIRECTORY "${fixture}" RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
+  file(WRITE "${fixture}/${script}.log" "${output}${errors}")
+  if(NOT status STREQUAL "0")
+    message(FATAL_ERROR "Genesis generation failed (${status}); see ${fixture}/${script}.log")
+  endif()
+endforeach()
+foreach(state zerostate basestate0 counter-state)
+  file(SHA256 "${fixture}/${state}.boc" hash)
+  string(TOUPPER "${hash}" hash)
+  configure_file("${fixture}/${state}.boc" "${fixture}/db/static/${hash}" COPYONLY)
+endforeach()
+execute_process(COMMAND "${BASE64}" "${fixture}/zerostate.rhash"
+  RESULT_VARIABLE root_status OUTPUT_VARIABLE root)
+execute_process(COMMAND "${BASE64}" "${fixture}/zerostate.fhash"
+  RESULT_VARIABLE file_status OUTPUT_VARIABLE hash)
+if(NOT root_status STREQUAL "0" OR NOT file_status STREQUAL "0")
+  message(FATAL_ERROR "Cannot encode fixture state identifiers")
+endif()
+string(STRIP "${root}" root)
+string(STRIP "${hash}" hash)
+file(WRITE "${fixture}/global.json" "{
+  \"@type\":\"config.global\",
+  \"dht\":{\"@type\":\"dht.config.global\",\"k\":6,\"a\":3,
+    \"static_nodes\":{\"@type\":\"dht.nodes\",\"nodes\":[]}},
+  \"validator\":{\"@type\":\"validator.config.global\",\"zero_state\":{
+    \"workchain\":-1,\"shard\":-9223372036854775808,\"seqno\":0,
+    \"root_hash\":\"${root}\",\"file_hash\":\"${hash}\"},\"hardforks\":[]}}
+")
+
+function(run_node label expected_status expected_text)
+  execute_process(COMMAND "${COLLATOR}" -C "${fixture}/global.json" -D "${fixture}/db" ${ARGN}
+    WORKING_DIRECTORY "${fixture}" RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
+  set(log "${output}${errors}")
+  file(WRITE "${fixture}/${label}.log" "${log}")
+  if(NOT status STREQUAL "${expected_status}")
+    message(FATAL_ERROR "${label}: exit ${status}, expected ${expected_status}; see ${fixture}/${label}.log")
+  endif()
+  string(FIND "${log}" "${expected_text}" found)
+  if(found EQUAL -1)
+    message(FATAL_ERROR "${label}: missing '${expected_text}'; see ${fixture}/${label}.log")
+  endif()
+  if(expected_status STREQUAL "0")
+    string(REGEX MATCH "= (\\([0-9-]+,8000000000000000,[0-9]+\\):[0-9A-F]+:[0-9A-F]+) saved to disk" match "${log}")
+    if(NOT match)
+      message(FATAL_ERROR "${label}: no persisted block identifier; see ${fixture}/${label}.log")
+    endif()
+    set(last_block "${CMAKE_MATCH_1}" PARENT_SCOPE)
+  else()
+    string(FIND "${log}" "saved to disk" saved)
+    if(NOT saved EQUAL -1)
+      message(FATAL_ERROR "${label}: rejected candidate was saved")
+    endif()
+  endif()
+endfunction()
+
+run_node(bootstrap 0 "saved to disk" -w -1)
+file(READ "${fixture}/counter-state.rhash" counter_root HEX)
+file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
+set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
+run_node(counter1 0 "(2,8000000000000000,1)" --counter-increment 2 -w 2 -T "${previous}")
+set(previous "${last_block}")
+# Fresh processes reopen the same database. These adjacent limits prove the
+# restored value is exactly 42, without trusting a private cache or an RPC claim.
+run_node(overflow 2 "counter overflow" --counter-increment 18446744073709551574 -w 2 -T "${previous}")
+run_node(counter2 0 "(2,8000000000000000,2)" --counter-increment 18446744073709551573 -w 2 -T "${previous}")
+run_node(max_overflow 2 "counter overflow" --counter-increment 1 -w 2 -T "${last_block}")
+message(STATUS "Counter collate/validate/restart checks passed; artifacts: ${fixture}")

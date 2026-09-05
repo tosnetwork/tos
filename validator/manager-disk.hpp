@@ -39,6 +39,7 @@ class WaitBlockState;
 class WaitZeroState;
 class WaitShardState;
 class WaitBlockDataDisk;
+class OutMsgQueueImporter;
 
 class ValidatorManagerImpl : public ValidatorManager {
  private:
@@ -183,9 +184,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void wait_block_state_short(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout, bool wait_store,
                               td::Promise<td::Ref<ShardState>> promise) override;
   void wait_neighbor_msg_queue_proofs(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks, td::Timestamp timeout,
-                                      td::Promise<std::map<BlockIdExt, td::Ref<OutMsgQueueProof>>> promise) override {
-    UNREACHABLE();
-  }
+                                      td::Promise<std::map<BlockIdExt, td::Ref<OutMsgQueueProof>>> promise) override;
 
   void set_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) override;
   void wait_block_data(BlockHandle handle, td::uint32 priority, td::Timestamp,
@@ -472,6 +471,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   ShardIdFull shard_to_generate_;
   BlockIdExt block_to_generate_;
   td::Ref<vm::Cell> block_candidate_;
+  td::actor::ActorOwn<OutMsgQueueImporter> out_msg_queue_importer_;
 
   int pending_new_shard_block_descr_{0};
   std::vector<td::Promise<std::vector<td::Ref<ShardTopBlockDescription>>>> waiting_new_shard_block_descr_;

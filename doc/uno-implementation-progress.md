@@ -20,10 +20,29 @@ Base node revision: `5a6145cce`.
   The existing disk-manager flow then validates the candidate and writes it.
   Production startup does not include/register this fixture. The admission CTest
   checks wrong-shard rejection and full uint64 parsing followed by missing-config
-  rejection. These checks do not yet generate a block: a matching MC/shard state
-  fixture and isolated database still need to be built and exercised.
+  rejection. The separate disk integration test generates and exercises matching
+  MC/shard states in a fresh database, as described below.
   Removing the tool's workchain guard changes the exact error and fails the
   admission CTest; the guard was restored.
+- `test-counter-disk-integration` generates zero-balance test genesis states on
+  global ID -23901, boots the disk manager, collates/validates/persists MC block 1
+  to register workchain shards, then collates/validates/persists Counter block 1.
+  Fresh processes reopen the same database for each subsequent candidate.
+  Increment `UINT64_MAX - 41` is rejected, while `UINT64_MAX - 42` succeeds as
+  Counter block 2, proving the restored prior value is exactly 42. Increment 1
+  from block 2 then overflows. Rejected runs must not report a persisted block.
+  The initial value is 40 and the first increment is 2. Test logs and databases
+  remain under unique `build/counter-integration-*` directories for inspection.
+- The disk manager now uses the existing queue-proof importer in local-only
+  mode instead of an unreachable neighbor-proof callback. MC bootstrap exercises
+  this callback with genuine workchain zerostates, not fabricated empty proofs.
+- This harness uses real Collator, ValidateQuery, AccountBlock/shard wrapping and
+  database persistence, but fake block-signature acceptance. It is not a live
+  committee, network synchronization, authenticated bridge or production audit.
+- Live-path mutation checks disable batch creation in the collator and block
+  replay selection in the validator. The integration test fails respectively on
+  a missing executor AccountBlock and account-scope rejection of the batch.
+  Both production paths were restored before the final passing run.
 - Counter execution now reads a canonical `ShardStateUnsplit` and augmented
   `ShardAccounts` dictionary rather than treating a bare integer as a shard.
   `extract_workchain_engine_state` checks workchain/shard identity, absence of
@@ -209,8 +228,8 @@ binds input context; neither authenticates the context by itself.
   Tests exercise the helper on a real serialized AccountBlock and reject changed
   identity, state updates and multiple transactions. Removing the AccountBlock
   state-update comparison accepts a forged wrapper and fails its rejection test;
-  the comparison was restored. This is not evidence of end-to-end validator
-  acceptance; a configured/registered engine and valid full-node fixture are needed.
+  the comparison was restored. The disk integration test additionally exercises
+  this branch with full Counter candidate blocks, not only the replay helper.
 - The collator block path now bypasses per-account processing but still must supply
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
@@ -221,8 +240,10 @@ binds input context; neither authenticates the context by itself.
 
 ## Remaining requirements
 
-This is the beginning of M1, not an enabled workchain. Both block branches require
-an explicitly registered engine and have no end-to-end acceptance evidence yet.
+This is partial M1, not an enabled privacy workchain. State-only Counter collation,
+validation and disk restart now have end-to-end test evidence. Both block branches
+still require an explicitly registered engine; message settlement, distributed
+consensus and network synchronization have not been accepted.
 Context cells are not authentication proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
