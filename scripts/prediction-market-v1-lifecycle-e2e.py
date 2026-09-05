@@ -291,12 +291,15 @@ class Lifecycle:
             return
         report_dir = self.workdir / "openfox-evidence"
         report_dir.mkdir(mode=0o700)
+        trusted_tosctl = self.workdir / "trusted-tosctl"
+        shutil.copyfile(self.tosctl, trusted_tosctl)
+        trusted_tosctl.chmod(0o700)
         info = rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]
         initial = info["init"]
         env = dict(os.environ)
         env.update({
             "GOWORK": "off", "OPENFOX_PREDICTION_ACCEPTED_WAGER_CONTRACT_THREE_NODE_E2E": "1",
-            "OPENFOX_PREDICTION_TOSCTL": str(self.tosctl),
+            "OPENFOX_PREDICTION_TOSCTL": str(trusted_tosctl),
             "OPENFOX_PREDICTION_MARKET_DEFINITION": str(self.evidence_dir / "market.json"),
             "OPENFOX_PREDICTION_MATCH_EXTERNAL_BOC": str(self.evidence_dir / "match-external.boc"),
             "OPENFOX_PREDICTION_MATCH_BODY_BOC": str(self.evidence_dir / "match-body.boc"),
