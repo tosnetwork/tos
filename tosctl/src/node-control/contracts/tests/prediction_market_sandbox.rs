@@ -130,6 +130,7 @@ struct Fixture {
     owner: Treasury,
     trader_b: Treasury,
     normal: Treasury,
+    normal_second: Treasury,
     appellate: Treasury,
     reserve: Treasury,
     market: MsgAddressInt,
@@ -339,9 +340,25 @@ impl Fixture {
         Self::new_with_global_version(14, configure)
     }
 
+    // A second normal reporter is test-only fixture identity. Keep it
+    // separate from the protocol-version constructor: callers that exercise
+    // a version gate must not accidentally inherit a different Oracle setup.
+    fn new_with_reporters(
+        configure: impl FnOnce(&mut PredictionMarketInitV1, &MsgAddressInt, &MsgAddressInt),
+    ) -> Self {
+        Self::new_with_global_version_and_reporters(14, configure)
+    }
+
     fn new_with_global_version(
         global_version: u32,
         configure: impl FnOnce(&mut PredictionMarketInitV1),
+    ) -> Self {
+        Self::new_with_global_version_and_reporters(global_version, |init, _, _| configure(init))
+    }
+
+    fn new_with_global_version_and_reporters(
+        global_version: u32,
+        configure: impl FnOnce(&mut PredictionMarketInitV1, &MsgAddressInt, &MsgAddressInt),
     ) -> Self {
         let mut bc = Blockchain::with_global_version(global_version).expect("blockchain");
         bc.set_workchain(-1);
@@ -349,6 +366,8 @@ impl Fixture {
         let owner = bc.treasury("prediction-owner", treasury_balance).expect("owner");
         let trader_b = bc.treasury("prediction-trader-b", treasury_balance).expect("trader b");
         let normal = bc.treasury("normal-reporter", 100 * TOS).expect("normal reporter");
+        let normal_second =
+            bc.treasury("normal-reporter-second", 100 * TOS).expect("second normal reporter");
         let appellate = bc.treasury("appellate-reporter", 100 * TOS).expect("appellate reporter");
         let reserve = bc.treasury("prediction-reserve", 100 * TOS).expect("reserve");
         let now = u64::from(bc.now());
@@ -394,7 +413,7 @@ impl Fixture {
                 reporters: vec![appellate.address().clone()],
             },
         };
-        configure(&mut init);
+        configure(&mut init, normal.address(), normal_second.address());
         let market = PredictionMarketContractV1::calculate_address(&init).expect("market address");
         let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
             .bounce(false)
@@ -402,7 +421,7 @@ impl Fixture {
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, owner, trader_b, normal, appellate, reserve, market, init }
+        Self { bc, owner, trader_b, normal, normal_second, appellate, reserve, market, init }
     }
 
     fn send(&mut self, sender: &MsgAddressInt, value: u64, body: Cell) -> SendResult {
@@ -1778,6 +1797,47 @@ fn resolution_context_getter_uses_unambiguous_absence_before_a_round_opens() {
     let (current, review_base) = f.resolution_contexts();
     assert!(current.is_none());
     assert!(review_base.is_none());
+}
+
+#[test]
+fn normal_quorum_requires_distinct_reporters_and_counts_each_once() {
+    let mut f = Fixture::new_with_reporters(|init, normal, normal_second| {
+        init.normal_oracle_policy = PredictionOraclePolicyV1 {
+            threshold: 2,
+            reporters: vec![normal.clone(), normal_second.clone()],
+        };
+    });
+    f.activate();
+    let keeper = f.trader_b.address().clone();
+    let first = f.normal.address().clone();
+    let second = f.normal_second.address().clone();
+    let now = f.init.resolve_not_before;
+    let deadline = f.init.oracle_vote_deadline;
+
+    f.bc.set_now(now as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    assert_ne!(context, [0; 32]);
+
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id, 0, context, 0, [0xc1; 32], now, deadline,
+        )
+        .unwrap()
+    };
+    f.send(&first, OPERATION_BUDGET, report(3)).expect_success();
+    assert_eq!(f.phase().0, 1, "one 2-of-2 vote must not form a proposal");
+
+    f.send(&first, OPERATION_BUDGET, report(4)).expect_success();
+    assert_eq!(f.phase().0, 1, "a duplicate reporter vote must remain idempotent");
+
+    f.send(&second, OPERATION_BUDGET, report(5)).expect_success();
+    let (status, _, _, _, _, proposal, _) = f.phase();
+    assert_eq!(status, 2, "the second distinct reporter must form the proposal");
+    assert_ne!(proposal, [0; 32]);
 }
 
 #[test]
