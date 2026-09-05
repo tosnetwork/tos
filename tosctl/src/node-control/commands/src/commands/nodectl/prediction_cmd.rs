@@ -1027,6 +1027,19 @@ impl PredictionPrepareAgentCmd {
             )?;
             boc
         };
+        // A BOC byte digest identifies the durable local artifact, whereas the
+        // relay history walk identifies the external message by its TVM cell
+        // representation hash.  Export both: serializing a valid cell in a
+        // different BOC envelope must not change the chain identity that the
+        // resolver searches for.
+        let submitted_external_message_hash = prediction_external_message_hash(&boc)?;
+        // The command emits the executable BOC both to the owner-private file
+        // and to stdout.  From this point any holder may submit it, so a
+        // subsequent resolver must treat chain inclusion as ambiguous rather
+        // than assume a merely Signed record is safe to rebuild.  Retrying
+        // this transition is deliberately idempotent and never changes the
+        // frozen bytes or controller sequence.
+        journal.begin_or_resume_exact_broadcast(&claim, now)?;
         persist_exact(&self.output_boc, &boc)?;
         println!(
             "{}",
@@ -1048,14 +1061,24 @@ impl PredictionPrepareAgentCmd {
                 "network_domain": network,
                 "pre_broadcast_source_cursor": pre_broadcast_source_cursor,
                 "pre_broadcast_masterchain_checkpoint": pre_broadcast_masterchain_checkpoint,
+                "submitted_external_message_hash": submitted_external_message_hash,
                 "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
                 "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
                 "output_boc": self.output_boc,
+                // No network write occurs in prepare-agent, but the exact BOC
+                // is no longer custody-private once this output is returned.
+                "journal_state": "broadcasting",
                 "broadcast": false,
             }))?
         );
         Ok(())
     }
+}
+
+fn prediction_external_message_hash(boc: &[u8]) -> anyhow::Result<String> {
+    let message =
+        read_single_root_boc(boc).context("decode signed Prediction external-message BOC")?;
+    Ok(format!("tvm-cell-sha256:{}", hex::encode(message.repr_hash().as_slice())))
 }
 
 // Serialize the only pre-broadcast recovery boundary accepted by OpenFox.
@@ -2097,6 +2120,17 @@ mod tests {
         assert!(parse_hash("hash", &"aa".repeat(32)).is_ok());
         assert!(parse_hash("hash", &"AA".repeat(32)).is_err());
         assert!(parse_hash("hash", &"aa".repeat(31)).is_err());
+    }
+
+    #[test]
+    fn prepared_external_message_hash_is_the_cell_hash_not_the_boc_digest() {
+        let cell = PredictionMarketContractV1::code().unwrap();
+        let boc = write_boc(&cell).unwrap();
+        assert_eq!(
+            prediction_external_message_hash(&boc).unwrap(),
+            format!("tvm-cell-sha256:{}", hex::encode(cell.repr_hash().as_slice()))
+        );
+        assert!(prediction_external_message_hash(b"not a boc").is_err());
     }
 
     #[test]

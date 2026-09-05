@@ -2,9 +2,10 @@
 """Run the direct-wallet PredictionMarket V1 lifecycle on three local nodes.
 
 This is an opt-in acceptance harness.  It owns a fresh local validator network,
-an owner-private temporary file Vault, and every wallet used by the run.  It
-does not claim to exercise the Agent Account relay; that boundary is covered by
-the OpenFox checked-call V2 acceptance gate.
+an owner-private temporary file Vault, and every wallet used by the run.  The
+Agent Account signed-match scenario additionally proves the checked-call V2
+source and destination recovery boundaries through a three-observer tosctl
+resolver.  The OpenFox gate remains an independent verifier of that evidence.
 
 Each normal-outcome scenario proves the complete contract exit path:
 
@@ -129,12 +130,47 @@ class Lifecycle:
         self.openfox_root = openfox_root
 
     def write_config(self, rpc_url: str | None = None) -> None:
+        endpoint = rpc_url or self.rpc_urls[0]
         self.config.write_text(json.dumps({
             "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
-            "chain_rpc": {"urls": [rpc_url or self.rpc_urls[0] + "/"]},
+            "chain_rpc": {"urls": [endpoint], "operator_provenance": "sha256:" + hashlib.sha256(
+                f"tos.prediction.local-observer.v1\\0{endpoint}".encode()).hexdigest()},
             "http": {}, "master_wallet": None, "tick_interval": 40, "log": None,
         }, indent=2))
         self.config.chmod(0o600)
+
+    def relay_quorum_configs(self) -> list[Path]:
+        """Write the two additional owner-pinned observer configs for tosctl recovery."""
+        paths: list[Path] = []
+        for index, endpoint in enumerate(self.rpc_urls[1:], 2):
+            path = self.workdir / f"prediction-relay-node-{index}.json"
+            path.write_text(json.dumps({
+                "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
+                "chain_rpc": {"urls": [endpoint], "operator_provenance": "sha256:" + hashlib.sha256(
+                    f"tos.prediction.local-observer.v1\\0{endpoint}".encode()).hexdigest()},
+                "http": {}, "master_wallet": None, "tick_interval": 40, "log": None,
+            }, indent=2))
+            path.chmod(0o600)
+            paths.append(path)
+        if len(paths) != 2:
+            raise RuntimeError("Prediction recovery requires exactly three local observers")
+        return paths
+
+    def relay_observer_profile(self, network: dict[str, Any], quorum_configs: list[Path]) -> dict[str, Any]:
+        result = json.loads(self.tosctl_call(
+            "agent", "account", "prediction-relay-profile",
+            "--network-id", str(network["network_id"]), "--global-id", str(network["global_id"]),
+            "--zero-state-root-hash", str(network["zero_state_root_hash"]),
+            "--zero-state-file-hash", str(network["zero_state_file_hash"]),
+            "--workchain-id", str(network["workchain_id"]), "--quorum-config",
+            *(str(path) for path in quorum_configs),
+        ))
+        if (result.get("schema") != "tosctl.prediction-relay-observer-profile.v1"
+                or not isinstance(result.get("network_domain_hash"), str)
+                or not isinstance(result.get("observer_ids"), list)
+                or result.get("quorum_threshold") != 2):
+            raise RuntimeError(f"invalid pinned Prediction observer profile: {result}")
+        return result
 
     def tosctl_call(self, *args: str, stdin: bytes | None = None) -> str:
         command = [str(self.tosctl), *args, "-c", str(self.config)]
@@ -415,35 +451,135 @@ class Lifecycle:
         )
         if rejected_path.exists():
             raise RuntimeError("rejected Prediction custody authorization wrote an executable BOC")
-        self.tosctl_call(
+        prepared = json.loads(self.tosctl_call(
             "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
             "--operation", str(operation_path), "--wallet", "prediction-solver",
             "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
             "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
             "--output-boc", str(boc_path), "--yes",
-        )
+        ))
         # The first process has now exited with the signed BOC only in the
         # durable custody journal and the owner-private output file. A fresh
         # process must resume that exact record rather than sign a new
         # controller sequence or reconstruct the payload.
         retry_path = self.workdir / f"agent-retry-message-{sequence}.boc"
-        self.tosctl_call(
+        retried = json.loads(self.tosctl_call(
             "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
             "--operation", str(operation_path), "--wallet", "prediction-solver",
             "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
             "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
             "--output-boc", str(retry_path), "--yes",
-        )
+        ))
         if boc_path.read_bytes() != retry_path.read_bytes():
             raise RuntimeError("Prediction custody retry rebuilt a different signed BOC")
+        for field in ("stable_action_id", "submitted_external_message_hash",
+                      "pre_broadcast_source_cursor", "pre_broadcast_masterchain_checkpoint"):
+            if prepared.get(field) != retried.get(field):
+                raise RuntimeError(f"Prediction custody retry changed durable {field}")
+        if (prepared.get("schema") != "tosctl.prediction-agent-effect-prepared.v1"
+                or not isinstance(prepared.get("submitted_external_message_hash"), str)
+                or not prepared["submitted_external_message_hash"].startswith("tvm-cell-sha256:")
+                or prepared.get("journal_state") != "broadcasting" or prepared.get("broadcast") is not False):
+            raise RuntimeError(f"prepared Prediction effect omitted exact external cell hash: {prepared}")
         before = self.json_call("agent", "account", "show", "--address", self.agent_account_address)
         prior_seqno = int(before["seqno"])
-        self.broadcast_file(boc_path)
+        broadcast = json.loads(self.tosctl_call(
+            "agent", "account", "economic-effect-broadcast", "--wallet", "prediction-solver",
+            "--stable-action-id", prepared["stable_action_id"], "--yes",
+        ))
+        if (broadcast.get("schema") != "tosctl.agent-account.economic-effect-broadcast.v1"
+                or broadcast.get("stable_action_id") != prepared["stable_action_id"]
+                or broadcast.get("state") != "broadcasting"):
+            raise RuntimeError(f"Prediction custody broadcaster did not submit the prepared action: {broadcast}")
         wait_until(
             lambda: int(self.json_call("agent", "account", "show", "--address", self.agent_account_address)["seqno"]) > prior_seqno,
             f"Prediction Agent Account seqno advancement for operation {sequence}",
         )
+        self.resolve_agent_prediction_relay(prepared, body_path)
         return boc_path
+
+    def resolve_agent_prediction_relay(self, prepared: dict[str, Any], body_path: Path) -> None:
+        """Prove one exact V2 source and destination path through tosctl's durable resolver."""
+        required = ("stable_action_id", "source", "source_agent_account_code_hash", "destination",
+                    "market_id", "market_code_hash", "market_config_hash", "amount_nanotos", "body_hash",
+                    "network_domain", "submitted_external_message_hash", "pre_broadcast_source_cursor",
+                    "pre_broadcast_masterchain_checkpoint")
+        if any(name not in prepared for name in required):
+            raise RuntimeError(f"prepared Prediction effect lacks recovery input: {prepared}")
+        quorum_configs = self.relay_quorum_configs()
+        observer = self.relay_observer_profile(prepared["network_domain"], quorum_configs)
+        profile = {
+            "network_domain_hash": observer["network_domain_hash"], "source_agent_account": prepared["source"],
+            "source_agent_account_code_hash": prepared["source_agent_account_code_hash"],
+            "market_address": prepared["destination"], "market_id": prepared["market_id"],
+            "market_code_hash": prepared["market_code_hash"], "market_config_hash": prepared["market_config_hash"],
+            "observer_ids": observer["observer_ids"], "quorum_threshold": observer["quorum_threshold"],
+            "maximum_outstanding": 8, "maximum_signed_boc_bytes": 64 << 10,
+            "minimum_no_bounce_masterchain_blocks": 8,
+        }
+        source_request = {
+            "schema": "tosctl.prediction-relay-source-request.v1", "action_id": prepared["stable_action_id"],
+            "profile": profile, "submitted_external_message_hash": prepared["submitted_external_message_hash"],
+            "pre_broadcast_source_cursor": prepared["pre_broadcast_source_cursor"],
+            "pre_broadcast_masterchain_checkpoint": prepared["pre_broadcast_masterchain_checkpoint"],
+        }
+        source_path = self.workdir / "prediction-relay-source-request.json"
+        source_path.write_text(json.dumps(source_request))
+        source_path.chmod(0o600)
+        source = json.loads(self.tosctl_call(
+            "agent", "account", "prediction-relay-source-resolve", "--wallet", "prediction-solver",
+            "--stable-action-id", prepared["stable_action_id"], "--relay-request", str(source_path),
+            "--max-transactions", "1000", "--quorum-config", *(str(path) for path in quorum_configs),
+        ))
+        if source.get("schema") != "tosctl.prediction-relay-source-evidence.v1" or source.get("state") != "source_finalized":
+            raise RuntimeError(f"Prediction source resolver did not prove the checked call: {source}")
+        evidence = source.get("source_evidence")
+        if not isinstance(evidence, dict) or len(evidence.get("outbound_messages", [])) != 1:
+            raise RuntimeError(f"Prediction source resolver did not bind one exact outbound: {source}")
+        actual = evidence["outbound_messages"][0]
+        source_masterchain = evidence.get("block", {}).get("masterchain_sequence_number")
+        if not isinstance(source_masterchain, int) or source_masterchain <= 0:
+            raise RuntimeError(f"Prediction source evidence omitted a finalized masterchain anchor: {source}")
+        # The source transaction only creates the internal message.  Wait for
+        # all local observers to advance beyond that finalized source block
+        # before asking the destination resolver to search the destination
+        # shard; otherwise a correct resolver would have to report an honest
+        # temporary absence as an ambiguous terminal outcome.
+        wait_until(
+            lambda: min(int(rpc(url, "getMasterchainInfo")["result"]["last"]["seqno"])
+                        for url in self.rpc_urls) >= source_masterchain + 2,
+            "Prediction destination delivery after source finality",
+        )
+        opcode = 0x504D0009  # PredictionMarketV1 match_pair, frozen in the contract wrapper.
+        predicate = "TOS-PREDICTION-CALL-SUCCESS\0{}\0{}\0{}\0{}\0{}\0{}\0{}".format(
+            prepared["action_kind"], prepared["stable_action_id"], prepared["destination"],
+            prepared["amount_nanotos"], prepared["body_hash"], 3, opcode)
+        expected = {
+            "action_kind": prepared["action_kind"], "stable_action_id": prepared["stable_action_id"],
+            "target_address": prepared["destination"], "value_nanotos": prepared["amount_nanotos"],
+            "body_boc_base64": base64.b64encode(body_path.read_bytes()).decode(), "body_hash": prepared["body_hash"],
+            "state_init_boc_base64": "", "state_init_hash": "", "bounce": True, "extra_flags": 3,
+            "opcode": opcode, "success_predicate_digest": "sha256:" + hashlib.sha256(predicate.encode()).hexdigest(),
+        }
+        destination_request = {
+            "schema": "tosctl.prediction-relay-destination-request.v1", "action_id": prepared["stable_action_id"],
+            "profile": profile, "expected": expected,
+            "pre_broadcast_source_cursor": prepared["pre_broadcast_source_cursor"],
+            "pre_broadcast_masterchain_checkpoint": prepared["pre_broadcast_masterchain_checkpoint"],
+            "source_evidence": evidence, "actual_outbound": actual,
+        }
+        destination_path = self.workdir / "prediction-relay-destination-request.json"
+        destination_path.write_text(json.dumps(destination_request))
+        destination_path.chmod(0o600)
+        destination = json.loads(self.tosctl_call(
+            "agent", "account", "prediction-relay-destination-resolve", "--wallet", "prediction-solver",
+            "--stable-action-id", prepared["stable_action_id"], "--relay-request", str(destination_path),
+            "--max-masterchain-blocks", "1000", "--max-transactions", "1000", "--quorum-config",
+            *(str(path) for path in quorum_configs),
+        ))
+        if (destination.get("schema") != "tosctl.prediction-relay-destination-evidence.v1"
+                or destination.get("state") != "destination_committed"):
+            raise RuntimeError(f"Prediction destination resolver did not prove market execution: {destination}")
 
     def export_match_evidence(self, external_boc: Path, operation: dict[str, Any], scan_start: int) -> None:
         """Export bounded public inputs for the OpenFox live acceptance gate."""

@@ -79,7 +79,8 @@ use dual_absence::{
 };
 use prediction_relay::{
     AgentAccountPredictionRelayBounceCreditResolveCmd,
-    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelaySourceResolveCmd,
+    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelayProfileCmd,
+    AgentAccountPredictionRelaySourceResolveCmd,
 };
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -626,6 +627,8 @@ pub enum AgentAccountAction {
     EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
     /// Resolve a Prediction exact source transaction from a durable pre-broadcast cursor
     PredictionRelaySourceResolve(AgentAccountPredictionRelaySourceResolveCmd),
+    /// Preflight and describe a pinned Prediction relay observer quorum
+    PredictionRelayProfile(AgentAccountPredictionRelayProfileCmd),
     /// Resolve the exact PredictionMarket destination transaction from a durable chain checkpoint
     PredictionRelayDestinationResolve(AgentAccountPredictionRelayDestinationResolveCmd),
     /// Resolve the exact rich bounce credit back at the source Agent Account
@@ -1602,6 +1605,7 @@ impl AgentAccountCmd {
             }
             AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelayProfile(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelaySourceResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelayDestinationResolve(cmd) => {
                 cmd.run(config_path).await

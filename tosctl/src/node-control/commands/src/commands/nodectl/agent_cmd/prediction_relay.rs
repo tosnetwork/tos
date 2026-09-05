@@ -44,6 +44,30 @@ const MAX_PREDICTION_TRANSACTION_BOC_BYTES: usize = 2 << 20;
 
 #[derive(clap::Args, Clone)]
 #[command(
+    about = "Preflight a pinned Prediction relay observer set and emit its canonical identity"
+)]
+pub struct AgentAccountPredictionRelayProfileCmd {
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    global_id: i32,
+    #[arg(long)]
+    zero_state_root_hash: String,
+    #[arg(long)]
+    zero_state_file_hash: String,
+    #[arg(long)]
+    workchain_id: i32,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional absolute tosctl configs; all members need distinct endpoint and operator pins"
+    )]
+    quorum_configs: Vec<String>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
     about = "Resolve a Prediction source transaction from an exact pre-broadcast cursor and RPC quorum"
 )]
 pub struct AgentAccountPredictionRelaySourceResolveCmd {
@@ -503,6 +527,46 @@ impl SourceHistoryWalk {
         }
         self.expected_lt = step.previous_lt;
         self.expected_hash = step.previous_hash;
+        Ok(())
+    }
+}
+
+impl AgentAccountPredictionRelayProfileCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.network_id.is_empty() && self.network_id.len() <= 256,
+            "Prediction relay network_id is invalid"
+        );
+        validate_sha256_digest("zero_state_root_hash", &self.zero_state_root_hash)?;
+        validate_sha256_digest("zero_state_file_hash", &self.zero_state_file_hash)?;
+        let network = RelayNetworkDomainPin {
+            network_id: self.network_id.clone(),
+            global_id: self.global_id,
+            zero_state_root_hash: self.zero_state_root_hash.clone(),
+            zero_state_file_hash: self.zero_state_file_hash.clone(),
+            workchain_id: self.workchain_id,
+        };
+        let members = load_economic_payment_corroboration_members(
+            Path::new(config_path),
+            &self.quorum_configs,
+        )?;
+        verify_economic_payment_corroboration_network(&members, &network).await?;
+        let mut observer_ids =
+            members.iter().map(|member| member.locator_identity_digest.clone()).collect::<Vec<_>>();
+        observer_ids.sort();
+        anyhow::ensure!(
+            observer_ids.windows(2).all(|pair| pair[0] < pair[1]),
+            "Prediction relay observer identities are not unique"
+        );
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.prediction-relay-observer-profile.v1",
+                "network_domain_hash": prediction_network_domain_digest(&network)?,
+                "observer_ids": observer_ids,
+                "quorum_threshold": observer_ids.len() / 2 + 1,
+            })
+        );
         Ok(())
     }
 }
