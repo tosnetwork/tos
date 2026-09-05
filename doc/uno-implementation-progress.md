@@ -588,8 +588,7 @@ Verification after restoration: create-state, test-workchain-block,
 test-tos-collator and validator-engine build with -j48; all seven targeted CTest
 cases pass three consecutive runs (21 executions).
 
-Remaining ingress work includes negative sender configuration lookup
-coverage, a wrong-address Native wallet disk scenario, explicit alternate-address
+Remaining ingress work includes a wrong-address Native wallet disk scenario, explicit alternate-address
 encoding coverage, and authenticated activation/queue migration enforcement.
 The referenced engine payload is not yet consumed as engine configuration.
 This is not production activation and does not implement private notes or reserve
@@ -638,3 +637,12 @@ address; removing its descriptor-binding call accepts the wrong version. Each
 mutation fails the corresponding status assertion, without matching error text;
 both checks were restored. This covers receiver resolution, not sender lookup
 without an engine, validator rollout readiness or engine-specific payload use.
+
+Sender lookup now has separate coverage using decoded ConfigParam 12 and 84 cells.
+The default registry has no Counter engine, yet the common resolver returns the
+configured nonzero executor address. Missing descriptors, descriptor-version
+mismatch and missing tables reject; explicit empty tables produce an empty map.
+Removing the binding check in the sender resolver makes the version-mismatch
+case succeed and its test fail; the check was restored. This proves lookup does
+not require foreign-engine registration, not that a Native wallet's invalid send
+is handled correctly end to end; that disk scenario remains outstanding.

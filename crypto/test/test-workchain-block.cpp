@@ -1477,6 +1477,52 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
   ASSERT_TRUE(resolve({policy}).is_ok());
 }
 
+TEST(WorkchainBlock, SenderResolvesIngressWithoutForeignEngine) {
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address = td::Bits256::ones();
+  policy.engine_configuration = number(0);
+  auto configuration = [&](td::Ref<vm::Cell> table, bool include_descriptor, unsigned descriptor_version = 0) {
+    vm::Dictionary config(32);
+    vm::CellBuilder version;
+    CHECK(block::gen::t_GlobalVersion.pack_capabilities(version, 15, tos::capBlockTransition));
+    CHECK(config.set_ref(td::BitArray<32>{8}, version.finalize()));
+    if (table.not_null()) {
+      CHECK(config.set_ref(td::BitArray<32>{84}, table));
+    }
+    vm::Dictionary workchains(32);
+    if (include_descriptor) {
+      vm::CellBuilder descriptor;
+      descriptor.store_long(0xa6, 8).store_zeroes(32 + 24).store_long(7, 3).store_zeroes(13)
+          .store_zeroes(512).store_long(descriptor_version, 32).store_long(1, 4)
+          .store_long(0x434e5431, 32).store_zeroes(64);
+      auto encoded = descriptor.finalize();
+      CHECK(block::gen::t_WorkchainDescr.validate_ref(10000, encoded));
+      CHECK(workchains.set(td::BitArray<32>{2}, vm::load_cell_slice_ref(encoded)));
+    }
+    vm::CellBuilder list;
+    CHECK(std::move(workchains).append_dict_to_bool(list));
+    CHECK(config.set_ref(td::BitArray<32>{12}, list.finalize()));
+    return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+        block::Config::needCapabilities | block::Config::needWorkchainInfo).move_as_ok();
+  };
+  auto table = block::encode_workchain_native_ingress_table({policy}).move_as_ok();
+  auto good = configuration(table, true);
+  ASSERT_TRUE(!block::default_workchain_execution_registry().execution_scope(policy.engine_key).has_value());
+  auto destinations = block::resolve_native_ingress_destinations(*good).move_as_ok();
+  ASSERT_EQ(destinations.size(), 1u);
+  ASSERT_TRUE(destinations.at(2) == policy.executor_address);
+  auto missing_descriptor = configuration(table, false);
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_descriptor).is_error());
+  auto wrong_version = configuration(table, true, 1);
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*wrong_version).is_error());
+  auto missing_table = configuration({}, true);
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_table).is_error());
+  auto empty = configuration(block::encode_workchain_native_ingress_table({}).move_as_ok(), true);
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*empty).move_as_ok().empty());
+}
+
 TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   block::WorkchainExecutionRegistry registry;
   ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
