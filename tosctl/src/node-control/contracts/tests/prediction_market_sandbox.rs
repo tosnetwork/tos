@@ -676,6 +676,46 @@ fn zero_oracle_threshold_in_a_structurally_valid_config_cannot_activate() {
 }
 
 #[test]
+fn overlapping_normal_and_appellate_reporter_sets_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let policies = config.reference(3).unwrap();
+
+    // Keep each individual policy canonical and quorum-valid, but make both
+    // roles use the exact same reporter set. The only invalidity is the
+    // cross-policy independence invariant checked by the deployed contract.
+    let mut policies_builder = BuilderData::from_cell(&policies).unwrap();
+    policies_builder.replace_reference_cell(1, policies.reference(0).unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
+    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
+    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
+    let invalid_data = root_builder.into_cell().unwrap();
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("overlapping-policy-owner", 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), invalid_data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "overlapping committees must not activate the market");
+}
+
+#[test]
 fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
