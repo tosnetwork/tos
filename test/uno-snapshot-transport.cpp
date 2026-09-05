@@ -28,7 +28,8 @@ class RemoteDownload final : public fullnode::DownloadState {
 
 class Transport final : public td::actor::Actor {
  public:
-  Transport(td::BufferSlice source, td::Result<td::BufferSlice>& result, std::atomic<bool>& completed, bool truncate)
+  Transport(td::BufferSlice source, td::Result<fullnode::DownloadedPersistentState>& result,
+            std::atomic<bool>& completed, bool truncate)
       : source_(std::move(source)), result_(result), completed_(completed), truncate_(truncate) {}
 
   class Queries final : public adnl::Adnl::Callback {
@@ -135,11 +136,25 @@ class Transport final : public td::actor::Actor {
       result_ = r.move_as_error();
     } else {
       auto downloaded = r.move_as_ok();
-      ASSERT_TRUE(downloaded.is_memory());
       ASSERT_EQ(sent_, source_.size());
       ASSERT_EQ(slices_, (source_.size() + (1u << 21) - 1) / (1u << 21));
-      ASSERT_TRUE(downloaded.memory().data.as_slice() == source_.as_slice());
-      result_ = downloaded.memory().data.clone();
+      if (source_.size() <= fullnode::persistent_state_heap_threshold_bytes()) {
+        ASSERT_TRUE(downloaded.is_memory());
+        ASSERT_TRUE(downloaded.memory().data.as_slice() == source_.as_slice());
+      } else {
+        ASSERT_TRUE(downloaded.is_file());
+        ASSERT_EQ(downloaded.file().size, source_.size());
+        auto fd = td::FileFd::open(downloaded.file().path, td::FileFd::Flags::Read).move_as_ok();
+        td::BufferSlice chunk(1u << 20);
+        for (std::size_t offset = 0; offset < source_.size();) {
+          auto count = std::min(chunk.size(), source_.size() - offset);
+          auto view = chunk.as_slice().substr(0, count);
+          ASSERT_EQ(fd.pread(view, offset).move_as_ok(), count);
+          ASSERT_TRUE(view == source_.as_slice().substr(offset, count));
+          offset += count;
+        }
+      }
+      result_ = std::move(downloaded);
     }
     completed_.store(true, std::memory_order_release);
     td::actor::SchedulerContext::get().stop();
@@ -147,7 +162,7 @@ class Transport final : public td::actor::Actor {
   void alarm() override { LOG(FATAL) << "UNO TCP snapshot transfer timed out"; }
  private:
   td::BufferSlice source_;
-  td::Result<td::BufferSlice>& result_;
+  td::Result<fullnode::DownloadedPersistentState>& result_;
   std::atomic<bool>& completed_;
   bool truncate_;
   td::uint16 port_ = 0;
@@ -163,8 +178,10 @@ class Transport final : public td::actor::Actor {
 };
 }  // namespace
 
-td::Result<td::BufferSlice> download_uno_snapshot_over_tcp(td::BufferSlice source, bool truncate) {
-  td::Result<td::BufferSlice> result = td::Status::Error("download did not complete");
+td::Result<tos::validator::fullnode::DownloadedPersistentState> download_uno_snapshot_state_over_tcp(
+    td::BufferSlice source, bool truncate) {
+  td::Result<tos::validator::fullnode::DownloadedPersistentState> result =
+      td::Status::Error("download did not complete");
   std::atomic<bool> completed{false};
   td::actor::Scheduler scheduler({2});
   td::actor::ActorOwn<Transport> actor;
@@ -174,4 +191,10 @@ td::Result<td::BufferSlice> download_uno_snapshot_over_tcp(td::BufferSlice sourc
   scheduler.run();
   ASSERT_TRUE(completed.load(std::memory_order_acquire));
   return result;
+}
+
+td::Result<td::BufferSlice> download_uno_snapshot_over_tcp(td::BufferSlice source, bool truncate) {
+  TRY_RESULT(result, download_uno_snapshot_state_over_tcp(std::move(source), truncate));
+  ASSERT_TRUE(result.is_memory());
+  return result.memory().data.clone();
 }

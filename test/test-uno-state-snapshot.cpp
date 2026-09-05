@@ -287,6 +287,44 @@ TEST(UnoStateSnapshot, TcpSlicesAndTruncatedPeer) {
   ASSERT_TRUE(download_uno_snapshot_over_tcp(bytes.clone(), true).is_error());
 }
 
+TEST(UnoStateSnapshot, TcpFileDownloadOwnership) {
+  using namespace tos::validator::fullnode;
+  using testing::test_get_persistent_state_download_bytes;
+  auto saved_directory = get_persistent_state_tempfile_dir();
+  auto directory = td::mkdtemp("/tmp", "uno-snapshot-download-").move_as_ok();
+  set_persistent_state_tempfile_dir(directory);
+  auto baseline = test_get_persistent_state_download_bytes();
+  // Cross the actual production threshold, rather than overriding it in a test.
+  const auto size = persistent_state_heap_threshold_bytes() + 137;
+  td::BufferSlice source(size);
+  std::mt19937 generator(44);
+  for (auto& byte : source.as_slice()) byte = static_cast<char>(generator() & 255);
+  std::string path;
+  {
+    auto received = download_uno_snapshot_state_over_tcp(source.clone()).move_as_ok();
+    ASSERT_TRUE(received.is_file());
+    ASSERT_EQ(received.file().size, size);
+    ASSERT_TRUE(received.file().reservation != nullptr);
+    ASSERT_EQ(test_get_persistent_state_download_bytes(), baseline + size);
+    path = received.file().path;
+    ASSERT_TRUE(td::stat(path).is_ok());
+    ASSERT_TRUE(path.find(".partial") == std::string::npos);
+    auto moved = std::move(received);
+    ASSERT_TRUE(td::stat(moved.file().path).is_ok());
+    ASSERT_EQ(test_get_persistent_state_download_bytes(), baseline + size);
+  }
+  ASSERT_TRUE(td::stat(path).is_error());
+  ASSERT_EQ(test_get_persistent_state_download_bytes(), baseline);
+  ASSERT_TRUE(download_uno_snapshot_state_over_tcp(std::move(source), true).is_error());
+  ASSERT_EQ(test_get_persistent_state_download_bytes(), baseline);
+  unsigned leftovers = 0;
+  td::WalkPath::run(directory, [&](td::CSlice, td::WalkPath::Type type) {
+    if (type == td::WalkPath::Type::RegularFile || type == td::WalkPath::Type::Symlink) ++leftovers;
+  }).ensure();
+  ASSERT_EQ(leftovers, 0u);
+  set_persistent_state_tempfile_dir(saved_directory);
+}
+
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
   // Reproducible synthetic keys, not cryptographic test vectors. Random-looking
   // paths avoid the excessive DAG sharing of a sequential integer key set.

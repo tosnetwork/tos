@@ -1309,3 +1309,53 @@ Temporary test directories are retained under `/tmp/uno-snapshot-transport-*`
 and `/tmp/uno-snapshot-celldb-*`; no production configuration is changed.
 After restoring the mutation, the snapshot, workchain-routing and nullifier
 CTest groups each passed three consecutive runs (42.07 seconds total).
+
+### TCP file-mode acquisition and ownership
+
+The TCP transport helper now returns the actual `DownloadedPersistentState`
+instead of always copying it into an unbudgeted memory buffer. The compatibility
+helper used by the small snapshot still explicitly requires the memory variant.
+`TcpFileDownloadOwnership` supplies 64 MiB + 137 bytes, crossing the production
+64 MiB heap threshold without changing it. The real downloader requests 33
+slices, writes its tempfile, fsyncs/renames it and returns the file variant.
+The fixture checks the entire file against the source in 1 MiB reads; it does
+not map or allocate a full receiving-side verification buffer.
+
+After the downloader and scheduler have stopped, the caller must still own an
+existing finalized file and its full byte reservation. Moving the returned
+object must preserve both; dropping the final owner must unlink the file and
+restore the original budget counter. A matching truncated remote response must
+leave neither reserved bytes nor any file in the dedicated download directory.
+
+Two production mutations independently demonstrated these checks: bypassing
+chunk writes failed the byte-comparison assertion, and bypassing abort cleanup
+failed with one leftover file instead of zero. Both mutations were restored;
+this change adds test coverage, not a production behavior change. Mutation-run
+artifacts are retained under unique `/tmp/uno-snapshot-download-*` directories.
+After restoration, snapshot, routing and nullifier CTest groups each passed
+three consecutive runs (74.17 seconds total).
+
+This closes the prior fixture's file-mode transport coverage gap, not the full
+large-state synchronization requirement. The large payload is synthetic bytes,
+not a large valid UNO state, and its sender is still a same-process fixture.
+It supplies no RSS/performance bound, authenticated checkpoint, P2P overlay or
+real-manager download/import evidence. The small valid UNO snapshot continues
+to cover actual CellDb import/reopening separately.
+
+### Slot-length measurement deliverable
+
+The current 75-second slot is a candidate awaiting justification, not a fixed
+performance target. M2 measurement output must include a conditional achievable
+slot lower bound and a recommended value with margin, stating validator hardware,
+network conditions, state size and block limits. Measure the complete critical
+path and its tail behavior: MC time advancement, collation/verification, tree
+and nullifier updates/persistence, propagation and agreement, including cold
+state, maximum legal blocks and adversarial inputs. Component measurements alone
+cannot freeze a slot without the real M1 network/consensus path.
+
+Client proving is outside the submitted block's critical path, but its latency
+matters for anchor availability and expiry. Freeze slot length together with
+the candidate 100-height anchor window and 64-height expiry window; neither is
+a fixed wall-clock duration under missed slots or stalled height. Preserve the
+continuous scheduling-epoch requirement if slot duration changes. No measured
+slot lower bound is available yet, and these transport tests do not supply one.
