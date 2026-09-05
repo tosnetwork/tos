@@ -200,11 +200,18 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   }
   Ed25519_PublicKey created_by{td::Bits256::zero()};
   td::as<td::uint32>(created_by.as_bits256().data() + 32 - 4) = ((unsigned)std::time(nullptr) >> 8);
+  td::Ref<CollatorOptions> options;
+  if (block_candidate_.not_null()) {
+    // Disk-only block fixture: defer the second output to exercise queue recovery.
+    options = td::make_ref<CollatorOptions>();
+    options.write().defer_messages_after = 1;
+  }
   run_collate_query(CollateParams{.shard = shard_id,
                                   .min_masterchain_block_id = last_masterchain_block_id_,
                                   .prev = prev,
                                   .creator = created_by,
                                   .validator_set = val_set,
+                                  .collator_opts = std::move(options),
                                   .workchain_block_candidate = block_candidate_},
                     actor_id(this), {}, std::move(P));
 }

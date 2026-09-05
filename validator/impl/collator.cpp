@@ -2457,12 +2457,15 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
   if (block_execution) {
-    if (after_split_ || before_split_ || after_merge_ || !dispatch_queue_->is_empty() ||
-        !nb_out_msgs_->is_eof() || !in_msg_dict->is_empty() || !out_msg_dict->is_empty()) {
-      co_return td::Status::Error("block batch collation requires unsplit state without native message settlement");
+    if (after_split_ || before_split_ || after_merge_ ||
+        !nb_out_msgs_->is_eof() || !in_msg_dict->is_empty()) {
+      co_return td::Status::Error("block batch collation requires unsplit state without incoming account messages");
     }
     inbound_queues_empty_ = true;
     allow_repeat_collation_ = false;
+    if (!process_dispatch_queue()) {
+      co_return td::Status::Error("cannot advance workchain batch dispatch queue");
+    }
     if (!create_workchain_batch_transaction(*block_execution, params_.workchain_block_candidate)) {
       co_return td::Status::Error("cannot create workchain batch transaction");
     }
@@ -3430,9 +3433,18 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
     return fatal_error("missing block executor account");
   }
   block::WorkchainBlockInput input{prev_state_root_, std::move(candidate), config_->get_root_cell(), mc_state_root};
+  auto after_lt = start_lt;
+  auto emitted = last_dispatch_queue_emitted_lt_.find(account->addr);
+  if (emitted != last_dispatch_queue_emitted_lt_.end()) {
+    after_lt = std::max(after_lt, emitted->second);
+  }
+  if (after_lt == std::numeric_limits<tos::LogicalTime>::max()) {
+    return fatal_error("workchain batch logical time exhausted after deferred messages");
+  }
+  LOG(INFO) << "staging workchain batch at lt=" << after_lt + 1;
   set_current_tx_storage_dict(*account);
   auto staged = block::prepare_resolved_workchain_batch_transaction(
-      execution, input, *account, start_lt + 1, now_, serialize_cfg_, &action_phase_cfg_);
+      execution, input, *account, after_lt + 1, now_, serialize_cfg_, &action_phase_cfg_);
   if (staged.is_error()) {
     return fatal_error(staged.move_as_error_prefix("cannot stage workchain batch: "));
   }

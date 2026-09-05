@@ -87,11 +87,11 @@ Base node revision: `5a6145cce`.
   Removing the resource check accepts an over-limit persisted batch and fails its
   rejection assertion; the check was restored. These are post-execution checks
   over deterministic engine metrics, not a substitute for cheap pre-verification
-  admission limits or native storage limits. Live dispatch has not yet been
-  activated for these entry points.
+  admission limits or native storage limits. Live entry points are exercised by
+  the disk fixture; production startup still registers no block engine.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (nineteen cases) and the full `validator-engine` target build
+- `test-workchain-block` (twenty cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -133,10 +133,10 @@ Base node revision: `5a6145cce`.
   Account collation rejects unexpected candidates; block collation requires one.
   Removing candidate/scope matching accepts a missing block candidate and fails
   the rejection assertion; the check was restored.
-  This branch still rejects split/merge, pending incoming messages and an existing
-  dispatch queue. Persisted outbound queues are now supported. Native dequeue
-  descriptors produced during cleanup still prevent this branch from proceeding;
-  delivered-message cleanup and deferred-queue progress need further integration.
+  This branch still rejects split/merge and pending incoming account messages.
+  Persisted outbound queues, dispatch queue advancement and native dequeue
+  descriptors from the existing cleanup pass are supported. Receiving-chain
+  delivery and acknowledgement-driven cleanup still need end-to-end evidence.
   The default registry still has no block engine; automatic candidate production
   remains pending. The disk fixture tests outbound native settlement end to end.
   Removing the exact staging-LT check silently advances an invalid requested LT
@@ -182,20 +182,40 @@ Base node revision: `5a6145cce`.
   using the executor address and batch LT. No output is re-executed as an ordinary
   account transaction in the batch block. Native queues, descriptors, block value
   flow and shard serialization remain the host's responsibility.
+- Before creating a new batch the collator advances the existing native dispatch
+  queue. Deferred outputs are processed in enqueue-only mode with their original
+  payload, funding and origin metadata. The batch's requested LT is strictly after
+  the executor's latest deferred emission LT, with an exhaustion check. Validator
+  block replay admits only `msg_import_deferred_tr` host transit entries in InMsg;
+  the normal validator verifies their removed DispatchQueue entry, matching
+  envelopes, routing and paired OutMsg. No such entry credits the executor or
+  substitutes for an authenticated engine system input.
 - Validator batch replay recomputes messages and fees from authenticated pricing.
   Afterwards it shares the existing account outbound-message checks: every output
   must have a permitted OutMsg record with the right source transaction and origin
   metadata, and obey deferred-message ordering. The normal OutMsg/queue checks
   still verify the reverse transaction reference and queue state update. Native
-  incoming message settlement is still rejected.
+  incoming account message settlement is still rejected; deferred host transit
+  does not execute a recipient account in this block.
 - The disk test now sends two messages carrying 100 atoms each to workchain 0.
   Fixture forwarding prices charge 100 per message: 33 collected locally and 67
   retained for forwarding. Block 1 asserts 1000 -> 600 balance, 334 exported, 66
-  collected and queue size 0 -> 2. An independent database imports this block.
-  After restart it sends another pair (600 -> 200, queue 2 -> 4), rejects a third
-  pair for insufficient budget, then creates a no-output block that preserves
-  balance 200 and queue size 4. This tests complete outgoing block value flow and
+  collected. The disk manager explicitly sets the test block collator's defer
+  threshold to 1, so one output enters OutMsgQueue and one enters DispatchQueue.
+  An independent database imports this block. After restart block 2 moves the old
+  deferred message to OutMsgQueue and sends another pair (600 -> 200, OutMsgQueue
+  1 -> 3, another output deferred). Its host transit imports 167 and exports 167;
+  with new outputs, exported value is 501 and collected fees remain 66. A third
+  pair fails for insufficient budget after local dispatch preparation. The next
+  no-output batch still releases the same persisted deferred message (OutMsgQueue
+  3 -> 4), imports/exports 167, and preserves executor balance 200. Tests assert
+  both later batches have LT after deferred emission. This tests outgoing value flow,
+  deferred progress without a second executor charge, and
   failure atomicity across restart, not receiving-chain execution or bridge finality.
+- Deferred-path mutation checks skip the batch dispatch pass (block 2 lacks the
+  required 167-atom transit flow) and ignore the executor's emitted LT (batch LT
+  collides with emitted LT 3000001). The integration assertions fail in both cases;
+  both mutations are restored before verification.
 - Live outbound mutation checks omit batch output registration (collation rejects
   unbalanced block value flow) and change validator-expected metadata depth from
   0 to 1 (shared outbound checking rejects mismatched metadata). Both fail the
@@ -256,9 +276,10 @@ and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
 Native transaction/account wrapping, witness storage and transaction-level outbound
-settlement are implemented. Live full-shard acceptance, outbound queue persistence
-and outgoing block value flow are tested. Incoming/deferred messages and delivered
-queue cleanup remain incomplete.
+settlement are implemented. Live full-shard acceptance, outbound/deferred queue
+persistence and outgoing block value flow are tested. Incoming account messages
+remain unimplemented; receiving-chain delivery and delivered queue cleanup need
+end-to-end evidence.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.
@@ -267,8 +288,10 @@ removing the pre-execution input-hash check changes the exact rejection and fail
 the input test. Both guards were restored.
 
 The result envelope is not a `TransactionDescr` constructor or a replacement
-for native `Transaction` validation. It is not yet inserted into block-extra;
-synthetic transaction LT/value-flow semantics and host dispatch remain pending.
+for native `Transaction` validation. The host inserts the synthetic batch transaction
+into AccountBlock/block-extra and persists the result witness in executor data;
+outgoing and deferred host LT/value-flow paths are tested, while incoming account
+message semantics remain pending.
 The effect envelope alone binds output data, while its batch description also
 binds input context; neither authenticates the context by itself.
 
@@ -313,7 +336,7 @@ binds input context; neither authenticates the context by itself.
 This is partial M1, not an enabled privacy workchain. Counter collation, outgoing
 native settlement, independent database replay and disk restart have end-to-end
 test evidence. Both block branches still require an explicitly registered engine;
-incoming/deferred message settlement, delivered queue cleanup, distributed
+incoming account message settlement, delivered queue cleanup, distributed
 consensus and network synchronization have not been accepted.
 Context cells are not authentication proofs by themselves.
 

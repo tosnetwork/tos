@@ -6491,8 +6491,13 @@ bool ValidateQuery::check_transactions() {
   if (resolved.ok().has_value() &&
       std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
     const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
-    if (!in_msg_dict_->is_empty()) {
-      return reject_query("block batch message settlement is not implemented");
+    // Deferred transit only moves an already-funded message between host queues.
+    // It cannot credit the executor or stand in for an engine system input.
+    if (!in_msg_dict_->check_for_each_extra(
+            [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+              return block::gen::t_InMsg.get_tag(*value) == block::gen::InMsg::msg_import_deferred_tr;
+            })) {
+      return reject_query("block batch incoming account message settlement is not implemented");
     }
     block::WorkchainBlockReplayContext context{prev_state_root_, config_->get_root_cell(), mc_state_root_};
     bool found = false;
