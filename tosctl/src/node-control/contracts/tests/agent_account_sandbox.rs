@@ -470,6 +470,11 @@ fn checked_contract_call_v2_is_one_bounceable_exact_body_transfer() {
     let inbound = target_tx.read_in_msg().expect("read inbound").expect("inbound message");
     let header = inbound.int_header().expect("internal header");
     assert!(header.bounce, "V2 checked contract calls must be bounceable");
+    assert_eq!(
+        header.extra_flags.as_u64().expect("V2 extra flags fit u64"),
+        u64::from(contracts::AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS),
+        "V2 checked calls must request the rich bounce envelope"
+    );
     assert!(inbound.state_init().is_none(), "V2 calls must never carry StateInit");
     let actual_body = inbound.body().expect("V2 body").clone().into_cell().expect("body cell");
     assert_eq!(actual_body.repr_hash(), expected_body.repr_hash());
@@ -1264,6 +1269,105 @@ fn controller_action_accepts_assigned_task_escrow() {
         .expect_success()
         .int_at(7);
     assert_eq!(status, 1);
+}
+
+#[test]
+fn checked_contract_call_v2_rejected_by_target_bounces_without_restoring_authorization() {
+    // This must be a real action path, rather than the synthetic bounced
+    // inbound below. The target is active but authorizes a different assigned
+    // agent, so its compute phase rejects the checked call and the rich
+    // bounce returns to the sender Agent Account.
+    let mut fixture = Fixture::new();
+    let creator = fixture.bc.treasury("bounce-task-creator", 100 * TOS).expect("creator");
+    let different_agent = fixture.bc.treasury("different-task-agent", 100 * TOS).expect("agent");
+    let init = TaskEscrowInit {
+        creator: creator.address().clone(),
+        assigned_agent: Some(different_agent.address().clone()),
+        verifier: None,
+        budget: 2 * TOS,
+        deadline: u64::from(fixture.bc.now()) + 3_600,
+        review_period: 3_600,
+        settlement_policy_hash: [0x31; 32],
+        permission_hash: [0x32; 32],
+        attestor_pubkey: None,
+    };
+    let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("escrow address");
+    let deploy = MessageBuilder::internal(creator.address(), &escrow, 3 * TOS)
+        .bounce(false)
+        .state_init(TaskEscrowContract::build_state_init(&init).expect("escrow state"))
+        .body(Cell::default())
+        .build();
+    fixture.bc.send_message(deploy).expect("deploy escrow").expect_success();
+
+    let value = TOS;
+    let balance_before = fixture.balance();
+    let action = fixture.signed_checked_call(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &escrow,
+        value,
+        TaskEscrowContract::accept(1).expect("accept body"),
+    );
+    let result = fixture.send_external(action).expect("checked call");
+    result.expect_success().expect_out_msgs(1);
+    assert_eq!(fixture.seqno(), 1, "a target rejection cannot resurrect the external request");
+    assert_eq!(
+        fixture.spent_today(),
+        value as i128,
+        "daily authority remains consumed after a bounce"
+    );
+    assert!(
+        fixture.balance() > balance_before - value,
+        "the rich bounce must credit the rejected message value back to the Agent Account"
+    );
+
+    let target_tx = result
+        .transactions_for(&escrow)
+        .into_iter()
+        .next()
+        .expect("target receives the checked call");
+    assert!(
+        target_tx.read_description().expect("target description").is_aborted(),
+        "target must reject the unauthorized call"
+    );
+    let bounced = result.transactions_for(&fixture.account).into_iter().any(|transaction| {
+        transaction
+            .read_in_msg()
+            .ok()
+            .flatten()
+            .is_some_and(|message| message.int_header().is_some_and(|header| header.bounced))
+    });
+    assert!(bounced, "rejected V2 call must generate an actual bounced inbound message");
+}
+
+#[test]
+fn checked_contract_call_v2_action_skip_consumes_the_exact_signed_request() {
+    // V2 deliberately uses send mode 3. An action-stage routing failure must
+    // therefore consume the controller authorization exactly once, without a
+    // target delivery or a fabricated bounce that could make the request look
+    // retryable. This is distinct from a valid route whose target aborts and
+    // can return a real rich bounce.
+    let mut fixture = Fixture::new();
+    let invalid_workchain = MsgAddressInt::with_params(1, [0x66; 32]).expect("invalid target");
+    let mut body = BuilderData::new();
+    body.append_u32(0x504d_0001).expect("operation");
+    let action = fixture.signed_checked_call(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &invalid_workchain,
+        TOS,
+        body.into_cell().expect("body"),
+    );
+    fixture
+        .send_external(action.clone())
+        .expect("V2 mode 3 must keep the source transaction successful when routing is invalid")
+        .expect_success()
+        .expect_out_msgs(0);
+    assert_eq!(fixture.seqno(), 1, "action skip must consume the signed seqno");
+    assert_eq!(fixture.spent_today(), TOS as i128, "action skip must retain daily spend");
+    fixture.expect_external_exit(action, 1705);
 }
 
 #[test]

@@ -21,6 +21,7 @@ import asyncio
 import json
 import threading
 import time
+import os
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +39,7 @@ from tosapi import tos_api
 from toslib import ToslibClient
 
 REPO = Path(__file__).resolve().parents[1]
+BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
 def rpc_call(rpc_addr: str, method: str, **params):
@@ -306,7 +308,7 @@ async def resume_saved_network(
 async def main(
     rpc_addr, control_addr, num_validators, workdir, boot_timeout, demo, fund, reuse, base_port
 ):
-    install = Install(REPO / "build", REPO)
+    install = Install(BUILD_DIR, REPO)
     if reuse and saved_network_exists(workdir, num_validators):
         if demo or fund:
             raise ValueError("--demo/--fund are only valid while creating a fresh localnet")

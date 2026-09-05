@@ -51,7 +51,8 @@ pub use agent_account::{
 pub use agent_account_custody::{
     AgentAccountCustodyJournal, ControllerActionClaim, ControllerActionRecord,
     ControllerActionResolutionEvidence, ControllerActionStatus, EconomicActionAuthorization,
-    EconomicEffectAuthorization, agent_account_task_body_hash,
+    EconomicEffectAuthorization, PredictionRelayMasterchainCheckpoint,
+    PredictionRelayRecoveryBoundary, PredictionRelaySourceCursor, agent_account_task_body_hash,
     controller_resolution_evidence_digest,
 };
 pub use attestation::{

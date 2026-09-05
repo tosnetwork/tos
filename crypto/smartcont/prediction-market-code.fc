@@ -110,8 +110,9 @@ const int max_participants_hard = 4096;
 const int max_orders_per_participant_hard = 256;
 const int max_live_orders_hard = 16384;
 ;; The heaviest bounded V1 path (appellate quorum finalization) currently uses
-;; 62,131 gas in the production BOC sandbox. One TOS buys 100,000 gas under the
-;; audited fee schedule, leaving >1.6x compute headroom before forward fees.
+;; 62,131 gas in the production BOC sandbox. Basechain gas costs 400 nanotomi
+;; per gas under the audited fee schedule. The attached operation budget below
+;; is a funding floor, not a gas-price conversion or a promise about fees.
 const int min_operation_budget = 1000000000;
 const int min_first_deposit = 1000000;
 const int min_entry_fee = 1000000;

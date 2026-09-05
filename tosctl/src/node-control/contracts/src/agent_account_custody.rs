@@ -89,6 +89,36 @@ pub struct ControllerActionClaim {
     pub valid_until: u32,
 }
 
+/// The authenticated history boundary captured immediately before a
+/// Prediction checked-call is signed.  It is custody data, rather than
+/// caller-supplied resolver input: accepting a replacement boundary after a
+/// crash could make a different source transaction look like the effect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictionRelayRecoveryBoundary {
+    pub source_cursor: PredictionRelaySourceCursor,
+    pub masterchain_checkpoint: PredictionRelayMasterchainCheckpoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictionRelaySourceCursor {
+    pub account_address: String,
+    pub last_logical_time: u64,
+    pub last_transaction_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictionRelayMasterchainCheckpoint {
+    pub workchain_id: i32,
+    pub shard: i64,
+    pub sequence_number: u32,
+    pub root_hash: String,
+    pub file_hash: String,
+    pub masterchain_sequence_number: u32,
+}
+
 /// Exact, Agreement-bound authorization issued by the Owner Economic Action
 /// Authority for one custody payment. The Action Authority key is pinned by
 /// custody configuration; the key carried here is only an audit commitment.
@@ -208,6 +238,11 @@ pub struct ControllerActionRecord {
     pub economic_authorization: Option<EconomicActionAuthorization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub economic_effect_authorization: Option<EconomicEffectAuthorization>,
+    /// Required for Prediction effects before their exact BOC may become
+    /// durable.  It is retained in the permanent economic tombstone so a
+    /// process crash cannot replace the resolver's authenticated boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prediction_relay_recovery_boundary: Option<PredictionRelayRecoveryBoundary>,
     /// Replayable, bounded evidence durably stored before a resolver writes
     /// stdout. It is deliberately generic at the custody layer: the caller
     /// verifies the chain-specific witness, while custody binds it to the one
@@ -933,6 +968,12 @@ impl AgentAccountCustodyJournal {
         }
         validate_signed_boc(claim, boc_base64, Some(digest), ExpectedAction::Primary)?;
         self.mutate_exact(claim, |record| {
+            if record.economic_effect_authorization.as_ref().is_some_and(|authorization| {
+                authorization.profile == PREDICTION_CUSTODY_EFFECT_PROFILE_V1
+            }) && record.prediction_relay_recovery_boundary.is_none()
+            {
+                anyhow::bail!("Prediction effect has no durable relay recovery boundary");
+            }
             if let Some(existing) = &record.exact_signed_boc_digest {
                 if existing != digest
                     || record.exact_signed_boc_base64.as_deref() != Some(boc_base64)
@@ -947,6 +988,41 @@ impl AgentAccountCustodyJournal {
             record.exact_signed_boc_base64 = Some(boc_base64.to_owned());
             record.exact_signed_boc_digest = Some(digest.to_owned());
             record.status = ControllerActionStatus::Signed;
+            record.updated_at_unix = now;
+            Ok(())
+        })
+    }
+
+    /// Persist the one pre-broadcast history boundary for a Prediction effect.
+    /// This operation is idempotent only for byte-for-byte equivalent semantic
+    /// data and may not run after signing, so an exact BOC never races a
+    /// mutable resolver boundary.
+    pub fn attach_prediction_relay_recovery_boundary(
+        &self,
+        claim: &ControllerActionClaim,
+        boundary: PredictionRelayRecoveryBoundary,
+        now: u64,
+    ) -> anyhow::Result<ControllerActionRecord> {
+        validate_prediction_relay_recovery_boundary(&boundary)?;
+        self.mutate_exact(claim, |record| {
+            anyhow::ensure!(
+                record.economic_effect_authorization.as_ref().is_some_and(|authorization| {
+                    authorization.profile == PREDICTION_CUSTODY_EFFECT_PROFILE_V1
+                }),
+                "relay recovery boundary belongs only to a Prediction effect"
+            );
+            if let Some(existing) = &record.prediction_relay_recovery_boundary {
+                anyhow::ensure!(
+                    existing == &boundary,
+                    "changed Prediction relay recovery boundary conflicts with custody journal"
+                );
+                return Ok(());
+            }
+            anyhow::ensure!(
+                record.status == ControllerActionStatus::Claimed,
+                "Prediction relay recovery boundary must be fixed before signing"
+            );
+            record.prediction_relay_recovery_boundary = Some(boundary);
             record.updated_at_unix = now;
             Ok(())
         })
@@ -2104,6 +2180,26 @@ fn same_economic_effect(
         && left.public_key == right.public_key
 }
 
+fn validate_prediction_relay_recovery_boundary(
+    boundary: &PredictionRelayRecoveryBoundary,
+) -> anyhow::Result<()> {
+    let cursor = &boundary.source_cursor;
+    let checkpoint = &boundary.masterchain_checkpoint;
+    anyhow::ensure!(
+        !cursor.account_address.is_empty()
+            && cursor.account_address.len() <= 128
+            && (cursor.last_logical_time == 0 && cursor.last_transaction_hash.is_empty()
+                || cursor.last_logical_time != 0 && valid_digest(&cursor.last_transaction_hash))
+            && checkpoint.workchain_id == -1
+            && checkpoint.sequence_number != 0
+            && checkpoint.sequence_number == checkpoint.masterchain_sequence_number
+            && valid_digest(&checkpoint.root_hash)
+            && valid_digest(&checkpoint.file_hash),
+        "invalid Prediction relay recovery boundary"
+    );
+    Ok(())
+}
+
 fn validate_claim(claim: &ControllerActionClaim) -> anyhow::Result<()> {
     validate_generation(&claim.account, claim.network_global_id, &claim.deployment_id)?;
     if let Some(network) = &claim.network_domain {
@@ -2208,6 +2304,7 @@ fn admit_claim(
         cancellation_boc_base64: None,
         economic_authorization,
         economic_effect_authorization: None,
+        prediction_relay_recovery_boundary: None,
         exact_winner_resolution: None,
         created_at_unix: now,
         updated_at_unix: now,
@@ -3564,6 +3661,34 @@ mod tests {
             .unwrap();
         assert!(created);
         assert_eq!(record.economic_effect_authorization, Some(authorization.clone()));
+        let boundary = PredictionRelayRecoveryBoundary {
+            source_cursor: PredictionRelaySourceCursor {
+                account_address: claim.account.clone(),
+                last_logical_time: 0,
+                last_transaction_hash: String::new(),
+            },
+            masterchain_checkpoint: PredictionRelayMasterchainCheckpoint {
+                workchain_id: -1,
+                shard: -1,
+                sequence_number: 9,
+                root_hash: format!("sha256:{}", "a".repeat(64)),
+                file_hash: format!("sha256:{}", "b".repeat(64)),
+                masterchain_sequence_number: 9,
+            },
+        };
+        assert!(
+            journal
+                .attach_prediction_relay_recovery_boundary(&claim, boundary.clone(), 2_000_000_001,)
+                .is_ok()
+        );
+        let mut changed_boundary = boundary.clone();
+        changed_boundary.masterchain_checkpoint.sequence_number = 10;
+        changed_boundary.masterchain_checkpoint.masterchain_sequence_number = 10;
+        assert!(
+            journal
+                .attach_prediction_relay_recovery_boundary(&claim, changed_boundary, 2_000_000_001)
+                .is_err()
+        );
         let payload =
             crate::agent_account::AgentAccountContract::build_checked_contract_call_v2_payload(
                 network.global_id,
@@ -3627,6 +3752,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(terminal.status, ControllerActionStatus::Resolved);
+        assert_eq!(terminal.prediction_relay_recovery_boundary, Some(boundary));
         assert!(terminal.exact_signed_boc_base64.is_none());
         assert!(terminal.exact_winner_resolution.is_some());
     }
@@ -4621,6 +4747,7 @@ mod tests {
                         cancellation_boc_base64: None,
                         economic_authorization: None,
                         economic_effect_authorization: None,
+                        prediction_relay_recovery_boundary: None,
                         exact_winner_resolution: None,
                         created_at_unix: 100 + u64::try_from(index).unwrap(),
                         updated_at_unix: 100 + u64::try_from(index).unwrap(),
