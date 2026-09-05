@@ -613,6 +613,53 @@ fn activate_register_split_merge_and_withdraw_preserve_accounting() {
 }
 
 #[test]
+fn maximum_free_withdrawal_survives_real_storage_rent_collection() {
+    let mut f = Fixture::new_with(|init| {
+        // Keep the withdrawal window open while the executor advances far enough
+        // to collect a material, nonzero storage fee from the market account.
+        init.claim_deadline = init.trade_close + 100 * 24 * 60 * 60;
+        init.operating_reserve_floor = 100 * TOS;
+    });
+    f.activate();
+    let owner = f.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x5a; 32]);
+    f.register(&owner, &key, 2);
+    // Storage rent is paid from physical operating funds, not participant
+    // liabilities. Fund the selected horizon explicitly before advancing time.
+    f.send(
+        &owner,
+        50 * TOS,
+        PredictionMarketContractV1::top_up_reserve(3).unwrap(),
+    )
+    .expect_success();
+
+    let withdrawable = f.account(&owner)[0] as u64;
+    assert!(withdrawable > 0, "fixture must create a positive free balance");
+    f.bc.set_now(f.bc.now() + 30 * 24 * 60 * 60);
+
+    let owner_before = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let result = f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::withdraw(4, withdrawable).unwrap(),
+    );
+    assert_success("maximum free withdrawal after rent", &result);
+    result.expect_out_msgs(1);
+    let description = result.read_primary_description();
+    let storage = description
+        .storage_ph
+        .as_ref()
+        .expect("ordinary market transaction must have a storage phase");
+    assert!(
+        storage.storage_fees_collected.as_u128() > 0,
+        "the delayed withdrawal must collect actual market storage rent"
+    );
+    assert_eq!(f.account(&owner)[0], 0, "the complete recorded free balance was not withdrawn");
+    let owner_after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    assert!(owner_after > owner_before, "strict payout must still reach the owner after rent");
+}
+
+#[test]
 fn participant_cap_rejects_a_new_account_without_mutating_accounting() {
     let mut f = Fixture::new_with(|init| init.max_participants = 2);
     f.activate();
