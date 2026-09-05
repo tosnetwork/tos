@@ -24,7 +24,7 @@ use contracts::{
     MasterchainCheckpoint, PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE,
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
-    PredictionResolutionContextsV1, Wallet,
+    PredictionRelayRecoveryBoundary, PredictionResolutionContextsV1, Wallet,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -958,6 +958,26 @@ impl PredictionPrepareAgentCmd {
             expected_key,
             now,
         )?;
+        // Reuse the owner-private boundary already fixed for an idempotent
+        // retry. A freshly observed boundary after the first preparation is
+        // necessarily later and must never replace the history-walk anchor.
+        let recovery_boundary =
+            if let Some(boundary) = record.prediction_relay_recovery_boundary.clone() {
+                boundary
+            } else {
+                let boundary: PredictionRelayRecoveryBoundary = serde_json::from_value(json!({
+                    "source_cursor": pre_broadcast_source_cursor,
+                    "masterchain_checkpoint": pre_broadcast_masterchain_checkpoint,
+                }))
+                .context("serialize Prediction relay recovery boundary")?;
+                journal
+                    .attach_prediction_relay_recovery_boundary(&claim, boundary, now)?
+                    .prediction_relay_recovery_boundary
+                    .context("custody did not retain Prediction relay recovery boundary")?
+            };
+        let pre_broadcast_source_cursor = serde_json::to_value(&recovery_boundary.source_cursor)?;
+        let pre_broadcast_masterchain_checkpoint =
+            serde_json::to_value(&recovery_boundary.masterchain_checkpoint)?;
         anyhow::ensure!(
             record.status != ControllerActionStatus::Resolved,
             "Prediction effect sequence was consumed; resolve before retry"
@@ -1068,7 +1088,11 @@ fn prediction_pre_broadcast_boundary(
             "sequence_number": masterchain_seqno,
             "root_hash": format!("sha256:{}", hex::encode(masterchain_root_hash)),
             "file_hash": format!("sha256:{}", hex::encode(masterchain_file_hash)),
-            "masterchain_sequence": masterchain_seqno,
+            // This is the strict field name consumed by
+            // `prediction-relay-source-resolve`. The prepared artifact is a
+            // direct resolver input, so an abbreviated local spelling would
+            // make a valid preparation unrecoverable.
+            "masterchain_sequence_number": masterchain_seqno,
         }),
     ))
 }
@@ -2103,7 +2127,7 @@ mod tests {
         assert_eq!(cursor["last_logical_time"], 7);
         assert_eq!(cursor["last_transaction_hash"], format!("sha256:{}", "11".repeat(32)));
         assert_eq!(checkpoint["workchain_id"], -1);
-        assert_eq!(checkpoint["masterchain_sequence"], 9);
+        assert_eq!(checkpoint["masterchain_sequence_number"], 9);
         assert_eq!(checkpoint["root_hash"], format!("sha256:{}", "22".repeat(32)));
 
         let (zero_cursor, _) =

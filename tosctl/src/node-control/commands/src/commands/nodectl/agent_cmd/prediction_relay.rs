@@ -557,6 +557,14 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .find_economic_effect_by_stable_action(&self.stable_action_id)?
             .context("prepared Prediction effect was not found")?;
         validate_prediction_custody_record(&record, &request)?;
+        let boundary = record
+            .prediction_relay_recovery_boundary
+            .as_ref()
+            .context("Prediction effect has no durable relay recovery boundary")?;
+        anyhow::ensure!(
+            prediction_request_matches_durable_boundary(&request, boundary),
+            "Prediction resolver request conflicts with its durable recovery boundary"
+        );
 
         if record.status == ControllerActionStatus::Resolved {
             let resolution = record
@@ -1167,6 +1175,29 @@ fn validate_source_request(
         validate_sha256_digest("observer_id", observer)?;
     }
     Ok(())
+}
+
+fn prediction_request_matches_durable_boundary(
+    request: &PredictionRelaySourceRequest,
+    boundary: &contracts::PredictionRelayRecoveryBoundary,
+) -> bool {
+    boundary.source_cursor.account_address == request.pre_broadcast_source_cursor.account_address
+        && boundary.source_cursor.last_logical_time
+            == request.pre_broadcast_source_cursor.last_logical_time
+        && boundary.source_cursor.last_transaction_hash
+            == request.pre_broadcast_source_cursor.last_transaction_hash
+        && boundary.masterchain_checkpoint.workchain_id
+            == request.pre_broadcast_masterchain_checkpoint.workchain_id
+        && boundary.masterchain_checkpoint.shard
+            == request.pre_broadcast_masterchain_checkpoint.shard
+        && boundary.masterchain_checkpoint.sequence_number
+            == request.pre_broadcast_masterchain_checkpoint.sequence_number
+        && boundary.masterchain_checkpoint.root_hash
+            == request.pre_broadcast_masterchain_checkpoint.root_hash
+        && boundary.masterchain_checkpoint.file_hash
+            == request.pre_broadcast_masterchain_checkpoint.file_hash
+        && boundary.masterchain_checkpoint.masterchain_sequence_number
+            == request.pre_broadcast_masterchain_checkpoint.masterchain_sequence_number
 }
 
 fn validate_destination_request(
@@ -2562,6 +2593,62 @@ fn parse_sha256_digest(value: &str) -> anyhow::Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_recovery_boundary_rejects_a_replaced_history_anchor() {
+        let boundary = contracts::PredictionRelayRecoveryBoundary {
+            source_cursor: contracts::PredictionRelaySourceCursor {
+                account_address: "0:source".into(),
+                last_logical_time: 7,
+                last_transaction_hash: format!("sha256:{}", "1".repeat(64)),
+            },
+            masterchain_checkpoint: contracts::PredictionRelayMasterchainCheckpoint {
+                workchain_id: -1,
+                shard: -1,
+                sequence_number: 9,
+                root_hash: format!("sha256:{}", "2".repeat(64)),
+                file_hash: format!("sha256:{}", "3".repeat(64)),
+                masterchain_sequence_number: 9,
+            },
+        };
+        let mut request = PredictionRelaySourceRequest {
+            schema: SOURCE_REQUEST_SCHEMA.into(),
+            action_id: format!("sha256:{}", "4".repeat(64)),
+            profile: PredictionRelayProfile {
+                network_domain_hash: format!("sha256:{}", "5".repeat(64)),
+                source_agent_account: "0:source".into(),
+                source_agent_account_code_hash: format!("tvm-cell-sha256:{}", "6".repeat(64)),
+                market_address: "0:market".into(),
+                market_id: format!("sha256:{}", "7".repeat(64)),
+                market_code_hash: format!("tvm-cell-sha256:{}", "8".repeat(64)),
+                market_config_hash: format!("tvm-cell-sha256:{}", "9".repeat(64)),
+                observer_ids: Vec::new(),
+                quorum_threshold: 0,
+                maximum_outstanding: 1,
+                maximum_signed_boc_bytes: 1,
+                minimum_no_bounce_masterchain_blocks: 1,
+            },
+            submitted_external_message_hash: format!("tvm-cell-sha256:{}", "a".repeat(64)),
+            pre_broadcast_source_cursor: PredictionAccountCursor {
+                account_address: boundary.source_cursor.account_address.clone(),
+                last_logical_time: boundary.source_cursor.last_logical_time,
+                last_transaction_hash: boundary.source_cursor.last_transaction_hash.clone(),
+            },
+            pre_broadcast_masterchain_checkpoint: PredictionBlockIdentity {
+                workchain_id: boundary.masterchain_checkpoint.workchain_id,
+                shard: boundary.masterchain_checkpoint.shard,
+                sequence_number: boundary.masterchain_checkpoint.sequence_number,
+                root_hash: boundary.masterchain_checkpoint.root_hash.clone(),
+                file_hash: boundary.masterchain_checkpoint.file_hash.clone(),
+                masterchain_sequence_number: boundary
+                    .masterchain_checkpoint
+                    .masterchain_sequence_number,
+            },
+        };
+        assert!(prediction_request_matches_durable_boundary(&request, &boundary));
+        request.pre_broadcast_source_cursor.last_logical_time += 1;
+        assert!(!prediction_request_matches_durable_boundary(&request, &boundary));
+    }
 
     fn test_hash(index: u32) -> [u8; 32] {
         Sha256::digest(index.to_be_bytes()).into()
