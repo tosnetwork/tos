@@ -70,5 +70,30 @@ against source, not against memory.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
 
+## Wait for relevant CI, not every CI job
+
+CI is evidence only when it exercises the change under review. Do not hold a
+small, independently tested change hostage to an unrelated full CLI/native
+build merely because that repository-wide job happens to run on every PR.
+
+Before merging, identify the **smallest sufficient set** of checks from the
+paths and execution boundary actually changed:
+
+- Changes to Rust/C++/FunC code, Cargo manifests or lockfiles, CMake/build
+  wiring, generated contract artifacts, protocol codecs, or the `tosctl` CLI
+  execution boundary must wait for their relevant build and test gates.
+- A Python-only local harness must wait for its own Python tests and any
+  directly used Vault/CLI smoke test. Documentation-only changes need a
+  whitespace/rendering check, not a native rebuild.
+- A job made mandatory by GitHub branch protection always remains a hard gate.
+  An otherwise unrelated repository-wide job may be bypassed only with the
+  owner's explicit instruction; record that its result was still pending, and
+  never cancel it or represent it as passing.
+
+This rule is not permission to skip validation. It requires a written mapping
+from each changed boundary to the test that can fail because of that boundary.
+If a change affects more than one boundary, wait for the union of their
+relevant gates.
+
 `CLAUDE.md` is a symlink to this file, so Codex and Claude Code read the same
 instructions.
