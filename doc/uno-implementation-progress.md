@@ -19,8 +19,26 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (four cases) and the full `validator-engine` target build
+- `test-workchain-block` (six cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
+- Canonical `WorkchainBlockResult` and `WorkchainBlockOutputs` TL-B envelopes
+  carry all seven output references and three uint64 resource counters. The
+  result root is exactly 224 bits/four references; its outputs child is exactly
+  32 bits/four references. Both envelopes require ordinary cells and fixed v1
+  tags. Payload interpretation remains the resolved engine's responsibility.
+- Serialized-result replay decodes this envelope before independently executing
+  and comparing every output. BoC round-trip, distinct field preservation,
+  uint64 boundaries, generated TL-B validation, extra bits/missing references,
+  wrong tags and special-cell rejection are covered by two additional tests.
+- Mutation checks: relaxing the exact root bit count makes the rejection test
+  fail; swapping receipt/event serialization makes round-trip replay fail.
+  Both mutations were restored.
+
+The result envelope is not a `TransactionDescr` constructor or a replacement
+for native `Transaction` validation. It is not yet inserted into block-extra;
+synthetic transaction LT/value-flow semantics and host dispatch remain pending.
+Its hash binds output data, not authenticated execution context: the host must
+still authenticate the input independently and select the correct engine.
 
 ## Next host integration points
 
@@ -33,6 +51,11 @@ Base node revision: `5a6145cce`.
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
   insufficient and would not constitute M1.
+- `block::tlb::TransactionDescr` has handwritten tag/skip/storage-fee logic in
+  `block-parse.cpp`, alongside the generated TL-B implementation. Both must
+  recognize a synthetic descriptor. `CheckAccountTxs::check_one_transaction`
+  currently reconstructs a per-account `Transaction`; adding a schema tag alone
+  does not supply block replay and must not enable acceptance on account chains.
 
 ## Remaining requirements
 

@@ -43,10 +43,16 @@ class WorkchainBlockEngine {
   virtual td::Result<WorkchainBlockResult> execute_block(const WorkchainBlockInput& input) const = 0;
 };
 
-// Neither function commits state. The host may commit only after replay succeeds.
+// These helpers never commit state. The host may commit only after replay succeeds.
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result);
+// Canonical TL-B envelope; encoding is not proof of valid execution or authenticated context.
+td::Result<td::Ref<vm::Cell>> encode_workchain_block_result(const WorkchainBlockResult& result);
+td::Result<WorkchainBlockResult> decode_workchain_block_result(const td::Ref<vm::Cell>& root);
 td::Result<WorkchainBlockResult> replay_workchain_block(const WorkchainBlockEngine& engine,
                                                       const WorkchainBlockInput& input,
                                                       const WorkchainBlockResult& claimed);
+td::Result<WorkchainBlockResult> replay_workchain_block(const WorkchainBlockEngine& engine,
+                                                      const WorkchainBlockInput& input,
+                                                      const td::Ref<vm::Cell>& claimed_root);
 
 }  // namespace block

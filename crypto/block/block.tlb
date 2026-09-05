@@ -1,4 +1,10 @@
 unit$_ = Unit;
+// Block-transition result envelope. Payload semantics are checked by the resolved engine.
+workchain_block_outputs_v1#57424f31 outbound_messages:^Cell actions:^Cell
+  receipts:^Cell events:^Cell = WorkchainBlockOutputs;
+workchain_block_result_v1#57425231 wire_bytes:uint64 verification_units:uint64 written_cells:uint64
+  new_shard_state:^Cell batch_transaction:^Cell outputs:^WorkchainBlockOutputs
+  data_availability:^Cell = WorkchainBlockResult;
 true$_ = True;
 // EMPTY False;
 bool_false$0 = Bool;
