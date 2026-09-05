@@ -771,6 +771,13 @@ foreach(activation_mode missing_capability old_version)
       -DACTIVATION_MODE=${activation_mode}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
   set_tests_properties(test-counter-activation-${activation_mode} PROPERTIES TIMEOUT 90)
+  add_test(NAME test-counter-config-presence-${activation_mode}
+    COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
+      -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
+      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+      -DACTIVATION_MODE=${activation_mode} -DREJECT_CONFIG_PRESENCE=ON
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+  set_tests_properties(test-counter-config-presence-${activation_mode} PROPERTIES TIMEOUT 90)
 endforeach()
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)

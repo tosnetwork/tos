@@ -127,6 +127,13 @@ Production remains blocked on readiness evidence, transition checks and
 old/new-binary negative acceptance tests; the current passing harness proves none
 of those properties.
 
+Two same-binary Counter negative cases now exercise `valid_config_data` through
+create-state: parameter 84 with an old version or missing capability must fail
+without a masterchain zerostate artifact. Disabling only the caller's rejection
+branch makes both configurations succeed and both tests fail. This establishes
+the complete configuration-validation gate, not a mixed-version rollout or an
+authenticated configuration-update transition.
+
 Sender admission prevents new wrong-address traffic; it does not dispose of
 already committed messages. Activation must not assume an empty queue merely
 because the new workchain state has an empty local OutMsgQueue. Foreign source

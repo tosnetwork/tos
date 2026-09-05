@@ -606,6 +606,13 @@ assertion fail; the predicate was restored. The inactive Counter fixtures omit
 
 This does not prove readiness of old validators or implement an authenticated
 upgrade transition. The M0 all-validator upgrade ordering remains mandatory.
-Further evidence must cover rejection through full `valid_config_data` and the
-real configuration-update path, including mixed-version binaries; predicate
-mutation coverage alone does not prove that every caller enforces it.
+Full `valid_config_data` coverage now uses two isolated Counter configuration
+rejection cases in the disk harness. They retain parameter 84 while respectively
+lowering the version or clearing the capability. create-state must reach the
+presence gate, fail, and publish no masterchain zerostate. Disabling the rejection
+branch in `valid_config_data` (without changing the helper) makes both cases fail
+because the complete configurations are accepted. The branch was restored.
+The existing activated disk fixtures are the positive controls. These are
+same-binary rejection fixtures, not deployment templates or upgrade procedures.
+Further evidence must cover the real configuration-update path and mixed-version
+binaries; these tests do not prove readiness or that every caller enforces it.
