@@ -297,6 +297,10 @@ class WorkchainExecutionRegistry {
 
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry);
 
+// ConfigParam 8 consensus activation, independent of network capability reports.
+inline constexpr int kBlockTransitionMinGlobalVersion = 15;
+td::Status validate_workchain_block_activation(const block::Config& configuration);
+
 // Transitional Phase 1 owner used by startup registration and legacy
 // transaction dispatch. Long-term block execution should inject a registry
 // through the block-transition context rather than depending on this process

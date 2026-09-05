@@ -91,7 +91,7 @@ Base node revision: `5a6145cce`.
   the disk fixture; production startup still registers no block engine.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (twenty cases) and the full `validator-engine` target build
+- `test-workchain-block` (twenty-two cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -271,8 +271,8 @@ Base node revision: `5a6145cce`.
 - Removing the persisted engine/effects equality check accepts an inconsistent
   witness and fails its rejection assertion. The check was restored.
 - `replay_workchain_batch_state` recovers public candidate data from the claimed
-  singleton executor state. Its context contains only previous shard, configuration
-  and finality roots supplied by the host. It checks the final transaction link,
+  singleton executor state. Its context contains previous shard, configuration,
+  finality and an optional authenticated inbound root supplied by the host. It checks the final transaction link,
   independently reconstructs the transaction and compares the complete Account,
   including the persisted effects, without publishing state. BoC recovery tests
   exercise this entry and reject altered transaction links, receipts and candidates.
@@ -283,6 +283,36 @@ Base node revision: `5a6145cce`.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.
+- Batch inbound representation is now defined without changing the existing
+  no-inbound wire: `WorkchainBatchInbound` tag `57494e31`, nonzero uint15 count,
+  `HashmapE 256 ^MsgEnvelope` keyed by original message hash. Decoding validates
+  count, key/message identity, complete internal envelopes and produces deterministic
+  (emitted LT, message hash) order, using created LT when emitted LT is absent.
+  Different producer insertion orders produce the same dictionary; the same message
+  cannot be included twice with different envelopes/emission times. UNO protocol
+  source-locator ordering is an engine responsibility, not replaced by this host order.
+- Inbound batches use descriptor tag `1001` with the original two commitments and
+  counters plus an inbound-list reference. Tag `1000` and the old input encoding
+  remain unchanged for no-inbound batches. Both generated and handwritten TL-B
+  parsing recognize the new tag; account-compute scope rejects it. Replay binds
+  the inbound root in the authenticated input hash and separately compares the
+  description's exposed list against the host list, preventing forged membership
+  references from being paired with otherwise correct input/effect hashes.
+- Native `is_transaction_in_msg` supports multi-message membership for descriptor
+  `1001` through direct hash-dictionary lookup, without scanning the whole batch
+  for each message. A v2 batch may not also claim an ordinary single input in r1.
+  This lookup is not transaction validation, delivery authentication or acceptance;
+  complete list validation and independent replay remain mandatory.
+- Tests cover BoC round-trip, insertion-order invariance, emitted-LT ordering,
+  equal-LT hash tie-breaking, duplicate original messages, count/key mismatches,
+  malformed envelopes, input/list commitment substitution and positive/negative
+  native membership. `prepare_workchain_batch` explicitly rejects any inbound root
+  until native credits and queue extraction are implemented, so this format support
+  cannot silently accept messages without accounting for their value.
+- Inbound mutation checks omit the exposed-list comparison during replay (a
+  substituted membership list is accepted) and omit dictionary-key/message-hash
+  checking (a falsely indexed envelope is accepted). Each fails its targeted
+  assertion; both mutations are restored before final verification.
 
 The engine result now contains `new_engine_state`, not a final shard state or
 synthetic transaction. This removes the previous circular interface: a final
@@ -291,6 +321,9 @@ input to that same transaction's commitment.
 
 `input_hash` is the Cell hash of `WorkchainBlockInput` v1 (tag `57424931`,
 references in order: previous shard state, candidate, configuration, finality).
+With inbound messages it uses v2 tag `57424932`, references previous shard,
+candidate, context and inbound list. Context tag `57424332` binds configuration
+and finality together, keeping the input within the four-reference Cell limit.
 `effects_hash` is the Cell hash of `WorkchainBlockResult` v2 (tag `57425232`).
 `make_workchain_batch_description` constructs both commitments; batch replay
 checks the input commitment before executing, independently computes the effects
@@ -376,4 +409,35 @@ Context cells are not authentication proofs by themselves.
 7. Run integration, mutation, model, recovery, multi-node and performance tests;
    meet the specification's activation and independent audit gates.
 
-No production capability, network activation or value-bearing genesis is enabled.
+No production configuration activation or value-bearing genesis is enabled.
+
+BlockTransition host activation now requires both ConfigParam 8 version >= 15
+and the separate `capBlockTransition` bit (1024). Version 15 is the host's
+existing supported baseline, not an assertion that older version-15 binaries
+understand batches. The new bit is the opt-in boundary; activation still requires
+a coordinated validator upgrade. Collator and validator advertise support for
+this host capability, but the default engine registry remains TVM-only.
+Only the Counter disk-test genesis enables the bit. This does not activate UNO.
+
+The shared registry `resolve_block` gate precedes engine configuration and is
+used by scoped resolution in collator configuration/construction and validator
+configuration/transaction replay. Ordinary AccountCompute validation still
+rejects batch descriptors by scope. Generated TL-B validation remains structural,
+not permission to execute. Low-level codec/replay helpers are not standalone
+consensus acceptance APIs. Broader import/proof/API call-site audit and live
+negative activation tests remain outstanding.
+
+`RegistryRequiresConsensusActivation` uses real decoded ConfigParam 8 cells and
+checks both sides of the version boundary, the capability on/off combinations,
+and unavailable configuration. Omitting the registry gate makes resolution
+incorrectly succeed and the test fail; the gate was restored. Network
+`tosNode.capabilities.flags` is a different namespace and is not used as a
+consensus activation signal; its engine-advertisement policy remains unfinished.
+
+Review follow-up: `UnmatchedBatchInputDoesNotInvokeEngine` adds a successful
+matching-input control and checks zero engine invocations for each mismatched
+committed input field. Removing the pre-execution input-hash guard makes the
+invocation assertion fail (1 instead of 0), independently of rejection wording.
+The guard was restored. Earlier exact-message mutation checks demonstrate
+diagnostic selection, not this execution-order property. Activation audit and
+consolidation of the unactivated batch descriptor formats remain required.

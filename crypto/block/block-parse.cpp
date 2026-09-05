@@ -1468,6 +1468,8 @@ const SplitMergeInfo t_SplitMergeInfo;
 
 bool TransactionDescr::skip(vm::CellSlice& cs) const {
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v2:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64) && cs.advance_refs(1);
     case trans_workchain_batch_v1:
       return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:
@@ -1520,6 +1522,9 @@ bool TransactionDescr::skip(vm::CellSlice& cs) const {
 
 bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v2:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64) &&
+             gen::t_WorkchainBatchInbound.validate_ref(ops, cs.fetch_ref(), weak);
     case trans_workchain_batch_v1:
       return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:
@@ -1572,12 +1577,14 @@ bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) con
 
 int TransactionDescr::get_tag(const vm::CellSlice& cs) const {
   int t = (int)cs.prefetch_ulong(4);
-  return (t >= 0 && t <= 8) ? (t == 3 ? 2 : t) : -1;
+  return (t >= 0 && t <= 9) ? (t == 3 ? 2 : t) : -1;
 }
 
 bool TransactionDescr::skip_to_storage_phase(vm::CellSlice& cs, bool& found) const {
   found = false;
   switch (get_tag(cs)) {
+    case trans_workchain_batch_v2:
+      return cs.advance(4 + 256 + 256 + 64 + 64 + 64) && cs.advance_refs(1);
     case trans_workchain_batch_v1:
       return cs.advance(4 + 256 + 256 + 64 + 64 + 64);
     case trans_ord:

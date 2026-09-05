@@ -1,4 +1,8 @@
 unit$_ = Unit;
+workchain_batch_inbound_v1#57494e31 count:uint15 envelopes:(HashmapE 256 ^MsgEnvelope) = WorkchainBatchInbound;
+workchain_block_context_v2#57424332 configuration:^Cell finality_context:^Cell = WorkchainBlockContext;
+workchain_block_input_v2#57424932 previous_shard_state:^Cell candidate:^Cell
+  context:^WorkchainBlockContext inbound_messages:^WorkchainBatchInbound = WorkchainBlockInput;
 // Block-transition result envelope. Payload semantics are checked by the resolved engine.
 workchain_block_outputs_v1#57424f31 outbound_messages:^Cell actions:^Cell
   receipts:^Cell events:^Cell = WorkchainBlockOutputs;
@@ -378,6 +382,9 @@ trans_storage$0001 storage_ph:TrStoragePhase
 // Commit effects before constructing the transaction and final shard wrapper.
 trans_workchain_batch_v1$1000 input_hash:bits256 effects_hash:bits256
   wire_bytes:uint64 verification_units:uint64 written_cells:uint64 = TransactionDescr;
+trans_workchain_batch_v2$1001 input_hash:bits256 effects_hash:bits256
+  wire_bytes:uint64 verification_units:uint64 written_cells:uint64
+  inbound_messages:^WorkchainBatchInbound = TransactionDescr;
 
 trans_tick_tock$001 is_tock:Bool storage_ph:TrStoragePhase
   compute_ph:TrComputePhase action:(Maybe ^TrActionPhase)

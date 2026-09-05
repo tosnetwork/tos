@@ -4,6 +4,7 @@
 #include "block/transaction.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
+#include <algorithm>
 
 namespace block {
 namespace {
@@ -16,6 +17,103 @@ bool same_cell(const td::Ref<vm::Cell>& a, const td::Ref<vm::Cell>& b) {
 }
 
 }  // namespace
+
+td::Result<std::vector<td::Ref<vm::Cell>>> decode_workchain_batch_inbound(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing batch inbound list");
+  }
+  try {
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special || cs.size() != 48 || cs.size_refs() != 1 || cs.fetch_ulong(32) != 0x57494e31) {
+      return td::Status::Error("invalid batch inbound list");
+    }
+    auto count = cs.fetch_ulong(15);
+    if (!count || cs.prefetch_ulong(1) != 1) {
+      return td::Status::Error("batch inbound list must be nonempty");
+    }
+    vm::Dictionary dict(cs, 256);
+    using Order = std::pair<std::uint64_t, td::Bits256>;
+    std::vector<std::pair<Order, td::Ref<vm::Cell>>> ordered;
+    if (!dict.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {
+          if (bits != 256 || ordered.size() >= count ||
+              value->size_ext() != 0x10000) {
+            return false;
+          }
+          auto cell = value->prefetch_ref();
+          block::tlb::MsgEnvelope::Record_std envelope;
+          gen::CommonMsgInfo::Record_int_msg_info info;
+          if (!gen::t_MsgEnvelope.validate_ref(4096, cell) || !tlb::unpack_cell(cell, envelope) ||
+              !tlb::unpack_cell_inexact(envelope.msg, info)) {
+            return false;
+          }
+          td::Bits256 hash = envelope.msg->get_hash().bits();
+          if (hash != td::Bits256(key)) {
+            return false;
+          }
+          ordered.emplace_back(Order{envelope.emitted_lt ? envelope.emitted_lt.value() : info.created_lt, hash},
+                               std::move(cell));
+          return true;
+        }) || ordered.size() != count) {
+      return td::Status::Error("invalid or noncanonical batch inbound entries");
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<td::Ref<vm::Cell>> envelopes;
+    envelopes.reserve(ordered.size());
+    for (auto& item : ordered) {
+      envelopes.push_back(std::move(item.second));
+    }
+    return envelopes;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid batch inbound cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete batch inbound proof");
+  }
+}
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_batch_inbound(const std::vector<td::Ref<vm::Cell>>& envelopes) {
+  if (envelopes.empty() || envelopes.size() > 32767) {
+    return td::Status::Error("batch inbound count must be between 1 and 32767");
+  }
+  vm::Dictionary dict(256);
+  for (unsigned index = 0; index < envelopes.size(); ++index) {
+    block::tlb::MsgEnvelope::Record_std envelope;
+    if (envelopes[index].is_null() || !tlb::unpack_cell(envelopes[index], envelope)) {
+      return td::Status::Error("cannot encode batch inbound entry");
+    }
+    if (!dict.set_ref(envelope.msg->get_hash().bits(), 256, envelopes[index], vm::Dictionary::SetMode::Add)) {
+      return td::Status::Error("duplicate batch inbound message");
+    }
+  }
+  vm::CellBuilder cb;
+  cb.store_long(0x57494e31, 32).store_long(envelopes.size(), 15);
+  if (!std::move(dict).append_dict_to_bool(cb)) {
+    return td::Status::Error("cannot encode batch inbound dictionary");
+  }
+  auto root = cb.finalize();
+  TRY_RESULT(checked, decode_workchain_batch_inbound(root));
+  return root;
+}
+
+bool workchain_batch_inbound_contains(const td::Ref<vm::Cell>& root, const td::Ref<vm::Cell>& message) {
+  if (root.is_null() || message.is_null()) {
+    return false;
+  }
+  try {
+    gen::WorkchainBatchInbound::Record record;
+    if (!tlb::unpack_cell(root, record) || !record.count) {
+      return false;
+    }
+    vm::Dictionary dict(record.envelopes, 256);
+    auto cell = dict.lookup_ref(message->get_hash().bits(), 256);
+    block::tlb::MsgEnvelope::Record_std envelope;
+    return cell.not_null() && tlb::unpack_cell(cell, envelope) && envelope.msg->get_hash() == message->get_hash();
+  } catch (vm::VmError&) {
+    return false;
+  } catch (vm::VmVirtError&) {
+    return false;
+  }
+}
 
 td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::Cell>& shard_state,
                                                            std::int32_t workchain_id,
@@ -62,10 +160,15 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
 }
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description) {
-  return vm::CellBuilder().store_long(8, 4)
+  vm::CellBuilder cb;
+  cb.store_long(description.inbound_messages.not_null() ? 9 : 8, 4)
       .store_bits(description.input_hash.bits(), 256).store_bits(description.effects_hash.bits(), 256)
       .store_long(description.usage.wire_bytes, 64).store_long(description.usage.verification_units, 64)
-      .store_long(description.usage.written_cells, 64).finalize();
+      .store_long(description.usage.written_cells, 64);
+  if (description.inbound_messages.not_null()) {
+    cb.store_ref(description.inbound_messages);
+  }
+  return cb.finalize();
 }
 
 td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const td::Ref<vm::Cell>& root) {
@@ -74,7 +177,11 @@ td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const t
   }
   bool special = false;
   auto cs = vm::load_cell_slice_special(root, special);
-  if (special || cs.size() != 708 || cs.size_refs() != 0 || cs.fetch_ulong(4) != 8) {
+  if (special || cs.size() != 708) {
+    return td::Status::Error("invalid batch transaction description");
+  }
+  auto tag = cs.fetch_ulong(4);
+  if ((tag != 8 && tag != 9) || cs.size_refs() != (tag == 9 ? 1u : 0u)) {
     return td::Status::Error("invalid batch transaction description");
   }
   WorkchainBatchDescription description;
@@ -82,6 +189,10 @@ td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const t
     return td::Status::Error("incomplete batch transaction commitments");
   }
   description.usage = {cs.fetch_ulong(64), cs.fetch_ulong(64), cs.fetch_ulong(64)};
+  if (tag == 9) {
+    description.inbound_messages = cs.fetch_ref();
+    TRY_RESULT(checked, decode_workchain_batch_inbound(description.inbound_messages));
+  }
   return description;
 }
 
@@ -95,13 +206,13 @@ td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& descrip
     return td::Status::Error("invalid transaction description for execution scope");
   }
   auto tag = cs.fetch_ulong(4);
-  if (tag > 8) {
+  if (tag > 9) {
     return td::Status::Error("unknown transaction description for execution scope");
   }
   if (scope == WorkchainExecutionScope::AccountCompute && tag < 8) {
     return td::Status::OK();
   }
-  if (scope == WorkchainExecutionScope::BlockTransition && tag == 8) {
+  if (scope == WorkchainExecutionScope::BlockTransition && (tag == 8 || tag == 9)) {
     return td::Status::OK();
   }
   return td::Status::Error("transaction description does not match execution scope");
@@ -190,6 +301,13 @@ td::Result<td::Ref<vm::Cell>> encode_workchain_block_input(const WorkchainBlockI
       input.finality_context.is_null()) {
     return td::Status::Error("batch commitment requires state, candidate, configuration and finality");
   }
+  if (input.inbound_messages.not_null()) {
+    TRY_RESULT(checked, decode_workchain_batch_inbound(input.inbound_messages));
+    auto context = vm::CellBuilder().store_long(0x57424332, 32)
+        .store_ref(input.configuration).store_ref(input.finality_context).finalize();
+    return vm::CellBuilder().store_long(0x57424932, 32).store_ref(input.previous_shard_state)
+        .store_ref(input.candidate).store_ref(context).store_ref(input.inbound_messages).finalize();
+  }
   return vm::CellBuilder().store_long(0x57424931, 32).store_ref(input.previous_shard_state)
       .store_ref(input.candidate).store_ref(input.configuration).store_ref(input.finality_context).finalize();
 }
@@ -255,6 +373,7 @@ td::Result<WorkchainBatchDescription> make_workchain_batch_description(const Wor
   description.input_hash = context->get_hash().bits();
   description.effects_hash = encoded_effects->get_hash().bits();
   description.usage = effects.usage;
+  description.inbound_messages = input.inbound_messages;
   return description;
 }
 
@@ -269,7 +388,9 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
   TRY_RESULT(effects, engine.execute_block(input));
   TRY_RESULT(actual, make_workchain_batch_description(input, effects));
   if (claimed.input_hash != actual.input_hash || claimed.effects_hash != actual.effects_hash ||
-      !(claimed.usage == actual.usage)) {
+      !(claimed.usage == actual.usage) ||
+      (!(claimed.inbound_messages.is_null() && actual.inbound_messages.is_null()) &&
+       !same_cell(claimed.inbound_messages, actual.inbound_messages))) {
     return td::Status::Error("batch transaction commitments differ from replay");
   }
   return effects;
@@ -345,7 +466,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
       return td::Status::Error("claimed executor state is missing batch witness");
     }
     WorkchainBlockInput input{context.previous_shard_state, witness.candidate,
-                              context.configuration, context.finality_context};
+                              context.configuration, context.finality_context, context.inbound_messages};
     TRY_RESULT(reconstructed, replay_workchain_batch_transaction(
         engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg, message_cfg));
     if (!same_cell(reconstructed, account.total_state)) {

@@ -4419,6 +4419,9 @@ td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell
 // Staging does not commit the account or publish any message.
 td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
                                                const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
+  if (input.inbound_messages.not_null()) {
+    return td::Status::Error("batch incoming native value settlement is not implemented");
+  }
   if (trans_type != tr_workchain_batch || account.status != Account::acc_active || account.workchain < 0 ||
       account.now_ != now || start_lt >= end_lt || root.not_null() || new_total_state.not_null() ||
       batch_description.not_null()) {

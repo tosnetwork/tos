@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "td/utils/Status.h"
 #include "td/utils/bits.h"
@@ -20,6 +21,8 @@ struct WorkchainBlockInput {
   td::Ref<vm::Cell> candidate;
   td::Ref<vm::Cell> configuration;
   td::Ref<vm::Cell> finality_context;
+  // Nonempty canonical envelope list, authenticated by native queue validation.
+  td::Ref<vm::Cell> inbound_messages = {};
 };
 
 // Candidate data is recovered from the claimed state, never supplied by a local cache.
@@ -27,7 +30,16 @@ struct WorkchainBlockReplayContext {
   td::Ref<vm::Cell> previous_shard_state;
   td::Ref<vm::Cell> configuration;
   td::Ref<vm::Cell> finality_context;
+  td::Ref<vm::Cell> inbound_messages = {};
 };
+
+// Decode orders by (emitted LT, message hash), falling back to created LT.
+// Engines may apply their own authenticated source-locator order afterwards.
+// These helpers do not authenticate message delivery.
+td::Result<td::Ref<vm::Cell>> encode_workchain_batch_inbound(const std::vector<td::Ref<vm::Cell>>& envelopes);
+td::Result<std::vector<td::Ref<vm::Cell>>> decode_workchain_batch_inbound(const td::Ref<vm::Cell>& root);
+// Membership only. The caller separately validates the complete list and transaction.
+bool workchain_batch_inbound_contains(const td::Ref<vm::Cell>& root, const td::Ref<vm::Cell>& message);
 
 struct WorkchainBlockResourceUsage {
   std::uint64_t wire_bytes{0};
@@ -64,6 +76,7 @@ struct WorkchainBatchDescription {
   td::Bits256 input_hash{td::Bits256::zero()};
   td::Bits256 effects_hash{td::Bits256::zero()};
   WorkchainBlockResourceUsage usage;
+  td::Ref<vm::Cell> inbound_messages = {};
 };
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description);

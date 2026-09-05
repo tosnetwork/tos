@@ -207,6 +207,14 @@ std::optional<WorkchainExecutionScope> WorkchainExecutionRegistry::execution_sco
   return std::nullopt;
 }
 
+td::Status validate_workchain_block_activation(const block::Config& configuration) {
+  if (configuration.get_global_version() < kBlockTransitionMinGlobalVersion ||
+      !configuration.has_capability(tos::capBlockTransition)) {
+    return td::Status::Error("block transition is not activated by global version and capability");
+  }
+  return td::Status::OK();
+}
+
 td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_block(
     const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
   if (!descriptor.active) {
@@ -217,6 +225,7 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
   if (it == block_engines_.end()) {
     return td::Status::Error("descriptor has no registered block engine");
   }
+  TRY_STATUS(validate_workchain_block_activation(configuration));
   TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration));
   if (!config) {
     return td::Status::Error("block engine returned null configuration");

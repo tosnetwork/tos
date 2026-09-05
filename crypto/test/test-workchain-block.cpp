@@ -20,6 +20,16 @@ td::Ref<vm::Cell> number(std::uint64_t value) {
 
 using CounterEngine = block::test::CounterEngine;
 
+std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
+                                                 td::uint64 capabilities = tos::capBlockTransition) {
+  vm::CellBuilder param;
+  CHECK(block::gen::t_GlobalVersion.pack_capabilities(param, version, capabilities));
+  vm::Dictionary config(32);
+  CHECK(config.set_ref(td::BitArray<32>(8u), param.finalize()));
+  return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+                                     block::Config::needCapabilities).move_as_ok();
+}
+
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
                               std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
@@ -66,6 +76,33 @@ block::WorkchainBlockInput input() {
   return {shard_fixture(), number(2), number(1), number(1)};
 }
 
+td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
+                                  td::optional<tos::LogicalTime> emitted = {}) {
+  vm::CellBuilder cb;
+  cb.store_long(4, 4).store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
+      .store_long(4, 3).store_long(2, 8).store_zeroes(256);
+  ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
+  cb.store_long(0, 4).store_long(1, 4).store_long(67, 8).store_long(lt, 64)
+      .store_long(1, 32).store_zeroes(2).store_long(nonce, 64);
+  auto message = cb.finalize();
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(4096, message));
+  block::tlb::MsgEnvelope::Record_std record{0x60, 0x60, td::make_refint(67), message, emitted, {}};
+  td::Ref<vm::Cell> envelope;
+  ASSERT_TRUE(tlb::pack_cell(envelope, record));
+  return envelope;
+}
+
+td::Ref<vm::Cell> inbound_transaction(td::Ref<vm::Cell> description, td::Ref<vm::Cell> ordinary_input = {}) {
+  vm::CellBuilder messages;
+  ASSERT_TRUE(messages.store_maybe_ref(ordinary_input));
+  messages.store_long(0, 1);
+  auto update = vm::CellBuilder().store_long(0x72, 8).store_zeroes(512).finalize();
+  return vm::CellBuilder().store_long(7, 4).store_zeroes(256).store_long(10, 64)
+      .store_zeroes(256).store_long(0, 64).store_long(10, 32).store_zeroes(15)
+      .store_long(2, 2).store_long(2, 2).store_ref(messages.finalize()).store_zeroes(5)
+      .store_ref(update).store_ref(description).finalize();
+}
+
 }  // namespace
 
 TEST(WorkchainBlock, ExtractExecutorFromShardState) {
@@ -105,6 +142,115 @@ TEST(WorkchainBlock, CounterReplay) {
   ASSERT_TRUE(validated.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
   auto previous = block::extract_workchain_engine_state(in.previous_shard_state, 2, td::Bits256::zero()).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(previous).fetch_ulong(64), 40u);
+}
+
+TEST(WorkchainBlock, CanonicalInboundList) {
+  auto first = inbound_envelope(3);
+  auto second = inbound_envelope(4);
+  auto encoded = block::encode_workchain_batch_inbound({first, second}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainBatchInbound.validate_ref(10000, encoded));
+  auto wire = vm::std_boc_serialize(encoded).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  auto decoded = block::decode_workchain_batch_inbound(restored).move_as_ok();
+  ASSERT_EQ(decoded.size(), 2u);
+  ASSERT_TRUE(decoded[0]->get_hash() == first->get_hash());
+  ASSERT_TRUE(decoded[1]->get_hash() == second->get_hash());
+  auto reversed = block::encode_workchain_batch_inbound({second, first}).move_as_ok();
+  ASSERT_TRUE(reversed->get_hash() == encoded->get_hash());
+  // Increasing emitted LT must not disguise a duplicate original message.
+  auto duplicate = block::encode_workchain_batch_inbound({first, inbound_envelope(3, 0, 5)});
+  ASSERT_TRUE(duplicate.is_error());
+  ASSERT_EQ(duplicate.error().message(), "duplicate batch inbound message");
+  ASSERT_TRUE(block::encode_workchain_batch_inbound({number(0)}).is_error());
+  ASSERT_TRUE(block::encode_workchain_batch_inbound({}).is_error());
+  ASSERT_TRUE(block::encode_workchain_batch_inbound({{}}).is_error());
+  auto delayed = inbound_envelope(1, 0, 5);
+  auto delayed_root = block::encode_workchain_batch_inbound({delayed, second}).move_as_ok();
+  auto delayed_list = block::decode_workchain_batch_inbound(delayed_root).move_as_ok();
+  ASSERT_TRUE(delayed_list[0]->get_hash() == second->get_hash());
+  ASSERT_TRUE(delayed_list[1]->get_hash() == delayed->get_hash());
+  auto same_lt = inbound_envelope(3, 1);
+  block::tlb::MsgEnvelope::Record_std a, b;
+  ASSERT_TRUE(tlb::unpack_cell(first, a) && tlb::unpack_cell(same_lt, b));
+  auto equal_root = block::encode_workchain_batch_inbound({first, same_lt}).move_as_ok();
+  auto equal_list = block::decode_workchain_batch_inbound(equal_root).move_as_ok();
+  ASSERT_TRUE(equal_list[0]->get_hash() == (a.msg->get_hash() < b.msg->get_hash() ? first : same_lt)->get_hash());
+  auto mismatched_count = vm::CellBuilder().store_long(0x57494e31, 32).store_long(3, 15)
+      .store_long(1, 1).store_ref(vm::load_cell_slice(encoded).prefetch_ref()).finalize();
+  auto mismatch = block::decode_workchain_batch_inbound(mismatched_count);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.error().message(), "invalid or noncanonical batch inbound entries");
+  vm::Dictionary gap(256);
+  ASSERT_TRUE(gap.set_ref(number(99)->get_hash().bits(), 256, first));
+  vm::CellBuilder gap_root;
+  gap_root.store_long(0x57494e31, 32).store_long(1, 15);
+  ASSERT_TRUE(std::move(gap).append_dict_to_bool(gap_root));
+  auto gap_result = block::decode_workchain_batch_inbound(gap_root.finalize());
+  ASSERT_TRUE(gap_result.is_error());
+  ASSERT_EQ(gap_result.error().message(), "invalid or noncanonical batch inbound entries");
+}
+
+TEST(WorkchainBlock, InboundCommitmentAndMembership) {
+  auto in = input();
+  auto first = inbound_envelope(3);
+  auto second = inbound_envelope(4);
+  in.inbound_messages = block::encode_workchain_batch_inbound({first, second}).move_as_ok();
+  auto encoded_input = block::encode_workchain_block_input(in).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainBlockInput.validate_ref(10000, encoded_input));
+  block::gen::WorkchainBlockInput::Record_workchain_block_input_v2 input_record;
+  ASSERT_TRUE(tlb::unpack_cell(encoded_input, input_record));
+  ASSERT_TRUE(input_record.inbound_messages->get_hash() == in.inbound_messages->get_hash());
+  CounterEngine engine;
+  auto effects = engine.execute_block(in).move_as_ok();
+  auto description = block::make_workchain_batch_description(in, effects).move_as_ok();
+  auto root = block::encode_workchain_batch_description(description);
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, root));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, root));
+  ASSERT_TRUE(block::validate_transaction_execution_scope(root, block::WorkchainExecutionScope::BlockTransition).is_ok());
+  ASSERT_TRUE(block::validate_transaction_execution_scope(root, block::WorkchainExecutionScope::AccountCompute).is_error());
+  auto decoded = block::decode_workchain_batch_description(root).move_as_ok();
+  ASSERT_TRUE(decoded.inbound_messages->get_hash() == in.inbound_messages->get_hash());
+  ASSERT_TRUE(block::replay_workchain_batch(engine, in, root).is_ok());
+  auto forged = description;
+  forged.inbound_messages = block::encode_workchain_batch_inbound({inbound_envelope(5)}).move_as_ok();
+  auto wrong = block::replay_workchain_batch(engine, in, block::encode_workchain_batch_description(forged));
+  ASSERT_TRUE(wrong.is_error());
+  ASSERT_EQ(wrong.error().message(), "batch transaction commitments differ from replay");
+  auto altered_input = in;
+  altered_input.inbound_messages = forged.inbound_messages;
+  auto wrong_input = block::replay_workchain_batch(engine, altered_input, root);
+  ASSERT_TRUE(wrong_input.is_error());
+  ASSERT_EQ(wrong_input.error().message(), "batch transaction input commitment differs from authenticated context");
+  auto transaction = inbound_transaction(root);
+  ASSERT_TRUE(block::gen::t_Transaction.validate_ref(10000, transaction));
+  ASSERT_TRUE(block::tlb::t_Transaction.validate_ref(10000, transaction));
+  block::tlb::MsgEnvelope::Record_std first_record, second_record, other;
+  ASSERT_TRUE(tlb::unpack_cell(first, first_record));
+  ASSERT_TRUE(tlb::unpack_cell(second, second_record));
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(5), other));
+  ASSERT_TRUE(block::is_transaction_in_msg(transaction, first_record.msg));
+  ASSERT_TRUE(block::is_transaction_in_msg(transaction, second_record.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, other.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, {}));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(root, first_record.msg), first_record.msg));
+  auto malformed = forged;
+  malformed.inbound_messages = number(0);
+  auto bad = block::encode_workchain_batch_description(malformed);
+  ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, bad));
+  ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, bad));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(bad), other.msg));
+  // A membership query is not acceptance: native incoming credit is still gated.
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  auto status = tx.prepare_workchain_batch(in, effects, block::SerializeConfig{});
+  ASSERT_TRUE(status.is_error());
+  ASSERT_EQ(status.message(), "batch incoming native value settlement is not implemented");
+  ASSERT_TRUE(account.balance.is_zero());
+  ASSERT_TRUE(!tx.serialize(block::SerializeConfig{}));
 }
 
 TEST(WorkchainBlock, ExecutorWitnessEncoding) {
@@ -243,7 +389,8 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   auto state_replay = block::replay_workchain_batch_state(
       engine, context, restored, committed, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
   ASSERT_TRUE(state_replay->get_hash() == recovered_account.total_state->get_hash());
-  block::Config configuration(0);
+  auto configuration_owner = block_configuration();
+  auto& configuration = *configuration_owner;
   block::WorkchainExecutionDescriptor descriptor;
   descriptor.workchain_id = 2;
   descriptor.active = true;
@@ -320,7 +467,8 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
 
 TEST(WorkchainBlock, ResolvedBatchStaging) {
   auto in = input();
-  block::Config configuration(0);
+  auto configuration_owner = block_configuration();
+  auto& configuration = *configuration_owner;
   block::WorkchainExecutionDescriptor descriptor;
   descriptor.workchain_id = 2;
   descriptor.active = true;
@@ -530,7 +678,7 @@ TEST(WorkchainBlock, BatchCommitmentReplay) {
   auto produced = engine.execute_block(in).move_as_ok();
   auto context = block::encode_workchain_block_input(in).move_as_ok();
   ASSERT_TRUE(block::gen::t_WorkchainBlockInput.validate_ref(10000, context));
-  block::gen::WorkchainBlockInput::Record generated;
+  block::gen::WorkchainBlockInput::Record_workchain_block_input_v1 generated;
   ASSERT_TRUE(tlb::unpack_cell(context, generated));
   ASSERT_TRUE(generated.previous_shard_state->get_hash() == in.previous_shard_state->get_hash());
   ASSERT_TRUE(generated.candidate->get_hash() == in.candidate->get_hash());
@@ -556,6 +704,36 @@ TEST(WorkchainBlock, BatchCommitmentReplay) {
     auto missing = block::replay_workchain_batch(engine, changed, description);
     ASSERT_TRUE(missing.is_error());
     ASSERT_EQ(missing.error().message(), "batch commitment requires state, candidate, configuration and finality");
+  }
+}
+
+TEST(WorkchainBlock, UnmatchedBatchInputDoesNotInvokeEngine) {
+  class CountingEngine final : public block::WorkchainBlockEngine {
+   public:
+    mutable unsigned calls = 0;
+    td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput& in) const override {
+      ++calls;
+      return CounterEngine().execute_block(in);
+    }
+  } engine;
+  auto in = input();
+  auto effects = CounterEngine().execute_block(in).move_as_ok();
+  auto claim = block::make_workchain_batch_description(in, effects).move_as_ok();
+  auto description = block::encode_workchain_batch_description(claim);
+  auto matched = block::replay_workchain_batch(engine, in, description);
+  ASSERT_TRUE(matched.is_ok());
+  ASSERT_EQ(engine.calls, 1u);
+
+  td::Ref<vm::Cell> block::WorkchainBlockInput::* fields[] = {
+      &block::WorkchainBlockInput::previous_shard_state, &block::WorkchainBlockInput::candidate,
+      &block::WorkchainBlockInput::configuration, &block::WorkchainBlockInput::finality_context};
+  for (auto field : fields) {
+    auto changed = in;
+    changed.*field = number(99);
+    engine.calls = 0;
+    auto rejected = block::replay_workchain_batch(engine, changed, description);
+    ASSERT_EQ(engine.calls, 0u);
+    ASSERT_TRUE(rejected.is_error());
   }
 }
 
@@ -625,7 +803,7 @@ TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
   ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, account));
   ASSERT_TRUE(block::validate_transaction_execution_scope(account, block::WorkchainExecutionScope::AccountCompute).is_ok());
   ASSERT_TRUE(block::validate_transaction_execution_scope(account, block::WorkchainExecutionScope::BlockTransition).is_error());
-  for (unsigned tag = 9; tag < 16; ++tag) {
+  for (unsigned tag = 10; tag < 16; ++tag) {
     auto future = vm::CellBuilder().store_long(tag, 4).finalize();
     ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, future));
     ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, future));
@@ -812,7 +990,8 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   ASSERT_TRUE(registry.execution_scope(key) == block::WorkchainExecutionScope::BlockTransition);
   ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_error());
   ASSERT_TRUE(registry.register_block_engine(nullptr).is_error());
-  block::Config configuration(0);
+  auto configuration_owner = block_configuration();
+  auto& configuration = *configuration_owner;
   block::WorkchainExecutionDescriptor descriptor;
   descriptor.workchain_id = 2;
   descriptor.active = true;
@@ -854,8 +1033,31 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
       native_registry.resolve_scoped(descriptor, configuration).move_as_ok()));
 }
 
+TEST(WorkchainBlock, RegistryRequiresConsensusActivation) {
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  auto activated = block_configuration();
+  ASSERT_TRUE(registry.resolve_block(descriptor, *activated).is_ok());
+  for (int version : {block::kBlockTransitionMinGlobalVersion - 1,
+                      block::kBlockTransitionMinGlobalVersion}) {
+    for (td::uint64 capabilities : {td::uint64{0}, td::uint64{tos::capBlockTransition}}) {
+      auto config = block_configuration(version, capabilities);
+      bool expected = version >= block::kBlockTransitionMinGlobalVersion && capabilities != 0;
+      ASSERT_EQ(registry.resolve_block(descriptor, *config).is_ok(), expected);
+      ASSERT_EQ(registry.resolve_scoped(descriptor, *config).is_ok(), expected);
+    }
+  }
+  block::Config unavailable(0);
+  ASSERT_TRUE(registry.resolve_block(descriptor, unavailable).is_error());
+}
+
 TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
-  block::Config configuration(0);
+  auto configuration_owner = block_configuration();
+  auto& configuration = *configuration_owner;
   block::WorkchainExecutionDescriptor descriptor;
   descriptor.workchain_id = 2;
   descriptor.active = true;
@@ -891,7 +1093,8 @@ TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
 TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   block::WorkchainExecutionRegistry registry;
   ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
-  block::Config configuration(0);
+  auto configuration_owner = block_configuration();
+  auto& configuration = *configuration_owner;
   td::Ref<block::WorkchainInfo> info{true};
   auto& value = info.write();
   value.workchain = 2;
