@@ -1,0 +1,74 @@
+name: Smart contract sandboxes
+
+# The contracts crate carries thirteen production-BOC sandbox suites and no
+# workflow ran any of them. `tosctl-service.yml` matches the same paths but
+# every cargo invocation there is `--lib`, which by definition never reaches
+# `tests/`. A suite that never runs reports no failures, so a green PR said
+# nothing about the contracts holding user funds.
+#
+# Deliberately no `branches:` filter. The build and hygiene workflows gate on
+# master/testnet/main, so a stacked PR whose base is another feature branch
+# receives none of them — which is exactly how a 2,600-line money contract
+# reached "all checks passed" without being compiled.
+
+on:
+  pull_request:
+    paths:
+      - "crypto/smartcont/**"
+      - "tosctl/src/node-control/contracts/**"
+      - "tosctl/src/sandbox/**"
+      - "scripts/update-*-code.py"
+      - ".github/workflows/contract-sandboxes.yml"
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    paths:
+      - "crypto/smartcont/**"
+      - "tosctl/src/node-control/contracts/**"
+      - "tosctl/src/sandbox/**"
+      - "scripts/update-*-code.py"
+      - ".github/workflows/contract-sandboxes.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sandboxes:
+    name: contract-sandboxes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      # The sandbox compiles FunC in-process through tos_sandbox, which shells
+      # out to these two binaries via FUNC_PATH / FIFT_PATH. Nothing else from
+      # the node is needed, so this stays far cheaper than a full build.
+      - name: Build FunC and Fift
+        run: cmake --build build --target func fift -j2
+
+      # Runs every file under contracts/tests/, which is where the sandbox
+      # suites live. Do not narrow this to a single --test target: the point
+      # is that adding a suite should not require editing CI to have it run.
+      #
+      # Each suite compiles its contract from source and asserts the frozen
+      # BOC still matches, so this covers artifact staleness as well as
+      # behaviour. That check already existed in the tests; it had simply
+      # never been executed.
+      - name: Contract sandbox suites
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked
+
+      - name: Frozen BOCs match their sources
+        run: git diff --exit-code

@@ -2,7 +2,9 @@ name: Ubuntu TOS build (x86-64)
 
 on:
   pull_request:
-    branches: [master, testnet, main]
+    # feature/** keeps stacked PRs covered: a PR whose base is another
+    # feature branch otherwise receives no build at all.
+    branches: [master, testnet, main, 'feature/**']
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master, testnet, main]
