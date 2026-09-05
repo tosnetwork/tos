@@ -439,6 +439,18 @@ impl Fixture {
         (0..11).map(|index| result.int_at(index)).collect()
     }
 
+    // The complete persistent state cell, used to prove rejected messages did
+    // not commit a partial state transition.
+    fn data_hash(&self) -> Vec<u8> {
+        self.bc
+            .get_account(&self.market)
+            .expect("market account")
+            .get_data_hash()
+            .expect("market data hash")
+            .as_slice()
+            .to_vec()
+    }
+
     fn account(&self, owner: &MsgAddressInt) -> Vec<i128> {
         let cell = owner.write_to_new_cell().unwrap().into_cell().unwrap();
         let owner = SliceData::load_cell(cell).unwrap();
@@ -929,6 +941,43 @@ fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
         .body(PredictionMarketContractV1::top_up_reserve(79).unwrap())
         .build();
     f.bc.send_message(non_bounce).expect("send non-bounce top-up").expect_exit_code(2405);
+}
+
+#[test]
+fn malformed_and_unknown_messages_leave_state_and_liabilities_unchanged() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+
+    // Unknown opcodes must reach the contract dispatcher (rather than merely
+    // failing message construction) and cannot commit state on their way out.
+    for opcode in
+        [0x0000_0000, 0x0000_0001, 0xdead_beef, 0x504c_0007, 0x504d_001a, 0x7fff_ffff, 0xffff_ffff]
+    {
+        let mut body = BuilderData::new();
+        body.append_u32(opcode).expect("opcode");
+        body.append_u64(u64::from(opcode)).expect("opaque trailing bits");
+        f.send(&owner, OPERATION_BUDGET, body.into_cell().expect("unknown-op body"))
+            .expect_exit_code(2499);
+        assert_eq!(f.data_hash(), before_data_hash, "unknown opcode {opcode:#010x} changed state");
+        assert_eq!(
+            f.accounting(),
+            before_accounting,
+            "unknown opcode {opcode:#010x} changed liabilities"
+        );
+    }
+
+    // This is a real, recognized opcode with its required query id and
+    // quantity deliberately absent. Exit code 9 proves it reached the
+    // contract's decoder and failed on the truncated cell, not dispatch.
+    let mut truncated = BuilderData::new();
+    truncated.append_u32(contracts::prediction_market::PM_SPLIT_OPCODE).expect("split opcode");
+    f.send(&owner, OPERATION_BUDGET, truncated.into_cell().expect("truncated split body"))
+        .expect_exit_code(9);
+    assert_eq!(f.data_hash(), before_data_hash, "truncated split changed state");
+    assert_eq!(f.accounting(), before_accounting, "truncated split changed liabilities");
 }
 
 #[test]
