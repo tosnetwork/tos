@@ -1375,6 +1375,7 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   info.write().min_addr_len = info.write().max_addr_len = 256;
   info.write().addr_len_step = 0;
   block::WorkchainSet workchains{{2, info}};
+  info.clear();
   auto in = input();
   in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000);
   auto effects = CounterEngine().execute_block(in).move_as_ok();
@@ -1423,6 +1424,11 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   auto normalized_message = send(variable_address(false), true);
   ASSERT_TRUE(normalized_message->get_hash() == canonical_message->get_hash());
   send(variable_address(true), false);
+  workchains.at(2).write().accept_msgs = false;
+  send(address(false), false);
+  send(variable_address(false), false);
+  workchains.at(2).write().accept_msgs = true;
+  send(address(false), true);
   auto anycast = vm::load_cell_slice_ref(vm::CellBuilder().store_long(2, 2).store_long(1, 1)
       .store_long(1, 5).store_long(0, 1).store_long(2, 8).store_zeroes(256).finalize());
   send(anycast, false);

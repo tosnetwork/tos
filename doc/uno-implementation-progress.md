@@ -758,3 +758,12 @@ accept a later opening with unchanged policy. Removing only the admission flag
 check makes the immediately-open rejection assertion fail; it was restored.
 This establishes ordering only: authenticated validator readiness, zero-state
 acceptance and end-to-end configuration-update activation remain unfinished.
+
+Native action settlement now has a closed-admission regression control with a
+public executor policy installed: both canonical standard and variable addresses
+are rejected while the destination descriptor has `accept_msgs=false`. The test
+checks no output message, unchanged transaction principal and unchanged source
+account; reopening admission accepts the same destination. Bypassing the native
+destination admission check makes the closed case succeed and fails the status
+assertion. The check was restored. This exercises the existing settlement gate,
+not a new receiver-side ban on consuming messages already committed to queues.
