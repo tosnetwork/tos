@@ -780,6 +780,54 @@ fn zero_immutable_rules_hash_in_a_structurally_valid_config_cannot_activate() {
 }
 
 #[test]
+fn rebound_derived_ids_allow_a_different_canonical_market_config() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let config = valid_data.reference(0).unwrap();
+    let identity = config.reference(0).unwrap();
+    let mut identity_builder = BuilderData::from_cell(&identity).unwrap();
+    let mut identity_data = identity_builder.data().to_vec();
+    // Change the first byte of deployment_salt only. The configuration remains
+    // valid, but both derived fields must be recomputed for activation.
+    identity_data[9] ^= 0x01;
+    identity_builder.replace_data(identity_data, identity.bit_length());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(0, identity_builder.into_cell().unwrap());
+    let data = initial_state_with_rebound_config(
+        &valid_data,
+        &PredictionMarketInitV1 {
+            deployment_salt: {
+                let mut salt = template.init.deployment_salt;
+                salt[0] ^= 0x01;
+                salt
+            },
+            ..template.init.clone()
+        },
+        config_builder.into_cell().unwrap(),
+    );
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("rebound-config-owner", 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    bc.send_message(
+        MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+            .bounce(true)
+            .state_init(state_init)
+            .body(PredictionMarketContractV1::activate(1).unwrap())
+            .build(),
+    )
+    .unwrap()
+    .expect_success();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 1, "a correctly rebound canonical config must activate");
+}
+
+#[test]
 fn inverted_trade_and_resolution_times_cannot_activate() {
     let template = Fixture::new();
     let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
