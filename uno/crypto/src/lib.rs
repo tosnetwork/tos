@@ -149,6 +149,37 @@ pub fn validate_profile(
 mod tests {
     use super::*;
 
+    fn measure_proofs(
+        label: &str,
+        samples: usize,
+        verifier: &FixedVerifier,
+        mut prove: impl FnMut() -> (Bundle<Authorized, i64>, std::time::Duration),
+    ) {
+        if samples == 0 {
+            return;
+        }
+        let mut elapsed = Vec::with_capacity(samples);
+        let mut previous_proof = Vec::new();
+        for sample in 0..samples {
+            let (bundle, duration) = prove();
+            assert_eq!(verifier.verify_bundle(&bundle, &[42; 32], 2, 7264), Ok(()));
+            let proof = bundle.authorization().proof().as_ref();
+            assert!(proof != previous_proof.as_slice(), "measurement reused a cached proof");
+            previous_proof = proof.to_vec();
+            let ms = duration.as_secs_f64() * 1000.0;
+            println!("PROVE_SAMPLE workload={label} sample={sample} actions=2 proof_bytes=7264 ms={ms}");
+            elapsed.push(ms);
+        }
+        elapsed.sort_by(f64::total_cmp);
+        let rank = |percent: usize| elapsed[(samples * percent).div_ceil(100) - 1];
+        println!("PROVE_SUMMARY workload={label} samples={samples} unit=ms p50={} max={}",
+                 rank(50), elapsed[samples - 1]);
+        // Small pilot runs do not support useful tail percentile estimates.
+        if samples >= 100 {
+            println!("PROVE_TAIL workload={label} p95={} p99={}", rank(95), rank(99));
+        }
+    }
+
     fn encoded_actions(bundle: &Bundle<Authorized, i64>) -> Vec<decode::EncodedAction> {
         use crate::decode::EncodedAction;
         bundle
@@ -258,6 +289,15 @@ mod tests {
 
     #[test]
     fn real_bundle_requires_proof_and_signatures() {
+        let proving_samples = match std::env::var("UNO_PROVING_SAMPLES") {
+            Err(std::env::VarError::NotPresent) => 0,
+            Err(error) => panic!("invalid measurement setting: {error}"),
+            Ok(text) => {
+                let count: usize = text.parse().expect("numeric proving sample count");
+                assert!((3..=1000).contains(&count), "proving sample count must be in [3,1000]");
+                count
+            }
+        };
         use incrementalmerkletree::Hashable;
         use orchard::{
             builder::{Builder, BundleType},
@@ -283,14 +323,27 @@ mod tests {
             .expect("test output");
         let (unsigned, metadata) =
             builder.build::<i64>(&mut rng).expect("build").expect("nonempty");
+        let key_start = std::time::Instant::now();
         let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
+        if proving_samples != 0 {
+            println!("PROVING_KEY unit=ms elapsed={}", key_start.elapsed().as_secs_f64() * 1000.0);
+        }
         let digest = [42; 32];
         let bundle = unsigned
+            .clone()
             .create_proof(&pk, &mut rng)
             .expect("proof")
             .apply_signatures(&mut rng, digest, &[])
             .expect("signatures");
         let verifier = FixedVerifier::new().expect("fixed key");
+        measure_proofs("output-only", proving_samples, &verifier, || {
+            let unproven = unsigned.clone();
+            let start = std::time::Instant::now();
+            let proven = unproven.create_proof(&pk, &mut rng).expect("measured output proof");
+            let duration = start.elapsed();
+            let authorized = proven.apply_signatures(&mut rng, digest, &[]).expect("measured signatures");
+            (authorized, duration)
+        });
         let bundle = decode_real_bundle(&bundle);
         assert_eq!(ffi_status(&bundle, |_| {}), ffi::AbiStatus::UNO_CRYPTO_OK as u32);
         export_abi_fixture(&bundle, "output-only.bin");
@@ -354,11 +407,22 @@ mod tests {
         assert_eq!(*unsigned_spend.value_balance(), 100);
         let real_spend_index = spend_metadata.spend_action_index(0).expect("real spend index");
         let spent = unsigned_spend
+            .clone()
             .create_proof(&pk, &mut rng)
             .expect("spend proof")
             .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
             .expect("real spend authorization");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        measure_proofs("spend", proving_samples, &verifier, || {
+            let unproven = unsigned_spend.clone();
+            let start = std::time::Instant::now();
+            let proven = unproven.create_proof(&pk, &mut rng).expect("measured spend proof");
+            let duration = start.elapsed();
+            let authorized = proven
+                .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
+                .expect("measured spend authorization");
+            (authorized, duration)
+        });
         let spent = decode_real_bundle(&spent);
         assert_eq!(ffi_status(&spent, |_| {}), ffi::AbiStatus::UNO_CRYPTO_OK as u32);
         export_abi_fixture(&spent, "spend.bin");

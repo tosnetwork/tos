@@ -161,3 +161,30 @@ acceptance; ownership, panic limits, remaining tests and reproduction are in ABI
 The root CMake build now offers `TOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON` (default OFF)
 for the Rust suite and both C++ callers through CTest. This is test-only linking,
 not node/engine registration. See [ABI.md](ABI.md#opt-in-cmakectest-integration).
+
+## Optional proving measurements
+
+The real-bundle test can reuse its proving key to generate fresh randomized
+proofs repeatedly for its output-only and real-spend fixtures:
+
+```sh
+UNO_PROVING_SAMPLES=100 cargo test --locked --offline --release -j48 \
+  --lib real_bundle_requires_proof_and_signatures -- --nocapture
+```
+
+Use the same `CARGO_TARGET_DIR` as CMake when sharing that build. The opt-in count
+must be 3 through 1000; an absent variable disables repetitions. The test prints
+proving-key construction time separately, each raw proving sample, median and
+maximum. Nearest-rank p95/p99 are printed only with at least 100 samples. The
+ordinary fixture proof warms the prover before these repetitions. Each sample
+times only `create_proof`: cloning the unsigned bundle, builder/encryption work,
+signing and subsequent complete verification are outside the interval.
+
+Every generated bundle must verify, and consecutive proofs must differ; returning
+a cached valid proof cannot masquerade as near-zero proving time. Require a zero
+test exit before using any partial stdout. Samples reuse the same witnesses and
+key with fresh proof randomness; they are not independent wallet workloads, cold
+starts, maximum-action bundles or memory measurements. The fixtures do not use
+the planned hybrid encryption. Record hardware, source revision, dependency lock
+and runtime thread configuration. Client proving occurs before submission, so
+these numbers inform wallet/expiry budgeting, not a serial block-slot deadline.

@@ -1623,3 +1623,53 @@ tree/nullifier updates, state serialization, storage tails, propagation and
 committee agreement. They do not establish a block capacity, gas schedule, idle
 cost or achievable slot lower bound. Those remain joint M1/M2 measurement outputs,
 not a multiplication of this two-Action result by a proposed transaction count.
+
+### Client proving measurement harness
+
+The real Rust bundle test now has an opt-in `UNO_PROVING_SAMPLES=3..1000` mode.
+It measures proving-key construction separately and repeatedly generates fresh
+randomized proofs for both its output-only and genuine-spend fixtures. Each
+sample times only `create_proof`, with the prepared witness clone outside the
+interval; signing and complete verification run afterwards. The baseline proof
+warms the prover, and the same key and witnesses are reused. This is deliberately
+not end-to-end wallet construction or hybrid encryption measurement.
+
+Every timed proof must verify and differ from its predecessor. A temporary
+mutation returned the already verified baseline bundle and zero duration instead
+of generating a proof. The second sample failed the cached-proof assertion and
+the test exited 101. The mutation was restored. The assertion reports only its
+reason, not both entire proof byte arrays. Small pilot runs report median/max;
+tail percentiles are emitted only for at least 100 samples. Partial output from
+a failed test is not usable measurement evidence.
+
+The initial three-sample pilot passed both workloads and the existing real-bundle
+negative controls in 18.24 seconds. Its medians were 1354.38628 ms (output-only)
+and 1406.904055 ms (spend), with 3252.886042 ms proving-key construction. These
+small pilot values are not tail estimates. Reproduction is in
+`uno/crypto/README.md`; the default test does not repeat proving.
+
+The subsequent 100-sample-per-workload run passed in 285.89 seconds on toserver
+on 2026-09-05, source base `023384a76` plus this change, Rust 1.97.1 Release and
+unchanged Cargo.lock. Both fixtures have two Actions and 7264-byte proofs.
+
+| Proving workload | p50 ms | p95 ms | p99 ms | max ms |
+| --- | ---: | ---: | ---: | ---: |
+| Output-only | 1400.397126 | 1435.112684 | 1457.986233 | 1480.101301 |
+| Genuine spend | 1353.742007 | 1408.072384 | 1423.208480 | 1423.802031 |
+
+Proving-key construction was 2718.065829 ms in this run, a single observation,
+not an initialization percentile. Calls were serial but the prover used its
+default multicore runtime: process inspection observed 194 threads and 4837%
+cumulative CPU utilization on this 192-logical-CPU machine. No affinity or runtime
+thread override was applied. The shared host's one-minute load was 35.38 near
+the start and 41.68 during spend sampling. These numbers must not be presented
+as typical laptop/mobile performance, nor as independent-witness tail guarantees.
+
+Client proving precedes submission. These measurements contribute to wallet and
+anchor/expiry-window budgeting, but do not establish a consensus deadline or slot
+lower bound. Memory, maximum-action counts, witness diversity and constrained
+client hardware remain unmeasured; the full block state/transport path is still
+needed for the slot and idle-cadence decision.
+After the measurement run, the default full Rust library suite passed: 17 tests,
+one intentionally ignored diagnostic export, 10.74 seconds, without the sample
+environment variable.
