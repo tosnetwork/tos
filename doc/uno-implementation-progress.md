@@ -903,3 +903,12 @@ produces an erroneous Ok result and fails the targeted test. Overflow fixtures
 supply the wrapped length deliberately, so a different error cannot conceal
 the bypass. All mutations were restored and locked offline tests pass. Actual
 proof verification and wiring this check before allocation remain unfinished.
+
+The prototype now reconstructs the actual fixed-circuit verifying key internally
+and reads its circuit version for bundle-profile checks. External callers cannot
+inject a replacement key. Construction unwinds return an explicit error (this
+does not recover process abort/OOM). The real-key test passes; changing only the
+selected construction variant to the historical circuit makes the actual
+key-version assertion fail. The fixed selector was restored. No canonical VK
+fingerprint/reconstruction manifest, proof or signature verification, external
+FFI or host registration is claimed by this step.

@@ -26,9 +26,14 @@ insecure circuit and subsequent Orchard/Ironwood profiles are rejected, includin
 mismatched bundle/circuit pairs. A 4-by-3 test matrix checks this boundary;
 removing either comparison makes unsupported pairs pass and the test fail.
 
-This function checks selectors only. It does not build or fingerprint a VK,
-validate a bundle, prove ownership, or bind a supplied VK to those selectors.
-It must not be exposed as a transaction-verification API.
+This function checks selectors only and must not be exposed as a transaction
+verification API. `FixedVerifier::new` separately reconstructs an internal VK
+using the explicit fixed circuit; callers cannot supply or replace that key.
+Its profile check reads the constructed key's circuit version. Key construction
+unwinds are converted to an error, not process-abort or out-of-memory failures.
+The construction test was mutation-checked by selecting the historical circuit:
+the actual key-version assertion failed. This is not a VK fingerprint, bundle
+verification or proof of ownership.
 
 `validate_proof_shape` is a separate allocation-free precheck for the pinned
 profile. It requires nonzero configured action/byte limits and an exact proof
@@ -57,5 +62,6 @@ Before production use: inspect all applicable advisories and licenses across the
 lock, record transitive source revisions/features, construct and fingerprint the
 allowed VK, enforce canonical lengths and full point/field decoding, integrate
 the TOS authorization digest, run real positive/negative proof and signature
-vectors, and validate hybrid encryption separately. No proof, signature, key
-generation, encryption or FFI implementation is shipped by this prototype yet.
+vectors, and validate hybrid encryption separately. No proof/signature
+verification, proving-key construction, encryption or FFI entry point is shipped
+by this prototype yet.

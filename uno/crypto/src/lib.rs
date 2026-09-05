@@ -1,7 +1,32 @@
-use orchard::{bundle::BundleVersion, circuit::OrchardCircuitVersion};
+use orchard::{
+    bundle::BundleVersion,
+    circuit::{OrchardCircuitVersion, VerifyingKey},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedProfile;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyConstructionFailed;
+
+// The key cannot be supplied or replaced by a bundle or FFI caller.
+// Full proof/signature verification is not exposed by this prototype yet.
+pub struct FixedVerifier {
+    key: VerifyingKey,
+}
+
+impl FixedVerifier {
+    pub fn new() -> Result<Self, KeyConstructionFailed> {
+        let key =
+            std::panic::catch_unwind(|| VerifyingKey::build(OrchardCircuitVersion::FixedPostNu6_2))
+                .map_err(|_| KeyConstructionFailed)?;
+        Ok(Self { key })
+    }
+
+    pub fn check_bundle_profile(&self, bundle: BundleVersion) -> Result<(), UnsupportedProfile> {
+        validate_profile(bundle, self.key.circuit_version())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofShapeError {
@@ -53,6 +78,23 @@ pub fn validate_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constructed_key_is_bound_to_fixed_profile() {
+        let verifier = match FixedVerifier::new() {
+            Ok(verifier) => verifier,
+            Err(error) => panic!("key construction failed: {error:?}"),
+        };
+        assert_eq!(verifier.key.circuit_version(), OrchardCircuitVersion::FixedPostNu6_2);
+        assert_eq!(verifier.check_bundle_profile(BundleVersion::orchard_v2()), Ok(()));
+        for version in [
+            BundleVersion::orchard_insecure_v1(),
+            BundleVersion::orchard_v3(),
+            BundleVersion::ironwood_v3(),
+        ] {
+            assert_eq!(verifier.check_bundle_profile(version), Err(UnsupportedProfile));
+        }
+    }
 
     #[test]
     fn profile_requires_both_fixed_selectors() {
