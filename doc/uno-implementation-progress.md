@@ -749,3 +749,12 @@ cover both rejection cases, unchanged policy and a newly introduced workchain
 as controls. Bypassing this guard accepts the unsafe existing-workchain transition
 and fails the assertion; the guard was restored. Fresh-workchain activation,
 validator readiness and an authenticated migration protocol remain separate work.
+
+Fresh ingress-policy installation now requires a new descriptor with native
+admission closed (`accept_msgs=false`), rather than allowing installation and
+opening in the same transition. Isolated transition tests reject an immediately
+open descriptor, accept closed installation, and
+accept a later opening with unchanged policy. Removing only the admission flag
+check makes the immediately-open rejection assertion fail; it was restored.
+This establishes ordering only: authenticated validator readiness, zero-state
+acceptance and end-to-end configuration-update activation remain unfinished.

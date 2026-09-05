@@ -176,6 +176,14 @@ Fresh descriptors are not rejected by this continuity check, but still require
 the independent configuration and activation conditions; this is not deployment
 authorization or an implementation of the missing migration protocol.
 
+A newly introduced ingress entry must now accompany a new descriptor with
+`accept_msgs=false`. Missing descriptors and simultaneous installation/opening
+are rejected by the shared transition predicate. An unchanged installed policy
+may pass this predicate when admission opens in a later transition; this local
+ordering check does not establish validator readiness or verify the zero state.
+Removing only the admission-closed condition makes the simultaneous-opening
+test fail because the unsafe transition is accepted. The condition was restored.
+
 ## Required implementation and evidence
 
 1. Freeze and implement the common configuration codec, descriptor binding and

@@ -36,6 +36,7 @@ struct WorkchainSpec {
   td::int32 vm_version = -1;
   td::uint64 vm_mode = 0;
   bool active = true;
+  bool accept_msgs = true;
   td::Bits256 zerostate_root_hash = td::Bits256::zero();
 };
 
@@ -53,7 +54,7 @@ td::Ref<vm::Cell> make_workchain_descr(const WorkchainSpec& spec) {
   CHECK(cb.store_long_bool(4, 8));   // max_split
   CHECK(cb.store_long_bool(1, 1));   // basic
   CHECK(cb.store_long_bool(spec.active ? 1 : 0, 1));
-  CHECK(cb.store_long_bool(1, 1));   // accept_msgs
+  CHECK(cb.store_long_bool(spec.accept_msgs, 1));
   CHECK(cb.store_long_bool(0, 13));  // flags
   CHECK(cb.store_bits_bool(spec.zerostate_root_hash.cbits(), 256));
   cb.store_zeroes(256);              // zerostate_file_hash
@@ -197,7 +198,16 @@ TEST(ConfigTransition, ingress_destination_continuity) {
   policy.executor_address.set_zero();
   policy.engine_configuration = vm::CellBuilder().finalize();
   auto with_policies = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
-    vm::Dictionary config(base, 32);
+    std::vector<WorkchainSpec> descriptors{WorkchainSpec{}};
+    for (const auto& entry : policies) {
+      if (entry.workchain_id == 3) {
+        WorkchainSpec extra_descriptor;
+        extra_descriptor.id = 3;
+        extra_descriptor.accept_msgs = false;
+        descriptors.push_back(extra_descriptor);
+      }
+    }
+    vm::Dictionary config(make_config(descriptors), 32);
     auto encoded = block::encode_workchain_native_ingress_table(policies).move_as_ok();
     ASSERT_TRUE(config.set_ref(td::BitArray<32>{block::kWorkchainNativeIngressConfigParam}, encoded));
     return config.get_root_cell();
@@ -238,5 +248,11 @@ TEST(ConfigTransition, existing_workchain_cannot_add_ingress_restriction) {
   ASSERT_TRUE(block::valid_config_transition(empty_policy.get_root_cell(), next.get_root_cell()).is_error());
   expect_ok(block::valid_config_transition(next.get_root_cell(), next.get_root_cell()));
   // Isolated transition control; full configuration validity and activation are separate checks.
-  expect_ok(block::valid_config_transition(make_config({}), next.get_root_cell()));
+  ASSERT_TRUE(block::valid_config_transition(make_config({}), next.get_root_cell()).is_error());
+  existing.accept_msgs = false;
+  vm::Dictionary closed(make_config({existing}), 32);
+  ASSERT_TRUE(closed.set_ref(td::BitArray<32>{84},
+      block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+  expect_ok(block::valid_config_transition(make_config({}), closed.get_root_cell()));
+  expect_ok(block::valid_config_transition(closed.get_root_cell(), next.get_root_cell()));
 }

@@ -1971,6 +1971,12 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
         if (!old_ingress.count(id) && old_workchains.count(id)) {
           return td::Status::Error("existing workchain adds native ingress restriction without an explicit migration rule");
         }
+        if (!old_ingress.count(id)) {
+          auto descriptor = new_workchains.find(id);
+          if (descriptor == new_workchains.end() || descriptor->second.is_null() || descriptor->second->accept_msgs) {
+            return td::Status::Error("new native ingress policy requires a descriptor with admission closed");
+          }
+        }
       }
     }
     TRY_STATUS_PREFIX(validate_workchain_execution_descriptor_transitions(old_workchains, new_workchains),
