@@ -424,8 +424,18 @@ used by scoped resolution in collator configuration/construction and validator
 configuration/transaction replay. Ordinary AccountCompute validation still
 rejects batch descriptors by scope. Generated TL-B validation remains structural,
 not permission to execute. Low-level codec/replay helpers are not standalone
-consensus acceptance APIs. Broader import/proof/API call-site audit and live
-negative activation tests remain outstanding.
+consensus acceptance APIs. Broader import/proof/API call-site audit and independent
+candidate-import negative activation tests remain outstanding.
+
+Two real disk-node activation tests now generate isolated masterchain genesis
+configurations: version 15 without the host capability, and version 14 with it.
+Each bootstraps the masterchain successfully, registers the Counter engine, then
+requires workchain-2 collation to fail with no batch staging or saved block.
+The existing activated integration remains the positive control. Removing the
+shared registry activation gate makes both negative tests incorrectly produce a
+block (exit 0 instead of 2); restoring it makes both reject again. Generated
+fixture variants verify their source marker before substitution so fixture drift
+cannot silently leave activation enabled.
 
 `RegistryRequiresConsensusActivation` uses real decoded ConfigParam 8 cells and
 checks both sides of the version boundary, the capability on/off combinations,
