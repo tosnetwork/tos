@@ -625,6 +625,9 @@ add_executable(test-uno-amount test/test-td-main.cpp uno/test/test-amount.cpp un
   uno/test/test-leaf-budget.cpp uno/test/test-transition-budget.cpp)
 target_include_directories(test-uno-amount PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-uno-amount PRIVATE tdutils)
+add_executable(test-uno-native-amount test/test-td-main.cpp uno/test/test-native-amount.cpp)
+target_include_directories(test-uno-native-amount PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-uno-native-amount PRIVATE tos_crypto)
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
 
@@ -1088,6 +1091,7 @@ tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
 tos_test(test-workchain-block)
 tos_test(test-uno-amount)
+tos_test(test-uno-native-amount)
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)

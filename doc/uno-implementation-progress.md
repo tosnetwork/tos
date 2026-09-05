@@ -860,3 +860,13 @@ the relevant rejection assertion fail; all mutations were restored. This does
 not yet make a complete state transition atomic: real tree updates, individual
 withdrawal identity/ownership, terminal records, verified proof data and native
 outbound messages must join the same eventual host commitment.
+
+Added explicit nanotomi-preserving conversion between UNO wide amounts and
+Native Tomis integers. Native's existing VarUInteger 16 encoding permits at
+most 120 unsigned bits; oversized, negative or absent values are rejected rather
+than narrowed. This does not reduce the 128-bit aggregate counters or establish
+a supply cap. Tests round-trip zero, 10^17, UINT64_MAX, 2^64 and the 120-bit maximum
+through the real `t_Tomis` codec, with independent decimal controls. Removing
+the outgoing bound, widening the incoming bound to 128 bits, or dropping high
+bytes independently makes the relevant test fail; mutations were restored.
+These conversion helpers are not yet wired into a Reserve contract or bridge.
