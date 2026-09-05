@@ -295,6 +295,7 @@ class Lifecycle:
         trusted_dir.chmod(0o700)
         trusted_tosctl = trusted_dir / "tosctl"
         shutil.copyfile(self.tosctl, trusted_tosctl)
+        subprocess.run(["strip", "--strip-unneeded", str(trusted_tosctl)], check=True, timeout=60)
         trusted_tosctl.chmod(0o700)
         info = rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]
         initial = info["init"]
