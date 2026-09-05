@@ -449,6 +449,77 @@ class Lifecycle:
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"challenged withdrawal did not exhaust free collateral: {withdrawn}")
 
+    def run_double_timeout_lifecycle(self) -> None:
+        """Prove that only two frozen Oracle timeouts yield terminal INVALID."""
+        definition = self.write_definition()
+        deploy = self.workdir / "deploy.boc"
+        self.tosctl_call(
+            "agent", "prediction", "prepare-deploy", "--definition", str(self.definition),
+            "--from", "owner", "--amount-nanotos", str(2 * TOS), "--output-boc", str(deploy),
+        )
+        prior_seqno = self.wallet_seqno("owner")
+        self.broadcast_file(deploy)
+        wait_until(lambda: self.wallet_seqno("owner") > prior_seqno, "deploy source wallet seqno advancement")
+        self.wait_status("trading")
+
+        register_amount = 2 * TOS + definition["participant_entry_fee"] + definition["account_cleanup_bounty"] + OPERATION_BUDGET
+        self.prepare_and_send("owner", {
+            "operation": "register_and_deposit", "query_id": 1,
+            "credited_amount": 2 * TOS, "trading_pubkey": TRADING_PUBLIC_KEY,
+        }, register_amount, 1)
+        self.prepare_and_send("owner", {"operation": "split", "query_id": 2, "quantity_lots": 1}, OPERATION_BUDGET, 2)
+        split = self.show_quorum()
+        if split["complete_sets"] != 1 or split["locked"] != TOS:
+            raise RuntimeError(f"double-timeout split accounting is invalid: {split}")
+
+        # Deliberately do not open or report a normal round. A late keeper
+        # first records TRADING -> REPORTING, then the next independent call
+        # must enter REVIEWING(NORMAL_TIMEOUT) without manufacturing a stale
+        # normal vote context.
+        wait_until(
+            lambda: int(time.time()) >= definition["oracle_vote_deadline"],
+            "normal Oracle deadline", 700,
+        )
+        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 3}, OPERATION_BUDGET, 3)
+        reporting = self.wait_status("reporting")
+        if reporting["current_context_hash"] != "00" * 32:
+            raise RuntimeError(f"late normal transition opened a stale round: {reporting}")
+        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 4}, OPERATION_BUDGET, 4)
+        reviewing = self.wait_status("reviewing")
+        review_base = reviewing["review_base_context_hash"]
+        appeal_deadline = reviewing["next_deadline"]
+        if not isinstance(review_base, str) or review_base == "00" * 32:
+            raise RuntimeError(f"normal timeout did not freeze review base context: {reviewing}")
+        if reviewing["current_context_hash"] != "00" * 32:
+            raise RuntimeError(f"normal timeout unexpectedly opened appellate round: {reviewing}")
+        if not isinstance(appeal_deadline, int) or appeal_deadline <= int(time.time()):
+            raise RuntimeError(f"normal timeout did not expose future appeal deadline: {reviewing}")
+
+        # Do not open the appellate round and do not report. The base context
+        # remains the sole authorization input for the timeout finalizer.
+        wait_until(
+            lambda: int(time.time()) >= appeal_deadline,
+            "appellate Oracle deadline", definition["appeal_period"] + 90,
+        )
+        self.prepare_and_send("owner", {
+            "operation": "finalize_review_timeout", "query_id": 5,
+            "expected_review_base_context_hash": review_base,
+        }, OPERATION_BUDGET, 5)
+        finalized = self.wait_status("finalized")
+        if finalized["final_outcome"] != "invalid" or finalized["remaining_payout"] != TOS:
+            raise RuntimeError(f"double timeout did not produce INVALID accounting: {finalized}")
+
+        self.prepare_and_send("owner", {
+            "operation": "claim", "query_id": 6, "owner": self.addresses["owner"],
+        }, OPERATION_BUDGET, 6)
+        claimed = self.show_quorum()
+        if claimed["remaining_payout"] != 0 or claimed["claimed"] != TOS:
+            raise RuntimeError(f"double-timeout claim did not exhaust payout liability: {claimed}")
+        self.prepare_and_send("owner", {"operation": "withdraw", "query_id": 7, "amount": 2 * TOS}, OPERATION_BUDGET, 7)
+        withdrawn = self.show_quorum()
+        if withdrawn["total_free"] != 0:
+            raise RuntimeError(f"double-timeout withdrawal did not exhaust free collateral: {withdrawn}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -460,7 +531,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "challenged-appellate"), default="normal",
+        "--scenario", choices=("normal", "challenged-appellate", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -508,10 +579,14 @@ def main() -> int:
                 "PredictionMarket normal "
                 f"{args.normal_outcome.upper()} direct-wallet three-node lifecycle: PASS"
             )
-        else:
+        elif args.scenario == "challenged-appellate":
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle()
             print("PredictionMarket challenged appellate direct-wallet three-node lifecycle: PASS")
+        else:
+            lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_double_timeout_lifecycle()
+            print("PredictionMarket double-timeout direct-wallet three-node lifecycle: PASS")
         return 0
     finally:
         if localnet.poll() is None:
