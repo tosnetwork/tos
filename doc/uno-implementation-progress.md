@@ -346,7 +346,8 @@ The result envelope is not a `TransactionDescr` constructor or a replacement
 for native `Transaction` validation. The host inserts the synthetic batch transaction
 into AccountBlock/block-extra and persists the result witness in executor data;
 outgoing, deferred host and executor self-queue inbound LT/value-flow paths are
-tested. Cross-workchain inbound and invalid-destination recovery remain pending.
+tested. Cross-workchain inbox delivery is also covered below; invalid-destination
+recovery remains pending.
 The effect envelope alone binds output data, while its batch description also
 binds input context; neither authenticates the context by itself.
 
@@ -509,7 +510,7 @@ successful incoming-funded outgoing message with independent replay, and an
 insufficient second outgoing message leaving no partial credit/fee/output.
 Omitting the credit update makes the balance-200 assertion fail; it was restored.
 These are transaction-layer tests; the integration below extends them to native
-queue consumption and incoming candidate replay, not yet cross-workchain funding.
+queue consumption and incoming candidate replay, including cross-workchain funding.
 
 Collator now collects executor-bound neighbor/own-queue deliveries after native
 route/key/fee/processed-up-to checks. It commits their canonical inbox to the
@@ -529,3 +530,18 @@ snapshot imports the first receiving candidate through real ValidateQuery.
 Omitting final InMsg publication makes the first receiving block fail native
 value-flow conservation (in != out); publication was restored. Consensus
 acceptance in this harness still uses the existing fake committee mechanism.
+
+Cross-workchain disk coverage uses a second test-only Counter workchain (3),
+with its own 1000-atom operating allocation. Workchain 2 sends two 100-atom
+messages and flushes the deferred one; a masterchain checkpoint publishes its
+outgoing queue. Workchain 3 imports both through neighbor queue proofs in one
+batch: balance 1000 -> 1200, imported 334, collected forwarding fees 134.
+An independent DB snapshot validates the exported receiving candidate. After
+checkpointing the receiver, the sender removes both messages via native
+processed-up-to proofs and preserves balance 600. Another receiving block must
+preserve 1200 with no duplicate credit. This exercises different workchain IDs,
+not just two processes replaying a self-queue. No production engine registration,
+UNO reserve allocation or real committee signatures are introduced by the fixture.
+Mutation verification: forcing a neighbor import to be marked as own-queue
+delivery makes the cross-workchain receiver attempt an invalid local dequeue
+and fail its queue-size invariant. The correct ownership flag was restored.

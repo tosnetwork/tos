@@ -16,9 +16,11 @@ inline td::Ref<vm::Cell> counter_number(std::uint64_t value) {
 
 // Non-bouncing transfers to an uninitialized native recipient exercise delivery
 // without requiring a return-message handler in the test block engine.
-inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment, bool to_executor = false) {
+inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment, bool to_executor = false,
+                                                std::int32_t executor_workchain = 2) {
   auto message = vm::CellBuilder().store_long(4, 4).store_zeroes(2)
-      .store_long(4, 3).store_long(to_executor ? 2 : 0, 8).store_zeroes(255).store_long(to_executor ? 0 : 1, 1)
+      .store_long(4, 3).store_long(to_executor ? executor_workchain : 0, 8)
+      .store_zeroes(255).store_long(to_executor ? 0 : 1, 1)
       .store_long(1, 4).store_long(100, 8).store_long(0, 1)
       .store_zeroes(8).store_zeroes(96).store_zeroes(2).finalize();
   vm::Dictionary dict(15);
@@ -32,8 +34,9 @@ inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment, bool
 
 class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
  public:
-  explicit CounterEngine(block::WorkchainBlockResourceUsage limits = {8, 1, 3}, std::uint64_t verification_units = 1)
-      : limits_(limits), verification_units_(verification_units) {
+  explicit CounterEngine(block::WorkchainBlockResourceUsage limits = {8, 1, 3}, std::uint64_t verification_units = 1,
+                         std::int32_t workchain = 2)
+      : limits_(limits), verification_units_(verification_units), workchain_(workchain) {
   }
 
   td::Result<block::WorkchainBlockPolicy> block_policy(
@@ -56,7 +59,7 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   }
 
   td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput& input) const override {
-    TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, 2, td::Bits256::zero()));
+    TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, workchain_, td::Bits256::zero()));
     auto state = vm::load_cell_slice(engine_state);
     auto candidate = vm::load_cell_slice(input.candidate);
     if (state.size() != 64 || state.size_refs() != 0 || candidate.size() != 64 || candidate.size_refs() > 1) {
@@ -82,6 +85,7 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
  private:
   block::WorkchainBlockResourceUsage limits_;
   std::uint64_t verification_units_;
+  std::int32_t workchain_;
 };
 
 }  // namespace block::test

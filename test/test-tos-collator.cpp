@@ -106,6 +106,9 @@ class TestNode : public td::actor::Actor {
   void set_counter_self_send_increment(td::uint64 increment) {
     block_candidate_ = block::test::counter_message_candidate(increment, true);
   }
+  void set_counter_peer_send_increment(td::uint64 increment) {
+    block_candidate_ = block::test::counter_message_candidate(increment, true, 3);
+  }
   void set_export_candidate(std::string path) {
     export_candidate_ = std::move(path);
   }
@@ -290,12 +293,12 @@ class TestNode : public td::actor::Actor {
 
   void run() {
     if (block_candidate_.not_null()) {
-      if (shard_ != tos::ShardIdFull{2, tos::shardIdAll}) {
-        std::cerr << "fatal: Counter collation requires the unsplit workchain 2.\n";
+      if (shard_ != tos::ShardIdFull{2, tos::shardIdAll} && shard_ != tos::ShardIdFull{3, tos::shardIdAll}) {
+        std::cerr << "fatal: Counter collation requires the unsplit workchain 2 or 3.\n";
         std::_Exit(2);
       }
       auto status = block::default_workchain_execution_registry().register_block_engine(
-          std::make_unique<block::test::CounterEngine>());
+          std::make_unique<block::test::CounterEngine>(block::WorkchainBlockResourceUsage{8, 1, 3}, 1, shard_.workchain));
       if (status.is_error()) {
         LOG(ERROR) << status;
         std::_Exit(2);
@@ -478,6 +481,12 @@ int main(int argc, char *argv[]) {
                        [&](td::Slice arg) {
                          TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));
                          td::actor::send_closure(x, &TestNode::set_counter_self_send_increment, increment);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option(0, "counter-peer-send-increment", "test-only: send two messages to workchain 3",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));
+                         td::actor::send_closure(x, &TestNode::set_counter_peer_send_increment, increment);
                          return td::Status::OK();
                        });
   p.add_checked_option('T', "top-block", "BlockIdExt of top block (new block will be generated atop of it)",

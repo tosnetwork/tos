@@ -1,0 +1,14 @@
+"TosUtil.fif" include
+"Asm.fif" include
+"Lists.fif" include
+
+// Independent receiving workchain with its own native operating allocation.
+-23901 setglobalid
+3 setworkchain
+empty_cell
+<b x{57424531} s, 0 1 u, <b 40 64 u, b> ref, b>
+empty_cell 1000 0 0 0 6 register_smc drop
+create_state
+dup 31 boc+>B dup "counter-peer-state.boc" B>file
+Bhashu 256 u>B "counter-peer-state.fhash" B>file
+hashu 256 u>B "counter-peer-state.rhash" B>file
