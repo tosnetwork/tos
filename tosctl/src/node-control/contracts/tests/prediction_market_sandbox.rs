@@ -1895,6 +1895,98 @@ fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
 }
 
 #[test]
+fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
+    for (outcome, claim_order) in [(0_u8, [1_usize, 0]), (1, [0, 1]), (2, [1, 0])] {
+        let mut f = Fixture::new();
+        f.activate();
+        let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
+        let keys = [SigningKey::from_bytes(&[0x80 + outcome; 32]), SigningKey::from_bytes(&[0x90 + outcome; 32])];
+        let normal = f.normal.address().clone();
+        f.register(&owners[0], &keys[0], 2);
+        f.register(&owners[1], &keys[1], 3);
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::split(4, 3).unwrap())
+            .expect_success();
+        f.send(&owners[1], OPERATION_BUDGET, PredictionMarketContractV1::split(5, 2).unwrap())
+            .expect_success();
+
+        // Move one YES lot only. The two accounts now have asymmetric YES/NO
+        // positions, so all three outcomes exercise different individual payouts.
+        let sell_yes = f.signed_order(
+            &owners[0], &keys[0], 1, PredictionOrderActionV1::Sell,
+            PredictionOrderOutcomeV1::Yes, PredictionLiquidityRoleV1::Maker, 5_000, 1,
+        );
+        let buy_yes = f.signed_order(
+            &owners[1], &keys[1], 1, PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes, PredictionLiquidityRoleV1::Taker, 5_000, 1,
+        );
+        f.send(
+            &owners[1], 2 * TOS,
+            PredictionMarketContractV1::match_pair(6, 1, sell_yes, buy_yes).unwrap(),
+        )
+        .expect_success();
+
+        f.bc.set_now(f.init.resolve_not_before as u32);
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(7).unwrap())
+            .expect_success();
+        f.send(&owners[0], OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+            .expect_success();
+        let context = f.phase().3;
+        f.send(
+            &normal,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::report_result(
+                9, 0, context, outcome, [0xb0 + outcome; 32], u64::from(f.bc.now()),
+                f.init.oracle_vote_deadline,
+            )
+            .unwrap(),
+        )
+        .expect_success();
+        let finalization_deadline = f.phase().6;
+        f.bc.set_now(finalization_deadline as u32);
+        f.send(
+            &owners[0], OPERATION_BUDGET,
+            PredictionMarketContractV1::finalize_uncontested(10).unwrap(),
+        )
+        .expect_success();
+
+        let final_backing = 5 * TOS;
+        assert_eq!(f.accounting()[6], final_backing as i128, "outcome {outcome}: final backing");
+        let mut claimed = 0_u64;
+        for index in claim_order {
+            let account_before = f.account(&owners[index]);
+            let expected_payout = match outcome {
+                0 => (account_before[1] as u64).checked_mul(TOS).unwrap(),
+                1 => (account_before[2] as u64).checked_mul(TOS).unwrap(),
+                2 => (account_before[1] as u64 + account_before[2] as u64)
+                    .checked_mul(TOS / 2)
+                    .unwrap(),
+                _ => unreachable!(),
+            };
+            f.send(
+                &owners[1 - index], OPERATION_BUDGET,
+                PredictionMarketContractV1::claim(20 + index as u64, &owners[index]).unwrap(),
+            )
+            .expect_success();
+            let account_after = f.account(&owners[index]);
+            assert_eq!(
+                account_after[0] as u64 - account_before[0] as u64,
+                expected_payout,
+                "outcome {outcome}: claim payout diverged for participant {index}"
+            );
+            claimed = claimed.checked_add(expected_payout).unwrap();
+            let accounting = f.accounting();
+            assert_eq!(
+                accounting[7] as u64 + claimed,
+                final_backing,
+                "outcome {outcome}: remaining plus claimed payout diverged"
+            );
+        }
+        assert_eq!(claimed, final_backing, "outcome {outcome}: total payout must equal backing");
+        assert_eq!(f.accounting()[7], 0, "outcome {outcome}: payout liability remains");
+    }
+}
+
+#[test]
 fn appellate_quorum_can_uphold_the_challenged_normal_result() {
     let mut f = Fixture::new();
     f.activate();
