@@ -1585,7 +1585,7 @@ bool Collator::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return fatal_error(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
+  auto execution_res = block::default_workchain_execution_registry().resolve_scoped_workchain(
       config_->get_workchain_list(), workchain(), *config_);
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));

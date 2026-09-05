@@ -593,6 +593,9 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   descriptor.active = true;
   descriptor.vm_version = static_cast<std::int32_t>(key.selector);
   auto resolved = registry.resolve_block(descriptor, configuration).move_as_ok();
+  auto scoped = registry.resolve_scoped(descriptor, configuration).move_as_ok();
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainBlockExecution>(scoped));
+  ASSERT_TRUE(std::get<block::ResolvedWorkchainBlockExecution>(scoped).executor == resolved.executor);
   auto in = input();
   auto produced = resolved.executor->execute_block(in).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(produced.new_engine_state).fetch_ulong(64), 42u);
@@ -622,4 +625,45 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   ASSERT_TRUE(native_registry.execution_scope(block::tvm_workchain_engine_key()) ==
               block::WorkchainExecutionScope::AccountCompute);
   ASSERT_TRUE(native_registry.resolve(descriptor, configuration).is_ok());
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainExecution>(
+      native_registry.resolve_scoped(descriptor, configuration).move_as_ok()));
+}
+
+TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  block::Config configuration(0);
+  td::Ref<block::WorkchainInfo> info{true};
+  auto& value = info.write();
+  value.workchain = 2;
+  value.enabled_since = 0;
+  value.monitor_min_split = value.min_split = value.max_split = 0;
+  value.basic = value.active = value.accept_msgs = true;
+  value.flags = value.version = 0;
+  value.zerostate_root_hash.set_zero();
+  value.zerostate_file_hash.set_zero();
+  value.vm_version = 0x434e5431;
+  value.min_addr_len = value.max_addr_len = 256;
+  value.addr_len_step = 0;
+  block::WorkchainSet workchains{{2, std::move(info)}};
+  auto scoped = registry.resolve_scoped_workchain(workchains, 2, configuration).move_as_ok();
+  ASSERT_TRUE(scoped.has_value());
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*scoped));
+  ASSERT_TRUE(!registry.resolve_scoped_workchain(workchains, tos::masterchainId, configuration).move_as_ok().has_value());
+  ASSERT_TRUE(!registry.resolve_scoped_workchain(workchains, 99, configuration).move_as_ok().has_value());
+  auto account = registry.resolve_workchain(workchains, 2, configuration);
+  ASSERT_TRUE(account.is_error());
+  ASSERT_EQ(account.error().message(), "block engine cannot execute through account compute");
+  block::LocalWorkchainRoleSet roles;
+  roles.required_workchains.insert(2);
+  ASSERT_TRUE(registry.validate_required_workchains(workchains, configuration, roles).is_error());
+  workchains[2].write().max_split = 1;
+  auto split = registry.resolve_scoped_workchain(workchains, 2, configuration);
+  ASSERT_TRUE(split.is_error());
+  ASSERT_EQ(split.error().message(), "counter requires an unsplit workchain");
+  workchains[2].write().max_split = 0;
+  workchains[2].write().workchain = 3;
+  auto mismatch = registry.resolve_scoped_workchain(workchains, 2, configuration);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.error().message(), "workchain descriptor identity differs from configuration key");
 }

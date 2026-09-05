@@ -246,6 +246,33 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
   return resolved;
 }
 
+td::Result<ResolvedScopedWorkchainExecution> WorkchainExecutionRegistry::resolve_scoped(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  if (execution_scope(workchain_engine_key_from_descriptor(descriptor)) == WorkchainExecutionScope::BlockTransition) {
+    TRY_RESULT(resolved, resolve_block(descriptor, configuration));
+    return ResolvedScopedWorkchainExecution{std::move(resolved)};
+  }
+  TRY_RESULT(resolved, resolve(descriptor, configuration));
+  return ResolvedScopedWorkchainExecution{std::move(resolved)};
+}
+
+td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRegistry::resolve_scoped_workchain(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  if (workchain_id == tos::masterchainId) {
+    return std::optional<ResolvedScopedWorkchainExecution>{};
+  }
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end() || it->second.is_null() || !it->second->active) {
+    return std::optional<ResolvedScopedWorkchainExecution>{};
+  }
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  if (descriptor.workchain_id != workchain_id) {
+    return td::Status::Error("workchain descriptor identity differs from configuration key");
+  }
+  TRY_RESULT(resolved, resolve_scoped(descriptor, configuration));
+  return std::optional<ResolvedScopedWorkchainExecution>{std::move(resolved)};
+}
+
 td::Result<std::optional<ResolvedWorkchainExecution>> WorkchainExecutionRegistry::resolve_workchain(
     const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
     const block::Config& block_transition_config) const {

@@ -1265,7 +1265,7 @@ bool ValidateQuery::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return reject_query(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
+  auto execution_res = block::default_workchain_execution_registry().resolve_scoped_workchain(
       config_->get_workchain_list(), workchain(), *config_);
   if (execution_res.is_error()) {
     return reject_query(execution_res.move_as_error_prefix("cannot validate configured workchain: ").to_string());

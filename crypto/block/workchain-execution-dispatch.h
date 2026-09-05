@@ -15,6 +15,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 
 #include "block/block.h"
 #include "block/mc-config.h"
@@ -213,6 +214,8 @@ struct ResolvedWorkchainBlockExecution {
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
 };
 
+using ResolvedScopedWorkchainExecution = std::variant<ResolvedWorkchainExecution, ResolvedWorkchainBlockExecution>;
+
 bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution);
 
 struct LocalWorkchainRoleSet {
@@ -233,6 +236,11 @@ class WorkchainExecutionRegistry {
   std::optional<WorkchainExecutionScope> execution_scope(const WorkchainEngineKey& key) const;
   td::Result<ResolvedWorkchainBlockExecution> resolve_block(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
+  td::Result<ResolvedScopedWorkchainExecution> resolve_scoped(
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
+  td::Result<std::optional<ResolvedScopedWorkchainExecution>> resolve_scoped_workchain(
+      const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+      const block::Config& configuration) const;
 
   td::Result<ResolvedWorkchainExecution> resolve(const WorkchainExecutionDescriptor& descriptor,
                                                  const block::Config& block_transition_config) const;

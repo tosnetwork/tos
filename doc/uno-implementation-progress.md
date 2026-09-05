@@ -33,7 +33,7 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (fifteen cases) and the full `validator-engine` target build
+- `test-workchain-block` (sixteen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -135,7 +135,12 @@ binds input context; neither authenticates the context by itself.
 ## Next host integration points
 
 - Both `Collator::check_this_shard_mc_info` and
-  `ValidateQuery::check_this_shard_mc_info` currently call account resolution.
+  `ValidateQuery::check_this_shard_mc_info` now use scope-preserving resolution.
+  The registry returns an explicit account/block variant and validates descriptor
+  identity against the configuration dictionary key. Tests cover both variants,
+  masterchain/absent entries, unsplit configuration and mismatched identity.
+  Removing the identity guard makes the mismatched-key rejection test fail;
+  the guard was restored. Account-only resolution still rejects block engines.
 - Both configuration paths call `validate_required_workchains`, which still
   requires account execution. Block engines therefore remain deliberately
   unavailable to the node until block dispatch is integrated.
