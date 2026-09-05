@@ -1927,6 +1927,21 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
   try {
     vm::Dictionary old_dict{std::move(old_cfg_root), 32};
     vm::Dictionary new_dict{std::move(new_cfg_root), 32};
+    auto old_ingress_root = old_dict.lookup_ref(td::BitArray<32>{kWorkchainNativeIngressConfigParam});
+    if (old_ingress_root.not_null()) {
+      TRY_RESULT(old_ingress, decode_workchain_native_ingress_table(old_ingress_root));
+      auto new_ingress_root = new_dict.lookup_ref(td::BitArray<32>{kWorkchainNativeIngressConfigParam});
+      if (new_ingress_root.is_null()) {
+        return td::Status::Error("native ingress table removed without an explicit migration rule");
+      }
+      TRY_RESULT(new_ingress, decode_workchain_native_ingress_table(new_ingress_root));
+      for (const auto& [id, policy] : old_ingress) {
+        auto next = new_ingress.find(id);
+        if (next == new_ingress.end() || next->second.executor_address != policy.executor_address) {
+          return td::Status::Error("native ingress destination changed without an explicit migration rule");
+        }
+      }
+    }
     TRY_RESULT_PREFIX(old_workchains, Config::unpack_workchain_list(old_dict.lookup_ref(td::BitArray<32>{12})),
                       "cannot unpack old workchain list (ConfigParam 12): ");
     TRY_RESULT_PREFIX(new_workchains, Config::unpack_workchain_list(new_dict.lookup_ref(td::BitArray<32>{12})),

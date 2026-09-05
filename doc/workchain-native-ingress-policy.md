@@ -151,6 +151,18 @@ migration mechanism. A later general refund/quarantine design would need its
 own canonical liabilities, message records, and terminal receipts; it is not
 implicitly authorized by this admission policy.
 
+The shared `valid_config_transition` predicate now rejects removing an existing
+ingress table, deleting an existing entry, or changing its executor address.
+Collation and independent validation already call this predicate before installing
+a configuration. No migration override is provided. Transition unit tests cover
+unchanged destinations and additions as controls, table/entry removal, and address
+replacement even alongside unrelated entries. Disabling the continuity block or
+only its address comparison respectively makes removal or replacement succeed
+and the test fail. The fixture isolates transition rules, not full configuration
+validity or activation authorization. New entries, engine-configuration changes,
+readiness and the authenticated in-flight migration protocol still need their
+own rules and end-to-end configuration-update acceptance tests.
+
 ## Required implementation and evidence
 
 1. Freeze and implement the common configuration codec, descriptor binding and

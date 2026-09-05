@@ -23,6 +23,7 @@
 
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
@@ -186,4 +187,33 @@ TEST(ConfigTransition, external_message_size_default_is_64k) {
   // broadcasts external messages up to this size before any gas is paid.
   block::SizeLimitsConfig::ExtMsgLimits limits;
   ASSERT_EQ(65535u, limits.max_size);
+}
+
+TEST(ConfigTransition, ingress_destination_continuity) {
+  auto base = make_config({WorkchainSpec{}});
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address.set_zero();
+  policy.engine_configuration = vm::CellBuilder().finalize();
+  auto with_policies = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
+    vm::Dictionary config(base, 32);
+    auto encoded = block::encode_workchain_native_ingress_table(policies).move_as_ok();
+    ASSERT_TRUE(config.set_ref(td::BitArray<32>{block::kWorkchainNativeIngressConfigParam}, encoded));
+    return config.get_root_cell();
+  };
+  auto original = with_policies({policy});
+  auto hash = original->get_hash();
+  expect_ok(block::valid_config_transition(original, original));
+  ASSERT_TRUE(block::valid_config_transition(original, base).is_error());
+  ASSERT_TRUE(block::valid_config_transition(original, with_policies({})).is_error());
+  auto changed = policy;
+  changed.executor_address = td::Bits256::ones();
+  ASSERT_TRUE(block::valid_config_transition(original, with_policies({changed})).is_error());
+  // Entry order or unrelated entries cannot authorize changing an existing destination.
+  auto extra = policy;
+  extra.workchain_id = 3;
+  expect_ok(block::valid_config_transition(original, with_policies({extra, policy})));
+  ASSERT_TRUE(block::valid_config_transition(original, with_policies({extra, changed})).is_error());
+  ASSERT_TRUE(original->get_hash() == hash);
 }

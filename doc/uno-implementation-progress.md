@@ -616,3 +616,15 @@ The existing activated disk fixtures are the positive controls. These are
 same-binary rejection fixtures, not deployment templates or upgrade procedures.
 Further evidence must cover the real configuration-update path and mixed-version
 binaries; these tests do not prove readiness or that every caller enforces it.
+
+Ingress destination continuity is now checked in the shared configuration-transition
+predicate used by collation and independent validation. Existing tables/entries
+cannot disappear and an existing executor address cannot change without an
+explicit migration rule (none is implemented). Unit tests check unchanged and
+additive controls, deletion, and address replacement, including replacement mixed
+with unrelated additions. Removing the continuity block makes deletion accepted;
+removing only address comparison makes replacement accepted. Both tests fail for
+the intended reason and both checks were restored. These are isolated transition
+tests, not proof of full valid configurations or successful network upgrades.
+New-entry activation, engine configuration transitions, validator readiness and
+authenticated queue migration remain required; production activation is not enabled.
