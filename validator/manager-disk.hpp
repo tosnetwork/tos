@@ -355,13 +355,16 @@ class ValidatorManagerImpl : public ValidatorManager {
   }
 
   ValidatorManagerImpl(PublicKeyHash local_id, td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard_id,
-                       BlockIdExt shard_to_block_id, std::string db_root, td::Ref<vm::Cell> block_candidate)
+                       BlockIdExt shard_to_block_id, std::string db_root, td::Ref<vm::Cell> block_candidate,
+                       std::string export_candidate, std::string import_candidate)
       : local_id_(local_id)
       , opts_(std::move(opts))
       , db_root_(db_root)
       , shard_to_generate_(shard_id)
       , block_to_generate_(shard_to_block_id)
-      , block_candidate_(std::move(block_candidate)) {
+      , block_candidate_(std::move(block_candidate))
+      , export_candidate_(std::move(export_candidate))
+      , import_candidate_(std::move(import_candidate)) {
   }
 
  public:
@@ -471,6 +474,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   ShardIdFull shard_to_generate_;
   BlockIdExt block_to_generate_;
   td::Ref<vm::Cell> block_candidate_;
+  std::string export_candidate_;
+  std::string import_candidate_;
   td::actor::ActorOwn<OutMsgQueueImporter> out_msg_queue_importer_;
 
   int pending_new_shard_block_descr_{0};

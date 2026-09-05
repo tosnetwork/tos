@@ -81,6 +81,7 @@ class TestNode : public td::actor::Actor {
   std::string db_root_ = "tos-collator-work-db";
   std::string global_config_;
   td::Ref<vm::Cell> block_candidate_;
+  std::string export_candidate_, import_candidate_;
   td::Ref<tos::validator::ValidatorManagerOptions> opts_;
 
   tos::ZeroStateIdExt zero_id_;
@@ -98,6 +99,12 @@ class TestNode : public td::actor::Actor {
  public:
   void set_counter_increment(td::uint64 increment) {
     block_candidate_ = block::test::counter_number(increment);
+  }
+  void set_export_candidate(std::string path) {
+    export_candidate_ = std::move(path);
+  }
+  void set_import_candidate(std::string path) {
+    import_candidate_ = std::move(path);
   }
   void set_db_root(std::string db_root) {
     db_root_ = db_root;
@@ -320,7 +327,8 @@ class TestNode : public td::actor::Actor {
 
     opts.write().set_initial_sync_disabled(true);
     validator_manager_ = tos::validator::ValidatorManagerDiskFactory::create(tos::PublicKeyHash::zero(), opts, shard_,
-                                                                             shard_top_block_id_, db_root_, block_candidate_);
+                                                                             shard_top_block_id_, db_root_, block_candidate_,
+                                                                             export_candidate_, import_candidate_);
     for (auto &msg : ext_msgs_) {
       td::actor::ask(validator_manager_, &tos::validator::ValidatorManager::new_external_message_broadcast,
                      std::move(msg), 0, td::optional<tos::PublicKeyHash>{})
@@ -466,6 +474,10 @@ int main(int argc, char *argv[]) {
                            return td::Status::Error("cannot parse BlockIdExt");
                          }
                        });
+  p.add_option(0, "export-candidate", "test-only: save the validated candidate in native archive format",
+               [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_export_candidate, path.str()); });
+  p.add_option(0, "import-candidate", "test-only: validate and store an archived candidate without collation",
+               [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_import_candidate, path.str()); });
   p.add_option('d', "daemonize", "set SIGHUP", [&]() {
     td::set_signal_handler(td::SignalType::HangUp, [](int sig) {
 #if TD_DARWIN || TD_LINUX

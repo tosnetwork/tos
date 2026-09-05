@@ -18,6 +18,8 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "adnl/utils.hpp"
+#include "common/checksum.h"
+#include "td/utils/filesystem.h"
 #include "db/celldb.hpp"
 #include "downloaders/wait-block-data-disk.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
@@ -148,6 +150,35 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
 
   //LOG(DEBUG) << "before get_validator_set";
   auto val_set = last_masterchain_state_->get_validator_set(shard_id);
+  if (!import_candidate_.empty()) {
+    auto read = td::read_file(import_candidate_);
+    if (read.is_error()) {
+      LOG(ERROR) << "cannot read imported candidate: " << read.error();
+      std::exit(2);
+    }
+    auto decoded = fetch_tl_object<tos_api::db_candidate>(read.move_as_ok(), true);
+    if (decoded.is_error()) {
+      LOG(ERROR) << "cannot decode imported candidate: " << decoded.error();
+      std::exit(2);
+    }
+    auto value = decoded.move_as_ok();
+    if (!value->source_ || value->source_->get_id() != tos_api::pub_ed25519::ID || !value->id_) {
+      LOG(ERROR) << "invalid imported candidate identity";
+      std::exit(2);
+    }
+    auto id = create_block_id(value->id_);
+    if (id.shard_full() != shard_id) {
+      LOG(ERROR) << "imported candidate differs from requested shard";
+      std::exit(2);
+    }
+    auto key = PublicKey{value->source_};
+    auto hash = sha256_bits256(value->collated_data_);
+    LOG(INFO) << "validating imported candidate " << id.to_str();
+    validate_fake(BlockCandidate{Ed25519_PublicKey{key.ed25519_value().raw()}, id, hash,
+                                 std::move(value->data_), std::move(value->collated_data_)},
+                  std::move(prev), last_masterchain_block_id_, std::move(val_set));
+    return;
+  }
   //LOG(DEBUG) << "after get_validator_set: addr=" << (const void*)val_set.get();
 
   auto P = td::PromiseCreator::lambda(
@@ -209,6 +240,16 @@ void ValidatorManagerImpl::validate_fake(BlockCandidate candidate, std::vector<B
 
 void ValidatorManagerImpl::write_fake(BlockCandidate candidate, std::vector<BlockIdExt> prev, BlockIdExt last,
                                       td::Ref<block::ValidatorSet> val_set) {
+  if (!export_candidate_.empty()) {
+    auto source = PublicKey{pubkeys::Ed25519{candidate.pubkey.as_bits256()}};
+    auto bytes = create_serialize_tl_object<tos_api::db_candidate>(
+        source.tl(), create_tl_block_id(candidate.id), candidate.data.clone(), candidate.collated_data.clone());
+    auto status = td::write_file(export_candidate_, bytes.as_slice());
+    if (status.is_error()) {
+      LOG(ERROR) << "cannot export validated candidate: " << status;
+      std::exit(2);
+    }
+  }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), id = candidate.id](td::Result<td::Unit> R) {
     if (R.is_ok()) {
       td::actor::send_closure(SelfId, &ValidatorManagerImpl::complete_fake, id);
@@ -1121,9 +1162,10 @@ void ValidatorManagerImpl::try_get_static_file(FileHash file_hash, td::Promise<t
 
 td::actor::ActorOwn<ValidatorManagerInterface> ValidatorManagerDiskFactory::create(
     PublicKeyHash id, td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard, BlockIdExt shard_top_block_id,
-    std::string db_root, td::Ref<vm::Cell> block_candidate) {
+    std::string db_root, td::Ref<vm::Cell> block_candidate, std::string export_candidate, std::string import_candidate) {
   return td::actor::create_actor<validator::ValidatorManagerImpl>("manager", id, std::move(opts), shard,
-                                                                  shard_top_block_id, db_root, std::move(block_candidate));
+                                                                  shard_top_block_id, db_root, std::move(block_candidate),
+                                                                  std::move(export_candidate), std::move(import_candidate));
 }
 
 }  // namespace validator

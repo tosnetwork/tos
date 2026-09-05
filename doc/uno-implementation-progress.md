@@ -33,6 +33,17 @@ Base node revision: `5a6145cce`.
   from block 2 then overflows. Rejected runs must not report a persisted block.
   The initial value is 40 and the first increment is 2. Test logs and databases
   remain under unique `build/counter-integration-*` directories for inspection.
+- The disk tool can export a validated candidate and import it without collation,
+  using the existing native `db_candidate` archive format (block ID, creator,
+  complete block bytes and collated data). The integration test snapshots only
+  the MC-bootstrap database into a peer directory before producing Counter block 1.
+  The peer imports the exported candidate, checks the exact persisted block ID,
+  then restarts for the 42/MAX boundary checks. Its CLI increment is deliberately
+  zero: the imported transition must recover the actual candidate from block state.
+  This tests independent database replay and persistence, not network transport.
+  Wrong-shard and malformed archive imports are rejected before the valid import.
+  Disabling import dispatch falls back to collation and fails the integration
+  test's required import marker; the import branch was restored.
 - The disk manager now uses the existing queue-proof importer in local-only
   mode instead of an unreachable neighbor-proof callback. MC bootstrap exercises
   this callback with genuine workchain zerostates, not fabricated empty proofs.

@@ -39,8 +39,9 @@ file(WRITE "${fixture}/global.json" "{
     \"root_hash\":\"${root}\",\"file_hash\":\"${hash}\"},\"hardforks\":[]}}
 ")
 
+set(node_db "${fixture}/db")
 function(run_node label expected_status expected_text)
-  execute_process(COMMAND "${COLLATOR}" -C "${fixture}/global.json" -D "${fixture}/db" ${ARGN}
+  execute_process(COMMAND "${COLLATOR}" -C "${fixture}/global.json" -D "${node_db}" ${ARGN}
     WORKING_DIRECTORY "${fixture}" RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
   set(log "${output}${errors}")
   file(WRITE "${fixture}/${label}.log" "${log}")
@@ -66,11 +67,25 @@ function(run_node label expected_status expected_text)
 endfunction()
 
 run_node(bootstrap 0 "saved to disk" -w -1)
+file(COPY "${fixture}/db" DESTINATION "${fixture}/peer")
 file(READ "${fixture}/counter-state.rhash" counter_root HEX)
 file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
 set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
-run_node(counter1 0 "(2,8000000000000000,1)" --counter-increment 2 -w 2 -T "${previous}")
+set(zero_block "${previous}")
+run_node(counter1 0 "(2,8000000000000000,1)" --counter-increment 2 -w 2 -T "${previous}"
+  --export-candidate "${fixture}/counter1.candidate")
 set(previous "${last_block}")
+set(node_db "${fixture}/peer/db")
+run_node(wrong_import_shard 2 "imported candidate differs from requested shard"
+  -w 0 --import-candidate "${fixture}/counter1.candidate")
+file(WRITE "${fixture}/invalid.candidate" "invalid archive")
+run_node(invalid_import 2 "cannot decode imported candidate" --counter-increment 0 -w 2 -T "${zero_block}"
+  --import-candidate "${fixture}/invalid.candidate")
+run_node(import1 0 "validating imported candidate" --counter-increment 0 -w 2 -T "${zero_block}"
+  --import-candidate "${fixture}/counter1.candidate")
+if(NOT last_block STREQUAL previous)
+  message(FATAL_ERROR "Peer imported a different block: ${last_block} != ${previous}")
+endif()
 # Fresh processes reopen the same database. These adjacent limits prove the
 # restored value is exactly 42, without trusting a private cache or an RPC claim.
 run_node(overflow 2 "counter overflow" --counter-increment 18446744073709551574 -w 2 -T "${previous}")
