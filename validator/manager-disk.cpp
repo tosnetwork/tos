@@ -112,6 +112,15 @@ void ValidatorManagerImpl::wait_neighbor_msg_queue_proofs(
 }
 
 void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
+  for (auto& raw : pending_ext_messages_) {
+    auto parsed = create_ext_message(std::move(raw), last_masterchain_state_->get_ext_msg_limits());
+    if (parsed.is_error()) {
+      LOG(ERROR) << "invalid queued disk external message: " << parsed.move_as_error();
+      std::exit(2);
+    }
+    ext_messages_.push_back(parsed.move_as_ok());
+  }
+  pending_ext_messages_.clear();
   started_ = true;
 
   //ShardIdFull shard_id{masterchainId, shardIdAll};
@@ -372,7 +381,8 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
   // Disk-replay manager treats source_peer as informational only here.
   (void)source_peer;
   if (last_masterchain_state_.is_null()) {
-    co_return td::Status::Error(ErrorCode::notready, "not ready");
+    pending_ext_messages_.push_back(std::move(data));
+    co_return td::Unit{};
   }
   auto msg = co_await create_ext_message(std::move(data), last_masterchain_state_->get_ext_msg_limits());
   ext_messages_.emplace_back(std::move(msg));

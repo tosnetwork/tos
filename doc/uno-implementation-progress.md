@@ -588,7 +588,7 @@ Verification after restoration: create-state, test-workchain-block,
 test-tos-collator and validator-engine build with -j48; all seven targeted CTest
 cases pass three consecutive runs (21 executions).
 
-Remaining ingress work includes a wrong-address Native wallet disk scenario, explicit alternate-address
+Remaining ingress work includes authenticated wallet coverage, explicit alternate-address
 encoding coverage, and authenticated activation/queue migration enforcement.
 The referenced engine payload is not yet consumed as engine configuration.
 This is not production activation and does not implement private notes or reserve
@@ -646,3 +646,22 @@ Removing the binding check in the sender resolver makes the version-mismatch
 case succeed and its test fail; the check was restored. This proves lookup does
 not require foreign-engine registration, not that a Native wallet's invalid send
 is handled correctly end to end; that disk scenario remains outstanding.
+
+The Native action/queue path now has an end-to-end disk fixture using an explicitly
+unauthenticated test-only sender, not a production wallet. Its external call emits
+two 100-atom requests: wrong executor address with send mode 3 (skip error), then
+the correct executor with mode 1. Only one message enters the Native queue. An
+independent DB validates the exported Native candidate; after a masterchain
+checkpoint the Counter receiver imports 167 atoms of value/forwarding fees and
+credits exactly 100 (balance 1000 -> 1100, fees 67). Native sending does not
+register the Counter engine.
+
+The fixture exposed a disk-tool startup race: external broadcasts were rejected
+before the masterchain state was loaded and the tool produced an empty block.
+The disk manager now buffers startup messages and parses them with the loaded
+configuration's limits before collation; malformed queued input aborts the tool.
+Production manager behavior is unchanged. The original empty-queue failure was
+observed before the fix. Disabling destination admission subsequently produced
+two queued messages instead of one and failed the fixture; admission was restored.
+This does not test signing, wallet authorization, bounce/refund modes, or private
+UNO issuance. The sender has no authentication and must never hold real funds.

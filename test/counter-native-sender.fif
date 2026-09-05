@@ -1,0 +1,19 @@
+"TosUtil.fif" include
+"Asm.fif" include
+"Lists.fif" include
+
+// Isolated, unauthenticated test sender. Never deploy with real funds.
+-23901 setglobalid
+0 setworkchain
+{ <b 6 4 u, 0 2 u, 4 3 u, 2 8 i, swap 256 u,
+  1 4 u, 100 8 u, 0 1 u, 0 8 u, 0 64 u, 0 32 u, 0 2 u, b>
+} : executor-message
+<{ ACCEPT c4 PUSH CTOS LDREF LDREF ENDS SWAP 3 PUSHINT SENDRAWMSG 1 PUSHINT SENDRAWMSG }>c
+<b 1 executor-message ref, 0 executor-message ref, b>
+empty_cell 1000000000000 0 0 1 6 register_smc drop
+create_state
+dup 31 boc+>B dup "basestate0.boc" B>file
+Bhashu 256 u>B "basestate0.fhash" B>file
+hashu 256 u>B "basestate0.rhash" B>file
+<b 2 2 u, 0 2 u, 4 3 u, 0 8 i, 1 256 u, 0 4 u, 0 2 u, b>
+31 boc+>B "sender-message.boc" B>file

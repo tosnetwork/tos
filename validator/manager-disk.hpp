@@ -44,6 +44,7 @@ class OutMsgQueueImporter;
 class ValidatorManagerImpl : public ValidatorManager {
  private:
   std::vector<td::Ref<ExtMessage>> ext_messages_;
+  std::vector<td::BufferSlice> pending_ext_messages_;
   std::vector<td::Ref<IhrMessage>> ihr_messages_;
   struct Compare {
     bool operator()(const td::Ref<ShardTopBlockDescription> &l, const td::Ref<ShardTopBlockDescription> &r) const {
