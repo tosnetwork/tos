@@ -1396,9 +1396,17 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
     ASSERT_EQ(tx.out_msgs.size(), accepted ? 1u : 0u);
     ASSERT_EQ(tx.balance.tomis->to_long(), accepted ? 900 : 1000);
     ASSERT_EQ(sender.balance.tomis->to_long(), 1000);
+    return accepted ? tx.out_msgs.front() : td::Ref<vm::Cell>{};
   };
-  send(address(false), true);
+  auto canonical_message = send(address(false), true);
   send(address(true), false);
+  auto variable_address = [](bool wrong) {
+    return vm::load_cell_slice_ref(vm::CellBuilder().store_long(6, 3).store_long(256, 9)
+        .store_long(2, 32).store_zeroes(255).store_long(wrong, 1).finalize());
+  };
+  auto normalized_message = send(variable_address(false), true);
+  ASSERT_TRUE(normalized_message->get_hash() == canonical_message->get_hash());
+  send(variable_address(true), false);
   auto anycast = vm::load_cell_slice_ref(vm::CellBuilder().store_long(2, 2).store_long(1, 1)
       .store_long(1, 5).store_long(0, 1).store_long(2, 8).store_zeroes(256).finalize());
   send(anycast, false);

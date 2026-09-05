@@ -588,8 +588,8 @@ Verification after restoration: create-state, test-workchain-block,
 test-tos-collator and validator-engine build with -j48; all seven targeted CTest
 cases pass three consecutive runs (21 executions).
 
-Remaining ingress work includes authenticated wallet coverage, explicit alternate-address
-encoding coverage, and authenticated activation/queue migration enforcement.
+Remaining ingress work includes authenticated wallet coverage and authenticated
+activation/queue migration enforcement.
 The referenced engine payload is not yet consumed as engine configuration.
 This is not production activation and does not implement private notes or reserve
 accounting.
@@ -713,3 +713,10 @@ and observes a different input commitment, and rejects missing/malformed headers
 Returning the candidate instead of the queue makes the exact-cell assertion fail;
 the accessor was restored. The full previous shard was already committed before
 this change: this clarifies access and ownership, not a previously missing hash.
+
+Alternate address encoding now has native settlement coverage: a 256-bit addr_var
+for the executor is normalized to the exact same complete output message as its
+addr_std form, while a wrong executor in addr_var is rejected. Disabling the
+normalization makes the valid request fail the native final-message check and
+the test's success assertion; normalization was restored. This covers workchain
+2's standard-address range, not arbitrary extended workchain IDs or anycast.
