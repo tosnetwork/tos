@@ -3,6 +3,9 @@ name: PredictionMarket release-scale sandbox
 # The 10,000-fill equivalence test executes real production BOCs and therefore
 # belongs to a deliberate release gate, not every ordinary pull request.
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/prediction-market-release-scale.yml"
   workflow_dispatch:
 
 concurrency:
