@@ -411,10 +411,13 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
     if (info.is_null() || !info->active || !local_roles.requires_local_execution(workchain_id)) {
       continue;
     }
-    TRY_RESULT(descriptor, normalize_workchain_descriptor(*info));
-    TRY_RESULT(resolved, resolve(descriptor, block_transition_config));
-    auto policy = resolved.executor->account_policy(resolved.descriptor, *resolved.engine_config);
-    TRY_STATUS(validate_account_execution_policy_supported(policy));
+    TRY_RESULT(resolved, resolve_scoped_workchain(workchains, workchain_id, block_transition_config));
+    if (resolved.has_value()) {
+      if (const auto* account = std::get_if<ResolvedWorkchainExecution>(&*resolved)) {
+        auto policy = account->executor->account_policy(account->descriptor, *account->engine_config);
+        TRY_STATUS(validate_account_execution_policy_supported(policy));
+      }
+    }
   }
   return td::Status::OK();
 }

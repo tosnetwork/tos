@@ -88,8 +88,8 @@ Base node revision: `5a6145cce`.
   Removing candidate/scope matching accepts a missing block candidate and fails
   the rejection assertion; the check was restored.
   This initial branch rejects split/merge and nonempty native queues/message
-  descriptors. The configuration gate still prevents activation; automatic
-  candidate production, native message settlement and end-to-end tests are pending.
+  descriptors. The default registry still has no block engine; automatic candidate
+  production, native message settlement and end-to-end tests are pending.
   Removing the exact staging-LT check silently advances an invalid requested LT
   and fails the rejection test; the check was restored.
 - State-only batch round-trip tests execute 40 -> 42 from a native shard,
@@ -181,9 +181,14 @@ binds input context; neither authenticates the context by itself.
   masterchain/absent entries, unsplit configuration and mismatched identity.
   Removing the identity guard makes the mismatched-key rejection test fail;
   the guard was restored. Account-only resolution still rejects block engines.
-- Both configuration paths call `validate_required_workchains`, which still
-  requires account execution. Block engines therefore remain deliberately
-  unavailable to the node until block dispatch is integrated.
+- Both configuration paths now preserve execution scope. Required-workchain
+  validation resolves block engines with their own configuration/resource policy;
+  only account engines enter account-policy validation. Tests cover explicitly
+  registered Counter acceptance, invalid split configuration, unregistered required
+  engines, non-required remote engines and the default TVM account path. The default
+  registry contains no block engine and advertised capabilities remain unchanged.
+  Reinstating account-only rejection in required-workchain validation fails the
+  registered Counter acceptance test; scoped validation was restored.
 - `ValidateQuery::check_transactions` now has a separate state-only block branch,
   requiring exactly the configured executor AccountBlock, rejecting native
   inbound/outbound message descriptors, and replaying from the previous shard,
@@ -193,8 +198,8 @@ binds input context; neither authenticates the context by itself.
   Tests exercise the helper on a real serialized AccountBlock and reject changed
   identity, state updates and multiple transactions. Removing the AccountBlock
   state-update comparison accepts a forged wrapper and fails its rejection test;
-  the comparison was restored. The earlier configuration gate still prevents node
-  activation; this is not evidence of end-to-end validator acceptance.
+  the comparison was restored. This is not evidence of end-to-end validator
+  acceptance; a configured/registered engine and valid full-node fixture are needed.
 - The collator block path now bypasses per-account processing but still must supply
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
@@ -205,8 +210,8 @@ binds input context; neither authenticates the context by itself.
 
 ## Remaining requirements
 
-This is the beginning of M1, not an enabled workchain. Both block branches remain
-behind the configuration gate and have no end-to-end acceptance evidence yet.
+This is the beginning of M1, not an enabled workchain. Both block branches require
+an explicitly registered engine and have no end-to-end acceptance evidence yet.
 Context cells are not authentication proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through

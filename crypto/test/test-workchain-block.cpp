@@ -831,14 +831,26 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   ASSERT_EQ(account.error().message(), "block engine cannot execute through account compute");
   block::LocalWorkchainRoleSet roles;
   roles.required_workchains.insert(2);
-  ASSERT_TRUE(registry.validate_required_workchains(workchains, configuration, roles).is_error());
+  ASSERT_TRUE(registry.validate_required_workchains(workchains, configuration, roles).is_ok());
+  block::WorkchainExecutionRegistry unsupported;
+  ASSERT_TRUE(unsupported.validate_required_workchains(workchains, configuration, {}).is_ok());
+  ASSERT_TRUE(unsupported.validate_required_workchains(workchains, configuration, roles).is_error());
+  ASSERT_TRUE(block::default_workchain_execution_registry()
+                  .validate_required_workchains(workchains, configuration, roles).is_error());
   workchains[2].write().max_split = 1;
   auto split = registry.resolve_scoped_workchain(workchains, 2, configuration);
   ASSERT_TRUE(split.is_error());
   ASSERT_EQ(split.error().message(), "counter requires an unsplit workchain");
+  auto invalid_required = registry.validate_required_workchains(workchains, configuration, roles);
+  ASSERT_TRUE(invalid_required.is_error());
+  ASSERT_EQ(invalid_required.error().message(), "counter requires an unsplit workchain");
   workchains[2].write().max_split = 0;
   workchains[2].write().workchain = 3;
   auto mismatch = registry.resolve_scoped_workchain(workchains, 2, configuration);
   ASSERT_TRUE(mismatch.is_error());
   ASSERT_EQ(mismatch.error().message(), "workchain descriptor identity differs from configuration key");
+  workchains[2].write().workchain = 2;
+  workchains[2].write().vm_version = static_cast<std::int32_t>(block::tvm_workchain_engine_key().selector);
+  ASSERT_TRUE(block::default_workchain_execution_registry()
+                  .validate_required_workchains(workchains, configuration, roles).is_ok());
 }

@@ -2271,14 +2271,15 @@ bool Collator::fetch_config_params() {
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
 
   bool custom_workchain = false;
-  auto resolved_execution = block::default_workchain_execution_registry().resolve_workchain(
+  auto resolved_execution = block::default_workchain_execution_registry().resolve_scoped_workchain(
       config_->get_workchain_list(), workchain(), *config_);
   if (resolved_execution.is_error()) {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    const auto& execution = *resolved_execution.ok();
-    custom_workchain = block::resolved_workchain_execution_is_custom(execution);
+    if (const auto* account = std::get_if<block::ResolvedWorkchainExecution>(&*resolved_execution.ok())) {
+      custom_workchain = block::resolved_workchain_execution_is_custom(*account);
+    }
   }
 
   if (custom_workchain) {
