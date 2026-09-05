@@ -1373,8 +1373,7 @@ fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     assert_eq!(f.account(&b)[3..6], [0, TOS as i128 / 1_000, 0]);
 }
 
-#[test]
-fn deterministic_random_sequences_match_an_independent_conservation_model() {
+fn run_conservation_sequence(mut seed: u64, steps: u64) -> u8 {
     let mut f = Fixture::new();
     f.activate();
     let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
@@ -1399,10 +1398,9 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
     }
     model.assert_matches(&f, [&owners[0], &owners[1]]);
 
-    let mut seed = 0x8f3d_9a21_4c77_b105_u64;
     let mut nonce = 10_u64;
     let mut exercised = 0_u8;
-    for step in 0_u64..50 {
+    for step in 0_u64..steps {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         let quantity = 1 + ((seed >> 33) % 2);
         let first = usize::from(((seed >> 17) & 1) != 0);
@@ -1522,6 +1520,12 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         }
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
+    exercised
+}
+
+#[test]
+fn deterministic_random_sequences_match_an_independent_conservation_model() {
+    let exercised = run_conservation_sequence(0x8f3d_9a21_4c77_b105, 50);
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
 
     // Finish the same randomized state through a production resolution, then
@@ -1608,6 +1612,28 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         assert_eq!(f.account(&owners[index])[0], 0, "withdraw must exhaust modeled free balance");
     }
     assert_eq!(f.accounting()[4], 0, "all participant free liability must be withdrawn");
+}
+
+#[test]
+fn multiple_randomized_conservation_sequences_match_the_production_boc() {
+    // These fixed seeds are deliberately reproducible regression vectors, not
+    // a probabilistic test that can hide an accounting failure on a later run.
+    // Together they exercise every operation class against the independent
+    // model after each real contract transaction.
+    let mut exercised = 0_u8;
+    for seed in [
+        0x134d_5c8e_219a_7bf0,
+        0x2d47_a9c1_5e38_b604,
+        0x4f83_1bd6_a297_0ce5,
+        0x65ba_e420_3d19_8f72,
+        0x8a17_3cf5_d860_24be,
+        0xa3e9_750b_4c21_df68,
+        0xc746_08ad_91fe_35b2,
+        0xed20_bf74_6a83_19cd,
+    ] {
+        exercised |= run_conservation_sequence(seed, 100);
+    }
+    assert_eq!(exercised, 31, "the multi-seed corpus missed an operation class");
 }
 
 fn run_partitioned_fill(parts: u64) -> ([i128; 3], [i128; 3], [i128; 4]) {
