@@ -33,6 +33,20 @@ fn compute_gas_used(result: &SendResult) -> u64 {
     }
 }
 
+fn always_abort_recipient_code() -> Cell {
+    let source = std::env::temp_dir().join("prediction_market_always_abort_recipient.fc");
+    std::fs::write(
+        &source,
+        r#"
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  throw(777);
+}
+"#,
+    )
+    .expect("write aborting recipient source");
+    compile_func_with_stdlib(&[source]).expect("compile aborting recipient")
+}
+
 const TOS: u64 = 1_000_000_000;
 const OPERATION_BUDGET: u64 = TOS;
 
@@ -657,6 +671,40 @@ fn maximum_free_withdrawal_survives_real_storage_rent_collection() {
     assert_eq!(f.account(&owner)[0], 0, "the complete recorded free balance was not withdrawn");
     let owner_after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
     assert!(owner_after > owner_before, "strict payout must still reach the owner after rent");
+}
+
+#[test]
+fn no_bounce_withdrawal_credits_an_aborting_recipient_without_a_market_bounce() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x5b; 32]);
+    f.register(&owner, &key, 2);
+
+    let mut recipient = f.bc.get_account(&owner).cloned().expect("owner account");
+    assert!(recipient.set_code(always_abort_recipient_code()), "owner must remain active");
+    f.bc.set_account(owner.clone(), recipient);
+
+    let amount = TOS;
+    let free_before = f.account(&owner)[0] as u64;
+    let recipient_before = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let result = f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::withdraw(3, amount).unwrap());
+    result.expect_success().expect_out_msgs(1);
+    let recipient_transactions = result.transactions_for(&owner);
+    assert_eq!(recipient_transactions.len(), 1, "withdrawal must create exactly one recipient delivery");
+    let recipient_description = match recipient_transactions[0].read_description().unwrap() {
+        chain_block::TransactionDescr::Ordinary(description) => description,
+        other => panic!("expected ordinary recipient transaction, got {other:?}"),
+    };
+    assert!(recipient_description.aborted, "recipient probe must abort its compute phase");
+    assert_eq!(
+        result.transactions_for(&f.market).len(),
+        1,
+        "a non-bounce payout must not create a late bounce back to the market"
+    );
+    assert_eq!(f.account(&owner)[0] as u64, free_before - amount, "aborting recipient must not restore free balance");
+    let recipient_after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    assert!(recipient_after > recipient_before, "non-bounce payout did not credit the recipient account");
 }
 
 #[test]
