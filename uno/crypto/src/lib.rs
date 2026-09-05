@@ -1,4 +1,5 @@
 use orchard::Bundle;
+pub mod decode;
 use orchard::{
     bundle::{Authorized, BundleVersion},
     circuit::{OrchardCircuitVersion, VerifyingKey},
@@ -119,6 +120,38 @@ pub fn validate_profile(
 mod tests {
     use super::*;
 
+    fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
+        use crate::decode::{decode_bundle, EncodedAction, EncodedBundle};
+        let actions: Vec<_> = bundle
+            .actions()
+            .iter()
+            .map(|action| EncodedAction {
+                cv_net: action.cv_net().to_bytes(),
+                nullifier: action.nullifier().to_bytes(),
+                rk: action.rk().into(),
+                cmx: action.cmx().to_bytes(),
+                epk: action.encrypted_note().epk_bytes,
+                enc_ciphertext: action.encrypted_note().enc_ciphertext,
+                out_ciphertext: action.encrypted_note().out_ciphertext,
+                spend_signature: action.authorization().into(),
+            })
+            .collect();
+        decode_bundle(
+            &EncodedBundle {
+                profile: bundle.bundle_version(),
+                flags: bundle.flag_byte(),
+                value_balance: *bundle.value_balance(),
+                anchor: bundle.anchor().to_bytes(),
+                actions: &actions,
+                proof: bundle.authorization().proof().as_ref(),
+                binding_signature: bundle.authorization().binding_signature().into(),
+            },
+            2,
+            7264,
+        )
+        .expect("decode real bundle")
+    }
+
     #[test]
     fn real_bundle_requires_proof_and_signatures() {
         use incrementalmerkletree::Hashable;
@@ -154,6 +187,7 @@ mod tests {
             .apply_signatures(&mut rng, digest, &[])
             .expect("signatures");
         let verifier = FixedVerifier::new().expect("fixed key");
+        let bundle = decode_real_bundle(&bundle);
         assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
 
         // Recover an actual nonzero output and spend it from a single-leaf tree.
@@ -193,6 +227,8 @@ mod tests {
             .expect("spend proof")
             .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
             .expect("real spend authorization");
+        assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        let spent = decode_real_bundle(&spent);
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         let wrong_balance = spent
             .clone()

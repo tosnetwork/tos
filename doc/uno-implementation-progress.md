@@ -938,3 +938,15 @@ its assertion; both mutations were restored. The witness root is a fixture,
 not an authenticated host anchor, and the recovery uses dependency encryption,
 not the required hybrid profile. This extends M2 evidence without claiming
 stateful admission, fee authorization or wallet integration.
+
+Added a borrowed primitive-field bundle decoder to the Rust prototype. It checks
+the fixed profile, resource/proof shape and reserved flags, excludes i64::MIN,
+decodes anchor/cv_net/nf/rk/cmx with pinned APIs, and uses checked Action assembly
+for nonidentity rk/epk. It copies ciphertext, signature and proof bytes unchanged;
+successful construction is not proof/signature validity. Both real bundle
+fixtures now pass through decoding before cryptographic verification. Twelve
+independent mutations exercise profile, limits, flags, amount, primitive fields,
+identity rejection and ciphertext preservation: invalid inputs become accepted,
+or preserved bytes change, and the matching tests fail. All mutations were
+restored. No outer Cell schema/profile-tag assignment, hybrid envelope, TOS
+sighash, host-context authorization or production activation is implied.

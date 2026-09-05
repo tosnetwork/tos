@@ -68,6 +68,27 @@ the original proof and signatures is rejected by the binding check. Recovery
 uses the dependency's encryption solely for this fixture; it is not TOS hybrid
 encryption, an authenticated chain anchor, or a host-authorized fee debit.
 
+## Primitive field decoding
+
+`decode::decode_bundle` accepts borrowed, fixed-width Action fields and proof
+bytes, not a serialized TOS transaction. It restricts the profile, validates
+resource/proof-length limits before copying, parses flags without masking
+reserved bits, rejects the asymmetric `i64::MIN` balance, and decodes anchor,
+cv_net, nullifier, rk and cmx using the pinned primitive APIs. The checked Action
+constructor also rejects identity rk and invalid/identity epk. Ciphertexts and
+signature bytes are preserved unchanged. Signature canonicality and validity
+remain the verifier's responsibility, not a success claim of decoding.
+
+Tests round-trip both generated real bundles through this decoder and verify
+them again. Separate structural fixtures deliberately have invalid proof/signature
+contents: decoding must preserve these bytes, not authorize them. Malformed-field,
+profile, flags, balance and resource tests were mutation-checked; bypasses yielded
+successful decoding of invalid inputs. Clearing ciphertext bytes failed the
+preservation assertion. These mutations were restored. Limits on allocation in
+this function do not bound the caller's earlier wire parsing or the entire process.
+The TOS Cell schema, profile-tag mapping, contextual flags/empty-anchor policy,
+hybrid ciphertext envelope and external authorization digest remain separate work.
+
 ## Source review, 2026-09-05
 
 - [Pinned bundle version implementation](https://github.com/zcash/orchard/blob/29d1d55db62153dcaeef8ef631c8991c53ed1248/src/bundle.rs)
