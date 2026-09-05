@@ -689,3 +689,12 @@ The special-account negative test fails when the new guard is bypassed, because
 batch preparation succeeds; the guard was restored. Existing fee/value-flow
 tests continue to cover nonzero native message charges. This fixed version policy
 is not a configurable fee waiver; changes require an explicit protocol revision.
+
+Removed redundant callback key-length checks from inbox decoding, executor
+extraction and batch AccountBlock validation. All three dictionaries are
+constructed with 256-bit keys, and their traversal APIs pass get_key_bits(),
+not a length supplied by a cell. Also removed the workchainInvalid equality
+after the negative-workchain check: that sentinel is INT32_MIN. Unique executor,
+dictionary-key/address binding, structural validation and full replay remain.
+No security coverage is attributed to these unreachable branches and no new
+negative test is claimed for their removal.

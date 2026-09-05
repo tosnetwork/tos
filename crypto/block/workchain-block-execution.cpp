@@ -36,8 +36,8 @@ td::Result<std::vector<td::Ref<vm::Cell>>> decode_workchain_batch_inbound(const 
     vm::Dictionary dict(cs, 256);
     using Order = std::pair<std::uint64_t, td::Bits256>;
     std::vector<std::pair<Order, td::Ref<vm::Cell>>> ordered;
-    if (!dict.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {
-          if (bits != 256 || ordered.size() >= count ||
+    if (!dict.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int) {
+          if (ordered.size() >= count ||
               value->size_ext() != 0x10000) {
             return false;
           }
@@ -119,7 +119,7 @@ bool workchain_batch_inbound_contains(const td::Ref<vm::Cell>& root, const td::R
 td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::Cell>& shard_state,
                                                            std::int32_t workchain_id,
                                                            const td::Bits256& executor_address) {
-  if (shard_state.is_null() || workchain_id < 0 || workchain_id == tos::workchainInvalid) {
+  if (shard_state.is_null() || workchain_id < 0) {
     return td::Status::Error("missing or invalid block workchain state identity");
   }
   try {
@@ -135,8 +135,8 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
     vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
     td::Ref<vm::CellSlice> executor;
     if (!accounts.validate_check_extra([&](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>,
-                                          td::ConstBitPtr key, int bits) {
-          if (bits != 256 || td::Bits256(key) != executor_address || executor.not_null()) {
+                                          td::ConstBitPtr key, int) {
+          if (td::Bits256(key) != executor_address || executor.not_null()) {
             return false;
           }
           executor = std::move(value);

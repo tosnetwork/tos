@@ -6512,8 +6512,8 @@ bool ValidateQuery::check_transactions() {
         prev_state_root_, config_->get_root_cell(), mc_state_root_, inbox.move_as_ok()};
     bool found = false;
     bool valid = account_blocks_dict_->check_for_each_extra(
-        [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int bits) {
-          if (found || bits != 256 || td::Bits256(key) != execution.policy.executor_address) {
+        [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int) {
+          if (found || td::Bits256(key) != execution.policy.executor_address) {
             return reject_query("block execution requires exactly its executor AccountBlock");
           }
           found = true;
