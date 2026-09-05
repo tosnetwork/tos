@@ -85,7 +85,8 @@ def wait_until(predicate, description: str, timeout: float = 90.0) -> Any:
 
 
 class Lifecycle:
-    def __init__(self, workdir: Path, tosctl: Path, rpc_urls: list[str], control_url: str):
+    def __init__(self, workdir: Path, tosctl: Path, rpc_urls: list[str], control_url: str,
+                 evidence_dir: Path | None = None):
         self.workdir = workdir
         self.tosctl = tosctl
         self.rpc_urls = rpc_urls
@@ -101,6 +102,7 @@ class Lifecycle:
         self.env = dict(os.environ)
         self.env["VAULT_URL"] = self.vault_url
         self.addresses: dict[str, str] = {}
+        self.evidence_dir = evidence_dir
 
     def write_config(self, rpc_url: str | None = None) -> None:
         self.config.write_text(json.dumps({
@@ -223,7 +225,7 @@ class Lifecycle:
                 return int(entry["seqno"])
         raise RuntimeError(f"active wallet {name} has no observable seqno")
 
-    def prepare_and_send(self, sender: str, operation: dict[str, Any], amount: int, sequence: int) -> None:
+    def prepare_and_send(self, sender: str, operation: dict[str, Any], amount: int, sequence: int) -> Path:
         op_path = self.workdir / f"operation-{sequence}.json"
         boc_path = self.workdir / f"message-{sequence}.boc"
         op_path.write_text(json.dumps(operation))
@@ -244,6 +246,32 @@ class Lifecycle:
             lambda: self.wallet_seqno(sender) > prior_seqno,
             f"source wallet {sender} seqno advancement for operation {sequence}",
         )
+        return boc_path
+
+    def export_match_evidence(self, external_boc: Path, operation: dict[str, Any], scan_start: int) -> None:
+        """Export bounded public inputs for the OpenFox live acceptance gate."""
+        if self.evidence_dir is None:
+            return
+        self.evidence_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.evidence_dir.chmod(0o700)
+        body_path = self.evidence_dir / "match-body.boc"
+        operation_path = self.workdir / "match-operation.json"
+        operation_path.write_text(json.dumps(operation))
+        operation_path.chmod(0o600)
+        self.tosctl_call("agent", "prediction", "build-operation", "--definition", str(self.definition),
+                         "--operation", str(operation_path), "--output-boc", str(body_path))
+        shutil.copyfile(self.definition, self.evidence_dir / "market.json")
+        shutil.copyfile(external_boc, self.evidence_dir / "match-external.boc")
+        for index, endpoint in enumerate(self.rpc_urls, 1):
+            path = self.evidence_dir / f"node-{index}.json"
+            path.write_text(json.dumps({"nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
+                                        "chain_rpc": {"urls": [endpoint + "/"]}, "http": {},
+                                        "master_wallet": None, "tick_interval": 40, "log": None}, indent=2))
+            path.chmod(0o600)
+        manifest = {"schema": "tos.prediction-match-evidence.v1", "source_address": self.addresses["owner"],
+                    "scan_start_masterchain_seqno": scan_start}
+        (self.evidence_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        (self.evidence_dir / "manifest.json").chmod(0o600)
 
     def signed_order(self, order: dict[str, Any], label: str, seed: bytes) -> str:
         """Build and verify one canonical signed order using an ephemeral key."""
@@ -444,12 +472,14 @@ class Lifecycle:
                                 "salt": "72" * 32, "action": "buy", "outcome": "no",
                                 "liquidity_role": "taker", "limit_price_tick": 4_000}, "no", seeds["normal_two"])
         order_contribution = 2 * (definition["order_entry_fee"] + definition["order_cleanup_bounty"])
-        self.prepare_and_send("owner", {"operation": "match_pair", "query_id": 3, "quantity_lots": 1,
-                                        "left_signed_order_boc": yes, "right_signed_order_boc": no},
-                              order_contribution + OPERATION_BUDGET, 3)
+        match_operation = {"operation": "match_pair", "query_id": 3, "quantity_lots": 1,
+                           "left_signed_order_boc": yes, "right_signed_order_boc": no}
+        scan_start = int(rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]["last"]["seqno"])
+        external_boc = self.prepare_and_send("owner", match_operation, order_contribution + OPERATION_BUDGET, 3)
         matched = self.show_quorum()
         if matched["complete_sets"] != 1 or matched["locked"] != TOS or matched["fill_count"] != 1:
             raise RuntimeError(f"signed match did not create one conserved complete set: {matched}")
+        self.export_match_evidence(external_boc, match_operation, scan_start)
 
     def run_challenged_lifecycle(self, appellate_outcome: int | None) -> None:
         """Exercise appellate quorum or timeout after a hash-bound challenge."""
@@ -651,6 +681,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workdir", type=Path, help="optional private parent for temporary state")
     parser.add_argument("--tosctl", type=Path, default=REPO / "tosctl/src/target/debug/tosctl")
     parser.add_argument("--base-port", type=int, default=21600)
+    parser.add_argument("--evidence-dir", type=Path, help="owner-private export for OpenFox match acceptance")
     parser.add_argument(
         "--normal-outcome", choices=("yes", "no", "invalid"), default="yes",
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
@@ -694,7 +725,8 @@ def main() -> int:
             "localnet faucet readiness",
             60,
         )
-        lifecycle = Lifecycle(workdir, args.tosctl.resolve(), rpc_urls, control_url)
+        lifecycle = Lifecycle(workdir, args.tosctl.resolve(), rpc_urls, control_url,
+                              args.evidence_dir.resolve() if args.evidence_dir else None)
         lifecycle.write_config()
         if args.scenario == "normal":
             lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
