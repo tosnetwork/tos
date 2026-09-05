@@ -1011,3 +1011,15 @@ A separately compiled C++ caller links the real static library and tests layout,
 argument rejection and decoding rejection. C++ positive proof fixtures, platform
 layout generation, sanitizers/fuzzing and node/engine linking remain unfinished;
 the ABI does not assign transaction wire tags or authorize settlement sources.
+
+Added actual C++ positive verification across the static-library ABI. The real
+Rust fixture test optionally creates new public-only output/spend fixture files
+in an explicit temporary directory; it refuses to overwrite files. A separately
+compiled C++ reader constructs requests, accepts both valid bundles, rejects
+independently changed digest/proof/each spend signature/binding signature and
+resource/high-word amount errors, then accepts restored originals. Removing
+each cryptographic check, rebuilding the Rust library and relinking C++ makes
+its isolated invalid input succeed and the C++ test fail. All mutations were
+restored. These temporary randomized records are not TOS wire, frozen production
+vectors, secrets or authenticated settlement receipts. Node CMake registration,
+platform ABI generation, sanitizer/fuzzing and engine integration remain open.

@@ -207,6 +207,36 @@ mod tests {
         unsafe { ffi::uno_crypto_verify_v0(&request) }
     }
 
+    fn export_abi_fixture(bundle: &Bundle<Authorized, i64>, name: &str) {
+        use std::io::Write;
+        let Some(directory) = std::env::var_os("UNO_ABI_FIXTURE_DIR") else {
+            return;
+        };
+        assert_eq!(bundle.actions().len(), 2);
+        assert_eq!(bundle.authorization().proof().as_ref().len(), 7264);
+        let mut bytes = b"UNOABIT0".to_vec();
+        bytes.push(bundle.flag_byte());
+        bytes.extend_from_slice(&bundle.value_balance().to_le_bytes());
+        bytes.extend_from_slice(&bundle.anchor().to_bytes());
+        bytes.extend_from_slice(&<[u8; 64]>::from(bundle.authorization().binding_signature()));
+        bytes.extend_from_slice(bundle.authorization().proof().as_ref());
+        for action in encoded_actions(bundle) {
+            for field in [&action.cv_net, &action.nullifier, &action.rk, &action.cmx, &action.epk] {
+                bytes.extend_from_slice(field);
+            }
+            bytes.extend_from_slice(&action.enc_ciphertext);
+            bytes.extend_from_slice(&action.out_ciphertext);
+            bytes.extend_from_slice(&action.spend_signature);
+        }
+        let path = std::path::PathBuf::from(directory).join(name);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .expect("create a new public test fixture; never overwrite");
+        file.write_all(&bytes).expect("write public fixture");
+    }
+
     fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
         use crate::decode::{decode_bundle, EncodedBundle};
         let actions = encoded_actions(bundle);
@@ -263,6 +293,7 @@ mod tests {
         let verifier = FixedVerifier::new().expect("fixed key");
         let bundle = decode_real_bundle(&bundle);
         assert_eq!(ffi_status(&bundle, |_| {}), ffi::AbiStatus::Ok as u32);
+        export_abi_fixture(&bundle, "output-only.bin");
         assert_eq!(ffi_status(&bundle, |r| r.abi_version = 1), ffi::AbiStatus::Arguments as u32);
         assert_eq!(ffi_status(&bundle, |r| r.profile = 0), ffi::AbiStatus::Arguments as u32);
         assert_eq!(ffi_status(&bundle, |r| r.context = 6), ffi::AbiStatus::Arguments as u32);
@@ -330,6 +361,7 @@ mod tests {
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         let spent = decode_real_bundle(&spent);
         assert_eq!(ffi_status(&spent, |_| {}), ffi::AbiStatus::Ok as u32);
+        export_abi_fixture(&spent, "spend.bin");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         assert_eq!(
             verifier.verify_in_context(

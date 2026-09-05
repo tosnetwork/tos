@@ -154,6 +154,6 @@ No encryption or production activation is shipped.
 
 An initial [read-only C ABI](ABI.md) now exports the combined decoder/verifier
 through a static library. Generated positive/negative fixtures exercise the export
-from Rust, and a separately linked C++ smoke caller exercises argument/decoding
-failures. This is not yet production host linking or complete cross-language ABI
+from Rust; separate C++ programs test argument/decoding failures and real exported
+proof/signature fixtures across the linked ABI. This is not yet production host linking or complete cross-language ABI
 acceptance; ownership, panic limits, remaining tests and reproduction are in ABI.md.

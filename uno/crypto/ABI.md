@@ -46,6 +46,36 @@ c++ -std=c++17 -O2 -Iinclude tests/abi-smoke.cpp target/release/libtos_uno_crypt
 target/abi-smoke
 ```
 
-This does not yet provide a C++ positive proof fixture, generated-header consistency
-checks on other platforms, sanitizer/fuzz coverage, host CMake linking or real UNO
-engine integration. Those remain acceptance requirements before production use.
+## Real C++ verification fixtures
+
+The real-proof Rust test can export two fresh public-only fixtures after they
+pass ABI verification. The files contain flags, valueBalance, anchor, proof,
+commitments, ciphertext and signatures; no spending key or witness is exported.
+They use a test-only fixed-size record marked `UNOABIT0`, not native struct memory
+or the TOS Cell encoding. The digest is the fixture's arbitrary `[42; 32]`, not
+the full TOS authorization digest. These randomized temporary fixtures are not
+frozen production golden vectors. Existing files are never overwritten.
+
+From `uno/crypto`, reproduce the actual C++ positive/negative path with:
+
+```sh
+uno_fixture_dir=$(mktemp -d /tmp/uno-abi-real.XXXXXX)
+UNO_ABI_FIXTURE_DIR="$uno_fixture_dir" cargo test --locked --offline --release -j48 real_bundle_requires_proof_and_signatures
+cargo build --locked --offline --release -j48
+c++ -std=c++17 -O2 -Iinclude tests/abi-real.cpp target/release/libtos_uno_crypto_prototype.a -ldl -lpthread -lm -o target/abi-real
+target/abi-real "$uno_fixture_dir/output-only.bin" "$uno_fixture_dir/spend.bin"
+```
+
+The C++ program independently constructs borrowed ABI requests, accepts both
+output-only and real-spend bundles, rejects an altered digest, proof, each Action
+signature, binding signature, action limit and high-word public amount, then
+accepts each original bundle again after restoring fields. It requires both
+files, complete records and EOF. Removing proof, spend or binding verification
+independently, rebuilding the static library and relinking the C++ program makes
+the matching corrupted input return success and the test fail. All three mutations
+were restored; these tests therefore exercise the linked implementation rather
+than a stale binary or rejection-only stub.
+
+Generated-header consistency on other platforms, sanitizer/fuzz coverage, host
+CMake linking and real UNO engine integration remain acceptance requirements
+before production use.
