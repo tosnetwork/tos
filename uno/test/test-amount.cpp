@@ -36,3 +36,29 @@ TEST(UnoAmount, ExplicitNarrowing) {
   auto genesis = Amount::from_nanotomi(100000000000000000ULL);
   ASSERT_EQ(genesis.checked_bundle_balance(false).move_as_ok(), 100000000000000000LL);
 }
+
+TEST(UnoAmount, CheckedMultiplication) {
+  const auto max = std::numeric_limits<td::uint64>::max();
+  const auto wide_max = Amount::from_words(max, max);
+  const auto one = Amount::from_nanotomi(1);
+  const auto two = Amount::from_nanotomi(2);
+  auto identity = wide_max.checked_mul(one).move_as_ok();
+  ASSERT_EQ(identity.high(), max);
+  ASSERT_EQ(identity.low(), max);
+  for (auto zero : {wide_max.checked_mul(Amount{}).move_as_ok(),
+                    Amount{}.checked_mul(wide_max).move_as_ok()}) {
+    ASSERT_EQ(zero.high(), 0u);
+    ASSERT_EQ(zero.low(), 0u);
+  }
+  auto carry = Amount::from_nanotomi(max).checked_mul(two).move_as_ok();
+  ASSERT_EQ(carry.high(), 1u);
+  ASSERT_EQ(carry.low(), 18446744073709551614ULL);
+  auto high_product = Amount::from_words(1, 0).checked_mul(Amount::from_nanotomi(max)).move_as_ok();
+  ASSERT_EQ(high_product.high(), max);
+  ASSERT_EQ(high_product.low(), 0u);
+  ASSERT_TRUE(wide_max.checked_mul(two).is_error());
+  ASSERT_TRUE(two.checked_mul(wide_max).is_error());
+  ASSERT_TRUE(Amount::from_words(1, 0).checked_mul(Amount::from_words(1, 0)).is_error());
+  ASSERT_EQ(wide_max.high(), max);
+  ASSERT_EQ(wide_max.low(), max);
+}

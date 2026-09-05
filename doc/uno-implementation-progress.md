@@ -827,3 +827,12 @@ not a runtime mint entry point: authenticated deposit consumption, the matching
 D decrease at a reconciled cut, output bundle verification and permanent IDs
 are still required outside these calculations. Fee distribution authorization,
 unique distribution IDs and authenticated R/P/D reconciliation remain unfinished.
+
+Wide amounts now include checked multiplication, with a pre-multiplication
+maximum/divisor bound and explicit zero handling. Tests cover both zero operand
+positions, the maximum times one, cross-word products, high-word operands and
+overflow in both operand orders. Disabling the bound accepts an overflowing
+product, replacing multiplication with the input loses the carry, and removing
+zero handling reaches the underlying division-by-zero check; each mutation makes
+the test fail and was restored. No supply scale, fee schedule or wire encoding
+is inferred from this arithmetic operation.

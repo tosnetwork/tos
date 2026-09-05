@@ -40,6 +40,17 @@ class Amount {
     }
     return low();
   }
+  td::Result<Amount> checked_mul(const Amount& other) const {
+    if (other.value_.is_zero()) {
+      return Amount{};
+    }
+    const auto max_word = std::numeric_limits<td::uint64>::max();
+    const auto limit = td::uint128(max_word, max_word).div(other.value_);
+    if (less(limit, value_)) {
+      return td::Status::Error("UNO amount multiplication overflow");
+    }
+    return Amount(value_.mult(other.value_));
+  }
   // Convert a public magnitude with an explicit sign; INT64_MIN is excluded.
   td::Result<td::int64> checked_bundle_balance(bool negative) const {
     TRY_RESULT(value, checked_note_value());
