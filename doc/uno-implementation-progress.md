@@ -720,3 +720,12 @@ addr_std form, while a wrong executor in addr_var is rejected. Disabling the
 normalization makes the valid request fail the native final-message check and
 the test's success assertion; normalization was restored. This covers workchain
 2's standard-address range, not arbitrary extended workchain IDs or anycast.
+
+Closed a policy/address-range mismatch: public ingress previously accepted any
+nonnegative int32 workchain ID, while batch incoming credit requires addr_std's
+int8 workchain field. Entry encoding/decoding now restricts this host policy to
+0–127. Tests accept both endpoints and reject 128 and INT32_MAX, including raw
+entries that pass generated TL-B structural validation. Removing the bound makes
+the invalid-ID acceptance assertion fail; it was restored. Engine format remains
+independent of workchain ID; this does not remove Extended engine selectors or
+change UNO's workchain 2. Future wider addresses need a new policy version.

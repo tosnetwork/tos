@@ -1318,6 +1318,22 @@ TEST(WorkchainBlock, PublicIngressPolicyCodecAndDescriptorBinding) {
   ASSERT_TRUE(block::decode_workchain_native_ingress_policy(extra).is_error());
 }
 
+TEST(WorkchainBlock, PublicIngressRequiresStandardWorkchainRange) {
+  block::WorkchainNativeIngressPolicy policy;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address.set_zero();
+  policy.engine_configuration = number(0);
+  for (int id : {0, 127, 128, std::numeric_limits<std::int32_t>::max()}) {
+    policy.workchain_id = id;
+    ASSERT_EQ(block::encode_workchain_native_ingress_policy(policy).is_ok(), id <= 127);
+    auto raw = vm::CellBuilder().store_long(0x57495031, 32).store_long(id, 32).store_long(0, 1)
+        .store_long(policy.engine_key.selector, 64).store_zeroes(64 + 32 + 256)
+        .store_ref(policy.engine_configuration).finalize();
+    ASSERT_TRUE(block::gen::t_WorkchainNativeIngressPolicy.validate_ref(10000, raw));
+    ASSERT_EQ(block::decode_workchain_native_ingress_policy(raw).is_ok(), id <= 127);
+  }
+}
+
 TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
   block::WorkchainNativeIngressPolicy first;
   first.workchain_id = 2;

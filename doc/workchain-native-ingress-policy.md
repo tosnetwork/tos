@@ -14,7 +14,10 @@ BlockTransition and standard, non-anycast ingress; it does not permit arbitrary
 execution scopes. Basic selectors must fit int32; Extended selectors must fit
 uint32 and have vm_mode=0. Negative workchains and absent engine configuration
 are rejected. The public decoder does not invoke an engine or interpret its
-private configuration payload.
+private configuration payload. This addr_std-only policy restricts workchain IDs
+to 0–127: a larger nonnegative int32 ID is structurally encodable in the table but
+cannot be represented by the destination format accepted by this host. Supporting
+larger IDs requires an explicitly versioned address policy, not truncation.
 
 The binding check compares workchain, engine identity/mode and descriptor version
 against the supplied normalized ConfigParam 12 descriptor, and requires active,

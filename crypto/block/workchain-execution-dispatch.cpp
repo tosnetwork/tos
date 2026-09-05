@@ -17,7 +17,9 @@ namespace {
 td::Status check_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
   bool basic = policy.engine_key.format == WorkchainFormat::Basic;
   bool extended = policy.engine_key.format == WorkchainFormat::Extended;
-  if (policy.workchain_id < 0 || policy.engine_configuration.is_null() || (!basic && !extended) ||
+  // This policy promises addr_std ingress, whose workchain field is int8.
+  if (policy.workchain_id < 0 || policy.workchain_id > 127 || policy.engine_configuration.is_null() ||
+      (!basic && !extended) ||
       (basic && (policy.engine_key.selector < std::numeric_limits<std::int32_t>::min() ||
                  policy.engine_key.selector > std::numeric_limits<std::int32_t>::max())) ||
       (extended && (policy.engine_key.selector < 0 ||
