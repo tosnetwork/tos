@@ -292,14 +292,14 @@ mod tests {
             .expect("signatures");
         let verifier = FixedVerifier::new().expect("fixed key");
         let bundle = decode_real_bundle(&bundle);
-        assert_eq!(ffi_status(&bundle, |_| {}), ffi::AbiStatus::Ok as u32);
+        assert_eq!(ffi_status(&bundle, |_| {}), ffi::AbiStatus::UNO_CRYPTO_OK as u32);
         export_abi_fixture(&bundle, "output-only.bin");
-        assert_eq!(ffi_status(&bundle, |r| r.abi_version = 1), ffi::AbiStatus::Arguments as u32);
-        assert_eq!(ffi_status(&bundle, |r| r.profile = 0), ffi::AbiStatus::Arguments as u32);
-        assert_eq!(ffi_status(&bundle, |r| r.context = 6), ffi::AbiStatus::Arguments as u32);
-        assert_eq!(ffi_status(&bundle, |r| r.fee_lo = 1), ffi::AbiStatus::Arguments as u32);
-        assert_eq!(ffi_status(&bundle, |r| r.sighash = [43; 32]), ffi::AbiStatus::Verify as u32);
-        assert_eq!(ffi_status(&bundle, |r| r.flags = 255), ffi::AbiStatus::Decode as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.abi_version = 1), ffi::AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.profile = 0), ffi::AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.context = 6), ffi::AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.fee_lo = 1), ffi::AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.sighash = [43; 32]), ffi::AbiStatus::UNO_CRYPTO_VERIFY as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.flags = 255), ffi::AbiStatus::UNO_CRYPTO_DECODE as u32);
         assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
         use context::{ContextError, PublicContext};
         for context in [
@@ -360,7 +360,7 @@ mod tests {
             .expect("real spend authorization");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         let spent = decode_real_bundle(&spent);
-        assert_eq!(ffi_status(&spent, |_| {}), ffi::AbiStatus::Ok as u32);
+        assert_eq!(ffi_status(&spent, |_| {}), ffi::AbiStatus::UNO_CRYPTO_OK as u32);
         export_abi_fixture(&spent, "spend.bin");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         assert_eq!(
@@ -434,7 +434,7 @@ mod tests {
             verifier.verify_bundle(&bad_proof, &digest, 2, 7264),
             Err(VerificationError::Proof)
         );
-        assert_eq!(ffi_status(&bad_proof, |_| {}), ffi::AbiStatus::Verify as u32);
+        assert_eq!(ffi_status(&bad_proof, |_| {}), ffi::AbiStatus::UNO_CRYPTO_VERIFY as u32);
         assert_eq!(
             verifier.verify_in_context(
                 &bad_proof,

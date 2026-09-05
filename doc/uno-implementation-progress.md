@@ -1236,3 +1236,34 @@ This proves clean database reopening within one process, not process-crash
 recovery, cold OS-cache performance, active GC, signed block acceptance,
 authenticated checkpoint registration or network synchronization. The block ID
 is synthetic and no full RootDb/validator manager is present in this fixture.
+
+### Rust/C ABI header generation and drift rejection
+
+Read the pre-deletion FFI build script/configuration and the vendored build
+integration pin/refresh notes at `cd8e170a0^`. The prototype now follows the
+generated-and-committed header pattern with cbindgen pinned to 0.29.0 as a
+locked build dependency. Unlike the historical warning-only fallback, generation
+errors and disagreement with the committed header stop the Cargo build.
+Generation runs into OUT_DIR and never rewrites source during an ordinary build;
+explicit regeneration is documented in `uno/crypto/ABI.md`.
+
+Function signatures, request/Action fields, status discriminants and the actual
+version/profile/context constants used in Rust now feed the same generated
+header. The opt-in CMake Rust target already runs Cargo on each build, so its
+real C++ callers cannot silently link a changed Rust surface against an old
+header. Default-OFF stub-only builds still require no Rust toolchain and are not
+cross-language consistency evidence.
+
+Independent mutations of pointer constness, Action array length, status value,
+context value and only the C header count type each failed specifically at the
+header comparison. All were restored. C11 syntax checking and the linked C++
+build passed. Generation does not prove length semantics, pointer validity or
+ownership; runtime boundary guards and real-proof tests remain required.
+All four `test-uno-crypto-*` CTest groups then passed twice, including the real
+proof fixtures through the linked C++ adapter (49.52 seconds total).
+
+The historical Corrosion v0.5.2 pin and whole-release refresh policy were read
+and recorded as prior art in ABI.md. Native Linux-only direct Cargo integration,
+per-build target directories, the default-OFF option, and production activation
+scope are unchanged. No previously locked cryptographic dependency version was
+changed to add the generator.

@@ -7,6 +7,15 @@ use crate::{
 use orchard::bundle::BundleVersion;
 use std::{mem, panic::catch_unwind, slice, sync::OnceLock};
 
+pub const UNO_CRYPTO_ABI_VERSION: u32 = 0;
+pub const UNO_CRYPTO_FIXED_PROFILE: u32 = 1;
+pub const UNO_TRANSFER: u32 = 0;
+pub const UNO_UNSHIELD: u32 = 1;
+pub const UNO_SHIELD_CLAIM: u32 = 2;
+pub const UNO_WITHDRAWAL_REFUND: u32 = 3;
+pub const UNO_GENESIS: u32 = 4;
+pub const UNO_PRIVATE_FEE_DISTRIBUTION: u32 = 5;
+
 #[repr(C)]
 pub struct VerifyRequest {
     pub abi_version: u32,
@@ -29,28 +38,29 @@ pub struct VerifyRequest {
     pub max_proof_bytes: usize,
 }
 
+#[allow(non_camel_case_types)]
 #[repr(u32)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum AbiStatus {
-    Ok = 0,
-    Arguments = 1,
-    Decode = 2,
-    Verify = 3,
-    Key = 4,
-    Panic = 5,
+    UNO_CRYPTO_OK = 0,
+    UNO_CRYPTO_ARGUMENTS = 1,
+    UNO_CRYPTO_DECODE = 2,
+    UNO_CRYPTO_VERIFY = 3,
+    UNO_CRYPTO_KEY = 4,
+    UNO_CRYPTO_PANIC = 5,
 }
 
 fn context(request: &VerifyRequest) -> Result<PublicContext, AbiStatus> {
     let amount = (u128::from(request.principal_hi) << 64) | u128::from(request.principal_lo);
     let fee = (u128::from(request.fee_hi) << 64) | u128::from(request.fee_lo);
     match request.context {
-        0 if amount == 0 => Ok(PublicContext::Transfer { fee }),
-        1 => Ok(PublicContext::Unshield { amount, fee }),
-        2 if fee == 0 => Ok(PublicContext::ShieldClaim { amount }),
-        3 if fee == 0 => Ok(PublicContext::WithdrawalRefund { amount }),
-        4 if fee == 0 => Ok(PublicContext::Genesis { amount }),
-        5 if fee == 0 => Ok(PublicContext::PrivateFeeDistribution { amount }),
-        _ => Err(AbiStatus::Arguments),
+        UNO_TRANSFER if amount == 0 => Ok(PublicContext::Transfer { fee }),
+        UNO_UNSHIELD => Ok(PublicContext::Unshield { amount, fee }),
+        UNO_SHIELD_CLAIM if fee == 0 => Ok(PublicContext::ShieldClaim { amount }),
+        UNO_WITHDRAWAL_REFUND if fee == 0 => Ok(PublicContext::WithdrawalRefund { amount }),
+        UNO_GENESIS if fee == 0 => Ok(PublicContext::Genesis { amount }),
+        UNO_PRIVATE_FEE_DISTRIBUTION if fee == 0 => Ok(PublicContext::PrivateFeeDistribution { amount }),
+        _ => Err(AbiStatus::UNO_CRYPTO_ARGUMENTS),
     }
 }
 
@@ -77,12 +87,12 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         }
     });
     if !bounded_span(request, 1) {
-        return Err(AbiStatus::Arguments);
+        return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS);
     }
     // The caller guarantees this initialized allocation remains readable throughout the call.
     let request = unsafe { &*request };
-    if request.abi_version != 0 || request.profile != 1 {
-        return Err(AbiStatus::Arguments);
+    if request.abi_version != UNO_CRYPTO_ABI_VERSION || request.profile != UNO_CRYPTO_FIXED_PROFILE {
+        return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS);
     }
     let context = context(request)?;
     validate_proof_shape(
@@ -91,11 +101,11 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         request.max_actions,
         request.max_proof_bytes,
     )
-    .map_err(|_| AbiStatus::Arguments)?;
+    .map_err(|_| AbiStatus::UNO_CRYPTO_ARGUMENTS)?;
     if !bounded_span(request.actions, request.action_count)
         || !bounded_span(request.proof, request.proof_bytes)
     {
-        return Err(AbiStatus::Arguments);
+        return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS);
     }
     // Numeric bounds do not prove allocation validity; that remains the caller's contract.
     let actions = unsafe { slice::from_raw_parts(request.actions, request.action_count) };
@@ -113,8 +123,8 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         request.max_actions,
         request.max_proof_bytes,
     )
-    .map_err(|_| AbiStatus::Decode)?;
-    let verifier = VERIFIER.get_or_init(FixedVerifier::new).as_ref().map_err(|_| AbiStatus::Key)?;
+    .map_err(|_| AbiStatus::UNO_CRYPTO_DECODE)?;
+    let verifier = VERIFIER.get_or_init(FixedVerifier::new).as_ref().map_err(|_| AbiStatus::UNO_CRYPTO_KEY)?;
     verifier
         .verify_in_context(
             &bundle,
@@ -123,14 +133,14 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
             request.max_actions,
             request.max_proof_bytes,
         )
-        .map_err(|_| AbiStatus::Verify)
+        .map_err(|_| AbiStatus::UNO_CRYPTO_VERIFY)
 }
 
 fn contain_unwind(f: impl FnOnce() -> Result<(), AbiStatus> + std::panic::UnwindSafe) -> u32 {
     match catch_unwind(f) {
-        Ok(Ok(())) => AbiStatus::Ok as u32,
+        Ok(Ok(())) => AbiStatus::UNO_CRYPTO_OK as u32,
         Ok(Err(error)) => error as u32,
-        Err(_) => AbiStatus::Panic as u32,
+        Err(_) => AbiStatus::UNO_CRYPTO_PANIC as u32,
     }
 }
 
@@ -152,8 +162,8 @@ mod tests {
     #[test]
     fn abi_catches_verification_unwind() {
         INJECT_UNWIND.with(|flag| flag.set(true));
-        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::Panic as u32);
-        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::Arguments as u32);
+        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::UNO_CRYPTO_PANIC as u32);
+        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
     }
     #[test]
     fn abi_contains_unwind_and_rejects_invalid_spans() {
@@ -164,8 +174,8 @@ mod tests {
             assert_eq!(mem::offset_of!(VerifyRequest, value_balance), 16);
             assert_eq!(mem::offset_of!(VerifyRequest, actions), 184);
         }
-        assert_eq!(contain_unwind(|| panic!("injected verifier unwind")), AbiStatus::Panic as u32);
-        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::Arguments as u32);
+        assert_eq!(contain_unwind(|| panic!("injected verifier unwind")), AbiStatus::UNO_CRYPTO_PANIC as u32);
+        assert_eq!(unsafe { uno_crypto_verify_v0(std::ptr::null()) }, AbiStatus::UNO_CRYPTO_ARGUMENTS as u32);
         let byte = 0u8;
         assert!(bounded_span(&byte, 1));
         assert!(!bounded_span(&byte, usize::MAX));

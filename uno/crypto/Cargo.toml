@@ -13,6 +13,9 @@ orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153d
 
 [workspace]
 
+[build-dependencies]
+cbindgen = { version = "=0.29.0", default-features = false }
+
 [dev-dependencies]
 blake2b_simd = "=1.0.5"
 incrementalmerkletree = "=0.8.2"

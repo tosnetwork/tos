@@ -1,0 +1,18 @@
+language = "C"
+include_guard = "UNO_CRYPTO_PROTOTYPE_H"
+autogen_warning = "/* Generated from Rust ABI declarations. Do not edit; see ABI.md. */"
+cpp_compat = true
+usize_is_size_t = true
+style = "type"
+
+[parse]
+parse_deps = false
+
+[export]
+include = ["AbiStatus"]
+item_types = ["constants", "enums", "structs", "functions"]
+
+[export.rename]
+EncodedAction = "UnoCryptoAction"
+VerifyRequest = "UnoCryptoVerifyRequest"
+AbiStatus = "UnoCryptoStatus"

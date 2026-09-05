@@ -4,7 +4,7 @@
 --offline --release -j48` produces the matching static library. This is a native
 process interface, not a Cell codec, chain wire assignment or activation profile.
 ABI version 0 and ABI profile 1 select only the pinned fixed bundle/circuit pair.
-Unknown values fail; context tags are defined explicitly in the header and must
+Unknown values fail; context tags are generated from Rust constants and must
 not be obtained by casting another language's internal context enumeration.
 
 The caller owns the request, Action array and proof bytes. All fields must be
@@ -101,7 +101,7 @@ the C++ program's failure. Public fixtures are retained for inspection. Tests
 that invoke Cargo share a CTest resource lock. Two repeat runs of all three tests
 passed; a no-op generator and a failing C++ caller each caused the wrapper to fail.
 
-Generated-header consistency on other platforms, sanitizer/fuzz coverage and
+ABI layout validation on other platforms, sanitizer/fuzz coverage and
 actual node/UNO engine integration remain acceptance requirements before
 production use. The CMake option does not activate a workchain or install config.
 
@@ -129,3 +129,52 @@ All were restored. The CMake real-fixture test additionally compiles with the
 adapter and validates real positive, corrupted-proof and wrong-digest bundles
 against the actual Rust library. The stub is never linked into that real test
 or node binaries. No node/engine call site uses the adapter yet.
+
+## Generated header and build-time drift gate
+
+The header is generated from the Rust declarations by cbindgen **0.29.0**, pinned
+as a build dependency with its transitive dependencies in Cargo.lock. Normal
+Cargo builds generate into OUT_DIR and compare every byte with the committed
+header. Generation errors, a missing header, or a mismatch fail the build;
+there is no warning-only fallback. CMake's existing always-invoked Rust target
+runs this check before linking either real ABI caller. Source-tree header edits
+and changes anywhere under `src/` invalidate the Cargo build-script cache.
+Default-OFF C++-only builds still use the committed header without requiring Rust;
+they do not claim to check it against a Rust library they do not build or link.
+
+To deliberately regenerate after reviewing an ABI change, from `uno/crypto`:
+
+```sh
+UNO_CRYPTO_HEADER_OUT=include/uno_crypto.h cargo build --locked --offline --release -j48
+git diff -- include/uno_crypto.h
+cargo build --locked --offline --release -j48
+```
+
+The export variable writes a maintenance artifact; it does not disable the
+comparison. Exporting to another path still fails if the committed header differs.
+Review and commit the declarations, generated header and any ABI contract changes
+together. First-time dependency provisioning may require `cargo fetch --locked`;
+ordinary builds remain locked/offline after provisioning.
+
+The request and Action layouts and exported function signature are generated
+directly. Context/version/profile constants are also the constants used by the
+Rust checks; status discriminants come from the actual Rust status enum. Context
+macros replace the former unused C-only enum; the ABI continues accepting raw
+u32 tags so unknown values can be rejected safely. Existing symbol, field and
+constant names and their numeric values remain unchanged. Header generation
+cannot prove pointer validity, length semantics, ownership or panic behavior;
+the runtime guards and linked positive/negative tests remain necessary.
+
+Five independent drift mutations (function pointer constness, ciphertext array
+length, status discriminant, context constant, and only the C header's count
+type) each failed specifically at the generated-header comparison, before Rust
+library compilation. All were restored.
+
+Historical build-pattern reference: `cd8e170a0^:uno/plonky3-ffi/build.rs` and
+`cbindgen.toml`. We reuse generation plus a committed consumer header, but not
+the historical warning-and-continue behavior. The historical
+`third-party/corrosion/README.uno.md` records v0.5.2 and a whole-release refresh
+policy keeping its CMake and generator components together. That policy was read;
+Corrosion restoration and cross-platform native-library discovery remain deferred.
+The present opt-in native-Linux Cargo integration and per-build target directory
+are unchanged. Historical build/test target names are not current acceptance gates.
