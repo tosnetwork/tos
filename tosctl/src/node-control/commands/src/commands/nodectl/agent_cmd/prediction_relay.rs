@@ -621,19 +621,6 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .find_economic_effect_by_stable_action(&self.stable_action_id)?
             .context("prepared Prediction effect was not found")?;
         validate_prediction_custody_record(&record, &request)?;
-
-        // A terminal record contains immutable, custody-bound evidence.  It
-        // remains safe to replay even if it predates the recovery-boundary
-        // field: replay does not inspect history, broadcast, or alter custody.
-        // Check it before requiring a boundary, whose purpose is only to bind
-        // a new non-terminal history scan.
-        if let Some(evidence) = resolved_prediction_source_evidence(
-            &record.status,
-            record.exact_winner_resolution.as_ref(),
-        )? {
-            println!("{evidence}");
-            return Ok(());
-        }
         let boundary = record
             .prediction_relay_recovery_boundary
             .as_ref()
@@ -642,6 +629,18 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             prediction_request_matches_durable_boundary(&request, boundary),
             "Prediction resolver request conflicts with its durable recovery boundary"
         );
+
+        if record.status == ControllerActionStatus::Resolved {
+            let resolution = record
+                .exact_winner_resolution
+                .context("resolved Prediction source has no replayable evidence")?;
+            anyhow::ensure!(
+                resolution.evidence_kind == SOURCE_EVIDENCE_SCHEMA,
+                "Prediction action was resolved under a different evidence profile"
+            );
+            println!("{}", resolution.evidence);
+            return Ok(());
+        }
 
         anyhow::ensure!(
             record.status == ControllerActionStatus::Broadcasting,
@@ -786,21 +785,6 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
         );
         Ok(())
     }
-}
-
-fn resolved_prediction_source_evidence(
-    status: &ControllerActionStatus,
-    resolution: Option<&ControllerActionResolutionEvidence>,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    if status != &ControllerActionStatus::Resolved {
-        return Ok(None);
-    }
-    let resolution = resolution.context("resolved Prediction source has no replayable evidence")?;
-    anyhow::ensure!(
-        resolution.evidence_kind == SOURCE_EVIDENCE_SCHEMA,
-        "Prediction action was resolved under a different evidence profile"
-    );
-    Ok(Some(resolution.evidence.clone()))
 }
 
 impl AgentAccountPredictionRelayDestinationResolveCmd {
@@ -2819,35 +2803,6 @@ mod tests {
         assert_eq!(prediction_scan_first_after_checkpoint(&checkpoint).unwrap(), 42);
         let overflow = PredictionBlockIdentity { sequence_number: u32::MAX, ..checkpoint };
         assert!(prediction_scan_first_after_checkpoint(&overflow).is_err());
-    }
-
-    #[test]
-    fn terminal_source_evidence_replays_without_a_recovery_boundary() {
-        let expected = serde_json::json!({"state": "source_finalized"});
-        let resolution = ControllerActionResolutionEvidence {
-            evidence_kind: SOURCE_EVIDENCE_SCHEMA.into(),
-            evidence_digest: format!("sha256:{}", "a".repeat(64)),
-            evidence: expected.clone(),
-        };
-        assert_eq!(
-            resolved_prediction_source_evidence(
-                &ControllerActionStatus::Resolved,
-                Some(&resolution),
-            )
-            .unwrap(),
-            Some(expected)
-        );
-        assert!(
-            resolved_prediction_source_evidence(
-                &ControllerActionStatus::Broadcasting,
-                Some(&resolution),
-            )
-            .unwrap()
-            .is_none()
-        );
-        assert!(
-            resolved_prediction_source_evidence(&ControllerActionStatus::Resolved, None).is_err()
-        );
     }
 
     fn test_hash(index: u32) -> [u8; 32] {
