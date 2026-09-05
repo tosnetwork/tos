@@ -393,7 +393,11 @@ This is partial M1, not an enabled privacy workchain. Counter collation, outgoin
 native settlement, independent database replay and disk restart have end-to-end
 test evidence. Both block branches still require an explicitly registered engine;
 incoming account message settlement, return/bounce handling, distributed
-consensus and network synchronization have not been accepted.
+consensus and network synchronization have no UNO live-network test evidence.
+The disk harness cannot download and uses fake signature acceptance: it proves
+restart and file-import replay, not network synchronization. Live synchronization
+integration was not started by those tests; the routing work below is its first
+network-layer change, not completed synchronization acceptance.
 Context cells are not authentication proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
@@ -1085,3 +1089,27 @@ The record encoding is internal prototype state, not a frozen StateV2 schema.
 External root decoding, resource limits, cmx reservation/history policy,
 preverified refund-data binding, authenticated terminal receipts and joint
 tree/accounting/block commit remain open. No engine call site is added here.
+
+### Live synchronization: first routing blocker
+
+Source tracing found that `FullNodeImpl::get_shard` explicitly rejected every
+non-masterchain, non-basechain workchain. Thus earlier expectations that wc2
+downloads could already use generic transport were incorrect. Overlay topology
+also used the basechain monitoring depth for all workchains.
+
+The production routing now tracks monitoring depth per workchain and resolves
+known foreign overlays and their same-workchain ancestors. Unknown foreign
+overlays do not fall back to masterchain; the existing basechain startup
+fallback remains. Shared routing-policy tests cover wc2 selection, missing
+overlays, independent depths, historical parent selection and topology reset.
+Restoring the old foreign-workchain rejection makes wc2 selection fail;
+restoring the shared basechain depth makes the independent-depth assertion
+fail. Both mutations were restored. The production validator executable builds
+with this policy, but the unit test does not instantiate live overlay actors.
+
+This is not a live network test. Still required: independent real managers,
+engine registration, actual peer transfer, normal signatures/acceptance and
+receiver-side batch replay; separately, persistent-state acquisition/import,
+resource measurements, catch-up and GC with the monolithic engine-state shape.
+These are priority M1 prerequisites before freezing StateV2, not gates already
+implemented by the disk harness.

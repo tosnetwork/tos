@@ -207,9 +207,12 @@ void FullNodeImpl::on_new_masterchain_block(td::Ref<MasterchainState> state, std
   std::set<ShardIdFull> new_active;
   all_shards.insert(ShardIdFull(masterchainId));
   std::set<WorkchainId> workchains;
-  wc_monitor_min_split_ = state->monitor_min_split_depth(basechainId);
+  shard_routing_.clear();
+  for (const auto &[wc, winfo] : state->get_workchain_list()) {
+    shard_routing_.set_depth(wc, state->monitor_min_split_depth(wc));
+  }
   auto cut_shard = [&](ShardIdFull shard) -> ShardIdFull {
-    return wc_monitor_min_split_ < shard.pfx_len() ? shard_prefix(shard, wc_monitor_min_split_) : shard;
+    return shard_routing_.cut(shard);
   };
   for (auto &info : state->get_shards()) {
     workchains.insert(info->shard().workchain);
@@ -547,32 +550,23 @@ td::actor::ActorId<FullNodeShard> FullNodeImpl::get_shard(ShardIdFull shard, boo
   if (shard.is_masterchain()) {
     return shards_[ShardIdFull{masterchainId}].actor.get();
   }
-  if (shard.workchain != basechainId) {
-    return {};
-  }
-  int pfx_len = shard.pfx_len();
-  int min_split = wc_monitor_min_split_;
+  int min_split = shard_routing_.depth(shard.workchain);
   if (historical) {
     min_split = td::Random::fast(0, min_split);
   }
-  if (pfx_len > min_split) {
-    shard = shard_prefix(shard, min_split);
+  auto selected = shard_routing_.select(shard, min_split, [&](ShardIdFull candidate) {
+    return shards_.contains(candidate);
+  });
+  if (!selected) {
+    return {};
   }
-  while (true) {
-    auto it = shards_.find(shard);
-    if (it != shards_.end()) {
-      update_shard_actor(shard, it->second.active, it->second.enable_plumtree_broadcast);
-      return it->second.actor.get();
-    }
-    if (shard.pfx_len() == 0) {
-      break;
-    }
-    shard = shard_parent(shard);
+  if (selected->is_masterchain()) {
+    return shards_[*selected].actor.get();
   }
-
-  // Special case if shards_ was not yet initialized.
-  // This can happen briefly on node startup.
-  return shards_[ShardIdFull{masterchainId}].actor.get();
+  auto it = shards_.find(*selected);
+  CHECK(it != shards_.end());
+  update_shard_actor(*selected, it->second.active, it->second.enable_plumtree_broadcast);
+  return it->second.actor.get();
 }
 
 td::actor::ActorId<FullNodeShard> FullNodeImpl::get_shard(AccountIdPrefixFull dst) {

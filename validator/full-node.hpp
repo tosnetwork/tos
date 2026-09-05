@@ -20,6 +20,7 @@
 #pragma once
 
 #include "full-node-shard.h"
+#include "full-node-shard-routing.h"
 #include "full-node.h"
 //#include "tos-node-slave.h"
 #include <map>
@@ -144,7 +145,7 @@ class FullNodeImpl : public FullNode {
   td::actor::ActorId<FullNodeShard> get_shard(AccountIdPrefixFull dst);
   td::actor::ActorId<FullNodeShard> get_shard(ShardIdFull shard, bool historical = false);
   std::map<ShardIdFull, ShardInfo> shards_;
-  int wc_monitor_min_split_ = 0;
+  FullNodeShardRouting shard_routing_;
 
   td::actor::ActorId<keyring::Keyring> keyring_;
   td::actor::ActorId<adnl::Adnl> adnl_;
