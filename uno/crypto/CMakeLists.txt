@@ -34,6 +34,13 @@ target_compile_definitions(test-uno-crypto-abi-real PRIVATE UNO_TEST_HOST_ADAPTE
 target_include_directories(test-uno-crypto-abi-real PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(test-uno-crypto-abi-real PRIVATE tdutils)
 
+add_executable(test-uno-tree-cell ../../test/test-td-main.cpp tests/tree-cell.cpp)
+target_include_directories(test-uno-tree-cell PRIVATE ../..)
+target_link_libraries(test-uno-tree-cell PRIVATE tos_crypto "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
+add_dependencies(test-uno-tree-cell uno-crypto-rust)
+add_dependencies(all-tests test-uno-tree-cell)
+add_test(NAME test-uno-tree-cell COMMAND test-uno-tree-cell)
+
 add_test(NAME test-uno-crypto-rust
   COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
     ${UNO_CRYPTO_CARGO} test --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS} --lib)

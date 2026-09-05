@@ -1783,3 +1783,39 @@ with ENOSPC before C++ verification. A subsequent filesystem check showed 1.1 Gi
 available without deleting artifacts; rerunning that group then passed twice
 (23.86 seconds). The failed run is not counted as success. Disk headroom remains
 low and needs attention before another large snapshot experiment.
+
+### C++ frontier Cell persistence and continued execution
+
+`uno/core/note-tree-state.h` now provides immutable tree state backed by the real
+Rust ABI, with a strict, unactivated Cell prototype. A 358-bit header carries
+tag `0x554e4630`, 64-bit next position, 256-bit last leaf and 6-bit prior-subtree
+count. Exactly that many 256-bit ordinary node Cells follow in ABI order through
+a single-reference list. The maximum is 32 node Cells plus the header. This does
+not serialize native ABI structs or cache a trusted root; decoding reconstructs
+the frontier and recomputes its root via the ABI. The tag/layout are not a frozen
+StateV2 assignment or a deployment path.
+
+Header/node bit counts and reference counts are exact. Oversized lists, trailing
+data, special Cells, invalid empty states and inconsistent positions are rejected.
+VM failures return errors; a library reference is never resolved implicitly.
+Caller-supplied append limits and refund reservations still need authenticated
+configuration/state. Failed append cannot modify the source object. The wrapper
+preserves ABI status codes on errors, so the future engine must classify local
+failures separately from invalid candidate state.
+
+The new opt-in linked test walks 65 appends, serializing to BoC, restoring and
+continuing after each append, with root and canonical Cell-hash equality. It also
+checks empty restoration, late invalid leaves, limits/reservations, malformed
+Cells, zero library resolver calls, read-budget failures and successful retries.
+A synthetic full-capacity frontier loads in exactly 33 reads and cannot append;
+an oversized count rejects after the header read only. This is not evidence of
+billions of generated outputs or a database/cold-restart experiment.
+
+Two independent mutations removed the exact header bit-length check or reversed
+serialized node order. The tests respectively accepted forbidden trailing data
+or observed a changed restored root and failed. Both mutations were restored.
+Full StateV2 integration, history/DA storage, block-final anchors and host engine
+registration remain open; a small frontier cannot replace the full output archive.
+After restoration, the Cell, tree-ABI and real-ABI CTest groups each passed three
+consecutive runs (35.20 seconds total). No large database experiment was required
+or counted as evidence for this bounded codec.

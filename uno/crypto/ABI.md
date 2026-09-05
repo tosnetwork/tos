@@ -247,3 +247,23 @@ spend fixtures are not valid for this paired test; regenerate both fixtures
 together. Rust tests inject a panic immediately before publication and numeric
 span overflow, requiring unchanged output in both cases. No production host
 or Cell codec is enabled by these tests.
+
+## C++ frontier Cell prototype
+
+`uno/core/note-tree-state.h` wraps the tree ABI with immutable C++ state and a
+strict Cell codec. This unactivated prototype has a 358-bit header:
+`tag:32 = 0x554e4630`, `next_position:64`, `leaf:256`, `ommer_count:6`.
+The header has exactly one reference when count is nonzero, otherwise none.
+Its referenced list stores prior subtree nodes in ABI order, 256 bits per Cell,
+with exactly one reference except at the last node. At most 32 nodes are accepted.
+Integers use Cell bit encoding; node bytes retain their canonical crypto encoding.
+No native C struct bytes or cached root are serialized. Restore recomputes the
+root through the Rust ABI before publishing the object.
+
+Special Cells, extra bits/references, invalid counts and malformed frontier shapes
+are rejected. Library references are never implicitly resolved. The complete
+load is at most 33 Cell reads; VM failures become Result errors. The root tag and
+layout are prototype-local, not frozen StateV2 or an activated TL-B constructor.
+There is no claim that a bounded frontier replaces output/ciphertext history or
+authenticates the enclosing state. The opt-in `test-uno-tree-cell` links the actual
+Rust implementation and tests BoC round trips followed by more appends.
