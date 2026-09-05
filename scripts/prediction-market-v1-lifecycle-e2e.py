@@ -512,6 +512,16 @@ class Lifecycle:
                                       timeout=300, check=False)
             if completed.returncode:
                 raise RuntimeError(f"OpenFox accepted-wager gate failed:\n{completed.stdout.decode()}")
+            exported = self.evidence_dir / "openfox-reports"
+            exported.mkdir(mode=0o700)
+            exported.chmod(0o700)
+            for prefix in ("accepted-wager-", "future-block-lock-", "future-block-reveal-"):
+                reports = sorted(report_dir.glob(prefix + "*.json"))
+                if len(reports) != 1 or reports[0].stat().st_size <= 0 or reports[0].stat().st_size > 2 << 20:
+                    raise RuntimeError(f"OpenFox did not produce one bounded {prefix} report")
+                destination = exported / reports[0].name
+                shutil.copyfile(reports[0], destination)
+                destination.chmod(0o600)
         finally:
             shutil.rmtree(trusted_dir, ignore_errors=False)
 
