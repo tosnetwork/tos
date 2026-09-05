@@ -588,6 +588,128 @@ fn activate_register_split_merge_and_withdraw_preserve_accounting() {
 }
 
 #[test]
+fn participant_cap_rejects_a_new_account_without_mutating_accounting() {
+    let mut f = Fixture::new_with(|init| init.max_participants = 2);
+    f.activate();
+    let owner = f.owner.address().clone();
+    let trader = f.trader_b.address().clone();
+    let owner_key = SigningKey::from_bytes(&[0x51; 32]);
+    let trader_key = SigningKey::from_bytes(&[0x52; 32]);
+    f.register(&owner, &owner_key, 2);
+    f.register(&trader, &trader_key, 3);
+    let before = f.accounting();
+    let extra = f.bc.treasury("prediction-third-participant", 25_000 * TOS).expect("third trader");
+    let result = f.send(
+        extra.address(),
+        10 * TOS + f.init.participant_entry_fee + f.init.account_cleanup_bounty + OPERATION_BUDGET,
+        PredictionMarketContractV1::register_and_deposit(
+            4,
+            10 * TOS,
+            SigningKey::from_bytes(&[0x53; 32]).verifying_key().to_bytes(),
+        )
+        .unwrap(),
+    );
+    assert!(result.read_primary_description().aborted, "participant cap admitted a third account");
+    assert_eq!(f.accounting(), before, "failed participant admission mutated accounting");
+}
+
+#[test]
+fn owner_order_and_global_live_order_caps_fail_closed() {
+    fn matched_buy_pair(
+        fixture: &mut Fixture,
+        owner: &MsgAddressInt,
+        trader: &MsgAddressInt,
+        owner_key: &SigningKey,
+        trader_key: &SigningKey,
+        nonce: u64,
+    ) -> SendResult {
+        let yes = fixture.signed_order(
+            owner,
+            owner_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Maker,
+            6_000,
+            1,
+        );
+        let no = fixture.signed_order(
+            trader,
+            trader_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::No,
+            PredictionLiquidityRoleV1::Taker,
+            4_000,
+            1,
+        );
+        fixture.send(
+            owner,
+            2 * TOS,
+            PredictionMarketContractV1::match_pair(nonce + 10, 1, yes, no).unwrap(),
+        )
+    }
+
+    let mut per_owner = Fixture::new_with(|init| {
+        init.max_orders_per_participant = 2;
+        init.max_live_order_records = 8;
+    });
+    per_owner.activate();
+    let owner = per_owner.owner.address().clone();
+    let trader = per_owner.trader_b.address().clone();
+    let owner_key = SigningKey::from_bytes(&[0x54; 32]);
+    let trader_key = SigningKey::from_bytes(&[0x55; 32]);
+    per_owner.register(&owner, &owner_key, 2);
+    per_owner.register(&trader, &trader_key, 3);
+    assert_success(
+        "first owner order",
+        &matched_buy_pair(&mut per_owner, &owner, &trader, &owner_key, &trader_key, 1),
+    );
+    assert_success(
+        "second owner order",
+        &matched_buy_pair(&mut per_owner, &owner, &trader, &owner_key, &trader_key, 2),
+    );
+    let before = per_owner.accounting();
+    let rejected = matched_buy_pair(&mut per_owner, &owner, &trader, &owner_key, &trader_key, 3);
+    assert!(
+        rejected.read_primary_description().aborted,
+        "per-owner order cap admitted a third live order"
+    );
+    assert_eq!(
+        per_owner.accounting(),
+        before,
+        "failed per-owner order admission mutated accounting"
+    );
+
+    let mut global = Fixture::new_with(|init| {
+        init.max_orders_per_participant = 8;
+        init.max_live_order_records = 4;
+    });
+    global.activate();
+    let owner = global.owner.address().clone();
+    let trader = global.trader_b.address().clone();
+    let owner_key = SigningKey::from_bytes(&[0x56; 32]);
+    let trader_key = SigningKey::from_bytes(&[0x57; 32]);
+    global.register(&owner, &owner_key, 2);
+    global.register(&trader, &trader_key, 3);
+    assert_success(
+        "first global order",
+        &matched_buy_pair(&mut global, &owner, &trader, &owner_key, &trader_key, 1),
+    );
+    assert_success(
+        "second global order",
+        &matched_buy_pair(&mut global, &owner, &trader, &owner_key, &trader_key, 2),
+    );
+    let before = global.accounting();
+    let rejected = matched_buy_pair(&mut global, &owner, &trader, &owner_key, &trader_key, 3);
+    assert!(
+        rejected.read_primary_description().aborted,
+        "global live-order cap admitted excess records"
+    );
+    assert_eq!(global.accounting(), before, "failed global order admission mutated accounting");
+}
+
+#[test]
 fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     let mut f = Fixture::new();
     f.activate();
@@ -1270,6 +1392,182 @@ fn uncontested_normal_quorum_finalizes_only_at_the_frozen_deadline() {
     let (status, reason, outcome, _, _, _, _) = f.phase();
     assert_eq!((status, reason, outcome), (4, 0, 0));
     assert_eq!(f.accounting()[5..8], [0, TOS as i128, TOS as i128]);
+}
+
+#[test]
+fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let keeper = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let key = SigningKey::from_bytes(&[0x74; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            context,
+            2,
+            [0xa1; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let deadline = f.phase().6;
+    f.bc.set_now(deadline as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::finalize_uncontested(7).unwrap())
+        .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!(
+        (status, reason, outcome),
+        (4, 0, 2),
+        "a normal factual INVALID is distinct from a protocol timeout"
+    );
+
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::claim(8, &owner).unwrap())
+        .expect_success();
+    assert_eq!(f.accounting()[4], 10 * TOS as i128, "INVALID must pay a full set exactly once");
+    assert_eq!(f.accounting()[7], 0, "claim must exhaust the finalized payout liability");
+}
+
+#[test]
+fn appellate_quorum_can_uphold_the_challenged_normal_result() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let challenger = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let appellate = f.appellate.address().clone();
+    let key = SigningKey::from_bytes(&[0x75; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            normal_context,
+            0,
+            [0xa2; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let proposal_hash = f.phase().5;
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(7, proposal_hash, 1, [0xa3; 32]).unwrap(),
+    )
+    .expect_success();
+
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+        .expect_success();
+    let appeal_context = f.phase().3;
+    f.send(
+        &appellate,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            9,
+            1,
+            appeal_context,
+            0,
+            [0xa4; 32],
+            u64::from(f.bc.now()),
+            f.init.resolve_not_before + f.init.appeal_period,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!((status, reason, outcome), (4, 1, 0));
+}
+
+#[test]
+fn challenged_proposal_appellate_timeout_keeps_normal_result_not_invalid() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let challenger = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let key = SigningKey::from_bytes(&[0x76; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            normal_context,
+            0,
+            [0xa5; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let proposal_hash = f.phase().5;
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(7, proposal_hash, 1, [0xa6; 32]).unwrap(),
+    )
+    .expect_success();
+    let review_base = f.phase().4;
+    let deadline = f.phase().6;
+
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+        .expect_success();
+    f.bc.set_now(deadline as u32);
+    f.send(
+        &challenger,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::finalize_review_timeout(9, review_base).unwrap(),
+    )
+    .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!(
+        (status, reason, outcome),
+        (4, 1, 0),
+        "a challenged normal proposal remains authoritative when appellate quorum times out"
+    );
 }
 
 #[test]
