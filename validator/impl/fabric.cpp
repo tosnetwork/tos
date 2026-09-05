@@ -145,10 +145,11 @@ void run_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<
 
 void run_fake_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                                  td::Ref<block::ValidatorSet> validator_set,
-                                 td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise) {
-  td::actor::create_actor<AcceptBlockQuery>("fakeaccept", AcceptBlockQuery::IsFake(), id, std::move(data),
-                                            std::move(prev), std::move(validator_set), std::move(manager),
-                                            std::move(promise))
+                                 td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise,
+                                 bool send_shard_block_desc) {
+  td::actor::create_actor<AcceptBlockQuery>(
+      "fakeaccept", AcceptBlockQuery::IsFake{send_shard_block_desc}, id, std::move(data),
+      std::move(prev), std::move(validator_set), std::move(manager), std::move(promise))
       .release();
 }
 

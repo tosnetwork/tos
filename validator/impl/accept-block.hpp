@@ -48,7 +48,9 @@ using td::Ref;
 
 class AcceptBlockQuery : public td::actor::Actor {
  public:
-  struct IsFake {};
+  struct IsFake {
+    bool send_shard_block_desc{false};
+  };
   struct ForceFork {};
   AcceptBlockQuery(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                    td::Ref<block::ValidatorSet> validator_set, td::Ref<block::BlockSignatureSet> signatures,

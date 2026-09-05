@@ -267,7 +267,8 @@ void ValidatorManagerImpl::write_fake(BlockCandidate candidate, std::vector<Bloc
   });
   auto data = create_block(candidate.id, std::move(candidate.data)).move_as_ok();
 
-  run_fake_accept_block_query(candidate.id, data, prev, val_set, actor_id(this), std::move(P));
+  run_fake_accept_block_query(candidate.id, data, prev, val_set, actor_id(this), std::move(P),
+                              !candidate.id.is_masterchain());
 }
 
 void ValidatorManagerImpl::complete_fake(BlockIdExt block_id) {

@@ -96,7 +96,8 @@ void run_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<
                             bool apply, td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
 void run_fake_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                                  td::Ref<block::ValidatorSet> validator_set,
-                                 td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
+                                 td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise,
+                                 bool send_shard_block_desc = false);
 void run_hardfork_accept_block_query(BlockIdExt id, td::Ref<BlockData> data,
                                      td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
 void run_broadcast_only_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,

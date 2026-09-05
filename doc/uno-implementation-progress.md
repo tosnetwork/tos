@@ -135,8 +135,8 @@ Base node revision: `5a6145cce`.
   the rejection assertion; the check was restored.
   This branch still rejects split/merge and pending incoming account messages.
   Persisted outbound queues, dispatch queue advancement and native dequeue
-  descriptors from the existing cleanup pass are supported. Receiving-chain
-  delivery and acknowledgement-driven cleanup still need end-to-end evidence.
+  descriptors from the existing cleanup pass are supported. Non-bouncing Native
+  delivery and processed-upto-driven cleanup now have disk integration evidence.
   The default registry still has no block engine; automatic candidate production
   remains pending. The disk fixture tests outbound native settlement end to end.
   Removing the exact staging-LT check silently advances an invalid requested LT
@@ -211,7 +211,29 @@ Base node revision: `5a6145cce`.
   3 -> 4), imports/exports 167, and preserves executor balance 200. Tests assert
   both later batches have LT after deferred emission. This tests outgoing value flow,
   deferred progress without a second executor charge, and
-  failure atomicity across restart, not receiving-chain execution or bridge finality.
+  failure atomicity across restart. The delivery extension below exercises the
+  receiving chain; bridge finality and private withdrawals remain unimplemented.
+- Fake acceptance now has an explicit, default-off option to send the generated
+  shard top description to the local manager callback. The disk manager enables
+  it for shard blocks, allowing the existing `-s` export and `-M` import options
+  to carry the native proof-link chain into a subsequent test MC block. Real
+  acceptance/signature verification is unchanged. The fake signature semantics
+  remain restricted to the existing test acceptance/description-validation paths.
+- The test transfers are non-bouncing internal messages to the uninitialized
+  Native address 0:...01. Counter block 3 exports its top description; test MC
+  block 2 registers it. Native block 1 then executes the four ordinary receiving
+  transactions: 668 atoms imported, 400 retained in accounts, 268 collected and
+  no outgoing messages. Its top description is registered by MC block 3, which
+  imports the 268 fees. Counter block 4 subsequently verifies neighbor queue
+  proofs/processed-upto, removes all four delivered messages (queue 4 -> 0), and
+  retains operating balance 200 with no new fees or value movement. This proves
+  one-way native delivery and source queue cleanup, not UNO inbound execution,
+  bouncing/refund handling, Reserve settlement or real committee finality.
+- Delivery mutation checks disable the disk fake-accept description-send option
+  (the required Counter top-description file is absent) and reinstate rejection
+  of nonempty outgoing descriptors at batch admission (Counter block 4 cannot
+  accept its native dequeue records). Both fail the integration test and are
+  restored before final verification.
 - Deferred-path mutation checks skip the batch dispatch pass (block 2 lacks the
   required 167-atom transit flow) and ignore the executor's emitted LT (batch LT
   collides with emitted LT 3000001). The integration assertions fail in both cases;
@@ -278,8 +300,8 @@ These use the native Cell representation hash, not the user transaction-ID hash.
 Native transaction/account wrapping, witness storage and transaction-level outbound
 settlement are implemented. Live full-shard acceptance, outbound/deferred queue
 persistence and outgoing block value flow are tested. Incoming account messages
-remain unimplemented; receiving-chain delivery and delivered queue cleanup need
-end-to-end evidence.
+remain unimplemented. Non-bouncing receiving-chain execution and delivered queue
+cleanup have end-to-end disk evidence with fake consensus signatures.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.
@@ -336,7 +358,7 @@ binds input context; neither authenticates the context by itself.
 This is partial M1, not an enabled privacy workchain. Counter collation, outgoing
 native settlement, independent database replay and disk restart have end-to-end
 test evidence. Both block branches still require an explicitly registered engine;
-incoming account message settlement, delivered queue cleanup, distributed
+incoming account message settlement, return/bounce handling, distributed
 consensus and network synchronization have not been accepted.
 Context cells are not authentication proofs by themselves.
 

@@ -76,6 +76,7 @@ AcceptBlockQuery::AcceptBlockQuery(AcceptBlockQuery::IsFake fake, BlockIdExt id,
                                                             validator_set_->get_validator_set_hash()))
     , is_fake_(true)
     , is_fork_(false)
+    , send_shard_block_desc_(fake.send_shard_block_desc)
     , manager_(manager)
     , promise_(std::move(promise))
     , perf_timer_("acceptblock", 0.1, [manager](double duration) {

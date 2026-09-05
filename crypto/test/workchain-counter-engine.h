@@ -14,9 +14,10 @@ inline td::Ref<vm::Cell> counter_number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
 }
 
-// Two funded service messages exercise native forwarding and transaction linking.
+// Non-bouncing transfers to an uninitialized native recipient exercise delivery
+// without requiring a return-message handler in the test block engine.
 inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment) {
-  auto message = vm::CellBuilder().store_long(6, 4).store_zeroes(2)
+  auto message = vm::CellBuilder().store_long(4, 4).store_zeroes(2)
       .store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
       .store_long(1, 4).store_long(100, 8).store_long(0, 1)
       .store_zeroes(8).store_zeroes(96).store_zeroes(2).finalize();
