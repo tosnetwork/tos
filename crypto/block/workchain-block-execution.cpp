@@ -5,6 +5,7 @@
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 #include <algorithm>
+#include <limits>
 
 namespace block {
 namespace {
@@ -157,6 +158,29 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
   } catch (vm::VmVirtError&) {
     return td::Status::Error("incomplete block workchain state proof");
   }
+}
+
+td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,
+                                                const td::Ref<vm::Cell>& inbound_messages) {
+  auto after = host_after_lt;
+  if (inbound_messages.not_null()) {
+    TRY_RESULT(envelopes, decode_workchain_batch_inbound(inbound_messages));
+    for (const auto& root : envelopes) {
+      tlb::MsgEnvelope::Record_std envelope;
+      gen::CommonMsgInfo::Record_int_msg_info info;
+      if (!tlb::unpack_cell(root, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info)) {
+        return td::Status::Error("invalid batch inbound timing context");
+      }
+      after = std::max(after, static_cast<std::uint64_t>(info.created_lt));
+      if (envelope.emitted_lt) {
+        after = std::max(after, static_cast<std::uint64_t>(envelope.emitted_lt.value()));
+      }
+    }
+  }
+  if (after >= std::numeric_limits<std::uint64_t>::max() - 1) {
+    return td::Status::Error("workchain batch logical time exhausted");
+  }
+  return after + 1;
 }
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description) {

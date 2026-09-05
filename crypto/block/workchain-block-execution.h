@@ -33,6 +33,11 @@ struct WorkchainBlockReplayContext {
   td::Ref<vm::Cell> inbound_messages = {};
 };
 
+// Select a start LT strictly after host/message events, leaving one LT for end.
+// The host remains responsible for authenticating the supplied inbox.
+td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,
+                                                const td::Ref<vm::Cell>& inbound_messages = {});
+
 // Decode orders by (emitted LT, message hash), falling back to created LT.
 // Engines may apply their own authenticated source-locator order afterwards.
 // These helpers do not authenticate message delivery.

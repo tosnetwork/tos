@@ -3438,13 +3438,15 @@ bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchain
   if (emitted != last_dispatch_queue_emitted_lt_.end()) {
     after_lt = std::max(after_lt, emitted->second);
   }
-  if (after_lt == std::numeric_limits<tos::LogicalTime>::max()) {
-    return fatal_error("workchain batch logical time exhausted after deferred messages");
+  auto batch_lt_result = block::workchain_batch_start_lt(after_lt, input.inbound_messages);
+  if (batch_lt_result.is_error()) {
+    return fatal_error(batch_lt_result.move_as_error());
   }
-  LOG(INFO) << "staging workchain batch at lt=" << after_lt + 1;
+  auto batch_lt = batch_lt_result.move_as_ok();
+  LOG(INFO) << "staging workchain batch at lt=" << batch_lt;
   set_current_tx_storage_dict(*account);
   auto staged = block::prepare_resolved_workchain_batch_transaction(
-      execution, input, *account, after_lt + 1, now_, serialize_cfg_, &action_phase_cfg_);
+      execution, input, *account, batch_lt, now_, serialize_cfg_, &action_phase_cfg_);
   if (staged.is_error()) {
     return fatal_error(staged.move_as_error_prefix("cannot stage workchain batch: "));
   }

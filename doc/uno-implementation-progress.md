@@ -467,3 +467,15 @@ Mutation verification: reintroducing tag-8 acceptance in handwritten `skip`
 makes `RetiredBatchDescriptorRejected` fail at its skip-rejection assertion.
 The mutation was removed. The same test checks the empty-inbox batch's native
 message-membership behavior; existing tests cover nonempty inbox membership.
+
+Native inbound preparation: the collator now uses a shared batch-start LT
+selector that follows the host/deferred LT and every supplied inbox message's
+created/emitted LT, while reserving one additional LT for transaction end.
+It rejects host/message bounds >= UINT64_MAX-1 before transaction construction.
+This does not authenticate delivery or enable native inbox credit. A test covers
+host precedence, creation/emission precedence, malformed inboxes and exact
+uint64 boundaries. Weakening the limit to reject only UINT64_MAX makes the
+UINT64_MAX-1 rejection assertion fail; the correct limit was restored.
+Native settlement still must credit only message value to the executor and
+retain the native InMsg accounting of remaining forwarding fees, alongside
+authenticated queue processing and exactly-once batch membership.

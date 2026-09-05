@@ -865,6 +865,24 @@ TEST(WorkchainBlock, RetiredBatchDescriptorRejected) {
   ASSERT_TRUE(!block::is_transaction_in_msg(transaction, envelope.msg));
 }
 
+TEST(WorkchainBlock, BatchTimeFollowsEveryInputAndLeavesEndSpace) {
+  ASSERT_EQ(block::workchain_batch_start_lt(10).move_as_ok(), 11u);
+  auto inbox = block::encode_workchain_batch_inbound(
+      {inbound_envelope(20), inbound_envelope(3, 1, 30)}).move_as_ok();
+  ASSERT_EQ(block::workchain_batch_start_lt(10, inbox).move_as_ok(), 31u);
+  ASSERT_EQ(block::workchain_batch_start_lt(40, inbox).move_as_ok(), 41u);
+  // Even an inconsistent old emission time cannot hide the creation LT.
+  auto created = block::encode_workchain_batch_inbound({inbound_envelope(50, 0, 2)}).move_as_ok();
+  ASSERT_EQ(block::workchain_batch_start_lt(10, created).move_as_ok(), 51u);
+  auto maximum = std::numeric_limits<std::uint64_t>::max();
+  ASSERT_EQ(block::workchain_batch_start_lt(maximum - 2).move_as_ok(), maximum - 1);
+  ASSERT_TRUE(block::workchain_batch_start_lt(maximum - 1).is_error());
+  ASSERT_TRUE(block::workchain_batch_start_lt(maximum).is_error());
+  auto exhausted = block::encode_workchain_batch_inbound({inbound_envelope(maximum - 1)}).move_as_ok();
+  ASSERT_TRUE(block::workchain_batch_start_lt(0, exhausted).is_error());
+  ASSERT_TRUE(block::workchain_batch_start_lt(0, number(0)).is_error());
+}
+
 TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {
   block::WorkchainBatchDescription description;
   description.input_hash.set_zero();
