@@ -1061,3 +1061,27 @@ untrusted root loading, owner-bound refund reservations (including cmx),
 cryptographic admission, resource limits and atomic block integration remain
 required. Only internally constructed roots can enter this class; dictionary
 runtime exceptions are not converted into transaction rejection here.
+
+### Owner-bound refund nullifier state
+
+`NullifierState` composes the used set with two persistent Cell dictionaries:
+nullifier-to-owner bindings and owner records containing a complete key-set
+manifest. Ordinary insertion rejects reserved keys. Reservation rejects spent
+keys, duplicate keys, other reservations, empty manifests and reused owner IDs.
+Paid settlement releases the entire manifest; refund settlement moves the
+entire manifest into the permanent used set. Neither path removes original
+spend nullifiers. Both retain distinct terminal owner tombstones and reject
+further transitions for that owner. Duplicate receipt handling must happen in
+the authenticated bridge layer, not by running these transitions again.
+
+Tests exercise multiple owners, zero keys, late conflicts, complete release
+and consumption, terminal replay, original-state isolation and deterministic
+roots across insertion orders. Three independent mutations fail on semantic
+assertions: bypassing reserved-key admission accepts a conflicting spend;
+skipping refund consumption leaves a nullifier unused; consuming on Paid
+incorrectly spends a released key. All mutations were restored.
+
+The record encoding is internal prototype state, not a frozen StateV2 schema.
+External root decoding, resource limits, cmx reservation/history policy,
+preverified refund-data binding, authenticated terminal receipts and joint
+tree/accounting/block commit remain open. No engine call site is added here.
