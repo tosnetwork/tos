@@ -6,12 +6,18 @@ an owner-private temporary file Vault, and every wallet used by the run.  It
 does not claim to exercise the Agent Account relay; that boundary is covered by
 the OpenFox checked-call V2 acceptance gate.
 
-The normal scenario proves the complete contract exit path:
+Each normal-outcome scenario proves the complete contract exit path:
 
 deploy -> register/deposit -> split -> normal quorum -> finalize -> claim ->
 withdraw.  Every post-transition view must agree byte-for-byte across all
 three JSON-RPC nodes.  All files, the encrypted local Vault, and validator
 databases are removed when the process exits.
+
+The reporter outcome is a deliberately controlled protocol input.  These
+scenarios prove that the on-chain YES, NO, and INVALID accounting branches
+execute over real nodes; they do not claim to prove an external fact.  The
+separate real-entropy Oracle acceptance scenario must bind reporters to a
+target fixed only after the wager is made.
 
 Run from the TOS repository with an available validator build:
 
@@ -269,7 +275,9 @@ class Lifecycle:
         return wait_until(lambda: (view := self.show_quorum()).get("status") == status and view,
                           f"market status {status}")
 
-    def run_normal_lifecycle(self) -> None:
+    def run_normal_lifecycle(self, outcome: int) -> None:
+        outcome_names = {0: "yes", 1: "no", 2: "invalid"}
+        outcome_name = outcome_names[outcome]
         definition = self.write_definition()
         deploy = self.workdir / "deploy.boc"
         self.tosctl_call(
@@ -315,8 +323,8 @@ class Lifecycle:
         for sequence, reporter in ((5, "normal_one"), (6, "normal_two")):
             self.prepare_and_send(reporter, {
                 "operation": "report_result", "query_id": sequence, "round": 0,
-                "expected_round_context_hash": context, "outcome": 0,
-                "evidence_root": "44" * 32, "statement_created_at": created_at,
+                "expected_round_context_hash": context, "outcome": outcome,
+                "evidence_root": f"{0x44 + outcome:02x}" * 32, "statement_created_at": created_at,
                 "statement_expiry": definition["oracle_vote_deadline"],
             }, OPERATION_BUDGET, sequence)
         proposed = self.wait_status("proposed")
@@ -329,7 +337,7 @@ class Lifecycle:
         )
         self.prepare_and_send("owner", {"operation": "finalize_uncontested", "query_id": 7}, OPERATION_BUDGET, 7)
         finalized = self.wait_status("finalized")
-        if finalized["final_outcome"] != "yes" or finalized["remaining_payout"] != TOS:
+        if finalized["final_outcome"] != outcome_name or finalized["remaining_payout"] != TOS:
             raise RuntimeError(f"normal finalization accounting is invalid: {finalized}")
 
         self.prepare_and_send("owner", {
@@ -349,6 +357,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workdir", type=Path, help="optional private parent for temporary state")
     parser.add_argument("--tosctl", type=Path, default=REPO / "tosctl/src/target/debug/tosctl")
     parser.add_argument("--base-port", type=int, default=21600)
+    parser.add_argument(
+        "--normal-outcome", choices=("yes", "no", "invalid"), default="yes",
+        help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
+    )
     return parser.parse_args()
 
 
@@ -387,8 +399,12 @@ def main() -> int:
         lifecycle = Lifecycle(workdir, args.tosctl.resolve(), rpc_urls, control_url)
         lifecycle.write_config()
         lifecycle.provision_wallets()
-        lifecycle.run_normal_lifecycle()
-        print("PredictionMarket normal direct-wallet three-node lifecycle: PASS")
+        outcome = {"yes": 0, "no": 1, "invalid": 2}[args.normal_outcome]
+        lifecycle.run_normal_lifecycle(outcome)
+        print(
+            "PredictionMarket normal "
+            f"{args.normal_outcome.upper()} direct-wallet three-node lifecycle: PASS"
+        )
         return 0
     finally:
         if localnet.poll() is None:
