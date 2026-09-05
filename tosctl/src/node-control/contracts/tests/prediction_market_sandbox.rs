@@ -1528,6 +1528,53 @@ fn appellate_reporter_window_opens_after_delay_and_closes_at_deadline() {
 }
 
 #[test]
+fn normal_oracle_requires_exact_threshold_without_duplicate_counting() {
+    let mut f = Fixture::new_with(|init| {
+        init.normal_oracle_policy.threshold = 2;
+        init.normal_oracle_policy.reporters.push(init.reserve_recipient.clone());
+    });
+    f.activate();
+    let first = f.normal.address().clone();
+    let second = f.reserve.address().clone();
+    let keeper = f.trader_b.address().clone();
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    let now = u64::from(f.bc.now());
+    let deadline = f.init.oracle_vote_deadline;
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id,
+            0,
+            context,
+            0,
+            [0xd1; 32],
+            now,
+            deadline,
+        )
+        .unwrap()
+    };
+
+    f.send(&first, OPERATION_BUDGET, report(3)).expect_success();
+    assert_eq!(f.phase().0, 1, "M-1 reports must not create a proposal");
+    f.send(&first, OPERATION_BUDGET, report(4)).expect_success();
+    assert_eq!(f.phase().0, 1, "duplicate reporter vote must be idempotent");
+    f.send(
+        &first,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(5, 0, context, 1, [0xd2; 32], now, deadline)
+            .unwrap(),
+    )
+    .expect_exit_code(2429);
+    assert_eq!(f.phase().0, 1, "equivocation must not create a proposal");
+    f.send(&second, OPERATION_BUDGET, report(6)).expect_success();
+    assert_eq!(f.phase().0, 2, "exactly M independent reporters must create a proposal");
+}
+
+#[test]
 fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
     let mut f = Fixture::new();
     f.activate();
