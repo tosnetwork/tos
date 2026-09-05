@@ -393,6 +393,10 @@ fn capabilities() -> anyhow::Result<()> {
             "minimum_global_version": 14,
             "full_risk_global_versions": AUDITED_GLOBAL_VERSIONS,
             "prepared_artifact": "exact-signed-external-message-boc",
+            "agent_relay_preparation": {
+                "schema": "tosctl.prediction-agent-effect-prepared.v1",
+                "pre_broadcast_recovery_boundary": "pinned-rpc"
+            },
             "get_methods": [
                 "get_prediction_state", "get_prediction_accounting",
                 "get_prediction_account", "get_prediction_order", "get_market_phase",
@@ -894,6 +898,29 @@ impl PredictionPrepareAgentCmd {
         {
             anyhow::bail!("owner declined Prediction effect authorization");
         }
+        // The recovery boundary is an observation made by the same pinned RPC
+        // which prepares the exact external BOC. It must not be supplied by
+        // an OpenFox caller: that would let an untrusted caller choose where a
+        // later authenticated history walk stops.
+        //
+        // Keep this immediately before the durable claim/signing boundary.
+        // Everything after it is local journal and signing work until the BOC
+        // is returned; no network write occurs here.
+        let pre_broadcast_source = rpc.get_address_information(&account).await?;
+        anyhow::ensure!(
+            pre_broadcast_source.state == AccountState::Active,
+            "Agent Account became inactive before Prediction effect preparation"
+        );
+        let pre_broadcast_master = rpc.get_masterchain_info().await?;
+        let (pre_broadcast_source_cursor, pre_broadcast_masterchain_checkpoint) =
+            prediction_pre_broadcast_boundary(
+                &account.to_string(),
+                pre_broadcast_source.last_transaction_id.lt,
+                &pre_broadcast_source.last_transaction_id.hash,
+                pre_broadcast_master.last.seqno,
+                &pre_broadcast_master.last.root_hash,
+                &pre_broadcast_master.last.file_hash,
+            )?;
         let journal = open_economic_controller_journal(
             path,
             self.journal_directory.as_deref(),
@@ -989,6 +1016,8 @@ impl PredictionPrepareAgentCmd {
                 "seqno": data.seqno,
                 "valid_until": self.valid_until,
                 "network_domain": network,
+                "pre_broadcast_source_cursor": pre_broadcast_source_cursor,
+                "pre_broadcast_masterchain_checkpoint": pre_broadcast_masterchain_checkpoint,
                 "exact_signed_boc": base64::engine::general_purpose::STANDARD.encode(&boc),
                 "exact_signed_boc_digest": format!("sha256:{}", hex::encode(Sha256::digest(&boc))),
                 "output_boc": self.output_boc,
@@ -997,6 +1026,51 @@ impl PredictionPrepareAgentCmd {
         );
         Ok(())
     }
+}
+
+// Serialize the only pre-broadcast recovery boundary accepted by OpenFox.
+// Keeping this conversion pure makes its zero-cursor and canonical-hash
+// contract regression-testable without an RPC fixture.
+fn prediction_pre_broadcast_boundary(
+    account: &str,
+    source_lt: u64,
+    source_hash: &[u8],
+    masterchain_seqno: u32,
+    masterchain_root_hash: &[u8],
+    masterchain_file_hash: &[u8],
+) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
+    anyhow::ensure!(!account.is_empty(), "Agent Account source address is empty");
+    let source_hash = if source_lt == 0 {
+        anyhow::ensure!(
+            source_hash.is_empty(),
+            "zero Agent Account source cursor carries a transaction hash"
+        );
+        String::new()
+    } else {
+        anyhow::ensure!(source_hash.len() == 32, "Agent Account source cursor hash is malformed");
+        format!("sha256:{}", hex::encode(source_hash))
+    };
+    anyhow::ensure!(
+        masterchain_seqno > 0
+            && masterchain_root_hash.len() == 32
+            && masterchain_file_hash.len() == 32,
+        "pre-broadcast masterchain checkpoint is malformed"
+    );
+    Ok((
+        json!({
+            "account_address": account,
+            "last_logical_time": source_lt,
+            "last_transaction_hash": source_hash,
+        }),
+        json!({
+            "workchain_id": -1,
+            "shard": -1,
+            "sequence_number": masterchain_seqno,
+            "root_hash": format!("sha256:{}", hex::encode(masterchain_root_hash)),
+            "file_hash": format!("sha256:{}", hex::encode(masterchain_file_hash)),
+            "masterchain_sequence": masterchain_seqno,
+        }),
+    ))
 }
 
 fn prediction_semantic_effect_kind(operation: &str) -> Option<&'static str> {
@@ -2012,6 +2086,52 @@ mod tests {
         );
         assert_eq!(prediction_semantic_effect_kind("prune_order"), None);
         assert_eq!(prediction_semantic_effect_kind("prediction.future.action"), None);
+    }
+
+    #[test]
+    fn pre_broadcast_boundary_is_canonical_and_rejects_malformed_observations() {
+        let (cursor, checkpoint) = prediction_pre_broadcast_boundary(
+            "0:source",
+            7,
+            &[0x11; 32],
+            9,
+            &[0x22; 32],
+            &[0x33; 32],
+        )
+        .unwrap();
+        assert_eq!(cursor["account_address"], "0:source");
+        assert_eq!(cursor["last_logical_time"], 7);
+        assert_eq!(cursor["last_transaction_hash"], format!("sha256:{}", "11".repeat(32)));
+        assert_eq!(checkpoint["workchain_id"], -1);
+        assert_eq!(checkpoint["masterchain_sequence"], 9);
+        assert_eq!(checkpoint["root_hash"], format!("sha256:{}", "22".repeat(32)));
+
+        let (zero_cursor, _) =
+            prediction_pre_broadcast_boundary("0:source", 0, &[], 9, &[0x22; 32], &[0x33; 32])
+                .unwrap();
+        assert_eq!(zero_cursor["last_transaction_hash"], "");
+        assert!(
+            prediction_pre_broadcast_boundary(
+                "0:source",
+                0,
+                &[0x11; 32],
+                9,
+                &[0x22; 32],
+                &[0x33; 32],
+            )
+            .is_err()
+        );
+        assert!(
+            prediction_pre_broadcast_boundary(
+                "0:source",
+                7,
+                &[0x11; 31],
+                9,
+                &[0x22; 32],
+                &[0x33; 32],
+            )
+            .is_err()
+        );
     }
 
     #[test]
