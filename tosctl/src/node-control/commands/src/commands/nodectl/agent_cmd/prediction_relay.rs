@@ -2152,7 +2152,7 @@ async fn observe_prediction_bounce_credit(
     let info = rpc.get_address_information(source).await?;
     verify_prediction_source_code(&info, &request.profile.source_agent_account_code_hash)?;
     let master = rpc.get_masterchain_info().await?;
-    let first = request.destination_evidence.block.masterchain_sequence_number;
+    let first = prediction_bounce_credit_scan_first(source, request)?;
     anyhow::ensure!(
         first > request.pre_broadcast_masterchain_checkpoint.sequence_number
             && master.last.seqno >= first,
@@ -2172,7 +2172,7 @@ async fn observe_prediction_bounce_credit(
     let mut seen_blocks = BTreeSet::new();
     let mut inspected_transactions = 0u32;
     let mut found: Option<PredictionBounceCreditCandidate> = None;
-    for masterchain_seqno in first..=master.last.seqno {
+    'scan: for masterchain_seqno in first..=master.last.seqno {
         let blocks = if source.workchain_id() == -1 {
             vec![
                 rpc.lookup_block(
@@ -2224,6 +2224,13 @@ async fn observe_prediction_bounce_credit(
                 &mut found,
             )
             .await?;
+            // The authenticated market failure creates exactly this rich
+            // bounce. Once that message is credited back at the frozen Agent
+            // Account code, later unrelated history cannot strengthen the
+            // proof and must not make recovery depend on retained indexes.
+            if found.is_some() {
+                break 'scan;
+            }
         }
     }
     let candidate = found.context(
@@ -2251,6 +2258,39 @@ async fn observe_prediction_bounce_credit(
     })
 }
 
+// As with the source-to-market leg, a masterchain market failure and the
+// Agent Account's bounce-credit transaction can be in the same masterchain
+// block. The destination evidence finality head is only an observation point,
+// not a safe exclusive scan cursor.
+fn prediction_bounce_credit_scan_first(
+    source: &MsgAddressInt,
+    request: &PredictionRelayBounceCreditRequest,
+) -> anyhow::Result<u32> {
+    prediction_bounce_credit_scan_first_for_workchain(
+        source.workchain_id(),
+        request.destination_evidence.block.workchain_id,
+        request.destination_evidence.block.sequence_number,
+        request.destination_evidence.block.masterchain_sequence_number,
+    )
+}
+
+fn prediction_bounce_credit_scan_first_for_workchain(
+    source_workchain: i32,
+    destination_block_workchain: i32,
+    destination_block_sequence_number: u32,
+    destination_finality_masterchain_sequence_number: u32,
+) -> anyhow::Result<u32> {
+    if source_workchain == -1 {
+        anyhow::ensure!(
+            destination_block_workchain == -1,
+            "Prediction masterchain bounce has non-masterchain destination evidence"
+        );
+        Ok(destination_block_sequence_number)
+    } else {
+        Ok(destination_finality_masterchain_sequence_number)
+    }
+}
+
 async fn scan_prediction_bounce_credit_block(
     rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
     source: &MsgAddressInt,
@@ -2273,7 +2313,13 @@ async fn scan_prediction_bounce_credit_block(
                 after_account.as_deref(),
                 DESTINATION_BLOCK_PAGE_SIZE,
             )
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "read Prediction bounce-credit block {}:{}:{}",
+                    expected_block.workchain, expected_block.shard, expected_block.seqno
+                )
+            })?;
         let actual = page
             .id
             .as_ref()
@@ -2721,6 +2767,13 @@ mod tests {
         assert_eq!(prediction_destination_scan_first_for_workchain(-1, -1, 42, 99).unwrap(), 42);
         assert!(prediction_destination_scan_first_for_workchain(-1, 0, 42, 99).is_err());
         assert_eq!(prediction_destination_scan_first_for_workchain(0, 0, 42, 99).unwrap(), 99);
+    }
+
+    #[test]
+    fn bounce_credit_scan_includes_the_destination_masterchain_block() {
+        assert_eq!(prediction_bounce_credit_scan_first_for_workchain(-1, -1, 42, 99).unwrap(), 42);
+        assert!(prediction_bounce_credit_scan_first_for_workchain(-1, 0, 42, 99).is_err());
+        assert_eq!(prediction_bounce_credit_scan_first_for_workchain(0, 0, 42, 99).unwrap(), 99);
     }
 
     fn test_hash(index: u32) -> [u8; 32] {
