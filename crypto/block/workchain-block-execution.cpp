@@ -205,14 +205,27 @@ td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& descrip
   if (special || cs.size() < 4) {
     return td::Status::Error("invalid transaction description for execution scope");
   }
-  auto tag = cs.fetch_ulong(4);
-  if (tag > 9) {
-    return td::Status::Error("unknown transaction description for execution scope");
+  // get_tag alone may select a constructor for an unassigned wire prefix;
+  // check_tag also verifies that the selected constructor's prefix matches.
+  WorkchainExecutionScope expected;
+  switch (gen::t_TransactionDescr.check_tag(cs)) {
+    case gen::TransactionDescr::trans_ord:
+    case gen::TransactionDescr::trans_storage:
+    case gen::TransactionDescr::trans_tick_tock:
+    case gen::TransactionDescr::trans_split_prepare:
+    case gen::TransactionDescr::trans_split_install:
+    case gen::TransactionDescr::trans_merge_prepare:
+    case gen::TransactionDescr::trans_merge_install:
+      expected = WorkchainExecutionScope::AccountCompute;
+      break;
+    case gen::TransactionDescr::trans_workchain_batch_v1:
+    case gen::TransactionDescr::trans_workchain_batch_v2:
+      expected = WorkchainExecutionScope::BlockTransition;
+      break;
+    default:
+      return td::Status::Error("unknown transaction description for execution scope");
   }
-  if (scope == WorkchainExecutionScope::AccountCompute && tag < 8) {
-    return td::Status::OK();
-  }
-  if (scope == WorkchainExecutionScope::BlockTransition && (tag == 8 || tag == 9)) {
+  if (scope == expected) {
     return td::Status::OK();
   }
   return td::Status::Error("transaction description does not match execution scope");

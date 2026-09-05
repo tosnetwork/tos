@@ -434,6 +434,15 @@ incorrectly succeed and the test fail; the gate was restored. Network
 `tosNode.capabilities.flags` is a different namespace and is not used as a
 consensus activation signal; its engine-advertisement policy remains unfinished.
 
+Execution-scope classification now switches on generated TransactionDescr
+constructor enums through `check_tag`, without a second production wire-tag
+boundary table. `get_tag` alone is insufficient: the generated selector can map
+unassigned prefixes to a candidate constructor. The exhaustive four-bit-prefix
+test checks every ordinary constructor, both tick/tock fourth-bit values, both
+current batch formats, and rejection of unassigned prefixes in both scopes.
+Replacing `check_tag` with `get_tag` makes the test fail because an unassigned
+prefix is accepted as BlockTransition; the checked classifier was restored.
+
 Review follow-up: `UnmatchedBatchInputDoesNotInvokeEngine` adds a successful
 matching-input control and checks zero engine invocations for each mismatched
 committed input field. Removing the pre-execution input-hash guard makes the

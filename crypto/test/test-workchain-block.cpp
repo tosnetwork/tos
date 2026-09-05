@@ -827,6 +827,20 @@ TEST(WorkchainBlock, RejectMalformedBatchDescription) {
   }
 }
 
+TEST(WorkchainBlock, ScopeClassifiesEveryConstructorPrefix) {
+  // Prefix classification is separate from full TL-B payload validation.
+  // Both fourth-bit values of the three-bit tick/tock tag must classify alike.
+  for (unsigned tag = 0; tag < 16; ++tag) {
+    auto prefix = vm::CellBuilder().store_long(tag, 4).finalize();
+    bool account = block::validate_transaction_execution_scope(
+        prefix, block::WorkchainExecutionScope::AccountCompute).is_ok();
+    bool batch = block::validate_transaction_execution_scope(
+        prefix, block::WorkchainExecutionScope::BlockTransition).is_ok();
+    ASSERT_EQ(account, tag < 8);
+    ASSERT_EQ(batch, tag == 8 || tag == 9);
+  }
+}
+
 TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {
   block::WorkchainBatchDescription description;
   description.input_hash.set_zero();
