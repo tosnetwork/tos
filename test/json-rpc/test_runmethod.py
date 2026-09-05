@@ -12,6 +12,7 @@ import pytest
 logger = logging.getLogger(__name__)
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
+SHARD_ALL = -9223372036854775808
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -124,6 +125,36 @@ class TestRunGetMethodStd:
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
+
+    def test_checkpoint_identity_matches_lookup(
+        self, api_method_call_no_get, last_mc_seqno
+    ):
+        """A checkpoint-pinned getter must identify the exact block it used."""
+        lookup = api_method_call_no_get(
+            "lookupBlock",
+            workchain=-1,
+            shard=SHARD_ALL,
+            seqno=last_mc_seqno,
+        )
+        assert lookup.status_code == 200, lookup.json().get("error")
+        lookup_data = lookup.json()
+        assert lookup_data["ok"] is True
+
+        response = api_method_call_no_get(
+            self.METHOD,
+            address=ELECTOR_ADDRESS,
+            method="active_election_id",
+            stack=[],
+            seqno=last_mc_seqno,
+        )
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+
+        expected = lookup_data["result"]
+        actual = data["result"]["block_id"]
+        for field in ("workchain", "shard", "seqno", "root_hash", "file_hash"):
+            assert actual[field] == expected[field]
 
     def test_missing_address(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, method="seqno", stack=[])

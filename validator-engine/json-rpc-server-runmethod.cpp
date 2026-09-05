@@ -661,11 +661,17 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
 
           // Note: liteServer.runMethodResult does not include gas_used;
           // report 0 for compatibility (same as existing runGetMethod handler).
+          std::string block_id_json = "null";
+          if (f->id_) {
+            block_id_json = format_block_id_json(*f->id_);
+          }
           auto result = PSTRING()
               << "{\"@type\":\"smc.runResult\""
               << ",\"gas_used\":0"
               << ",\"stack\":" << stack_json
               << ",\"exit_code\":" << f->exit_code_
+              << ",\"last_transaction_id\":null"
+              << ",\"block_id\":" << block_id_json
               << "}";
 
           if (!slot->settled) {
