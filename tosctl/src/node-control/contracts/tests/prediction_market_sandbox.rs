@@ -5,7 +5,7 @@
 
 //! Production-BOC state-transition tests for PredictionMarket V1.
 
-use chain_block::{Cell, MsgAddressInt, Serializable, SliceData, TrComputePhase};
+use chain_block::{BuilderData, Cell, MsgAddressInt, Serializable, SliceData, StateInit, TrComputePhase};
 use contracts::{
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
@@ -486,6 +486,42 @@ fn global_version_gate_rejects_v13_and_admits_v14_v15_activation() {
         let mut fixture = Fixture::new_with_global_version(version, |_| {});
         fixture.activate();
         assert_eq!(fixture.phase().0, 0, "v{version} activation must retain the trading phase");
+    }
+}
+
+#[test]
+fn malformed_state_init_data_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let code = PredictionMarketContractV1::code().unwrap();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut bad_magic_builder = BuilderData::from_cell(&valid_data).unwrap();
+    let mut bad_magic = bad_magic_builder.data().to_vec();
+    bad_magic[0] ^= 0x80;
+    bad_magic_builder.replace_data(bad_magic, valid_data.bit_length());
+    let bad_magic = bad_magic_builder.into_cell().unwrap();
+    let mut truncated_builder = BuilderData::from_cell(&valid_data).unwrap();
+    truncated_builder.trunc(16).unwrap();
+    let truncated = truncated_builder.into_cell().unwrap();
+
+    for (label, data) in [("empty", Cell::default()), ("truncated", truncated), ("bad magic", bad_magic)] {
+        let mut bc = Blockchain::with_global_version(14).unwrap();
+        bc.set_workchain(-1);
+        let owner = bc.treasury(&format!("malformed-init-{label}"), 25_000 * TOS).unwrap();
+        let state_init = StateInit::with_code_and_data(code.clone(), data);
+        let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+        let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+        let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+            .bounce(true)
+            .state_init(state_init)
+            .body(PredictionMarketContractV1::activate(1).unwrap())
+            .build();
+        let result = bc.send_message(deploy).unwrap();
+        result.expect_aborted();
+        let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+        assert_ne!(
+            state.exit_code, 0,
+            "{label} StateInit must not become a parseable active market state"
+        );
     }
 }
 
