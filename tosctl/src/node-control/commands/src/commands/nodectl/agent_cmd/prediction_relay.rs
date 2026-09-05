@@ -789,7 +789,9 @@ impl AgentAccountPredictionRelayDestinationResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionDestinationObservation>> = BTreeMap::new();
@@ -1016,7 +1018,9 @@ impl AgentAccountPredictionRelayBounceCreditResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionBounceCreditObservation>> = BTreeMap::new();
@@ -1667,14 +1671,11 @@ async fn observe_prediction_destination(
     rpc.verify_pinned_primary_network(expected_network).await?;
     verify_prediction_checkpoint(&rpc, &request.pre_broadcast_masterchain_checkpoint).await?;
     let master = rpc.get_masterchain_info().await?;
-    let first = request
-        .pre_broadcast_masterchain_checkpoint
-        .sequence_number
-        .checked_add(1)
-        .context("Prediction checkpoint cannot advance")?;
+    let first = prediction_destination_scan_first(market, request)?;
     anyhow::ensure!(
-        master.last.seqno >= first,
-        "observer masterchain has not advanced past the pre-broadcast checkpoint"
+        first > request.pre_broadcast_masterchain_checkpoint.sequence_number
+            && master.last.seqno >= first,
+        "Prediction destination lower bound is not after the durable checkpoint"
     );
     let span = master
         .last
@@ -1693,7 +1694,7 @@ async fn observe_prediction_destination(
     let mut seen_blocks = BTreeSet::new();
     let mut inspected_transactions = 0u32;
     let mut found: Option<PredictionDestinationCandidate> = None;
-    for masterchain_seqno in first..=master.last.seqno {
+    'scan: for masterchain_seqno in first..=master.last.seqno {
         let blocks = if market.workchain_id() == -1 {
             vec![
                 rpc.lookup_block(
@@ -1743,6 +1744,15 @@ async fn observe_prediction_destination(
                 &mut found,
             )
             .await?;
+            // `actual_outbound` is authenticated by the exact source
+            // transaction and the frozen Agent Account code emits one checked
+            // call per controller action. Once that unique message has been
+            // consumed by the market, later unrelated history cannot improve
+            // the proof; continuing would only make recovery depend on every
+            // subsequently retained RPC block index.
+            if found.is_some() {
+                break 'scan;
+            }
         }
     }
     let candidate = found.context(
@@ -1796,6 +1806,40 @@ async fn observe_prediction_destination(
             no_bounce_observation_digest,
         },
     })
+}
+
+// A masterchain source and its masterchain destination may be executed in the
+// same block.  The source evidence's finality head is deliberately a later
+// observer head, so using it as this cursor would skip that block (and the
+// exact inbound we are trying to prove).  The source transaction's own block
+// is the durable inclusive lower bound for a masterchain market.
+fn prediction_destination_scan_first(
+    market: &MsgAddressInt,
+    request: &PredictionRelayDestinationRequest,
+) -> anyhow::Result<u32> {
+    prediction_destination_scan_first_for_workchain(
+        market.workchain_id(),
+        request.source_evidence.block.workchain_id,
+        request.source_evidence.block.sequence_number,
+        request.source_evidence.block.masterchain_sequence_number,
+    )
+}
+
+fn prediction_destination_scan_first_for_workchain(
+    market_workchain: i32,
+    source_block_workchain: i32,
+    source_block_sequence_number: u32,
+    source_finality_masterchain_sequence_number: u32,
+) -> anyhow::Result<u32> {
+    if market_workchain == -1 {
+        anyhow::ensure!(
+            source_block_workchain == -1,
+            "Prediction masterchain market has non-masterchain source evidence"
+        );
+        Ok(source_block_sequence_number)
+    } else {
+        Ok(source_finality_masterchain_sequence_number)
+    }
 }
 
 async fn verify_prediction_market_identity(
@@ -1885,7 +1929,13 @@ async fn scan_prediction_destination_block(
                 after_account.as_deref(),
                 DESTINATION_BLOCK_PAGE_SIZE,
             )
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "read Prediction destination block {}:{}:{}",
+                    expected_block.workchain, expected_block.shard, expected_block.seqno
+                )
+            })?;
         let actual_block =
             page.id.as_ref().context("Prediction destination block page omitted block identity")?;
         anyhow::ensure!(
@@ -2483,8 +2533,6 @@ fn prediction_observed_checked_call(
     let body_hash = format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)));
     let amount =
         header.value.coins.as_u64().context("Prediction source output value exceeds u64")?;
-    let extra_flags =
-        header.extra_flags.as_u64().context("Prediction source output extra_flags exceed u64")?;
     anyhow::ensure!(
         header.ihr_disabled
             && header.bounce
@@ -2493,7 +2541,6 @@ fn prediction_observed_checked_call(
             && header.dst.to_string() == record.claim.target
             && amount == record.claim.value_atomic
             && header.value.other.is_empty()
-            && extra_flags == 3
             && message.state_init().is_none()
             && record.claim.state_init_hash.is_none()
             && record.claim.body_hash.as_deref() == Some(body_hash.as_str()),
@@ -2513,7 +2560,11 @@ fn prediction_observed_checked_call(
         state_init_hash: String::new(),
         bounce: header.bounce,
         bounced: header.bounced,
-        extra_flags,
+        // `3` is the Agent Account V2 `send_raw_message` mode, not the
+        // internal-message header's `extra_flags` (which is normally zero).
+        // The source code hash is verified before this parser runs, and that
+        // audited code binds every checked-call V2 outbound to this mode.
+        extra_flags: 3,
     })
 }
 
@@ -2660,6 +2711,16 @@ mod tests {
         assert!(prediction_request_matches_durable_boundary(&request, &boundary));
         request.pre_broadcast_source_cursor.last_logical_time += 1;
         assert!(!prediction_request_matches_durable_boundary(&request, &boundary));
+    }
+
+    #[test]
+    fn destination_scan_includes_the_source_masterchain_block() {
+        // Finality is normally observed after the source transaction.  Starting
+        // at that later head would miss a destination transaction in the same
+        // masterchain block as the source checked call.
+        assert_eq!(prediction_destination_scan_first_for_workchain(-1, -1, 42, 99).unwrap(), 42);
+        assert!(prediction_destination_scan_first_for_workchain(-1, 0, 42, 99).is_err());
+        assert_eq!(prediction_destination_scan_first_for_workchain(0, 0, 42, 99).unwrap(), 99);
     }
 
     fn test_hash(index: u32) -> [u8; 32] {
