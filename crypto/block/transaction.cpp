@@ -4363,12 +4363,13 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
 // Ordered HashmapE 15 ^MessageRelaxed requests. Fixed mode 1 preserves the requested
 // value, charges fees separately, and never skips failures or drains the account.
 td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell>& messages,
-                                                              const ActionPhaseConfig& cfg) {
+                                                              const ActionPhaseConfig& cfg,
+                                                              const CurrencyCollection& initial_balance) {
   if (!cfg.workchains || cfg.max_actions < 0) {
     return td::Status::Error("missing batch native message configuration");
   }
   ActionPhase staged{};
-  staged.remaining_balance = balance;
+  staged.remaining_balance = initial_balance;
   staged.reserved_balance.set_zero();
   staged.end_lt = end_lt;
   staged.total_action_fees = staged.total_fwd_fees = staged.action_fine = td::zero_refint();
@@ -4416,12 +4417,49 @@ td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell
   }
 }
 
+td::Result<CurrencyCollection> Transaction::stage_workchain_credit(const WorkchainBlockInput& input,
+                                                                 const SerializeConfig& cfg) const {
+  auto credited = balance;
+  if (input.inbound_messages.is_null()) {
+    return credited;
+  }
+  if (cfg.global_version < kBlockTransitionMinGlobalVersion) {
+    return td::Status::Error("batch incoming credit requires activated host version");
+  }
+  TRY_RESULT(envelopes, decode_workchain_batch_inbound(input.inbound_messages));
+  for (const auto& root : envelopes) {
+    tlb::MsgEnvelope::Record_std envelope;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    gen::MsgAddressInt::Record_addr_std destination;
+    CurrencyCollection value;
+    if (!tlb::unpack_cell(root, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
+        !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
+        destination.workchain_id != account.workchain || destination.address != account.addr ||
+        !info.ihr_disabled || !extra_flags_within_valid_mask(tlb::t_Tomis.as_integer(info.extra_flags)) ||
+        info.created_lt >= start_lt || info.created_at > now ||
+        (envelope.emitted_lt && envelope.emitted_lt.value() >= start_lt) ||
+        !value.validate_unpack(info.value)) {
+      return td::Status::Error("invalid batch incoming credit context");
+    }
+    // Forwarding fees belong to native InMsg accounting, never executor credit.
+    auto checked_credit = [](const CurrencyCollection& prior,
+                             const CurrencyCollection& incoming) -> td::Result<CurrencyCollection> {
+      auto result = prior + incoming;
+      vm::CellBuilder encoded;
+      if (!result.is_valid() || !result.store(encoded)) {
+        return td::Status::Error("batch incoming balance exceeds native encoding");
+      }
+      return result;
+    };
+    TRY_RESULT(next, checked_credit(credited, value));
+    credited = std::move(next);
+  }
+  return credited;
+}
+
 // Staging does not commit the account or publish any message.
 td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
                                                const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
-  if (input.inbound_messages.not_null()) {
-    return td::Status::Error("batch incoming native value settlement is not implemented");
-  }
   if (trans_type != tr_workchain_batch || account.status != Account::acc_active || account.workchain < 0 ||
       account.now_ != now || start_lt >= end_lt || root.not_null() || new_total_state.not_null() ||
       batch_description.not_null()) {
@@ -4458,8 +4496,9 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
     return td::Status::Error("batch state preparation cannot mix account phases or native value flow");
   }
   ActionPhase settlement{};
+  TRY_RESULT(credited_balance, stage_workchain_credit(input, cfg));
   if (has_messages) {
-    TRY_RESULT(staged, stage_workchain_messages(effects.outbound_messages, *message_cfg));
+    TRY_RESULT(staged, stage_workchain_messages(effects.outbound_messages, *message_cfg, credited_balance));
     settlement = std::move(staged);
   }
   TRY_RESULT(encoded_effects, encode_workchain_block_result(effects));
@@ -4472,6 +4511,7 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
   }
   batch_account_data = new_data;
   batch_description = encode_workchain_batch_description(description);
+  balance = std::move(credited_balance);
   if (has_messages) {
     balance = std::move(settlement.remaining_balance);
     total_fees = CurrencyCollection(std::move(settlement.total_action_fees));

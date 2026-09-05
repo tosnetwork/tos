@@ -195,7 +195,7 @@ Base node revision: `5a6145cce`.
   must have a permitted OutMsg record with the right source transaction and origin
   metadata, and obey deferred-message ordering. The normal OutMsg/queue checks
   still verify the reverse transaction reference and queue state update. Native
-  incoming account message settlement is still rejected; deferred host transit
+  incoming queue consumption is still rejected by the collator; deferred host transit
   does not execute a recipient account in this block.
 - The disk test now sends two messages carrying 100 atoms each to workchain 0.
   Fixture forwarding prices charge 100 per message: 33 collected locally and 67
@@ -306,9 +306,8 @@ Base node revision: `5a6145cce`.
 - Tests cover BoC round-trip, insertion-order invariance, emitted-LT ordering,
   equal-LT hash tie-breaking, duplicate original messages, count/key mismatches,
   malformed envelopes, input/list commitment substitution and positive/negative
-  native membership. `prepare_workchain_batch` explicitly rejects any inbound root
-  until native credits and collator queue consumption are implemented, so this format support
-  cannot silently accept messages without accounting for their value.
+  native membership. Native batch preparation now stages incoming value credit;
+  collator queue consumption and end-to-end inbound value-flow tests remain pending.
 - Inbound mutation checks omit the exposed-list comparison during replay (a
   substituted membership list is accepted) and omit dictionary-key/message-hash
   checking (a falsely indexed envelope is accepted). Each fails its targeted
@@ -487,9 +486,27 @@ transit contributes none. Other import kinds and duplicate final messages reject
 This extraction is structural: the existing earlier `check_in_msg_descr` checks
 queue proofs, dictionary keys, routing, fees and transaction backlinks. The
 reconstructed canonical root is then passed through WorkchainBlockReplayContext
-and compared with the batch input/description commitments. Nonempty inboxes
-still reject at native batch preparation; no credit path is enabled by extraction.
+and compared with the batch input/description commitments. Inbox extraction alone
+does not credit value; the transaction settlement layer performs that operation.
 The import reconstruction test uses generated-TL-B-valid native records and
 checks exact canonical inbox hash, transit-only/empty inputs, duplicates,
 malformed inputs and a well-formed unsupported discard. Omitting deferred-final
 envelopes makes its canonical-hash assertion fail; the inclusion was restored.
+
+Native batch credit staging now checks version, exact standard destination with
+no anycast, IHR-disabled/valid flags, creation/emission time, and native value
+encoding. A checked addition builds a temporary balance from message principals
+only; remaining forwarding fees stay in native InMsg accounting. Outbound mode-1
+settlement spends from that temporary balance. No transaction balance, fee or
+output is published until all messages and state limits succeed; the account is
+not committed by preparation. This is native executor funding, not UNO reserve
+allocation or private Note minting.
+
+Tests cover two incoming 100-atom principals (balance 200, not 334), unchanged
+account state, full native wrapper replay, rejection of late input times, a
+successful incoming-funded outgoing message with independent replay, and an
+insufficient second outgoing message leaving no partial credit/fee/output.
+Omitting the credit update makes the balance-200 assertion fail; it was restored.
+These are transaction-layer tests. Live collator inbox collection, native InMsg
+publication, processed-up-to updates and incoming multi-node integration remain
+required before claiming full M1 incoming support.

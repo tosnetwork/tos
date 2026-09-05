@@ -423,7 +423,10 @@ struct Transaction {
   std::vector<Ref<vm::Cell>> batch_out_msgs;
   tos::LogicalTime batch_end_lt{0};
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
-                                                  const ActionPhaseConfig& cfg);
+                                                  const ActionPhaseConfig& cfg,
+                                                  const CurrencyCollection& initial_balance);
+  td::Result<CurrencyCollection> stage_workchain_credit(const WorkchainBlockInput& input,
+                                                       const SerializeConfig& cfg) const;
  public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;

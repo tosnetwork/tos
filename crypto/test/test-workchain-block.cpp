@@ -239,7 +239,7 @@ TEST(WorkchainBlock, InboundCommitmentAndMembership) {
   ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, bad));
   ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, bad));
   ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(bad), other.msg));
-  // A membership query is not acceptance: native incoming credit is still gated.
+  // A membership query is not acceptance: native credit requires host version.
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
@@ -248,7 +248,7 @@ TEST(WorkchainBlock, InboundCommitmentAndMembership) {
   block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
   auto status = tx.prepare_workchain_batch(in, effects, block::SerializeConfig{});
   ASSERT_TRUE(status.is_error());
-  ASSERT_EQ(status.message(), "batch incoming native value settlement is not implemented");
+  ASSERT_EQ(status.message(), "batch incoming credit requires activated host version");
   ASSERT_TRUE(account.balance.is_zero());
   ASSERT_TRUE(!tx.serialize(block::SerializeConfig{}));
 }
@@ -912,6 +912,83 @@ TEST(WorkchainBlock, InboxReconstructedFromNativeImports) {
       .store_long(1, 4).store_long(67, 8).finalize();
   ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, discarded));
   ASSERT_TRUE(block::workchain_batch_inbound_from_imports({discarded}).is_error());
+}
+
+TEST(WorkchainBlock, NativeBatchCreditIsAtomicAndReplayable) {
+  auto in = input();
+  in.inbound_messages = block::encode_workchain_batch_inbound(
+      {inbound_envelope(3), inbound_envelope(4)}).move_as_ok();
+  auto effects = CounterEngine().execute_block(in).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  auto old_hash = account.total_state->get_hash();
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  using Transaction = block::transaction::Transaction;
+  Transaction tx(account, Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  ASSERT_TRUE(tx.balance == block::CurrencyCollection(200));
+  ASSERT_TRUE(tx.total_fees.is_zero());
+  ASSERT_TRUE(account.balance.is_zero());
+  ASSERT_TRUE(tx.serialize(cfg));
+  ASSERT_TRUE(block::replay_workchain_batch_transaction(
+      CounterEngine(), in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg).is_ok());
+  ASSERT_TRUE(account.total_state->get_hash() == old_hash);
+
+  for (auto late : {inbound_envelope(10), inbound_envelope(3, 0, 10)}) {
+    auto changed = in;
+    changed.inbound_messages = block::encode_workchain_batch_inbound({late}).move_as_ok();
+    Transaction rejected(account, Transaction::tr_workchain_batch, 10, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_batch(changed, effects, cfg).is_error());
+    ASSERT_TRUE(rejected.balance.is_zero());
+    ASSERT_TRUE(!rejected.serialize(cfg));
+  }
+  vm::CellBuilder message;
+  message.store_long(4, 4).store_zeroes(2)
+      .store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+  ASSERT_TRUE(block::CurrencyCollection(100).store(message));
+  message.store_zeroes(8).store_zeroes(96).store_zeroes(2);
+  auto outbound = message.finalize();
+  vm::Dictionary requests(15);
+  for (unsigned i = 0; i < 2; ++i) {
+    ASSERT_TRUE(requests.set_ref(td::BitArray<15>(i), outbound));
+  }
+  vm::CellBuilder encoded_requests;
+  ASSERT_TRUE(std::move(requests).append_dict_to_bool(encoded_requests));
+  auto costly = effects;
+  costly.outbound_messages = encoded_requests.finalize();
+  block::WorkchainSet workchains;
+  block::ActionPhaseConfig message_cfg;
+  message_cfg.workchains = &workchains;
+  message_cfg.global_version = cfg.global_version;
+  message_cfg.fwd_mc.lump_price = 100;
+  message_cfg.fwd_mc.first_frac = 32768;
+  vm::Dictionary one_request(15);
+  unsigned first_index = 0;
+  ASSERT_TRUE(one_request.set_ref(td::BitArray<15>(first_index), outbound));
+  vm::CellBuilder one_encoded;
+  ASSERT_TRUE(std::move(one_request).append_dict_to_bool(one_encoded));
+  auto funded_input = in;
+  funded_input.candidate = vm::CellBuilder().store_long(2, 64).store_ref(one_encoded.finalize()).finalize();
+  auto funded_effects = CounterEngine().execute_block(funded_input).move_as_ok();
+  Transaction funded(account, Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(funded.prepare_workchain_batch(funded_input, funded_effects, cfg, &message_cfg).is_ok());
+  ASSERT_TRUE(funded.balance.is_zero());
+  ASSERT_EQ(funded.out_msgs.size(), 1u);
+  ASSERT_TRUE(funded.serialize(cfg));
+  ASSERT_TRUE(block::replay_workchain_batch_transaction(
+      CounterEngine(), funded_input, funded.root, 2, td::Bits256::zero(), 10, 10, cfg, &message_cfg).is_ok());
+  Transaction insufficient(account, Transaction::tr_workchain_batch, 10, 10);
+  auto failure = insufficient.prepare_workchain_batch(in, costly, cfg, &message_cfg);
+  ASSERT_TRUE(failure.is_error());
+  ASSERT_EQ(failure.message(), "batch native message send failed");
+  ASSERT_TRUE(insufficient.balance.is_zero());
+  ASSERT_TRUE(insufficient.out_msgs.empty());
+  ASSERT_TRUE(insufficient.total_fees.is_zero());
+  ASSERT_TRUE(account.total_state->get_hash() == old_hash);
 }
 
 TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {
