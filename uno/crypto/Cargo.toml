@@ -1,0 +1,10 @@
+[package]
+name = "tos-uno-crypto-prototype"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153dcaeef8ef631c8991c53ed1248", default-features = false, features = ["circuit", "multicore", "std"] }
+
+[workspace]

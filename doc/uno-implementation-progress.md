@@ -882,3 +882,14 @@ dropping the output permission requirement or reversing the output-only sign
 makes the matching assertion fail; changes were restored. This is not a wire-tag
 assignment, canonical flags decoder, proof/signature verifier or authorization
 for output-only issuance. Those must be connected at the real bundle boundary.
+
+Started an isolated M2 Rust prototype under `uno/crypto`, pinned to the Orchard
+0.15.5 release revision, an explicit feature set, Cargo.lock and Rust 1.97.1.
+It compiles the actual circuit dependency and checks the allowed bundle/circuit
+selector pair, rejecting historical and later profiles. The 12-combination
+matrix fails when either selector comparison is removed; both were restored.
+Locked offline tests and formatting checks pass. Source/API and initial advisory
+review links are in its README. This is not a production dependency approval,
+full security/license audit, VK identity manifest or proof verifier; no engine
+registration, FFI or mainnet activation was added. Real proofs/signatures, pinned
+VK reconstruction and complete TOS authorization/profile integration remain M2.
