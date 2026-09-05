@@ -1273,6 +1273,182 @@ fn uncontested_normal_quorum_finalizes_only_at_the_frozen_deadline() {
 }
 
 #[test]
+fn factual_invalid_from_normal_quorum_pays_each_complete_set_half() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let keeper = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let key = SigningKey::from_bytes(&[0x74; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            context,
+            2,
+            [0xa1; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let deadline = f.phase().6;
+    f.bc.set_now(deadline as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::finalize_uncontested(7).unwrap())
+        .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!(
+        (status, reason, outcome),
+        (4, 0, 2),
+        "a normal factual INVALID is distinct from a protocol timeout"
+    );
+
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::claim(8, &owner).unwrap())
+        .expect_success();
+    assert_eq!(f.accounting()[4], 10 * TOS as i128, "INVALID must pay a full set exactly once");
+    assert_eq!(f.accounting()[7], 0, "claim must exhaust the finalized payout liability");
+}
+
+#[test]
+fn appellate_quorum_can_uphold_the_challenged_normal_result() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let challenger = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let appellate = f.appellate.address().clone();
+    let key = SigningKey::from_bytes(&[0x75; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            normal_context,
+            0,
+            [0xa2; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let proposal_hash = f.phase().5;
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(7, proposal_hash, 1, [0xa3; 32]).unwrap(),
+    )
+    .expect_success();
+
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+        .expect_success();
+    let appeal_context = f.phase().3;
+    f.send(
+        &appellate,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            9,
+            1,
+            appeal_context,
+            0,
+            [0xa4; 32],
+            u64::from(f.bc.now()),
+            f.init.resolve_not_before + f.init.appeal_period,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!((status, reason, outcome), (4, 1, 0));
+}
+
+#[test]
+fn challenged_proposal_appellate_timeout_keeps_normal_result_not_invalid() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let challenger = f.trader_b.address().clone();
+    let normal = f.normal.address().clone();
+    let key = SigningKey::from_bytes(&[0x76; 32]);
+    f.register(&owner, &key, 2);
+    f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::split(3, 1).unwrap())
+        .expect_success();
+
+    f.bc.set_now(f.init.resolve_not_before as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(4).unwrap())
+        .expect_success();
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(5).unwrap())
+        .expect_success();
+    let normal_context = f.phase().3;
+    f.send(
+        &normal,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::report_result(
+            6,
+            0,
+            normal_context,
+            0,
+            [0xa5; 32],
+            u64::from(f.bc.now()),
+            f.init.oracle_vote_deadline,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    let proposal_hash = f.phase().5;
+    f.send(
+        &challenger,
+        OPERATION_BUDGET + f.init.challenge_bond + f.init.challenge_processing_fee,
+        PredictionMarketContractV1::challenge_result(7, proposal_hash, 1, [0xa6; 32]).unwrap(),
+    )
+    .expect_success();
+    let review_base = f.phase().4;
+    let deadline = f.phase().6;
+
+    f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
+    f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(8).unwrap())
+        .expect_success();
+    f.bc.set_now(deadline as u32);
+    f.send(
+        &challenger,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::finalize_review_timeout(9, review_base).unwrap(),
+    )
+    .expect_success();
+    let (status, reason, outcome, _, _, _, _) = f.phase();
+    assert_eq!(
+        (status, reason, outcome),
+        (4, 1, 0),
+        "a challenged normal proposal remains authoritative when appellate quorum times out"
+    );
+}
+
+#[test]
 fn both_frozen_oracle_rounds_timing_out_is_the_only_timeout_that_yields_invalid() {
     let mut f = Fixture::new();
     f.activate();
