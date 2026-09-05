@@ -243,15 +243,20 @@ impl ReferenceMarket {
 
 impl Fixture {
     fn new() -> Self {
+        Self::new_with(|_| {})
+    }
+
+    fn new_with(configure: impl FnOnce(&mut PredictionMarketInitV1)) -> Self {
         let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
         bc.set_workchain(-1);
-        let owner = bc.treasury("prediction-owner", 1_000 * TOS).expect("owner");
-        let trader_b = bc.treasury("prediction-trader-b", 1_000 * TOS).expect("trader b");
+        let treasury_balance = 25_000_u64.checked_mul(TOS).unwrap();
+        let owner = bc.treasury("prediction-owner", treasury_balance).expect("owner");
+        let trader_b = bc.treasury("prediction-trader-b", treasury_balance).expect("trader b");
         let normal = bc.treasury("normal-reporter", 100 * TOS).expect("normal reporter");
         let appellate = bc.treasury("appellate-reporter", 100 * TOS).expect("appellate reporter");
         let reserve = bc.treasury("prediction-reserve", 100 * TOS).expect("reserve");
         let now = u64::from(bc.now());
-        let init = PredictionMarketInitV1 {
+        let mut init = PredictionMarketInitV1 {
             global_id: 42,
             workchain_id: -1,
             deployment_salt: [0x11; 32],
@@ -293,6 +298,7 @@ impl Fixture {
                 reporters: vec![appellate.address().clone()],
             },
         };
+        configure(&mut init);
         let market = PredictionMarketContractV1::calculate_address(&init).expect("market address");
         let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
             .bounce(false)
@@ -807,6 +813,100 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
+}
+
+fn run_partitioned_fill(parts: u64) -> ([i128; 3], [i128; 3], [i128; 4]) {
+    assert!(parts > 0 && 10_000_u64.checked_rem(parts) == Some(0));
+    let mut f = Fixture::new_with(|init| {
+        init.lot_value = 10_000;
+        init.max_order_lots = 10_000;
+        init.max_locked_collateral = TOS;
+        init.max_account_free_balance = TOS;
+        init.max_total_free_balance = 2_u64.checked_mul(TOS).unwrap();
+        init.max_total_liability = 5_u64.checked_mul(TOS).unwrap();
+    });
+    f.activate();
+    let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
+    let keys = [SigningKey::from_bytes(&[0x31; 32]), SigningKey::from_bytes(&[0x32; 32])];
+    let credited = 200_000_000_u64;
+    for (index, owner) in owners.iter().enumerate() {
+        let value = credited
+            .checked_add(f.init.participant_entry_fee)
+            .and_then(|amount| amount.checked_add(f.init.account_cleanup_bounty))
+            .and_then(|amount| amount.checked_add(OPERATION_BUDGET))
+            .unwrap();
+        f.send(
+            owner,
+            value,
+            PredictionMarketContractV1::register_and_deposit(
+                20_u64.checked_add(index as u64).unwrap(),
+                credited,
+                keys[index].verifying_key().to_bytes(),
+            )
+            .unwrap(),
+        )
+        .expect_success();
+    }
+    let buy_yes = f.signed_order(
+        &owners[0],
+        &keys[0],
+        1,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        10_000,
+    );
+    let buy_no = f.signed_order(
+        &owners[1],
+        &keys[1],
+        1,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        10_000,
+    );
+    let chunk = 10_000_u64.checked_div(parts).unwrap();
+    for index in 0..parts {
+        f.send(
+            &owners[0],
+            2_u64.checked_mul(TOS).unwrap(),
+            PredictionMarketContractV1::match_pair(
+                100_u64.checked_add(index).unwrap(),
+                chunk,
+                buy_yes.clone(),
+                buy_no.clone(),
+            )
+            .unwrap(),
+        )
+        .expect_success();
+    }
+    let accounting = f.accounting();
+    assert_eq!(accounting[0], 2);
+    assert_eq!(accounting[1], 2);
+    assert_eq!(accounting[2], i128::from(parts));
+    assert_eq!(accounting[3], 10_000);
+    assert_eq!(accounting[4], 300_000_000);
+    assert_eq!(accounting[5], 100_000_000);
+    assert_eq!(accounting[10], 4_000_000);
+    let left = f.account(&owners[0]);
+    let right = f.account(&owners[1]);
+    let left = [left[0], left[1], left[2]];
+    let right = [right[0], right[1], right[2]];
+    assert_eq!(left, [140_000_000, 10_000, 0]);
+    assert_eq!(right, [160_000_000, 0, 10_000]);
+    (left, right, [accounting[3], accounting[4], accounting[5], accounting[10]])
+}
+
+#[test]
+#[ignore = "release-scale production-BOC gate; executes 10,011 real match transactions"]
+fn one_ten_and_ten_thousand_partial_fills_are_economically_identical() {
+    let single = run_partitioned_fill(1);
+    let ten = run_partitioned_fill(10);
+    let ten_thousand = run_partitioned_fill(10_000);
+    assert_eq!(single, ten);
+    assert_eq!(single, ten_thousand);
 }
 
 #[test]

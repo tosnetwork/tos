@@ -1038,7 +1038,7 @@ int order_key(int epoch, int nonce) inline {
 (int, int, int, int) inspect_order_record(cell orders, int epoch, int nonce,
     int digest, int quantity, int valid_until) impure inline {
   (cell state, int found) = orders.udict_get_ref?(96, order_key(epoch, nonce));
-  if (~ found) {
+  if (found == 0) {
     return (0, 0, 0, 0);
   }
   (int stored_digest, int stored_quantity, int filled, int stored_valid_until,
@@ -1570,13 +1570,13 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     }
 
     int new_records = 0;
-    if (~ left_record_found) { new_records += 1; }
-    if (~ right_record_found) { new_records += 1; }
+    if (left_record_found == 0) { new_records += 1; }
+    if (right_record_found == 0) { new_records += 1; }
     int record_cost = checked_mul(new_records,
       checked_add(order_entry_fee, order_cleanup_bounty));
     throw_unless(err::insufficient_value,
       msg_value >= checked_add(min_operation_budget, record_cost));
-    if (~ left_record_found) {
+    if (left_record_found == 0) {
       throw_unless(err::capacity,
         (left_live < max_orders_per_participant) &
         (global_live_orders < max_live_orders));
@@ -1586,7 +1586,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
       left_order_cleanup = checked_add(left_order_cleanup, order_cleanup_bounty);
       cleanup = checked_add(cleanup, order_cleanup_bounty);
     }
-    if (~ right_record_found) {
+    if (right_record_found == 0) {
       throw_unless(err::capacity,
         (right_live < max_orders_per_participant) &
         (global_live_orders < max_live_orders));
