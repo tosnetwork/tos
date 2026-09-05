@@ -33,7 +33,7 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (fourteen cases) and the full `validator-engine` target build
+- `test-workchain-block` (fifteen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The
@@ -85,6 +85,21 @@ Base node revision: `5a6145cce`.
 - Removing the complete-transaction hash comparison accepts a forged wrapper
   and fails the rejection assertion. The comparison was restored. This helper
   is not yet called by the live validator's block-execution path.
+- Executor account data now uses `WorkchainExecutorState` (`57424531`): engine
+  state plus an optional latest `WorkchainBatchWitness` (`57425731`) containing
+  the candidate and canonical effects envelope. Initial state can omit the
+  witness; every prepared batch writes one. The codec checks fixed cell shapes,
+  complete candidate/effects pairs and equality of engine state with the effects.
+- Native account serialization and storage limits now include the persisted
+  candidate/effects. Tests restore the resulting shard BoC, recover the witness
+  from the account and use its candidate to independently replay the original
+  transaction, obtaining the same Account hash. Only the current witness is
+  retained in current state; historical availability still requires block/state
+  archive retention and live synchronization acceptance tests.
+  Here witness means public verification data (candidate/proofs/ciphertexts),
+  never wallet secrets or private proving inputs.
+- Removing the persisted engine/effects equality check accepts an inconsistent
+  witness and fails its rejection assertion. The check was restored.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.
@@ -102,8 +117,8 @@ checks the input commitment before executing, independently computes the effects
 and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
-Native state-only transaction/account wrapping is implemented; live witness
-placement, full shard wrapping, queue settlement and collator wiring remain pending.
+Native state-only transaction/account wrapping and witness storage are implemented;
+full shard wrapping, queue settlement and collator wiring remain pending.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.
@@ -139,7 +154,7 @@ called by the collator or validator and its context cells are not authentication
 proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
-   the descriptor registry; implement witness placement and final transaction wrapping.
+   the descriptor registry; integrate persisted witnesses with live block processing.
 2. Integrate real collate/validate, message queues, value flow, resource limits,
    atomic publication, capability gating, restart and state synchronization.
 3. Lock the payment proof dependency, circuit/VK, signature and encryption

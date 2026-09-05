@@ -7,6 +7,9 @@ workchain_block_input_v1#57424931 previous_shard_state:^Cell candidate:^Cell
 workchain_block_result_v2#57425232 wire_bytes:uint64 verification_units:uint64 written_cells:uint64
   new_engine_state:^Cell outputs:^WorkchainBlockOutputs
   data_availability:^Cell = WorkchainBlockResult;
+workchain_batch_witness_v1#57425731 candidate:^Cell effects:^WorkchainBlockResult = WorkchainBatchWitness;
+workchain_executor_state_v1#57424531 engine_state:^Cell
+  latest_batch:(Maybe ^WorkchainBatchWitness) = WorkchainExecutorState;
 true$_ = True;
 // EMPTY False;
 bool_false$0 = Bool;

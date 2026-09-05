@@ -69,7 +69,8 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
     account.store_long(1, 1).store_long(4, 3).store_long(account_wc, 8).store_bits(address.bits(), 256)
         .store_zeroes(42).store_long(2, 64).store_zeroes(5);
     if (active) {
-      account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(number(counter_value)).store_long(0, 1);
+      auto executor = block::encode_workchain_executor_state({number(counter_value), {}, {}}).move_as_ok();
+      account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(executor).store_long(0, 1);
     } else {
       account.store_long(0, 2);
     }
@@ -137,6 +138,39 @@ TEST(WorkchainBlock, CounterReplay) {
   ASSERT_EQ(vm::load_cell_slice(previous).fetch_ulong(64), 40u);
 }
 
+TEST(WorkchainBlock, ExecutorWitnessEncoding) {
+  CounterEngine engine;
+  auto in = input();
+  auto effects = engine.execute_block(in).move_as_ok();
+  auto encoded_effects = block::encode_workchain_block_result(effects).move_as_ok();
+  block::WorkchainExecutorState state{effects.new_engine_state, in.candidate, encoded_effects};
+  auto root = block::encode_workchain_executor_state(state).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainExecutorState.validate_ref(10000, root));
+  auto wire = vm::std_boc_serialize(root).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  auto decoded = block::decode_workchain_executor_state(restored).move_as_ok();
+  ASSERT_TRUE(decoded.engine_state->get_hash() == state.engine_state->get_hash());
+  ASSERT_TRUE(decoded.candidate->get_hash() == state.candidate->get_hash());
+  ASSERT_TRUE(decoded.effects->get_hash() == state.effects->get_hash());
+  auto missing = state;
+  missing.candidate = {};
+  ASSERT_TRUE(block::encode_workchain_executor_state(missing).is_error());
+  auto bad = vm::CellBuilder().store_long(0x57424531, 32).store_long(1, 1).store_ref(number(99))
+      .store_ref(vm::load_cell_slice(root).prefetch_ref(1)).finalize();
+  ASSERT_TRUE(block::gen::t_WorkchainExecutorState.validate_ref(10000, bad));
+  auto mismatch = block::decode_workchain_executor_state(bad);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.error().message(), "executor state differs from stored batch effects");
+  auto missing_witness = vm::CellBuilder().store_long(0x57424531, 32).store_long(1, 1)
+      .store_ref(state.engine_state).finalize();
+  auto absent = block::decode_workchain_executor_state(missing_witness);
+  ASSERT_TRUE(absent.is_error());
+  ASSERT_EQ(absent.error().message(), "invalid workchain executor state references");
+  auto initial = block::encode_workchain_executor_state({number(40), {}, {}}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainExecutorState.validate_ref(10000, initial));
+  ASSERT_TRUE(block::decode_workchain_executor_state(initial).move_as_ok().candidate.is_null());
+}
+
 TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   CounterEngine engine;
   auto in = input();
@@ -200,7 +234,10 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   ASSERT_TRUE(account.storage_used.cells > 0);
   ASSERT_EQ(account.last_trans_lt_, 10u);
   ASSERT_EQ(account.last_trans_end_lt_, 11u);
-  ASSERT_EQ(vm::load_cell_slice(account.data).fetch_ulong(64), 42u);
+  auto stored = block::decode_workchain_executor_state(account.data).move_as_ok();
+  ASSERT_EQ(vm::load_cell_slice(stored.engine_state).fetch_ulong(64), 42u);
+  ASSERT_TRUE(stored.candidate->get_hash() == in.candidate->get_hash());
+  ASSERT_TRUE(stored.effects->get_hash() == block::encode_workchain_block_result(effects).move_as_ok()->get_hash());
   vm::CellBuilder account_block;
   ASSERT_TRUE(account.create_account_block(account_block));
   auto block_root = account_block.finalize();
@@ -220,6 +257,19 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
   auto new_data = block::extract_workchain_engine_state(restored, 2, td::Bits256::zero()).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(new_data).fetch_ulong(64), 42u);
+  block::gen::ShardStateUnsplit::Record recovered_state;
+  ASSERT_TRUE(tlb::unpack_cell(restored, recovered_state));
+  vm::AugmentedDictionary recovered_accounts(vm::load_cell_slice_ref(recovered_state.accounts), 256,
+                                              block::tlb::aug_ShardAccounts);
+  block::Account recovered_account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(recovered_account.unpack(recovered_accounts.lookup(td::Bits256::zero()), 10, false));
+  auto recovered_witness = block::decode_workchain_executor_state(recovered_account.data).move_as_ok();
+  auto recovered_input = in;
+  recovered_input.candidate = recovered_witness.candidate;
+  auto replayed_from_storage = block::replay_workchain_batch_transaction(
+      engine, recovered_input, committed, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(replayed_from_storage->get_hash() == recovered_account.total_state->get_hash());
+  ASSERT_TRUE(recovered_witness.effects->get_hash() == stored.effects->get_hash());
 }
 
 TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {

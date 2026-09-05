@@ -418,7 +418,7 @@ struct Transaction {
   Ref<vm::Cell> root;
  private:
   Ref<vm::Cell> batch_description;
-  Ref<vm::Cell> batch_engine_state;
+  Ref<vm::Cell> batch_account_data;
  public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;

@@ -40,6 +40,15 @@ struct WorkchainBlockResult {
   WorkchainBlockResourceUsage usage;
 };
 
+// Only the latest batch is retained here; historical witnesses belong to archived blocks/states.
+struct WorkchainExecutorState {
+  td::Ref<vm::Cell> engine_state;
+  td::Ref<vm::Cell> candidate;
+  td::Ref<vm::Cell> effects;
+};
+td::Result<td::Ref<vm::Cell>> encode_workchain_executor_state(const WorkchainExecutorState& state);
+td::Result<WorkchainExecutorState> decode_workchain_executor_state(const td::Ref<vm::Cell>& root);
+
 // Neither hash may depend on this transaction or the final shard wrapper.
 struct WorkchainBatchDescription {
   td::Bits256 input_hash{td::Bits256::zero()};

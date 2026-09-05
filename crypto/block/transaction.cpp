@@ -4371,7 +4371,8 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
     return td::Status::Error("invalid batch transaction preparation context");
   }
   TRY_RESULT(previous_data, extract_workchain_engine_state(input.previous_shard_state, account.workchain, account.addr));
-  if (account.data.is_null() || previous_data->get_hash() != account.data->get_hash()) {
+  TRY_RESULT(previous_executor, decode_workchain_executor_state(account.data));
+  if (previous_data->get_hash() != previous_executor.engine_state->get_hash()) {
     return td::Status::Error("batch account differs from committed input state");
   }
   gen::ShardStateUnsplit::Record previous;
@@ -4398,13 +4399,15 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
       bounce_phase || balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero()) {
     return td::Status::Error("batch state preparation cannot mix account phases or native value flow");
   }
-  new_data = effects.new_engine_state;
+  TRY_RESULT(encoded_effects, encode_workchain_block_result(effects));
+  TRY_RESULT(executor_state, encode_workchain_executor_state({effects.new_engine_state, input.candidate, encoded_effects}));
+  new_data = std::move(executor_state);
   auto limits = check_state_limits(cfg.size_limits, cfg.global_version);
   if (limits.is_error()) {
     new_data = account.data;
     return limits;
   }
-  batch_engine_state = new_data;
+  batch_account_data = new_data;
   batch_description = encode_workchain_batch_description(description);
   return td::Status::OK();
 }
@@ -4414,8 +4417,8 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
     return true;
   }
   if (trans_type == tr_workchain_batch &&
-      (batch_description.is_null() || batch_engine_state.is_null() || new_data.is_null() ||
-       batch_engine_state->get_hash() != new_data->get_hash() || in_msg.not_null() || !out_msgs.empty() ||
+      (batch_description.is_null() || batch_account_data.is_null() || new_data.is_null() ||
+       batch_account_data->get_hash() != new_data->get_hash() || in_msg.not_null() || !out_msgs.empty() ||
        compute_phase || action_phase || storage_phase || credit_phase || bounce_phase ||
        balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero() ||
        acc_status != Account::acc_active || start_lt >= end_lt)) {

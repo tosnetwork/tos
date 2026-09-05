@@ -52,7 +52,8 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
     if (account.status != Account::acc_active || account.data.is_null() || account.addr_rewrite_length != 0) {
       return td::Status::Error("block executor requires active state data without address rewriting");
     }
-    return account.data;
+    TRY_RESULT(executor_state, decode_workchain_executor_state(account.data));
+    return executor_state.engine_state;
   } catch (vm::VmError&) {
     return td::Status::Error("invalid block workchain state cells");
   } catch (vm::VmVirtError&) {
@@ -183,6 +184,59 @@ td::Result<td::Ref<vm::Cell>> encode_workchain_block_input(const WorkchainBlockI
   }
   return vm::CellBuilder().store_long(0x57424931, 32).store_ref(input.previous_shard_state)
       .store_ref(input.candidate).store_ref(input.configuration).store_ref(input.finality_context).finalize();
+}
+
+namespace {
+td::Status validate_executor_state(const WorkchainExecutorState& state) {
+  if (state.engine_state.is_null() || state.candidate.is_null() != state.effects.is_null()) {
+    return td::Status::Error("incomplete workchain executor state");
+  }
+  if (state.effects.not_null()) {
+    TRY_RESULT(effects, decode_workchain_block_result(state.effects));
+    if (effects.new_engine_state->get_hash() != state.engine_state->get_hash()) {
+      return td::Status::Error("executor state differs from stored batch effects");
+    }
+  }
+  return td::Status::OK();
+}
+}  // namespace
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_executor_state(const WorkchainExecutorState& state) {
+  TRY_STATUS(validate_executor_state(state));
+  vm::CellBuilder cb;
+  cb.store_long(0x57424531, 32).store_ref(state.engine_state).store_long(state.effects.not_null(), 1);
+  if (state.effects.not_null()) {
+    cb.store_ref(vm::CellBuilder().store_long(0x57425731, 32).store_ref(state.candidate)
+                     .store_ref(state.effects).finalize());
+  }
+  return cb.finalize();
+}
+
+td::Result<WorkchainExecutorState> decode_workchain_executor_state(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing workchain executor state");
+  }
+  bool special = false;
+  auto cs = vm::load_cell_slice_special(root, special);
+  if (special || cs.size() != 33 || cs.fetch_ulong(32) != 0x57424531) {
+    return td::Status::Error("invalid workchain executor state");
+  }
+  bool have_batch = cs.fetch_ulong(1) != 0;
+  if (cs.size_refs() != (have_batch ? 2u : 1u)) {
+    return td::Status::Error("invalid workchain executor state references");
+  }
+  WorkchainExecutorState state;
+  state.engine_state = cs.fetch_ref();
+  if (have_batch) {
+    auto witness = vm::load_cell_slice_special(cs.fetch_ref(), special);
+    if (special || witness.size() != 32 || witness.size_refs() != 2 || witness.fetch_ulong(32) != 0x57425731) {
+      return td::Status::Error("invalid stored workchain batch witness");
+    }
+    state.candidate = witness.fetch_ref();
+    state.effects = witness.fetch_ref();
+  }
+  TRY_STATUS(validate_executor_state(state));
+  return state;
 }
 
 td::Result<WorkchainBatchDescription> make_workchain_batch_description(const WorkchainBlockInput& input,
