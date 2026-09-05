@@ -59,6 +59,15 @@ different digest, a damaged proof, zeroed spend signatures, and a zeroed binding
 signature independently. This fixture does not authorize issuance or implement
 the TOS transaction digest. Test-only randomness is pinned through `rand`.
 
+The fixture also recovers that nonzero note, builds its depth-32 single-leaf
+membership path, and proves a spend with a 4900-nanotomi output and public
+valueBalance 100. It signs with the real spending key, not only dummy keys.
+Replacing only the real spend's signature is rejected while dummy signatures,
+proof and binding signature remain intact. Changing valueBalance to 101 with
+the original proof and signatures is rejected by the binding check. Recovery
+uses the dependency's encryption solely for this fixture; it is not TOS hybrid
+encryption, an authenticated chain anchor, or a host-authorized fee debit.
+
 ## Source review, 2026-09-05
 
 - [Pinned bundle version implementation](https://github.com/zcash/orchard/blob/29d1d55db62153dcaeef8ef631c8991c53ed1248/src/bundle.rs)

@@ -926,3 +926,15 @@ the already allocated typed input is not a bounded wire ingress. This is not
 output-only issuance authorization, stateful anchor/nullifier validation, a
 canonical VK manifest, FFI or host integration; those remain required for M2
 and the actual UNO engine.
+
+Extended the real cryptographic fixture through a non-dummy spend: recover the
+5000-nanotomi note, construct its depth-32 single-leaf witness, create a 4900
+output with valueBalance 100, prove membership and sign with the actual spending
+key. The resulting bundle passes the fixed verifier. Corrupting only the real
+spend signature (leaving dummy signatures intact) fails; changing valueBalance
+to 101 with unchanged proof and signatures fails binding verification. Removing
+the respective signature check makes each isolated negative return Ok and fail
+its assertion; both mutations were restored. The witness root is a fixture,
+not an authenticated host anchor, and the recovery uses dependency encryption,
+not the required hybrid profile. This extends M2 evidence without claiming
+stateful admission, fee authorization or wallet integration.

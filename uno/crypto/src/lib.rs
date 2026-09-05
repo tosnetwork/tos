@@ -121,12 +121,13 @@ mod tests {
 
     #[test]
     fn real_bundle_requires_proof_and_signatures() {
+        use incrementalmerkletree::Hashable;
         use orchard::{
             builder::{Builder, BundleType},
             bundle::Flags,
             circuit::ProvingKey,
-            keys::{FullViewingKey, Scope, SpendingKey},
-            tree::Anchor,
+            keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey},
+            tree::{Anchor, MerkleHashOrchard, MerklePath},
             value::NoteValue,
             Proof,
         };
@@ -143,7 +144,8 @@ mod tests {
         builder
             .add_output(None, recipient, NoteValue::from_raw(5000), [0; 512])
             .expect("test output");
-        let (unsigned, _) = builder.build::<i64>(&mut rng).expect("build").expect("nonempty");
+        let (unsigned, metadata) =
+            builder.build::<i64>(&mut rng).expect("build").expect("nonempty");
         let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
         let digest = [42; 32];
         let bundle = unsigned
@@ -153,6 +155,66 @@ mod tests {
             .expect("signatures");
         let verifier = FixedVerifier::new().expect("fixed key");
         assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
+
+        // Recover an actual nonzero output and spend it from a single-leaf tree.
+        // This uses the dependency's test encryption, not the required hybrid profile.
+        let fvk = FullViewingKey::from(&sk);
+        let (note, _, _) = bundle
+            .decrypt_output_with_key(
+                metadata.output_action_index(0).expect("real output index"),
+                &fvk.to_ivk(Scope::External),
+            )
+            .expect("recover real note");
+        assert_eq!(note.value(), NoteValue::from_raw(5000));
+        let path = MerklePath::from_parts(
+            0,
+            std::array::from_fn(|level| {
+                MerkleHashOrchard::empty_root(u8::try_from(level).expect("tree level").into())
+            }),
+        );
+        let anchor = path.root(note.commitment().into());
+        let mut spender = Builder::new(
+            BundleType::DEFAULT,
+            BundleVersion::orchard_v2(),
+            BundleVersion::orchard_v2().default_flags(),
+            anchor,
+        )
+        .expect("spend builder");
+        spender.add_spend(fvk, note, path).expect("real spend");
+        spender
+            .add_output(None, recipient, NoteValue::from_raw(4900), [0; 512])
+            .expect("change output");
+        let (unsigned_spend, spend_metadata) =
+            spender.build::<i64>(&mut rng).expect("spend build").expect("nonempty spend");
+        assert_eq!(*unsigned_spend.value_balance(), 100);
+        let real_spend_index = spend_metadata.spend_action_index(0).expect("real spend index");
+        let spent = unsigned_spend
+            .create_proof(&pk, &mut rng)
+            .expect("spend proof")
+            .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
+            .expect("real spend authorization");
+        assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        let wrong_balance = spent
+            .clone()
+            .try_map_value_balance(|_| Ok::<i64, std::convert::Infallible>(101))
+            .expect("typed balance change");
+        assert_eq!(
+            verifier.verify_bundle(&wrong_balance, &digest, 2, 7264),
+            Err(VerificationError::BindingSignature)
+        );
+        let bad_real_spend = spent.map_authorization(
+            &mut 0usize,
+            |index, _, sig| {
+                let result = if *index == real_spend_index { [0; 64].into() } else { sig };
+                *index = index.checked_add(1).expect("action index");
+                result
+            },
+            |_, auth| auth,
+        );
+        assert_eq!(
+            verifier.verify_bundle(&bad_real_spend, &digest, 2, 7264),
+            Err(VerificationError::SpendSignature)
+        );
         assert!(verifier.verify_bundle(&bundle, &[43; 32], 2, 7264).is_err());
         let bad_spend =
             bundle.clone().map_authorization(&mut (), |_, _, _| [0; 64].into(), |_, auth| auth);
