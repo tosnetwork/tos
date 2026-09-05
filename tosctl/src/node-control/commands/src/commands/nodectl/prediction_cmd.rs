@@ -24,7 +24,7 @@ use contracts::{
     MasterchainCheckpoint, PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE,
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
-    Wallet,
+    PredictionResolutionContextsV1, Wallet,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -395,7 +395,8 @@ fn capabilities() -> anyhow::Result<()> {
             "prepared_artifact": "exact-signed-external-message-boc",
             "get_methods": [
                 "get_prediction_state", "get_prediction_accounting",
-                "get_prediction_account", "get_prediction_order", "get_market_phase"
+                "get_prediction_account", "get_prediction_order", "get_market_phase",
+                "get_resolution_contexts"
             ]
         }))?
     );
@@ -519,6 +520,18 @@ impl PredictionShowCmd {
                 .run_get_method_at(address.to_string(), "get_market_phase", vec![], &checkpoint)
                 .await?,
         )?;
+        let contexts = PredictionMarketContractV1::decode_resolution_contexts(
+            &provider
+                .run_get_method_at(
+                    address.to_string(),
+                    "get_resolution_contexts",
+                    vec![],
+                    &checkpoint,
+                )
+                .await?,
+        )?;
+        let (current_context_boc_base64, review_base_context_boc_base64) =
+            verified_resolution_context_bocs(&phase, &contexts)?;
         let final_outcome = matches!(
             state.status,
             contracts::PredictionMarketStatusV1::Finalized
@@ -557,13 +570,40 @@ impl PredictionShowCmd {
                 "challenge_bond": accounting.challenge_bond,
                 "cleanup_liability": accounting.cleanup_liability,
                 "current_context_hash": hex::encode(phase.current_context_hash),
+                "current_context_boc_base64": current_context_boc_base64,
                 "review_base_context_hash": hex::encode(phase.review_base_context_hash),
+                "review_base_context_boc_base64": review_base_context_boc_base64,
                 "proposed_statement_hash": hex::encode(phase.proposed_statement_hash),
                 "next_deadline": phase.next_deadline,
             }))?
         );
         Ok(())
     }
+}
+
+fn verified_resolution_context_bocs(
+    phase: &contracts::PredictionMarketPhaseV1,
+    contexts: &PredictionResolutionContextsV1,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    let current_hash =
+        contexts.current.as_ref().map(|value| *value.repr_hash().as_array()).unwrap_or([0; 32]);
+    let review_base_hash =
+        contexts.review_base.as_ref().map(|value| *value.repr_hash().as_array()).unwrap_or([0; 32]);
+    anyhow::ensure!(
+        current_hash == phase.current_context_hash,
+        "resolution context cell conflicts with get_market_phase at the pinned checkpoint"
+    );
+    anyhow::ensure!(
+        review_base_hash == phase.review_base_context_hash,
+        "review base context cell conflicts with get_market_phase at the pinned checkpoint"
+    );
+    let encode = |value: &Cell| -> anyhow::Result<String> {
+        Ok(base64::engine::general_purpose::STANDARD.encode(write_boc(value)?))
+    };
+    Ok((
+        contexts.current.as_ref().map(encode).transpose()?,
+        contexts.review_base.as_ref().map(encode).transpose()?,
+    ))
 }
 
 impl PredictionPrepareDeployCmd {
@@ -1777,6 +1817,26 @@ mod tests {
             proposed_statement_hash: [0x66; 32],
             next_deadline: 200,
         }
+    }
+
+    #[test]
+    fn resolution_context_bocs_are_hash_cross_checked_before_export() {
+        let current = PredictionMarketContractV1::top_up_reserve(7).unwrap();
+        let mut phase = test_phase(contracts::PredictionMarketStatusV1::Reporting);
+        phase.current_context_hash = *current.repr_hash().as_array();
+        phase.review_base_context_hash = [0; 32];
+        let contexts =
+            PredictionResolutionContextsV1 { current: Some(current.clone()), review_base: None };
+        let (encoded, review) = verified_resolution_context_bocs(&phase, &contexts).unwrap();
+        assert!(review.is_none());
+        let decoded = read_single_root_boc(
+            &base64::engine::general_purpose::STANDARD.decode(encoded.unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decoded, current);
+
+        phase.current_context_hash = [0x99; 32];
+        assert!(verified_resolution_context_bocs(&phase, &contexts).is_err());
     }
 
     fn report_operation(round: u8, context: [u8; 32]) -> OperationJson {
