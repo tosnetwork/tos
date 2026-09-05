@@ -7,6 +7,7 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
       - "scripts/toscan-dev-seed.py"
@@ -16,6 +17,7 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
       - "scripts/toscan-dev-seed.py"
@@ -67,6 +69,16 @@ jobs:
         run: cargo fmt -p secrets-vault --check
       - name: Vault tests
         run: cargo test -p secrets-vault --lib --locked
+
+  # This harness creates a new encrypted file Vault for one local child
+  # process. It has no third-party Python dependency and must stay unable to
+  # leak its generated capability into source, logs, or a caller's environment.
+  local-test-vault-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify local ephemeral Vault runner
+        run: python3 -m unittest tosctl/scripts/tests/test_local_test_vault.py -v
 
   # On demand only. The gate itself takes under a minute; what made this a
   # forty-seven minute job was compiling the node in front of it, which a
