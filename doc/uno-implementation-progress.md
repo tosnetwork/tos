@@ -13,6 +13,19 @@ Base node revision: `5a6145cce`.
   transaction and final shard wrapper are host outputs, not engine outputs.
 - Counter fixture tests correct execution, input preservation, result field
   mutations, resource mutations, missing finality context and overflow.
+- Counter execution now reads a canonical `ShardStateUnsplit` and augmented
+  `ShardAccounts` dictionary rather than treating a bare integer as a shard.
+  `extract_workchain_engine_state` checks workchain/shard identity, absence of
+  splitting, exactly the designated executor account, dictionary augmentation,
+  account address/workchain consistency, and active non-rewritten state data.
+  It reuses native `Account::unpack` on a local object without publishing state.
+  Tests cover BoC restoration, wrong workchain/address, split flags/prefix,
+  missing/extra executor accounts, inactive accounts and malformed roots.
+- Removing the unsplit/workchain check accepts a wrong shard and fails the test.
+  Removing the dictionary-key check accepts a leaf stored under a different key
+  despite a matching embedded account address, and fails the test. Both guards
+  were restored. The extractor assumes the caller authenticated the shard root;
+  it does not establish finality or validate unrelated queue/value-flow state.
 - Mutation check: temporarily removing cell hash comparison makes
   `RejectEveryResultMutation` fail at its rejection assertion. Comparison restored.
 - Separate block-engine registration/configuration resolution in the host
@@ -20,7 +33,7 @@ Base node revision: `5a6145cce`.
   rejection. Account resolution rejects block engines before account policy use.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (eleven cases) and the full `validator-engine` target build
+- `test-workchain-block` (twelve cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The

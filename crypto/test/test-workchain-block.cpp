@@ -35,7 +35,8 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   }
 
   td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput& input) const override {
-    auto state = vm::load_cell_slice(input.previous_shard_state);
+    TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, 2, td::Bits256::zero()));
+    auto state = vm::load_cell_slice(engine_state);
     auto candidate = vm::load_cell_slice(input.candidate);
     if (state.size() != 64 || state.size_refs() != 0 || candidate.size() != 64 || candidate.size_refs() != 0) {
       return td::Status::Error("counter input shape");
@@ -57,11 +58,73 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   }
 };
 
+td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
+                              unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
+                              std::uint64_t counter_value = 40, bool wrong_dictionary_key = false) {
+  vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+  for (unsigned i = 0; i < account_count; ++i) {
+    td::Bits256 address = td::Bits256::zero();
+    if (i != 0) address = number(i)->get_hash().bits();
+    vm::CellBuilder account;
+    account.store_long(1, 1).store_long(4, 3).store_long(account_wc, 8).store_bits(address.bits(), 256)
+        .store_zeroes(42).store_long(2, 64).store_zeroes(5);
+    if (active) {
+      account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(number(counter_value)).store_long(0, 1);
+    } else {
+      account.store_long(0, 2);
+    }
+    auto root = account.finalize();
+    ASSERT_TRUE(block::gen::t_Account.validate_ref(10000, root));
+    vm::CellBuilder entry;
+    entry.store_ref(root).store_zeroes(256).store_long(1, 64);
+    auto dictionary_address = address;
+    if (wrong_dictionary_key) dictionary_address = number(99)->get_hash().bits();
+    ASSERT_TRUE(accounts.set_builder(dictionary_address, entry));
+  }
+  auto queue = vm::CellBuilder().store_zeroes(67).finalize();
+  auto aux = vm::CellBuilder().store_zeroes(140).finalize();
+  auto root = vm::CellBuilder().store_long(0x9023afe2, 32).store_long(1, 32)
+      .store_long(0, 2).store_long(prefix_bits, 6).store_long(shard_wc, 32).store_long(0, 64)
+      .store_long(1, 32).store_long(0, 32).store_long(1, 32).store_long(2, 64).store_long(0, 32)
+      .store_ref(queue).store_long(before_split, 1).store_ref(accounts.get_wrapped_dict_root())
+      .store_ref(aux).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::gen::t_ShardStateUnsplit.validate_ref(10000, root));
+  return root;
+}
+
 block::WorkchainBlockInput input() {
-  return {number(40), number(2), number(1), number(1)};
+  return {shard_fixture(), number(2), number(1), number(1)};
 }
 
 }  // namespace
+
+TEST(WorkchainBlock, ExtractExecutorFromShardState) {
+  auto root = shard_fixture();
+  auto bytes = vm::std_boc_serialize(root).move_as_ok();
+  auto restored = vm::std_boc_deserialize(bytes.as_slice()).move_as_ok();
+  auto data = block::extract_workchain_engine_state(restored, 2, td::Bits256::zero()).move_as_ok();
+  ASSERT_EQ(vm::load_cell_slice(data).fetch_ulong(64), 40u);
+  ASSERT_TRUE(root->get_hash() == restored->get_hash());
+  auto reject = [&](td::Ref<vm::Cell> state, td::Slice expected) {
+    auto result = block::extract_workchain_engine_state(state, 2, td::Bits256::zero());
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), expected);
+  };
+  reject(shard_fixture(3), "block engine requires its own unsplit shard state");
+  reject(shard_fixture(2, 2, true, 1, true), "block engine requires its own unsplit shard state");
+  reject(shard_fixture(2, 2, true, 1, false, 1), "block engine requires its own unsplit shard state");
+  reject(shard_fixture(2, 2, true, 0), "block workchain must contain exactly its executor account");
+  reject(shard_fixture(2, 2, true, 2), "block workchain must contain exactly its executor account");
+  reject(shard_fixture(2, 2, true, 1, false, 0, 40, true),
+         "block workchain must contain exactly its executor account");
+  reject(shard_fixture(2, 3), "invalid block executor account");
+  reject(shard_fixture(2, 2, false), "block executor requires active state data without address rewriting");
+  reject({}, "missing or invalid block workchain state identity");
+  reject(number(0), "invalid block workchain shard state");
+  auto wrong_address = block::extract_workchain_engine_state(root, 2, number(99)->get_hash().bits());
+  ASSERT_TRUE(wrong_address.is_error());
+  ASSERT_EQ(wrong_address.error().message(), "block workchain must contain exactly its executor account");
+}
 
 TEST(WorkchainBlock, CounterReplay) {
   CounterEngine engine;
@@ -70,7 +133,8 @@ TEST(WorkchainBlock, CounterReplay) {
   ASSERT_EQ(vm::load_cell_slice(produced.new_engine_state).fetch_ulong(64), 42u);
   auto validated = block::replay_workchain_block(engine, in, produced).move_as_ok();
   ASSERT_TRUE(validated.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
-  ASSERT_EQ(vm::load_cell_slice(in.previous_shard_state).fetch_ulong(64), 40u);
+  auto previous = block::extract_workchain_engine_state(in.previous_shard_state, 2, td::Bits256::zero()).move_as_ok();
+  ASSERT_EQ(vm::load_cell_slice(previous).fetch_ulong(64), 40u);
 }
 
 TEST(WorkchainBlock, BatchCommitmentReplay) {
@@ -329,7 +393,7 @@ TEST(WorkchainBlock, RejectOverflowAndMissingContext) {
   CounterEngine engine;
   auto in = input();
   auto produced = engine.execute_block(in).move_as_ok();
-  in.previous_shard_state = number(std::numeric_limits<std::uint64_t>::max());
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, std::numeric_limits<std::uint64_t>::max());
   auto overflow = block::replay_workchain_block(engine, in, produced);
   ASSERT_TRUE(overflow.is_error());
   ASSERT_EQ(overflow.error().message(), "counter overflow");

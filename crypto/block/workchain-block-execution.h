@@ -48,6 +48,10 @@ struct WorkchainBatchDescription {
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description);
 td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const td::Ref<vm::Cell>& root);
 td::Result<td::Ref<vm::Cell>> encode_workchain_block_input(const WorkchainBlockInput& input);
+// Requires exactly one active executor account in an unsplit, already authenticated shard.
+td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::Cell>& shard_state,
+                                                           std::int32_t workchain_id,
+                                                           const td::Bits256& executor_address);
 td::Result<WorkchainBatchDescription> make_workchain_batch_description(const WorkchainBlockInput& input,
                                                                      const WorkchainBlockResult& effects);
 // Scope check only; callers must separately validate the full transaction encoding.

@@ -1,4 +1,7 @@
 #include "block/workchain-block-execution.h"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/transaction.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 
@@ -13,6 +16,49 @@ bool same_cell(const td::Ref<vm::Cell>& a, const td::Ref<vm::Cell>& b) {
 }
 
 }  // namespace
+
+td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::Cell>& shard_state,
+                                                           std::int32_t workchain_id,
+                                                           const td::Bits256& executor_address) {
+  if (shard_state.is_null() || workchain_id < 0 || workchain_id == tos::workchainInvalid) {
+    return td::Status::Error("missing or invalid block workchain state identity");
+  }
+  try {
+    gen::ShardStateUnsplit::Record state;
+    gen::ShardIdent::Record shard;
+    if (!tlb::unpack_cell(shard_state, state) || !tlb::csr_unpack(state.shard_id, shard)) {
+      return td::Status::Error("invalid block workchain shard state");
+    }
+    if (shard.workchain_id != workchain_id || shard.shard_pfx_bits != 0 || shard.shard_prefix != 0 ||
+        state.before_split) {
+      return td::Status::Error("block engine requires its own unsplit shard state");
+    }
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    td::Ref<vm::CellSlice> executor;
+    if (!accounts.validate_check_extra([&](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>,
+                                          td::ConstBitPtr key, int bits) {
+          if (bits != 256 || td::Bits256(key) != executor_address || executor.not_null()) {
+            return false;
+          }
+          executor = std::move(value);
+          return true;
+        }) || executor.is_null()) {
+      return td::Status::Error("block workchain must contain exactly its executor account");
+    }
+    Account account(workchain_id, executor_address.bits());
+    if (!account.unpack(executor, state.gen_utime, false)) {
+      return td::Status::Error("invalid block executor account");
+    }
+    if (account.status != Account::acc_active || account.data.is_null() || account.addr_rewrite_length != 0) {
+      return td::Status::Error("block executor requires active state data without address rewriting");
+    }
+    return account.data;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid block workchain state cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete block workchain state proof");
+  }
+}
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description) {
   return vm::CellBuilder().store_long(8, 4)
