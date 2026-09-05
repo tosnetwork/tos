@@ -772,10 +772,10 @@ TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
   description.effects_hash = number(12)->get_hash().bits();
   description.usage = {13, 14, std::numeric_limits<std::uint64_t>::max()};
   auto root = block::encode_workchain_batch_description(description);
-  ASSERT_EQ(vm::load_cell_slice(root).size(), 708u);
+  ASSERT_EQ(vm::load_cell_slice(root).size(), 709u);
   ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, root));
   ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, root));
-  block::gen::TransactionDescr::Record_trans_workchain_batch_v1 generated;
+  block::gen::TransactionDescr::Record_trans_workchain_batch_v2 generated;
   ASSERT_TRUE(tlb::unpack_cell(root, generated));
   ASSERT_TRUE(generated.input_hash == description.input_hash);
   ASSERT_TRUE(generated.effects_hash == description.effects_hash);
@@ -787,7 +787,7 @@ TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
   ASSERT_TRUE(decoded.effects_hash == description.effects_hash);
   ASSERT_TRUE(decoded.usage == description.usage);
   auto cs = vm::load_cell_slice(root);
-  ASSERT_EQ(block::tlb::t_TransactionDescr.get_tag(cs), block::tlb::TransactionDescr::trans_workchain_batch_v1);
+  ASSERT_EQ(block::tlb::t_TransactionDescr.get_tag(cs), block::tlb::TransactionDescr::trans_workchain_batch_v2);
   ASSERT_TRUE(block::tlb::t_TransactionDescr.skip(cs));
   ASSERT_TRUE(cs.empty_ext());
   td::RefInt256 storage_fees;
@@ -816,7 +816,7 @@ TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
 TEST(WorkchainBlock, RejectMalformedBatchDescription) {
   for (int mutation = 0; mutation < 3; ++mutation) {
     vm::CellBuilder cb;
-    cb.store_long(8, 4).store_zeroes(mutation == 0 ? 703 : mutation == 1 ? 705 : 704);
+    cb.store_long(9, 4).store_zeroes(mutation == 0 ? 704 : mutation == 1 ? 706 : 705);
     if (mutation == 2) cb.store_ref(number(0));
     auto root = cb.finalize();
     ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, root));
@@ -837,8 +837,32 @@ TEST(WorkchainBlock, ScopeClassifiesEveryConstructorPrefix) {
     bool batch = block::validate_transaction_execution_scope(
         prefix, block::WorkchainExecutionScope::BlockTransition).is_ok();
     ASSERT_EQ(account, tag < 8);
-    ASSERT_EQ(batch, tag == 8 || tag == 9);
+    ASSERT_EQ(batch, tag == 9);
   }
+}
+
+TEST(WorkchainBlock, RetiredBatchDescriptorRejected) {
+  auto retired = vm::CellBuilder().store_long(8, 4).store_zeroes(704).finalize();
+  ASSERT_TRUE(!block::gen::t_TransactionDescr.validate_ref(10000, retired));
+  ASSERT_TRUE(!block::tlb::t_TransactionDescr.validate_ref(10000, retired));
+  ASSERT_TRUE(block::decode_workchain_batch_description(retired).is_error());
+  auto cs = vm::load_cell_slice(retired);
+  ASSERT_TRUE(!block::tlb::t_TransactionDescr.skip(cs));
+  cs = vm::load_cell_slice(retired);
+  bool found = false;
+  ASSERT_TRUE(!block::tlb::t_TransactionDescr.skip_to_storage_phase(cs, found));
+  ASSERT_TRUE(block::validate_transaction_execution_scope(
+      retired, block::WorkchainExecutionScope::BlockTransition).is_error());
+
+  block::WorkchainBatchDescription empty;
+  auto current = block::encode_workchain_batch_description(empty);
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, current));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(10000, current));
+  auto transaction = inbound_transaction(current);
+  ASSERT_TRUE(block::is_transaction_in_msg(transaction, {}));
+  block::tlb::MsgEnvelope::Record_std envelope;
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(3), envelope));
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, envelope.msg));
 }
 
 TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {

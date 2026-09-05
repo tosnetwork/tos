@@ -161,10 +161,11 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description) {
   vm::CellBuilder cb;
-  cb.store_long(description.inbound_messages.not_null() ? 9 : 8, 4)
+  cb.store_long(9, 4)
       .store_bits(description.input_hash.bits(), 256).store_bits(description.effects_hash.bits(), 256)
       .store_long(description.usage.wire_bytes, 64).store_long(description.usage.verification_units, 64)
-      .store_long(description.usage.written_cells, 64);
+      .store_long(description.usage.written_cells, 64)
+      .store_long(description.inbound_messages.not_null(), 1);
   if (description.inbound_messages.not_null()) {
     cb.store_ref(description.inbound_messages);
   }
@@ -177,11 +178,11 @@ td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const t
   }
   bool special = false;
   auto cs = vm::load_cell_slice_special(root, special);
-  if (special || cs.size() != 708) {
+  if (special || cs.size() != 709) {
     return td::Status::Error("invalid batch transaction description");
   }
   auto tag = cs.fetch_ulong(4);
-  if ((tag != 8 && tag != 9) || cs.size_refs() != (tag == 9 ? 1u : 0u)) {
+  if (tag != 9) {
     return td::Status::Error("invalid batch transaction description");
   }
   WorkchainBatchDescription description;
@@ -189,7 +190,11 @@ td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const t
     return td::Status::Error("incomplete batch transaction commitments");
   }
   description.usage = {cs.fetch_ulong(64), cs.fetch_ulong(64), cs.fetch_ulong(64)};
-  if (tag == 9) {
+  bool has_inbound = cs.fetch_ulong(1) != 0;
+  if (cs.size_refs() != (has_inbound ? 1u : 0u)) {
+    return td::Status::Error("invalid batch transaction description");
+  }
+  if (has_inbound) {
     description.inbound_messages = cs.fetch_ref();
     TRY_RESULT(checked, decode_workchain_batch_inbound(description.inbound_messages));
   }
@@ -218,7 +223,6 @@ td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& descrip
     case gen::TransactionDescr::trans_merge_install:
       expected = WorkchainExecutionScope::AccountCompute;
       break;
-    case gen::TransactionDescr::trans_workchain_batch_v1:
     case gen::TransactionDescr::trans_workchain_batch_v2:
       expected = WorkchainExecutionScope::BlockTransition;
       break;

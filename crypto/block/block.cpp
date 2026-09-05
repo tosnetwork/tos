@@ -2283,12 +2283,15 @@ bool is_transaction_in_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell> msg) {
   }
   if (block::tlb::t_TransactionDescr.get_tag(vm::load_cell_slice(transaction.description)) ==
       block::tlb::TransactionDescr::trans_workchain_batch_v2) {
-    if (msg.is_null() || transaction.r1.in_msg->prefetch_ref().not_null()) {
+    if (transaction.r1.in_msg->prefetch_ref().not_null()) {
       return false;
     }
     gen::TransactionDescr::Record_trans_workchain_batch_v2 description;
-    return tlb::unpack_cell(transaction.description, description) &&
-           workchain_batch_inbound_contains(description.inbound_messages, msg);
+    if (!tlb::unpack_cell(transaction.description, description)) {
+      return false;
+    }
+    auto inbox = description.inbound_messages->prefetch_ref();
+    return inbox.is_null() ? msg.is_null() : workchain_batch_inbound_contains(inbox, msg);
   }
   auto imsg = transaction.r1.in_msg->prefetch_ref();
   return imsg.not_null() == msg.not_null() &&

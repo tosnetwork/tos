@@ -106,9 +106,9 @@ Base node revision: `5a6145cce`.
 - Mutation checks: relaxing the exact root bit count makes the rejection test
   fail; swapping receipt/event serialization makes round-trip replay fail.
   Both mutations were restored.
-- Synthetic `trans_workchain_batch_v1$1000` description: two 256-bit
-  input/effects commitments and three uint64 resource counters, exactly 708 bits
-  with no references. Both generated and handwritten transaction parsers
+- Synthetic `trans_workchain_batch_v2$1001` description: two 256-bit
+  input/effects commitments, three uint64 resource counters and a Maybe inbox,
+  exactly 709 bits with zero or one reference. Both transaction parsers
   recognize it, including transaction-wrapper validation and storage-fee
   extraction (no native storage phase in this descriptor).
 - Account transaction replay and the account emulator explicitly check execution
@@ -283,8 +283,7 @@ Base node revision: `5a6145cce`.
 - Mutation checks for the descriptor remove handwritten validation support,
   relax its exact bit length, and remove the real account-emulator scope call.
   Each produces the expected test failure; all three changes were restored.
-- Batch inbound representation is now defined without changing the existing
-  no-inbound wire: `WorkchainBatchInbound` tag `57494e31`, nonzero uint15 count,
+- Batch inbound representation: `WorkchainBatchInbound` tag `57494e31`, nonzero uint15 count,
   `HashmapE 256 ^MsgEnvelope` keyed by original message hash. Decoding validates
   count, key/message identity, complete internal envelopes and produces deterministic
   (emitted LT, message hash) order, using created LT when emitted LT is absent.
@@ -292,8 +291,9 @@ Base node revision: `5a6145cce`.
   cannot be included twice with different envelopes/emission times. UNO protocol
   source-locator ordering is an engine responsibility, not replaced by this host order.
 - Inbound batches use descriptor tag `1001` with the original two commitments and
-  counters plus an inbound-list reference. Tag `1000` and the old input encoding
-  remain unchanged for no-inbound batches. Both generated and handwritten TL-B
+  counters plus a Maybe inbound-list reference. Unactivated tag `1000` has been
+  removed; no-inbound batches also use `1001` with the absent-inbox bit. The old
+  no-inbound input encoding remains unchanged. Both generated and handwritten TL-B
   parsing recognize the new tag; account-compute scope rejects it. Replay binds
   the inbound root in the authenticated input hash and separately compares the
   description's exposed list against the host list, preventing forged membership
@@ -438,8 +438,8 @@ Execution-scope classification now switches on generated TransactionDescr
 constructor enums through `check_tag`, without a second production wire-tag
 boundary table. `get_tag` alone is insufficient: the generated selector can map
 unassigned prefixes to a candidate constructor. The exhaustive four-bit-prefix
-test checks every ordinary constructor, both tick/tock fourth-bit values, both
-current batch formats, and rejection of unassigned prefixes in both scopes.
+test checks every ordinary constructor, both tick/tock fourth-bit values, the
+batch format, and rejection of unassigned prefixes in both scopes.
 Replacing `check_tag` with `get_tag` makes the test fail because an unassigned
 prefix is accepted as BlockTransition; the checked classifier was restored.
 
@@ -448,5 +448,12 @@ matching-input control and checks zero engine invocations for each mismatched
 committed input field. Removing the pre-execution input-hash guard makes the
 invocation assertion fail (1 instead of 0), independently of rejection wording.
 The guard was restored. Earlier exact-message mutation checks demonstrate
-diagnostic selection, not this execution-order property. Activation audit and
-consolidation of the unactivated batch descriptor formats remain required.
+diagnostic selection, not this execution-order property. Activation audit remains
+required. Batch descriptors now use one format; retired tag 8 is rejected by the
+generated parser, all handwritten parser paths, the codec and scope classifier.
+Empty inboxes use Maybe=0; a present inbox must remain nonempty and canonical.
+This intentionally invalidates development-only batch blocks from older builds.
+Mutation verification: reintroducing tag-8 acceptance in handwritten `skip`
+makes `RetiredBatchDescriptorRejected` fail at its skip-rejection assertion.
+The mutation was removed. The same test checks the empty-inbox batch's native
+message-membership behavior; existing tests cover nonempty inbox membership.

@@ -380,11 +380,9 @@ trans_storage$0001 storage_ph:TrStoragePhase
   = TransactionDescr;
 
 // Commit effects before constructing the transaction and final shard wrapper.
-trans_workchain_batch_v1$1000 input_hash:bits256 effects_hash:bits256
-  wire_bytes:uint64 verification_units:uint64 written_cells:uint64 = TransactionDescr;
 trans_workchain_batch_v2$1001 input_hash:bits256 effects_hash:bits256
   wire_bytes:uint64 verification_units:uint64 written_cells:uint64
-  inbound_messages:^WorkchainBatchInbound = TransactionDescr;
+  inbound_messages:(Maybe ^WorkchainBatchInbound) = TransactionDescr;
 
 trans_tick_tock$001 is_tock:Bool storage_ph:TrStoragePhase
   compute_ph:TrComputePhase action:(Maybe ^TrActionPhase)
