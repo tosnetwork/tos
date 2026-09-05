@@ -393,7 +393,9 @@ This is partial M1, not an enabled privacy workchain. Counter collation, outgoin
 native settlement, independent database replay and disk restart have end-to-end
 test evidence. Both block branches still require an explicitly registered engine;
 incoming account message settlement, return/bounce handling, distributed
-consensus and network synchronization have no UNO live-network test evidence.
+consensus and complete node-to-node synchronization remain unverified. The TCP
+snapshot fixture below now exercises remote state acquisition, but not either
+of those end-to-end properties.
 The disk harness cannot download and uses fake signature acceptance: it proves
 restart and file-import replay, not network synchronization. Live synchronization
 integration was not started by those tests; the routing work below is its first
@@ -1267,3 +1269,43 @@ and recorded as prior art in ABI.md. Native Linux-only direct Cargo integration,
 per-build target directories, the default-OFF option, and production activation
 scope are unchanged. No previously locked cryptographic dependency version was
 changed to add the generator.
+
+### First TCP snapshot acquisition evidence
+
+`test/uno-snapshot-transport.cpp` now runs a real ADNL external TCP server and
+client on localhost. Its remote fixture serves the prepare/size/slice queries;
+the receiving actor inherits the production `fullnode::DownloadState` and uses
+its real TL decoding, size reservation, slice assembly and completion path.
+Only startup is overridden to skip manager-local lookup and node discovery.
+No fake sender or direct response injection replaces the TCP transport.
+
+The wc2 single-account snapshot (4096 synthetic nullifiers) now crosses that
+connection before its received bytes are written to the import fixture's file
+and passed to the actual CellDb worker, root registration and clean reopening
+checks. The source bytes are held by the serving fixture, not loaded from the
+receiving database. The test checks wc2 in slice requests, contiguous offsets,
+query counts and byte-for-byte equality. Synthetic block and masterchain IDs
+are not authenticated checkpoint evidence.
+
+A separate 2 MiB + 137-byte transport payload requires two slices. Its matching
+negative peer truncates the first response by one byte and would serve later
+responses correctly if asked. The downloader must reject immediately with a
+protocol violation after one slice. Disabling the production short-part guard
+made the test fail with two queries instead of one; the guard was restored.
+This checks actual acquisition order independently of rejection wording.
+
+Scope: one process, real localhost TCP, synthetic serving callback, the external
+client branch, and the small-state heap path. It does not test P2P RLDP/overlay
+discovery, independent validator managers/processes, authenticated block/state
+proofs, receiver-side batch replay, committee consensus, large-file download
+mode or production download-to-import orchestration. The post-download tempfile
+handoff is still test code. Large-state scaling, active GC and those full-node
+paths remain M1 work, not accepted gates.
+
+The fixture probes a random unused port before constructing the ordinary TCP
+server; a close/rebind race fails within bounded actor timeouts. The existing
+client may take its reconnect delay when the listener has not started yet.
+Temporary test directories are retained under `/tmp/uno-snapshot-transport-*`
+and `/tmp/uno-snapshot-celldb-*`; no production configuration is changed.
+After restoring the mutation, the snapshot, workchain-routing and nullifier
+CTest groups each passed three consecutive runs (42.07 seconds total).

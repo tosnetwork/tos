@@ -13,6 +13,7 @@
 #include "validator/streaming-import-budget.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
+#include "uno-snapshot-transport.h"
 
 namespace {
 class SnapshotImportActor final : public td::actor::Actor {
@@ -153,7 +154,7 @@ class SnapshotImportActor final : public td::actor::Actor {
 };
 
 void actor_import_snapshot(td::Ref<vm::Cell> state, td::Ref<vm::Cell> payload, const std::vector<td::Bits256>& keys) {
-  auto bytes = vm::std_boc_serialize(state).move_as_ok();
+  auto bytes = download_uno_snapshot_over_tcp(vm::std_boc_serialize(state).move_as_ok()).move_as_ok();
   auto temporary = td::mkstemp("/tmp").move_as_ok();
   temporary.first.write_all(bytes.as_slice()).ensure();
   temporary.first.close();
@@ -274,6 +275,16 @@ TEST(UnoStateSnapshot, EncodingBudgetCheckedArithmetic) {
   ASSERT_TRUE(streaming_import_encoding_bound(1, max).is_error());
   ASSERT_TRUE(streaming_import_encoding_bound(max, 1).is_error());
   ASSERT_TRUE(streaming_import_encoding_bound(max / 2, 1).is_error());
+}
+
+TEST(UnoStateSnapshot, TcpSlicesAndTruncatedPeer) {
+  // Exercise multiple network responses independently of the small state fixture.
+  td::BufferSlice bytes((1u << 21) + 137);
+  std::mt19937 generator(43);
+  for (auto& byte : bytes.as_slice()) byte = static_cast<char>(generator() & 255);
+  auto received = download_uno_snapshot_over_tcp(bytes.clone()).move_as_ok();
+  ASSERT_TRUE(received.as_slice() == bytes.as_slice());
+  ASSERT_TRUE(download_uno_snapshot_over_tcp(bytes.clone(), true).is_error());
 }
 
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
