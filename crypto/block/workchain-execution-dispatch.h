@@ -228,6 +228,10 @@ td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
     std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg);
+td::Status replay_resolved_workchain_account_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& account_block,
+    std::uint32_t expected_utime, const SerializeConfig& cfg);
 
 using ResolvedScopedWorkchainExecution = std::variant<ResolvedWorkchainExecution, ResolvedWorkchainBlockExecution>;
 

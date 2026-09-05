@@ -5,6 +5,8 @@
 
 #include <sstream>
 
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "td/utils/logging.h"
 
 namespace block {
@@ -260,6 +262,47 @@ td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
   return replay_workchain_batch_state(engine, context, claimed_shard, claimed_transaction,
                                       execution.descriptor.workchain_id, execution.policy.executor_address,
                                       expected_lt, expected_utime, cfg);
+}
+
+td::Status replay_resolved_workchain_account_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& account_block,
+    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+  try {
+    gen::AccountBlock::Record record;
+    if (account_block.is_null() || !gen::t_AccountBlock.validate_ref(4096, account_block) ||
+        !tlb::unpack_cell(account_block, record)) {
+      return td::Status::Error("invalid block executor AccountBlock");
+    }
+    if (record.account_addr != execution.policy.executor_address) {
+      return td::Status::Error("AccountBlock differs from configured executor identity");
+    }
+    vm::AugmentedDictionary transactions(vm::DictNonEmpty(), record.transactions, 64, tlb::aug_AccountTransactions);
+    td::Ref<vm::Cell> transaction;
+    std::uint64_t lt = 0;
+    if (!transactions.validate_check_extra([&](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>,
+                                               td::ConstBitPtr key, int bits) {
+          if (bits != 64 || transaction.not_null() || value->size_ext() != 0x10000) {
+            return false;
+          }
+          lt = key.get_uint(64);
+          transaction = value->prefetch_ref();
+          return true;
+        }) || transaction.is_null()) {
+      return td::Status::Error("block executor requires exactly one batch transaction");
+    }
+    gen::Transaction::Record batch;
+    if (!tlb::unpack_cell(transaction, batch) || batch.state_update->get_hash() != record.state_update->get_hash()) {
+      return td::Status::Error("AccountBlock state update differs from its batch transaction");
+    }
+    TRY_RESULT(replayed, replay_resolved_workchain_batch_state(
+        execution, context, claimed_shard, transaction, lt, expected_utime, cfg));
+    return td::Status::OK();
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid block executor AccountBlock cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete block executor AccountBlock proof");
+  }
 }
 
 td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(

@@ -6479,6 +6479,35 @@ bool ValidateQuery::check_account_failures() {
  */
 bool ValidateQuery::check_transactions() {
   LOG(INFO) << "checking all transactions";
+  auto resolved = block::default_workchain_execution_registry().resolve_scoped_workchain(
+      config_->get_workchain_list(), workchain(), *config_);
+  if (resolved.is_error()) {
+    return reject_query(resolved.move_as_error_prefix("cannot resolve transaction execution scope: ").to_string());
+  }
+  if (resolved.ok().has_value() &&
+      std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
+    const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
+    if (!in_msg_dict_->is_empty() || !out_msg_dict_->is_empty()) {
+      return reject_query("block batch message settlement is not implemented");
+    }
+    block::WorkchainBlockReplayContext context{prev_state_root_, config_->get_root_cell(), mc_state_root_};
+    bool found = false;
+    bool valid = account_blocks_dict_->check_for_each_extra(
+        [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int bits) {
+          if (found || bits != 256 || td::Bits256(key) != execution.policy.executor_address) {
+            return reject_query("block execution requires exactly its executor AccountBlock");
+          }
+          found = true;
+          auto account_block = vm::CellBuilder().append_cellslice(value).finalize();
+          auto status = block::replay_resolved_workchain_account_block(
+              execution, context, state_root_, account_block, now_, serialize_cfg_);
+          if (status.is_error()) {
+            return reject_query(status.move_as_error_prefix("block execution replay: ").to_string());
+          }
+          return true;
+        });
+    return valid && (found || reject_query("missing block executor AccountBlock"));
+  }
   size_t accounts_count = 0;
   bool result = account_blocks_dict_->check_for_each_extra(
       [this, &accounts_count](Ref<vm::CellSlice> value, Ref<vm::CellSlice> extra, td::ConstBitPtr key, int key_len) {

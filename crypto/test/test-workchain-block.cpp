@@ -296,6 +296,30 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   auto resolved = registry.resolve_block(descriptor, configuration).move_as_ok();
   ASSERT_TRUE(block::replay_resolved_workchain_batch_state(
       resolved, context, restored, committed, 10, 10, cfg).is_ok());
+  ASSERT_TRUE(block::replay_resolved_workchain_account_block(
+      resolved, context, restored, block_root, 10, cfg).is_ok());
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    block::gen::AccountBlock::Record altered;
+    ASSERT_TRUE(tlb::unpack_cell(block_root, altered));
+    if (mutation == 0) altered.account_addr = number(99)->get_hash().bits();
+    if (mutation == 1) altered.state_update = vm::CellBuilder().store_long(0x72, 8).store_zeroes(512).finalize();
+    if (mutation == 2) {
+      vm::AugmentedDictionary transactions(vm::DictNonEmpty(), altered.transactions, 64,
+                                             block::tlb::aug_AccountTransactions);
+      ASSERT_TRUE(transactions.set_ref(td::BitArray<64>{11LL}, committed, vm::Dictionary::SetMode::Add));
+      altered.transactions = vm::load_cell_slice_ref(transactions.get_root_cell());
+    }
+    td::Ref<vm::Cell> altered_root;
+    ASSERT_TRUE(tlb::pack_cell(altered_root, altered));
+    ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, altered_root));
+    auto rejected = block::replay_resolved_workchain_account_block(
+        resolved, context, restored, altered_root, 10, cfg);
+    ASSERT_TRUE(rejected.is_error());
+    const td::Slice expected[] = {"AccountBlock differs from configured executor identity",
+                                  "AccountBlock state update differs from its batch transaction",
+                                  "block executor requires exactly one batch transaction"};
+    ASSERT_EQ(rejected.error().message(), expected[mutation]);
+  }
   resolved.policy.limits.wire_bytes = 7;
   auto limited = block::replay_resolved_workchain_batch_state(
       resolved, context, restored, committed, 10, 10, cfg);

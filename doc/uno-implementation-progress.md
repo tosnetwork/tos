@@ -42,7 +42,7 @@ Base node revision: `5a6145cce`.
   rejection assertion; the check was restored. These are post-execution checks
   over deterministic engine metrics, not a substitute for cheap pre-verification
   admission limits or native storage limits. Live dispatch has not yet been
-  switched to these entry points.
+  activated for these entry points.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
 - `test-workchain-block` (seventeen cases) and the full `validator-engine` target build
@@ -166,19 +166,30 @@ binds input context; neither authenticates the context by itself.
 - Both configuration paths call `validate_required_workchains`, which still
   requires account execution. Block engines therefore remain deliberately
   unavailable to the node until block dispatch is integrated.
-- The block path must replace per-account transaction processing and supply
+- `ValidateQuery::check_transactions` now has a separate state-only block branch,
+  requiring exactly the configured executor AccountBlock, rejecting native
+  inbound/outbound message descriptors, and replaying from the previous shard,
+  selected MC configuration root and MC state root. The helper validates the
+  AccountBlock identity, augmented transaction dictionary, exactly one batch and
+  matching AccountBlock/transaction state updates before persisted-state replay.
+  Tests exercise the helper on a real serialized AccountBlock and reject changed
+  identity, state updates and multiple transactions. Removing the AccountBlock
+  state-update comparison accepts a forged wrapper and fails its rejection test;
+  the comparison was restored. The earlier configuration gate still prevents node
+  activation; this is not evidence of end-to-end validator acceptance.
+- The collator block path must replace per-account transaction processing and supply
   canonical synthetic transactions to block-extra, account/state-update,
   message-queue and value-flow verification. Bypassing only scope checks is
   insufficient and would not constitute M1.
 - `CheckAccountTxs::check_one_transaction` still reconstructs a per-account
   `Transaction` after its scope check. Block execution needs a separate host
-  path, not removal of that rejection.
+  path; its account-scope rejection remains unchanged.
 
 ## Remaining requirements
 
-This is the beginning of M1, not an enabled workchain. The interface is not yet
-called by the collator or validator and its context cells are not authentication
-proofs by themselves.
+This is the beginning of M1, not an enabled workchain. The collator is not wired;
+the validator branch remains behind the configuration gate. Context cells are
+not authentication proofs by themselves.
 
 1. Authenticate block configuration/finality and resolve execution scope through
    the descriptor registry; integrate persisted witnesses with live block processing.
