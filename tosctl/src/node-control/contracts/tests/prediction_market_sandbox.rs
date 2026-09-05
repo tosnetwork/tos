@@ -526,6 +526,46 @@ fn malformed_state_init_data_cannot_activate_the_production_contract() {
 }
 
 #[test]
+fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut builder = BuilderData::from_cell(&valid_data).unwrap();
+    let mut bytes = builder.data().to_vec();
+    // Root layout is magic:uint32, version:uint16, activated:1,
+    // activated_at:uint64. Set the low bit of activated_at without changing
+    // config, accounting, resolution, or dictionary references.
+    bytes[14] |= 0x80;
+    builder.replace_data(bytes, valid_data.bit_length());
+    let prepopulated_data = builder.into_cell().unwrap();
+    let mut decoded = SliceData::load_cell(prepopulated_data.clone()).unwrap();
+    decoded.get_next_u32().unwrap();
+    decoded.get_next_u16().unwrap();
+    decoded.get_next_bit().unwrap();
+    assert_eq!(decoded.get_next_u64().unwrap(), 1, "test mutation must set activated_at");
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("prepopulated-init-owner", 25_000 * TOS).unwrap();
+    let state_init = StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), prepopulated_data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "pre-populated runtime must not activate the market");
+    assert_eq!(state.int_at(1), 1, "failed activation must not rewrite the supplied runtime");
+}
+
+#[test]
 fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
