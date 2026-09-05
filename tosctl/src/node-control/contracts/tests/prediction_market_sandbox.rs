@@ -14,6 +14,7 @@ use contracts::{
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
 };
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, Treasury, compile_func_with_stdlib};
 use tos_vm::stack::StackItem;
 
@@ -48,6 +49,54 @@ fn assert_state_init_activation_aborts(label: &str, data: Cell) {
     let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
     state.expect_success();
     assert_eq!(state.int_at(0), 0, "{label} must not activate the market");
+}
+
+fn initial_state_with_rebound_config(
+    valid_initial_data: &Cell,
+    init: &PredictionMarketInitV1,
+    config: Cell,
+) -> Cell {
+    let config_hash = *config.repr_hash().as_array();
+    let mut market_id = Sha256::new();
+    market_id.update(b"TOS_PREDICTION_MARKET_V1");
+    market_id.update(init.global_id.to_be_bytes());
+    market_id.update(init.workchain_id.to_be_bytes());
+    market_id.update(init.deployment_salt);
+    market_id.update(config_hash);
+    let market_id: [u8; 32] = market_id.finalize().into();
+
+    // Updating a config requires rebinding both derived identity fields. This
+    // lets negative tests reach their specific config invariant instead of
+    // stopping at the earlier stale-identity guard.
+    let mut state = BuilderData::new();
+    state
+        .append_u32(0x504d_5331)
+        .unwrap()
+        .append_u16(1)
+        .unwrap()
+        .append_bit_zero()
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .append_u8(0)
+        .unwrap()
+        .append_raw(&[0], 2)
+        .unwrap()
+        .append_raw(&[0], 2)
+        .unwrap()
+        .append_raw(&config_hash, 256)
+        .unwrap()
+        .append_raw(&market_id, 256)
+        .unwrap()
+        .checked_append_reference(config)
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(1).unwrap())
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(2).unwrap())
+        .unwrap()
+        .checked_append_reference(valid_initial_data.reference(3).unwrap())
+        .unwrap();
+    state.into_cell().unwrap()
 }
 
 fn compute_gas_used(result: &SendResult) -> u64 {
@@ -672,9 +721,11 @@ fn zero_oracle_threshold_in_a_structurally_valid_config_cannot_activate() {
     policies_builder.replace_reference_cell(0, normal_builder.into_cell().unwrap());
     let mut config_builder = BuilderData::from_cell(&config).unwrap();
     config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
-    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
-    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
-    let invalid_data = root_builder.into_cell().unwrap();
+    let invalid_data = initial_state_with_rebound_config(
+        &valid_data,
+        &template.init,
+        config_builder.into_cell().unwrap(),
+    );
 
     assert_state_init_activation_aborts("zero-threshold", invalid_data);
 }
@@ -693,9 +744,11 @@ fn overlapping_normal_and_appellate_reporter_sets_cannot_activate() {
     policies_builder.replace_reference_cell(1, policies.reference(0).unwrap());
     let mut config_builder = BuilderData::from_cell(&config).unwrap();
     config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
-    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
-    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
-    let invalid_data = root_builder.into_cell().unwrap();
+    let invalid_data = initial_state_with_rebound_config(
+        &valid_data,
+        &template.init,
+        config_builder.into_cell().unwrap(),
+    );
 
     assert_state_init_activation_aborts("overlapping-policy", invalid_data);
 }
@@ -716,9 +769,14 @@ fn zero_immutable_rules_hash_in_a_structurally_valid_config_cannot_activate() {
 
     let mut config_builder = BuilderData::from_cell(&config).unwrap();
     config_builder.replace_reference_cell(0, identity_builder.into_cell().unwrap());
-    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
-    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
-    assert_state_init_activation_aborts("zero-rules-hash", root_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "zero-rules-hash",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
 }
 
 #[test]
@@ -735,9 +793,14 @@ fn inverted_trade_and_resolution_times_cannot_activate() {
 
     let mut config_builder = BuilderData::from_cell(&config).unwrap();
     config_builder.replace_reference_cell(1, times_builder.into_cell().unwrap());
-    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
-    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
-    assert_state_init_activation_aborts("inverted-times", root_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "inverted-times",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
 }
 
 #[test]
@@ -762,9 +825,14 @@ fn zero_challenge_bond_in_a_structurally_valid_config_cannot_activate() {
     economics_builder.replace_reference_cell(0, fees_builder.into_cell().unwrap());
     let mut config_builder = BuilderData::from_cell(&config).unwrap();
     config_builder.replace_reference_cell(2, economics_builder.into_cell().unwrap());
-    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
-    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
-    assert_state_init_activation_aborts("zero-challenge-bond", root_builder.into_cell().unwrap());
+    assert_state_init_activation_aborts(
+        "zero-challenge-bond",
+        initial_state_with_rebound_config(
+            &valid_data,
+            &template.init,
+            config_builder.into_cell().unwrap(),
+        ),
+    );
 }
 
 #[test]
