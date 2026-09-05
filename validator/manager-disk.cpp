@@ -159,7 +159,8 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
                                   .min_masterchain_block_id = last_masterchain_block_id_,
                                   .prev = prev,
                                   .creator = created_by,
-                                  .validator_set = val_set},
+                                  .validator_set = val_set,
+                                  .workchain_block_candidate = block_candidate_},
                     actor_id(this), {}, std::move(P));
 }
 
@@ -1106,9 +1107,9 @@ void ValidatorManagerImpl::try_get_static_file(FileHash file_hash, td::Promise<t
 
 td::actor::ActorOwn<ValidatorManagerInterface> ValidatorManagerDiskFactory::create(
     PublicKeyHash id, td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard, BlockIdExt shard_top_block_id,
-    std::string db_root) {
+    std::string db_root, td::Ref<vm::Cell> block_candidate) {
   return td::actor::create_actor<validator::ValidatorManagerImpl>("manager", id, std::move(opts), shard,
-                                                                  shard_top_block_id, db_root);
+                                                                  shard_top_block_id, db_root, std::move(block_candidate));
 }
 
 }  // namespace validator

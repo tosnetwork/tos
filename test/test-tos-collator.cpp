@@ -31,6 +31,7 @@
 #include "auto/tl/tos_api_json.h"
 #include "common/errorlog.h"
 #include "crypto/block/block-db.h"
+#include "crypto/test/workchain-counter-engine.h"
 #include "crypto/vm/vm.h"
 #include "dht/dht.h"
 #include "overlay/overlays.h"
@@ -79,6 +80,7 @@ class TestNode : public td::actor::Actor {
   // be populated by a prior run or pointed at an existing node DB.
   std::string db_root_ = "tos-collator-work-db";
   std::string global_config_;
+  td::Ref<vm::Cell> block_candidate_;
   td::Ref<tos::validator::ValidatorManagerOptions> opts_;
 
   tos::ZeroStateIdExt zero_id_;
@@ -94,6 +96,9 @@ class TestNode : public td::actor::Actor {
   tos::ShardIdFull shard_{tos::masterchainId, tos::shardIdAll};
 
  public:
+  void set_counter_increment(td::uint64 increment) {
+    block_candidate_ = block::test::counter_number(increment);
+  }
   void set_db_root(std::string db_root) {
     db_root_ = db_root;
   }
@@ -271,6 +276,18 @@ class TestNode : public td::actor::Actor {
   }
 
   void run() {
+    if (block_candidate_.not_null()) {
+      if (shard_ != tos::ShardIdFull{2, tos::shardIdAll}) {
+        std::cerr << "fatal: Counter collation requires the unsplit workchain 2.\n";
+        std::_Exit(2);
+      }
+      auto status = block::default_workchain_execution_registry().register_block_engine(
+          std::make_unique<block::test::CounterEngine>());
+      if (status.is_error()) {
+        LOG(ERROR) << status;
+        std::_Exit(2);
+      }
+    }
     // This is a manual collation tool, not a self-checking test: it collates a
     // block for a given shard atop a given top block, using state that already
     // lives in the DB. The disk validator manager cannot download, so without a
@@ -303,7 +320,7 @@ class TestNode : public td::actor::Actor {
 
     opts.write().set_initial_sync_disabled(true);
     validator_manager_ = tos::validator::ValidatorManagerDiskFactory::create(tos::PublicKeyHash::zero(), opts, shard_,
-                                                                             shard_top_block_id_, db_root_);
+                                                                             shard_top_block_id_, db_root_, block_candidate_);
     for (auto &msg : ext_msgs_) {
       td::actor::ask(validator_manager_, &tos::validator::ValidatorManager::new_external_message_broadcast,
                      std::move(msg), 0, td::optional<tos::PublicKeyHash>{})
@@ -431,6 +448,12 @@ int main(int argc, char *argv[]) {
   });
   p.add_option('s', "save-top-descr", "saves generated shard top block description into files with specified prefix",
                [&](td::Slice arg) { td::actor::send_closure(x, &TestNode::set_top_descr_prefix, arg.str()); });
+  p.add_checked_option(0, "counter-increment", "test-only: register Counter engine and collate this uint64 increment",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));
+                         td::actor::send_closure(x, &TestNode::set_counter_increment, increment);
+                         return td::Status::OK();
+                       });
   p.add_checked_option('T', "top-block", "BlockIdExt of top block (new block will be generated atop of it)",
                        [&](td::Slice arg) {
                          tos::BlockIdExt block_id;

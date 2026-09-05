@@ -13,6 +13,17 @@ Base node revision: `5a6145cce`.
   transaction and final shard wrapper are host outputs, not engine outputs.
 - Counter fixture tests correct execution, input preservation, result field
   mutations, resource mutations, missing finality context and overflow.
+- The Counter engine is shared in `crypto/test/workchain-counter-engine.h` by
+  unit tests and the manual disk-backed collator tool. `test-tos-collator
+  --counter-increment <uint64> -w 2 ...` explicitly registers it only in that test
+  process and passes the candidate through the disk manager to real collation.
+  The existing disk-manager flow then validates the candidate and writes it.
+  Production startup does not include/register this fixture. The admission CTest
+  checks wrong-shard rejection and full uint64 parsing followed by missing-config
+  rejection. These checks do not yet generate a block: a matching MC/shard state
+  fixture and isolated database still need to be built and exercised.
+  Removing the tool's workchain guard changes the exact error and fails the
+  admission CTest; the guard was restored.
 - Counter execution now reads a canonical `ShardStateUnsplit` and augmented
   `ShardAccounts` dictionary rather than treating a bare integer as a shard.
   `extract_workchain_engine_state` checks workchain/shard identity, absence of

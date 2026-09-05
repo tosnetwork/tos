@@ -742,6 +742,9 @@ add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
+add_test(NAME test-counter-collator-admission
+  COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-collator-admission.cmake)
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
 target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)

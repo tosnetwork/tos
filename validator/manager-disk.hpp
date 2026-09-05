@@ -356,12 +356,13 @@ class ValidatorManagerImpl : public ValidatorManager {
   }
 
   ValidatorManagerImpl(PublicKeyHash local_id, td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard_id,
-                       BlockIdExt shard_to_block_id, std::string db_root)
+                       BlockIdExt shard_to_block_id, std::string db_root, td::Ref<vm::Cell> block_candidate)
       : local_id_(local_id)
       , opts_(std::move(opts))
       , db_root_(db_root)
       , shard_to_generate_(shard_id)
-      , block_to_generate_(shard_to_block_id) {
+      , block_to_generate_(shard_to_block_id)
+      , block_candidate_(std::move(block_candidate)) {
   }
 
  public:
@@ -470,6 +471,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::string db_root_;
   ShardIdFull shard_to_generate_;
   BlockIdExt block_to_generate_;
+  td::Ref<vm::Cell> block_candidate_;
 
   int pending_new_shard_block_descr_{0};
   std::vector<td::Promise<std::vector<td::Ref<ShardTopBlockDescription>>>> waiting_new_shard_block_descr_;

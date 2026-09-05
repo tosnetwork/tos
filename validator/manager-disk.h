@@ -29,7 +29,8 @@ class ValidatorManagerDiskFactory {
  public:
   static td::actor::ActorOwn<ValidatorManagerInterface> create(PublicKeyHash local_id,
                                                                td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard,
-                                                               BlockIdExt shard_top_block_id, std::string db_root);
+                                                               BlockIdExt shard_top_block_id, std::string db_root,
+                                                               td::Ref<vm::Cell> block_candidate = {});
 };
 
 }  // namespace validator
