@@ -247,7 +247,14 @@ impl Fixture {
     }
 
     fn new_with(configure: impl FnOnce(&mut PredictionMarketInitV1)) -> Self {
-        let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
+        Self::new_with_global_version(14, configure)
+    }
+
+    fn new_with_global_version(
+        global_version: u32,
+        configure: impl FnOnce(&mut PredictionMarketInitV1),
+    ) -> Self {
+        let mut bc = Blockchain::with_global_version(global_version).expect("blockchain");
         bc.set_workchain(-1);
         let treasury_balance = 25_000_u64.checked_mul(TOS).unwrap();
         let owner = bc.treasury("prediction-owner", treasury_balance).expect("owner");
@@ -448,6 +455,24 @@ fn source_compiles_to_frozen_prediction_market_code() {
         PredictionMarketContractV1::code().expect("frozen code").repr_hash(),
         "frozen PredictionMarket BOC must be regenerated after every FunC change"
     );
+}
+
+#[test]
+fn global_version_gate_rejects_v13_and_admits_v14_v15_activation() {
+    let mut v13 = Fixture::new_with_global_version(13, |_| {});
+    let owner = v13.owner.address().clone();
+    v13.send(
+        &owner,
+        v13.init.operating_reserve_floor + OPERATION_BUDGET,
+        PredictionMarketContractV1::activate(1).unwrap(),
+    )
+    .expect_exit_code(2404);
+
+    for version in [14, 15] {
+        let mut fixture = Fixture::new_with_global_version(version, |_| {});
+        fixture.activate();
+        assert_eq!(fixture.phase().0, 0, "v{version} activation must retain the trading phase");
+    }
 }
 
 #[test]
