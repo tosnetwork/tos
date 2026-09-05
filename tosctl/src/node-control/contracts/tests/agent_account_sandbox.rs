@@ -1312,7 +1312,11 @@ fn checked_contract_call_v2_rejected_by_target_bounces_without_restoring_authori
     let result = fixture.send_external(action).expect("checked call");
     result.expect_success().expect_out_msgs(1);
     assert_eq!(fixture.seqno(), 1, "a target rejection cannot resurrect the external request");
-    assert_eq!(fixture.spent_today(), value as i128, "daily authority remains consumed after a bounce");
+    assert_eq!(
+        fixture.spent_today(),
+        value as i128,
+        "daily authority remains consumed after a bounce"
+    );
     assert!(
         fixture.balance() > balance_before - value,
         "the rich bounce must credit the rejected message value back to the Agent Account"

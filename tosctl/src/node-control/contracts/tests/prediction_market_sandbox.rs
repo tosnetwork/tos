@@ -5,7 +5,10 @@
 
 //! Production-BOC state-transition tests for PredictionMarket V1.
 
-use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit, TrComputePhase};
+use chain_block::{
+    BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
+    TrComputePhase,
+};
 use contracts::{
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
@@ -503,7 +506,9 @@ fn malformed_state_init_data_cannot_activate_the_production_contract() {
     truncated_builder.trunc(16).unwrap();
     let truncated = truncated_builder.into_cell().unwrap();
 
-    for (label, data) in [("empty", Cell::default()), ("truncated", truncated), ("bad magic", bad_magic)] {
+    for (label, data) in
+        [("empty", Cell::default()), ("truncated", truncated), ("bad magic", bad_magic)]
+    {
         let mut bc = Blockchain::with_global_version(14).unwrap();
         bc.set_workchain(-1);
         let owner = bc.treasury(&format!("malformed-init-{label}"), 25_000 * TOS).unwrap();
@@ -546,7 +551,10 @@ fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
     let mut bc = Blockchain::with_global_version(14).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury("prepopulated-init-owner", 25_000 * TOS).unwrap();
-    let state_init = StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), prepopulated_data);
+    let state_init = StateInit::with_code_and_data(
+        PredictionMarketContractV1::code().unwrap(),
+        prepopulated_data,
+    );
     let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
     let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
     let result = bc
@@ -576,11 +584,16 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
     }
     let mut accounting = BuilderData::new();
     accounting
-        .append_u32(0x504d_4131).unwrap()
-        .append_u32(1).unwrap() // participant_count
-        .append_u32(0).unwrap()
-        .append_u64(0).unwrap()
-        .append_u64(0).unwrap()
+        .append_u32(0x504d_4131)
+        .unwrap()
+        .append_u32(1)
+        .unwrap() // participant_count
+        .append_u32(0)
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
+        .append_u64(0)
+        .unwrap()
         .checked_append_reference(liabilities.into_cell().unwrap())
         .unwrap();
     let mut root = BuilderData::from_cell(&valid_data).unwrap();
@@ -590,7 +603,10 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
     let mut bc = Blockchain::with_global_version(14).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury("prepopulated-liability-owner", 25_000 * TOS).unwrap();
-    let state_init = StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), prepopulated_data);
+    let state_init = StateInit::with_code_and_data(
+        PredictionMarketContractV1::code().unwrap(),
+        prepopulated_data,
+    );
     let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
     let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
     let result = bc
@@ -606,9 +622,57 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
     let accounting = bc.run_get_method(&market, "get_prediction_accounting", vec![]).unwrap();
     accounting.expect_success();
     assert_eq!(accounting.int_at(0), 1, "failed activation must not normalize seeded liabilities");
-    let phase = bc.run_get_method(&market, "get_market_phase", vec![]).unwrap();
-    phase.expect_success();
-    assert_eq!(phase.int_at(0), 0, "seeded liability must not activate the market");
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "seeded liability must not activate the market");
+}
+
+#[test]
+fn zero_oracle_threshold_in_a_structurally_valid_config_cannot_activate() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+
+    // Preserve the canonical reporter dictionary and every surrounding cell;
+    // mutate only normal_policy.threshold. This bypasses the Rust-side builder
+    // validation and proves the production contract rejects the economic
+    // invariant itself while parsing a structurally valid StateInit DAG.
+    let config = valid_data.reference(0).unwrap();
+    let policies = config.reference(3).unwrap();
+    let normal_policy = policies.reference(0).unwrap();
+    let mut normal_builder = BuilderData::from_cell(&normal_policy).unwrap();
+    let mut normal_data = normal_builder.data().to_vec();
+    assert_eq!(normal_data[4], template.init.normal_oracle_policy.threshold);
+    normal_data[4] = 0;
+    normal_builder.replace_data(normal_data, normal_policy.bit_length());
+
+    let mut policies_builder = BuilderData::from_cell(&policies).unwrap();
+    policies_builder.replace_reference_cell(0, normal_builder.into_cell().unwrap());
+    let mut config_builder = BuilderData::from_cell(&config).unwrap();
+    config_builder.replace_reference_cell(3, policies_builder.into_cell().unwrap());
+    let mut root_builder = BuilderData::from_cell(&valid_data).unwrap();
+    root_builder.replace_reference_cell(0, config_builder.into_cell().unwrap());
+    let invalid_data = root_builder.into_cell().unwrap();
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("zero-threshold-owner", 25_000 * TOS).unwrap();
+    let state_init =
+        StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), invalid_data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let state = bc.run_get_method(&market, "get_prediction_state", vec![]).unwrap();
+    state.expect_success();
+    assert_eq!(state.int_at(0), 0, "zero threshold must not activate the market");
 }
 
 #[test]
@@ -762,12 +826,8 @@ fn maximum_free_withdrawal_survives_real_storage_rent_collection() {
     f.register(&owner, &key, 2);
     // Storage rent is paid from physical operating funds, not participant
     // liabilities. Fund the selected horizon explicitly before advancing time.
-    f.send(
-        &owner,
-        50 * TOS,
-        PredictionMarketContractV1::top_up_reserve(3).unwrap(),
-    )
-    .expect_success();
+    f.send(&owner, 50 * TOS, PredictionMarketContractV1::top_up_reserve(3).unwrap())
+        .expect_success();
 
     let withdrawable = f.account(&owner)[0] as u64;
     assert!(withdrawable > 0, "fixture must create a positive free balance");
@@ -809,11 +869,17 @@ fn no_bounce_withdrawal_credits_an_aborting_recipient_without_a_market_bounce() 
 
     let amount = TOS;
     let free_before = f.account(&owner)[0] as u64;
-    let recipient_before = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
-    let result = f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::withdraw(3, amount).unwrap());
+    let recipient_before =
+        f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    let result =
+        f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::withdraw(3, amount).unwrap());
     result.expect_success().expect_out_msgs(1);
     let recipient_transactions = result.transactions_for(&owner);
-    assert_eq!(recipient_transactions.len(), 1, "withdrawal must create exactly one recipient delivery");
+    assert_eq!(
+        recipient_transactions.len(),
+        1,
+        "withdrawal must create exactly one recipient delivery"
+    );
     let recipient_description = match recipient_transactions[0].read_description().unwrap() {
         chain_block::TransactionDescr::Ordinary(description) => description,
         other => panic!("expected ordinary recipient transaction, got {other:?}"),
@@ -824,9 +890,17 @@ fn no_bounce_withdrawal_credits_an_aborting_recipient_without_a_market_bounce() 
         1,
         "a non-bounce payout must not create a late bounce back to the market"
     );
-    assert_eq!(f.account(&owner)[0] as u64, free_before - amount, "aborting recipient must not restore free balance");
-    let recipient_after = f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
-    assert!(recipient_after > recipient_before, "non-bounce payout did not credit the recipient account");
+    assert_eq!(
+        f.account(&owner)[0] as u64,
+        free_before - amount,
+        "aborting recipient must not restore free balance"
+    );
+    let recipient_after =
+        f.bc.get_account(&owner).unwrap().balance().unwrap().coins.as_u64().unwrap();
+    assert!(
+        recipient_after > recipient_before,
+        "non-bounce payout did not credit the recipient account"
+    );
 }
 
 #[test]
@@ -1282,7 +1356,10 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
     let accounting = f.accounting();
     assert_eq!(accounting[5], 0, "finalization must clear locked backing");
     assert_eq!(accounting[6], final_backing as i128, "final backing diverged from the model");
-    assert_eq!(accounting[7], final_backing as i128, "all final backing must begin as payout liability");
+    assert_eq!(
+        accounting[7], final_backing as i128,
+        "all final backing must begin as payout liability"
+    );
     assert_eq!(accounting[8], 0, "no claim may be recorded before a claim");
 
     let mut cumulative_claimed = 0_u64;
@@ -1772,10 +1849,18 @@ fn appellate_reporter_window_opens_after_delay_and_closes_at_deadline() {
         let appellate = f.appellate.address().clone();
         let challenger = f.trader_b.address().clone();
         f.bc.set_now(f.init.resolve_not_before as u32);
-        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
-            .expect_success();
-        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
-            .expect_success();
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(1).unwrap(),
+        )
+        .expect_success();
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(2).unwrap(),
+        )
+        .expect_success();
         let normal_context = f.phase().3;
         let report_at = u64::from(f.bc.now());
         f.send(
@@ -1823,8 +1908,12 @@ fn appellate_reporter_window_opens_after_delay_and_closes_at_deadline() {
         .expect_exit_code(2426);
 
         f.bc.set_now(vote_not_before as u32);
-        f.send(&challenger, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(6).unwrap())
-            .expect_success();
+        f.send(
+            &challenger,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::advance_phase(6).unwrap(),
+        )
+        .expect_success();
         let appeal_context = f.phase().3;
         assert_ne!(appeal_context, [0; 32], "review delay expiry must open the appeal nonce");
         let deadline = f.phase().6;
@@ -1871,13 +1960,7 @@ fn normal_oracle_requires_exact_threshold_without_duplicate_counting() {
     let deadline = f.init.oracle_vote_deadline;
     let report = |query_id| {
         PredictionMarketContractV1::report_result(
-            query_id,
-            0,
-            context,
-            0,
-            [0xd1; 32],
-            now,
-            deadline,
+            query_id, 0, context, 0, [0xd1; 32], now, deadline,
         )
         .unwrap()
     };
@@ -2022,7 +2105,10 @@ fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
         let mut f = Fixture::new();
         f.activate();
         let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
-        let keys = [SigningKey::from_bytes(&[0x80 + outcome; 32]), SigningKey::from_bytes(&[0x90 + outcome; 32])];
+        let keys = [
+            SigningKey::from_bytes(&[0x80 + outcome; 32]),
+            SigningKey::from_bytes(&[0x90 + outcome; 32]),
+        ];
         let normal = f.normal.address().clone();
         f.register(&owners[0], &keys[0], 2);
         f.register(&owners[1], &keys[1], 3);
@@ -2034,15 +2120,28 @@ fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
         // Move one YES lot only. The two accounts now have asymmetric YES/NO
         // positions, so all three outcomes exercise different individual payouts.
         let sell_yes = f.signed_order(
-            &owners[0], &keys[0], 1, PredictionOrderActionV1::Sell,
-            PredictionOrderOutcomeV1::Yes, PredictionLiquidityRoleV1::Maker, 5_000, 1,
+            &owners[0],
+            &keys[0],
+            1,
+            PredictionOrderActionV1::Sell,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Maker,
+            5_000,
+            1,
         );
         let buy_yes = f.signed_order(
-            &owners[1], &keys[1], 1, PredictionOrderActionV1::Buy,
-            PredictionOrderOutcomeV1::Yes, PredictionLiquidityRoleV1::Taker, 5_000, 1,
+            &owners[1],
+            &keys[1],
+            1,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Taker,
+            5_000,
+            1,
         );
         f.send(
-            &owners[1], 2 * TOS,
+            &owners[1],
+            2 * TOS,
             PredictionMarketContractV1::match_pair(6, 1, sell_yes, buy_yes).unwrap(),
         )
         .expect_success();
@@ -2057,7 +2156,12 @@ fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
             &normal,
             OPERATION_BUDGET,
             PredictionMarketContractV1::report_result(
-                9, 0, context, outcome, [0xb0 + outcome; 32], u64::from(f.bc.now()),
+                9,
+                0,
+                context,
+                outcome,
+                [0xb0 + outcome; 32],
+                u64::from(f.bc.now()),
                 f.init.oracle_vote_deadline,
             )
             .unwrap(),
@@ -2066,7 +2170,8 @@ fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
         let finalization_deadline = f.phase().6;
         f.bc.set_now(finalization_deadline as u32);
         f.send(
-            &owners[0], OPERATION_BUDGET,
+            &owners[0],
+            OPERATION_BUDGET,
             PredictionMarketContractV1::finalize_uncontested(10).unwrap(),
         )
         .expect_success();
@@ -2085,7 +2190,8 @@ fn every_outcome_exhausts_final_backing_under_different_claim_orders() {
                 _ => unreachable!(),
             };
             f.send(
-                &owners[1 - index], OPERATION_BUDGET,
+                &owners[1 - index],
+                OPERATION_BUDGET,
                 PredictionMarketContractV1::claim(20 + index as u64, &owners[index]).unwrap(),
             )
             .expect_success();
