@@ -600,7 +600,9 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionSourceObservation>> = BTreeMap::new();
@@ -1200,6 +1202,22 @@ fn prediction_request_matches_durable_boundary(
             == request.pre_broadcast_masterchain_checkpoint.masterchain_sequence_number
 }
 
+// Resolver results normally expose only a stable failure category because an
+// RPC response is untrusted.  An owner may opt into a bounded diagnostic when
+// operating a private test chain; the normal release surface remains stable.
+fn prediction_rpc_failure_diagnostic(endpoint: &str, error: &anyhow::Error) -> String {
+    let category = rpc_failure_diagnostic(endpoint, error);
+    if std::env::var_os("TOSCTL_DEBUG_PREDICTION_RELAY").is_none() {
+        return category;
+    }
+    let detail = format!("{error:#}")
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(512)
+        .collect::<String>();
+    format!("{category}; detail={detail}")
+}
+
 fn validate_destination_request(
     request: &PredictionRelayDestinationRequest,
     stable_action_id: &str,
@@ -1413,9 +1431,8 @@ fn validate_bounce_credit_request(
     );
     let root = read_single_root_boc(&transaction_bytes)?;
     anyhow::ensure!(
-        write_boc(&root)? == transaction_bytes
-            && format!("sha256:{}", hex::encode(root.hash(0))) == evidence.transaction_hash,
-        "Prediction destination transaction is not canonical or hash-bound"
+        format!("sha256:{}", hex::encode(root.hash(0))) == evidence.transaction_hash,
+        "Prediction destination transaction is not hash-bound"
     );
     let transaction = Transaction::construct_from_cell(root)?;
     let market: MsgAddressInt = request.profile.market_address.parse()?;
@@ -1936,10 +1953,11 @@ fn parse_prediction_destination_candidate(
         "market transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc).context("parse market transaction BOC")?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "market transaction BOC is not canonical"
-    );
+    // RPCs can legitimately include BOC index/cache/CRC framing.  The TVM
+    // cell hash, not those transport bytes, authenticates a transaction.
+    // Store a single canonical representation after decoding so later
+    // evidence is deterministic without rejecting an equivalent RPC reply.
+    let transaction_boc = write_boc(&root)?;
     let transaction = Transaction::construct_from_cell(root.clone())?;
     let transaction_hash = *root.hash(0).as_slice();
     let wrapper_hash = base64::engine::general_purpose::STANDARD
@@ -2275,10 +2293,7 @@ fn parse_prediction_bounce_credit_candidate(
         "source bounce transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc)?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "source bounce transaction BOC is not canonical"
-    );
+    let transaction_boc = write_boc(&root)?;
     let transaction = Transaction::construct_from_cell(root.clone())?;
     let transaction_hash = *root.hash(0).as_slice();
     let wrapper_hash = base64::engine::general_purpose::STANDARD
@@ -2355,10 +2370,7 @@ fn parse_prediction_source_history_step(
         "source transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc).context("parse source transaction BOC")?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "source transaction BOC is not canonical"
-    );
+    let transaction_boc = write_boc(&root)?;
     let transaction =
         Transaction::construct_from_cell(root.clone()).context("decode source transaction")?;
     let block = raw.block_id.context("source transaction has no block identity")?;

@@ -917,6 +917,7 @@ impl PredictionPrepareAgentCmd {
                 &account.to_string(),
                 pre_broadcast_source.last_transaction_id.lt,
                 &pre_broadcast_source.last_transaction_id.hash,
+                pre_broadcast_master.last.shard,
                 pre_broadcast_master.last.seqno,
                 &pre_broadcast_master.last.root_hash,
                 &pre_broadcast_master.last.file_hash,
@@ -1055,6 +1056,7 @@ fn prediction_pre_broadcast_boundary(
     account: &str,
     source_lt: u64,
     source_hash: &[u8],
+    masterchain_shard: i64,
     masterchain_seqno: u32,
     masterchain_root_hash: &[u8],
     masterchain_file_hash: &[u8],
@@ -1084,7 +1086,7 @@ fn prediction_pre_broadcast_boundary(
         }),
         json!({
             "workchain_id": -1,
-            "shard": -1,
+            "shard": masterchain_shard,
             "sequence_number": masterchain_seqno,
             "root_hash": format!("sha256:{}", hex::encode(masterchain_root_hash)),
             "file_hash": format!("sha256:{}", hex::encode(masterchain_file_hash)),
@@ -2118,6 +2120,7 @@ mod tests {
             "0:source",
             7,
             &[0x11; 32],
+            i64::MIN,
             9,
             &[0x22; 32],
             &[0x33; 32],
@@ -2127,18 +2130,27 @@ mod tests {
         assert_eq!(cursor["last_logical_time"], 7);
         assert_eq!(cursor["last_transaction_hash"], format!("sha256:{}", "11".repeat(32)));
         assert_eq!(checkpoint["workchain_id"], -1);
+        assert_eq!(checkpoint["shard"], i64::MIN);
         assert_eq!(checkpoint["masterchain_sequence_number"], 9);
         assert_eq!(checkpoint["root_hash"], format!("sha256:{}", "22".repeat(32)));
 
-        let (zero_cursor, _) =
-            prediction_pre_broadcast_boundary("0:source", 0, &[], 9, &[0x22; 32], &[0x33; 32])
-                .unwrap();
+        let (zero_cursor, _) = prediction_pre_broadcast_boundary(
+            "0:source",
+            0,
+            &[],
+            i64::MIN,
+            9,
+            &[0x22; 32],
+            &[0x33; 32],
+        )
+        .unwrap();
         assert_eq!(zero_cursor["last_transaction_hash"], "");
         assert!(
             prediction_pre_broadcast_boundary(
                 "0:source",
                 0,
                 &[0x11; 32],
+                i64::MIN,
                 9,
                 &[0x22; 32],
                 &[0x33; 32],
@@ -2150,6 +2162,7 @@ mod tests {
                 "0:source",
                 7,
                 &[0x11; 31],
+                i64::MIN,
                 9,
                 &[0x22; 32],
                 &[0x33; 32],
