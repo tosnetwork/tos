@@ -1023,3 +1023,12 @@ its isolated invalid input succeed and the C++ test fail. All mutations were
 restored. These temporary randomized records are not TOS wire, frozen production
 vectors, secrets or authenticated settlement receipts. Node CMake registration,
 platform ABI generation, sanitizer/fuzzing and engine integration remain open.
+
+Added default-OFF `TOS_UNO_CRYPTO_PROTOTYPE_TESTS` CMake/CTest integration on native
+Linux. Enabling it builds the locked/offline Rust static library in the CMake
+build directory, links both C++ callers, and registers the Rust suite plus smoke
+and real-fixture tests. Fresh fixture generation is checked for exit status and
+actual files; C++ rejection is propagated. All three tests passed twice. A no-op
+generator that returned success without files and a deliberately failing C++
+caller both caused wrapper failure. Cargo tests share a resource lock. This adds
+test targets only, not node linkage, workchain activation or config installation.

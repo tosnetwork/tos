@@ -76,6 +76,31 @@ the matching corrupted input return success and the test fail. All three mutatio
 were restored; these tests therefore exercise the linked implementation rather
 than a stale binary or rejection-only stub.
 
-Generated-header consistency on other platforms, sanitizer/fuzz coverage, host
-CMake linking and real UNO engine integration remain acceptance requirements
-before production use.
+## Opt-in CMake/CTest integration
+
+From the repository root, on a native Linux build:
+
+```sh
+cmake -S . -B build -DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON
+cmake --build build --target test-uno-crypto-abi-smoke test-uno-crypto-abi-real -j48
+ctest --test-dir build -R '^test-uno-crypto-' --output-on-failure
+```
+
+The option defaults to OFF. Enabling it adds three tests: the Rust unit suite,
+the C++ smoke caller, and the C++ real-fixture caller. The C++ targets depend on
+the locked/offline Cargo static-library build and join `all-tests`; no node or
+engine target links this library. `UNO_CRYPTO_BUILD_JOBS` defaults to 48 and may
+be configured separately. Preinstall the pinned toolchain and cache dependencies
+before enabling these targets; Cargo dependency resolution uses `--locked --offline`.
+Cargo artifacts live
+inside the CMake build directory, separate from the manual Cargo target directory.
+
+The real-fixture CTest generates fresh files in a unique build-directory path,
+requires both files even if the generator exits successfully, and propagates
+the C++ program's failure. Public fixtures are retained for inspection. Tests
+that invoke Cargo share a CTest resource lock. Two repeat runs of all three tests
+passed; a no-op generator and a failing C++ caller each caused the wrapper to fail.
+
+Generated-header consistency on other platforms, sanitizer/fuzz coverage and
+actual node/UNO engine integration remain acceptance requirements before
+production use. The CMake option does not activate a workchain or install config.

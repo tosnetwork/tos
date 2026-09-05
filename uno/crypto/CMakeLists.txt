@@ -1,0 +1,48 @@
+if (CMAKE_CROSSCOMPILING OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "UNO crypto prototype tests currently require a native Linux build")
+endif()
+find_program(UNO_CRYPTO_CARGO cargo)
+if (NOT UNO_CRYPTO_CARGO)
+  message(FATAL_ERROR "UNO crypto prototype tests require cargo and the pinned Rust toolchain")
+endif()
+find_package(Threads REQUIRED)
+set(UNO_CRYPTO_BUILD_JOBS 48 CACHE STRING "Parallel Rust build jobs for UNO prototype tests")
+if (NOT UNO_CRYPTO_BUILD_JOBS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "UNO_CRYPTO_BUILD_JOBS must be a positive integer")
+endif()
+set(UNO_CRYPTO_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo-target")
+set(UNO_CRYPTO_ARCHIVE "${UNO_CRYPTO_TARGET_DIR}/release/libtos_uno_crypto_prototype.a")
+
+# Let the locked build tool track its complete dependency graph on every invocation.
+add_custom_target(uno-crypto-rust
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+    ${UNO_CRYPTO_CARGO} build --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS}
+  BYPRODUCTS "${UNO_CRYPTO_ARCHIVE}"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  VERBATIM)
+
+foreach(kind smoke real)
+  add_executable(test-uno-crypto-abi-${kind} tests/abi-${kind}.cpp)
+  target_include_directories(test-uno-crypto-abi-${kind} PRIVATE include)
+  target_compile_features(test-uno-crypto-abi-${kind} PRIVATE cxx_std_17)
+  target_link_libraries(test-uno-crypto-abi-${kind} PRIVATE "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
+  add_dependencies(test-uno-crypto-abi-${kind} uno-crypto-rust)
+  add_dependencies(all-tests test-uno-crypto-abi-${kind})
+endforeach()
+
+add_test(NAME test-uno-crypto-rust
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+    ${UNO_CRYPTO_CARGO} test --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS} --lib)
+set_tests_properties(test-uno-crypto-rust PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)
+add_test(NAME test-uno-crypto-abi-smoke COMMAND test-uno-crypto-abi-smoke)
+add_test(NAME test-uno-crypto-abi-real
+  COMMAND ${CMAKE_COMMAND}
+    "-DUNO_CRYPTO_CARGO=${UNO_CRYPTO_CARGO}"
+    "-DUNO_CRYPTO_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DUNO_CRYPTO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+    "-DUNO_CRYPTO_BUILD_JOBS=${UNO_CRYPTO_BUILD_JOBS}"
+    "-DUNO_CRYPTO_FIXTURE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/fixtures"
+    "-DUNO_CRYPTO_ABI_EXE=$<TARGET_FILE:test-uno-crypto-abi-real>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/RunRealAbiTest.cmake")
+set_tests_properties(test-uno-crypto-abi-real PROPERTIES RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)

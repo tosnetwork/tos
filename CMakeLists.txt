@@ -534,6 +534,11 @@ endfunction()
 
 enable_testing()
 
+option(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "Build isolated UNO crypto ABI tests (no node activation)" OFF)
+if (TOS_UNO_CRYPTO_PROTOTYPE_TESTS)
+  add_subdirectory(uno/crypto)
+endif()
+
 set(TDUTILS_MIME_TYPE OFF CACHE BOOL "Generate mime type conversion")
 add_subdirectory(tdutils)
 if (TARGET lz4 AND TARGET tdutils)

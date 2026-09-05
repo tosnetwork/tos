@@ -157,3 +157,7 @@ through a static library. Generated positive/negative fixtures exercise the expo
 from Rust; separate C++ programs test argument/decoding failures and real exported
 proof/signature fixtures across the linked ABI. This is not yet production host linking or complete cross-language ABI
 acceptance; ownership, panic limits, remaining tests and reproduction are in ABI.md.
+
+The root CMake build now offers `TOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON` (default OFF)
+for the Rust suite and both C++ callers through CTest. This is test-only linking,
+not node/engine registration. See [ABI.md](ABI.md#opt-in-cmakectest-integration).
