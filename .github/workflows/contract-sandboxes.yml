@@ -64,8 +64,16 @@ jobs:
       # BOC still matches, so this covers artifact staleness as well as
       # behaviour. That check already existed in the tests; it had simply
       # never been executed.
+      # TOS_ROOT is load-bearing and easy to omit. tos_sandbox resolves
+      # stdlib.fc through find_tos_root(), which checks TOS_ROOT, then ~/tos,
+      # then only three directories up from the test binary's cwd -- and the
+      # repository root sits four levels above contracts/. A developer whose
+      # checkout happens to live at ~/tos passes locally through the second
+      # branch and learns nothing about CI, which is exactly what happened
+      # when this workflow was written.
       - name: Contract sandbox suites
         env:
+          TOS_ROOT: ${{ github.workspace }}
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked
