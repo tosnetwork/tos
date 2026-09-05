@@ -134,6 +134,31 @@ td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngres
   return td::Status::OK();
 }
 
+td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration) {
+  if (configuration.get_global_version() < kBlockTransitionMinGlobalVersion ||
+      !configuration.has_capability(tos::capBlockTransition)) {
+    return WorkchainNativeIngressTable{};
+  }
+  TRY_STATUS(validate_workchain_block_activation(configuration));
+  return decode_workchain_native_ingress_table(configuration.get_config_param(kWorkchainNativeIngressConfigParam));
+}
+
+td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(
+    const block::Config& configuration) {
+  TRY_RESULT(table, load_workchain_native_ingress_table(configuration));
+  std::map<tos::WorkchainId, tos::StdSmcAddress> destinations;
+  for (const auto& [id, policy] : table) {
+    auto it = configuration.get_workchain_list().find(id);
+    if (it == configuration.get_workchain_list().end() || it->second.is_null()) {
+      return td::Status::Error("native ingress policy has no workchain descriptor");
+    }
+    TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+    TRY_STATUS(validate_workchain_native_ingress_binding(policy, descriptor));
+    destinations.emplace(id, policy.executor_address);
+  }
+  return destinations;
+}
+
 namespace {
 
 constexpr std::int32_t kTvmVmVersion = -1;
@@ -353,6 +378,15 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
     return td::Status::Error("block engine returned null configuration");
   }
   TRY_RESULT(policy, it->second->block_policy(descriptor, *config));
+  TRY_RESULT(ingress_table, load_workchain_native_ingress_table(configuration));
+  auto ingress = ingress_table.find(descriptor.workchain_id);
+  if (ingress == ingress_table.end()) {
+    return td::Status::Error("block workchain has no public native ingress policy");
+  }
+  TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  if (ingress->second.executor_address != policy.executor_address) {
+    return td::Status::Error("engine executor differs from public native ingress policy");
+  }
   if (!policy.limits.wire_bytes || !policy.limits.verification_units || !policy.limits.written_cells) {
     return td::Status::Error("block execution policy requires explicit nonzero resource limits");
   }

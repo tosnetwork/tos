@@ -899,6 +899,7 @@ _ JettonBridgeParams = ConfigParam 79; // ETH->TOS token bridge
 _ JettonBridgeParams = ConfigParam 81; // BNB->TOS token bridge
 _ JettonBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
 _ JettonBridgeParams = ConfigParam 83; // Tron->TOS token bridge
+_ WorkchainNativeIngressTable = ConfigParam 84;
 
 //
 //  PROOFS

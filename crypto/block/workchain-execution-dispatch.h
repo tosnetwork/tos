@@ -102,6 +102,10 @@ using WorkchainNativeIngressTable = std::map<tos::WorkchainId, WorkchainNativeIn
 td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
     const std::vector<WorkchainNativeIngressPolicy>& policies);
 td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(const td::Ref<vm::Cell>& root);
+inline constexpr int kWorkchainNativeIngressConfigParam = 84;
+td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration);
+td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(
+    const block::Config& configuration);
 WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecutionDescriptor& descriptor);
 td::Status validate_workchain_execution_descriptor_transitions(
     const WorkchainSet& old_workchains, const WorkchainSet& new_workchains);

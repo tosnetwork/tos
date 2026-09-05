@@ -3239,6 +3239,9 @@ bool Transaction::check_rewrite_dest_addr(Ref<vm::CellSlice>& dest_addr, const A
     return false;
   }
   if (rec.anycast->size() > 1) {
+    if (cfg.native_ingress_destinations.count(rec.workchain_id)) {
+      return false;
+    }
     if (!allow_anycast) {
       return false;
     }
@@ -3259,6 +3262,11 @@ bool Transaction::check_rewrite_dest_addr(Ref<vm::CellSlice>& dest_addr, const A
                   && (rec.anycast = load_cell_slice_ref(cb.finalize())).not_null());
       repack = true;
     }
+  }
+  auto ingress = cfg.native_ingress_destinations.find(rec.workchain_id);
+  if (ingress != cfg.native_ingress_destinations.end() &&
+      (rec.addr_len != 256 || td::Bits256(rec.address->bits()) != ingress->second)) {
+    return false;
   }
   if (is_mc) {
     *is_mc = (rec.workchain_id == tos::masterchainId);
@@ -5146,6 +5154,8 @@ td::Status FetchConfigParams::fetch_config_params(
         block::MsgPrices{rec.lump_price,           rec.bit_price,          rec.cell_price, rec.ihr_price_factor,
                          (unsigned)rec.first_frac, (unsigned)rec.next_frac};
     action_phase_cfg->workchains = &config.get_workchain_list();
+    TRY_RESULT(ingress, resolve_native_ingress_destinations(config));
+    action_phase_cfg->native_ingress_destinations = std::move(ingress);
     action_phase_cfg->bounce_msg_body = (config.has_capability(tos::capBounceMsgBody) ? 256 : 0);
     action_phase_cfg->size_limits = size_limits;
     action_phase_cfg->action_fine_enabled = config.get_global_version() >= 4;

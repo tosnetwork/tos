@@ -1,6 +1,7 @@
 # Native ingress policy for block-transition workchains
 
-Status: entry/table codecs implemented; configuration/admission/transition enforcement pending.
+Status: entry/table codecs, configuration lookup and destination admission implemented;
+activation/configuration transition enforcement pending.
 Not an activated consensus rule.
 
 ## Implemented entry codec
@@ -20,8 +21,9 @@ against the supplied normalized ConfigParam 12 descriptor, and requires active,
 unsplit execution. `accept_msgs` remains an independent native admission gate,
 so closing admission does not invalidate an otherwise unchanged policy binding.
 This record does not replace descriptor finality or bind a masterchain state by
-itself. Table ownership, configuration lookup, activation and sender/receiver
-enforcement remain to be implemented before it has any admission effect.
+itself. Development ConfigParam 84 owns the table. Lookup requires global
+version >= 15 and capBlockTransition; below either gate, admission is unchanged.
+Once enabled, a missing table is rejected (an explicit empty table is valid).
 
 The table codec has tag `0x57495431` followed by a HashmapE with 32-bit workchain
 keys and reference-valued policy entries. Its root is 33 bits and zero/one
@@ -29,14 +31,14 @@ references. Empty tables are explicit, not interchangeable with a missing root.
 Encoding rejects repeated workchain IDs and is independent of insertion order.
 Decoding rejects malformed entry wrappers and a dictionary key that differs
 from the enclosed policy's workchain ID, even if generated TL-B validation
-accepts the structure. The table codec still does not assign a configuration
-slot, authenticate a configuration state, or enforce message admission.
+accepts the structure. The table codec does not authenticate a configuration
+state; callers use the native host's authenticated configuration snapshot.
 
 ## Problem demonstrated by the current host
 
-`Transaction::check_rewrite_dest_addr` checks workchain existence, `accept_msgs`
-and permitted address length, but does not restrict a block workchain to its
-executor address. `Collator::process_inbound_message` rejects a final delivery
+Without the shared policy, `Transaction::check_rewrite_dest_addr` checks workchain
+existence, `accept_msgs` and permitted address length, but does not restrict a block
+workchain to its executor address. `Collator::process_inbound_message` rejects a final delivery
 whose destination differs from the configured executor. Native queue processing
 is ordered: a validly funded message to a different address can therefore stop
 the receiving workchain's progress.
@@ -66,9 +68,9 @@ The common policy must authenticate:
 ConfigParam 12 remains authoritative for the workchain descriptor and its
 `accept_msgs` setting. A common configuration record must be checked against
 that descriptor, not become a second independent descriptor source. The UNO
-specification names ConfigParam 84 only as a candidate: its final envelope must
-accommodate the common host policy and engine-specific configuration. Do not
-assign an additional slot or claim that the present code has frozen this codec.
+specification names ConfigParam 84 as a candidate; this development implementation
+uses it for the common table, with engine-specific configuration referenced by
+each entry. This is not a production activation or a frozen wire protocol.
 
 Both sender collation and sender independent validation must use the same
 resolved common policy through ActionPhaseConfig. Receiver registry resolution
@@ -77,6 +79,14 @@ Unknown policy versions, mismatched descriptor bindings, or missing required
 policy must fail closed. Ordinary workchains outside this opt-in policy retain
 their existing address behavior. The rule is gated by global version and the
 host capability, not network capability advertisements.
+
+The current resolver binds every table entry against ConfigParam 12 without an
+engine registry. Shared transaction configuration loads the resulting destination
+map for collation/emulation; independent validation loads the same map. Both
+send and bounce destination rewriting reject anycast and non-executor addresses.
+Native normalization of a 256-bit addr_var into addr_std remains supported.
+Receiver engine resolution requires a matching table entry and executor address.
+The opaque engine-configuration payload is not yet an input to engine execution.
 
 Reject a new invalid destination using the native invalid-destination action
 path, including existing send-mode and fee semantics. Do not enqueue a message

@@ -1166,6 +1166,11 @@ bool ValidateQuery::fetch_config_params() {
         block::MsgPrices{rec.lump_price,           rec.bit_price,          rec.cell_price, rec.ihr_price_factor,
                          (unsigned)rec.first_frac, (unsigned)rec.next_frac};
     action_phase_cfg_.workchains = &config_->get_workchain_list();
+    auto ingress = block::resolve_native_ingress_destinations(*config_);
+    if (ingress.is_error()) {
+      return fatal_error(ingress.move_as_error_prefix("invalid native ingress configuration: "));
+    }
+    action_phase_cfg_.native_ingress_destinations = ingress.move_as_ok();
     action_phase_cfg_.bounce_msg_body = (config_->has_capability(tos::capBounceMsgBody) ? 256 : 0);
     action_phase_cfg_.size_limits = size_limits;
     action_phase_cfg_.action_fine_enabled = config_->get_global_version() >= 4;

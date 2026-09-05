@@ -26,6 +26,12 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
   CHECK(block::gen::t_GlobalVersion.pack_capabilities(param, version, capabilities));
   vm::Dictionary config(32);
   CHECK(config.set_ref(td::BitArray<32>(8u), param.finalize()));
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address.set_zero();
+  policy.engine_configuration = number(0);
+  CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
   return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
                                      block::Config::needCapabilities).move_as_ok();
 }
@@ -1313,6 +1319,61 @@ TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
   ASSERT_TRUE(block::decode_workchain_native_ingress_table(wrong_key).is_error());
   ASSERT_TRUE(block::decode_workchain_native_ingress_table({}).is_error());
   ASSERT_TRUE(block::decode_workchain_native_ingress_table(number(0)).is_error());
+}
+
+TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
+  td::Ref<block::WorkchainInfo> info{true};
+  info.write().workchain = 2;
+  info.write().basic = info.write().active = info.write().accept_msgs = true;
+  info.write().min_addr_len = info.write().max_addr_len = 256;
+  info.write().addr_len_step = 0;
+  block::WorkchainSet workchains{{2, info}};
+  auto in = input();
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000);
+  auto effects = CounterEngine().execute_block(in).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account sender(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(sender.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  block::ActionPhaseConfig cfg;
+  cfg.workchains = &workchains;
+  cfg.native_ingress_destinations.emplace(2, td::Bits256::zero());
+  auto address = [](bool wrong) {
+    return vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
+        .store_zeroes(255).store_long(wrong, 1).finalize());
+  };
+  auto send = [&](td::Ref<vm::CellSlice> dest, bool accepted) {
+    vm::CellBuilder cb;
+    cb.store_long(6, 4).store_zeroes(2);
+    ASSERT_TRUE(cb.append_cellslice_bool(dest));
+    ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
+    cb.store_zeroes(8).store_zeroes(96).store_zeroes(2);
+    auto message = cb.finalize();
+    ASSERT_TRUE(block::gen::t_MessageRelaxed_Any.validate_ref(4096, message));
+    vm::Dictionary requests(15);
+    unsigned index = 0;
+    ASSERT_TRUE(requests.set_ref(td::BitArray<15>(index), message));
+    vm::CellBuilder root;
+    ASSERT_TRUE(std::move(requests).append_dict_to_bool(root));
+    effects.outbound_messages = root.finalize();
+    using Transaction = block::transaction::Transaction;
+    Transaction tx(sender, Transaction::tr_workchain_batch, 10, 10);
+    block::SerializeConfig serialization;
+    auto status = tx.prepare_workchain_batch(in, effects, serialization, &cfg);
+    ASSERT_EQ(status.is_ok(), accepted);
+    ASSERT_EQ(tx.out_msgs.size(), accepted ? 1u : 0u);
+    ASSERT_EQ(tx.balance.tomis->to_long(), accepted ? 900 : 1000);
+    ASSERT_EQ(sender.balance.tomis->to_long(), 1000);
+  };
+  send(address(false), true);
+  send(address(true), false);
+  auto anycast = vm::load_cell_slice_ref(vm::CellBuilder().store_long(2, 2).store_long(1, 1)
+      .store_long(1, 5).store_long(0, 1).store_long(2, 8).store_zeroes(256).finalize());
+  send(anycast, false);
+  cfg.native_ingress_destinations.clear();
+  send(address(true), true);
+  send(anycast, true);
 }
 
 TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {

@@ -26,6 +26,15 @@ config.workchains!
 
 15 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or
 capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or 1024 or config.version!
+variable native-ingress-dict
+dictnew native-ingress-dict !
+{ dup <b x{57495031} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
+  0 32 u, 0 256 u, empty_cell ref, b>
+  <b swap ref, b> <s swap native-ingress-dict @ 32 idict!+ 0= abort"duplicate ingress policy"
+  native-ingress-dict !
+} : add-counter-ingress
+2 add-counter-ingress
+<b x{57495431} s, native-ingress-dict @ dict, b> 84 config!
 <b globalid@ 32 i, b> 19 config!
 10 10 1 config.validator_num!
 10000 100000 10000 sg~10 config.validator_stake_limits!

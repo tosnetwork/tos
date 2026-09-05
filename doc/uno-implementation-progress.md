@@ -557,8 +557,8 @@ requires active unsplit execution and matching identity/version/mode. Tests
 cover generated TL-B validation, BoC/canonical round trip, independent binding
 failures, selector bounds, missing fields, trailing bits and uint64 mode values.
 Removing the mode binding makes the mismatch assertion fail; it was restored.
-This is not yet a configuration table, sender filter or activation/migration
-gate: those remain required to address invalid-destination liveness.
+The configuration table and sender filter are described below; activation and
+migration gates remain required to address invalid-destination liveness fully.
 
 The shared policy table codec now uses tag 57495431 and HashmapE 32 reference
 entries. It preserves deterministic encoding independent of insertion order,
@@ -566,5 +566,31 @@ supports an explicit empty table and rejects duplicate IDs, malformed roots and
 key/entry identity mismatches. The tests round-trip the table through BoC and
 show that a wrong-key fixture passes structural TL-B validation but fails the
 semantic decoder. Removing key/identity comparison makes that rejection fail;
-the comparison was restored. Configuration slot lookup and native admission
-enforcement are still pending; this codec alone does not fix queue liveness.
+the comparison was restored. This codec alone does not fix queue liveness.
+
+Development ConfigParam 84 now carries the shared table. Native configuration
+resolution binds its entries to ConfigParam 12 without loading a foreign engine;
+the block receiver also checks that its engine's executor matches the public
+entry. Global version 15 and capBlockTransition jointly enable lookup; absent
+tables fail closed once enabled. Collation/emulation and independent validation
+populate the same ActionPhaseConfig destination map. The shared native send and
+bounce address path rejects anycast and non-executor destinations for listed
+workchains, while unlisted workchains keep native behavior.
+
+The public batch-settlement test sends real MessageRelaxed requests through
+native action handling: correct destinations settle, wrong addresses and anycast
+fail without publishing outputs or debiting the account, and clearing the policy
+restores both legacy destinations. Separately disabling either destination-match
+or anycast rejection makes the test fail because the forbidden send succeeds;
+both guards were restored. Disk genesis generation includes ConfigParam 84 and
+the cross-workchain fixture includes both executor entries.
+Verification after restoration: create-state, test-workchain-block,
+test-tos-collator and validator-engine build with -j48; all seven targeted CTest
+cases pass three consecutive runs (21 executions).
+
+Remaining ingress work includes negative configuration lookup/engine-agreement
+coverage, a wrong-address Native wallet disk scenario, explicit alternate-address
+encoding coverage, and authenticated activation/queue migration enforcement.
+The referenced engine payload is not yet consumed as engine configuration.
+This is not production activation and does not implement private notes or reserve
+accounting.
