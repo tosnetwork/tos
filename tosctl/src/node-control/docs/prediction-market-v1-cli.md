@@ -74,6 +74,11 @@ tosctl agent prediction prepare-deploy --definition market.json --from master_wa
 tosctl agent prediction show --definition market.json
 ```
 
+`show` emits the locally derived normal and appellate Oracle policy cell hashes
+alongside the checkpointed chain state. Because preflight verifies the complete
+market configuration hash, an observer can bind its configured round policy to
+the exact policy committed by the deployed market definition.
+
 The deploy message carries StateInit and `activate` together and is bounceable,
 as required by the contract. An already active or frozen address is rejected;
 frozen-account recovery needs the exact retained dynamic state and is a

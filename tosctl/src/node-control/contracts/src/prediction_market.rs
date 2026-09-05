@@ -370,6 +370,10 @@ impl PredictionMarketContractV1 {
         Ok(*Self::build_config(init)?.repr_hash().as_array())
     }
 
+    pub fn oracle_policy_hash(policy: &PredictionOraclePolicyV1) -> anyhow::Result<[u8; 32]> {
+        Ok(*build_policy(policy)?.repr_hash().as_array())
+    }
+
     pub fn market_id(init: &PredictionMarketInitV1) -> anyhow::Result<[u8; 32]> {
         let config_hash = Self::market_config_hash(init)?;
         let mut hasher = Sha256::new();
@@ -1165,6 +1169,23 @@ mod tests {
         assert_eq!(slice.get_next_u64().unwrap(), 0x0102_0304_0506_0708);
         assert_eq!(slice.remaining_bits(), 0);
         assert_eq!(slice.remaining_references(), 0);
+    }
+
+    #[test]
+    fn oracle_policy_hash_is_the_canonical_policy_cell_hash() {
+        let policy = PredictionOraclePolicyV1 {
+            threshold: 1,
+            reporters: vec![addr(
+                "0:1111111111111111111111111111111111111111111111111111111111111111",
+            )],
+        };
+        let expected = *build_policy(&policy).unwrap().repr_hash().as_array();
+        assert_eq!(PredictionMarketContractV1::oracle_policy_hash(&policy).unwrap(), expected);
+
+        let mut changed = policy;
+        changed.reporters[0] =
+            addr("0:2222222222222222222222222222222222222222222222222222222222222222");
+        assert_ne!(PredictionMarketContractV1::oracle_policy_hash(&changed).unwrap(), expected);
     }
 
     #[test]

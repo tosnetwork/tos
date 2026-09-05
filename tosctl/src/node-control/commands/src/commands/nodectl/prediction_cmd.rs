@@ -532,6 +532,10 @@ impl PredictionShowCmd {
         )?;
         let (current_context_boc_base64, review_base_context_boc_base64) =
             verified_resolution_context_bocs(&phase, &contexts)?;
+        let normal_oracle_policy_hash =
+            PredictionMarketContractV1::oracle_policy_hash(&init.normal_oracle_policy)?;
+        let appellate_oracle_policy_hash =
+            PredictionMarketContractV1::oracle_policy_hash(&init.appellate_oracle_policy)?;
         let final_outcome = matches!(
             state.status,
             contracts::PredictionMarketStatusV1::Finalized
@@ -558,6 +562,8 @@ impl PredictionShowCmd {
                 "final_outcome": final_outcome,
                 "market_id": hex::encode(state.market_id),
                 "market_config_hash": hex::encode(state.market_config_hash),
+                "normal_oracle_policy_hash": hex::encode(normal_oracle_policy_hash),
+                "appellate_oracle_policy_hash": hex::encode(appellate_oracle_policy_hash),
                 "participants": accounting.participants,
                 "live_orders": accounting.live_orders,
                 "fill_count": accounting.fill_count,
