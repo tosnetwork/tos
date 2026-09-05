@@ -521,6 +521,9 @@ Collection respects native queue stop conditions and the 32767-envelope format
 bound. Invalid executor destinations still reject; a live-chain recovery/bounce
 policy is required so a protocol-valid wrong-address message cannot stall input
 progress. This is an explicit remaining liveness issue, not activation-ready.
+The implementation decision is recorded in `workchain-native-ingress-policy.md`:
+destination admission must use shared consensus configuration, not the sender's
+local engine registry, and activation must reconcile pending foreign queues.
 
 The new self-delivery disk test sends two 100-atom messages, with one deferred,
 then reopens nodes to receive them over two batches. Exact balances are
