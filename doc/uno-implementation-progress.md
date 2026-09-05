@@ -665,3 +665,15 @@ observed before the fix. Disabling destination admission subsequently produced
 two queued messages instead of one and failed the fixture; admission was restored.
 This does not test signing, wallet authorization, bounce/refund modes, or private
 UNO issuance. The sender has no authentication and must never hold real funds.
+
+The Native-sender fixture also checkpoints the receiving batch and reopens the
+Native sender on its previous tip: the acknowledged outbound queue shrinks from
+one entry to zero. A subsequent receiving batch remains at 1100 nanotomi with
+no imports or additional credit. Bypassing Native queue cleanup leaves the queue
+at one and fails the new cleanup assertion; cleanup was restored. This checks
+processed-up-to queue recovery, not withdrawal payout acknowledgements.
+
+Amount terminology follows Native: TOS is the display coin, Tomis the protocol
+type, and nanotomi the base unit (1 TOS = 10^9 nanotomi). UNO uses the same base
+unit. The design document now makes that scale explicit rather than presenting
+10^18 as a parallel example. No wallet-layer legacy identifiers were renamed.
