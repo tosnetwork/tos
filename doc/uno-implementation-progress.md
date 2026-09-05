@@ -31,9 +31,21 @@ Base node revision: `5a6145cce`.
 - Separate block-engine registration/configuration resolution in the host
   registry, with explicit scope lookup, duplicate-key rejection and null-config
   rejection. Account resolution rejects block engines before account policy use.
+- Block engines must resolve an explicit executor address and nonzero wire-byte,
+  verification-unit and written-cell limits from their validated configuration.
+  `execute_resolved_workchain_block` checks input completeness, the configured
+  singleton identity and all result resource counters. Its state-replay counterpart
+  uses the same execution wrapper and derives identity from the resolved policy.
+  Counter tests cover exact/under/over limits, absent limits, wrong executor
+  identity and rejection of an otherwise valid persisted batch above its limit.
+  Removing the resource check accepts an over-limit persisted batch and fails its
+  rejection assertion; the check was restored. These are post-execution checks
+  over deterministic engine metrics, not a substitute for cheap pre-verification
+  admission limits or native storage limits. Live dispatch has not yet been
+  switched to these entry points.
 - Registered Counter replay and scope/configuration tests pass; removing the
   account-scope guard causes the exact-error assertion to fail. Guard restored.
-- `test-workchain-block` (sixteen cases) and the full `validator-engine` target build
+- `test-workchain-block` (seventeen cases) and the full `validator-engine` target build
   pass with the existing Release/clang-21 build. CTest runs the new target.
 - Canonical `WorkchainBlockResult` v2 and `WorkchainBlockOutputs` TL-B envelopes
   carry all six engine-effect references and three uint64 resource counters. The

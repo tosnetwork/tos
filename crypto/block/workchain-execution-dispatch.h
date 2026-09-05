@@ -201,18 +201,33 @@ struct ResolvedWorkchainExecution {
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
 };
 
+struct WorkchainBlockPolicy {
+  td::Bits256 executor_address{td::Bits256::zero()};
+  WorkchainBlockResourceUsage limits;
+};
+
 class RegisteredWorkchainBlockEngine : public WorkchainBlockEngine {
  public:
   virtual WorkchainEngineKey engine_key() const = 0;
   virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const = 0;
+  virtual td::Result<WorkchainBlockPolicy> block_policy(
+      const WorkchainExecutionDescriptor& descriptor, const WorkchainEngineConfig& configuration) const = 0;
 };
 
 struct ResolvedWorkchainBlockExecution {
   const RegisteredWorkchainBlockEngine* executor{nullptr};
   WorkchainExecutionDescriptor descriptor;
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
+  WorkchainBlockPolicy policy;
 };
+
+td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input);
+td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg);
 
 using ResolvedScopedWorkchainExecution = std::variant<ResolvedWorkchainExecution, ResolvedWorkchainBlockExecution>;
 

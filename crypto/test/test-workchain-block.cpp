@@ -19,6 +19,14 @@ td::Ref<vm::Cell> number(std::uint64_t value) {
 
 class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
  public:
+  explicit CounterEngine(block::WorkchainBlockResourceUsage limits = {8, 1, 3}, std::uint64_t verification_units = 1)
+      : limits_(limits), verification_units_(verification_units) {
+  }
+
+  td::Result<block::WorkchainBlockPolicy> block_policy(
+      const block::WorkchainExecutionDescriptor&, const block::WorkchainEngineConfig&) const override {
+    return block::WorkchainBlockPolicy{td::Bits256::zero(), limits_};
+  }
   block::WorkchainEngineKey engine_key() const override {
     return {block::WorkchainFormat::Basic, 0x434e5431};
   }
@@ -53,9 +61,13 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
     result.receipts = result.new_engine_state;
     result.events = number(increment);
     result.data_availability = input.candidate;
-    result.usage = {8, 1, 3};
+    result.usage = {8, verification_units_, 3};
     return result;
   }
+
+ private:
+  block::WorkchainBlockResourceUsage limits_;
+  std::uint64_t verification_units_;
 };
 
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
@@ -274,6 +286,21 @@ TEST(WorkchainBlock, BatchAccountCommitAndReload) {
   auto state_replay = block::replay_workchain_batch_state(
       engine, context, restored, committed, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
   ASSERT_TRUE(state_replay->get_hash() == recovered_account.total_state->get_hash());
+  block::Config configuration(0);
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  auto resolved = registry.resolve_block(descriptor, configuration).move_as_ok();
+  ASSERT_TRUE(block::replay_resolved_workchain_batch_state(
+      resolved, context, restored, committed, 10, 10, cfg).is_ok());
+  resolved.policy.limits.wire_bytes = 7;
+  auto limited = block::replay_resolved_workchain_batch_state(
+      resolved, context, restored, committed, 10, 10, cfg);
+  ASSERT_TRUE(limited.is_error());
+  ASSERT_EQ(limited.error().message(), "block execution exceeds configured resource limits");
   block::gen::ShardStateUnsplit::Record original_state;
   ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, original_state));
   vm::AugmentedDictionary original_accounts(vm::load_cell_slice_ref(original_state.accounts), 256,
@@ -635,7 +662,7 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainBlockExecution>(scoped));
   ASSERT_TRUE(std::get<block::ResolvedWorkchainBlockExecution>(scoped).executor == resolved.executor);
   auto in = input();
-  auto produced = resolved.executor->execute_block(in).move_as_ok();
+  auto produced = block::execute_resolved_workchain_block(resolved, in).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(produced.new_engine_state).fetch_ulong(64), 42u);
   auto account = registry.resolve(descriptor, configuration);
   ASSERT_TRUE(account.is_error());
@@ -665,6 +692,40 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   ASSERT_TRUE(native_registry.resolve(descriptor, configuration).is_ok());
   ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainExecution>(
       native_registry.resolve_scoped(descriptor, configuration).move_as_ok()));
+}
+
+TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
+  block::Config configuration(0);
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  const block::WorkchainBlockResourceUsage limits[] = {
+      {8, 2, 3}, {9, 3, 4}, {7, 2, 3}, {8, 2, 2}, {8, 1, 3}, {0, 2, 3}, {8, 0, 3}, {8, 2, 0}};
+  for (unsigned i = 0; i < std::size(limits); ++i) {
+    block::WorkchainExecutionRegistry registry;
+    ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>(limits[i], 2)).is_ok());
+    auto resolved = registry.resolve_block(descriptor, configuration);
+    if (i >= 5) {
+      ASSERT_TRUE(resolved.is_error());
+      ASSERT_EQ(resolved.error().message(), "block execution policy requires explicit nonzero resource limits");
+      continue;
+    }
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_TRUE(resolved.ok().policy.limits == limits[i]);
+    auto result = block::execute_resolved_workchain_block(resolved.ok(), input());
+    if (i >= 2) {
+      ASSERT_TRUE(result.is_error());
+      ASSERT_EQ(result.error().message(), "block execution exceeds configured resource limits");
+      continue;
+    }
+    ASSERT_TRUE(result.is_ok());
+    auto wrong_identity = resolved.ok();
+    wrong_identity.policy.executor_address = number(99)->get_hash().bits();
+    auto rejected = block::execute_resolved_workchain_block(wrong_identity, input());
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(rejected.error().message(), "block workchain must contain exactly its executor account");
+  }
 }
 
 TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {

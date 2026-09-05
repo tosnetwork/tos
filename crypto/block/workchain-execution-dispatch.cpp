@@ -218,7 +218,48 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
   if (!config) {
     return td::Status::Error("block engine returned null configuration");
   }
-  return ResolvedWorkchainBlockExecution{it->second.get(), descriptor, std::move(config)};
+  TRY_RESULT(policy, it->second->block_policy(descriptor, *config));
+  if (!policy.limits.wire_bytes || !policy.limits.verification_units || !policy.limits.written_cells) {
+    return td::Status::Error("block execution policy requires explicit nonzero resource limits");
+  }
+  return ResolvedWorkchainBlockExecution{it->second.get(), descriptor, std::move(config), std::move(policy)};
+}
+
+td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input) {
+  if (!execution.executor || !execution.engine_config) {
+    return td::Status::Error("missing resolved block execution configuration");
+  }
+  TRY_RESULT(context, encode_workchain_block_input(input));
+  TRY_RESULT(state, extract_workchain_engine_state(input.previous_shard_state, execution.descriptor.workchain_id,
+                                                  execution.policy.executor_address));
+  TRY_RESULT(result, execution.executor->execute_block(input));
+  TRY_STATUS(validate_workchain_block_result(result));
+  const auto& limits = execution.policy.limits;
+  if (result.usage.wire_bytes > limits.wire_bytes || result.usage.verification_units > limits.verification_units ||
+      result.usage.written_cells > limits.written_cells) {
+    return td::Status::Error("block execution exceeds configured resource limits");
+  }
+  return result;
+}
+
+td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg) {
+  class ConfiguredEngine final : public WorkchainBlockEngine {
+   public:
+    explicit ConfiguredEngine(const ResolvedWorkchainBlockExecution& execution) : execution_(execution) {
+    }
+    td::Result<WorkchainBlockResult> execute_block(const WorkchainBlockInput& input) const override {
+      return execute_resolved_workchain_block(execution_, input);
+    }
+   private:
+    const ResolvedWorkchainBlockExecution& execution_;
+  } engine(execution);
+  return replay_workchain_batch_state(engine, context, claimed_shard, claimed_transaction,
+                                      execution.descriptor.workchain_id, execution.policy.executor_address,
+                                      expected_lt, expected_utime, cfg);
 }
 
 td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
