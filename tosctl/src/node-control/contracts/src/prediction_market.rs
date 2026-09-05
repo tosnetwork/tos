@@ -271,6 +271,12 @@ pub struct PredictionMarketPhaseV1 {
     pub next_deadline: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionResolutionContextsV1 {
+    pub current: Option<chain_block::Cell>,
+    pub review_base: Option<chain_block::Cell>,
+}
+
 impl PredictionMarketContractV1 {
     pub fn code() -> anyhow::Result<chain_block::Cell> {
         read_single_root_boc(base64_decode(PREDICTION_MARKET_CODE_B64.trim())?).map_err(Into::into)
@@ -543,6 +549,29 @@ impl PredictionMarketContractV1 {
             review_base_context_hash: parse_hash(stack, 4)?,
             proposed_statement_hash: parse_hash(stack, 5)?,
             next_deadline: stack.u64(6)?,
+        })
+    }
+
+    pub fn decode_resolution_contexts(
+        stack: &TvmStackParser,
+    ) -> anyhow::Result<PredictionResolutionContextsV1> {
+        require_stack_len(stack, 4, "get_resolution_contexts")?;
+        let current_present = stack.bool(0)?;
+        let current = stack.cell(1)?;
+        let review_present = stack.bool(2)?;
+        let review_base = stack.cell(3)?;
+        anyhow::ensure!(
+            current_present || (current.bit_length() == 0 && current.references_count() == 0),
+            "absent current resolution context must use the empty-cell sentinel"
+        );
+        anyhow::ensure!(
+            review_present
+                || (review_base.bit_length() == 0 && review_base.references_count() == 0),
+            "absent review base context must use the empty-cell sentinel"
+        );
+        Ok(PredictionResolutionContextsV1 {
+            current: current_present.then_some(current),
+            review_base: review_present.then_some(review_base),
         })
     }
 
@@ -1103,7 +1132,9 @@ mod tests {
     use super::*;
     use common::tvm_stack_parser::TvmStackParser;
     use tl_api::tos::tvm::{
-        Number, StackEntry, numberdecimal::NumberDecimal, stackentry::StackEntryNumber,
+        Number, StackEntry, cell,
+        numberdecimal::NumberDecimal,
+        stackentry::{StackEntryCell, StackEntryNumber},
     };
 
     fn number(value: impl Into<String>) -> StackEntry {
@@ -1114,6 +1145,12 @@ mod tests {
 
     fn hash_number(value: [u8; 32]) -> StackEntry {
         number(format!("0x{}", hex::encode(value)))
+    }
+
+    fn cell_entry(value: &chain_block::Cell) -> StackEntry {
+        StackEntry::Tvm_StackEntryCell(StackEntryCell {
+            cell: cell::Cell { bytes: chain_block::write_boc(value).unwrap() },
+        })
     }
 
     fn addr(value: &str) -> MsgAddressInt {
@@ -1249,6 +1286,29 @@ mod tests {
         .unwrap();
         assert_eq!(phase.status, PredictionMarketStatusV1::Reviewing);
         assert_eq!(phase.current_context_hash, [0x44; 32]);
+
+        let current = BuilderData::with_raw(vec![0x80], 1).unwrap().into_cell().unwrap();
+        let empty = chain_block::Cell::default();
+        let contexts =
+            PredictionMarketContractV1::decode_resolution_contexts(&TvmStackParser::new(vec![
+                number("-1"),
+                cell_entry(&current),
+                number("0"),
+                cell_entry(&empty),
+            ]))
+            .unwrap();
+        assert_eq!(contexts.current, Some(current));
+        assert_eq!(contexts.review_base, None);
+
+        assert!(
+            PredictionMarketContractV1::decode_resolution_contexts(&TvmStackParser::new(vec![
+                number("0"),
+                cell_entry(&BuilderData::with_raw(vec![0x80], 1).unwrap().into_cell().unwrap()),
+                number("0"),
+                cell_entry(&empty),
+            ]))
+            .is_err()
+        );
     }
 
     #[test]

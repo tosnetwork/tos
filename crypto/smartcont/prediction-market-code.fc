@@ -2549,3 +2549,63 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   return (status, review_reason, final_outcome, current_context,
     base_present * base_hash, proposal_hash, next_deadline);
 }
+
+;; Return the exact canonical cells whose hashes authorize Oracle votes. A hash
+;; alone is insufficient for an external reporter: the round nonce and opening
+;; time are deliberately unpredictable and therefore cannot be reconstructed
+;; from get_market_phase. Presence bits make the empty-cell sentinel
+;; unambiguous while preserving a fixed stack shape for strict RPC decoders.
+(int, cell, int, cell) get_resolution_contexts() method_id {
+  var (_, _, status, _, _, _, market_id,
+    cell config, _, cell resolution, _) = load_state();
+  slice c = config.begin_parse();
+  c~load_uint(32);
+  cell identity = c~load_ref();
+  cell times = c~load_ref();
+  c~load_ref();
+  c~load_ref();
+  c.end_parse();
+  slice i = identity.begin_parse();
+  i~load_uint(32);
+  i~load_int(32);
+  i~load_int(8);
+  i~load_uint(256);
+  int rules_hash = i~load_uint(256);
+  i~load_uint(256);
+  i~load_ref();
+  i.end_parse();
+  slice t = times.begin_parse();
+  t~load_uint(32);
+  t~load_uint(64);
+  int resolve_not_before = t~load_uint(64);
+  int oracle_vote_deadline = t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t~load_uint(64);
+  t.end_parse();
+  (cell normal, cell review_state, _, _) = load_resolution(resolution);
+  (int normal_nonce, int normal_opened_at, _, _, _, _, _, _, _) =
+    load_normal_runtime(normal);
+  (int base_present, cell review_base, int base_hash, int review_nonce,
+    int review_opened_at, _) = load_review_runtime(review_state);
+  cell empty = begin_cell().end_cell();
+  int context_present = 0;
+  cell round_context = empty;
+  if ((status == status::reporting) & (normal_nonce != 0)) {
+    throw_unless(err::malformed, normal_opened_at != 0);
+    round_context = build_normal_context(market_id, rules_hash,
+      normal_nonce, normal_opened_at, resolve_not_before, oracle_vote_deadline);
+    context_present = 1;
+  } elseif ((status == status::reviewing) & (review_nonce != 0)) {
+    throw_unless(err::malformed,
+      base_present & (base_hash != 0) & (review_opened_at != 0));
+    round_context = build_review_vote_context(base_hash,
+      review_nonce, review_opened_at);
+    context_present = 1;
+  }
+  if (base_present == 0) {
+    review_base = empty;
+  }
+  return (context_present, round_context, base_present, review_base);
+}

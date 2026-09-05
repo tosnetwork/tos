@@ -87,7 +87,7 @@ pub use prediction_market::{
     PredictionMarketInitV1, PredictionMarketPhaseV1, PredictionMarketStateV1,
     PredictionMarketStatusV1, PredictionOraclePolicyV1, PredictionOrderActionV1,
     PredictionOrderOutcomeV1, PredictionOrderStateV1, PredictionOrderV1,
-    PredictionResolutionOutcomeV1,
+    PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

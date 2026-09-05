@@ -153,6 +153,19 @@ impl Fixture {
         )
     }
 
+    fn resolution_contexts(&self) -> (Option<Cell>, Option<Cell>) {
+        let result = self
+            .bc
+            .run_get_method(&self.market, "get_resolution_contexts", vec![])
+            .expect("resolution contexts getter");
+        result.expect_success();
+        assert_eq!(result.stack.len(), 4);
+        (
+            (result.int_at(0) != 0).then(|| result.cell_at(1)),
+            (result.int_at(2) != 0).then(|| result.cell_at(3)),
+        )
+    }
+
     fn activate(&mut self) {
         let owner = self.owner.address().clone();
         let result = self.send(
@@ -493,6 +506,14 @@ fn trading_key_and_nonce_floor_freeze_at_trade_close() {
 }
 
 #[test]
+fn resolution_context_getter_uses_unambiguous_absence_before_a_round_opens() {
+    let f = Fixture::new();
+    let (current, review_base) = f.resolution_contexts();
+    assert!(current.is_none());
+    assert!(review_base.is_none());
+}
+
+#[test]
 fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     let mut f = Fixture::new();
     f.activate();
@@ -515,6 +536,9 @@ fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     let (status, _, _, normal_context, _, _, _) = f.phase();
     assert_eq!(status, 1);
     assert_ne!(normal_context, [0; 32]);
+    let (current, review_base) = f.resolution_contexts();
+    assert_eq!(*current.as_ref().unwrap().repr_hash().as_array(), normal_context);
+    assert!(review_base.is_none());
     let result = f.send(
         &normal,
         OPERATION_BUDGET,
@@ -545,12 +569,18 @@ fn challenged_normal_result_is_overturned_by_the_frozen_appellate_oracle() {
     assert_eq!((status, reason), (3, 1));
     assert_eq!(context, [0; 32], "challenge entry must not open the appeal round");
     assert_ne!(base, [0; 32]);
+    let (current, review_base) = f.resolution_contexts();
+    assert!(current.is_none());
+    assert_eq!(*review_base.as_ref().unwrap().repr_hash().as_array(), base);
 
     f.bc.set_now((f.init.resolve_not_before + f.init.appeal_review_delay) as u32);
     f.send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(7).unwrap())
         .expect_success();
     let (_, _, _, appeal_context, _, _, _) = f.phase();
     assert_ne!(appeal_context, [0; 32]);
+    let (current, review_base) = f.resolution_contexts();
+    assert_eq!(*current.as_ref().unwrap().repr_hash().as_array(), appeal_context);
+    assert_eq!(*review_base.as_ref().unwrap().repr_hash().as_array(), base);
     let result = f.send(
         &appellate,
         OPERATION_BUDGET,
