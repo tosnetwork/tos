@@ -11,5 +11,6 @@ orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153d
 [workspace]
 
 [dev-dependencies]
+blake2b_simd = "=1.0.5"
 incrementalmerkletree = "=0.8.2"
 rand = "=0.8.8"

@@ -974,3 +974,15 @@ an invalid fixture and fails its assertion. All were restored. This parallels
 the C++ context helper but does not claim cross-language conformance/FFI yet,
 assign wire tags or authenticate settlement sources. Caller-supplied context
 must ultimately be derived from authenticated host state and committed TOS core.
+
+Recorded a frozen BLAKE2b-512 diagnostic snapshot of the actual constructed fixed
+VK, including parameters and commitments exposed by its Debug representation.
+The pinned public API has no internal VK serialization accessor; the similarly
+named verifier-fingerprint feature captures a verifier execution, not a key.
+The fixture README explicitly distinguishes this regression artifact from the
+still-required canonical production key manifest and forbids automatic constant
+regeneration. Rebuilding gives identical bytes. A historical VK with its selector
+text relabelled as fixed still has a different digest. Replacing hashing with a
+constant makes that test fail; selecting the historical constructor fails the
+frozen digest assertion. Both mutations were restored. An independent skill
+hash backend matched the Rust digest over the exported 907512-byte preimage.

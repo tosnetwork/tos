@@ -35,6 +35,12 @@ The construction test was mutation-checked by selecting the historical circuit:
 the actual key-version assertion failed. This construction check is not a VK
 fingerprint or proof of ownership.
 
+A separate [frozen diagnostic snapshot](fixtures/README.md) now hashes the actual
+constructed VK's complete Debug representation. This catches key changes that
+leave selector checks green, including differing historical key material with a
+falsely relabelled selector. It is deliberately test-only, not canonical binary
+serialization or a production VK identity manifest.
+
 `validate_proof_shape` is a separate allocation-free precheck for the pinned
 profile. It requires nonzero configured action/byte limits and an exact proof
 length of `2720 + 2272 * actions`, computed with checked arithmetic. Tests compare

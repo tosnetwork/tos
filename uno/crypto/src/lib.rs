@@ -1,6 +1,8 @@
 use orchard::Bundle;
 pub mod context;
 pub mod decode;
+#[cfg(test)]
+mod vk_snapshot;
 use orchard::{
     bundle::{Authorized, BundleVersion, Flags},
     circuit::{OrchardCircuitVersion, VerifyingKey},
