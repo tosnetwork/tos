@@ -878,7 +878,7 @@ add_executable(test-validator-options test/test-validator-options.cpp)
 add_executable(test-full-node-shard-routing test/test-td-main.cpp test/test-full-node-shard-routing.cpp)
 target_link_libraries(test-full-node-shard-routing PRIVATE tos_crypto)
 add_executable(test-uno-state-snapshot test/test-td-main.cpp test/test-uno-state-snapshot.cpp)
-target_link_libraries(test-uno-state-snapshot PRIVATE validator tos_crypto tl_api tdactor tdutils)
+target_link_libraries(test-uno-state-snapshot PRIVATE validator validator-common full-node tos_crypto tl_api tdactor tdutils)
 target_link_libraries(test-validator-options PRIVATE validator-common)
 
 add_executable(test-block-handle-flags test/test-block-handle-flags.cpp)

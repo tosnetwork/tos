@@ -3,13 +3,50 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/workchain-block-execution.h"
+#include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "uno/core/used-nullifiers.h"
+#include "validator/downloaders/download-state.hpp"
 #include "validator/state-serializer.hpp"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 
 namespace {
+td::Ref<vm::Cell> import_snapshot_part(td::Ref<vm::Cell> cell) {
+  auto bytes = vm::std_boc_serialize(cell).move_as_ok();
+  auto temporary = td::mkstemp("/tmp").move_as_ok();
+  temporary.first.write_all(bytes.as_slice()).ensure();
+  temporary.first.close();
+  tos::validator::fullnode::BudgetedStateFile file(temporary.second, bytes.size(), {});
+  vm::StreamingBocImportOptions options;
+  options.max_resident_bytes = 16ULL << 20;
+  const tos::RootHash expected{cell->get_hash().bits()};
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto imported = tos::validator::parse_ondisk_state_streaming(file, expected, options, &sink).move_as_ok();
+  ASSERT_TRUE(sink.finished());
+  ASSERT_TRUE(!sink.aborted());
+  ASSERT_TRUE(sink.cell_count() > 1);
+  ASSERT_EQ(sink.cells_persisted(), 0u);
+  ASSERT_TRUE(imported->get_hash() == cell->get_hash());
+
+  auto wrong_hash = expected;
+  wrong_hash.as_slice()[0] ^= 1;
+  tos::validator::fullnode::CellDbStreamingSink wrong_root_sink;
+  ASSERT_TRUE(tos::validator::parse_ondisk_state_streaming(file, wrong_hash, options, &wrong_root_sink).is_error());
+  // Parsing really completed: this rejection is the root binding, not a
+  // malformed fixture or a resource error before root comparison.
+  ASSERT_TRUE(wrong_root_sink.finished());
+  ASSERT_EQ(wrong_root_sink.cell_count(), sink.cell_count());
+
+  auto limited = options;
+  limited.max_cells = 1;
+  tos::validator::fullnode::CellDbStreamingSink limited_sink;
+  ASSERT_TRUE(tos::validator::parse_ondisk_state_streaming(file, expected, limited, &limited_sink).is_error());
+  ASSERT_EQ(limited_sink.cell_count(), 0u);
+  ASSERT_TRUE(!limited_sink.finished());
+  return imported;
+}
+
 td::Ref<vm::Cell> single_account_state(td::Ref<vm::Cell> engine) {
   const auto address = td::Bits256::zero();
   auto executor = block::encode_workchain_executor_state({engine, {}, {}}).move_as_ok();
@@ -87,8 +124,7 @@ TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
       }
       ASSERT_TRUE(part.type.has<tos::validator::SplitAccountStateType>());
       ++account_parts;
-      auto serialized = vm::std_boc_serialize(part.cell).move_as_ok();
-      auto restored = vm::std_boc_deserialize(serialized.as_slice()).move_as_ok();
+      auto restored = import_snapshot_part(part.cell);
       ASSERT_TRUE(restored->get_hash() == part.cell->get_hash());
       block::gen::ShardStateUnsplit::Record decoded;
       ASSERT_TRUE(tlb::unpack_cell(header, decoded));

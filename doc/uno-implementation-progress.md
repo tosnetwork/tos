@@ -1133,3 +1133,22 @@ round-trip, not scalable state synchronization. It does not exercise network
 download, the production persistent-state importer, database reopening, peak
 memory at large state sizes, catch-up, GC or note-tree retention. Increasing
 account split depth cannot be assumed to reduce the single-account payload.
+
+### Bounded on-disk parsing of the executor snapshot part
+
+The account-data part now passes through an exclusive temporary file and the
+downloader's full-options `parse_ondisk_state_streaming` entry point before
+state reconstruction. The test supplies a 16 MiB resident budget and a counting
+`CellDbStreamingSink`, verifies completion and all recovered nullifiers, and
+explicitly checks that actual CellDb writes remain zero. A wrong expected root
+is rejected after the complete cell count has been parsed; a one-cell budget
+rejects before any cell reaches the sink. This distinguishes the two properties
+from incidental rejection. Disabling the full-options root comparison makes
+the wrong-root assertion fail; the mutation was restored.
+Ignoring the supplied cell-count limit also makes the budget rejection
+assertion fail; that mutation was restored as well.
+
+The test uses the small 4096-key state, keeps the source fixture in memory, and
+does not measure peak RSS. It exercises the bounded parser, not the actor-local
+CellDb commit/rollback path, authenticated network checkpoint acquisition or a
+cold node's end-to-end synchronization. Those remain required.
