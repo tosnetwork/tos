@@ -178,3 +178,33 @@ policy keeping its CMake and generator components together. That policy was read
 Corrosion restoration and cross-platform native-library discovery remain deferred.
 The present opt-in native-Linux Cargo integration and per-build target directory
 are unchanged. Historical build/test target names are not current acceptance gates.
+
+## Optional ABI timing experiment
+
+Build `test-uno-crypto-abi-real` and run its ordinary CTest with `-V` to generate
+fresh public fixtures and obtain their retained directory. Pass the same two
+fixture paths and a third argument of 100 through 10000 to the executable:
+
+```sh
+build/uno/crypto/test-uno-crypto-abi-real PATH/output-only.bin PATH/spend.bin 1000
+```
+
+Without that third argument the ordinary correctness test is unchanged. Timing
+mode still runs all its negative controls. For each fixture it separately reports
+the first ABI call, then 10 warmups and the requested number of serial samples
+for both a valid bundle and a wrong-digest rejection. Every sample must return
+the expected status. The result uses steady-clock milliseconds and nearest-rank
+p50/p95/p99/max. The first output-only call includes initial key construction;
+the first spend call does not, because this process has already used the key.
+Neither is a cold-OS-cache measurement or an initialization percentile.
+Only accept a report when the process exits zero and prints the final fixture
+success message; partial timing lines from a failed run are not valid evidence.
+
+The timed boundary includes ABI decoding and cryptographic verification, but
+excludes fixture reading, client proving, C++ owning-adapter construction, engine
+state lookup/update, tree append, serialization, network and consensus. The two
+fixtures each have two Actions and a 7264-byte proof; repeated verification of
+these same fixtures gives warm-cache observations, not workload diversity or
+maximum-block costs. Wrong digest is one rejection path, not a worst-case bound.
+Record the source revision, locked dependencies, hardware, concurrency/load and
+sample count with any results. Do not infer an achievable slot from this output.

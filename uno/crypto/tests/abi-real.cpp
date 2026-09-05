@@ -1,8 +1,13 @@
 #include "uno_crypto.h"
 #include <array>
+#include <algorithm>
+#include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <string_view>
+#include <vector>
 #ifdef UNO_TEST_HOST_ADAPTER
 #include "uno/core/crypto-verifier.h"
 #endif
@@ -50,7 +55,34 @@ bool check(const char* label, uint32_t actual, uint32_t expected) {
   return false;
 }
 
-bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fee, int64_t balance) {
+// Serial warm measurements of the full ABI call, including decoding and all
+// verification. Fixture loading, proof generation and key construction are out
+// of this loop. Every sample checks its result, including a rejection workload.
+bool measure(const char* label, const UnoCryptoVerifyRequest& request, uint32_t expected, size_t samples) {
+  for (unsigned i = 0; i < 10; ++i) {
+    if (!check("measurement warmup", uno_crypto_verify_v0(&request), expected)) return false;
+  }
+  std::vector<double> timings;
+  timings.reserve(samples);
+  for (size_t i = 0; i < samples; ++i) {
+    auto start = std::chrono::steady_clock::now();
+    auto status = uno_crypto_verify_v0(&request);
+    auto stop = std::chrono::steady_clock::now();
+    if (!check("measurement sample", status, expected)) return false;
+    timings.push_back(std::chrono::duration<double, std::milli>(stop - start).count());
+  }
+  std::sort(timings.begin(), timings.end());
+  // Nearest-rank percentiles; sample count is bounded to [100, 10000] by main.
+  auto percentile = [&](size_t percent) { return timings[(samples * percent + 99) / 100 - 1]; };
+  std::cout << "ABI_MEASURE workload=" << label << " context=" << request.context
+            << " actions=" << request.action_count << " proof_bytes=" << request.proof_bytes
+            << " samples=" << samples << " warmups=10 unit=ms"
+            << " p50=" << percentile(50) << " p95=" << percentile(95)
+            << " p99=" << percentile(99) << " max=" << timings.back() << '\n';
+  return true;
+}
+
+bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fee, int64_t balance, size_t samples) {
   std::ifstream input(path, std::ios::binary);
   std::array<char, 8> magic{};
   if (!input.read(magic.data(), magic.size()) || magic != std::array<char, 8>{'U','N','O','A','B','I','T','0'}) return false;
@@ -85,7 +117,15 @@ bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fe
   request.proof_bytes = sizeof(proof);
   request.max_actions = 2;
   request.max_proof_bytes = sizeof(proof);
-  if (!check("valid", uno_crypto_verify_v0(&request), UNO_CRYPTO_OK)) return false;
+  auto first_start = std::chrono::steady_clock::now();
+  auto first_status = uno_crypto_verify_v0(&request);
+  auto first_stop = std::chrono::steady_clock::now();
+  if (!check("valid", first_status, UNO_CRYPTO_OK)) return false;
+  if (samples) {
+    std::cout << "ABI_FIRST_CALL context=" << context << " unit=ms elapsed="
+              << std::chrono::duration<double, std::milli>(first_stop - first_start).count()
+              << " key_previously_used=" << (context != UNO_SHIELD_CLAIM) << '\n';
+  }
   request.sighash[0] ^= 1;
   if (!check("wrong digest", uno_crypto_verify_v0(&request), UNO_CRYPTO_VERIFY)) return false;
   request.sighash[0] ^= 1;
@@ -113,13 +153,30 @@ bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fe
     return false;
   }
 #endif
-  return check("restored valid", uno_crypto_verify_v0(&request), UNO_CRYPTO_OK);
+  if (!check("restored valid", uno_crypto_verify_v0(&request), UNO_CRYPTO_OK)) return false;
+  if (samples) {
+    if (!measure("valid", request, UNO_CRYPTO_OK, samples)) return false;
+    request.sighash[0] ^= 1;
+    if (!measure("wrong_digest", request, UNO_CRYPTO_VERIFY, samples)) return false;
+    request.sighash[0] ^= 1;
+    if (!check("post-measurement valid", uno_crypto_verify_v0(&request), UNO_CRYPTO_OK)) return false;
+  }
+  return true;
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) return 1;
-  if (!fixture(argv[1], UNO_SHIELD_CLAIM, 5000, 0, -5000)) return 2;
-  if (!fixture(argv[2], UNO_TRANSFER, 0, 100, 100)) return 3;
+  if (argc != 3 && argc != 4) return 1;
+  size_t samples = 0;
+  if (argc == 4) {
+    std::string_view text(argv[3]);
+    auto parsed = std::from_chars(text.data(), text.data() + text.size(), samples);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || samples < 100 || samples > 10000) {
+      std::cerr << "measurement sample count must be in [100, 10000]\n";
+      return 1;
+    }
+  }
+  if (!fixture(argv[1], UNO_SHIELD_CLAIM, 5000, 0, -5000, samples)) return 2;
+  if (!fixture(argv[2], UNO_TRANSFER, 0, 100, 100, samples)) return 3;
   std::cout << "Both real ABI fixtures and their mutations passed\n";
   return 0;
 }

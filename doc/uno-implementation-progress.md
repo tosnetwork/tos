@@ -1570,3 +1570,56 @@ This helper is not connected to a production engine or collator timer. It neithe
 authenticates a finality reference nor enforces the idle/checkpoint service policy,
 and does not measure or freeze the slot duration. The full UNO execution and
 configuration integration remains required.
+
+### First repeatable full-ABI verification timing experiment
+
+`uno/crypto/tests/abi-real.cpp` now accepts an optional sample count in
+`[100,10000]`. The ordinary correctness invocation remains unchanged. Timing
+mode reuses the real linked-library fixtures and all their positive/negative
+controls, then measures valid verification and wrong-digest rejection separately.
+Each timed call checks the returned status. Ten untimed warmups precede each
+workload; nearest-rank p50/p95/p99/max use a monotonic clock. The first call of
+each fixture is reported separately so initial key construction is not hidden
+inside warm verification figures. See `uno/crypto/ABI.md` for reproduction.
+
+Initial successful run on 2026-09-05, toserver, 192 logical CPUs (Intel Xeon
+Platinum 8455C), native Linux Release, Rust 1.97.1 and unchanged Cargo.lock,
+source base `68f3824ed` plus this timing change. Calls were serial from one
+process, without CPU affinity or runtime thread-pool overrides. This was a
+shared host, not a controlled dedicated benchmark; observed one-minute load
+was 22.77 before and 73.50 during the experiment. Each workload had 1000 samples,
+two Actions and a 7264-byte proof:
+
+| Fixture / workload | p50 ms | p95 ms | p99 ms | max ms |
+| --- | ---: | ---: | ---: | ---: |
+| Output-only / valid | 10.2397 | 11.3085 | 12.0569 | 13.3555 |
+| Output-only / wrong digest | 8.89983 | 9.66564 | 10.5273 | 12.1772 |
+| Spend / valid | 10.2213 | 11.0541 | 12.2421 | 13.3017 |
+| Spend / wrong digest | 8.85267 | 9.67726 | 10.5048 | 11.9872 |
+
+The initial output-only ABI call took 2063.7 ms including key initialization;
+the later spend first call took 9.0515 ms with the key already initialized.
+Neither is an initialization percentile. Public fixtures were freshly generated
+by the ordinary CTest (passed in 13.40 s) and retained under
+`build/uno/crypto/fixtures/33aec81ebd2a7e1b7f8f/`.
+
+To prove the measurement does not accept a removed verifier, a temporary mutation
+replaced only the timed ABI call with a constant success status. The valid-only
+timing then misleadingly approached zero, but the wrong-digest sample failed
+(`got 0, expected 3`) and the process exited 2. The mutation was restored. A report
+is usable only after the entire invocation succeeds, not from partial stdout.
+An out-of-range sample count of 99 also rejected before attempting fixture I/O.
+
+After restoration a second complete 4000-sample invocation passed on the same
+fixtures. Valid output/spend p99 were 12.0744/11.9821 ms, maxima
+14.5285/14.5029 ms; wrong-digest p99 were 10.2301/10.5877 ms. Initial key-inclusive
+call was 1925.36 ms. This repeat is not a statistical confidence bound and does
+not remove the shared-host or repeated-input limitations.
+
+These are warm repeated-fixture ABI observations, including primitive decoding,
+proof and signature verification, not the C++ owning adapter or host transition.
+They exclude client proving, diverse/maximal bundles, worst-case malicious wire,
+tree/nullifier updates, state serialization, storage tails, propagation and
+committee agreement. They do not establish a block capacity, gas schedule, idle
+cost or achievable slot lower bound. Those remain joint M1/M2 measurement outputs,
+not a multiplication of this two-Action result by a proposed transaction count.
