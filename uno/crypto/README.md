@@ -98,6 +98,26 @@ With spends enabled this rule does not authenticate an anchor against host state
 or distinguish real from dummy inputs. Transaction-kind flags and host anchor
 membership remain required, separate checks.
 
+## Context-bound verification
+
+`FixedVerifier::verify_in_context` reads valueBalance and permissions from the
+same typed bundle it cryptographically verifies. Logical `PublicContext` variants
+express Transfer fee, Unshield amount plus fee, and the four output-only amounts.
+All amounts are u128 nanotomi; addition is checked before symmetric i64 narrowing.
+The typed variants cannot carry an unrelated Transfer principal or settlement fee.
+Their equations match the existing C++ `uno/core/bundle-context.h` prototype;
+cross-language binding/conformance remains to be integrated, not inferred from
+separate tests. These Rust variants are not wire discriminants.
+
+The six-context permission/value matrix and wide arithmetic boundaries pass.
+Real generated bundles pass matching contexts and reject a changed public amount;
+a damaged proof still fails through the combined entry point. Seven mutations
+independently bypassed arithmetic bounds, value/permission checks, or either half
+of combined verification; each accepted an invalid fixture and failed its test.
+All were restored. `verify_bundle` remains a lower-level cryptographic API, not
+an admission API. Neither entry point authenticates a claimed deposit, genesis
+allocation, refund record, fee source, destination or caller-supplied digest.
+
 ## Source review, 2026-09-05
 
 - [Pinned bundle version implementation](https://github.com/zcash/orchard/blob/29d1d55db62153dcaeef8ef631c8991c53ed1248/src/bundle.rs)
@@ -120,6 +140,7 @@ allowed VK, enforce canonical lengths and full point/field decoding, integrate
 the TOS authorization digest, expand authoritative/differential and adversarial
 vectors beyond the generated fixture, and validate hybrid encryption separately.
 The caller's digest and limits must eventually come from frozen TOS core encoding
-and authenticated configuration. Contextual public-value checks, anchor/nullifier
-state, output-only authorization, host integration and FFI are not implemented
-by this verifier. No encryption or production activation is shipped.
+and authenticated configuration. Contextual public-value equations are checked
+by the combined API, but authenticated context derivation, anchor/nullifier state,
+output-only authorization, host integration and FFI remain unimplemented.
+No encryption or production activation is shipped.

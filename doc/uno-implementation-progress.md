@@ -961,3 +961,16 @@ either entry-point guard independently accepts the invalid case and fails its
 test. Both guards were restored. This uses the public spend-enable flag, not
 hidden real/dummy note classification, and does not replace transaction-kind
 flags validation or authenticated host anchor membership.
+
+Added context-bound Rust verification over the same bundle used for proof and
+signature checks. Six logical variants implement the specified public nanotomi
+equations and spend/output permissions, using checked u128 addition and i64
+range conversion. Their typed fields exclude irrelevant principals/fees. Tests
+cover all contexts and permission combinations, amount/sign mismatches, u128
+overflow, symmetric i64 limits, real matching bundles, changed public amounts
+and a corrupted proof through the combined API. Seven independent mutations
+remove arithmetic, value, permission or composition checks; each returns Ok for
+an invalid fixture and fails its assertion. All were restored. This parallels
+the C++ context helper but does not claim cross-language conformance/FFI yet,
+assign wire tags or authenticate settlement sources. Caller-supplied context
+must ultimately be derived from authenticated host state and committed TOS core.

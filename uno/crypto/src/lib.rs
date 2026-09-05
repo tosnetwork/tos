@@ -1,4 +1,5 @@
 use orchard::Bundle;
+pub mod context;
 pub mod decode;
 use orchard::{
     bundle::{Authorized, BundleVersion, Flags},
@@ -17,6 +18,7 @@ pub enum VerificationError {
     Profile,
     Shape(ProofShapeError),
     NonCanonicalAnchor,
+    Context(context::ContextError),
     Proof,
     SpendSignature,
     BindingSignature,
@@ -29,6 +31,20 @@ pub struct FixedVerifier {
 }
 
 impl FixedVerifier {
+    // Matching public amounts is not authorization to mint or settle a receipt.
+    pub fn verify_in_context(
+        &self,
+        bundle: &Bundle<Authorized, i64>,
+        context: context::PublicContext,
+        sighash: &[u8; 32],
+        max_actions: usize,
+        max_proof_bytes: usize,
+    ) -> Result<(), VerificationError> {
+        context::check_context(context, *bundle.value_balance(), bundle.flags())
+            .map_err(VerificationError::Context)?;
+        self.verify_bundle(bundle, sighash, max_actions, max_proof_bytes)
+    }
+
     pub fn new() -> Result<Self, KeyConstructionFailed> {
         let key =
             std::panic::catch_unwind(|| VerifyingKey::build(OrchardCircuitVersion::FixedPostNu6_2))
@@ -199,6 +215,25 @@ mod tests {
         let verifier = FixedVerifier::new().expect("fixed key");
         let bundle = decode_real_bundle(&bundle);
         assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
+        use context::{ContextError, PublicContext};
+        for context in [
+            PublicContext::ShieldClaim { amount: 5000 },
+            PublicContext::WithdrawalRefund { amount: 5000 },
+            PublicContext::Genesis { amount: 5000 },
+            PublicContext::PrivateFeeDistribution { amount: 5000 },
+        ] {
+            assert_eq!(verifier.verify_in_context(&bundle, context, &digest, 2, 7264), Ok(()));
+        }
+        assert_eq!(
+            verifier.verify_in_context(
+                &bundle,
+                PublicContext::ShieldClaim { amount: 5001 },
+                &digest,
+                2,
+                7264
+            ),
+            Err(VerificationError::Context(ContextError::ValueBalance))
+        );
 
         // Recover an actual nonzero output and spend it from a single-leaf tree.
         // This uses the dependency's test encryption, not the required hybrid profile.
@@ -240,6 +275,36 @@ mod tests {
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         let spent = decode_real_bundle(&spent);
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        assert_eq!(
+            verifier.verify_in_context(
+                &spent,
+                PublicContext::Transfer { fee: 100 },
+                &digest,
+                2,
+                7264
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verifier.verify_in_context(
+                &spent,
+                PublicContext::Unshield { amount: 80, fee: 20 },
+                &digest,
+                2,
+                7264
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verifier.verify_in_context(
+                &spent,
+                PublicContext::Transfer { fee: 101 },
+                &digest,
+                2,
+                7264
+            ),
+            Err(VerificationError::Context(ContextError::ValueBalance))
+        );
         let wrong_balance = spent
             .clone()
             .try_map_value_balance(|_| Ok::<i64, std::convert::Infallible>(101))
@@ -279,6 +344,16 @@ mod tests {
         );
         assert_eq!(
             verifier.verify_bundle(&bad_proof, &digest, 2, 7264),
+            Err(VerificationError::Proof)
+        );
+        assert_eq!(
+            verifier.verify_in_context(
+                &bad_proof,
+                PublicContext::ShieldClaim { amount: 5000 },
+                &digest,
+                2,
+                7264
+            ),
             Err(VerificationError::Proof)
         );
         let bad_binding = bundle.map_authorization(
