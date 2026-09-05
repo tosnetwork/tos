@@ -30,6 +30,8 @@
 ;;             = SignedExternalBody;
 ;;   deploy_send#41475006 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
 ;;             target:MsgAddressInt value:coins state_init:^Cell body:^Cell = SignedExternalBody;
+;;   checked_contract_call_v2#41475007 global_id:int32 controller_epoch:uint64 seqno:uint32 valid_until:uint32
+;;             target:MsgAddressInt value:coins extra_flags:uint8 body:^Cell = SignedExternalBody;
 
 int get_global_id() asm "GLOBALID";
 
@@ -39,6 +41,7 @@ const int op::agent_task_send = 0x41475003;          ;; "AGP\3"
 const int op::agent_native_send = 0x41475004;        ;; "AGP\4"
 const int op::agent_cancel_seqno = 0x41475005;       ;; "AGP\5"
 const int op::agent_deploy_send = 0x41475006;        ;; "AGP\6"
+const int op::agent_checked_contract_call_v2 = 0x41475007; ;; "AGP\7"
 const int max_signed_action_value = 281474976710655; ;; 2^48 - 1 nanoTOS
 
 ;; sha256("tos.agent-account.controller-signature.v1")
@@ -62,6 +65,11 @@ const int err::wrong_workchain = 1714;
 const int err::unsupported_state_init = 1715;
 const int err::seqno_exhausted = 1716;
 const int err::controller_epoch_exhausted = 1717;
+const int err::invalid_extra_flags = 1718;
+const int err::empty_body = 1719;
+const int err::weak_controller = 1720;
+
+const int checked_contract_call_v2_flags = 3;
 
 ;; The largest value a uint32 seqno field can hold; one past this can never be
 ;; stored back by pack_agent_state(), so every path that increments seqno must
@@ -243,6 +251,37 @@ cell pack_agent_state(
   throw_if(err::controller_epoch_exhausted, controller_epoch == max_controller_epoch);
 }
 
+;; Canonical encodings of the complete Ed25519 8-torsion subgroup. CHKSIGNU
+;; separately rejects non-canonical and off-curve encodings while validating
+;; every external action; this denylist closes the remaining small-order-key
+;; forgery class without changing the frozen owner rotation wire format.
+() require_strong_controller_key(int public_key) impure inline {
+  ;; Ed25519 encodes y little-endian in 255 bits and x's sign in the high bit
+  ;; of the last byte. y >= 2^255-19 is non-canonical. In byte order this can
+  ;; only happen at 0x[ed..ff]ff..ff[7f|ff], so the comparison is O(1).
+  int y_last = (public_key & 255) & 127;
+  int y_middle = (public_key >> 8) & ((1 << 240) - 1);
+  int y_first = public_key >> 248;
+  throw_if(err::weak_controller,
+    (y_last == 127) & (y_middle == ((1 << 240) - 1)) & (y_first >= 237));
+  throw_if(err::weak_controller, public_key ==
+    0x0100000000000000000000000000000000000000000000000000000000000000);
+  throw_if(err::weak_controller, public_key ==
+    0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+  throw_if(err::weak_controller, public_key ==
+    0x0000000000000000000000000000000000000000000000000000000000000080);
+  throw_if(err::weak_controller, public_key ==
+    0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+  throw_if(err::weak_controller, public_key ==
+    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+  throw_if(err::weak_controller, public_key ==
+    0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+  throw_if(err::weak_controller, public_key ==
+    0x0000000000000000000000000000000000000000000000000000000000000000);
+  throw_if(err::weak_controller, public_key ==
+    0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+}
+
 ;; Bug fix: this must be called as `in_msg_body~load_maybe_hash()`, not
 ;; `load_maybe_hash(in_msg_body)` -- FunC passes plain (non-`~`) call
 ;; arguments by value, so a version of this helper returning only `int`
@@ -389,6 +428,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     require_owner(sender, owner);
     int new_controller_pubkey = in_msg_body~load_uint(256);
     in_msg_body.end_parse();
+    require_strong_controller_key(new_controller_pubkey);
     require_seqno_not_saturated(seqno);
     require_controller_epoch_not_saturated(controller_epoch);
 
@@ -433,15 +473,18 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
 
   slice header = signed_body;
   int header_op = header~load_uint(32);
+  ;; External opcodes form one contiguous interval. Keeping this as a range
+  ;; also preserves the deploy path's tight pre-accept gas budget as V2 grows.
   throw_unless(err::unknown_op,
-    (header_op == op::agent_task_send) |
-    (header_op == op::agent_native_send) |
-    (header_op == op::agent_deploy_send) |
-    (header_op == op::agent_cancel_seqno));
+    (header_op >= op::agent_task_send) &
+    (header_op <= op::agent_checked_contract_call_v2));
   int msg_global_id = header~load_int(32);
   throw_unless(err::wrong_network, msg_global_id == get_global_id());
   int msg_controller_epoch = header~load_uint(64);
   throw_unless(err::stale_controller, msg_controller_epoch == controller_epoch);
+  if (header_op == op::agent_checked_contract_call_v2) {
+    require_strong_controller_key(controller_pubkey);
+  }
 
   ;; Bind the signature to the protocol, actual chain, exact account and full
   ;; payload. Wrong-network requests fail before signature work and acceptance.
@@ -506,6 +549,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   slice attachments = signed_body;
   cell body = null();
   cell state_init = null();
+  int checked_call = 0;
   ;; A deploy stays in this account's workchain, so masterchain forward prices
   ;; apply exactly when the account itself lives in the masterchain.
   int priced_as_masterchain = wc == -1;
@@ -521,6 +565,16 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     priced_as_masterchain = outbound_priced_as_masterchain(target, wc);
     if (op == op::agent_task_send) {
       body = signed_body~load_ref();
+    } elseif (op == op::agent_checked_contract_call_v2) {
+        checked_call = -1;
+        int extra_flags = signed_body~load_uint(8);
+        throw_unless(err::invalid_extra_flags, extra_flags == checked_contract_call_v2_flags);
+        ;; Exclude the signed-only flags byte from outbound fee accounting;
+        ;; only the remaining body reference is attached to the message.
+        attachments = signed_body;
+      body = signed_body~load_ref();
+      throw_if(err::empty_body, body.begin_parse().slice_empty?());
+      require_zero_cell_level(body);
     }
   }
   signed_body.end_parse();
@@ -542,7 +596,8 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
 
   accept_message();
   builder outbound = begin_cell()
-    .store_uint(0x10, 6)
+    ;; 0x18 sets bounce=1. Legacy operations retain their frozen 0x10 header.
+    .store_uint(checked_call ? 0x18 : 0x10, 6)
     .store_slice(target)
     .store_tomis(value)
     .store_uint(0, 1 + 4 + 4 + 64 + 32);
@@ -552,7 +607,7 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   } else {
     outbound = outbound.store_uint(0, 1);
   }
-  if ((op == op::agent_task_send) | (op == op::agent_deploy_send)) {
+  if ((op == op::agent_task_send) | (op == op::agent_deploy_send) | checked_call) {
     outbound = outbound.store_uint(1, 1).store_ref(body);
   } else {
     outbound = outbound.store_uint(0, 1);

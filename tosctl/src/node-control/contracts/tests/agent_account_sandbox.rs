@@ -12,8 +12,8 @@ use chain_block::{
 };
 use contracts::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE, AGENT_UPDATE_POLICY_OPCODE,
-    AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, AgentDeploySend,
-    TaskEscrowContract, TaskEscrowInit,
+    AgentAccountContract, AgentAccountInit, AgentAccountPolicyUpdate, AgentCheckedContractCallV2,
+    AgentDeploySend, TaskEscrowContract, TaskEscrowInit,
 };
 use tos_sandbox::{
     Blockchain, MessageBuilder, SandboxResult, SendResult, Treasury, compile_func_with_stdlib,
@@ -60,6 +60,33 @@ fn raw_deploy_payload(
     payload.into_cell().expect("payload")
 }
 
+fn raw_checked_call_payload(
+    seqno: u32,
+    valid_until: u32,
+    target: &MsgAddressInt,
+    value: u64,
+    extra_flags: u8,
+    body: Cell,
+) -> Cell {
+    let mut payload = BuilderData::new();
+    payload
+        .append_u32(contracts::AGENT_CHECKED_CONTRACT_CALL_V2_OPCODE)
+        .expect("opcode")
+        .append_i32(GLOBAL_ID)
+        .expect("network")
+        .append_u64(0)
+        .expect("epoch")
+        .append_u32(seqno)
+        .expect("seqno")
+        .append_u32(valid_until)
+        .expect("expiry");
+    target.write_to(&mut payload).expect("target");
+    Coins::new(value).write_to(&mut payload).expect("value");
+    payload.append_u8(extra_flags).expect("flags");
+    payload.checked_append_reference(body).expect("body ref");
+    payload.into_cell().expect("payload")
+}
+
 #[test]
 fn source_compiles_to_the_embedded_final_interface() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -67,7 +94,7 @@ fn source_compiles_to_the_embedded_final_interface() {
     let compiled = compile_func_with_stdlib(&[source]).expect("compile Agent Account source");
     assert_eq!(
         compiled.repr_hash(),
-        AgentAccountContract::code().expect("embedded Agent Account code").repr_hash(),
+        AgentAccountContract::v2_code().expect("embedded Agent Account V2 code").repr_hash(),
         "embedded Agent Account BOC must be regenerated whenever FunC changes"
     );
 }
@@ -123,10 +150,10 @@ impl Fixture {
             metadata_hash: None,
             service_endpoint_hash: None,
         };
-        let account = AgentAccountContract::calculate_address(-1, &init).expect("address");
+        let account = AgentAccountContract::calculate_v2_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(owner.address(), &account, funding)
             .bounce(false)
-            .state_init(AgentAccountContract::build_state_init(&init).expect("state init"))
+            .state_init(AgentAccountContract::build_v2_state_init(&init).expect("state init"))
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
@@ -229,6 +256,26 @@ impl Fixture {
             &AgentDeploySend { target: target.clone(), value, state_init, body },
         )
         .expect("deploy payload");
+        self.sign_payload(secret, GLOBAL_ID, payload)
+    }
+
+    fn signed_checked_call(
+        &self,
+        secret: &[u8; 32],
+        seqno: u32,
+        valid_until: u32,
+        target: &MsgAddressInt,
+        value: u64,
+        body: Cell,
+    ) -> Cell {
+        let payload = AgentAccountContract::build_checked_contract_call_v2_payload(
+            GLOBAL_ID,
+            self.controller_epoch() as u64,
+            seqno,
+            valid_until,
+            &AgentCheckedContractCallV2 { target: target.clone(), value, body },
+        )
+        .expect("checked-call payload");
         self.sign_payload(secret, GLOBAL_ID, payload)
     }
 
@@ -392,6 +439,97 @@ fn native_send_is_one_bodyless_non_bouncing_transfer() {
             .body()
             .is_none_or(|body| body.remaining_bits() == 0 && body.remaining_references() == 0)
     );
+}
+
+#[test]
+fn checked_contract_call_v2_is_one_bounceable_exact_body_transfer() {
+    let mut fixture = Fixture::new();
+    let target = fixture.target.address().clone();
+    let mut body_builder = BuilderData::new();
+    body_builder.append_u32(0x504d_0001).expect("operation");
+    body_builder.append_u64(77).expect("query id");
+    let expected_body = body_builder.into_cell().expect("body");
+    let action = fixture.signed_checked_call(
+        &fixture.controller_secret,
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        TOS,
+        expected_body.clone(),
+    );
+    let result = fixture.send_external(action).expect("checked contract call");
+    result.expect_success().expect_out_msgs(1);
+
+    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.spent_today(), TOS as i128);
+    let target_tx = result
+        .transactions_for(&target)
+        .into_iter()
+        .next()
+        .expect("destination receives the checked call");
+    let inbound = target_tx.read_in_msg().expect("read inbound").expect("inbound message");
+    let header = inbound.int_header().expect("internal header");
+    assert!(header.bounce, "V2 checked contract calls must be bounceable");
+    assert!(inbound.state_init().is_none(), "V2 calls must never carry StateInit");
+    let actual_body = inbound.body().expect("V2 body").clone().into_cell().expect("body cell");
+    assert_eq!(actual_body.repr_hash(), expected_body.repr_hash());
+}
+
+#[test]
+fn checked_contract_call_v2_rejects_weakening_or_empty_body_before_acceptance() {
+    let mut fixture = Fixture::new();
+    let target = fixture.target.address().clone();
+    let mut nonempty = BuilderData::new();
+    nonempty.append_u32(0x504d_0001).expect("operation");
+
+    let bad_flags = raw_checked_call_payload(
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        TOS,
+        1,
+        nonempty.into_cell().expect("body"),
+    );
+    let bad_flags = fixture.sign_payload(&fixture.controller_secret, GLOBAL_ID, bad_flags);
+    fixture.expect_external_exit(bad_flags, 1718);
+    assert_eq!(fixture.seqno(), 0);
+
+    let empty = raw_checked_call_payload(
+        0,
+        fixture.bc.now() + 300,
+        &target,
+        TOS,
+        contracts::AGENT_CHECKED_CONTRACT_CALL_V2_FLAGS,
+        Cell::default(),
+    );
+    let empty = fixture.sign_payload(&fixture.controller_secret, GLOBAL_ID, empty);
+    fixture.expect_external_exit(empty, 1719);
+    assert_eq!(fixture.seqno(), 0);
+}
+
+#[test]
+fn owner_rotation_rejects_small_order_and_noncanonical_controller_keys() {
+    let mut fixture = Fixture::new();
+    let owner = fixture.owner.address().clone();
+    for encoded in [
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    ] {
+        let key: [u8; 32] = hex::decode(encoded).expect("hex").try_into().expect("key");
+        let mut body = BuilderData::new();
+        body.append_u32(contracts::agent_account::AGENT_ROTATE_CONTROLLER_OPCODE)
+            .expect("opcode")
+            .append_u64(1)
+            .expect("query id")
+            .append_raw(&key, 256)
+            .expect("key");
+        fixture
+            .send_internal(&owner, body.into_cell().expect("body"))
+            .expect_aborted()
+            .expect_exit_code(1720);
+        assert_eq!(fixture.seqno(), 0);
+        assert_eq!(fixture.controller_epoch(), 0);
+    }
 }
 
 #[test]
