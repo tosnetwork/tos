@@ -6491,15 +6491,20 @@ bool ValidateQuery::check_transactions() {
   if (resolved.ok().has_value() &&
       std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
     const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
-    // Deferred transit only moves an already-funded message between host queues.
-    // It cannot credit the executor or stand in for an engine system input.
+    std::vector<Ref<vm::Cell>> native_imports;
     if (!in_msg_dict_->check_for_each_extra(
             [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
-              return block::gen::t_InMsg.get_tag(*value) == block::gen::InMsg::msg_import_deferred_tr;
+              native_imports.push_back(vm::CellBuilder().append_cellslice(value).finalize());
+              return true;
             })) {
-      return reject_query("block batch incoming account message settlement is not implemented");
+      return reject_query("cannot traverse native batch imports");
     }
-    block::WorkchainBlockReplayContext context{prev_state_root_, config_->get_root_cell(), mc_state_root_};
+    auto inbox = block::workchain_batch_inbound_from_imports(native_imports);
+    if (inbox.is_error()) {
+      return reject_query(inbox.move_as_error_prefix("cannot reconstruct native batch inbox: ").to_string());
+    }
+    block::WorkchainBlockReplayContext context{
+        prev_state_root_, config_->get_root_cell(), mc_state_root_, inbox.move_as_ok()};
     bool found = false;
     bool valid = account_blocks_dict_->check_for_each_extra(
         [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int bits) {

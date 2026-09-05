@@ -160,6 +160,54 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
   }
 }
 
+td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
+    const std::vector<td::Ref<vm::Cell>>& imports) {
+  std::vector<td::Ref<vm::Cell>> envelopes;
+  try {
+    for (const auto& root : imports) {
+      if (root.is_null()) {
+        return td::Status::Error("missing native batch import");
+      }
+      auto cs = vm::load_cell_slice(root);
+      switch (gen::t_InMsg.check_tag(cs)) {
+        case gen::InMsg::msg_import_fin: {
+          gen::InMsg::Record_msg_import_fin record;
+          if (!tlb::unpack_cell(root, record)) {
+            return td::Status::Error("invalid native final batch import");
+          }
+          envelopes.push_back(record.in_msg);
+          break;
+        }
+        case gen::InMsg::msg_import_deferred_fin: {
+          gen::InMsg::Record_msg_import_deferred_fin record;
+          if (!tlb::unpack_cell(root, record)) {
+            return td::Status::Error("invalid native deferred final batch import");
+          }
+          envelopes.push_back(record.in_msg);
+          break;
+        }
+        case gen::InMsg::msg_import_deferred_tr: {
+          gen::InMsg::Record_msg_import_deferred_tr record;
+          if (!tlb::unpack_cell(root, record)) {
+            return td::Status::Error("invalid native deferred transit batch import");
+          }
+          break;
+        }
+        default:
+          return td::Status::Error("unsupported native batch import kind");
+      }
+    }
+    if (envelopes.empty()) {
+      return td::Ref<vm::Cell>{};
+    }
+    return encode_workchain_batch_inbound(envelopes);
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid native batch import cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete native batch import proof");
+  }
+}
+
 td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,
                                                 const td::Ref<vm::Cell>& inbound_messages) {
   auto after = host_after_lt;

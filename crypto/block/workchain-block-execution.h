@@ -38,6 +38,12 @@ struct WorkchainBlockReplayContext {
 td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,
                                                 const td::Ref<vm::Cell>& inbound_messages = {});
 
+// Reconstruct the engine inbox from native imports, not the claimed batch list.
+// Queue proofs, dictionary keys and transaction backlinks remain host checks.
+// Deferred transit contributes no engine input; an empty result is null.
+td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
+    const std::vector<td::Ref<vm::Cell>>& imports);
+
 // Decode orders by (emitted LT, message hash), falling back to created LT.
 // Engines may apply their own authenticated source-locator order afterwards.
 // These helpers do not authenticate message delivery.

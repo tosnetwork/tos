@@ -307,7 +307,7 @@ Base node revision: `5a6145cce`.
   equal-LT hash tie-breaking, duplicate original messages, count/key mismatches,
   malformed envelopes, input/list commitment substitution and positive/negative
   native membership. `prepare_workchain_batch` explicitly rejects any inbound root
-  until native credits and queue extraction are implemented, so this format support
+  until native credits and collator queue consumption are implemented, so this format support
   cannot silently accept messages without accounting for their value.
 - Inbound mutation checks omit the exposed-list comparison during replay (a
   substituted membership list is accepted) and omit dictionary-key/message-hash
@@ -479,3 +479,17 @@ UINT64_MAX-1 rejection assertion fail; the correct limit was restored.
 Native settlement still must credit only message value to the executor and
 retain the native InMsg accounting of remaining forwarding fees, alongside
 authenticated queue processing and exactly-once batch membership.
+
+Validator replay now reconstructs its inbox from the native InMsgDescr records
+instead of assuming it is absent or trusting the description's claimed list.
+Final and deferred-final imports contribute their original envelopes; deferred
+transit contributes none. Other import kinds and duplicate final messages reject.
+This extraction is structural: the existing earlier `check_in_msg_descr` checks
+queue proofs, dictionary keys, routing, fees and transaction backlinks. The
+reconstructed canonical root is then passed through WorkchainBlockReplayContext
+and compared with the batch input/description commitments. Nonempty inboxes
+still reject at native batch preparation; no credit path is enabled by extraction.
+The import reconstruction test uses generated-TL-B-valid native records and
+checks exact canonical inbox hash, transit-only/empty inputs, duplicates,
+malformed inputs and a well-formed unsupported discard. Omitting deferred-final
+envelopes makes its canonical-hash assertion fail; the inclusion was restored.

@@ -883,6 +883,37 @@ TEST(WorkchainBlock, BatchTimeFollowsEveryInputAndLeavesEndSpace) {
   ASSERT_TRUE(block::workchain_batch_start_lt(0, number(0)).is_error());
 }
 
+TEST(WorkchainBlock, InboxReconstructedFromNativeImports) {
+  auto first = inbound_envelope(3);
+  auto second = inbound_envelope(4);
+  auto expected = block::encode_workchain_batch_inbound({first, second}).move_as_ok();
+  block::WorkchainBatchDescription description;
+  description.input_hash.set_zero();
+  description.effects_hash.set_zero();
+  description.inbound_messages = expected;
+  auto transaction = inbound_transaction(block::encode_workchain_batch_description(description));
+  auto final = vm::CellBuilder().store_long(4, 3).store_ref(first).store_ref(transaction)
+      .store_long(1, 4).store_long(67, 8).finalize();
+  auto deferred = vm::CellBuilder().store_long(4, 5).store_ref(second).store_ref(transaction)
+      .store_long(1, 4).store_long(67, 8).finalize();
+  auto transit = vm::CellBuilder().store_long(5, 5).store_ref(first).store_ref(first).finalize();
+  ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, final));
+  ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, deferred));
+  ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, transit));
+  auto rebuilt = block::workchain_batch_inbound_from_imports({deferred, transit, final}).move_as_ok();
+  ASSERT_TRUE(rebuilt->get_hash() == expected->get_hash());
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({transit}).move_as_ok().is_null());
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({}).move_as_ok().is_null());
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({final, final}).is_error());
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({{}}).is_error());
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({number(0)}).is_error());
+  // A well-formed discarded message is not a final delivery to the engine.
+  auto discarded = vm::CellBuilder().store_long(6, 3).store_ref(first).store_long(10, 64)
+      .store_long(1, 4).store_long(67, 8).finalize();
+  ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, discarded));
+  ASSERT_TRUE(block::workchain_batch_inbound_from_imports({discarded}).is_error());
+}
+
 TEST(WorkchainBlock, AccountEmulatorRejectsBatchTransaction) {
   block::WorkchainBatchDescription description;
   description.input_hash.set_zero();
