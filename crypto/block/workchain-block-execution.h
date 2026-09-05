@@ -28,8 +28,8 @@ struct WorkchainBlockResourceUsage {
 };
 
 struct WorkchainBlockResult {
-  td::Ref<vm::Cell> new_shard_state;
-  td::Ref<vm::Cell> batch_transaction;
+  // Engine-owned state only. The host constructs the account, transaction and shard afterwards.
+  td::Ref<vm::Cell> new_engine_state;
   td::Ref<vm::Cell> outbound_messages;
   td::Ref<vm::Cell> actions;
   td::Ref<vm::Cell> receipts;
@@ -47,6 +47,9 @@ struct WorkchainBatchDescription {
 
 td::Ref<vm::Cell> encode_workchain_batch_description(const WorkchainBatchDescription& description);
 td::Result<WorkchainBatchDescription> decode_workchain_batch_description(const td::Ref<vm::Cell>& root);
+td::Result<td::Ref<vm::Cell>> encode_workchain_block_input(const WorkchainBlockInput& input);
+td::Result<WorkchainBatchDescription> make_workchain_batch_description(const WorkchainBlockInput& input,
+                                                                     const WorkchainBlockResult& effects);
 // Scope check only; callers must separately validate the full transaction encoding.
 td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& description, WorkchainExecutionScope scope);
 
@@ -55,6 +58,11 @@ class WorkchainBlockEngine {
   virtual ~WorkchainBlockEngine() = default;
   virtual td::Result<WorkchainBlockResult> execute_block(const WorkchainBlockInput& input) const = 0;
 };
+
+// Replay from authenticated input and compare the complete pre-wrapper effect commitment.
+td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngine& engine,
+                                                      const WorkchainBlockInput& input,
+                                                      const td::Ref<vm::Cell>& description);
 
 // These helpers never commit state. The host may commit only after replay succeeds.
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result);

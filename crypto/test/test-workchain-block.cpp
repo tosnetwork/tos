@@ -46,12 +46,10 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
       return td::Status::Error("counter overflow");
     }
     block::WorkchainBlockResult result;
-    result.new_shard_state = number(value + increment);
-    result.batch_transaction = vm::CellBuilder().store_ref(input.previous_shard_state)
-                                   .store_ref(result.new_shard_state).store_ref(input.candidate).finalize();
+    result.new_engine_state = number(value + increment);
     result.outbound_messages = number(0);
     result.actions = input.candidate;
-    result.receipts = result.new_shard_state;
+    result.receipts = result.new_engine_state;
     result.events = number(increment);
     result.data_availability = input.candidate;
     result.usage = {8, 1, 3};
@@ -69,10 +67,76 @@ TEST(WorkchainBlock, CounterReplay) {
   CounterEngine engine;
   auto in = input();
   auto produced = engine.execute_block(in).move_as_ok();
-  ASSERT_EQ(vm::load_cell_slice(produced.new_shard_state).fetch_ulong(64), 42u);
+  ASSERT_EQ(vm::load_cell_slice(produced.new_engine_state).fetch_ulong(64), 42u);
   auto validated = block::replay_workchain_block(engine, in, produced).move_as_ok();
-  ASSERT_TRUE(validated.new_shard_state->get_hash() == produced.new_shard_state->get_hash());
+  ASSERT_TRUE(validated.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
   ASSERT_EQ(vm::load_cell_slice(in.previous_shard_state).fetch_ulong(64), 40u);
+}
+
+TEST(WorkchainBlock, BatchCommitmentReplay) {
+  CounterEngine engine;
+  auto in = input();
+  in.configuration = number(17);
+  in.finality_context = number(19);
+  auto produced = engine.execute_block(in).move_as_ok();
+  auto context = block::encode_workchain_block_input(in).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainBlockInput.validate_ref(10000, context));
+  block::gen::WorkchainBlockInput::Record generated;
+  ASSERT_TRUE(tlb::unpack_cell(context, generated));
+  ASSERT_TRUE(generated.previous_shard_state->get_hash() == in.previous_shard_state->get_hash());
+  ASSERT_TRUE(generated.candidate->get_hash() == in.candidate->get_hash());
+  ASSERT_TRUE(generated.configuration->get_hash() == in.configuration->get_hash());
+  ASSERT_TRUE(generated.finality_context->get_hash() == in.finality_context->get_hash());
+  auto commitments = block::make_workchain_batch_description(in, produced).move_as_ok();
+  auto description = block::encode_workchain_batch_description(commitments);
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(10000, description));
+  auto wire = vm::std_boc_serialize(description).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  auto replayed = block::replay_workchain_batch(engine, in, restored).move_as_ok();
+  ASSERT_TRUE(replayed.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
+  td::Ref<vm::Cell> block::WorkchainBlockInput::* fields[] = {
+      &block::WorkchainBlockInput::previous_shard_state, &block::WorkchainBlockInput::candidate,
+      &block::WorkchainBlockInput::configuration, &block::WorkchainBlockInput::finality_context};
+  for (auto field : fields) {
+    auto changed = in;
+    changed.*field = number(99);
+    auto result = block::replay_workchain_batch(engine, changed, description);
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), "batch transaction input commitment differs from authenticated context");
+    changed.*field = {};
+    auto missing = block::replay_workchain_batch(engine, changed, description);
+    ASSERT_TRUE(missing.is_error());
+    ASSERT_EQ(missing.error().message(), "batch commitment requires state, candidate, configuration and finality");
+  }
+}
+
+TEST(WorkchainBlock, BatchCommitmentRejectsEffectMutations) {
+  CounterEngine engine;
+  auto in = input();
+  auto produced = engine.execute_block(in).move_as_ok();
+  td::Ref<vm::Cell> block::WorkchainBlockResult::* fields[] = {
+      &block::WorkchainBlockResult::new_engine_state, &block::WorkchainBlockResult::outbound_messages,
+      &block::WorkchainBlockResult::actions, &block::WorkchainBlockResult::receipts,
+      &block::WorkchainBlockResult::events, &block::WorkchainBlockResult::data_availability};
+  for (auto field : fields) {
+    auto changed = produced;
+    changed.*field = number(99);
+    auto claimed = block::make_workchain_batch_description(in, changed).move_as_ok();
+    auto result = block::replay_workchain_batch(engine, in, block::encode_workchain_batch_description(claimed));
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), "batch transaction commitments differ from replay");
+    changed.*field = {};
+    ASSERT_TRUE(block::make_workchain_batch_description(in, changed).is_error());
+  }
+  for (int i = 0; i < 3; ++i) {
+    auto claimed = block::make_workchain_batch_description(in, produced).move_as_ok();
+    if (i == 0) claimed.usage.wire_bytes = 99;
+    if (i == 1) claimed.usage.verification_units = 99;
+    if (i == 2) claimed.usage.written_cells = 99;
+    auto result = block::replay_workchain_batch(engine, in, block::encode_workchain_batch_description(claimed));
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), "batch transaction commitments differ from replay");
+  }
 }
 
 TEST(WorkchainBlock, BatchDescriptionParsersAndScope) {
@@ -169,7 +233,7 @@ TEST(WorkchainBlock, ResultWireRoundTrip) {
   auto encoded = block::encode_workchain_block_result(validated).move_as_ok();
   ASSERT_TRUE(encoded->get_hash() == root->get_hash());
   td::Ref<vm::Cell> block::WorkchainBlockResult::* fields[] = {
-      &block::WorkchainBlockResult::new_shard_state, &block::WorkchainBlockResult::batch_transaction,
+      &block::WorkchainBlockResult::new_engine_state,
       &block::WorkchainBlockResult::outbound_messages, &block::WorkchainBlockResult::actions,
       &block::WorkchainBlockResult::receipts, &block::WorkchainBlockResult::events,
       &block::WorkchainBlockResult::data_availability};
@@ -197,13 +261,13 @@ TEST(WorkchainBlock, RejectNonCanonicalResultWire) {
   auto produced = engine.execute_block(input()).move_as_ok();
   auto valid = block::encode_workchain_block_result(produced).move_as_ok();
   auto cs = vm::load_cell_slice(valid);
-  auto outputs = cs.prefetch_ref(2);
+  auto outputs = cs.prefetch_ref(1);
   auto envelope = [&](std::uint32_t tag, td::Ref<vm::Cell> out, unsigned extra_bits, unsigned refs) {
     vm::CellBuilder cb;
     cb.store_long(tag, 32).store_long(8, 64).store_long(1, 64).store_long(3, 64);
     if (extra_bits) cb.store_long(0, extra_bits);
-    td::Ref<vm::Cell> children[] = {produced.new_shard_state, produced.batch_transaction, out,
-                                  produced.data_availability};
+    td::Ref<vm::Cell> children[] = {produced.new_engine_state, out,
+                                  produced.data_availability, number(99)};
     for (unsigned i = 0; i < refs; ++i) cb.store_ref(children[i]);
     return cb.finalize();
   };
@@ -219,17 +283,18 @@ TEST(WorkchainBlock, RejectNonCanonicalResultWire) {
   auto proof = vm::MerkleProof::generate(valid, [](const td::Ref<vm::Cell>&) { return false; }).move_as_ok();
   reject(proof, "invalid block result envelope");
   auto output_proof = vm::MerkleProof::generate(outputs, [](const td::Ref<vm::Cell>&) { return false; }).move_as_ok();
-  reject(envelope(0x57425231, output_proof, 0, 4), "invalid block output envelope");
-  reject(envelope(0x57425230, outputs, 0, 4), "invalid block result envelope");
-  reject(envelope(0x57425231, outputs, 1, 4), "invalid block result envelope");
+  reject(envelope(0x57425232, output_proof, 0, 3), "invalid block output envelope");
   reject(envelope(0x57425231, outputs, 0, 3), "invalid block result envelope");
+  reject(envelope(0x57425232, outputs, 1, 3), "invalid block result envelope");
+  reject(envelope(0x57425232, outputs, 0, 2), "invalid block result envelope");
+  reject(envelope(0x57425232, outputs, 0, 4), "invalid block result envelope");
   for (int mutation = 0; mutation < 3; ++mutation) {
     vm::CellBuilder cb;
     cb.store_long(mutation == 0 ? 0x57424f30 : 0x57424f31, 32);
     if (mutation == 1) cb.store_long(0, 1);
     cb.store_ref(produced.outbound_messages).store_ref(produced.actions).store_ref(produced.receipts);
     if (mutation != 2) cb.store_ref(produced.events);
-    reject(envelope(0x57425231, cb.finalize(), 0, 4), "invalid block output envelope");
+    reject(envelope(0x57425232, cb.finalize(), 0, 3), "invalid block output envelope");
   }
 }
 
@@ -238,7 +303,7 @@ TEST(WorkchainBlock, RejectEveryResultMutation) {
   auto in = input();
   auto produced = engine.execute_block(in).move_as_ok();
   td::Ref<vm::Cell> block::WorkchainBlockResult::* fields[] = {
-      &block::WorkchainBlockResult::new_shard_state, &block::WorkchainBlockResult::batch_transaction,
+      &block::WorkchainBlockResult::new_engine_state,
       &block::WorkchainBlockResult::outbound_messages, &block::WorkchainBlockResult::actions,
       &block::WorkchainBlockResult::receipts, &block::WorkchainBlockResult::events,
       &block::WorkchainBlockResult::data_availability};
@@ -293,7 +358,7 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   auto resolved = registry.resolve_block(descriptor, configuration).move_as_ok();
   auto in = input();
   auto produced = resolved.executor->execute_block(in).move_as_ok();
-  ASSERT_EQ(vm::load_cell_slice(produced.new_shard_state).fetch_ulong(64), 42u);
+  ASSERT_EQ(vm::load_cell_slice(produced.new_engine_state).fetch_ulong(64), 42u);
   auto account = registry.resolve(descriptor, configuration);
   ASSERT_TRUE(account.is_error());
   ASSERT_EQ(account.error().message(), "block engine cannot execute through account compute");
