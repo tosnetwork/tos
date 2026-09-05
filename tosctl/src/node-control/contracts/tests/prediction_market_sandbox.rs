@@ -523,18 +523,17 @@ impl Fixture {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn signed_order(
+    fn order(
         &self,
         owner: &MsgAddressInt,
-        key: &SigningKey,
         nonce: u64,
         action: PredictionOrderActionV1,
         outcome: PredictionOrderOutcomeV1,
         role: PredictionLiquidityRoleV1,
         price: u16,
         quantity: u64,
-    ) -> Cell {
-        let order = PredictionOrderV1 {
+    ) -> PredictionOrderV1 {
+        PredictionOrderV1 {
             global_id: self.init.global_id,
             workchain_id: self.init.workchain_id,
             market_address: self.market.clone(),
@@ -553,7 +552,22 @@ impl Fixture {
             valid_after: u64::from(self.bc.now()),
             valid_until: self.init.trade_close,
             optional_counterparty: None,
-        };
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn signed_order(
+        &self,
+        owner: &MsgAddressInt,
+        key: &SigningKey,
+        nonce: u64,
+        action: PredictionOrderActionV1,
+        outcome: PredictionOrderOutcomeV1,
+        role: PredictionLiquidityRoleV1,
+        price: u16,
+        quantity: u64,
+    ) -> Cell {
+        let order = self.order(owner, nonce, action, outcome, role, price, quantity);
         let digest = PredictionMarketContractV1::order_digest(&order).unwrap();
         let signature = key.sign(&digest).to_bytes();
         PredictionMarketContractV1::build_signed_order(
@@ -978,6 +992,87 @@ fn malformed_and_unknown_messages_leave_state_and_liabilities_unchanged() {
         .expect_exit_code(9);
     assert_eq!(f.data_hash(), before_data_hash, "truncated split changed state");
     assert_eq!(f.accounting(), before_accounting, "truncated split changed liabilities");
+}
+
+#[test]
+fn cancellation_tombstone_is_nonce_bound_and_prunes_cleanup_once() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let keeper = f.trader_b.address().clone();
+    let key = SigningKey::from_bytes(&[0x63; 32]);
+    f.register(&owner, &key, 2);
+
+    let order = f.order(
+        &owner,
+        41,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        1,
+    );
+    let cancellation_value =
+        OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty;
+    f.send(
+        &owner,
+        cancellation_value,
+        PredictionMarketContractV1::cancel_exact(3, &order).expect("cancel body"),
+    )
+    .expect_success();
+    assert_eq!(f.accounting()[1], 1, "cancellation must retain one nonce tombstone");
+    assert_eq!(
+        f.accounting()[10],
+        i128::from(f.init.account_cleanup_bounty + f.init.order_cleanup_bounty),
+        "tombstone cleanup credit must remain a liability"
+    );
+
+    let after_cancel_data = f.data_hash();
+    let after_cancel_accounting = f.accounting();
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::cancel_exact(4, &order).expect("idempotent cancel body"),
+    )
+    .expect_success();
+    assert_eq!(f.data_hash(), after_cancel_data, "repeated exact cancellation changed state");
+    assert_eq!(
+        f.accounting(),
+        after_cancel_accounting,
+        "repeated exact cancellation changed liability"
+    );
+
+    let conflicting_order = f.order(
+        &owner,
+        41,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_001,
+        1,
+    );
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::cancel_exact(5, &conflicting_order)
+            .expect("conflicting cancel body"),
+    )
+    .expect_exit_code(2421);
+    assert_eq!(f.data_hash(), after_cancel_data, "conflicting nonce changed state");
+    assert_eq!(f.accounting(), after_cancel_accounting, "conflicting nonce changed liability");
+
+    f.send(
+        &keeper,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::prune_order(6, &owner, 0, 41, false).expect("prune body"),
+    )
+    .expect_success();
+    assert_eq!(f.accounting()[1], 0, "pruning must remove the cancelled tombstone");
+    assert_eq!(
+        f.accounting()[10],
+        i128::from(f.init.account_cleanup_bounty),
+        "pruning must release the order cleanup liability exactly once"
+    );
 }
 
 #[test]
