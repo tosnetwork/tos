@@ -260,8 +260,10 @@ class Lifecycle:
         operation_path.chmod(0o600)
         self.tosctl_call("agent", "prediction", "build-operation", "--definition", str(self.definition),
                          "--operation", str(operation_path), "--output-boc", str(body_path))
-        shutil.copyfile(self.definition, self.evidence_dir / "market.json")
-        shutil.copyfile(external_boc, self.evidence_dir / "match-external.boc")
+        for source, name in ((self.definition, "market.json"), (external_boc, "match-external.boc")):
+            destination = self.evidence_dir / name
+            shutil.copyfile(source, destination)
+            destination.chmod(0o600)
         for index, endpoint in enumerate(self.rpc_urls, 1):
             path = self.evidence_dir / f"node-{index}.json"
             path.write_text(json.dumps({"nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
