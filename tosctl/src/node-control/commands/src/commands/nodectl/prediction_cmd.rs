@@ -17,6 +17,7 @@ use chain_block::{
     Cell, ConfigParamEnum, MsgAddressInt, Serializable, read_single_root_boc, write_boc,
 };
 use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountState};
+use common::app_config::AppConfig;
 use common::time_format;
 use contracts::{
     AgentAccountContract, AgentCheckedContractCallV2, ChainProvider, ControllerActionClaim,
@@ -501,7 +502,15 @@ impl PredictionBuildOperationCmd {
 impl PredictionShowCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let init = load_definition(&self.definition)?;
-        let (_, _, rpc) = load_config_vault_rpc_client(Path::new(config_path)).await?;
+        // A market view is a read-only RPC projection. Loading a Vault here
+        // would make an observer disclose a signing capability merely to
+        // inspect public chain state, and breaks confined verifier processes
+        // that intentionally inherit no ambient secret configuration.
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc = Arc::new(ClientJsonRpc::connect_many(
+            config.chain_rpc.resolved_endpoints(),
+            config.chain_rpc.api_key.clone(),
+        )?);
         let (address, global_version, checkpoint) = preflight_market(&rpc, &init, false).await?;
         let provider = DefaultChainProvider::new(rpc.clone());
         let state = PredictionMarketContractV1::decode_state(
