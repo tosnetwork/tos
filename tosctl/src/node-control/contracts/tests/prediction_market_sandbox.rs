@@ -5,7 +5,7 @@
 
 //! Production-BOC state-transition tests for PredictionMarket V1.
 
-use chain_block::{BuilderData, Cell, MsgAddressInt, Serializable, SliceData, StateInit, TrComputePhase};
+use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit, TrComputePhase};
 use contracts::{
     PredictionLiquidityRoleV1, PredictionMarketContractV1, PredictionMarketInitV1,
     PredictionOraclePolicyV1, PredictionOrderActionV1, PredictionOrderOutcomeV1, PredictionOrderV1,
@@ -563,6 +563,52 @@ fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
     state.expect_success();
     assert_eq!(state.int_at(0), 0, "pre-populated runtime must not activate the market");
     assert_eq!(state.int_at(1), 1, "failed activation must not rewrite the supplied runtime");
+}
+
+#[test]
+fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
+    let template = Fixture::new();
+    let valid_data = PredictionMarketContractV1::build_data(&template.init).unwrap();
+    let mut liabilities = BuilderData::new();
+    liabilities.append_u32(0x504d_4c31).unwrap();
+    for _ in 0..7 {
+        Coins::new(0).write_to(&mut liabilities).unwrap();
+    }
+    let mut accounting = BuilderData::new();
+    accounting
+        .append_u32(0x504d_4131).unwrap()
+        .append_u32(1).unwrap() // participant_count
+        .append_u32(0).unwrap()
+        .append_u64(0).unwrap()
+        .append_u64(0).unwrap()
+        .checked_append_reference(liabilities.into_cell().unwrap())
+        .unwrap();
+    let mut root = BuilderData::from_cell(&valid_data).unwrap();
+    root.replace_reference_cell(1, accounting.into_cell().unwrap());
+    let prepopulated_data = root.into_cell().unwrap();
+
+    let mut bc = Blockchain::with_global_version(14).unwrap();
+    bc.set_workchain(-1);
+    let owner = bc.treasury("prepopulated-liability-owner", 25_000 * TOS).unwrap();
+    let state_init = StateInit::with_code_and_data(PredictionMarketContractV1::code().unwrap(), prepopulated_data);
+    let state = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
+    let market = MsgAddressInt::with_params(-1, state.hash(0)).unwrap();
+    let result = bc
+        .send_message(
+            MessageBuilder::internal(owner.address(), &market, 2 * TOS)
+                .bounce(true)
+                .state_init(state_init)
+                .body(PredictionMarketContractV1::activate(1).unwrap())
+                .build(),
+        )
+        .unwrap();
+    result.expect_aborted();
+    let accounting = bc.run_get_method(&market, "get_prediction_accounting", vec![]).unwrap();
+    accounting.expect_success();
+    assert_eq!(accounting.int_at(0), 1, "failed activation must not normalize seeded liabilities");
+    let phase = bc.run_get_method(&market, "get_market_phase", vec![]).unwrap();
+    phase.expect_success();
+    assert_eq!(phase.int_at(0), 0, "seeded liability must not activate the market");
 }
 
 #[test]
