@@ -18,6 +18,7 @@
 
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/workchain-block-execution.h"
 #include "td/utils/Status.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
@@ -199,6 +200,19 @@ struct ResolvedWorkchainExecution {
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
 };
 
+class RegisteredWorkchainBlockEngine : public WorkchainBlockEngine {
+ public:
+  virtual WorkchainEngineKey engine_key() const = 0;
+  virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const = 0;
+};
+
+struct ResolvedWorkchainBlockExecution {
+  const RegisteredWorkchainBlockEngine* executor{nullptr};
+  WorkchainExecutionDescriptor descriptor;
+  std::shared_ptr<const WorkchainEngineConfig> engine_config;
+};
+
 bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution);
 
 struct LocalWorkchainRoleSet {
@@ -215,6 +229,10 @@ class WorkchainExecutionRegistry {
   void register_engine(std::unique_ptr<WorkchainEngine> engine);
   bool register_engine_if_absent(std::unique_ptr<WorkchainEngine> engine);
   bool has_engine(const WorkchainEngineKey& key) const;
+  td::Status register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine);
+  std::optional<WorkchainExecutionScope> execution_scope(const WorkchainEngineKey& key) const;
+  td::Result<ResolvedWorkchainBlockExecution> resolve_block(
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
 
   td::Result<ResolvedWorkchainExecution> resolve(const WorkchainExecutionDescriptor& descriptor,
                                                  const block::Config& block_transition_config) const;
@@ -237,6 +255,7 @@ class WorkchainExecutionRegistry {
   // internal lock; concurrent writes would be a data race. Do not call
   // register_engine* from any thread other than the startup sequence.
   std::map<WorkchainEngineKey, std::unique_ptr<WorkchainEngine>> engines_;
+  std::map<WorkchainEngineKey, std::unique_ptr<RegisteredWorkchainBlockEngine>> block_engines_;
 };
 
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry);

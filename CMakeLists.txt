@@ -619,6 +619,8 @@ if (WINGETOPT_FOUND)
 endif()
 
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
+add_executable(test-workchain-block test/test-td-main.cpp crypto/test/test-workchain-block.cpp)
+target_link_libraries(test-workchain-block PRIVATE tos_crypto)
 target_link_libraries(test-cells PRIVATE tos_crypto)
 
 
@@ -1021,6 +1023,7 @@ tos_test(test-bigint)
 tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
+tos_test(test-workchain-block)
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)

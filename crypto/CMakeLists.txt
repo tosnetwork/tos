@@ -206,6 +206,8 @@ set(BLOCK_SOURCE
   block/account-storage-stat.cpp
   block/precompiled-smc/PrecompiledSmartContract.cpp
   block/workchain-execution-dispatch.cpp
+  block/workchain-block-execution.cpp
+  block/workchain-block-execution.h
   block/workchain-execution-dispatch.h
   ${TLB_BLOCK_AUTO}
 

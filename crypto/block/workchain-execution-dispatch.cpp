@@ -160,6 +160,7 @@ td::Status validate_workchain_execution_descriptor_transitions(
 void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
   CHECK(engine != nullptr);
   auto key = engine->engine_key();
+  CHECK(block_engines_.count(key) == 0);
   auto inserted = engines_.emplace(key, std::move(engine));
   LOG_CHECK(inserted.second) << "duplicate workchain engine registration for "
                              << workchain_engine_key_to_string(key);
@@ -178,7 +179,46 @@ bool WorkchainExecutionRegistry::register_engine_if_absent(std::unique_ptr<Workc
 }
 
 bool WorkchainExecutionRegistry::has_engine(const WorkchainEngineKey& key) const {
-  return engines_.count(key) != 0;
+  return engines_.count(key) != 0 || block_engines_.count(key) != 0;
+}
+
+td::Status WorkchainExecutionRegistry::register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine) {
+  if (!engine) {
+    return td::Status::Error("cannot register null block engine");
+  }
+  auto key = engine->engine_key();
+  if (workchain_engine_key_is_tvm(key) || has_engine(key)) {
+    return td::Status::Error("block engine key is reserved or already registered");
+  }
+  block_engines_.emplace(key, std::move(engine));
+  return td::Status::OK();
+}
+
+std::optional<WorkchainExecutionScope> WorkchainExecutionRegistry::execution_scope(const WorkchainEngineKey& key) const {
+  if (engines_.count(key)) {
+    return WorkchainExecutionScope::AccountCompute;
+  }
+  if (block_engines_.count(key)) {
+    return WorkchainExecutionScope::BlockTransition;
+  }
+  return std::nullopt;
+}
+
+td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_block(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  if (!descriptor.active) {
+    return td::Status::Error("block workchain is inactive");
+  }
+  auto key = workchain_engine_key_from_descriptor(descriptor);
+  auto it = block_engines_.find(key);
+  if (it == block_engines_.end()) {
+    return td::Status::Error("descriptor has no registered block engine");
+  }
+  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration));
+  if (!config) {
+    return td::Status::Error("block engine returned null configuration");
+  }
+  return ResolvedWorkchainBlockExecution{it->second.get(), descriptor, std::move(config)};
 }
 
 td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
@@ -187,12 +227,18 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
     return td::Status::Error(PSTRING() << "workchain " << descriptor.workchain_id << " is inactive");
   }
   auto key = workchain_engine_key_from_descriptor(descriptor);
+  if (block_engines_.count(key)) {
+    return td::Status::Error("block engine cannot execute through account compute");
+  }
   auto it = engines_.find(key);
   if (it == engines_.end()) {
     return td::Status::Error(PSTRING() << "missing workchain engine " << workchain_engine_key_to_string(key)
                                        << " for workchain " << descriptor.workchain_id);
   }
   TRY_RESULT(engine_config, it->second->validate_and_resolve_config(descriptor, block_transition_config));
+  if (!engine_config) {
+    return td::Status::Error("account engine returned null configuration");
+  }
   ResolvedWorkchainExecution resolved;
   resolved.executor = it->second.get();
   resolved.descriptor = descriptor;
