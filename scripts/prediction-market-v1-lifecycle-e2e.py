@@ -149,6 +149,13 @@ class Lifecycle:
             )
         return completed.stdout.decode()
 
+    def tosctl_must_fail(self, *args: str) -> None:
+        command = [str(self.tosctl), *args, "-c", str(self.config)]
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env=self.env, timeout=180, check=False)
+        if completed.returncode == 0:
+            raise RuntimeError(f"tosctl unexpectedly accepted negative test: {' '.join(args)}")
+
     def json_call(self, *args: str) -> Any:
         return json.loads(self.tosctl_call(*args, "--format", "json"))
 
@@ -390,6 +397,24 @@ class Lifecycle:
         )
         authorization_path.write_text(json.dumps(authorization))
         authorization_path.chmod(0o600)
+        rejected_path = self.workdir / f"agent-rejected-message-{sequence}.boc"
+        rejected = dict(authorization)
+        # This red test is deliberately performed through the production
+        # parser and custody journal. A proof that differs by one nibble must
+        # not reserve a controller sequence or leave an executable BOC.
+        rejected["proof"] = rejected["proof"][:-1] + ("0" if rejected["proof"][-1] != "0" else "1")
+        rejected_authorization_path = self.workdir / f"agent-rejected-authorization-{sequence}.json"
+        rejected_authorization_path.write_text(json.dumps(rejected))
+        rejected_authorization_path.chmod(0o600)
+        self.tosctl_must_fail(
+            "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
+            "--operation", str(operation_path), "--wallet", "prediction-solver",
+            "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
+            "--valid-until", str(valid_until), "--authorization-file", str(rejected_authorization_path),
+            "--output-boc", str(rejected_path), "--yes",
+        )
+        if rejected_path.exists():
+            raise RuntimeError("rejected Prediction custody authorization wrote an executable BOC")
         self.tosctl_call(
             "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
             "--operation", str(operation_path), "--wallet", "prediction-solver",
@@ -428,7 +453,7 @@ class Lifecycle:
                                         "chain_rpc": {"urls": [endpoint + "/"]}, "http": {},
                                         "master_wallet": None, "tick_interval": 40, "log": None}, indent=2))
             path.chmod(0o600)
-        manifest = {"schema": "tos.prediction-match-evidence.v1", "source_address": canonical_raw_address(self.addresses["owner"]),
+        manifest = {"schema": "tos.prediction-match-evidence.v1", "source_address": self.match_source_address or canonical_raw_address(self.addresses["owner"]),
                     "scan_start_masterchain_seqno": scan_start}
         (self.evidence_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
         (self.evidence_dir / "manifest.json").chmod(0o600)
