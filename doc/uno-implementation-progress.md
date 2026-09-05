@@ -1504,3 +1504,35 @@ a new user transaction or successor block. Ordinary 64-height transaction expiry
 is not a refund timer and cannot substitute for authenticated terminal settlement.
 An empty-block heartbeat exposes lack of progress, not proof against selective
 censorship. No measured idle service policy has been accepted yet.
+
+### Consecutive idle host batches and independent disk replay
+
+The host already creates a batch after collecting imports even when that inbox
+is empty. A missing candidate is deliberately invalid: an engine must supply an
+explicit candidate encoding zero user actions. No candidate-presence guard was
+relaxed and no production scheduling policy was changed.
+
+`test-counter-idle-replay` starts two independent databases from the test genesis
+and produces three consecutive zero-increment batches without incoming messages,
+outgoing messages or native fees. Each candidate is exported and independently
+validated/imported by a fresh peer process; full persisted block identifiers
+must match. Fresh processes on both databases then reject an increment one above
+the remaining counter range and accept the adjacent maximum, proving the restored
+engine value remains exactly 40 and execution can resume after idle advancement.
+
+A temporary mutation skipped batch construction when imports were empty. The
+first idle block then failed validation with `missing block executor AccountBlock`,
+and the positive test failed on the unsuccessful process exit, not a rejection
+message assertion. The mutation was restored. This checks actual collate/validate
+execution, not merely the presence of a staging log.
+
+After restoration, the idle-replay, disk-integration, self-delivery and
+cross-delivery CTest cases each passed three consecutive runs (12 executions,
+14.57 seconds total with four parallel test jobs).
+
+This remains a test-engine, file-transfer and disk-manager experiment with fake
+signature acceptance. It does not exercise a live network, the normal committee,
+UNO slot selection, timer-driven production, checkpoints, or system-message
+funding. Its elapsed runtime is not a slot-length measurement. The next service
+policy work must supply those missing scheduling/finality paths; an empty-action
+host batch is only their execution prerequisite.

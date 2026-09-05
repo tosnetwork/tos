@@ -771,6 +771,12 @@ add_test(NAME test-counter-disk-integration
     -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-disk-integration PROPERTIES TIMEOUT 180)
+add_test(NAME test-counter-idle-replay
+  COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
+    -DCREATE_STATE=$<TARGET_FILE:create-state> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR} -DIDLE_ONLY=ON
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+set_tests_properties(test-counter-idle-replay PROPERTIES TIMEOUT 180)
 add_test(NAME test-counter-self-delivery
   COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
     -DCREATE_STATE=$<TARGET_FILE:create-state> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}

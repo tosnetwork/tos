@@ -175,6 +175,38 @@ file(READ "${fixture}/counter-state.rhash" counter_root HEX)
 file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
 set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
 set(zero_block "${previous}")
+if(IDLE_ONLY)
+  # A zero increment is an explicit empty-action candidate, not a missing
+  # execution witness. Both databases start without incoming or outgoing work.
+  foreach(height RANGE 1 3)
+    set(node_db "${fixture}/db")
+    run_node(idle${height} 0 "(2,8000000000000000,${height})" --counter-increment 0 -w 2 -T "${previous}"
+      --export-candidate "${fixture}/idle${height}.candidate")
+    require_log(idle${height} "staging workchain batch at lt=")
+    require_log(idle${height} "outbound message queue size: 0 -> 0")
+    require_log(idle${height} "from_prev_blk:1000ng to_next_blk:1000ng imported:0ng exported:0ng fees_collected:0ng")
+    set(produced "${last_block}")
+    set(node_db "${fixture}/peer/db")
+    run_node(idle_import${height} 0 "validating imported candidate" --counter-increment 0 -w 2 -T "${previous}"
+      --import-candidate "${fixture}/idle${height}.candidate")
+    if(NOT last_block STREQUAL produced)
+      message(FATAL_ERROR "Independent peer imported a different idle block at height ${height}")
+    endif()
+    set(previous "${produced}")
+  endforeach()
+  # Adjacent arithmetic limits observe the actual restored engine value (40),
+  # independently of logs claiming a no-op or successful batch execution.
+  foreach(database db peer/db)
+    set(node_db "${fixture}/${database}")
+    string(REPLACE "/" "_" label "${database}")
+    run_node(idle_overflow_${label} 2 "counter overflow"
+      --counter-increment 18446744073709551576 -w 2 -T "${previous}")
+    run_node(idle_resume_${label} 0 "(2,8000000000000000,4)"
+      --counter-increment 18446744073709551575 -w 2 -T "${previous}")
+  endforeach()
+  message(STATUS "Consecutive idle batches and independent disk replay passed: ${fixture}")
+  return()
+endif()
 if(NATIVE_SENDER)
   file(COPY "${fixture}/db" DESTINATION "${fixture}/native-peer")
   run_node(native_send 0 "saved to disk" -w 0 -m "${fixture}/sender-message.boc"
