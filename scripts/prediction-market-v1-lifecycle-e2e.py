@@ -422,6 +422,20 @@ class Lifecycle:
             "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
             "--output-boc", str(boc_path), "--yes",
         )
+        # The first process has now exited with the signed BOC only in the
+        # durable custody journal and the owner-private output file. A fresh
+        # process must resume that exact record rather than sign a new
+        # controller sequence or reconstruct the payload.
+        retry_path = self.workdir / f"agent-retry-message-{sequence}.boc"
+        self.tosctl_call(
+            "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
+            "--operation", str(operation_path), "--wallet", "prediction-solver",
+            "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
+            "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
+            "--output-boc", str(retry_path), "--yes",
+        )
+        if boc_path.read_bytes() != retry_path.read_bytes():
+            raise RuntimeError("Prediction custody retry rebuilt a different signed BOC")
         before = self.json_call("agent", "account", "show", "--address", self.agent_account_address)
         prior_seqno = int(before["seqno"])
         self.broadcast_file(boc_path)
