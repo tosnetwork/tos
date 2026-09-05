@@ -4,6 +4,7 @@
 #include "block/workchain-execution-dispatch.h"
 
 #include <sstream>
+#include <limits>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -11,6 +12,72 @@
 #include "td/utils/logging.h"
 
 namespace block {
+
+namespace {
+td::Status check_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
+  bool basic = policy.engine_key.format == WorkchainFormat::Basic;
+  bool extended = policy.engine_key.format == WorkchainFormat::Extended;
+  if (policy.workchain_id < 0 || policy.engine_configuration.is_null() || (!basic && !extended) ||
+      (basic && (policy.engine_key.selector < std::numeric_limits<std::int32_t>::min() ||
+                 policy.engine_key.selector > std::numeric_limits<std::int32_t>::max())) ||
+      (extended && (policy.engine_key.selector < 0 ||
+                    policy.engine_key.selector > std::numeric_limits<std::uint32_t>::max() || policy.vm_mode != 0))) {
+    return td::Status::Error("invalid native ingress policy fields");
+  }
+  return td::Status::OK();
+}
+}  // namespace
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
+  TRY_STATUS(check_ingress_policy(policy));
+  return vm::CellBuilder().store_long(0x57495031, 32).store_long(policy.workchain_id, 32)
+      .store_long(policy.engine_key.format == WorkchainFormat::Extended, 1)
+      .store_long(policy.engine_key.selector, 64).store_long(policy.vm_mode, 64)
+      .store_long(policy.descriptor_version, 32).store_bits(policy.executor_address.bits(), 256)
+      .store_ref(policy.engine_configuration).finalize();
+}
+
+td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing native ingress policy");
+  }
+  try {
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special || cs.size() != 481 || cs.size_refs() != 1 || cs.fetch_ulong(32) != 0x57495031) {
+      return td::Status::Error("invalid native ingress policy encoding");
+    }
+    WorkchainNativeIngressPolicy policy;
+    policy.workchain_id = static_cast<std::int32_t>(cs.fetch_long(32));
+    policy.engine_key.format = cs.fetch_ulong(1) ? WorkchainFormat::Extended : WorkchainFormat::Basic;
+    policy.engine_key.selector = cs.fetch_long(64);
+    policy.vm_mode = cs.fetch_ulong(64);
+    policy.descriptor_version = static_cast<std::uint32_t>(cs.fetch_ulong(32));
+    if (!cs.fetch_bits_to(policy.executor_address)) {
+      return td::Status::Error("incomplete native ingress executor address");
+    }
+    policy.engine_configuration = cs.fetch_ref();
+    TRY_STATUS(check_ingress_policy(policy));
+    return policy;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid native ingress policy cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete native ingress policy proof");
+  }
+}
+
+td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
+                                                    const WorkchainExecutionDescriptor& descriptor) {
+  TRY_STATUS(check_ingress_policy(policy));
+  if (!descriptor.active || descriptor.min_split != 0 || descriptor.max_split != 0 ||
+      policy.workchain_id != descriptor.workchain_id ||
+      !(policy.engine_key == workchain_engine_key_from_descriptor(descriptor)) ||
+      policy.descriptor_version != descriptor.version ||
+      policy.vm_mode != (descriptor.format == WorkchainFormat::Basic ? descriptor.vm_mode : 0)) {
+    return td::Status::Error("native ingress policy differs from execution descriptor");
+  }
+  return td::Status::OK();
+}
 
 namespace {
 

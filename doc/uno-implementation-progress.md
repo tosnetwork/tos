@@ -548,3 +548,14 @@ UNO reserve allocation or real committee signatures are introduced by the fixtur
 Mutation verification: forcing a neighbor import to be marked as own-queue
 delivery makes the cross-workchain receiver attempt an invalid local dequeue
 and fail its queue-size invariant. The correct ownership flag was restored.
+
+Shared ingress-policy foundation: the public entry codec uses tag 57495031,
+481 bits and one opaque engine-configuration reference. It binds workchain,
+engine format/selector/mode, descriptor version and executor address without
+registering or executing the destination engine. The descriptor binding check
+requires active unsplit execution and matching identity/version/mode. Tests
+cover generated TL-B validation, BoC/canonical round trip, independent binding
+failures, selector bounds, missing fields, trailing bits and uint64 mode values.
+Removing the mode binding makes the mismatch assertion fail; it was restored.
+This is not yet a configuration table, sender filter or activation/migration
+gate: those remain required to address invalid-destination liveness.

@@ -1,4 +1,7 @@
 unit$_ = Unit;
+workchain_native_ingress_v1#57495031 workchain_id:int32 extended:Bool
+  engine_selector:int64 vm_mode:uint64 descriptor_version:uint32 executor_address:bits256
+  engine_configuration:^Cell = WorkchainNativeIngressPolicy;
 workchain_batch_inbound_v1#57494e31 count:uint15 envelopes:(HashmapE 256 ^MsgEnvelope) = WorkchainBatchInbound;
 workchain_block_context_v2#57424332 configuration:^Cell finality_context:^Cell = WorkchainBlockContext;
 workchain_block_input_v2#57424932 previous_shard_state:^Cell candidate:^Cell

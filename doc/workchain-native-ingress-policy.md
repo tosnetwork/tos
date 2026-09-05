@@ -1,6 +1,27 @@
 # Native ingress policy for block-transition workchains
 
-Status: implementation design; not an activated consensus rule.
+Status: entry codec implemented; table/admission/transition enforcement pending.
+Not an activated consensus rule.
+
+## Implemented entry codec
+
+The development `WorkchainNativeIngressPolicy` record has tag `0x57495031`,
+481 bits and one reference: workchain int32, Basic/Extended flag, engine selector
+int64, vm_mode uint64, WorkchainDescr version uint32, executor address bits256,
+and an opaque engine-configuration cell reference. Its constructor implies
+BlockTransition and standard, non-anycast ingress; it does not permit arbitrary
+execution scopes. Basic selectors must fit int32; Extended selectors must fit
+uint32 and have vm_mode=0. Negative workchains and absent engine configuration
+are rejected. The public decoder does not invoke an engine or interpret its
+private configuration payload.
+
+The binding check compares workchain, engine identity/mode and descriptor version
+against the supplied normalized ConfigParam 12 descriptor, and requires active,
+unsplit execution. `accept_msgs` remains an independent native admission gate,
+so closing admission does not invalidate an otherwise unchanged policy binding.
+This record does not replace descriptor finality or bind a masterchain state by
+itself. Table ownership, configuration lookup, activation and sender/receiver
+enforcement remain to be implemented before it has any admission effect.
 
 ## Problem demonstrated by the current host
 

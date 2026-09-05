@@ -1221,6 +1221,66 @@ TEST(WorkchainBlock, RegistryRequiresConsensusActivation) {
   ASSERT_TRUE(registry.resolve_block(descriptor, unavailable).is_error());
 }
 
+TEST(WorkchainBlock, PublicIngressPolicyCodecAndDescriptorBinding) {
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x554e4f32};
+  policy.vm_mode = 17;
+  policy.descriptor_version = 2;
+  policy.executor_address = number(9)->get_hash().bits();
+  policy.engine_configuration = number(42);
+  auto root = block::encode_workchain_native_ingress_policy(policy).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressPolicy.validate_ref(10000, root));
+  auto wire = vm::std_boc_serialize(root).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  auto decoded = block::decode_workchain_native_ingress_policy(restored).move_as_ok();
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(decoded).move_as_ok()->get_hash() == root->get_hash());
+  ASSERT_TRUE(decoded.executor_address == policy.executor_address);
+  ASSERT_TRUE(decoded.engine_configuration->get_hash() == policy.engine_configuration->get_hash());
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x554e4f32;
+  descriptor.vm_mode = 17;
+  descriptor.version = 2;
+  ASSERT_TRUE(block::validate_workchain_native_ingress_binding(decoded, descriptor).is_ok());
+  for (int mutation = 0; mutation < 6; ++mutation) {
+    auto changed = descriptor;
+    if (mutation == 0) changed.workchain_id = 3;
+    if (mutation == 1) changed.vm_version = 1;
+    if (mutation == 2) changed.vm_mode = 18;
+    if (mutation == 3) changed.version = 3;
+    if (mutation == 4) changed.active = false;
+    if (mutation == 5) changed.max_split = 1;
+    ASSERT_TRUE(block::validate_workchain_native_ingress_binding(decoded, changed).is_error());
+  }
+  auto invalid = policy;
+  invalid.engine_key.selector = std::numeric_limits<std::int64_t>::max();
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(invalid).is_error());
+  invalid = policy;
+  invalid.workchain_id = -1;
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(invalid).is_error());
+  invalid = policy;
+  invalid.engine_configuration = {};
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(invalid).is_error());
+  auto extended = policy;
+  extended.engine_key = {block::WorkchainFormat::Extended, std::numeric_limits<std::uint32_t>::max()};
+  extended.vm_mode = 0;
+  auto extended_root = block::encode_workchain_native_ingress_policy(extended).move_as_ok();
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressPolicy.validate_ref(10000, extended_root));
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(extended_root).move_as_ok().engine_key == extended.engine_key);
+  extended.vm_mode = 1;
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(extended).is_error());
+  auto wide_mode = policy;
+  wide_mode.vm_mode = std::numeric_limits<std::uint64_t>::max();
+  auto wide_root = block::encode_workchain_native_ingress_policy(wide_mode).move_as_ok();
+  ASSERT_EQ(block::decode_workchain_native_ingress_policy(wide_root).move_as_ok().vm_mode, wide_mode.vm_mode);
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy({}).is_error());
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(number(0)).is_error());
+  auto extra = vm::CellBuilder().append_cellslice(vm::load_cell_slice(root)).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(extra).is_error());
+}
+
 TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
   auto configuration_owner = block_configuration();
   auto& configuration = *configuration_owner;
