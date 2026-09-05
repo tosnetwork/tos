@@ -33,6 +33,7 @@ pub mod elector;
 pub mod liquid_controller;
 pub mod nominator;
 pub mod nominator_pool;
+pub mod prediction_market;
 pub mod proof_attestation;
 pub mod provider;
 pub mod service_actor;
@@ -79,6 +80,14 @@ pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapper
 pub use nominator_pool::{
     NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl,
     NominatorPosition,
+};
+pub use prediction_market::{
+    PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
+    PredictionMarketAccountV1, PredictionMarketAccountingV1, PredictionMarketContractV1,
+    PredictionMarketInitV1, PredictionMarketPhaseV1, PredictionMarketStateV1,
+    PredictionMarketStatusV1, PredictionOraclePolicyV1, PredictionOrderActionV1,
+    PredictionOrderOutcomeV1, PredictionOrderStateV1, PredictionOrderV1,
+    PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use provider::ContractProvider;

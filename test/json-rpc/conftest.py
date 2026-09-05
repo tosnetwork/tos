@@ -81,7 +81,17 @@ def wait_for_endpoint_ready(request):
     while time.time() < deadline:
         try:
             ready = requests.get(endpoint + "readyz", timeout=3)
-            if ready.status_code != 200 or ready.text.strip() != "OK":
+            if ready.status_code != 200:
+                time.sleep(1)
+                continue
+            try:
+                ready_body = ready.json()
+                is_ready = ready_body.get("ready") is True
+            except (ValueError, AttributeError):
+                # Keep compatibility with nodes predating the structured
+                # readiness response.
+                is_ready = ready.text.strip() == "OK"
+            if not is_ready:
                 time.sleep(1)
                 continue
             probe = requests.get(endpoint + "getMasterchainInfo", timeout=5)

@@ -595,6 +595,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2)
   GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
+  GenFif(DEST smartcont/auto/prediction-market-code SOURCE smartcont/prediction-market-code.fc NAME prediction-market)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
   GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual)

@@ -1,0 +1,82 @@
+// TOS PredictionMarket V1. All quantities are whole lots and all monetary
+// fields are native nanoTOS encoded as Grams.
+
+pm_activate#504d0001 query_id:uint64 = InternalMsgBody;
+pm_register_deposit#504d0002 query_id:uint64 credited:Grams trading_pubkey:uint256 = InternalMsgBody;
+pm_deposit#504d0003 query_id:uint64 credited:Grams = InternalMsgBody;
+pm_set_trading_key#504d0004 query_id:uint64 trading_pubkey:uint256 = InternalMsgBody;
+pm_raise_nonce_floor#504d0005 query_id:uint64 new_floor:uint64 = InternalMsgBody;
+pm_cancel_exact#504d0006 query_id:uint64 order:^Cell = InternalMsgBody;
+pm_split#504d0007 query_id:uint64 quantity_lots:uint64 = InternalMsgBody;
+pm_merge#504d0008 query_id:uint64 quantity_lots:uint64 = InternalMsgBody;
+pm_match_pair#504d0009 query_id:uint64 quantity_lots:uint64 left:^Cell right:^Cell = InternalMsgBody;
+pm_report_result#504d000a query_id:uint64 round:uint8 expected_round_context_hash:uint256
+  outcome:uint8 evidence_root:uint256 statement_created_at:uint64 statement_expiry:uint64 = InternalMsgBody;
+pm_challenge_result#504d000b query_id:uint64 expected_proposed_statement_hash:uint256
+  counter_outcome:uint8 counter_evidence_root:uint256 = InternalMsgBody;
+pm_advance_phase#504d000c query_id:uint64 = InternalMsgBody;
+pm_finalize_uncontested#504d000d query_id:uint64 = InternalMsgBody;
+pm_finalize_review_timeout#504d000e query_id:uint64 expected_review_base_hash:uint256 = InternalMsgBody;
+pm_claim#504d000f query_id:uint64 owner:MsgAddressInt = InternalMsgBody;
+pm_withdraw#504d0010 query_id:uint64 amount:Grams = InternalMsgBody;
+pm_withdraw_challenge_bond#504d0011 query_id:uint64 = InternalMsgBody;
+pm_force_refund_challenge_bond#504d0012 query_id:uint64 challenger:MsgAddressInt = InternalMsgBody;
+pm_prune_order#504d0013 query_id:uint64 owner:MsgAddressInt epoch:uint32 nonce:uint64 reward_mode:uint1 = InternalMsgBody;
+pm_close_empty_account#504d0014 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
+pm_force_close_account#504d0015 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
+pm_compact_terminal#504d0016 query_id:uint64 = InternalMsgBody;
+pm_withdraw_terminal_surplus#504d0017 query_id:uint64 amount:Grams = InternalMsgBody;
+pm_prune_owner_orders#504d0018 query_id:uint64 owner:MsgAddressInt reward_mode:uint1 = InternalMsgBody;
+pm_top_up_reserve#504d0019 query_id:uint64 = InternalMsgBody;
+
+pm_config#504d4331 identity:^PmIdentityV1 times:^PmTimesV1 economics:^PmEconomicsV1 policies:^PmPoliciesV1 = PmConfigV1;
+pm_identity#504d4931 global_id:int32 workchain_id:int8 deployment_salt:uint256
+  rules_hash:uint256 metadata_hash:uint256 reserve:^PmReserveRecipientV1 = PmIdentityV1;
+pm_reserve_recipient#504d5252 address:MsgAddressInt = PmReserveRecipientV1;
+pm_times#504d5431 trade_close:uint64 resolve_not_before:uint64 oracle_vote_deadline:uint64
+  challenge_period:uint64 appeal_review_delay:uint64 appeal_period:uint64 claim_deadline:uint64 = PmTimesV1;
+pm_economics#504d4531 lot_value:Grams min_price_tick:uint16 min_fill_lots:uint64 max_order_lots:uint64
+  max_locked_collateral:Grams max_account_free_balance:Grams max_total_free_balance:Grams
+  max_total_liability:Grams max_participants:uint32 max_orders_per_participant:uint32
+  max_live_order_records:uint32 fees:^PmFeesV1 = PmEconomicsV1;
+pm_fees#504d4631 participant_entry_fee:Grams account_cleanup_bounty:Grams order_entry_fee:Grams
+  order_cleanup_bounty:Grams operating_reserve_floor:Grams terminal_tombstone_reserve:Grams
+  challenge:^PmChallengeFeesV1 = PmFeesV1;
+pm_challenge_fees#504d4643 challenge_bond:Grams challenge_processing_fee:Grams = PmChallengeFeesV1;
+pm_policy#504d5031 threshold:uint8 reporter_count:uint8
+  reporters:(HashmapE 256 MsgAddressInt) = PmPolicyV1;
+pm_policies#504d5032 normal:^PmPolicyV1 appellate:^PmPolicyV1 = PmPoliciesV1;
+
+pm_state#504d5331 version:uint16 activated:uint1 activated_at:uint64 status:uint8 review_reason:uint2 final_outcome:uint2
+  market_config_hash:uint256 market_id:uint256 config:^PmConfigV1 accounting:^PmAccountingV1
+  resolution:^PmResolutionV1 dictionaries:^PmDictionariesV1 = PmStateV1;
+pm_accounting#504d4131 participant_count:uint32 live_order_count:uint32 fill_count:uint64
+  complete_sets:uint64 liabilities:^PmLiabilitiesV1 = PmAccountingV1;
+pm_liabilities#504d4c31 total_free:Grams locked_backing:Grams final_backing:Grams
+  remaining_payout:Grams cumulative_claimed:Grams bond_liability:Grams cleanup_liability:Grams = PmLiabilitiesV1;
+pm_account#504d4132 owner:MsgAddressInt trading_pubkey:uint256 key_epoch:uint32 min_valid_nonce:uint64
+  balances:^PmAccountBalancesV1 orders:(HashmapE 96 ^PmOrderStateV1) = PmAccountV1;
+pm_account_balances#504d4231 free_balance:Grams yes_lots:uint64 no_lots:uint64 live_order_count:uint32
+  account_cleanup_credit:Grams order_cleanup_credit_total:Grams = PmAccountBalancesV1;
+pm_order_state#504d4f31 order_digest:uint256 quantity_lots:uint64 filled_lots:uint64 valid_until:uint64
+  cancelled:uint1 cleanup_credit:Grams = PmOrderStateV1;
+
+pm_resolution#504d5230 normal:^PmNormalRuntimeV1 review:^PmReviewRuntimeV1
+  challenge:^PmChallengeV1 final:^PmFinalV1 = PmResolutionV1;
+pm_normal_runtime#504d524e normal_round_nonce:uint256 normal_opened_at:uint64 proposal_present:uint1
+  proposal:(proposal_present ? ^Cell : ())
+  proposal_hash:uint256 proposal_outcome:uint2 proposal_evidence:uint256 proposed_at:uint64
+  challenge_deadline:uint64 = PmNormalRuntimeV1;
+pm_review_runtime#504d5256 base_present:uint1 review_base:(base_present ? ^Cell : ())
+  review_base_hash:uint256 review_vote_nonce:uint256
+  review_opened_at:uint64 appeal_deadline:uint64 = PmReviewRuntimeV1;
+pm_challenge_none#504d4332 = PmChallengeV1;
+pm_challenge_some#504d4333 challenger:MsgAddressInt counter_outcome:uint2 evidence_root:uint256
+  refundable_credit:Grams = PmChallengeV1;
+pm_optional_hash_none#504d4f30 = PmOptionalHashV1;
+pm_optional_hash_some#504d4f31 value:uint256 = PmOptionalHashV1;
+pm_final#504d4632 final_reason:uint8 finalized_at:uint64 statement:^PmOptionalHashV1
+  evidence:^PmOptionalHashV1 round_context:^PmOptionalHashV1
+  review_base:^PmOptionalHashV1 = PmFinalV1;
+pm_dictionaries#504d4431 accounts:(HashmapE 256 ^PmAccountV1) normal_votes:(HashmapE 256 ^Cell)
+  appellate_votes:(HashmapE 256 ^Cell) statement_counts:(HashmapE 256 uint8) = PmDictionariesV1;
