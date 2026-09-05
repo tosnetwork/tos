@@ -1538,8 +1538,6 @@ struct AgentAccountTemplateView {
     get_methods: Vec<&'static str>,
     code_hash: String,
     code_boc: String,
-    v2_code_hash: String,
-    v2_code_boc: String,
 }
 
 impl AgentCmd {
@@ -9847,8 +9845,6 @@ impl AgentAccountShowTemplateCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         let code = AgentAccountContract::code()?;
         let code_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&code)?);
-        let v2_code = AgentAccountContract::v2_code()?;
-        let v2_code_boc = base64::engine::general_purpose::STANDARD.encode(write_boc(&v2_code)?);
         let view = AgentAccountTemplateView {
             contract: "agent-account",
             source: "crypto/smartcont/agent-account-code.fc",
@@ -9868,8 +9864,6 @@ impl AgentAccountShowTemplateCmd {
             ],
             code_hash: hex::encode(code.hash(0)),
             code_boc,
-            v2_code_hash: hex::encode(v2_code.hash(0)),
-            v2_code_boc,
         };
 
         if self.format == OutputFormat::Json {
@@ -9890,7 +9884,6 @@ impl AgentAccountShowTemplateCmd {
         println!("  Checked call V2 opcode:   {}", view.checked_contract_call_v2_opcode);
         println!("  Get methods:              {}", view.get_methods.join(", "));
         println!("  Code hash:                {}", view.code_hash);
-        println!("  V2 code hash:             {}", view.v2_code_hash);
         Ok(())
     }
 }

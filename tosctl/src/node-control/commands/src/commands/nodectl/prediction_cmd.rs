@@ -62,7 +62,7 @@ enum PredictionAction {
     PrepareDeploy(PredictionPrepareDeployCmd),
     /// Build and durably persist a signed operation external BOC
     Prepare(PredictionPrepareCmd),
-    /// Prepare a custody-authorized Agent Account V2 checked call
+    /// Prepare a custody-authorized Agent Account checked-contract-call v2
     PrepareAgent(PredictionPrepareAgentCmd),
 }
 
@@ -463,7 +463,7 @@ impl PredictionBuildOperationCmd {
         let market_id = PredictionMarketContractV1::market_id(&init)?;
         let market_config_hash = PredictionMarketContractV1::market_config_hash(&init)?;
         let market_code_hash = PredictionMarketContractV1::code()?.repr_hash();
-        let source_agent_account_code_hash = AgentAccountContract::v2_code()?.repr_hash();
+        let source_agent_account_code_hash = AgentAccountContract::code()?.repr_hash();
         let boc = write_boc(&built.body)?;
         if let Some(path) = &self.output_boc {
             persist_exact(path, &boc)?;
@@ -712,7 +712,7 @@ impl PredictionPrepareAgentCmd {
         let now = time_format::now();
         anyhow::ensure!(
             now <= u64::from(u32::MAX),
-            "current chain-operation time cannot be represented by Agent Account V2"
+            "current chain-operation time cannot be represented by Agent Account"
         );
         anyhow::ensure!(
             self.valid_until > now as u32,
@@ -828,10 +828,10 @@ impl PredictionPrepareAgentCmd {
         let deployed_source_code =
             account_info.code.as_ref().context("Agent Account has no deployed code")?;
         let source_code = read_single_root_boc(deployed_source_code)?;
-        let expected_source_code = AgentAccountContract::v2_code()?;
+        let expected_source_code = AgentAccountContract::code()?;
         anyhow::ensure!(
             source_code.repr_hash() == expected_source_code.repr_hash(),
-            "Prediction custody requires the audited Agent Account V2 code"
+            "Prediction custody requires the audited Agent Account code"
         );
         let source_code_hash =
             format!("tvm-cell-sha256:{}", hex::encode(expected_source_code.repr_hash().as_slice()));

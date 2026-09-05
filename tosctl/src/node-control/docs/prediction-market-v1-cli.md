@@ -159,13 +159,13 @@ contribution, operation budget, and any excess reserve donation. First-time
 order-record contribution; if records already exist, the disclosed excess is
 a reserve donation.
 
-## Agent Account V2 custody path
+## Agent Account custody path
 
 Autonomous OpenFox execution uses `prepare-agent`, not the direct-wallet
 `prepare` output. The command accepts the dedicated
 `PredictionCustodyEffectAuthorizationV1` JSON, checks its owner-pinned authority
 signature in the shared controller custody journal, and requires the deployed
-source to have the audited Agent Account V2 code hash. It also verifies the
+source to have the audited Agent Account code hash. It also verifies the
 full network domain, deployed market code, market ID/config hash, exact body
 cell hash, value, action kind and expiry before reserving the controller seqno.
 

@@ -1134,8 +1134,8 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   throw_unless(err::insufficient_value, msg_value >= min_operation_budget);
 
   ;; Empty-body transfers remain the universal direct reserve-donation path.
-  ;; This typed equivalent exists so Agent Account V2 can authorize the same
-  ;; effect without weakening its checked-call rule that bodies are non-empty.
+  ;; This typed equivalent exists so Agent Account checked calls can authorize
+  ;; the same effect without weakening the rule that bodies are non-empty.
   ;; It deliberately performs no state read or write and therefore remains
   ;; valid before activation and after terminal compaction.
   if (op == op::top_up_reserve) {

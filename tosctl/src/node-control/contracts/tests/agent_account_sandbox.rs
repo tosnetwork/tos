@@ -94,7 +94,7 @@ fn source_compiles_to_the_embedded_final_interface() {
     let compiled = compile_func_with_stdlib(&[source]).expect("compile Agent Account source");
     assert_eq!(
         compiled.repr_hash(),
-        AgentAccountContract::v2_code().expect("embedded Agent Account V2 code").repr_hash(),
+        AgentAccountContract::code().expect("embedded Agent Account code").repr_hash(),
         "embedded Agent Account BOC must be regenerated whenever FunC changes"
     );
 }
@@ -150,10 +150,10 @@ impl Fixture {
             metadata_hash: None,
             service_endpoint_hash: None,
         };
-        let account = AgentAccountContract::calculate_v2_address(-1, &init).expect("address");
+        let account = AgentAccountContract::calculate_address(-1, &init).expect("address");
         let deploy = MessageBuilder::internal(owner.address(), &account, funding)
             .bounce(false)
-            .state_init(AgentAccountContract::build_v2_state_init(&init).expect("state init"))
+            .state_init(AgentAccountContract::build_state_init(&init).expect("state init"))
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
