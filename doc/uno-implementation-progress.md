@@ -729,3 +729,13 @@ entries that pass generated TL-B structural validation. Removing the bound makes
 the invalid-ID acceptance assertion fail; it was restored. Engine format remains
 independent of workchain ID; this does not remove Extended engine selectors or
 change UNO's workchain 2. Future wider addresses need a new policy version.
+
+Complete configuration validation now also resolves the public ingress table
+against ConfigParam 12 using the same engine-independent sender resolver. A
+structurally valid but semantically mismatched policy can no longer be installed
+and then fail only when a later block fetches its action configuration. The new
+disk rejection case keeps version/capability enabled and changes only the policy's
+descriptor version. create-state rejects it before publishing a zerostate.
+Bypassing the added semantic-validation block lets that configuration succeed and
+fails the test; the check was restored. This does not prove all-validator readiness
+or authorize adding new policies to existing workchains with pending traffic.

@@ -89,6 +89,8 @@ map for collation/emulation; independent validation loads the same map. Both
 send and bounce destination rewriting reject anycast and non-executor addresses.
 Native normalization of a 256-bit addr_var into addr_std remains supported.
 Receiver engine resolution requires a matching table entry and executor address.
+Complete `valid_config_data` also runs the common resolver for present tables,
+rejecting semantic table/descriptor mismatches before configuration acceptance.
 The opaque engine-configuration payload is not yet an input to engine execution.
 
 Reject a new invalid destination using the native invalid-destination action

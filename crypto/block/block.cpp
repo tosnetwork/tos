@@ -1910,6 +1910,19 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
     LOG(ERROR) << ingress_presence;
     return false;
   }
+  if (dict.int_key_exists(kWorkchainNativeIngressConfigParam)) {
+    auto config = Config::unpack_config(dict.get_root_cell(), addr,
+                                       Config::needCapabilities | Config::needWorkchainInfo);
+    if (config.is_error()) {
+      LOG(ERROR) << "cannot resolve native ingress configuration: " << config.move_as_error();
+      return false;
+    }
+    auto ingress = resolve_native_ingress_destinations(*config.ok());
+    if (ingress.is_error()) {
+      LOG(ERROR) << "invalid native ingress configuration: " << ingress.move_as_error();
+      return false;
+    }
+  }
   for (int x : mandatory_config_params) {
     if (!dict.int_key_exists(x)) {
       LOG(ERROR) << "mandatory configuration parameter #" << x << " is missing";
