@@ -149,5 +149,11 @@ vectors beyond the generated fixture, and validate hybrid encryption separately.
 The caller's digest and limits must eventually come from frozen TOS core encoding
 and authenticated configuration. Contextual public-value equations are checked
 by the combined API, but authenticated context derivation, anchor/nullifier state,
-output-only authorization, host integration and FFI remain unimplemented.
+output-only authorization and host integration remain unimplemented.
 No encryption or production activation is shipped.
+
+An initial [read-only C ABI](ABI.md) now exports the combined decoder/verifier
+through a static library. Generated positive/negative fixtures exercise the export
+from Rust, and a separately linked C++ smoke caller exercises argument/decoding
+failures. This is not yet production host linking or complete cross-language ABI
+acceptance; ownership, panic limits, remaining tests and reproduction are in ABI.md.

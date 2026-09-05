@@ -12,6 +12,7 @@ use orchard::{
 use crate::{has_canonical_output_only_anchor, validate_proof_shape, ProofShapeError};
 
 #[derive(Clone)]
+#[repr(C)]
 pub struct EncodedAction {
     pub cv_net: [u8; 32],
     pub nullifier: [u8; 32],

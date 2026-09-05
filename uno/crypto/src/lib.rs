@@ -1,6 +1,7 @@
 use orchard::Bundle;
 pub mod context;
 pub mod decode;
+pub mod ffi;
 #[cfg(test)]
 mod vk_snapshot;
 use orchard::{
@@ -148,9 +149,9 @@ pub fn validate_profile(
 mod tests {
     use super::*;
 
-    fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
-        use crate::decode::{decode_bundle, EncodedAction, EncodedBundle};
-        let actions: Vec<_> = bundle
+    fn encoded_actions(bundle: &Bundle<Authorized, i64>) -> Vec<decode::EncodedAction> {
+        use crate::decode::EncodedAction;
+        bundle
             .actions()
             .iter()
             .map(|action| EncodedAction {
@@ -163,7 +164,52 @@ mod tests {
                 out_ciphertext: action.encrypted_note().out_ciphertext,
                 spend_signature: action.authorization().into(),
             })
-            .collect();
+            .collect()
+    }
+
+    fn ffi_status(
+        bundle: &Bundle<Authorized, i64>,
+        mutate: impl FnOnce(&mut ffi::VerifyRequest),
+    ) -> u32 {
+        let actions = encoded_actions(bundle);
+        let balance = *bundle.value_balance();
+        let (context, principal, fee) = if balance < 0 {
+            (
+                2,
+                u64::try_from(balance.checked_neg().expect("fixture magnitude"))
+                    .expect("principal"),
+                0,
+            )
+        } else {
+            (0, 0, u64::try_from(balance).expect("fee"))
+        };
+        let mut request = ffi::VerifyRequest {
+            abi_version: 0,
+            profile: 1,
+            context,
+            flags: bundle.flag_byte(),
+            value_balance: balance,
+            principal_hi: 0,
+            principal_lo: principal,
+            fee_hi: 0,
+            fee_lo: fee,
+            anchor: bundle.anchor().to_bytes(),
+            sighash: [42; 32],
+            binding_signature: bundle.authorization().binding_signature().into(),
+            actions: actions.as_ptr(),
+            action_count: actions.len(),
+            proof: bundle.authorization().proof().as_ref().as_ptr(),
+            proof_bytes: bundle.authorization().proof().as_ref().len(),
+            max_actions: 2,
+            max_proof_bytes: 7264,
+        };
+        mutate(&mut request);
+        unsafe { ffi::uno_crypto_verify_v0(&request) }
+    }
+
+    fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
+        use crate::decode::{decode_bundle, EncodedBundle};
+        let actions = encoded_actions(bundle);
         decode_bundle(
             &EncodedBundle {
                 profile: bundle.bundle_version(),
@@ -216,6 +262,13 @@ mod tests {
             .expect("signatures");
         let verifier = FixedVerifier::new().expect("fixed key");
         let bundle = decode_real_bundle(&bundle);
+        assert_eq!(ffi_status(&bundle, |_| {}), ffi::AbiStatus::Ok as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.abi_version = 1), ffi::AbiStatus::Arguments as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.profile = 0), ffi::AbiStatus::Arguments as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.context = 6), ffi::AbiStatus::Arguments as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.fee_lo = 1), ffi::AbiStatus::Arguments as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.sighash = [43; 32]), ffi::AbiStatus::Verify as u32);
+        assert_eq!(ffi_status(&bundle, |r| r.flags = 255), ffi::AbiStatus::Decode as u32);
         assert_eq!(verifier.verify_bundle(&bundle, &digest, 2, 7264), Ok(()));
         use context::{ContextError, PublicContext};
         for context in [
@@ -276,6 +329,7 @@ mod tests {
             .expect("real spend authorization");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         let spent = decode_real_bundle(&spent);
+        assert_eq!(ffi_status(&spent, |_| {}), ffi::AbiStatus::Ok as u32);
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
         assert_eq!(
             verifier.verify_in_context(
@@ -348,6 +402,7 @@ mod tests {
             verifier.verify_bundle(&bad_proof, &digest, 2, 7264),
             Err(VerificationError::Proof)
         );
+        assert_eq!(ffi_status(&bad_proof, |_| {}), ffi::AbiStatus::Verify as u32);
         assert_eq!(
             verifier.verify_in_context(
                 &bad_proof,

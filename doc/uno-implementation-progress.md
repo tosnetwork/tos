@@ -996,3 +996,18 @@ implementation's balance comparison makes the wrong-fee case accepted; flipping
 the first valid case's expected result fails both readers. All mutations were
 restored. This provides agreement evidence for those inputs, not exhaustive
 language equivalence, serialized wire conformance or an FFI boundary.
+
+Added prototype C ABI v0 and a matching public header/static library around the
+borrowed-field decoder and combined context/cryptographic verifier. The boundary
+rejects unknown ABI/profile/context values and irrelevant monetary fields, checks
+slice numeric bounds before construction, retains no caller pointers, shares an
+immutable constructed key, and contains unwinding panics. Caller allocation
+validity remains an explicit unsafe contract; OOM/abort are not recoverable.
+Real positive and negative bundles exercise the exported function from Rust.
+Thread-local test injection crosses the actual export; removing containment
+aborts the test process. Removing ABI version/profile checks or the verification
+call accepts invalid fixtures and fails tests. All mutations were restored.
+A separately compiled C++ caller links the real static library and tests layout,
+argument rejection and decoding rejection. C++ positive proof fixtures, platform
+layout generation, sanitizers/fuzzing and node/engine linking remain unfinished;
+the ABI does not assign transaction wire tags or authorize settlement sources.
