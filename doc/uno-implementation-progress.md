@@ -850,3 +850,13 @@ release or refund append makes the corresponding test fail; mutations were
 restored. This is aggregate arithmetic, not a tree implementation or proof of
 reservation ownership. Per-withdrawal records, atomic N/F/W plus tree commit,
 full refund data, and safe tree-capacity migration remain required.
+
+`TransitionBudget` now calculates withdrawal preparation, Paid Ack and refund
+over accounting and leaf capacity together, returning one result only after
+both components succeed. Tests verify exact paired results and reject either
+insufficient liabilities or insufficient leaf reservations without modifying
+the input. Bypassing each of the six component calculations independently makes
+the relevant rejection assertion fail; all mutations were restored. This does
+not yet make a complete state transition atomic: real tree updates, individual
+withdrawal identity/ownership, terminal records, verified proof data and native
+outbound messages must join the same eventual host commitment.
