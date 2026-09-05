@@ -48,6 +48,7 @@ TOS = 1_000_000_000
 OPERATION_BUDGET = TOS
 WALLET_NAMES = ("owner", "normal_one", "normal_two", "appeal_one", "appeal_two", "reserve")
 NORMAL_SCENARIO_FUNDED_WALLETS = ("owner", "normal_one", "normal_two", "reserve")
+CHALLENGED_SCENARIO_FUNDED_WALLETS = WALLET_NAMES
 TRADING_PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
 
@@ -124,7 +125,7 @@ class Lifecycle:
     def json_call(self, *args: str) -> Any:
         return json.loads(self.tosctl_call(*args, "--format", "json"))
 
-    def provision_wallets(self) -> None:
+    def provision_wallets(self, funded_wallets: tuple[str, ...]) -> None:
         for name in WALLET_NAMES:
             self.tosctl_call("wallet", "create", "-n", name, "-v", "V3R2", "-w", "0")
         listing = self.json_call("wallet", "ls")
@@ -148,7 +149,7 @@ class Lifecycle:
         if "error" in result:
             raise RuntimeError(f"faucet funding owner failed: {result['error']}")
         self.tosctl_call("wallet", "activate", "-n", "owner")
-        for name in NORMAL_SCENARIO_FUNDED_WALLETS:
+        for name in funded_wallets:
             if name == "owner":
                 continue
             self.tosctl_call(
@@ -160,10 +161,10 @@ class Lifecycle:
                 f"owner funding {name}",
             )
             time.sleep(5)
-        for name in NORMAL_SCENARIO_FUNDED_WALLETS:
+        for name in funded_wallets:
             if name != "owner":
                 self.tosctl_call("wallet", "activate", "-n", name)
-        for name in NORMAL_SCENARIO_FUNDED_WALLETS:
+        for name in funded_wallets:
             address = self.addresses[name]
             wait_until(
                 lambda a=address: rpc(self.rpc_urls[0], "getAddressState", address=a).get("result") == "active",
@@ -351,6 +352,103 @@ class Lifecycle:
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"withdraw did not exhaust the owner's free collateral: {withdrawn}")
 
+    def run_challenged_lifecycle(self) -> None:
+        """Prove a challenged normal proposal can be overturned by appellate quorum."""
+        definition = self.write_definition()
+        deploy = self.workdir / "deploy.boc"
+        self.tosctl_call(
+            "agent", "prediction", "prepare-deploy", "--definition", str(self.definition),
+            "--from", "owner", "--amount-nanotos", str(2 * TOS), "--output-boc", str(deploy),
+        )
+        prior_seqno = self.wallet_seqno("owner")
+        self.broadcast_file(deploy)
+        wait_until(lambda: self.wallet_seqno("owner") > prior_seqno, "deploy source wallet seqno advancement")
+        self.wait_status("trading")
+
+        register_amount = 2 * TOS + definition["participant_entry_fee"] + definition["account_cleanup_bounty"] + OPERATION_BUDGET
+        self.prepare_and_send("owner", {
+            "operation": "register_and_deposit", "query_id": 1,
+            "credited_amount": 2 * TOS, "trading_pubkey": TRADING_PUBLIC_KEY,
+        }, register_amount, 1)
+        self.prepare_and_send("owner", {"operation": "split", "query_id": 2, "quantity_lots": 1}, OPERATION_BUDGET, 2)
+        split = self.show_quorum()
+        if split["complete_sets"] != 1 or split["locked"] != TOS:
+            raise RuntimeError(f"challenged scenario split accounting is invalid: {split}")
+
+        wait_until(lambda: int(time.time()) >= definition["resolve_not_before"], "resolve_not_before", 320)
+        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 3}, OPERATION_BUDGET, 3)
+        self.wait_status("reporting")
+        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 4}, OPERATION_BUDGET, 4)
+        reporting = self.wait_status("reporting")
+        normal_context = reporting["current_context_hash"]
+        normal_created_at = int(time.time())
+        if not isinstance(normal_context, str) or len(normal_context) != 64 or normal_context == "00" * 32:
+            raise RuntimeError(f"normal context was not opened for challenged scenario: {reporting}")
+        for sequence, reporter in ((5, "normal_one"), (6, "normal_two")):
+            self.prepare_and_send(reporter, {
+                "operation": "report_result", "query_id": sequence, "round": 0,
+                "expected_round_context_hash": normal_context, "outcome": 0,
+                "evidence_root": "44" * 32, "statement_created_at": normal_created_at,
+                "statement_expiry": definition["oracle_vote_deadline"],
+            }, OPERATION_BUDGET, sequence)
+        proposed = self.wait_status("proposed")
+        proposal_hash = proposed["proposed_statement_hash"]
+        if not isinstance(proposal_hash, str) or proposal_hash == "00" * 32:
+            raise RuntimeError(f"normal proposal is not bound before challenge: {proposed}")
+
+        challenge_amount = (
+            OPERATION_BUDGET + definition["challenge_bond"] + definition["challenge_processing_fee"]
+        )
+        self.prepare_and_send("owner", {
+            "operation": "challenge_result", "query_id": 7,
+            "expected_proposed_statement_hash": proposal_hash, "counter_outcome": 1,
+            "counter_evidence_root": "55" * 32,
+        }, challenge_amount, 7)
+        reviewing = self.wait_status("reviewing")
+        review_base = reviewing["review_base_context_hash"]
+        appeal_deadline = reviewing["next_deadline"]
+        if not isinstance(review_base, str) or review_base == "00" * 32:
+            raise RuntimeError(f"challenge did not freeze review provenance: {reviewing}")
+        if not isinstance(appeal_deadline, int) or appeal_deadline <= int(time.time()):
+            raise RuntimeError(f"challenge did not expose a future appeal deadline: {reviewing}")
+
+        # The phase getter exposes the terminal appeal deadline, not the
+        # earlier review-vote opening time. The challenge is already observed
+        # in all three nodes; wait a conservative real-time margin beyond the
+        # frozen configured delay before the separate opening transaction.
+        review_entered_at = int(time.time())
+        wait_until(
+            lambda: int(time.time()) >= review_entered_at + definition["appeal_review_delay"] + 2,
+            "appeal review vote opening time", definition["appeal_review_delay"] + 90,
+        )
+        self.prepare_and_send("owner", {"operation": "advance_phase", "query_id": 8}, OPERATION_BUDGET, 8)
+        review_round = self.wait_status("reviewing")
+        appeal_context = review_round["current_context_hash"]
+        appeal_created_at = int(time.time())
+        if not isinstance(appeal_context, str) or appeal_context == "00" * 32:
+            raise RuntimeError(f"appellate round was not opened after delay: {review_round}")
+        for sequence, reporter in ((9, "appeal_one"), (10, "appeal_two")):
+            self.prepare_and_send(reporter, {
+                "operation": "report_result", "query_id": sequence, "round": 1,
+                "expected_round_context_hash": appeal_context, "outcome": 1,
+                "evidence_root": "66" * 32, "statement_created_at": appeal_created_at,
+                "statement_expiry": appeal_deadline,
+            }, OPERATION_BUDGET, sequence)
+        finalized = self.wait_status("finalized")
+        if finalized["final_outcome"] != "no" or finalized["remaining_payout"] != TOS:
+            raise RuntimeError(f"appellate quorum did not overturn normal proposal: {finalized}")
+
+        self.prepare_and_send("owner", {
+            "operation": "claim", "query_id": 11, "owner": self.addresses["owner"],
+        }, OPERATION_BUDGET, 11)
+        claimed = self.show_quorum()
+        if claimed["remaining_payout"] != 0 or claimed["claimed"] != TOS:
+            raise RuntimeError(f"challenged claim did not exhaust payout liability: {claimed}")
+        self.prepare_and_send("owner", {"operation": "withdraw", "query_id": 12, "amount": 2 * TOS}, OPERATION_BUDGET, 12)
+        withdrawn = self.show_quorum()
+        if withdrawn["total_free"] != 0:
+            raise RuntimeError(f"challenged withdrawal did not exhaust free collateral: {withdrawn}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -360,6 +458,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--normal-outcome", choices=("yes", "no", "invalid"), default="yes",
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
+    )
+    parser.add_argument(
+        "--scenario", choices=("normal", "challenged-appellate"), default="normal",
+        help="lifecycle branch to exercise",
     )
     return parser.parse_args()
 
@@ -398,13 +500,18 @@ def main() -> int:
         )
         lifecycle = Lifecycle(workdir, args.tosctl.resolve(), rpc_urls, control_url)
         lifecycle.write_config()
-        lifecycle.provision_wallets()
-        outcome = {"yes": 0, "no": 1, "invalid": 2}[args.normal_outcome]
-        lifecycle.run_normal_lifecycle(outcome)
-        print(
-            "PredictionMarket normal "
-            f"{args.normal_outcome.upper()} direct-wallet three-node lifecycle: PASS"
-        )
+        if args.scenario == "normal":
+            lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
+            outcome = {"yes": 0, "no": 1, "invalid": 2}[args.normal_outcome]
+            lifecycle.run_normal_lifecycle(outcome)
+            print(
+                "PredictionMarket normal "
+                f"{args.normal_outcome.upper()} direct-wallet three-node lifecycle: PASS"
+            )
+        else:
+            lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_challenged_lifecycle()
+            print("PredictionMarket challenged appellate direct-wallet three-node lifecycle: PASS")
         return 0
     finally:
         if localnet.poll() is None:
