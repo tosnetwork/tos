@@ -95,7 +95,7 @@ class NullifierState {
     return reserved.lookup(key).not_null();
   }
 
-  td::Result<NullifierState> with_used(const std::vector<td::Bits256>& keys) const {
+  td::Result<NullifierState> with_used(const std::vector<td::Bits256>& keys) const try {
     for (const auto& key : keys) {
       if (is_reserved(key)) {
         return td::Status::Error("UNO nullifier reserved for refund");
@@ -105,9 +105,15 @@ class NullifierState {
     auto next = *this;
     next.used_ = std::move(next_used);
     return next;
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO nullifier consumption failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO nullifier consumption encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO nullifier consumption exhausted execution budget");
   }
 
-  td::Result<NullifierState> reserve(const td::Bits256& owner, const std::vector<td::Bits256>& keys) const {
+  td::Result<NullifierState> reserve(const td::Bits256& owner, const std::vector<td::Bits256>& keys) const try {
     if (keys.empty()) {
       return td::Status::Error("UNO empty refund nullifier reservation");
     }
@@ -133,6 +139,12 @@ class NullifierState {
     next.reserved_ = std::move(reserved).extract_root_cell();
     next.owners_ = std::move(owners).extract_root_cell();
     return next;
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO nullifier reservation failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO nullifier reservation encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO nullifier reservation exhausted execution budget");
   }
 
   td::Result<NullifierState> paid(const td::Bits256& owner) const {
@@ -143,7 +155,7 @@ class NullifierState {
   }
 
  private:
-  td::Result<NullifierState> finish(const td::Bits256& owner, bool consume) const {
+  td::Result<NullifierState> finish(const td::Bits256& owner, bool consume) const try {
     vm::Dictionary owners(owners_, 256), reserved(reserved_, 256);
     auto record = owners.lookup(owner);
     if (record.is_null() || record->prefetch_ulong(2) != 0) {
@@ -183,6 +195,12 @@ class NullifierState {
     next.reserved_ = std::move(reserved).extract_root_cell();
     next.owners_ = std::move(owners).extract_root_cell();
     return next;
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO nullifier settlement failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO nullifier settlement encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO nullifier settlement exhausted execution budget");
   }
 
   UsedNullifiers used_;

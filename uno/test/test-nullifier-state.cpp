@@ -1,6 +1,8 @@
 #include "td/utils/tests.h"
 #include "uno/core/nullifier-state.h"
 #include "vm/boc.h"
+#include "vm/vmstate.h"
+#include <limits>
 
 using namespace uno_workchain;
 
@@ -22,6 +24,63 @@ td::Result<NullifierState> restore(const NullifierState& state,
                                    persisted(state.owners_root()), limits);
 }
 }  // namespace
+
+TEST(UnoNullifierState, EveryReadFailureLeavesSourceUnchanged) {
+  const auto original = NullifierState{}.with_used({key(1)}).move_as_ok()
+                            .reserve(key(10), {key(0), key(2)}).move_as_ok();
+  const auto used_hash = original.used_root()->get_hash();
+  const auto reserved_hash = original.reserved_root()->get_hash();
+  const auto owners_hash = original.owners_root()->get_hash();
+  class Loads final : public vm::VmStateInterface {
+   public:
+    unsigned calls = 0;
+    unsigned fail_at = std::numeric_limits<unsigned>::max();
+    unsigned kind = 0;
+    void register_cell_load(const vm::CellHash&) override {
+      if (calls++ == fail_at) {
+        if (kind == 1) throw vm::VmError{vm::Excno::cell_und};
+        if (kind == 2) throw vm::VmVirtError{1};
+        throw vm::VmNoGas{};
+      }
+    }
+  } loads;
+  auto exercise = [&](auto operation) {
+    loads.calls = 0;
+    loads.fail_at = std::numeric_limits<unsigned>::max();
+    unsigned total = 0;
+    {
+      vm::VmStateInterface::Guard guard(&loads);
+      ASSERT_TRUE(operation().is_ok());
+      total = loads.calls;
+    }
+    ASSERT_TRUE(total > 1);
+    for (unsigned index = 0; index < total; ++index) {
+      loads.calls = 0;
+      loads.fail_at = index;
+      {
+        vm::VmStateInterface::Guard guard(&loads);
+        ASSERT_TRUE(operation().is_error());
+        ASSERT_EQ(loads.calls, index + 1);
+      }
+      ASSERT_TRUE(original.used_root()->get_hash() == used_hash);
+      ASSERT_TRUE(original.reserved_root()->get_hash() == reserved_hash);
+      ASSERT_TRUE(original.owners_root()->get_hash() == owners_hash);
+      ASSERT_TRUE(original.is_used(key(1)));
+      ASSERT_TRUE(!original.is_used(key(3)));
+      ASSERT_TRUE(original.is_reserved(key(0)));
+      ASSERT_TRUE(original.is_reserved(key(2)));
+    }
+    // A failed attempt must not poison subsequent execution or owner status.
+    ASSERT_TRUE(operation().is_ok());
+  };
+  for (unsigned kind = 0; kind < 3; ++kind) {
+    loads.kind = kind;
+    exercise([&] { return original.with_used({key(3), key(4)}); });
+    exercise([&] { return original.reserve(key(11), {key(3), key(4)}); });
+    exercise([&] { return original.paid(key(10)); });
+    exercise([&] { return original.refund(key(10)); });
+  }
+}
 
 TEST(UnoNullifierState, RestoreJointStateAndContinue) {
   ASSERT_TRUE(restore(NullifierState{}, {0, 0, 0, 0}).is_ok());

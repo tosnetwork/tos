@@ -1673,3 +1673,34 @@ needed for the slot and idle-cadence decision.
 After the measurement run, the default full Rust library suite passed: 17 tests,
 one intentionally ignored diagnostic export, 10.74 seconds, without the sample
 environment variable.
+
+### Nullifier transition cell-failure boundaries
+
+The ordinary consumption path already rejects refund-reserved keys; no alternate
+spending path was added. Inspection instead found that restore operations returned
+VM failures as `Result` errors, while state updates could still throw past their
+`Result` signatures. `UsedNullifiers::with_used` and the joint state's consumption,
+reservation and settlement paths now convert `VmError`, `VmVirtError` and
+`VmNoGas` into errors without publishing staged roots.
+
+The new joint-state test first counts Cell reads on each successful consumption,
+reservation, paid and refund fixture. It then injects each of those three exception
+types separately at every observed read position, including late failures after
+private staging has begun. Each attempt must return an error at the selected read,
+leave all three source root hashes and key membership unchanged, and permit a
+subsequent successful retry. A direct used-set test separately covers its own
+budget-failure boundary, without relying on the joint state's outer handler.
+
+Four independent temporary mutations rethrew the budget exception from used-set
+update, joint consumption, reservation and settlement respectively. Each made
+its targeted test fail through an escaping exception. All mutations were restored.
+The fault injection covers Cell reads of these fixtures, not every allocation
+or Cell creation failure, and is not a crash-recovery experiment.
+After restoration the full nullifier and ordinary state-snapshot CTest groups
+each passed three consecutive runs (85.29 seconds total). The opt-in large
+snapshot experiment was not rerun for this error-boundary change.
+
+These are still isolated state primitives. Boolean query methods retain their
+VM exception contract; the outer engine must guard them and distinguish local
+resource failure from invalid consensus input. No OOM recovery, production gas
+schedule, complete StateV2 transaction or authenticated settlement is claimed.

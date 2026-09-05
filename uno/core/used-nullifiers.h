@@ -46,7 +46,7 @@ class UsedNullifiers {
 
   // Stage against a private root; even a late duplicate leaves this object
   // unchanged. Every public action, including dummy actions, supplies a key.
-  td::Result<UsedNullifiers> with_used(const std::vector<td::Bits256>& nullifiers) const {
+  td::Result<UsedNullifiers> with_used(const std::vector<td::Bits256>& nullifiers) const try {
     vm::Dictionary staged(root_, 256);
     vm::CellBuilder marker;
     for (const auto& nullifier : nullifiers) {
@@ -55,6 +55,12 @@ class UsedNullifiers {
       }
     }
     return UsedNullifiers(std::move(staged).extract_root_cell());
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO used nullifier update failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO used nullifier update encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO used nullifier update exhausted execution budget");
   }
 
  private:

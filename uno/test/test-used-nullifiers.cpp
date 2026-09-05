@@ -5,6 +5,29 @@
 
 using namespace uno_workchain;
 
+TEST(UnoUsedNullifiers, UpdateReturnsBudgetFailure) {
+  auto original = UsedNullifiers{}.with_used({td::Bits256::zero()}).move_as_ok();
+  auto fresh = td::Bits256::zero();
+  fresh.as_slice()[31] = 1;
+  const auto old_hash = original.root()->get_hash();
+  class Loads final : public vm::VmStateInterface {
+   public:
+    unsigned calls = 0;
+    void register_cell_load(const vm::CellHash&) override {
+      ++calls;
+      throw vm::VmNoGas{};
+    }
+  } loads;
+  {
+    vm::VmStateInterface::Guard guard(&loads);
+    ASSERT_TRUE(original.with_used({fresh}).is_error());
+    ASSERT_EQ(loads.calls, 1u);
+  }
+  ASSERT_TRUE(original.root()->get_hash() == old_hash);
+  ASSERT_TRUE(!original.contains(fresh));
+  ASSERT_TRUE(original.with_used({fresh}).move_as_ok().contains(fresh));
+}
+
 TEST(UnoUsedNullifiers, RestoreAndContinue) {
   auto zero = td::Bits256::zero();
   auto one = zero;
