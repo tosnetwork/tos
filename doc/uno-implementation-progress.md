@@ -1359,3 +1359,51 @@ the candidate 100-height anchor window and 64-height expiry window; neither is
 a fixed wall-clock duration under missed slots or stalled height. Preserve the
 continuous scheduling-epoch requirement if slot duration changes. No measured
 slot lower bound is available yet, and these transport tests do not supply one.
+
+### Large single-account file acquisition through database reopening
+
+The state-import fixture now accepts the downloader's `DownloadedPersistentState`
+directly. For file-mode results it moves the exact `BudgetedStateFile`, retaining
+its reservation through import and reopening; it does not recreate that file
+from a copied memory buffer. Only the small memory-mode fixture uses a separate
+temporary-file adapter.
+
+An opt-in experiment builds one wc2 executor account containing the actual
+permanent nullifier dictionary with 2,000,000 reproducible synthetic keys. Run:
+
+```sh
+cmake --build build --target test-uno-state-snapshot -j48
+UNO_SNAPSHOT_LARGE_TEST=1 build/test-uno-state-snapshot --filter LargeSingleAccountDownloadAndImport
+```
+
+Without the environment variable this experiment explicitly logs that it was
+not run; a default CTest pass is not large-state evidence. The large import
+actor has a 1200-second test watchdog, not a consensus/slot deadline. Smaller
+fixtures retain their 30-second watchdog.
+
+The explicit run passed in 203.1 seconds on this host. Serialized size was
+83,933,657 bytes, above the unchanged 64 MiB file threshold. The real TCP
+downloader acquired the file, then the real CellDb worker committed 4,000,006
+cells in 3907 actor batches. The expected root was
+`20BBED0D6F111FC861106DC4AFB1712F61633C90699CA8D1552CF3BD14513FAF`.
+The existing wrong-root rejection, all-key reads, root-registration metadata,
+lease release and clean database reopening assertions all executed. The retained
+database `/tmp/uno-snapshot-celldb-etPKG9` occupied approximately 410 MiB during
+the run and 383 MiB on a later post-run check. The ordinary snapshot CTest also
+passed (21.24 seconds).
+
+This is a valid host shard/account representation with a nullifier dictionary,
+not a frozen full UNO StateV2 including a note tree, bridge records and anchors.
+It remains one process with a synthetic TCP serving callback and synthetic block
+IDs, not real-manager orchestration or an authenticated checkpoint. Reopening
+does not evict the OS page cache. The 203.1 seconds includes fixture construction,
+negative import, multiple exhaustive dictionary scans and reopening; it is not
+a download, per-block execution or slot-latency measurement. Source state and
+the oracle keys remain in process memory, so process RSS is not receiver-only.
+
+The worker reported a 175.6 ms slowest import slice during the successful
+import, above its 5 ms scheduling target; the preceding rejection attempt also
+reported a 279.6 ms slice. These are diagnostic observations requiring targeted
+measurement, not an accepted scheduler bound. The result closes the split
+between large file transport and large dictionary import evidence, but does not
+close M1 network/consensus acceptance or M2 performance gates.

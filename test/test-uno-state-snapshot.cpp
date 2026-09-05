@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cstdlib>
 #include <random>
 
 #include "block/block-auto.h"
@@ -30,7 +31,7 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
 
   void start_up() override {
-    alarm_timestamp() = td::Timestamp::in(30);
+    alarm_timestamp() = td::Timestamp::in(request_.file_size > (64ULL << 20) ? 1200 : 30);
     auto options = tos::validator::ValidatorManagerOptions::create({}, {});
     options.write().set_celldb_in_memory(false);
     options.write().set_celldb_v2(false);
@@ -154,11 +155,21 @@ class SnapshotImportActor final : public td::actor::Actor {
 };
 
 void actor_import_snapshot(td::Ref<vm::Cell> state, td::Ref<vm::Cell> payload, const std::vector<td::Bits256>& keys) {
-  auto bytes = download_uno_snapshot_over_tcp(vm::std_boc_serialize(state).move_as_ok()).move_as_ok();
-  auto temporary = td::mkstemp("/tmp").move_as_ok();
-  temporary.first.write_all(bytes.as_slice()).ensure();
-  temporary.first.close();
-  tos::validator::fullnode::BudgetedStateFile file(temporary.second, bytes.size(), {});
+  using namespace tos::validator::fullnode;
+  auto saved_download_directory = get_persistent_state_tempfile_dir();
+  set_persistent_state_tempfile_dir(td::mkdtemp("/tmp", "uno-state-acquisition-").move_as_ok());
+  auto downloaded = download_uno_snapshot_state_over_tcp(vm::std_boc_serialize(state).move_as_ok()).move_as_ok();
+  set_persistent_state_tempfile_dir(saved_download_directory);
+  BudgetedStateFile file;
+  if (downloaded.is_file()) {
+    // Preserve the downloader's exact file and reservation through database adoption.
+    file = std::move(downloaded.file());
+  } else {
+    auto temporary = td::mkstemp("/tmp").move_as_ok();
+    temporary.first.write_all(downloaded.memory().data.as_slice()).ensure();
+    temporary.first.close();
+    file = BudgetedStateFile(temporary.second, downloaded.memory().data.size(), {});
+  }
   auto directory = td::mkdtemp("/tmp", "uno-snapshot-celldb-").move_as_ok();
   LOG(INFO) << "UNO actor import database retained at " << directory;
   tos::validator::PersistentStateImportRequest request;
@@ -323,6 +334,28 @@ TEST(UnoStateSnapshot, TcpFileDownloadOwnership) {
   }).ensure();
   ASSERT_EQ(leftovers, 0u);
   set_persistent_state_tempfile_dir(saved_directory);
+}
+
+TEST(UnoStateSnapshot, LargeSingleAccountDownloadAndImport) {
+  if (std::getenv("UNO_SNAPSHOT_LARGE_TEST") == nullptr) {
+    LOG(WARNING) << "Large state experiment not run: set UNO_SNAPSHOT_LARGE_TEST=1 explicitly";
+    return;
+  }
+  // Opt-in integration experiment, not a protocol size limit or a benchmark.
+  constexpr std::size_t count = 2000000;
+  std::mt19937 generator(45);
+  std::vector<td::Bits256> keys(count);
+  for (auto& key : keys) {
+    for (auto& byte : key.as_slice()) byte = static_cast<char>(generator() & 255);
+  }
+  LOG(WARNING) << "Building large single-account state with " << count << " nullifiers";
+  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto state = single_account_state(used.root());
+  auto bytes = vm::std_boc_serialize(state).move_as_ok();
+  LOG(WARNING) << "Large single-account state serialized bytes=" << bytes.size();
+  ASSERT_TRUE(bytes.size() > tos::validator::fullnode::persistent_state_heap_threshold_bytes());
+  bytes = {};
+  actor_import_snapshot(state, used.root(), keys);
 }
 
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
