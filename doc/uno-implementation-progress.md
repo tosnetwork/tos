@@ -138,11 +138,37 @@ Base node revision: `5a6145cce`.
   commit the account, validate the resulting `AccountBlock`, rebuild the shard
   account dictionary and restore its BoC to read 42. Native balance remains zero;
   transaction LT is 10 and the new account end LT is 11.
-- This initial wrapper rejects nonempty or malformed outbound-message maps,
-  account execution phases and Native value changes. It cannot yet settle
-  bridge messages, forwarding fees or operating budgets. Empty engine outbound
-  messages now use the one-bit empty HashmapE encoding. Size-limit failure does
+- Without explicit native message configuration the wrapper still rejects
+  nonempty or malformed outbound-message maps. It rejects mixed account phases
+  and externally altered Native value before preparation. Empty engine outbound
+  messages use the one-bit empty HashmapE encoding. Size-limit failure does
   not authorize serialization; changing staged engine data also rejects it.
+- Transaction-level outbound settlement now accepts ordered, contiguous
+  `HashmapE 15 ^MessageRelaxed` internal requests when supplied native pricing and
+  destination-workchain configuration. It calls the existing native send processor
+  with fixed mode 1: exact attached value, fees paid separately, no failure skipping,
+  balance draining or account deletion. It does not fabricate a compute phase.
+  Requests are engine commitments; finalized messages, fees, balance and LT are
+  host outputs. The account balance used here must be an independent operating
+  budget, not Reserve backing. No Reserve or private-fee accounting is implemented
+  by this helper.
+- All outgoing messages are staged locally before accepting engine state. A later
+  send failure, insufficient funds, bad ordering, message limits or LT overflow
+  reject preparation without publishing earlier messages or changing the account.
+  Serialization checks staged balance, fees, messages and end LT against tampering.
+  Plain transaction/state replay accepts the same host-supplied pricing and
+  reconstructs native settlement. Live registry/collator/validator plumbing still
+  declines nonempty messages; queue insertion and full-block value flow are next.
+- The funded Counter unit fixture starts with 1000 operating atoms. Two messages
+  each carry 100 and cost 100 forwarding atoms, leaving 600; 100 fee atoms are
+  collected locally and 100 remain in the messages. Tests check source, amount,
+  forwarding fee and LT, uncommitted account preservation, all-or-nothing failure,
+  serialization tampering and independent replay. Changing replay prices fails the
+  complete transaction hash comparison. This is not a bridge integration test.
+- Mutation checks remove the operating-balance debit (test observes 1000 rather
+  than 600) and remove the contiguous-index check (the rejection test accepts a
+  map starting at index 1). Both mutations fail the funded settlement test and
+  are restored before the passing verification run.
 - Mutation checks: disabling batch serialization fails the commit/reload test;
   removing the unsettled-message rejection fails the exact rejection test.
   Both changes were restored.
@@ -198,8 +224,9 @@ checks the input commitment before executing, independently computes the effects
 and checks their commitment plus explicit resource counters. Engine selection
 and authentication of configuration/finality are still the host's responsibility.
 These use the native Cell representation hash, not the user transaction-ID hash.
-Native state-only transaction/account wrapping and witness storage are implemented;
-live full-shard acceptance and queue settlement remain pending.
+Native transaction/account wrapping, witness storage and transaction-level outbound
+settlement are implemented. Live state-only full-shard acceptance is tested;
+nonempty queue settlement and full-block message value flow remain pending.
 
 Commitment tests cover serialized-description replay, all four input references,
 all six engine-effect references, missing cells and all three resource counters.

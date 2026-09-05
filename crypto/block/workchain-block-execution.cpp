@@ -278,7 +278,7 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
 td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
   if (claimed.is_null()) {
     return td::Status::Error("missing batch transaction");
   }
@@ -303,7 +303,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     }
     TRY_RESULT(effects, replay_workchain_batch(engine, input, record.description));
     transaction::Transaction actual(account, transaction::Transaction::tr_workchain_batch, expected_lt, expected_utime);
-    TRY_STATUS(actual.prepare_workchain_batch(input, effects, cfg));
+    TRY_STATUS(actual.prepare_workchain_batch(input, effects, cfg, message_cfg));
     if (actual.start_lt != expected_lt || !actual.serialize(cfg)) {
       return td::Status::Error("cannot reconstruct batch transaction");
     }
@@ -322,7 +322,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
     const WorkchainBlockEngine& engine, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg) {
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
   if (claimed_transaction.is_null()) {
     return td::Status::Error("missing batch transaction");
   }
@@ -347,7 +347,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
     WorkchainBlockInput input{context.previous_shard_state, witness.candidate,
                               context.configuration, context.finality_context};
     TRY_RESULT(reconstructed, replay_workchain_batch_transaction(
-        engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg));
+        engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg, message_cfg));
     if (!same_cell(reconstructed, account.total_state)) {
       return td::Status::Error("claimed executor account differs from batch replay");
     }

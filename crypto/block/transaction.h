@@ -419,6 +419,11 @@ struct Transaction {
  private:
   Ref<vm::Cell> batch_description;
   Ref<vm::Cell> batch_account_data;
+  CurrencyCollection batch_balance{0}, batch_fees{0};
+  std::vector<Ref<vm::Cell>> batch_out_msgs;
+  tos::LogicalTime batch_end_lt{0};
+  td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
+                                                  const ActionPhaseConfig& cfg);
  public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;
@@ -461,9 +466,10 @@ struct Transaction {
   td::Status check_state_limits(const SizeLimitsConfig& size_limits, int global_version, bool is_account_stat = true);
   bool prepare_bounce_phase(const ActionPhaseConfig& cfg);
   bool compute_state(const SerializeConfig& cfg);
-  // Stages engine state only; native queue settlement must be supplied separately before supporting messages.
+  // The executor's native balance is an operating budget, never private-note backing.
+  // Nonempty messages require authenticated native pricing; the host still owns queue insertion.
   td::Status prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
-                                    const SerializeConfig& cfg);
+                                    const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

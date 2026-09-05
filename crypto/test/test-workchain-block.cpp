@@ -22,14 +22,16 @@ using CounterEngine = block::test::CounterEngine;
 
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
-                              std::uint64_t counter_value = 40, bool wrong_dictionary_key = false) {
+                              std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
+                              std::uint64_t operating_balance = 0) {
   vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
   for (unsigned i = 0; i < account_count; ++i) {
     td::Bits256 address = td::Bits256::zero();
     if (i != 0) address = number(i)->get_hash().bits();
     vm::CellBuilder account;
     account.store_long(1, 1).store_long(4, 3).store_long(account_wc, 8).store_bits(address.bits(), 256)
-        .store_zeroes(42).store_long(2, 64).store_zeroes(5);
+        .store_zeroes(42).store_long(2, 64);
+    ASSERT_TRUE(block::CurrencyCollection(td::make_refint(operating_balance)).store(account));
     if (active) {
       auto executor = block::encode_workchain_executor_state({number(counter_value), {}, {}}).move_as_ok();
       account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(executor).store_long(0, 1);
@@ -45,7 +47,12 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
     ASSERT_TRUE(accounts.set_builder(dictionary_address, entry));
   }
   auto queue = vm::CellBuilder().store_zeroes(67).finalize();
-  auto aux = vm::CellBuilder().store_zeroes(140).finalize();
+  // Funded fixtures have one account; keep the public shard balance consistent.
+  ASSERT_TRUE(operating_balance == 0 || account_count == 1);
+  vm::CellBuilder aux_builder;
+  aux_builder.store_zeroes(128);
+  ASSERT_TRUE(block::CurrencyCollection(td::make_refint(operating_balance)).store(aux_builder));
+  auto aux = aux_builder.store_zeroes(7).finalize();
   auto root = vm::CellBuilder().store_long(0x9023afe2, 32).store_long(1, 32)
       .store_long(0, 2).store_long(prefix_bits, 6).store_long(shard_wc, 32).store_long(0, 64)
       .store_long(1, 32).store_long(0, 32).store_long(1, 32).store_long(2, 64).store_long(0, 32)
@@ -386,6 +393,133 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   tx.new_data = number(99);
   ASSERT_TRUE(!tx.serialize(cfg));
   ASSERT_TRUE(account.total_state->get_hash() == account.orig_total_state->get_hash());
+}
+
+TEST(WorkchainBlock, BatchNativeMessageSettlement) {
+  CounterEngine engine;
+  auto in = input();
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000);
+  auto effects = engine.execute_block(in).move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
+  auto previous = account.total_state->get_hash();
+  block::SerializeConfig cfg;
+  block::WorkchainSet workchains;
+  block::ActionPhaseConfig messages_cfg;
+  messages_cfg.workchains = &workchains;
+  messages_cfg.fwd_mc.lump_price = 100;
+  messages_cfg.fwd_mc.first_frac = 32768;
+  auto message = [&](int wc) {
+    vm::CellBuilder cb;
+    cb.store_long(6, 4).store_zeroes(2).store_long(4, 3).store_long(wc, 8).store_zeroes(256);
+    ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
+    cb.store_zeroes(8).store_zeroes(96).store_zeroes(2);
+    auto result = cb.finalize();
+    ASSERT_TRUE(block::gen::t_MessageRelaxed_Any.validate_ref(4096, result));
+    return result;
+  };
+  auto requests = [&](unsigned count, bool invalid_last = false, unsigned first = 0) {
+    vm::Dictionary dict(15);
+    for (unsigned i = 0; i < count; ++i) {
+      ASSERT_TRUE(dict.set_ref(td::BitArray<15>(i + first), message(invalid_last && i + 1 == count ? 9 : -1)));
+    }
+    vm::CellBuilder cb;
+    ASSERT_TRUE(std::move(dict).append_dict_to_bool(cb));
+    return cb.finalize();
+  };
+  using Transaction = block::transaction::Transaction;
+  effects.outbound_messages = requests(2);
+  Transaction tx(account, Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg, &messages_cfg).is_ok());
+  ASSERT_TRUE(!tx.compute_phase && !tx.action_phase);
+  ASSERT_EQ(tx.balance.tomis->to_long(), 600);
+  ASSERT_EQ(tx.total_fees.tomis->to_long(), 100);
+  ASSERT_EQ(tx.end_lt, 13u);
+  ASSERT_EQ(tx.out_msgs.size(), 2u);
+  for (unsigned i = 0; i < 2; ++i) {
+    block::gen::Message::Record msg;
+    block::gen::CommonMsgInfo::Record_int_msg_info info;
+    ASSERT_TRUE(tlb::type_unpack_cell(tx.out_msgs[i], block::gen::t_Message_Any, msg));
+    ASSERT_TRUE(tlb::csr_unpack(msg.info, info));
+    block::CurrencyCollection value;
+    ASSERT_TRUE(value.unpack(info.value));
+    ASSERT_EQ(value.tomis->to_long(), 100);
+    ASSERT_EQ(block::tlb::t_Tomis.as_integer(info.fwd_fee)->to_long(), 50);
+    ASSERT_EQ(info.created_lt, 11u + i);
+    ASSERT_EQ(info.created_at, 10u);
+    ASSERT_TRUE(info.src->contents_equal(*account.my_addr));
+  }
+  ASSERT_EQ(account.balance.tomis->to_long(), 1000);
+  ASSERT_TRUE(account.total_state->get_hash() == previous);
+  // Serialization must not accept public-field changes after fee settlement.
+  tx.balance = block::CurrencyCollection(601);
+  ASSERT_TRUE(!tx.serialize(cfg));
+  tx.balance = block::CurrencyCollection(600);
+  tx.total_fees = block::CurrencyCollection(101);
+  ASSERT_TRUE(!tx.serialize(cfg));
+  tx.total_fees = block::CurrencyCollection(100);
+  tx.end_lt = 14;
+  ASSERT_TRUE(!tx.serialize(cfg));
+  tx.end_lt = 13;
+  auto first_message = tx.out_msgs[0];
+  tx.out_msgs[0] = message(-1);
+  ASSERT_TRUE(!tx.serialize(cfg));
+  tx.out_msgs[0] = first_message;
+  ASSERT_TRUE(tx.serialize(cfg));
+  ASSERT_TRUE(block::gen::t_Transaction.validate_ref(10000, tx.root));
+  class MessageEngine final : public block::WorkchainBlockEngine {
+   public:
+    td::Ref<vm::Cell> requests;
+    td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput& input) const override {
+      TRY_RESULT(result, CounterEngine().execute_block(input));
+      result.outbound_messages = requests;
+      return result;
+    }
+  } replay_engine;
+  replay_engine.requests = effects.outbound_messages;
+  auto replayed = block::replay_workchain_batch_transaction(
+      replay_engine, in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg, &messages_cfg);
+  ASSERT_TRUE(replayed.is_ok());
+  ASSERT_TRUE(replayed.ok()->get_hash() == tx.new_total_state->get_hash());
+  auto different_prices = messages_cfg;
+  different_prices.fwd_mc.lump_price = 102;
+  auto wrong_fees = block::replay_workchain_batch_transaction(
+      replay_engine, in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg, &different_prices);
+  ASSERT_TRUE(wrong_fees.is_error());
+  ASSERT_EQ(wrong_fees.error().message(), "batch transaction wrapper differs from replay");
+  auto reject = [&](td::Ref<vm::Cell> outbound, const block::ActionPhaseConfig& pricing, td::Slice expected) {
+    Transaction rejected(account, Transaction::tr_workchain_batch, 10, 10);
+    auto altered = effects;
+    altered.outbound_messages = std::move(outbound);
+    auto status = rejected.prepare_workchain_batch(in, altered, cfg, &pricing);
+    ASSERT_TRUE(status.is_error());
+    ASSERT_EQ(status.message(), expected);
+    ASSERT_TRUE(rejected.out_msgs.empty());
+    ASSERT_EQ(rejected.balance.tomis->to_long(), 1000);
+    ASSERT_TRUE(rejected.total_fees.is_zero());
+    ASSERT_EQ(rejected.end_lt, 11u);
+    ASSERT_TRUE(rejected.new_data->get_hash() == account.data->get_hash());
+    ASSERT_TRUE(!rejected.serialize(cfg));
+  };
+  reject(requests(2, true), messages_cfg, "batch native message send failed");
+  reject(requests(6), messages_cfg, "batch native message send failed");
+  reject(requests(1, false, 1), messages_cfg, "invalid batch outbound requests");
+  reject(number(0), messages_cfg, "invalid batch outbound dictionary");
+  auto limited = messages_cfg;
+  limited.max_actions = 1;
+  reject(requests(2), limited, "invalid batch outbound requests");
+  limited = messages_cfg;
+  limited.workchains = nullptr;
+  reject(requests(1), limited, "missing batch native message configuration");
+  Transaction overflow(account, Transaction::tr_workchain_batch,
+                       std::numeric_limits<std::uint64_t>::max() - 1, 10);
+  auto no_lt = overflow.prepare_workchain_batch(in, effects, cfg, &messages_cfg);
+  ASSERT_TRUE(no_lt.is_error());
+  ASSERT_EQ(no_lt.message(), "invalid batch outbound requests");
+  ASSERT_TRUE(overflow.out_msgs.empty());
 }
 
 TEST(WorkchainBlock, BatchCommitmentReplay) {

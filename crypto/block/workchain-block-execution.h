@@ -9,6 +9,7 @@
 namespace block {
 
 struct SerializeConfig;
+struct ActionPhaseConfig;
 
 enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1 };
 
@@ -39,6 +40,8 @@ struct WorkchainBlockResourceUsage {
 struct WorkchainBlockResult {
   // Engine-owned state only. The host constructs the account, transaction and shard afterwards.
   td::Ref<vm::Cell> new_engine_state;
+  // Host settlement interprets this as ordered HashmapE 15 ^MessageRelaxed
+  // requests (internal messages, fixed send mode 1), not finalized messages.
   td::Ref<vm::Cell> outbound_messages;
   td::Ref<vm::Cell> actions;
   td::Ref<vm::Cell> receipts;
@@ -91,7 +94,7 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
 td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg);
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
 
 // Checks the persisted witness, reconstructed Account and final transaction link.
 // The host separately authenticates context and validates shard header/queues/value flow.
@@ -99,7 +102,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
     const WorkchainBlockEngine& engine, const WorkchainBlockReplayContext& context,
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg);
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
 
 // These helpers never commit state. The host may commit only after replay succeeds.
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result);

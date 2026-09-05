@@ -4360,11 +4360,65 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
   return true;
 }
 
-/**
- * Stages a state-only batch using the native account serializer. Does not commit the account.
- */
+// Ordered HashmapE 15 ^MessageRelaxed requests. Fixed mode 1 preserves the requested
+// value, charges fees separately, and never skips failures or drains the account.
+td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell>& messages,
+                                                              const ActionPhaseConfig& cfg) {
+  if (!cfg.workchains || cfg.max_actions < 0) {
+    return td::Status::Error("missing batch native message configuration");
+  }
+  ActionPhase staged{};
+  staged.remaining_balance = balance;
+  staged.reserved_balance.set_zero();
+  staged.end_lt = end_lt;
+  staged.total_action_fees = staged.total_fwd_fees = staged.action_fine = td::zero_refint();
+  try {
+    bool special = false;
+    auto root_slice = vm::load_cell_slice_special(messages, special);
+    if (special || root_slice.size() != 1 || root_slice.size_refs() != root_slice.prefetch_ulong(1)) {
+      return td::Status::Error("invalid batch outbound dictionary");
+    }
+    vm::Dictionary requests(vm::load_cell_slice_ref(messages), 15);
+    unsigned index = 0;
+    int send_error = 0;
+    if (!requests.check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {
+          if (bits != 15 || key.get_uint(15) != index || index >= static_cast<unsigned>(cfg.max_actions) ||
+              index >= 32767 || value->size_ext() != 0x10000 ||
+              staged.end_lt == std::numeric_limits<tos::LogicalTime>::max()) {
+            return false;
+          }
+          auto message = value->prefetch_ref();
+          if (!block::gen::t_MessageRelaxed_Any.validate_ref(4096, message)) {
+            return false;
+          }
+          // Service messages are internal; external logs belong in engine events.
+          if (vm::load_cell_slice(message).prefetch_ulong(1) != 0) {
+            return false;
+          }
+          auto action = vm::CellBuilder().store_long(0x0ec3c86d, 32).store_long(1, 8)
+                            .store_ref(message).finalize();
+          auto slice = vm::load_cell_slice(action);
+          send_error = try_action_send_msg(slice, staged, cfg);
+          for (int retry = 1; send_error == -2 && retry <= 2; ++retry) {
+            send_error = try_action_send_msg(slice, staged, cfg, retry);
+          }
+          ++index;
+          return send_error == 0;
+        })) {
+      return send_error ? td::Status::Error("batch native message send failed")
+                        : td::Status::Error("invalid batch outbound requests");
+    }
+    return staged;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid batch outbound message cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete batch outbound message proof");
+  }
+}
+
+// Staging does not commit the account or publish any message.
 td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
-                                               const SerializeConfig& cfg) {
+                                               const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
   if (trans_type != tr_workchain_batch || account.status != Account::acc_active || account.workchain < 0 ||
       account.now_ != now || start_lt >= end_lt || root.not_null() || new_total_state.not_null() ||
       batch_description.not_null()) {
@@ -4392,12 +4446,18 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
   TRY_RESULT(description, make_workchain_batch_description(input, effects));
   bool special_messages = false;
   auto messages = vm::load_cell_slice_special(effects.outbound_messages, special_messages);
-  if (special_messages || messages.size_ext() != 1 || messages.prefetch_ulong(1) != 0) {
+  bool has_messages = special_messages || messages.size_ext() != 1 || messages.prefetch_ulong(1) != 0;
+  if (has_messages && !message_cfg) {
     return td::Status::Error("batch native message settlement is not implemented");
   }
   if (in_msg.not_null() || !out_msgs.empty() || compute_phase || action_phase || storage_phase || credit_phase ||
       bounce_phase || balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero()) {
     return td::Status::Error("batch state preparation cannot mix account phases or native value flow");
+  }
+  ActionPhase settlement{};
+  if (has_messages) {
+    TRY_RESULT(staged, stage_workchain_messages(effects.outbound_messages, *message_cfg));
+    settlement = std::move(staged);
   }
   TRY_RESULT(encoded_effects, encode_workchain_block_result(effects));
   TRY_RESULT(executor_state, encode_workchain_executor_state({effects.new_engine_state, input.candidate, encoded_effects}));
@@ -4409,6 +4469,16 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
   }
   batch_account_data = new_data;
   batch_description = encode_workchain_batch_description(description);
+  if (has_messages) {
+    balance = std::move(settlement.remaining_balance);
+    total_fees = CurrencyCollection(std::move(settlement.total_action_fees));
+    out_msgs = std::move(settlement.out_msgs);
+    end_lt = settlement.end_lt;
+  }
+  batch_balance = balance;
+  batch_fees = total_fees;
+  batch_out_msgs = out_msgs;
+  batch_end_lt = end_lt;
   return td::Status::OK();
 }
 
@@ -4418,11 +4488,19 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
   }
   if (trans_type == tr_workchain_batch &&
       (batch_description.is_null() || batch_account_data.is_null() || new_data.is_null() ||
-       batch_account_data->get_hash() != new_data->get_hash() || in_msg.not_null() || !out_msgs.empty() ||
+       batch_account_data->get_hash() != new_data->get_hash() || in_msg.not_null() ||
+       out_msgs.size() != batch_out_msgs.size() || end_lt != batch_end_lt ||
        compute_phase || action_phase || storage_phase || credit_phase || bounce_phase ||
-       balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero() ||
+       balance != batch_balance || total_fees != batch_fees || !blackhole_burned.is_zero() ||
        acc_status != Account::acc_active || start_lt >= end_lt)) {
     return false;
+  }
+  if (trans_type == tr_workchain_batch) {
+    for (unsigned i = 0; i < out_msgs.size(); ++i) {
+      if (out_msgs[i].is_null() || out_msgs[i]->get_hash() != batch_out_msgs[i]->get_hash()) {
+        return false;
+      }
+    }
   }
   if (!compute_state(cfg)) {
     return false;
