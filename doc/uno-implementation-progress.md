@@ -594,3 +594,18 @@ encoding coverage, and authenticated activation/queue migration enforcement.
 The referenced engine payload is not yet consumed as engine configuration.
 This is not production activation and does not implement private notes or reserve
 accounting.
+
+Configuration-presence gate: `valid_config_data` now rejects parameter 84 unless
+ConfigParam 8 declares version >= 15 and capBlockTransition. This is separate
+from choosing whether an engine may execute: an empty table is still a parameter
+whose presence requires activation. Predicate tests cover absent parameters,
+both version/capability combinations, and missing/malformed version payloads.
+Replacing the predicate with unconditional success makes the forbidden-presence
+assertion fail; the predicate was restored. The inactive Counter fixtures omit
+84 and continue testing engine activation independently.
+
+This does not prove readiness of old validators or implement an authenticated
+upgrade transition. The M0 all-validator upgrade ordering remains mandatory.
+Further evidence must cover rejection through full `valid_config_data` and the
+real configuration-update path, including mixed-version binaries; predicate
+mutation coverage alone does not prove that every caller enforces it.

@@ -96,6 +96,37 @@ must also use the common admission policy; audit the second caller of
 
 ## Activation and messages already in flight
 
+M0 decision: slot 84 was unused before the development definition, but an unknown
+positive ConfigParam invalidates the entire configuration in old binaries.
+The definition in block.tlb therefore introduces a masterchain upgrade boundary.
+`valid_config_data` now checks parameter presence against version 15 AND
+capBlockTransition, independently of the reader/execution gates. This rejects an
+otherwise structurally valid table before activation, even an empty table.
+Upgrade readiness and authenticated transition enforcement remain open; this
+presence check alone cannot make an old binary understand the new structure.
+
+Retain a formally defined positive parameter as the design direction, with 84
+still subject to the final schema freeze. Before the parameter may appear, every
+validator (including the next set at the activation boundary) must have upgraded
+to the supporting binary, with auditable readiness evidence. Keep the parameter
+absent and UNO admission closed during that rollout. Only then may an authenticated
+configuration transition introduce it under gates at least as strong as version
+15 AND capBlockTransition. Descriptor/state/in-flight checks must precede opening
+admission. A capability advertisement alone is not proof of deployment readiness.
+
+Negative keys avoid generic payload validation, not the need for safe activation
+or full fail-closed parsing by new readers. They are not the selected compatibility
+shortcut. Moving to another positive slot (including the free 46–70 range) would
+not change the upgrade obligation.
+
+The Counter genesis at a0d261f6f already contains development parameter 84. It is
+a same-new-binary, mock-engine/finality regression fixture, NOT a UNO deployment
+template or mixed-version rollout test. Do not reuse it as a deployment path or
+introduce deployable positive-index UNO genesis configurations before this freeze.
+Production remains blocked on readiness evidence, transition checks and
+old/new-binary negative acceptance tests; the current passing harness proves none
+of those properties.
+
 Sender admission prevents new wrong-address traffic; it does not dispose of
 already committed messages. Activation must not assume an empty queue merely
 because the new workchain state has an empty local OutMsgQueue. Foreign source

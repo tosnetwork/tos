@@ -1905,6 +1905,11 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
   if (!dict.check_for_each(std::bind(check_one_config_param, _1, _2, addr.cbits(), relax_par0))) {
     return false;
   }
+  auto ingress_presence = validate_native_ingress_presence(dict);
+  if (ingress_presence.is_error()) {
+    LOG(ERROR) << ingress_presence;
+    return false;
+  }
   for (int x : mandatory_config_params) {
     if (!dict.int_key_exists(x)) {
       LOG(ERROR) << "mandatory configuration parameter #" << x << " is missing";

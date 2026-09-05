@@ -1376,6 +1376,27 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   send(anycast, true);
 }
 
+TEST(WorkchainBlock, NativeIngressParameterPresenceRequiresActivation) {
+  for (int version : {14, 15}) {
+    for (td::uint64 capabilities : {td::uint64{0}, td::uint64{tos::capBlockTransition}}) {
+      vm::Dictionary config(32);
+      vm::CellBuilder param;
+      ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(param, version, capabilities));
+      ASSERT_TRUE(config.set_ref(td::BitArray<32>{8}, param.finalize()));
+      ASSERT_TRUE(block::validate_native_ingress_presence(config).is_ok());
+      auto table = block::encode_workchain_native_ingress_table({}).move_as_ok();
+      ASSERT_TRUE(config.set_ref(td::BitArray<32>{84}, table));
+      ASSERT_EQ(block::validate_native_ingress_presence(config).is_ok(), version >= 15 && capabilities != 0);
+    }
+  }
+  vm::Dictionary missing_version(32);
+  ASSERT_TRUE(missing_version.set_ref(td::BitArray<32>{84},
+      block::encode_workchain_native_ingress_table({}).move_as_ok()));
+  ASSERT_TRUE(block::validate_native_ingress_presence(missing_version).is_error());
+  ASSERT_TRUE(missing_version.set_ref(td::BitArray<32>{8}, number(0)));
+  ASSERT_TRUE(block::validate_native_ingress_presence(missing_version).is_error());
+}
+
 TEST(WorkchainBlock, ResolvedBlockResourcePolicy) {
   auto configuration_owner = block_configuration();
   auto& configuration = *configuration_owner;

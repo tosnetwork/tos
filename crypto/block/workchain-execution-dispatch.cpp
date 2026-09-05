@@ -134,6 +134,19 @@ td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngres
   return td::Status::OK();
 }
 
+td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {
+  if (!configuration.int_key_exists(kWorkchainNativeIngressConfigParam)) {
+    return td::Status::OK();
+  }
+  block::gen::GlobalVersion::Record version;
+  auto root = configuration.lookup_ref(td::BitArray<32>{8});
+  if (root.is_null() || !tlb::unpack_cell(root, version) ||
+      version.version < kBlockTransitionMinGlobalVersion || !(version.capabilities & tos::capBlockTransition)) {
+    return td::Status::Error("native ingress parameter requires activated host version and capability");
+  }
+  return td::Status::OK();
+}
+
 td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration) {
   if (configuration.get_global_version() < kBlockTransitionMinGlobalVersion ||
       !configuration.has_capability(tos::capBlockTransition)) {

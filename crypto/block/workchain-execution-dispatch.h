@@ -103,6 +103,7 @@ td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
     const std::vector<WorkchainNativeIngressPolicy>& policies);
 td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(const td::Ref<vm::Cell>& root);
 inline constexpr int kWorkchainNativeIngressConfigParam = 84;
+td::Status validate_native_ingress_presence(vm::Dictionary& configuration);
 td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration);
 td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(
     const block::Config& configuration);
