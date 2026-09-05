@@ -291,7 +291,9 @@ class Lifecycle:
             return
         report_dir = self.workdir / "openfox-evidence"
         report_dir.mkdir(mode=0o700)
-        trusted_tosctl = self.workdir / "trusted-tosctl"
+        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-gate-", dir="/home/tomi"))
+        trusted_dir.chmod(0o700)
+        trusted_tosctl = trusted_dir / "tosctl"
         shutil.copyfile(self.tosctl, trusted_tosctl)
         trusted_tosctl.chmod(0o700)
         info = rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]
@@ -313,12 +315,15 @@ class Lifecycle:
             "OPENFOX_PREDICTION_ZERO_STATE_FILE_HASH": initial["file_hash"],
             "OPENFOX_PREDICTION_EVIDENCE_DIRECTORY": str(report_dir),
         })
-        completed = subprocess.run(["go", "test", "./pkg/earning", "-run",
-                                   "TestPredictionAcceptedWagerAndFutureRevealThreeNodeContractGate", "-count=1", "-v"],
-                                  cwd=self.openfox_root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  timeout=300, check=False)
-        if completed.returncode:
-            raise RuntimeError(f"OpenFox accepted-wager gate failed:\n{completed.stdout.decode()}")
+        try:
+            completed = subprocess.run(["go", "test", "./pkg/earning", "-run",
+                                       "TestPredictionAcceptedWagerAndFutureRevealThreeNodeContractGate", "-count=1", "-v"],
+                                      cwd=self.openfox_root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      timeout=300, check=False)
+            if completed.returncode:
+                raise RuntimeError(f"OpenFox accepted-wager gate failed:\n{completed.stdout.decode()}")
+        finally:
+            shutil.rmtree(trusted_dir, ignore_errors=False)
 
     def signed_order(self, order: dict[str, Any], label: str, seed: bytes) -> str:
         """Build and verify one canonical signed order using an ephemeral key."""
