@@ -8,6 +8,7 @@
 #include "vm/cellslice.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/cells/UsageCell.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "emulator/transaction-emulator.h"
@@ -169,8 +170,25 @@ TEST(WorkchainBlock, CounterPayloadSurvivesBatchReplay) {
     layer = std::move(next);
   }
   auto payload = layer.front();
+  std::size_t payload_loads = 0;
+  auto usage = std::make_shared<vm::CellUsageTree>();
+  usage->set_cell_load_callback([&](const vm::LoadedCell&) { ++payload_loads; });
+  auto observed_payload = vm::UsageCell::create(payload, usage->root_ptr());
+  // Prove the instrument observes loads, but neither hashing nor taking a
+  // reference counts as reading the payload. Use a fresh tree for each phase.
+  ASSERT_TRUE(observed_payload->get_hash() == payload->get_hash());
+  ASSERT_EQ(payload_loads, 0u);
+  vm::load_cell_slice(observed_payload);
+  ASSERT_EQ(payload_loads, 1u);
+  auto reset_observation = [&] {
+    payload_loads = 0;
+    usage = std::make_shared<vm::CellUsageTree>();
+    usage->set_cell_load_callback([&](const vm::LoadedCell&) { ++payload_loads; });
+    observed_payload = vm::UsageCell::create(payload, usage->root_ptr());
+  };
+  reset_observation();
   auto in = input();
-  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, payload);
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, observed_payload);
   const auto previous_hash = in.previous_shard_state->get_hash();
   CounterEngine engine({8, 1, 3}, 1, 2, CounterEngine::PayloadMode::PreserveReference);
   ASSERT_TRUE(CounterEngine().execute_block(in).is_error());
@@ -180,20 +198,31 @@ TEST(WorkchainBlock, CounterPayloadSurvivesBatchReplay) {
   ASSERT_EQ(result_state.fetch_ulong(64), 42u);
   ASSERT_EQ(result_state.size_refs(), 1u);
   ASSERT_TRUE(result_state.fetch_ref()->get_hash() == payload->get_hash());
+  ASSERT_EQ(payload_loads, 0u);
 
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
   block::Account account(2, td::Bits256::zero().bits());
   ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial));
+  ASSERT_EQ(payload_loads, 0u);
   block::SerializeConfig cfg;
   cfg.global_version = block::kBlockTransitionMinGlobalVersion;
   ASSERT_EQ(cfg.size_limits.max_acc_state_cells, 65536u);
   block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
   ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  // Diagnostic only: do not require a future storage-stat optimization to
+  // retain today's traversal cost. This fixture has no cached storage index.
+  LOG(INFO) << "Counter payload reads: phase=prepare unique_tree_nodes=" << payload_loads;
   ASSERT_TRUE(tx.serialize(cfg));
+  reset_observation();
+  auto replay_input = in;
+  replay_input.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, observed_payload);
+  ASSERT_TRUE(replay_input.previous_shard_state->get_hash() == previous_hash);
+  ASSERT_EQ(payload_loads, 0u);
   auto replayed = block::replay_workchain_batch_transaction(
-      engine, in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+      engine, replay_input, tx.root, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  LOG(INFO) << "Counter payload reads: phase=replay unique_tree_nodes=" << payload_loads;
   ASSERT_TRUE(replayed->get_hash() == tx.new_total_state->get_hash());
   auto wire = vm::std_boc_serialize(tx.new_data).move_as_ok();
   auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();

@@ -2997,3 +2997,40 @@ swaps. Reopened traversal again reached 8,000,011 live DataCells. The resource
 report is `build/uno-large-v2-residency-20260906.time`; timing differences from
 the previous run are not claimed as a performance improvement. M3 remains
 paused.
+
+### Payload reads in the batch host, not just the snapshot harness
+
+The legal 32,767-cell Counter payload now carries a CellUsageTree observation
+in `CounterPayloadSurvivesBatchReplay`. Hashing the payload does not fire the
+observer; explicitly loading its root fires it once. Fresh observation trees
+separate preparation from replay. Engine execution and account unpacking read
+zero payload nodes, while preparation and replay each read all 32,767 nodes
+in `build/uno-payload-read-phases.log`. The full wrapper remains 32,774 cells
+and 2,097,259 serialized bytes, below the unchanged 65,536-cell account limit.
+The host counts are diagnostic, not assertions requiring future versions to
+preserve this traversal cost.
+
+This observation is explained by a production path: ValidateQuery calls
+`replay_resolved_workchain_account_block`, which reaches
+`replay_workchain_batch_transaction`. That helper constructs and unpacks a
+fresh Account without initializing an account storage-stat index. Its batch
+preparation calls `check_state_limits`; changed wrapper data causes
+`AccountStorageStat::replace_roots` and recursive `add_cell` traversal. The
+ordinary account validation/cache initialization path does not automatically
+initialize this separately constructed replay Account. Thus full payload
+traversal is not solely caused by the snapshot fixture's exhaustive key lookup.
+
+The observation counts first loads of tree positions through UsageCell over
+an in-memory, unique-node payload. It is not a database-read counter, cold-I/O
+measurement, RSS ceiling or new independent-network result. In particular it
+does not establish which cache owners retain cells afterwards. Resource work
+must cover replay storage-stat initialization/reuse as well as importer and
+reader caches, retaining authenticated statistics and full-wrapper validation;
+simply removing the size check would not be an acceptable optimization.
+
+The instrumentation's positive control passed. Temporarily adding a payload
+root load inside Counter execution made the zero-read assertion fail with
+`1 != 0` (`build/uno-payload-read-mutation.log`). That change was removed, the
+target rebuilt, and all 39 WorkchainBlock tests passed in
+`build/uno-payload-read-regression.log`. No production traversal or resource
+policy was changed in this step; M1 resource gates remain open and M3 paused.
