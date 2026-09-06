@@ -58,8 +58,54 @@ a README that framed a shipped component as future work and understated proof
 sizes by 10×. It had been wrong for weeks and nothing failed. Verify docs
 against source, not against memory.
 
+## Review each unit, before the pile grows
+
+Stop at every reviewable unit and have Claude Code review it. Do not accumulate
+a wave of unreviewed work and hand it over at the end.
+
+```
+cd /home/tomi/tos && claude -p "<what changed, which finding it closes, what to look at>"
+```
+
+A unit is reached when any one of these is true:
+
+- an implementation plus its tests for one finding is written;
+- roughly 300-400 lines are added or changed;
+- anything on a consensus path is touched — `validate-query.cpp`,
+  `collator.cpp`, `transaction.cpp`, `workchain-execution-dispatch.cpp`;
+- a public interface, an error classification, or a TL-B definition is added.
+
+Four things the review must check, because each has already gone wrong here:
+
+1. **Error classification.** For every new failure path: is this an invalid
+   candidate the network must reject, or a local fault this node must abstain
+   on? Conflating the two lets a crafted input make honest nodes abstain, or
+   makes a node with missing data reject a valid candidate.
+2. **Whether the test can fail.** Remove what it tests and watch it go red. A
+   test whose dependency is missing must fail, not skip. An assertion with no
+   diagnostic output produces an empty log, and an empty log cannot be told
+   apart from a build that never ran.
+3. **Arithmetic.** Checked operations throughout. Before any subtraction, state
+   the invariant that keeps it from underflowing — write it down rather than
+   trusting it.
+4. **Exception classes.** Does each new `catch` cover what is actually thrown?
+   `CellCreateError` and `CellWriteError` do not derive from `VmError`; three
+   catch clauses once missed both and the thread terminated.
+
+Act on the result: apply what you agree with, write down why for what you do
+not, and stop and ask for anything that needs an owner decision. Commit the
+review's fixes with the unit and say in the message that it was reviewed.
+
+Review transcripts are working material, not repository documentation. Keep
+them in `~/memo/reviews/`; what lands here is the fix and the test.
+
 ## Conventions
 
+- Everything in this repository is written in English: documents, comments,
+  identifiers, commit messages, test names, and assertion text. This is a
+  public repository read by people who do not read Chinese, and it shares a
+  tree with upstream-derived code. Working material outside the repository has
+  no such constraint.
 - Financial arithmetic uses `checked_*`, never raw `+ - * /`. A bound that
   holds "because of a limit declared elsewhere" is not a checked operation —
   it is a dependency on a constant nobody will remember to re-check.

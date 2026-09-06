@@ -62,3 +62,6 @@ test/integration/.aipow-*/
 # here by default and pins the expected hash itself, so the artifact is checked
 # rather than stored.
 crypto/smartcont/artifacts/
+
+# Claude Code review transcripts are working material; they live in ~/memo/reviews/
+doc/reviews/
