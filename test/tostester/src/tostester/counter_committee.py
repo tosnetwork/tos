@@ -1,10 +1,35 @@
 """Test-network config-owner update; not a validator election workflow."""
 import asyncio
+import hashlib
 import subprocess
 
 from pytosiq_core import Address, Builder, Cell, HashMap
+from pytosiq_core.tl import TlGenerator
+from tosapi import toslib_api
 
 CONFIG_ADDRESS = Address((-1, bytes.fromhex("55" * 32)))
+
+
+def retired_signature_manifest(source_dir, signed, block, introduced, retired):
+    if (not isinstance(signed, toslib_api.Blocks_blockSignatures_simplex) or signed.id is None
+            or signed.id.to_json() != block.to_json() or introduced.id == retired.id):
+        raise ValueError("requires the exact target's finalized signature set")
+    schemas = TlGenerator(str(source_dir / "tl/generate/scheme/tos_api.tl")).generate()
+    vote = schemas.serialize("consensus.simplex.finalizeVote", {
+        "id": {"slot": signed.slot, "hash": hashlib.sha256(signed.candidate).hexdigest()}})
+    transcript = schemas.serialize("consensus.dataToSign", {"session_id": signed.session_id.hex(), "data": vote})
+    matching = [entry for entry in signed.signatures if entry.node_id_short == introduced.id]
+    if len(matching) != 1 or len(matching[0].signature) != 64:
+        raise ValueError("target proof must carry one introduced-member signature")
+    # A genuine network signature is the cross-language transcript control.
+    introduced.key.verify_key.verify(transcript, matching[0].signature)
+    signature = retired.key.sign(transcript).signature
+    retired.key.verify_key.verify(transcript, signature)
+    manifest = (b"URS1" + block.seqno.to_bytes(4, "big") + block.root_hash + block.file_hash
+                + introduced.id + retired.id + signature)
+    if len(manifest) != 200:
+        raise ValueError("invalid retired-signature manifest size")
+    return manifest, transcript
 
 
 def rewrite_committee(cell, replacement=None):

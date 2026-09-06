@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 
 #include "block/block-auto.h"
@@ -24,6 +25,65 @@ inline td::Result<BlockIdExt> proof_declared_block(td::Slice bytes) {
 inline td::Result<std::string> proof_cell_fingerprint(td::Slice bytes) {
   TRY_RESULT(root, vm::std_boc_deserialize(bytes));
   return root->get_hash().to_hex();
+}
+
+inline td::Result<td::BufferSlice> replace_with_retired_signature(BlockIdExt id, td::BufferSlice bytes) {
+  const auto* path = std::getenv("TOS_COUNTER_RETIRED_SIGNATURE_FILE");
+  static std::atomic<bool> injected{false};
+  if (!id.is_masterchain() || !path || !*path || injected.load()) {
+    return bytes;
+  }
+  std::ifstream file(path, std::ios::binary);
+  if (!file.good()) return bytes;
+  char manifest[200];
+  file.read(manifest, sizeof(manifest));
+  if (file.gcount() != sizeof(manifest) || file.peek() != std::ifstream::traits_type::eof() ||
+      std::memcmp(manifest, "URS1", 4)) {
+    return td::Status::Error("invalid retired-signature fixture");
+  }
+  td::uint32 seqno = 0;
+  for (unsigned i = 4; i < 8; ++i) seqno = (seqno << 8) | static_cast<unsigned char>(manifest[i]);
+  if (id.seqno() != seqno || std::memcmp(id.root_hash.data(), manifest + 8, 32) ||
+      std::memcmp(id.file_hash.data(), manifest + 40, 32)) return bytes;
+  TRY_RESULT(root, vm::std_boc_deserialize(bytes));
+  block::gen::BlockProof::Record proof;
+  block::gen::BlockSignatures::Record_block_signatures_simplex signatures;
+  if (!tlb::unpack_cell(root, proof) || !tlb::unpack_cell(proof.signatures->prefetch_ref(), signatures)) {
+    return td::Status::Error("cannot decode retired-signature target");
+  }
+  vm::Dictionary dict{signatures.signatures, 16};
+  bool replaced = false;
+  for (unsigned i = 0; i < signatures.sig_count; ++i) {
+    auto key = td::BitArray<16>(i);
+    auto entry = dict.lookup(key);
+    td::Bits256 signer;
+    if (entry.is_null() || !entry.write().fetch_bits_to(signer)) {
+      return td::Status::Error("invalid target signature dictionary");
+    }
+    if (!std::memcmp(signer.data(), manifest + 72, 32)) {
+      vm::CellBuilder changed;
+      if (!(changed.store_bytes_bool(manifest + 104, 32) && changed.store_long_bool(5, 4) &&
+            changed.store_bytes_bool(manifest + 136, 64) &&
+            dict.set_builder(key, changed, vm::Dictionary::SetMode::Replace))) {
+        return td::Status::Error("cannot install retired signature");
+      }
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) return td::Status::Error("introduced signer absent from target proof");
+  vm::CellBuilder dictionary;
+  if (!dict.append_dict_to_bool(dictionary)) return td::Status::Error("cannot encode target signature dictionary");
+  signatures.signatures = vm::load_cell_slice_ref(dictionary.finalize());
+  td::Ref<vm::Cell> signature_cell;
+  if (!tlb::pack_cell(signature_cell, signatures)) return td::Status::Error("cannot encode retired signature set");
+  proof.signatures = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(signature_cell).finalize());
+  td::Ref<vm::Cell> changed;
+  if (!tlb::pack_cell(changed, proof)) return td::Status::Error("cannot encode retired-member proof");
+  TRY_RESULT(encoded, vm::std_boc_serialize(changed));
+  if (injected.exchange(true)) return bytes;
+  LOG(WARNING) << "COUNTER_RETIRED_SIGNATURE_SENT " << changed->get_hash().to_hex() << " " << id.to_str();
+  return encoded;
 }
 
 inline td::Result<td::BufferSlice> corrupt_masterchain_signature(BlockIdExt id, td::BufferSlice bytes) {

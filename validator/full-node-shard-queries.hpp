@@ -54,6 +54,13 @@ class BlockFullSender : public td::actor::Actor {
       return;
     }
     proof_ = injected.move_as_ok();
+    injected = test::replace_with_retired_signature(block_id_, std::move(proof_));
+    if (injected.is_error()) {
+      LOG(ERROR) << "COUNTER_PROOF_INJECTION_FAIL " << injected.error();
+      abort_query(injected.move_as_error());
+      return;
+    }
+    proof_ = injected.move_as_ok();
     injected = test::corrupt_masterchain_signature(block_id_, std::move(proof_));
     if (injected.is_error()) {
       LOG(ERROR) << "COUNTER_PROOF_INJECTION_FAIL " << injected.error();
@@ -191,6 +198,7 @@ class NextBlocksFullSender : public td::actor::Actor {
       auto proof = co_await std::move(proof_task);
       auto proof_bytes = proof->data();
 #ifdef TOS_COUNTER_NETWORK_TEST
+      proof_bytes = CO_TRY(test::replace_with_retired_signature(block->block_id(), std::move(proof_bytes)));
       proof_bytes = CO_TRY(test::corrupt_masterchain_signature(block->block_id(), std::move(proof_bytes)));
 #endif
       auto obj = CO_TRY(serialize_block_full_obj(block->block_id(), proof_bytes, block->data(), false,

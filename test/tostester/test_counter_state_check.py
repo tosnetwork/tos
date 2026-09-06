@@ -20,6 +20,22 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_retired_member_acceptance_is_observed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server, cold = root / "network/node3", root / "network/node6"
+            server.mkdir(parents=True)
+            cold.mkdir()
+            fingerprint = "ab" * 32
+            (server / "log").write_text(f"COUNTER_RETIRED_SIGNATURE_SENT {fingerprint}\n")
+            (cold / "log").write_text(f"COUNTER_REMOTE_PROOF_REJECTED {fingerprint} unknown node\n")
+            sent, accepted, rejected = module.signature_proof_results(root, "node6", "COUNTER_RETIRED_SIGNATURE_SENT")
+            self.assertEqual(sent & rejected, {fingerprint.upper()})
+            self.assertFalse(sent & accepted)
+            (cold / "log").write_text(f"COUNTER_REMOTE_PROOF_ACCEPTED {fingerprint}\n")
+            with self.assertRaisesRegex(AssertionError, "retired committee member"):
+                await asyncio.wait_for(module.watch_proof_acceptance(root), 1)
+
     async def test_authenticated_cursor_must_reach_target(self):
         client = SimpleNamespace(sync_toslib=AsyncMock(side_effect=[
             toslib_api.Tos_blockIdExt(seqno=57), toslib_api.Tos_blockIdExt(seqno=58)]))

@@ -213,7 +213,7 @@ td::actor::Task<> DownloadNextBlocks::process_block(tl_object_ptr<tos_api::tosNo
       &ValidatorManagerInterface::validate_block_is_next_proof, handle_->id(), id, std::move(proof)).wrap();
   if (fingerprint.is_ok()) {
     LOG(WARNING) << (verified.is_ok() ? "COUNTER_REMOTE_PROOF_ACCEPTED " : "COUNTER_REMOTE_PROOF_REJECTED ")
-                 << fingerprint.ok();
+                 << fingerprint.ok() << " " << (verified.is_ok() ? std::string{} : verified.error().message().str());
   }
   if (verified.is_error()) {
     co_return verified.move_as_error();

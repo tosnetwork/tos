@@ -2693,3 +2693,58 @@ passed; the host and disk integration CTests passed in 1.74 seconds. Historical
 weight/first-membership runs were archived and verified before their original
 directories were moved to recoverable trash; active run directories were not
 touched.
+
+### Valid signatures from a retired member through real peer transport
+
+`--counter-retired-signature` requires membership replacement. For a genuine
+post-transition masterchain target, the fixture reads its finalized signature
+set and constructs the native signing transcript from the authoritative TL
+schema: candidate-data SHA-256, finalized vote and session-bound data-to-sign.
+The introduced member's genuine network signature must verify over those bytes
+before the retired member signs the identical transcript. That new signature
+is independently verified with the retired public key. No private key is given
+to the serving callback: its atomic 200-byte fixture file contains only the
+exact target identity, two signer IDs and the replacement signature.
+
+The test-only sender substitutes this valid retired signature for the new
+member's signature, leaving block data, proof roots, current committee hash,
+catchain/session metadata, signature count and declared weight unchanged.
+Other signatures remain genuine. In this equal-weight four-member fixture the
+result still carries three old-committee signatures, but not an authorized
+current-committee quorum. Each serving process substitutes at most once.
+
+Receiver observations correlate the exact changed proof-cell fingerprint with
+the real manager's callback and its `unknown node` membership rejection. Any
+acceptance triggers the live watcher immediately. Both single-block and
+next-block download paths are observed, without supplying their validation
+result. The first run `ea2rnm8l` reached real membership rejection but failed
+the harness because only the next-block observer recorded fingerprints; the
+actual request used the single-block path. That failed run was retained, and
+the missing observation was added before claiming a passing gate.
+
+Run `x7e497fb` then passed rejection, recovery, pinned state and database
+reopening (key block 49, target 59, Counter 57, cold height 85). The hash skill
+backend independently reproduced the candidate digest in the first run's
+transcript; the stronger cross-language control is the genuine native signature
+verification. Injection markers are absent from the rebuilt ordinary node and
+present in the explicit test target. M1 still requires persistent-checkpoint
+streaming synchronization and resource/retention evidence; M3 expansion remains
+paused.
+
+The retired-member mutation `togesid6` changed only the unknown-member branch
+inside signature verification: it incorrectly credited one quarter of this
+fixture's total weight and continued, while still verifying recognized members'
+signatures and enforcing committee metadata and quorum. The real cold receiver
+then accepted the substituted proof; the live watcher failed immediately with
+the retired-member acceptance diagnostic. Restoring the `unknown node` rejection
+left no diff in crypto/block/signature-set.cpp. This mutation targets membership
+authorization rather than disabling all signature verification.
+
+After restoration, `5mt97nwb` passed the retired-member rejection plus the
+2,097,263-byte state/reopening combination (key block 49, target 59, Counter
+56, cold height 84). Both node targets and host test targets rebuilt; five
+committee tests, ten client/state instrument tests and both host/disk CTests
+passed (the CTests took 1.34 seconds). The only production-path changes retained
+in downloader sources are test-macro observations; the authorization check is
+unchanged. Earlier terminal fixtures were archived, verified and moved to
+recoverable trash before admitting these runs.

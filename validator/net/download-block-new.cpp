@@ -279,13 +279,19 @@ void DownloadBlockNew::got_ready_to_deserialize(tl_object_ptr<tos_api::tosNode_D
   // to the real manager. This observer never supplies an acceptance result.
   auto declared = test::proof_declared_block(proof.as_slice());
   const bool misbound = declared.is_ok() && declared.ok() != block_id_;
+  auto fingerprint = test::proof_cell_fingerprint(proof.as_slice());
+  auto proof_fingerprint = fingerprint.is_ok() ? fingerprint.move_as_ok() : std::string{};
 #endif
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)
 #ifdef TOS_COUNTER_NETWORK_TEST
-                                     , misbound
+                                     , misbound, proof_fingerprint = std::move(proof_fingerprint)
 #endif
                                      ](td::Result<td::Unit> R) {
 #ifdef TOS_COUNTER_NETWORK_TEST
+    if (!proof_fingerprint.empty()) {
+      LOG(WARNING) << (R.is_ok() ? "COUNTER_REMOTE_PROOF_ACCEPTED " : "COUNTER_REMOTE_PROOF_REJECTED ")
+                   << proof_fingerprint << " " << (R.is_ok() ? std::string{} : R.error().message().str());
+    }
     if (misbound) {
       LOG(WARNING) << (R.is_ok() ? "COUNTER_MISBOUND_PROOF_ACCEPTED" : "COUNTER_MISBOUND_PROOF_REJECTED");
     }

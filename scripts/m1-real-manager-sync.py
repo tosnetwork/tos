@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / "test/tostester/src"))
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.zerostate import counter_payload_tree
-from tostester.counter_committee import read_committee, submit_committee_update, wait_committee_updated
+from tostester.counter_committee import read_committee, retired_signature_manifest, submit_committee_update, wait_committee_updated
 from pytosiq_core import Address, Cell
 
 
@@ -105,7 +105,7 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
-def signature_proof_results(root, cold_name="node5"):
+def signature_proof_results(root, cold_name="node5", sent_marker="COUNTER_BAD_SIGNATURE_SENT"):
     logs = "\n".join(log.read_text(errors="replace") for log in (root / "network").glob("node*/log"))
     cold_path = root / "network" / cold_name / "log"
     cold_log = cold_path.read_text(errors="replace") if cold_path.exists() else ""
@@ -115,7 +115,7 @@ def signature_proof_results(root, cold_name="node5"):
 
     # Any receiver accepting the injected proof fails; successful rejection
     # evidence must come from the cold observer, not another committee node.
-    return (fingerprints("COUNTER_BAD_SIGNATURE_SENT", logs), fingerprints("COUNTER_REMOTE_PROOF_ACCEPTED", logs),
+    return (fingerprints(sent_marker, logs), fingerprints("COUNTER_REMOTE_PROOF_ACCEPTED", logs),
             fingerprints("COUNTER_REMOTE_PROOF_REJECTED", cold_log))
 
 
@@ -127,6 +127,9 @@ async def watch_proof_acceptance(root):
         sent, accepted, _ = signature_proof_results(root)
         if sent & accepted:
             raise AssertionError("real receiver accepted a peer proof with a corrupted committee signature")
+        retired, accepted, _ = signature_proof_results(root, sent_marker="COUNTER_RETIRED_SIGNATURE_SENT")
+        if retired & accepted:
+            raise AssertionError("real receiver accepted a proof signed by a retired committee member")
         await asyncio.sleep(0.2)
 
 
@@ -147,7 +150,7 @@ async def guarded_exercise(root, *args):
 
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
-                   bad_signature=False, large_payload=False, reweight=False, membership=False):
+                   bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -179,6 +182,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
             "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
             "TOS_COUNTER_PAYLOAD": "1" if large_payload else "0",
+            "TOS_COUNTER_RETIRED_SIGNATURE_FILE": str(root / "retired-signature.bin") if retired_signature else "",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
@@ -227,6 +231,16 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                     await asyncio.sleep(0.2)
 
             counter_target = await asyncio.wait_for(post_committee_counter(), join_timeout)
+        if retired_signature:
+            signed = await warm_client.get_masterchain_block_signatures(target.seqno)
+            manifest, transcript = retired_signature_manifest(
+                REPO, signed, target, replacement_node.validator_key, validators[0].validator_key)
+            (root / "retired-signature-transcript.bin").write_bytes(transcript)
+            (root / "retired-signature-control.json").write_text(signed.to_json())
+            pending = root / "retired-signature.pending"
+            pending.write_bytes(manifest)
+            pending.replace(root / "retired-signature.bin")
+        cold_options = replace(options, env={**options.env, "TOS_COUNTER_RETIRED_SIGNATURE_FILE": ""})
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -234,7 +248,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if misbound_proof or bad_signature:
             (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
-        await cold.run(options, seed_extra_states=False)
+        await cold.run(cold_options, seed_extra_states=False)
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
             raise AssertionError("cold node must have only masterchain/native static states")
         cold_client, observed = await asyncio.wait_for(reach(cold, target.seqno + 2), join_timeout)
@@ -268,6 +282,14 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired, payload), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
+            if retired_signature:
+                sent, accepted, rejected = signature_proof_results(
+                    root, cold.log_path.parent.name, "COUNTER_RETIRED_SIGNATURE_SENT")
+                if sent & accepted or not sent & rejected:
+                    raise AssertionError("cold receiver did not reject the retired-member proof")
+                if not any(f"COUNTER_REMOTE_PROOF_REJECTED {fingerprint} " in line and "unknown node" in line
+                           for fingerprint in sent & rejected for line in cold_log.splitlines()):
+                    raise AssertionError("retired-member rejection did not reach membership validation")
             if bad_signature:
                 sent, accepted, rejected = signature_proof_results(root, cold.log_path.parent.name)
                 if sent & accepted:
@@ -319,7 +341,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             # Preserve the first process log: run() otherwise truncates it.
             await cold.stop()
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
-            await cold.run(options)
+            await cold.run(cold_options)
             restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
             await asyncio.wait_for(reach_authenticated(restarted, observed.seqno), join_timeout)
             if committee_key is not None:
@@ -345,6 +367,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
                 "remote_committee_signature_rejection_tested": bad_signature,
+                "remote_retired_member_rejection_tested": retired_signature,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 5 if membership else 4, "cold_observer_processes": 1,
@@ -364,6 +387,8 @@ def main():
                         help="cold-join after a signed config-owner validator-weight update (not an election)")
     parser.add_argument("--counter-membership", action="store_true",
                         help="replace one committee member with an independent node, then cold-join")
+    parser.add_argument("--counter-retired-signature", action="store_true",
+                        help="require rejection of a genuine retired-member signature after replacement")
     parser.add_argument("--counter-reencoded-state", action="store_true",
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
     parser.add_argument("--counter-misbound-proof", action="store_true",
@@ -377,6 +402,8 @@ def main():
         parser.error("--counter-reweight requires --counter")
     if args.counter_membership and (not args.counter or args.counter_reweight):
         parser.error("--counter-membership requires --counter and excludes --counter-reweight")
+    if args.counter_retired_signature and (not args.counter_membership or args.counter_bad_signature):
+        parser.error("--counter-retired-signature requires --counter-membership and excludes --counter-bad-signature")
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
     if args.counter_misbound_proof and not args.counter:
@@ -410,7 +437,7 @@ def main():
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
-                                      args.counter_membership)))
+                                      args.counter_membership, args.counter_retired_signature)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"
