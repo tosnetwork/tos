@@ -513,6 +513,62 @@ TEST(WorkchainBlock, ResolvedBatchStaging) {
   ASSERT_TRUE(account.transactions.empty());
 }
 
+TEST(WorkchainBlock, BatchExecutorCellBudgetIncludesFullWrapper) {
+  auto in = input();
+  auto effects = CounterEngine().execute_block(in).move_as_ok();
+  // A balanced, uniquely labelled tree avoids both depth-limit rejection and
+  // accidental deduplication. This is host test state, not a private-note tree.
+  std::vector<td::Ref<vm::Cell>> layer;
+  for (unsigned i = 0; i < (1u << 15); ++i) {
+    layer.push_back(number(i));
+  }
+  while (layer.size() > 1) {
+    std::vector<td::Ref<vm::Cell>> next;
+    for (std::size_t i = 0; i < layer.size(); i += 2) {
+      next.push_back(vm::CellBuilder().store_ref(layer[i]).store_ref(layer[i + 1]).finalize());
+    }
+    layer = std::move(next);
+  }
+  effects.new_engine_state = layer.front();
+  vm::CellStorageStat payload_stat;
+  ASSERT_TRUE(payload_stat.compute_used_storage(effects.new_engine_state).is_ok());
+  ASSERT_EQ(payload_stat.cells, 65535u);
+  auto encoded = block::encode_workchain_block_result(effects).move_as_ok();
+  auto wrapper = block::encode_workchain_executor_state({effects.new_engine_state, in.candidate, encoded}).move_as_ok();
+  vm::CellStorageStat wrapper_stat;
+  ASSERT_TRUE(wrapper_stat.compute_used_storage(wrapper).is_ok());
+  ASSERT_TRUE(wrapper_stat.cells > 65536u);
+  ASSERT_TRUE(wrapper_stat.cells < std::numeric_limits<td::uint32>::max());
+
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial));
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  ASSERT_EQ(cfg.size_limits.max_acc_state_cells, 65536u);
+  const auto original = account.total_state->get_hash();
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  auto rejected = tx.prepare_workchain_batch(in, effects, cfg);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().code(), block::AccountStorageStat::errorcode_limits_exceeded);
+  ASSERT_TRUE(tx.new_data->get_hash() == account.data->get_hash());
+  ASSERT_TRUE(!tx.serialize(cfg));
+  ASSERT_TRUE(tx.out_msgs.empty());
+  ASSERT_TRUE(account.total_state->get_hash() == original);
+
+  const auto required = static_cast<td::uint32>(wrapper_stat.cells);
+  cfg.size_limits.max_acc_state_cells = required - 1;
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_error());
+  cfg.size_limits.max_acc_state_cells = required;
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  ASSERT_TRUE(tx.serialize(cfg));
+  ASSERT_TRUE(tx.new_data->get_hash() == wrapper->get_hash());
+  ASSERT_TRUE(account.total_state->get_hash() == original);
+  LOG(INFO) << "Batch executor cell budget: payload=" << payload_stat.cells << " wrapper=" << required;
+}
+
 TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   CounterEngine engine;
   auto in = input();

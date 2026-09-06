@@ -2481,3 +2481,39 @@ passed in 1.45 seconds and all five Python instrument tests passed. Injection
 and observation markers are present only in the explicit test executable.
 M1 remains open for committee/checkpoint transitions and large-state sync;
 M3 expansion remains paused.
+
+### Executor account-cell ceiling before large-state synchronization
+
+Before enlarging the real-network fixture, source tracing found an earlier
+limit: prepare_workchain_batch checks the complete new executor data through
+Transaction::check_state_limits. SizeLimitsConfig defaults to 65,536 account
+cells (overridable by the existing configuration size-limits parameter). The
+ordinary/special fee policy does not exempt the executor from that limit.
+
+`BatchExecutorCellBudgetIncludesFullWrapper` constructs a balanced, uniquely
+labelled 65,535-cell test payload. Independent CellStorageStat traversal counts
+65,540 cells in the full executor wrapper, including candidate/result witness
+references with deduplication. The real batch preparation rejects it under the
+default limit with the storage-limit status code, restores staged data, emits
+no messages, cannot serialize the failed transaction, and leaves the account
+unchanged. A 65,539-cell budget still rejects it; exactly 65,540 accepts and
+serializes it without committing. The five-cell difference is specific to this
+fixture, not an overhead allowance for arbitrary UNO results.
+
+Removing the actual total-cell check and running only this test failed at
+`rejected.is_error()`: preparation incorrectly succeeded. The check was restored
+exactly; crypto/block/transaction.cpp has no lasting change. This is a host
+staging/size-bound measurement, not network synchronization, a private-note
+state schema, or a scalable-state acceptance result.
+
+M0/scale-test prerequisite: freeze an explicit total executor-state cell budget
+and capacity/migration policy together with candidate/effect retention. A large
+fixture must state any ConfigParam 43 override and test its real collate/validate
+path; neither an importer-only success nor silently raising the global limit
+proves UNO can operate at that size. No default, genesis configuration or
+production limit is changed here. The next network-state fixture must first
+fit a stated account-cell budget, then measure download/import, replay,
+reopening and resource use against it. M1 remains open.
+
+After restoring the check, both node targets and both Counter test targets
+rebuilt; BlockTransition and disk integration CTests passed in 1.65 seconds.
