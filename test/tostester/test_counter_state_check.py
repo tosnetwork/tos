@@ -1,8 +1,10 @@
 """Instrument checks for the real-network state assertions, not proof validation."""
 import importlib.util
+import asyncio
 from pathlib import Path
 import sys
 import unittest
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -18,6 +20,28 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_signature_results_match_the_injected_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            node = root / "network/node5"
+            node.mkdir(parents=True)
+            bad, good = "ab" * 32, "cd" * 32
+            log = node / "log"
+            server = root / "network/node1"
+            server.mkdir()
+            (server / "log").write_text(f"COUNTER_BAD_SIGNATURE_SENT {bad}\n"
+                                        f"COUNTER_REMOTE_PROOF_REJECTED {bad}\n")
+            log.write_text(f"COUNTER_REMOTE_PROOF_ACCEPTED {good}\n")
+            sent, accepted, rejected = module.signature_proof_results(root)
+            self.assertFalse(sent & rejected)
+            log.write_text(log.read_text() + f"COUNTER_REMOTE_PROOF_REJECTED {bad.upper()}\n")
+            sent, accepted, rejected = module.signature_proof_results(root)
+            self.assertEqual(sent & rejected, {bad.upper()})
+            self.assertFalse(sent & accepted)
+            log.write_text(log.read_text() + f"COUNTER_REMOTE_PROOF_ACCEPTED {bad}\n")
+            with self.assertRaisesRegex(AssertionError, "corrupted committee signature"):
+                await asyncio.wait_for(module.watch_proof_acceptance(root), 1)
+
     async def test_client_encodes_pinned_request(self):
         client = object.__new__(ToslibClient)
         response = toslib_api.Raw_fullAccountState().to_dict()

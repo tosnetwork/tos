@@ -2410,3 +2410,74 @@ correct state persistence, pinned account checks and database reopening
 rebuilt, the two Counter CTests passed in 1.48 seconds, and all four Python
 state/request tests passed. M1 is still not complete; M3 expansion remains
 paused.
+
+### Remote masterchain committee-signature rejection
+
+`--counter-bad-signature` flips one bit in the first 64-byte signature of a
+genuine masterchain proof, preserving its signer, signature count/weight,
+validator-set hash, session, slot, candidate data, block ID and Merkle root.
+The explicit test library injects it into single-block or batched next-block
+responses only after the committee has produced blocks. Normal subsequent
+responses permit recovery. The Ed25519 skill informed the fixed-length,
+content-only mutation; verification remains the real consensus verifier.
+
+Because compressed transport reserializes BoCs, sender/receiver correlation
+uses the full proof's Cell-root fingerprint, not the wire-file digest. This
+distinction follows the hash skill and preserves signature-set binding across
+transport encoding changes. The observer records the real
+validate_block_is_next_proof result. The runner requires rejection of an
+injected fingerprint specifically on the cold observer; acceptance on any
+node fails immediately. An accepted unrelated genuine proof does not fail the
+test, nor does a rejection on a warm node satisfy the cold-node requirement.
+
+The first setup run (`w79t4hhh`) failed from a test-only constructor mistake:
+`BitArray<16>{0}` selects the byte-pointer overload, not the integer template.
+A compiler AST probe confirmed the null-to-pointer conversion. This explained
+the missing injection marker and server exits; the run ended in timeout and
+is not rejection evidence. The helper now uses explicit `BitArray<16>::zero()`.
+That failed fixture was archived and verified in
+`build/m1-counter-signature-injector-failure-20260906.tar.gz` before moving its
+directory to trash. Earlier proof-identity runs were similarly retained in
+`build/m1-counter-misbound-runs-20260906.tar.gz`.
+
+Run `wrn8rad9` then passed: the cold node rejected injected masterchain proofs
+at CheckProof's actual signature call (`bad signature: Wrong signature`),
+retried, acquired Counter state, and reopened its database. Mutation run
+`h4ifrfgv` replaced only `sig_set_->check_signatures(vset_, id_)` with a
+successful result carrying the declared weight. Other metadata/weight checks
+remained. The cold observer accepted the injected fingerprints and the watch
+failed with `real receiver accepted a peer proof with a corrupted committee
+signature`. The signature call was restored exactly, leaving no diff in
+validator/impl/check-proof.cpp. This is a verifier-removal mutation, not an
+error-string or packet-format negative control.
+
+This covers cold masterchain catch-up under the trusted test genesis committee,
+not committee rotation, checkpoint selection at large height, persistent-state
+import at scale, or complete UNO synchronization. M1 remains open.
+
+Combined run `o9gmly11` caught a scope error in the signature test: a warm node
+requested a recent block whose valid proof was already cached, so CheckProof
+returned cached success without rechecking the supplied signatures. This was
+not cold-node first-proof acceptance. The sender now targets masterchain block
+1 only, after every initial validator has passed its height-3-or-later probe.
+That removes the warm-tip race without changing the production cache policy.
+The three initial signature runs were archived, verified, and moved to trash
+with full contents retained in
+`build/m1-counter-signature-initial-runs-20260906.tar.gz`.
+
+With the first-block target, combined run `22rlv5fq` passed state-file,
+proof-identity and committee-signature rejection together, including Counter
+state acquisition and database reopening. Repeating the real signature-call
+removal with that target (`uiaigol0`) again caused the cold observer to accept
+the changed proof and the watcher to fail immediately. The call was restored
+before the final build; neither CheckProof nor the production cache policy has
+a lasting change. The five Python instrument tests include fingerprint
+correlation and ensure a warm-node rejection cannot satisfy the cold-node gate.
+
+Final restored run `iq6sidsl` passed all three remote-response modes, the
+pinned Counter state and database reopening (Counter target 17, masterchain
+target 18, cold height 48). Both node targets rebuilt; the two Counter CTests
+passed in 1.45 seconds and all five Python instrument tests passed. Injection
+and observation markers are present only in the explicit test executable.
+M1 remains open for committee/checkpoint transitions and large-state sync;
+M3 expansion remains paused.

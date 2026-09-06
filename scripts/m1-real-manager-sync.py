@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import fcntl
 import json
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -81,11 +82,28 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
+def signature_proof_results(root):
+    logs = "\n".join(log.read_text(errors="replace") for log in (root / "network").glob("node*/log"))
+    cold_path = root / "network/node5/log"
+    cold_log = cold_path.read_text(errors="replace") if cold_path.exists() else ""
+
+    def fingerprints(marker, text):
+        return {value.upper() for value in re.findall(marker + r" ([0-9a-fA-F]{64})", text)}
+
+    # Any receiver accepting the injected proof fails; successful rejection
+    # evidence must come from the cold observer, not another committee node.
+    return (fingerprints("COUNTER_BAD_SIGNATURE_SENT", logs), fingerprints("COUNTER_REMOTE_PROOF_ACCEPTED", logs),
+            fingerprints("COUNTER_REMOTE_PROOF_REJECTED", cold_log))
+
+
 async def watch_proof_acceptance(root):
     while True:
         for log in (root / "network").glob("node*/log"):
             if "COUNTER_MISBOUND_PROOF_ACCEPTED" in log.read_text(errors="replace"):
                 raise AssertionError(f"real receiver accepted a misbound peer proof: {log}")
+        sent, accepted, _ = signature_proof_results(root)
+        if sent & accepted:
+            raise AssertionError("real receiver accepted a peer proof with a corrupted committee signature")
         await asyncio.sleep(0.2)
 
 
@@ -105,7 +123,8 @@ async def guarded_exercise(root, *args):
         await asyncio.gather(run, watch, return_exceptions=True)
 
 
-async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False):
+async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
+                   bad_signature=False):
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
     install.toslibjson.client_set_verbosity_level(1)
@@ -133,6 +152,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_SIGNATURE_PROBE": "0",
             "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
+            "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
@@ -140,6 +160,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 **options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1",
                 "TOS_COUNTER_REENCODE_ZERO_STATE": "1" if reencoded_state else "0",
                 "TOS_COUNTER_MISBOUND_PROOF_FILE": str(root / "proof-fault-armed") if misbound_proof else "",
+                "TOS_COUNTER_BAD_SIGNATURE_FILE": str(root / "proof-fault-armed") if bad_signature else "",
             }) if counter else options)
         _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
@@ -150,7 +171,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
         cold.announce_to(dht)
-        if misbound_proof:
+        if misbound_proof or bad_signature:
             (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
         await cold.run(options, seed_extra_states=False)
@@ -172,6 +193,12 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
+            if bad_signature:
+                sent, accepted, rejected = signature_proof_results(root)
+                if sent & accepted:
+                    raise AssertionError("real receiver accepted a peer proof with a corrupted committee signature")
+                if not (sent & rejected):
+                    raise AssertionError("no injected committee-signature proof was rejected by the real receiver")
             if misbound_proof:
                 if "COUNTER_MISBOUND_PROOF_ACCEPTED" in cold_log:
                     raise AssertionError("real receiver accepted a misbound peer proof")
@@ -229,6 +256,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_counter_zerostate_peer_download_tested": counter,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
+                "remote_committee_signature_rejection_tested": bad_signature,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
@@ -246,11 +274,15 @@ def main():
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
     parser.add_argument("--counter-misbound-proof", action="store_true",
                         help="require real receiver rejection of a peer proof naming the wrong file hash")
+    parser.add_argument("--counter-bad-signature", action="store_true",
+                        help="require rejection of a masterchain proof with one corrupted committee signature")
     args = parser.parse_args()
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
     if args.counter_misbound_proof and not args.counter:
         parser.error("--counter-misbound-proof requires --counter")
+    if args.counter_bad_signature and not args.counter:
+        parser.error("--counter-bad-signature requires --counter")
     build = args.build.resolve(strict=True)
     if not 1 <= args.join_timeout <= 600:
         parser.error("join timeout must be between 1 and 600 seconds")
@@ -276,7 +308,8 @@ def main():
               "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()}
     try:
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
-                                          args.counter_reencoded_state, args.counter_misbound_proof)))
+                                      args.counter_reencoded_state, args.counter_misbound_proof,
+                                      args.counter_bad_signature)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

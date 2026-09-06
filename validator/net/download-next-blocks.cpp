@@ -26,6 +26,10 @@
 #include "download-next-blocks.hpp"
 #include "full-node-serializer.hpp"
 
+#ifdef TOS_COUNTER_NETWORK_TEST
+#include "test/counter-network-proof-fault.h"
+#endif
+
 namespace tos {
 
 namespace validator {
@@ -203,8 +207,21 @@ td::actor::Task<> DownloadNextBlocks::process_block(tl_object_ptr<tos_api::tosNo
   if (td::sha256_bits256(block_data.as_slice()) != id.file_hash) {
     co_return td::Status::Error(ErrorCode::notready, "received data with bad hash");
   }
+#ifdef TOS_COUNTER_NETWORK_TEST
+  auto fingerprint = test::proof_cell_fingerprint(proof.as_slice());
+  auto verified = co_await td::actor::ask(validator_manager_,
+      &ValidatorManagerInterface::validate_block_is_next_proof, handle_->id(), id, std::move(proof)).wrap();
+  if (fingerprint.is_ok()) {
+    LOG(WARNING) << (verified.is_ok() ? "COUNTER_REMOTE_PROOF_ACCEPTED " : "COUNTER_REMOTE_PROOF_REJECTED ")
+                 << fingerprint.ok();
+  }
+  if (verified.is_error()) {
+    co_return verified.move_as_error();
+  }
+#else
   co_await td::actor::ask(validator_manager_, &ValidatorManagerInterface::validate_block_is_next_proof, handle_->id(),
                           id, std::move(proof));
+#endif
   ReceivedBlock result{.id = id, .data = std::move(block_data)};
   handle_ = co_await td::actor::ask(validator_manager_, &ValidatorManagerInterface::validate_block, std::move(result));
   success_ = true;
