@@ -3661,3 +3661,9 @@ The [six-angle audit response](uno-six-angle-audit-response.md) records the
 capability-only/absent-ingress-table consistency fix and the non-overwriting
 header-export guard. These are partial dispositions, not activation acceptance;
 retirement, scope admission, CI coverage and state-capacity decisions remain open.
+
+The [third-audit codec fixes](uno-third-audit-codec-fixes.md) bound standalone
+anchor capacity, contain builder exceptions across UNO state encoders, and
+require exact nullifier-root flag/ref correspondence. Tests failed on the old
+behavior and pass after rebuilding. No host storage-contract change or B3-1
+preflight completion is implied.

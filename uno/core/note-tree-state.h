@@ -50,6 +50,10 @@ class NoteTreeState {
         .store_bytes(value.leaf, 32).store_long(value.ommer_count, 6);
     if (tail.not_null()) header.store_ref(tail);
     return header.finalize();
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return td::Status::Error("UNO frontier encoding exceeds cell limits");
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return td::Status::Error("UNO frontier cell construction failed");
   } catch (vm::VmError&) {
     return td::Status::Error("UNO frontier cell encoding failed");
   } catch (vm::VmVirtError&) {

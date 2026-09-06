@@ -28,6 +28,86 @@ NoteState restore(const NoteState& state) {
 }
 }
 
+TEST(UnoNoteState, MissingFlaggedRootsAreNotEmptyDictionaries) {
+  auto source = initial();
+  auto canonical = source.to_cell().move_as_ok();
+  auto tree = source.tree().to_cell().move_as_ok();
+  auto anchors = source.anchors().to_cell().move_as_ok();
+  for (unsigned flags = 0; flags < 8; ++flags) {
+    auto missing = vm::CellBuilder().store_long(flags, 3).finalize();
+    auto cell = vm::CellBuilder().store_long(0x554e5330, 32)
+        .store_ref(tree).store_ref(anchors).store_ref(missing).finalize();
+    auto loaded = NoteState::from_cell(cell, 3, 3, {});
+    if (flags == 0) {
+      ASSERT_TRUE(loaded.is_ok());
+      ASSERT_TRUE(loaded.ok().to_cell().move_as_ok()->get_hash() == canonical->get_hash());
+    } else {
+      ASSERT_TRUE(loaded.is_error());
+    }
+  }
+}
+
+TEST(UnoNoteState, EnclosingStateDepthFailureIsRecoverable) {
+  for (unsigned capacity = vm::CellTraits::max_depth - 2; capacity <= vm::CellTraits::max_depth; ++capacity) {
+    auto tree = NoteTreeState::empty().move_as_ok();
+    auto anchors = AnchorWindow::genesis(capacity, capacity, tree.root()).move_as_ok();
+    for (unsigned height = 1; height < capacity; ++height) {
+      anchors = anchors.finish_block(height, tree.root()).move_as_ok();
+    }
+    auto notes = NoteState::assemble(tree, {}, anchors).move_as_ok();
+    auto encoded = notes.to_cell();
+    ASSERT_EQ(encoded.is_ok(), capacity < vm::CellTraits::max_depth);
+    auto state = PrivateTransferState::assemble(notes, {}).move_as_ok();
+    auto wrapped = state.to_cell();
+    ASSERT_EQ(wrapped.is_ok(), capacity < vm::CellTraits::max_depth - 1);
+    ASSERT_EQ(notes.anchors().size(), capacity);
+  }
+}
+
+TEST(UnoNoteState, BuilderFailuresLeaveSourceUnchanged) {
+  auto notes = initial();
+  auto transfer = PrivateTransferState::assemble(notes, {}).move_as_ok();
+  class Creates final : public vm::VmStateInterface {
+   public:
+    unsigned calls = 0, fail_at = UINT_MAX;
+    bool write_error = false;
+    void register_cell_create() override {
+      if (calls++ == fail_at) {
+        if (write_error) throw vm::CellBuilder::CellWriteError{};
+        throw vm::CellBuilder::CellCreateError{};
+      }
+    }
+  } creates;
+  auto exercise = [&](auto encode) {
+    auto before = encode().move_as_ok()->get_hash();
+    creates.calls = 0;
+    creates.fail_at = UINT_MAX;
+    {
+      vm::VmStateInterface::Guard guard(&creates);
+      ASSERT_TRUE(encode().is_ok());
+    }
+    const auto count = creates.calls;
+    ASSERT_TRUE(count > 0);
+    for (bool write_error : {false, true}) {
+      creates.write_error = write_error;
+      for (unsigned index = 0; index < count; ++index) {
+        creates.calls = 0;
+        creates.fail_at = index;
+        {
+          vm::VmStateInterface::Guard guard(&creates);
+          ASSERT_TRUE(encode().is_error());
+          ASSERT_EQ(creates.calls, index + 1);
+        }
+        ASSERT_TRUE(encode().move_as_ok()->get_hash() == before);
+      }
+    }
+  };
+  exercise([&] { return notes.tree().to_cell(); });
+  exercise([&] { return notes.anchors().to_cell(); });
+  exercise([&] { return notes.to_cell(); });
+  exercise([&] { return transfer.to_cell(); });
+}
+
 TEST(UnoNoteState, AtomicLateFailureAndReplay) {
   const auto source = initial();
   const auto hash = source.to_cell().move_as_ok()->get_hash();

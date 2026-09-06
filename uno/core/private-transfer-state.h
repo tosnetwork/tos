@@ -86,6 +86,10 @@ class PrivateTransferState {
       root.store_long(amount.high(), 64).store_long(amount.low(), 64);
     }
     return root.store_ref(notes).finalize();
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return td::Status::Error("UNO transfer state encoding exceeds cell limits");
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return td::Status::Error("UNO transfer state cell construction failed");
   } catch (vm::VmError&) {
     return td::Status::Error("UNO transfer state encoding failed");
   } catch (vm::VmVirtError&) {

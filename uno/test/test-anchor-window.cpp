@@ -34,6 +34,20 @@ TEST(UnoAnchorWindow, FrozenPrestateAndIdleAging) {
   ASSERT_TRUE(genesis.contains(root(0)));
 }
 
+TEST(UnoAnchorWindow, CapacityMustFitCellDepth) {
+  constexpr unsigned maximum = vm::CellTraits::max_depth;
+  ASSERT_TRUE(AnchorWindow::genesis(maximum + 1, maximum + 1, root(0)).is_error());
+  const auto leaf = vm::CellBuilder().store_bytes(root(0).data(), 32).finalize();
+  ASSERT_TRUE(AnchorWindow::from_cell(header(0, 1, leaf), maximum + 1, maximum + 1).is_error());
+  auto state = AnchorWindow::genesis(maximum, maximum, root(0)).move_as_ok();
+  for (unsigned i = 1; i < maximum; ++i) state = state.finish_block(i, root(i)).move_as_ok();
+  auto cell = state.to_cell().move_as_ok();
+  ASSERT_EQ(cell->get_depth(), maximum);
+  auto restored = AnchorWindow::from_cell(cell, maximum, maximum).move_as_ok();
+  ASSERT_TRUE(restored.to_cell().move_as_ok()->get_hash() == cell->get_hash());
+  ASSERT_TRUE(restored.finish_block(maximum, root(0)).move_as_ok().to_cell().is_ok());
+}
+
 TEST(UnoAnchorWindow, RestoreAndContinue) {
   auto state = AnchorWindow::genesis(3, 3, root(0)).move_as_ok();
   for (unsigned i = 0; i < 12; ++i) {

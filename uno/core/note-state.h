@@ -94,6 +94,10 @@ class NoteState {
     }
     return vm::CellBuilder().store_long(0x554e5330, 32).store_ref(tree).store_ref(anchors)
         .store_ref(nullifiers.finalize()).finalize();
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return td::Status::Error("UNO note state encoding exceeds cell limits");
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return td::Status::Error("UNO note state cell construction failed");
   } catch (vm::VmError&) {
     return td::Status::Error("UNO note state encoding failed");
   } catch (vm::VmVirtError&) {
@@ -114,6 +118,11 @@ class NoteState {
     TRY_RESULT(anchors, AnchorWindow::from_cell(root.fetch_ref(), window, window_limit));
     auto dictionary_roots = vm::load_cell_slice_special(root.fetch_ref(), special);
     if (special || dictionary_roots.size() != 3) return td::Status::Error("UNO invalid nullifier root envelope");
+    const auto flags = dictionary_roots.prefetch_ulong(3);
+    const auto expected_refs = (flags & 1u) + ((flags >> 1) & 1u) + ((flags >> 2) & 1u);
+    if (dictionary_roots.size_refs() != expected_refs) {
+      return td::Status::Error("UNO nullifier root flags differ from reference count");
+    }
     td::Ref<vm::Cell> roots[3];
     for (auto& item : roots) {
       if (dictionary_roots.fetch_ulong(1)) item = dictionary_roots.fetch_ref();

@@ -19,10 +19,15 @@ namespace uno_workchain {
 class AnchorWindow {
  public:
   using Root = std::array<td::uint8, 32>;
+  // Standalone codec bound. Enclosing state/host wrappers need their own depth
+  // headroom and must choose a smaller resource limit where necessary.
+  static constexpr std::uint32_t max_capacity = vm::CellTraits::max_depth;
 
   static td::Result<AnchorWindow> genesis(std::uint32_t capacity, std::uint32_t resource_limit,
                                         const Root& root) {
-    if (!capacity || capacity > resource_limit) return td::Status::Error("UNO anchor capacity exceeds limits");
+    if (!capacity || capacity > resource_limit || capacity > max_capacity) {
+      return td::Status::Error("UNO anchor capacity exceeds limits");
+    }
     return AnchorWindow(capacity, 0, {root});
   }
 
@@ -60,6 +65,10 @@ class AnchorWindow {
     }
     return vm::CellBuilder().store_long(0x554e4130, 32).store_long(height_, 64)
         .store_long(roots_.size(), 32).store_ref(tail).finalize();
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return td::Status::Error("UNO anchor cell encoding exceeds cell limits");
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return td::Status::Error("UNO anchor cell construction failed");
   } catch (vm::VmError&) {
     return td::Status::Error("UNO anchor encoding failed");
   } catch (vm::VmVirtError&) {
@@ -70,7 +79,7 @@ class AnchorWindow {
 
   static td::Result<AnchorWindow> from_cell(const td::Ref<vm::Cell>& cell, std::uint32_t capacity,
                                            std::uint32_t resource_limit) try {
-    if (!capacity || capacity > resource_limit || cell.is_null()) {
+    if (!capacity || capacity > resource_limit || capacity > max_capacity || cell.is_null()) {
       return td::Status::Error("UNO missing anchor state or invalid capacity");
     }
     bool special = false;
