@@ -3,6 +3,7 @@
 #include "workchain-counter-engine.h"
 
 #include "block/workchain-block-execution.h"
+#include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
 #include "vm/cells.h"
@@ -16,6 +17,32 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+class PreflightObservedCell final : public vm::Cell {
+ public:
+  PreflightObservedCell(td::Ref<vm::Cell> cell, unsigned* loads, bool unavailable = false)
+      : cell_(std::move(cell)), loads_(loads), unavailable_(unavailable) {
+  }
+  td::Status set_data_cell(td::Ref<vm::DataCell>&& cell) const override {
+    return cell_->set_data_cell(std::move(cell));
+  }
+  td::Result<LoadedCell> load_cell() const override {
+    ++*loads_;
+    if (unavailable_) return td::Status::Error("test input unavailable");
+    return cell_->load_cell();
+  }
+  bool is_virtualized() const override { return cell_->is_virtualized(); }
+  vm::CellUsageTree::NodePtr get_tree_node() const override { return {}; }
+  bool is_loaded() const override { return !unavailable_; }
+  LevelMask get_level_mask() const override { return cell_->get_level_mask(); }
+
+ private:
+  const Hash do_get_hash(td::uint32 level) const override { return cell_->get_hash(level); }
+  td::uint16 do_get_depth(td::uint32 level) const override { return cell_->get_depth(level); }
+  td::Ref<vm::Cell> cell_;
+  unsigned* loads_;
+  bool unavailable_;
+};
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
@@ -1472,6 +1499,74 @@ TEST(WorkchainBlock, CollationCandidateScope) {
   ASSERT_TRUE(unexpected.is_error());
   ASSERT_EQ(unexpected.error().message(), missing.error().message());
   ASSERT_TRUE(block::validate_workchain_candidate_scope({}, static_cast<Scope>(255)).is_error());
+}
+
+TEST(WorkchainBlock, InputPreflightUnionAndExactLimits) {
+  auto shared = vm::CellBuilder().store_long(5, 3).finalize();
+  auto first = vm::CellBuilder().store_long(0, 1).store_ref(shared).store_ref(shared).finalize();
+  auto second = vm::CellBuilder().store_long(1, 2).store_ref(shared).finalize();
+  block::WorkchainInputPreflight gate({3, 6, 3});
+  ASSERT_TRUE(gate.add(first).is_ok());
+  ASSERT_EQ(gate.usage().cells, 2u);
+  ASSERT_EQ(gate.usage().bits, 4u);
+  ASSERT_TRUE(gate.add(second).is_ok());
+  ASSERT_TRUE(gate.add(first).is_ok());
+  ASSERT_EQ(gate.usage().cells, 3u);
+  ASSERT_EQ(gate.usage().bits, 6u);
+  ASSERT_EQ(gate.usage().roots, 3u);
+  ASSERT_TRUE(gate.add(first).is_error());
+  block::WorkchainInputPreflight cells({2, 6, 2});
+  ASSERT_TRUE(cells.add(first).is_ok());
+  ASSERT_TRUE(cells.add(second).is_error());
+  block::WorkchainInputPreflight bits({3, 5, 2});
+  ASSERT_TRUE(bits.add(first).is_ok());
+  ASSERT_TRUE(bits.add(second).is_error());
+  ASSERT_TRUE(bits.add(first).is_error());
+}
+
+TEST(WorkchainBlock, InputPreflightStopsBeforeOverLimitLoad) {
+  unsigned root_loads = 0, child_loads = 0;
+  td::Ref<PreflightObservedCell> child{true, number(1), &child_loads};
+  auto raw_root = vm::CellBuilder().store_long(1, 1).store_ref(child).finalize();
+  td::Ref<PreflightObservedCell> root{true, raw_root, &root_loads};
+  block::WorkchainInputPreflight gate({1, 65, 1});
+  auto rejected = gate.add(root);
+  ASSERT_EQ(root_loads, 1u);
+  ASSERT_EQ(child_loads, 0u);
+  ASSERT_TRUE(rejected.is_error());
+  block::WorkchainInputPreflight accepted({2, 65, 1});
+  ASSERT_TRUE(accepted.add(root).is_ok());
+  ASSERT_EQ(root_loads, 2u);
+  ASSERT_EQ(child_loads, 1u);
+  block::WorkchainInputPreflight bits({2, 0, 1});
+  ASSERT_TRUE(bits.add(root).is_error());
+  ASSERT_EQ(root_loads, 3u);
+  ASSERT_EQ(child_loads, 1u);
+}
+
+TEST(WorkchainBlock, InputPreflightDeepSharedGraph) {
+  auto cell = vm::CellBuilder().finalize();
+  for (unsigned i = 0; i < vm::CellTraits::max_depth; ++i) {
+    cell = vm::CellBuilder().store_ref(cell).store_ref(cell).store_ref(cell).store_ref(cell).finalize();
+  }
+  block::WorkchainInputPreflight gate({vm::CellTraits::max_depth + 1, 0, 1});
+  ASSERT_TRUE(gate.add(cell).is_ok());
+  ASSERT_EQ(gate.usage().cells, vm::CellTraits::max_depth + 1u);
+  ASSERT_EQ(gate.usage().bits, 0u);
+}
+
+TEST(WorkchainBlock, InputPreflightUnavailableAndSpecial) {
+  unsigned loads = 0;
+  td::Ref<PreflightObservedCell> absent{true, number(1), &loads, true};
+  block::WorkchainInputPreflight unavailable({10, 1024, 2});
+  ASSERT_TRUE(unavailable.add(absent).is_error());
+  ASSERT_EQ(loads, 1u);
+  ASSERT_TRUE(unavailable.add(number(1)).is_error());
+  auto proof = vm::MerkleProof::generate(number(1), [](const td::Ref<vm::Cell>&) { return false; }).move_as_ok();
+  block::WorkchainInputPreflight special({10, 1024, 1});
+  ASSERT_TRUE(special.add(proof).is_error());
+  block::WorkchainInputPreflight missing({1, 1, 1});
+  ASSERT_TRUE(missing.add({}).is_error());
 }
 
 TEST(WorkchainBlock, RegistryScopeIsolation) {

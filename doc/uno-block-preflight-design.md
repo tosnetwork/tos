@@ -1,4 +1,56 @@
-# Block preflight: proposed contract, not activated
+# Block preflight: contract and incremental implementation
+
+## Implementation checkpoint: structural accumulator only (2026-09-06)
+
+`crypto/block/workchain-input-preflight.h` now implements a bounded accumulator
+for the union of multiple input roots. It is **not yet called by production
+admission, dispatch or replay**. B3-1/M-2 therefore remain open; this checkpoint
+does not protect the earlier commitment/inbox paths or bound proof execution.
+
+The API takes explicit Cells, payload bits and root-call limits; it defines no
+production defaults and does not reuse engine `wire_bytes`. Repeated root calls
+consume the root budget even when their Cells were already visited. All roots
+and reachable ordinary Cells count, with hash deduplication across calls.
+Failures are sticky, including unavailable data. No partial traversal becomes
+an accepted cache. This utility admits only complete non-virtualized ordinary
+input Cells; adopting that contract at a consensus entry point requires the
+resolved versioned policy, not an incidental parser behavior change.
+
+The iterative DFS admits at most the configured number of distinct Cells,
+checks that limit before loading the next one, and checks payload bits before
+visiting children. It uses an ordered hash set (not a hash-table collision-cost
+assumption); memory is bounded by admitted Cells and pending edges, with at
+most four new edges per admitted Cell. It does not serialize a BoC, decode an
+inbox, traverse previous-state/configuration roots, or allocate C++ recursion
+frames. This is an operation-count argument, not a measured cold-load/RSS bound.
+Local allocation failures are not converted into invalid-transaction results.
+
+Four tests cover hand-counted two-root sharing and exact/one-over bounds,
+observed loading of the first over-limit child, a depth-1024 four-way-shared
+graph, and unavailable/special/missing input. Each new test was demonstrated
+red with a targeted mutation:
+
+| Mutation | Observed failure |
+|---|---|
+| Remove Cell limit | Child load count becomes 1 instead of 0 |
+| Remove bit limit | One-bit-over second root is accepted |
+| Remove deduplication | Legal deep shared graph exceeds the Cell limit |
+| Admit special Cells | Merkle-proof input is accepted |
+
+All mutations were restored; all 46 WorkchainBlock tests pass. Logs are in
+`build/preflight-{cell,bits,sharing,special}-mutation.log` and
+`build/preflight-workchain-regression.log`. No physical-transaction constraint,
+partition schema, config encoding or shared Native account limit changed.
+
+Next integration must establish the resolved policy and bound collator import
+collection and validator InMsgDescr traversal *before* full inbox construction;
+replay's claimed-witness extraction must be bounded before its existing state
+decode. A dispatch-only gate is explicitly insufficient. Commitment building
+and full inbox validation must then obey the frozen order, with instrumented
+zero-invocation tests at those boundaries. Semantic/action/proof-cost preflight,
+cold resource measurements and collator/validator path tests remain required.
+
+## Design baseline
 
 This addresses audit M-2. It defines an implementation direction, not a frozen
 configuration, implemented protection, or accepted resource gate. H-2 and the
