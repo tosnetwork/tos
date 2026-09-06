@@ -32,7 +32,7 @@ endforeach()
 
 target_compile_definitions(test-uno-crypto-abi-real PRIVATE UNO_TEST_HOST_ADAPTER=1)
 target_include_directories(test-uno-crypto-abi-real PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-target_link_libraries(test-uno-crypto-abi-real PRIVATE tdutils)
+target_link_libraries(test-uno-crypto-abi-real PRIVATE tos_crypto)
 
 add_executable(test-uno-tree-cell ../../test/test-td-main.cpp tests/tree-cell.cpp tests/note-state.cpp)
 target_include_directories(test-uno-tree-cell PRIVATE ../..)

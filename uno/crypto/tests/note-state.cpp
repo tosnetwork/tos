@@ -1,4 +1,5 @@
 #include "uno/core/note-state.h"
+#include "uno/core/private-transfer-state.h"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "vm/vmstate.h"
@@ -175,4 +176,40 @@ TEST(UnoNoteState, EveryLoadFailureLeavesSourceUnchanged) {
   exercise([&] { return source.apply_spend_effects(2, {first}, {1, 1, 1}); });
   ASSERT_TRUE(!source.nullifiers().is_used(key(3)));
   ASSERT_TRUE(source.apply_spend_effects(2, {first}, {1, 1, 1}).is_ok());
+}
+
+TEST(UnoPrivateTransferState, WideAccountingAndStrictCodec) {
+  const Accounting amounts{Amount::from_words(0x8000000000000000, UINT64_MAX),
+                           Amount::from_words(1, UINT64_MAX), Amount::from_words(1, 17)};
+  auto state = PrivateTransferState::assemble(initial(), amounts).move_as_ok();
+  auto cell = state.to_cell().move_as_ok();
+  auto boc = vm::std_boc_serialize(cell).move_as_ok();
+  auto restored = PrivateTransferState::from_cell(vm::std_boc_deserialize(boc.as_slice()).move_as_ok(),
+                                                 3, 3, {}).move_as_ok();
+  ASSERT_EQ(restored.accounting().notes.high(), amounts.notes.high());
+  ASSERT_EQ(restored.accounting().notes.low(), amounts.notes.low());
+  ASSERT_EQ(restored.accounting().fees.high(), amounts.fees.high());
+  ASSERT_EQ(restored.accounting().fees.low(), amounts.fees.low());
+  ASSERT_EQ(restored.accounting().withdrawals.high(), amounts.withdrawals.high());
+  ASSERT_EQ(restored.accounting().withdrawals.low(), amounts.withdrawals.low());
+  ASSERT_TRUE(restored.to_cell().move_as_ok()->get_hash() == cell->get_hash());
+  auto idle = restored.apply_block(1, {}, {}).move_as_ok();
+  ASSERT_EQ(idle.accounting().notes.high(), amounts.notes.high());
+  ASSERT_EQ(idle.notes().anchors().height(), 1u);
+  ASSERT_TRUE(PrivateTransferState::assemble(initial(), {Amount::from_words(UINT64_MAX, UINT64_MAX),
+                                                       Amount::from_nanotomi(1), {}}).is_error());
+  ASSERT_TRUE(PrivateTransferState::assemble(initial(), {Amount::from_words(UINT64_MAX, UINT64_MAX),
+                                                       {}, Amount::from_nanotomi(1)}).is_error());
+  auto note_cell = state.notes().to_cell().move_as_ok();
+  auto overflow = vm::CellBuilder().store_long(0x55505430, 32).store_ones(128)
+      .store_zeroes(127).store_long(1, 1).store_zeroes(128).store_ref(note_cell).finalize();
+  ASSERT_TRUE(PrivateTransferState::from_cell(overflow, 3, 3, {}).is_error());
+  auto trailing = vm::CellBuilder().store_long(0x55505430, 32).store_zeroes(385).store_ref(note_cell).finalize();
+  ASSERT_TRUE(PrivateTransferState::from_cell(trailing, 3, 3, {}).is_error());
+  auto extra_ref = vm::CellBuilder().store_long(0x55505430, 32).store_zeroes(384)
+      .store_ref(note_cell).store_ref(note_cell).finalize();
+  ASSERT_TRUE(PrivateTransferState::from_cell(extra_ref, 3, 3, {}).is_error());
+  auto library = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  ASSERT_TRUE(PrivateTransferState::from_cell(library, 3, 3, {}).is_error());
+  ASSERT_TRUE(PrivateTransferState::from_cell({}, 3, 3, {}).is_error());
 }

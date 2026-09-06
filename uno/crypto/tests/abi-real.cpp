@@ -11,9 +11,87 @@
 #include <vector>
 #ifdef UNO_TEST_HOST_ADAPTER
 #include "uno/core/crypto-verifier.h"
+#include "uno/core/private-transfer-state.h"
+#include "vm/boc.h"
 #endif
 
 #ifdef UNO_TEST_HOST_ADAPTER
+td::Result<bool> transfer_state_fixture(const uno_workchain::CryptoBundle& bundle,
+                                      const std::array<td::uint8, 32>& digest,
+                                      const uno_workchain::Amount& fee, bool output_only) {
+  using namespace uno_workchain;
+  // The test driver supplies the verified public funding fixture first, then
+  // its real spend. This is a test bootstrap, never a runtime mint interface.
+  static std::optional<NoteState> funding;
+  if (output_only) {
+    TRY_RESULT(empty, NoteTreeState::empty());
+    std::vector<NoteTreeState::Commitment> outputs;
+    std::vector<td::Bits256> keys;
+    for (const auto& action : bundle.actions) {
+      NoteTreeState::Commitment cmx;
+      std::copy(std::begin(action.cmx), std::end(action.cmx), cmx.begin());
+      outputs.push_back(cmx);
+      td::Bits256 nf;
+      std::copy(std::begin(action.nullifier), std::end(action.nullifier), nf.as_slice().ubegin());
+      keys.push_back(nf);
+    }
+    TRY_RESULT(tree, empty.append(outputs, 0, 2));
+    TRY_RESULT(nullifiers, NullifierState{}.with_used(keys));
+    TRY_RESULT(anchors, AnchorWindow::genesis(3, 3, tree.root()));
+    TRY_RESULT(notes, NoteState::assemble(std::move(tree), std::move(nullifiers), std::move(anchors)));
+    funding = std::move(notes);
+    TRY_RESULT(not_transfer, CryptoVerifiedTransfer::verify(bundle, fee, digest, {2, 7264}));
+    return !not_transfer.has_value();
+  }
+  if (!funding) return false;
+  auto caller_bundle = bundle;
+  TRY_RESULT(verified, CryptoVerifiedTransfer::verify(caller_bundle, fee, digest, {2, 7264}));
+  if (!verified) return false;
+  caller_bundle.actions[0].cmx[0] ^= 1;
+  if (verified->bundle().actions[0].cmx[0] != bundle.actions[0].cmx[0]) return false;
+  auto wrong_digest = digest;
+  wrong_digest[0] ^= 1;
+  TRY_RESULT(wrong_signature, CryptoVerifiedTransfer::verify(bundle, fee, wrong_digest, {2, 7264}));
+  if (wrong_signature) { std::cerr << "wrong digest produced a verified transfer\n"; return false; }
+  auto broken = bundle;
+  broken.proof[0] ^= 1;
+  TRY_RESULT(wrong_proof, CryptoVerifiedTransfer::verify(broken, fee, digest, {2, 7264}));
+  if (wrong_proof) return false;
+  TRY_RESULT(wrong_fee, CryptoVerifiedTransfer::verify(bundle, Amount::from_nanotomi(101), digest, {2, 7264}));
+  if (wrong_fee) return false;
+  if (CryptoVerifiedTransfer::verify(bundle, fee, digest, {0, 0}).is_ok()) return false;
+
+  TRY_RESULT(before, PrivateTransferState::assemble(*funding, {Amount::from_nanotomi(5000), {}, {}}));
+  TRY_RESULT(before_cell, before.to_cell());
+  TRY_RESULT(after, before.apply_block(1, {*verified}, {1, 2, 2}));
+  if (after.accounting().notes.high() || after.accounting().notes.low() != 4900 ||
+      after.accounting().fees.high() || after.accounting().fees.low() != 100 ||
+      after.accounting().withdrawals.high() || after.accounting().withdrawals.low() ||
+      after.notes().tree().next_position() != 4 || after.notes().nullifiers().used_count() != 4 ||
+      after.notes().anchors().height() != 1) {
+    std::cerr << "verified transfer did not commit the expected fee and paired effects\n";
+    return false;
+  }
+  if (before.apply_block(1, {*verified, *verified}, {2, 2, 4}).is_ok()) return false;
+  if (before.apply_block(1, {*verified}, {1, 2, 1}).is_ok()) return false;
+  TRY_RESULT(poor, PrivateTransferState::assemble(*funding, {Amount::from_nanotomi(99), {}, {}}));
+  if (poor.apply_block(1, {*verified}, {1, 2, 2}).is_ok()) return false;
+  TRY_RESULT(unchanged, before.to_cell());
+  if (unchanged->get_hash() != before_cell->get_hash()) return false;
+  TRY_RESULT(after_cell, after.to_cell());
+  TRY_RESULT(boc, vm::std_boc_serialize(after_cell));
+  TRY_RESULT(decoded, vm::std_boc_deserialize(boc.as_slice()));
+  TRY_RESULT(restored, PrivateTransferState::from_cell(decoded, 3, 3, {10, 0, 0, 0}));
+  TRY_RESULT(restored_cell, restored.to_cell());
+  if (restored_cell->get_hash() != after_cell->get_hash() ||
+      restored.apply_block(2, {*verified}, {1, 2, 2}).is_ok()) return false;
+  TRY_RESULT(idle, restored.apply_block(2, {}, {}));
+  if (idle.accounting().notes.low() != 4900 || idle.accounting().fees.low() != 100 ||
+      idle.notes().tree().root() != restored.notes().tree().root() || idle.notes().anchors().height() != 2) return false;
+  std::cout << "Real transfer crypto, fee debit, atomic note state, restore and replay checks passed\n";
+  return true;
+}
+
 bool host_fixture(const UnoCryptoVerifyRequest& request) {
   using namespace uno_workchain;
   CryptoBundle bundle;
@@ -41,7 +119,9 @@ bool host_fixture(const UnoCryptoVerifyRequest& request) {
   if (wrong_digest.is_error() || wrong_digest.ok()) return false;
   digest[0] ^= 1;
   auto restored = verify();
-  return restored.is_ok() && restored.ok();
+  if (restored.is_error() || !restored.ok()) return false;
+  auto applied = transfer_state_fixture(bundle, digest, fee, context == BundleContext::ShieldClaim);
+  return applied.is_ok() && applied.ok();
 }
 #endif
 
