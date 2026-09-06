@@ -922,7 +922,7 @@ class Lifecycle:
         self.run_openfox_accepted_wager_gate()
 
     def run_challenged_lifecycle(self, appellate_outcome: int | None) -> None:
-        """Exercise appellate quorum or timeout after a hash-bound challenge."""
+        """Exercise appellate uphold, overturn, or timeout after a hash-bound challenge."""
         definition = self.write_definition()
         deploy = self.workdir / "deploy.boc"
         self.tosctl_call(
@@ -1021,8 +1021,10 @@ class Lifecycle:
                     "statement_expiry": appeal_deadline,
                 }, OPERATION_BUDGET, sequence)
             finalized = self.wait_status("finalized")
-            if finalized["final_outcome"] != "no" or finalized["remaining_payout"] != TOS:
-                raise RuntimeError(f"appellate quorum did not overturn normal proposal: {finalized}")
+            expected_outcome = ("yes", "no", "invalid")[appellate_outcome]
+            if (finalized["final_outcome"] != expected_outcome
+                    or finalized["remaining_payout"] != TOS):
+                raise RuntimeError(f"appellate quorum did not select its reported outcome: {finalized}")
             claim_query, bond_query, withdraw_query = 11, 12, 13
 
         self.prepare_and_send("owner", {
@@ -1128,7 +1130,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "signed-match", "agent-signed-match", "challenged-appellate", "challenged-timeout", "double-timeout"), default="normal",
+        "--scenario", choices=("normal", "signed-match", "agent-signed-match", "challenged-appellate", "challenged-uphold", "challenged-timeout", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -1192,6 +1194,10 @@ def main() -> int:
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle(1)
             print("PredictionMarket challenged appellate direct-wallet three-node lifecycle: PASS")
+        elif args.scenario == "challenged-uphold":
+            lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_challenged_lifecycle(0)
+            print("PredictionMarket challenged appellate-uphold direct-wallet three-node lifecycle: PASS")
         elif args.scenario == "challenged-timeout":
             lifecycle.provision_wallets(NORMAL_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle(None)
