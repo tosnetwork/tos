@@ -39,12 +39,23 @@ NoteTreeState::Commitment commitment(std::uint64_t n) {
 TEST(UnoNoteMeasurement, ContinuousComponentHistory) {
   auto tree = NoteTreeState::empty().move_as_ok();
   auto anchors = AnchorWindow::genesis(3,3,tree.root()).move_as_ok();
-  auto state = NoteState::assemble(tree,{},anchors).move_as_ok();
+  const auto owner = td::Bits256::zero();
+  auto refund_key = owner;
+  refund_key.as_slice()[31] = 101;
+  auto second_refund_key = owner;
+  second_refund_key.as_slice()[31] = 102;
+  const std::vector<td::Bits256> refund_keys{refund_key,second_refund_key};
+  auto reserved = NullifierState{}.reserve(owner,refund_keys).move_as_ok();
+  auto state = NoteState::assemble(tree,reserved,anchors).move_as_ok();
   std::vector<NoteTreeState::Commitment> all_outputs;
   std::vector<AnchorWindow::Root> expected_roots{tree.root()};
   std::vector<td::Bits256> all_keys;
   for (std::uint64_t height = 1; height <= 5; height = checked_add(height,1)) {
     const auto old_hash = state.to_cell().move_as_ok()->get_hash();
+    ASSERT_EQ(state.reserved_leaves(),2u);
+    NoteState::SpendEffects collision{state.anchors().latest(),{{refund_key,commitment(101)}}};
+    ASSERT_TRUE(state.apply_spend_effects(height,{collision},{1,2,2}).is_error());
+    ASSERT_TRUE(state.to_cell().move_as_ok()->get_hash() == old_hash);
     NoteState::SpendEffects event{state.anchors().latest(),{}};
     for (unsigned slot = 0; slot < 2; ++slot) {
       const auto ordinal = checked_add(all_keys.size(),1);
@@ -68,7 +79,12 @@ TEST(UnoNoteMeasurement, ContinuousComponentHistory) {
     expected_roots.push_back(reference.root());
     auto bytes = vm::std_boc_serialize(next.to_cell().move_as_ok()).move_as_ok();
     auto decoded = vm::std_boc_deserialize(bytes.as_slice()).move_as_ok();
-    state = NoteState::from_cell(decoded,3,3,{all_keys.size(),0,0,0}).move_as_ok();
+    state = NoteState::from_cell(decoded,3,3,{all_keys.size(),2,1,2}).move_as_ok();
+    ASSERT_EQ(state.reserved_leaves(),2u);
+    for (const auto& key : refund_keys) {
+      ASSERT_TRUE(state.nullifiers().try_is_reserved(key).move_as_ok());
+      ASSERT_TRUE(!state.nullifiers().try_is_used(key).move_as_ok());
+    }
     ASSERT_EQ(state.anchors().height(),height);
     for (std::size_t i = 0; i < expected_roots.size(); i = checked_add(i,1)) {
       // i <= size, so size - i cannot underflow. Three newest roots survive.
@@ -80,7 +96,28 @@ TEST(UnoNoteMeasurement, ContinuousComponentHistory) {
     ASSERT_TRUE(state.apply_spend_effects(checked_add(height,1),{event},{1,2,2}).is_error());
     ASSERT_TRUE(state.to_cell().move_as_ok()->get_hash() == restored_hash);
   }
-  std::cout << "continuous component history passed: five blocks, ten paired actions, rolling anchors, replay rejection\n";
+  // A test driver applies the existing refund primitives, not an authenticated
+  // Failed Ack or a new Reserve transition. Five intervening roots have aged.
+  const auto pending_hash = state.to_cell().move_as_ok()->get_hash();
+  auto settled_nullifiers = state.nullifiers().refund(owner).move_as_ok();
+  const std::vector<NoteTreeState::Commitment> refund_outputs{commitment(101),commitment(102)};
+  auto settled_tree = state.tree().append(refund_outputs,0,2).move_as_ok();
+  auto settled_anchors = state.anchors().finish_block(6,settled_tree.root()).move_as_ok();
+  auto settled = NoteState::assemble(settled_tree,settled_nullifiers,settled_anchors).move_as_ok();
+  auto settled_bytes = vm::std_boc_serialize(settled.to_cell().move_as_ok()).move_as_ok();
+  auto settled_cell = vm::std_boc_deserialize(settled_bytes.as_slice()).move_as_ok();
+  auto restored = NoteState::from_cell(settled_cell,3,3,{12,0,1,2}).move_as_ok();
+  ASSERT_EQ(restored.tree().next_position(),12u);
+  ASSERT_EQ(restored.nullifiers().used_count(),12u);
+  ASSERT_EQ(restored.reserved_leaves(),0u);
+  ASSERT_EQ(restored.anchors().height(),6u);
+  for (const auto& key : refund_keys) {
+    ASSERT_TRUE(restored.nullifiers().try_is_used(key).move_as_ok());
+    ASSERT_TRUE(!restored.nullifiers().try_is_reserved(key).move_as_ok());
+  }
+  ASSERT_TRUE(restored.nullifiers().refund(owner).is_error());
+  ASSERT_TRUE(state.to_cell().move_as_ok()->get_hash() == pending_hash);
+  std::cout << "continuous component history passed: five intervening blocks, reserved-key exclusion, terminal refund\n";
   std::cout.flush();
   ASSERT_TRUE(std::cout.good());
 }

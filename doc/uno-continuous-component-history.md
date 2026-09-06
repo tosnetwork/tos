@@ -35,3 +35,32 @@ established. No latency or capacity conclusion follows from this small fixture.
 It does not replace the required continuous proof-valid sample, mixed pending
 and terminal history, large-state experiment or persisted directory comparison.
 No partition, accumulator, Reserve or wire implementation is authorized by it.
+
+## Delayed refund follow-up
+
+Source base `9b3133d0f` plus the patch in
+`measurements/uno-delayed-refund-history.tar.gz` extends the same registered
+test. A two-key reservation exists before the five intervening blocks and is
+restored with each state. Ordinary actions targeting either reservation are
+not authorized by this model; the test probes one of the reserved keys at each
+height and requires rejection without a source-state change. Both keys remain
+reserved and unused throughout the intervening history.
+
+At height six the test driver invokes the existing refund primitive, appends
+its two commitments and advances the anchor. After another BoC restoration,
+used count and tree position are twelve, reserved leaves are zero, both refund
+keys are permanently used, and repeating the refund fails. The pending source
+root remains unchanged. This models component ordering, not a verified Failed
+Ack, authenticated refund bundle, money movement or a new settlement protocol.
+
+Removing the production reserved-key guard temporarily makes the ordinary
+collision event succeed, failing the rejection assertion (CTest exit 8).
+Restoring it and separately omitting the refund tree append fails the paired
+used-count/tree-position invariant (exit 8). All temporary production changes
+are restored; only test and evidence changes remain. The restored continuous
+test and previous envelope smoke pass. Exact patches and diagnostic logs are
+archived; external review remains pending at the milestone.
+
+This is a small mixed sequence, not the large/mixed owner population, full
+capacity reservation, root-only witness refresh or partition split experiment.
+It supplies no production storage limit or timing claim.
