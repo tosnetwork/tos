@@ -58,22 +58,24 @@ a README that framed a shipped component as future work and understated proof
 sizes by 10×. It had been wrong for weeks and nothing failed. Verify docs
 against source, not against memory.
 
-## Review each unit, before the pile grows
+## Review at the milestone, and at the consensus boundary
 
-Stop at every reviewable unit and have Claude Code review it. Do not accumulate
-a wave of unreviewed work and hand it over at the end.
+Have Claude Code review the work when a milestone is finished — M0, M1, M2 and
+so on. Do not stop for a review after each file, each fix, or each instrument;
+that costs more than it returns.
 
 ```
-cd /home/tomi/tos && claude -p "<what changed, which finding it closes, what to look at>"
+cd /home/tomi/tos && claude -p "<what changed, which findings it closes, what to look at>"
 ```
 
-A unit is reached when any one of these is true:
+One exception, kept narrow because late discovery there is the expensive kind:
+review as soon as it lands, without waiting for the milestone, when a change
+touches consensus judgement — `validate-query.cpp`, `collator.cpp`,
+`transaction.cpp`, `workchain-execution-dispatch.cpp` — or adds an error
+classification. Everything else waits.
 
-- an implementation plus its tests for one finding is written;
-- roughly 300-400 lines are added or changed;
-- anything on a consensus path is touched — `validate-query.cpp`,
-  `collator.cpp`, `transaction.cpp`, `workchain-execution-dispatch.cpp`;
-- a public interface, an error classification, or a TL-B definition is added.
+At a milestone the review is large, so say what changed and which findings it
+closes rather than asking for a read of the whole diff.
 
 Four things the review must check, because each has already gone wrong here:
 
@@ -93,8 +95,13 @@ Four things the review must check, because each has already gone wrong here:
    catch clauses once missed both and the thread terminated.
 
 Act on the result: apply what you agree with, write down why for what you do
-not, and stop and ask for anything that needs an owner decision. Commit the
-review's fixes with the unit and say in the message that it was reviewed.
+not, and stop and ask for anything that needs an owner decision. Say in the
+commit message that it was reviewed.
+
+Between reviews you are on your own for the four checks above. Run them
+yourself as you write — they are cheap to apply and expensive to retrofit,
+and the first review under this rule found two tests that appeared to run and
+did not.
 
 Review transcripts are working material, not repository documentation. Keep
 them in `~/memo/reviews/`; what lands here is the fix and the test.
