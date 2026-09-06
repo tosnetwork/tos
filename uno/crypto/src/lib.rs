@@ -438,6 +438,85 @@ mod tests {
         }
     }
 
+    #[test]
+    fn continuous_real_spend_history() {
+        use incrementalmerkletree::Hashable;
+        use orchard::{
+            builder::{Builder, BundleType},
+            circuit::ProvingKey,
+            keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey},
+            tree::{MerkleHashOrchard, MerklePath},
+            value::NoteValue,
+        };
+        use rand::SeedableRng;
+        // Public test keys and deterministic witnesses: never fund these notes.
+        let mut rng = rand::rngs::StdRng::from_seed([91;32]);
+        let sk = SpendingKey::from_bytes([0;32]).expect("public test key");
+        let fvk = FullViewingKey::from(&sk);
+        let recipient = fvk.address_at(0u32,Scope::External);
+        let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
+        let mut frontier = tree::NoteTree::default();
+        let mut leaves = Vec::<MerkleHashOrchard>::new();
+        let mut used = std::collections::BTreeSet::new();
+        let mut previous: Option<(orchard::Note,usize)> = None;
+        let mut remaining = 5000u64;
+        for round in 0usize..4 {
+            let anchor = Option::<Anchor>::from(Anchor::from_bytes(frontier.root())).expect("current anchor");
+            let flags = if round == 0 { Flags::SPENDS_DISABLED }
+                else { BundleVersion::orchard_v2().default_flags() };
+            let mut builder = Builder::new(BundleType::DEFAULT,BundleVersion::orchard_v2(),flags,anchor)
+                .expect("sequence builder");
+            if let Some((note,position)) = previous.take() {
+                assert_eq!(note.value(),NoteValue::from_raw(remaining));
+                assert!(position < leaves.len());
+                // Rebuild every layer from the entire historical leaf list,
+                // including dummy outputs and odd-width layers.
+                let mut nodes = leaves.clone();
+                let siblings = std::array::from_fn(|depth| {
+                    let level = u8::try_from(depth).expect("tree depth");
+                    let empty = MerkleHashOrchard::empty_root(level.into());
+                    let sibling = nodes.get((position >> depth) ^ 1).copied().unwrap_or(empty);
+                    nodes = nodes.chunks(2).map(|pair| MerkleHashOrchard::combine(
+                        level.into(),&pair[0],pair.get(1).unwrap_or(&empty))).collect();
+                    sibling
+                });
+                let path = MerklePath::from_parts(u32::try_from(position).expect("note position"),siblings);
+                assert_eq!(path.root(note.commitment().into()),anchor,"full-history path matches frontier");
+                builder.add_spend(fvk.clone(),note,path).expect("previous change spend");
+                remaining = remaining.checked_sub(100).expect("change covers fee");
+            } else {
+                assert_eq!(round,0,"every later round must consume previous change");
+            }
+            builder.add_output(None,recipient,NoteValue::from_raw(remaining),[0;512]).expect("next change");
+            let (unsigned,metadata) = builder.build::<i64>(&mut rng).expect("sequence build").expect("nonempty");
+            assert_eq!(unsigned.actions().len(),2,"fixed sequence shape");
+            let keys = if round == 0 { vec![] } else { vec![SpendAuthorizingKey::from(&sk)] };
+            let bundle = unsigned.create_proof(&pk,&mut rng).expect("sequence proof")
+                .apply_signatures(&mut rng,[42;32],&keys).expect("sequence signatures");
+            assert_eq!(*bundle.value_balance(),if round == 0 { -5000 } else { 100 });
+            assert_eq!(ffi_status(&bundle, |_| {}),0,"sequence real ABI acceptance");
+            assert_eq!(ffi_status(&bundle, |request| request.sighash[0] ^= 1),3,
+                "sequence changed authorization rejection");
+            let offset = leaves.len();
+            let commitments: Vec<_> = bundle.actions().iter().map(|action| {
+                assert!(used.insert(action.nullifier().to_bytes()),"history repeats a public nullifier");
+                leaves.push(MerkleHashOrchard::from_cmx(action.cmx()));
+                action.cmx().to_bytes()
+            }).collect();
+            frontier = frontier.append_batch(&commitments,0).expect("append accepted sequence");
+            assert_eq!(frontier.next_position(),u64::try_from(leaves.len()).expect("history count"));
+            assert_eq!(used.len(),leaves.len());
+            let local = metadata.output_action_index(0).expect("change action index");
+            let (note,_,_) = bundle.decrypt_output_with_key(local,&fvk.to_ivk(Scope::External))
+                .expect("recover next real change");
+            assert_eq!(note.value(),NoteValue::from_raw(remaining));
+            previous = Some((note,offset.checked_add(local).expect("global change position")));
+            println!("CONTINUOUS_PROOF round={round} leaves={} remaining={remaining}",leaves.len());
+        }
+        assert_eq!(remaining,4700);
+        assert_eq!(leaves.len(),8);
+    }
+
     fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
         use crate::decode::{decode_bundle, EncodedBundle};
         let actions = encoded_actions(bundle);
