@@ -2,7 +2,9 @@
 
 Branch: `feature/uno-privacy-workchain-v1`.
 
-Design baseline: `memo@0c3fc8d0:TOS_UNO_PRIVACY_WORKCHAIN_V1.md`.
+Initial design baseline: `memo@0c3fc8d0:TOS_UNO_PRIVACY_WORKCHAIN_V1.md`.
+Current milestone reconciliation: `memo@35f8f1c8:TOS_UNO_PRIVACY_WORKCHAIN_V1.md`,
+section 17 (2026-09-06).
 Base node revision: `5a6145cce`.
 
 Artifact retention correction (2026-09-06): successful Counter fixture directories
@@ -11,13 +13,71 @@ archiving their top-level diagnostics; they are historical run identifiers, not
 promises of retained databases. See [retention policy](counter-fixture-retention.md)
 and the cleanup/revalidation entry at the end of this document.
 
-## Implemented
+## Current acceptance status and evidence limits
 
-Current sequencing (2026-09-06): further M3 expansion is paused for M1's
-real-manager authenticated block/state acquisition, receiving-side batch replay,
-and non-fake committee-consensus acceptance. A stable M3 state shape is not a
-prerequisite for beginning these checks. Transport component results below do
-not constitute this trust-path acceptance.
+This summary is the authoritative status for this entire document, including
+the historical remaining-work list below. Later sections record historical work,
+not a second set of current acceptance gates.
+
+| Milestone | Current status | Boundary |
+|---|---|---|
+| M1 host | Seven complete, two partial | Capability gate and synchronization/restart remain partial |
+| M2 crypto/codec | Three complete, two partial, two missing | Complete circuit/VK/dependency pin, amount conversion, and implementation/infrastructure boundary; partial FFI/full bundle and authorization transcript; missing upstream differential vectors and hybrid encryption/recovery |
+
+The M1 capability gate has unit-level `{v14,v15} x {0,capBlockTransition}`
+coverage and two single-node collate-side negative disk configurations. In
+`test/test-counter-disk-integration.cmake`, the ACTIVATION_MODE branch runs
+`unactivated`, checks exit 2 and the expected error, asserts no batch staging,
+then returns before switching `node_db` to the peer database. Copying that peer
+database does not exercise it. Validate/import-side negative disk coverage is
+still missing. The other seven M1 item statuses are unchanged.
+
+Synchronization evidence has two distinct layers. The network harness uses real
+Simplex block consensus (`validator/consensus/bridge.cpp`);
+`Config::get_new_consensus_config(wc)` selects the shard configuration from
+ConfigParam 30 for non-masterchain workchains, including workchain 2
+(`crypto/block/mc-config.cpp`). However, the test-only candidate source in
+`validator-engine/validator-engine.cpp` returns `counter_number(1)` for every
+collator. Payload-content selection is therefore trivially identical. This is
+not evidence of a UNO mempool, payload availability layer, or ordering service.
+Cold-node end-to-end synchronization, independent real-manager processes,
+authenticated P2P download, long-running GC and archive cold synchronization
+are implemented and have manual measurements. They do not close those missing
+payload paths or establish recurring CI coverage of the manual profiles.
+
+M2 authorization mutations are partial, not absent or complete. The Rust
+`transfer_transcript.rs` tests vary domain, expiry, nonce, fee, profile/flags,
+value balance, anchor and Action fields including ciphertext/KEM bytes. These
+are transcript-layer tests; the complete authorization path and cross-language
+authorization vectors remain unconnected.
+
+CI coverage is narrower than the manual assertions. CMake registers only the
+bare `--counter` network profile behind default-OFF
+`TOS_UNO_COUNTER_NETWORK_TEST`. Misbound proof, corrupted signature, retired
+member, reencoded zerostate, wrong checkpoint, long-running GC and archive cold
+sync profiles are manual experiments, not recurring CTest gates.
+
+Historical mutation evidence exists and has the expected failure shape, but is
+not reproducible through a repository automation facility and is not a CI
+mutation gate. Narrative entries and untracked `build/` logs alone cannot prove
+a mutation run corresponds to current HEAD. Versioned archives now include
+`measurements/uno-wave4-mutations.tar.gz`, `uno-d3-unit-mutations.tar.gz` and
+`uno-d3-payload-mutations.tar.gz` (the latter two in the same directory). These
+preserve manual observations, not automatic reruns. Ordinary regression tests
+that repack modified fields into legal encodings remain useful independent
+coverage, but do not turn historical verifier-removal runs into recurring gates.
+
+Exact expected value-flow strings in disk tests are not an independently
+computed validator conservation invariant. Independent batch conservation and
+joint reserve/in-flight accounting tests remain deferred; this
+qualification does not change the existing M1 message/value-flow item status.
+
+## Historical implementation entries
+
+Further M3 expansion remains paused pending the M1 acceptance gates. The
+real-manager results recorded below do not lift that pause. A stable M3 state
+shape is not a prerequisite for testing authenticated acquisition and replay;
+component results alone do not constitute complete milestone acceptance.
 
 - Immutable block input/result interface and side-effect-free replay comparison.
 - Engine-result commitments cover engine state, outbound messages, actions,
@@ -399,15 +459,17 @@ binds input context; neither authenticates the context by itself.
   `Transaction` after its scope check. Block execution needs a separate host
   path; its account-scope rejection remains unchanged.
 
-## Remaining requirements
+## Historical remaining-work snapshot
 
-This is partial M1, not an enabled privacy workchain. Counter collation, outgoing
+This list predates the real-manager network results later in this document;
+the current acceptance summary above supersedes it. At this stage, Counter collation, outgoing
 native settlement, independent database replay and disk restart have end-to-end
 test evidence. Both block branches still require an explicitly registered engine;
 incoming account message settlement, return/bounce handling, distributed
-consensus and complete node-to-node synchronization remain unverified. The TCP
-snapshot fixture below now exercises remote state acquisition, but not either
-of those end-to-end properties.
+consensus and complete node-to-node synchronization had not been established by
+these disk tests. Later real-manager evidence establishes real block consensus
+and synchronization, but not nontrivial UNO payload selection or its availability
+and ordering services. The TCP snapshot fixture below is component evidence.
 The disk harness cannot download and uses fake signature acceptance: it proves
 restart and file-import replay, not network synchronization. Live synchronization
 integration was not started by those tests; the routing work below is its first
@@ -446,7 +508,7 @@ not permission to execute. Low-level codec/replay helpers are not standalone
 consensus acceptance APIs. Broader import/proof/API call-site audit and independent
 candidate-import negative activation tests remain outstanding.
 
-Two real disk-node activation tests now generate isolated masterchain genesis
+Two single-node collate-side activation tests generate isolated masterchain genesis
 configurations: version 15 without the host capability, and version 14 with it.
 Each bootstraps the masterchain successfully, registers the Counter engine, then
 requires workchain-2 collation to fail with no batch staging or saved block.
@@ -454,7 +516,8 @@ The existing activated integration remains the positive control. Removing the
 shared registry activation gate makes both negative tests incorrectly produce a
 block (exit 0 instead of 2); restoring it makes both reject again. Generated
 fixture variants verify their source marker before substitution so fixture drift
-cannot silently leave activation enabled.
+cannot silently leave activation enabled. Neither negative path switches to the
+peer database; these are not two-node validate/import activation tests.
 
 `RegistryRequiresConsensusActivation` uses real decoded ConfigParam 8 cells and
 checks both sides of the version boundary, the capability on/off combinations,
@@ -2036,6 +2099,9 @@ used-nullifier, tree/note-state and real-ABI CTest groups each passed twice
 test for each real-ABI run.
 
 ### Derived private-transfer transcript and real signature binding
+
+Milestone status: partial. Field mutation coverage below is real but remains
+transcript-layer evidence, not complete authorization or cross-language vectors.
 
 `uno/crypto/src/transfer_transcript.rs` adds a Rust-only, explicitly experimental
 transcript candidate. Its [layout and dependency record](../uno/crypto/TRANSFER_TRANSCRIPT.md)
