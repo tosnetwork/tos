@@ -85,3 +85,105 @@ margin to a real validation deadline. These gaps cannot be filled by treating
 the root vector as already implemented multi-account host state. In particular,
 this tool alone cannot support selection of a production schema or three input
 limits. Actual observed maxima are not WCET proofs.
+
+## Recorded run: 703935250
+
+Code: `7039352500a7c025818b812d437b5303b5702db6`; raw directory:
+`build/uno-wave4-run-703935250/partition-*.csv` and matching `.metrics`.
+The complete archived raw run is maintained by the fourth-wave report.
+Release build, Clang 21, `-O3 -DNDEBUG`; Intel Xeon Platinum 8455C,
+192 logical CPUs. Both modes used seed 45 and the matrix above. There are
+60 invocations, three samples each, and 1,620 phase rows. The table values below
+are sample medians, **not** p95/p99 or WCET estimates. Runs were serialized but
+the raw metadata does not establish CPU pinning or host isolation; recorded one-minute system load
+was 0.49 at run start and 4.70 at end. Relative timings must not be attributed
+solely to the partition representation from this three-sample, fixed-order run.
+
+### Two fresh keys against historical spent state
+
+`load_full` checks the entire resident history; `absence` is the two-key
+incremental lookup. Changed-page serialization is still whole-page BoC
+serialization, not a persistent CellDb write.
+
+| History | Mode | Full load ms | Absence µs | Update µs | Changed-page serialization ms | Changed BoC bytes | New unique Cells |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 0 | single | 0.000092 | 0.073 | 1.929 | 0.000818 | 88 | 3 |
+| 0 | pages16 | 0.000361 | 0.099 | 0.746 | 0.001138 | 94 | 2 |
+| 1,024 | single | 0.215 | 2.328 | 9.090 | 0.318 | 42,231 | 22 |
+| 1,024 | pages16 | 0.213 | 1.555 | 6.361 | 0.040 | 4,994 | 17 |
+| 8,192 | single | 2.031 | 3.129 | 13.020 | 3.426 | 335,703 | 31 |
+| 8,192 | pages16 | 3.392 | 4.381 | 18.222 | 0.538 | 41,729 | 24 |
+| 32,768 | single | 8.402 | 3.837 | 15.237 | 12.366 | 1,402,744 | 32 |
+| 32,768 | pages16 | 13.984 | 5.442 | 22.448 | 2.166 | 164,558 | 27 |
+| 65,536 | single | 17.377 | 4.849 | 21.779 | 27.645 | 2,793,889 | 38 |
+| 65,536 | pages16 | 29.339 | 6.644 | 26.920 | 4.623 | 331,386 | 31 |
+
+Observed: at the two largest levels, full resident validation is milliseconds
+while the two-key absence lookup is microseconds. That supports separating
+incremental hot work from required full restore validation; it does not justify
+omitting old spent-nullifier queries. The paged representation reduced bytes
+and time for serializing only the touched pages in this uniform-key sample,
+but did not reduce the measured full-load or two-key update times at those
+levels. Serialization of **all** pages had medians 14.106/17.603 ms at 32,768
+and 30.771/38.130 ms at 65,536 (single/pages16).
+
+| History | Mode | New-arena decode ms | New-arena full validation ms | Process peak RSS KiB | Used-set depth | Total used-set Cells after two inserts |
+|---:|---|---:|---:|---:|---:|---:|
+| 32,768 | single | 11.137 | 7.004 | 37,284 | 19 | 65,539 |
+| 32,768 | pages16 | 21.154 | 13.222 | 30,720 | 15 | 65,524 |
+| 65,536 | single | 23.439 | 14.064 | 77,608 | 21 | 131,075 |
+| 65,536 | pages16 | 38.074 | 14.701 | 58,092 | 17 | 131,060 |
+
+RSS is the maximum high-water observation across that invocation, including
+old/new arenas and instrumentation; it is not a stage-local memory saving
+claim. The single-root counts already cross the shared Native account cell
+limit; these rows are deliberately primitive-only results, not deployable
+host capacities. The page totals omit every account and coordinator wrapper.
+
+### Skew, split and failure/settlement primitives
+
+| History | Scenario/phase | single median µs | pages16 median µs |
+|---:|---|---:|---:|
+| 32,768 | prefix: changed-page serialization | 14,517.4 | 23,975.9 |
+| 65,536 | prefix: changed-page serialization | 29,949.7 | 30,141.1 |
+| 32,768 | split: full rebuild control / 16→32 repartition | 180,664 | 192,386 |
+| 65,536 | split: full rebuild control / 16→32 repartition | 393,250 | 265,542 |
+| 32,768 | duplicate rejection | 14.978 | 16.256 |
+| 65,536 | duplicate rejection | 24.131 | 15.445 |
+| 32,768 | reserve primitive | 10.929 | 9.307 |
+| 32,768 | refund primitive | 20.112 | 20.057 |
+| 65,536 | reserve primitive | 10.441 | 13.499 |
+| 65,536 | refund primitive | 20.783 | 29.876 |
+
+The concentrated-prefix case put all history and new keys on one experimental
+page. Both modes had exactly the same changed BoC bytes (872,434 at 32,768;
+1,729,348 at 65,536), used-set Cell counts, depths, and introduced Cell counts
+(32 and 35 respectively). Partitioning by a fixed prefix did **not** improve
+that structural limit; any production skew/split policy is still unchosen.
+
+The split control rebuilds an identical single root, hence zero changed bytes
+and zero new hashes after the costly rebuild. The experimental 16→32 split
+introduced 32 unique Cell hashes and serialized 1,337,432 / 2,663,073 changed bytes at
+the two levels; its depths were 14 / 16. This is not an atomic Native account
+split or bounded migration protocol. Across all measured partition phases,
+the largest observed time was the single 65,536-key rebuild: **399.279 ms**;
+the paged maximum was **268.100 ms** for the same scenario. These maxima omit
+proof verification, complete transaction construction and persistent commit,
+and therefore cannot be compared as end-to-end validation bounds to an alarm.
+
+All duplicate cases rejected without publishing source changes and had zero
+introduced hashes/changed bytes. Refund samples checked actual reservation
+then used-state transitions in `NullifierState`; their used-set metrics matched
+the two-key insert cases. They do not measure authenticated Deposit/Withdrawal,
+note-tree reservation, principal or Native fees. No assertion failure was
+reported in the 60 completed runs. Each phase had all three sample rows; all
+timings were finite and nonnegative, all RSS samples positive, and all structural
+metrics identical across the three repetitions of each scenario. Timing spread
+remains visible: for example single 65,536-key full load was 17.377 ms median
+but 28.277 ms maximum, and the split run's full serialization reached 76.381 ms.
+Do not discard those samples or infer stable tail percentiles from three runs.
+
+The deliberate instrument-failure runs preceded this data run: removing each
+entry-budget, route, staged-copy and checked-add guard produced a nonzero
+self-test, and the restored instrument passed. Their detailed logs are named
+`build/wave4-partition-{budget,routing,atomic,overflow}-mutation.log`.

@@ -1,9 +1,12 @@
 # Wave 4: bounded existing-state storage measurements
 
 Status: test-only measurement, not production partition-schema approval or a
-complete synchronization/consensus benchmark. Source baseline
-`33895e3537ebbf3b44ec7cc63ea6aeef34ddb685` plus the measurement changes committed
-with this report. Date: 2026-09-06. Raw rows are in `doc/measurements/`.
+complete synchronization/consensus benchmark. Measured instrument commit:
+`7039352500a7c025818b812d437b5303b5702db6` (based on
+`33895e3537ebbf3b44ec7cc63ea6aeef34ddb685`). Date:
+2026-09-06. The serial matrix ran 09:50:14–09:52:07 UTC; these timestamps cover
+the entire joint matrix, not just its final storage section. Raw storage rows are
+in [measurements/uno-wave4-storage.csv](measurements/uno-wave4-storage.csv).
 
 ## Fixture and procedure
 
@@ -36,7 +39,11 @@ just written and may be in the OS page cache. Thus this is **fresh-database impo
 and **same-process reopen**, not cold-node synchronization or cold-device I/O.
 CellDb is non-memory mode, V2 enabled, configured cache/min-cache 64 MiB; importer
 resident frontier budget 16 MiB. Other production importer/spool defaults remain
-unchanged. Synthetic block ID `(wc=2, shard=all, seqno=1)` registers the imported
+unchanged: maximum 50,000,000 cells, one root, 512 MiB scaffolding, 16 GiB total
+cell bytes; 48 GiB per-import and 96 GiB shared spool caps, 300% minimum file-size
+reservation ratio plus the checked encoding/rollback bound. The scheduler has
+two threads; Native fixture global version is 15. Synthetic block ID
+`(wc=2, shard=all, seqno=1)` registers the imported
 root for the existing ownership/GC-lease protocol, not consensus finality.
 
 ## Columns and timing boundaries
@@ -93,5 +100,53 @@ rolling are not exercised by this storage fixture.
 
 ## Results
 
-Pending sequential timed runs; do not infer numbers from fixture size or other
-cryptographic measurements. Observed maxima will be sample maxima, not WCET.
+Nine successful samples: exactly three independent process launches per size,
+always seed 91. For each size all three root hashes, serialized byte counts and
+cell counts agree. Each sample verified every key before and after root adoption,
+reopened the database, verified the registered root hash, fully decoded the used
+set, rejected a known duplicate and staged a fresh insertion. The fresh insertion
+is not a committed UNO transaction. Every sample retained the source DAG in RAM.
+Within each size, the three committed CSV rows retain sample order 1–3 from
+`build/uno-wave4-run-703935250/storage-<keys>-<sample>.csv`.
+
+| Keys | BoC cells / bytes | Batch data cells | Serialized account cells | Max process HWM, KiB |
+|---:|---:|---:|---:|---:|
+| 1,000 | 2,006 / 41,348 | 2,006 | 2,007 | 29,184 |
+| 8,000 | 16,006 / 327,895 | 16,006 | 16,007 | 39,776 |
+| 32,000 | 64,006 / 1,306,019 | 64,006 | 64,007 | 93,020 |
+
+The equality of BoC-cell and batch-data-cell counts here is coincidental: they
+describe different roots. The full serialized account includes its own header.
+The Native account admission check passed all measured cases with its limit
+unchanged at 65536; the self-check's 32768-key case was rejected and not imported.
+This does not certify a full UNO state at 32000 entries or establish a production
+capacity value. Process baseline HWM was 10752 KiB in all nine launches.
+
+All following times are milliseconds. Values are **median / observed maximum**
+among the three processes, not p95/p99 estimates or worst-case bounds.
+
+| Keys | Generate | Native admission + census | BoC serialize | Import request | First full lookup |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 7.176 / 7.195 | 2.748 / 2.798 | 0.534 / 0.543 | 39.239 / 40.629 | 8.073 / 9.328 |
+| 8,000 | 70.916 / 71.611 | 14.712 / 15.573 | 4.641 / 4.705 | 161.336 / 161.565 | 74.265 / 74.725 |
+| 32,000 | 278.194 / 327.893 | 42.861 / 63.041 | 14.116 / 19.331 | 603.887 / 781.021 | 328.073 / 330.037 |
+
+| Keys | Root adoption | Reopen root | Reopen validation + staged append | Whole import lifecycle | Whole reopen lifecycle |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 6.369 / 6.779 | 12.764 / 13.433 | 12.777 / 13.279 | 63.913 / 64.652 | 28.073 / 28.299 |
+| 8,000 | 6.386 / 6.752 | 31.739 / 31.775 | 86.917 / 89.145 | 294.670 / 296.970 | 124.711 / 125.179 |
+| 32,000 | 6.871 / 10.244 | 102.017 / 106.445 | 397.545 / 398.950 | 1172.860 / 1355.510 | 521.709 / 524.504 |
+
+The largest measured import-request sample was 781.021 ms; the whole import
+lifecycle reached 1355.510 ms. These are storage recovery operations, **not** a
+per-block validity pipeline or a lower bound for UNO's slot. They cannot be
+added to proof timings from another process to claim end-to-end deadline margin.
+Likewise, a 16 MiB importer frontier budget is not a process RSS bound: the
+measured process also owns source cells, account-stat dictionaries, database caches
+and allocator state. The 93020 KiB observed HWM is not a safe production maximum.
+
+No failed timed sample occurred in this nine-run set. Failure evidence is the
+separate explicit over-limit self-check and its demonstrated-red mutation, plus
+the independent import-bypass mutation described above. No inference is made
+about absent partition, proof, inbox or settlement stages, larger states, slow
+devices, OS-cold reads, concurrent workloads, or full production synchronization.
