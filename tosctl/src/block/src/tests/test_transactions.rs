@@ -68,6 +68,29 @@ fn test_transaction_serde() {
 }
 
 #[test]
+fn test_iterate_out_messages_preserves_original_cells() {
+    let data = create_test_transaction_set();
+    let mut transaction =
+        Transaction::with_address_and_status(data.account_id, data.orig_status.clone());
+    for message in &data.out_msgs {
+        transaction.add_out_message(message).unwrap();
+    }
+
+    let expected_cells =
+        data.out_msgs.iter().map(|message| message.serialize().unwrap()).collect::<Vec<_>>();
+    let mut index = 0;
+    transaction
+        .iterate_out_msgs_with_cells(|message, cell| {
+            assert_eq!(message, data.out_msgs[index]);
+            assert_eq!(cell.hash(0), expected_cells[index].hash(0));
+            index += 1;
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(index, expected_cells.len());
+}
+
+#[test]
 fn test_account_block_serde() {
     let address = AccountId::from([1; 32]);
     let acc_block = generate_account_block(address, 32).unwrap();
