@@ -39,6 +39,31 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(AssertionError, 'nonzero unsplit'):
             module.require_collected_counter_state(marker, toslib_api.Tos_blockIdExt(workchain=-1, seqno=17))
 
+    async def test_gc_wait_requires_height_and_committed_deletion(self):
+        block = toslib_api.Tos_blockIdExt(workchain=2, shard=-(1 << 63), seqno=17,
+                                        root_hash=b'\xab' * 32, file_hash=b'\xcd' * 32)
+        marker = 'Deleted state (2,8000000000000000,17):' + 'AB' * 32 + ':' + 'CD' * 32
+        client = SimpleNamespace(get_masterchain_info=AsyncMock(side_effect=[
+            SimpleNamespace(last=SimpleNamespace(seqno=height)) for height in (1044, 1045, 1046)]))
+        with tempfile.TemporaryDirectory() as directory:
+            node = SimpleNamespace(log_path=Path(directory) / 'log')
+            node.log_path.write_text('')
+            async def advance(_):
+                if client.get_masterchain_info.call_count == 2:
+                    node.log_path.write_text(marker)
+            with patch.object(module.asyncio, 'sleep', side_effect=advance) as pause:
+                evidence = await module.wait_counter_gc(node, client, block, 1045)
+            self.assertEqual(pause.call_count, 2)
+            self.assertEqual(evidence['observed_masterchain_height'], 1046)
+            self.assertEqual(evidence['deleted_block'], marker.removeprefix('Deleted state '))
+            # An already present marker cannot bypass the long-run height gate.
+            client.get_masterchain_info = AsyncMock(side_effect=[
+                SimpleNamespace(last=SimpleNamespace(seqno=height)) for height in (1044, 1045)])
+            with patch.object(module.asyncio, 'sleep', new_callable=AsyncMock) as pause:
+                evidence = await module.wait_counter_gc(node, client, block, 1045)
+            self.assertEqual(pause.call_count, 1)
+            self.assertEqual(evidence['observed_masterchain_height'], 1045)
+
     async def test_direct_node_log_progresses_while_controller_loop_is_busy(self):
         from tostester.network import Network, StartOptions, _get_install_and_options
         class TestNode(Network.Node):

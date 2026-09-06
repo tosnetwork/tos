@@ -3444,3 +3444,9 @@ block-identity binding made five negative controls fail (wrong workchain,
 height, root hash, file hash and appended hash digit); restoring it passed.
 This checks the observation instrument, not native GC scheduling or physical
 disk compaction. The long-run result and resource behavior remain unverified.
+
+The wait instrument also has asynchronous controls for deletion appearing only
+after the height threshold and for a deletion marker already present before it.
+Removing the height gate fails the latter control by returning without waiting.
+After restoring the gate, all 18 Python instrument tests passed. The live
+experiment remains separate from these mocked scheduling controls.
