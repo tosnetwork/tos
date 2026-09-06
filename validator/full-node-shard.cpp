@@ -48,6 +48,8 @@
 #ifdef TOS_COUNTER_NETWORK_TEST
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
+#include "td/utils/filesystem.h"
 #include "vm/boc.h"
 #endif
 
@@ -58,6 +60,36 @@ namespace validator {
 namespace fullnode {
 
 namespace {
+
+#ifdef TOS_COUNTER_NETWORK_TEST
+// A controller-owned file supplies one consistent alternative snapshot for
+// size and slice queries. Removing it restores normal serving on retry.
+td::Result<td::optional<td::BufferSlice>> counter_checkpoint_override(BlockIdExt block_id,
+                                                                    const PersistentStateType& state_type) {
+  const auto* path = std::getenv("TOS_COUNTER_CHECKPOINT_STATE_FILE");
+  if (!path || !*path || block_id.id.workchain != 2 || block_id.seqno() == 0 ||
+      !state_type.has<UnsplitStateType>()) {
+    return td::optional<td::BufferSlice>{};
+  }
+  std::error_code error;
+  bool exists = std::filesystem::exists(path, error);
+  if (error) {
+    return td::Status::Error("Counter checkpoint override stat failed: " + error.message());
+  }
+  if (!exists) {
+    return td::optional<td::BufferSlice>{};
+  }
+  auto size = std::filesystem::file_size(path, error);
+  if (error || size == 0 || size > (1U << 24)) {
+    return td::Status::Error("Counter checkpoint override must be a readable nonempty file of at most 16 MiB");
+  }
+  TRY_RESULT(data, td::read_file(td::CSlice(path), static_cast<td::int64>(size)));
+  if (data.size() != size) {
+    return td::Status::Error("Counter checkpoint override changed during read");
+  }
+  return td::optional<td::BufferSlice>{std::move(data)};
+}
+#endif
 
 constexpr const char *k_called_from_public = "public";
 constexpr td::uint32 k_heavy_request_cost_unit = 1 << 21;
@@ -749,6 +781,21 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "invalid max_size"));
     return;
   }
+#ifdef TOS_COUNTER_NETWORK_TEST
+  TRY_RESULT_PROMISE(promise, alternate, counter_checkpoint_override(block_id, state_type));
+  if (alternate) {
+    if (query.offset_ < 0 || static_cast<td::uint64>(query.offset_) > alternate.value().size()) {
+      promise.set_error(td::Status::Error("Counter checkpoint override offset out of range"));
+      return;
+    }
+    auto slice = alternate.value().as_slice().substr(static_cast<size_t>(query.offset_),
+                                                    static_cast<size_t>(query.max_size_));
+    LOG(WARNING) << "COUNTER_CHECKPOINT_STATE_SLICE_SENT " << block_id.to_str()
+                 << " offset=" << query.offset_ << " bytes=" << slice.size();
+    promise.set_value(td::BufferSlice(slice));
+    return;
+  }
+#endif
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -776,6 +823,13 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
   VLOG(FULL_NODE_DEBUG) << "Got query getPersistentStateSize " << block_id.to_str() << " " << mc_block_id.to_str()
                         << " (" << persistent_state_type_to_string(block_id.shard_full(), state_type) << ") from "
                         << src;
+#ifdef TOS_COUNTER_NETWORK_TEST
+  TRY_RESULT_PROMISE(promise, alternate, counter_checkpoint_override(block_id, state_type));
+  if (alternate) {
+    promise.set_value(create_serialize_tl_object<tos_api::tosNode_persistentStateSize>(alternate.value().size()));
+    return;
+  }
+#endif
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::get_persistent_state_size, block_id,
                           mc_block_id, state_type, std::move(P));
 }

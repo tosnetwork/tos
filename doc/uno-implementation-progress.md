@@ -3524,3 +3524,20 @@ any workchain made the wc=0 negative control fail. Download completion alone
 does not prove archive application: the existing authenticated target-state
 and database-reopen assertions remain mandatory. This is a fast observation
 control, not a unit replacement for the real archive-selection regression.
+
+### Preparing a mismatched-checkpoint network experiment
+
+The Counter-only full-node build now has a file-backed persistent-state serving
+override, `TOS_COUNTER_CHECKPOINT_STATE_FILE`. It applies only to nonzero wc=2
+unsplit snapshots, answers both size and slice queries from the supplied file,
+bounds that file to 16 MiB and validates slice offsets. Removing the file
+restores ordinary serving on retry. Ordinary harness profiles explicitly clear
+the variable. The production full-node build does not contain this test hook.
+
+This is work in progress, not a passed negative-state gate. The controller must
+still supply a valid differently rooted state, bind peer-serving and receiver
+rejection evidence to the authenticated checkpoint, verify no premature commit,
+restore normal serving and finish cold join/reopening. The actor importer has
+an explicit parsed-root comparison before spool sealing and database writes;
+the planned test must reach that boundary rather than fail in BoC parsing.
+No root comparison, downloader validation or production state format changed.

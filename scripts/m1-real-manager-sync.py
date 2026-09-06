@@ -339,6 +339,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
             "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
+            "TOS_COUNTER_CHECKPOINT_STATE_FILE": "",
             "TOS_COUNTER_PAYLOAD": "1" if large_payload else "0",
             "TOS_COUNTER_CHECKPOINT": "1" if checkpoint else "0",
             "TOS_COUNTER_RETIRED_SIGNATURE_FILE": str(root / "retired-signature.bin") if retired_signature else "",
