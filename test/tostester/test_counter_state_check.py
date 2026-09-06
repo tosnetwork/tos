@@ -7,7 +7,7 @@ import sys
 import unittest
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
@@ -21,6 +21,30 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_process_memory_requires_live_identity_and_explicit_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc = root / "123"
+            proc.mkdir()
+            stat = "123 (node with ) spaces) " + "S " + "0 " * 18 + "456 0\n"
+            (proc / "stat").write_text(stat)
+            status = "VmRSS:\t2048 kB\nVmHWM:\t4096 kB\n"
+            (proc / "status").write_text(status)
+            node = SimpleNamespace(process_id=123)
+            value = module.node_memory_observation(node, root)
+            self.assertEqual(value["process_start_ticks"], 456)
+            self.assertEqual(value["rss_bytes"], 2 * 1024**2)
+            self.assertEqual(value["kernel_reported_peak_rss_bytes"], 4 * 1024**2)
+            for bad in ("", status.replace(" kB", " MB"), status.replace("4096", "0"), status + status):
+                (proc / "status").write_text(bad)
+                with self.assertRaisesRegex(AssertionError, "memory observation"):
+                    module.node_memory_observation(node, root)
+            with patch.object(Path, "read_text", side_effect=[stat, status, stat.replace("456", "457")]):
+                with self.assertRaisesRegex(AssertionError, "identity changed"):
+                    module.node_memory_observation(node, root)
+            with self.assertRaisesRegex(AssertionError, "stopped node"):
+                module.node_memory_observation(SimpleNamespace(process_id=None), root)
+
     async def test_streaming_requires_matching_file_and_actor_import(self):
         identity = "(2,8000000000000000,18):" + "AB" * 32 + ":" + "CD" * 32
         file_log = f"finished downloading state {identity}: 2178KB (file)\n"

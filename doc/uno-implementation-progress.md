@@ -2890,3 +2890,34 @@ After restoration, both node targets and relevant test binaries rebuilt. The
 host, disk integration, download-budget and snapshot CTests passed in 36.24
 seconds with `TOS_FAST_TESTS=1`; large opt-in experiments were not run. All
 twelve Python state/client observation tests passed.
+
+### Whole-process memory observations for bounded streaming cold join
+
+The real-node harness now records `/proc/<pid>/status` VmRSS and VmHWM before
+stopping the initial cold process and after the reopened process has verified
+the same state. The node exposes only its live subprocess PID. The collector
+reads the process start ticks before and after the status read and confirms
+the PID still belongs to that live subprocess. Missing/duplicate memory
+fields, unsupported units, zero values or identity changes fail the run rather
+than silently supplying a zero measurement. The values are converted from
+kernel-reported KiB to bytes and saved in `cold-memory.json` and the report.
+
+Run `dt5bugc1` passed file-backed checkpoint 20, Counter target 19, masterchain
+target 21 and cold height 53, including the 2,097,263-byte executor-data BoC
+and identical state after reopening. Before the first cold process stopped,
+VmRSS and VmHWM both reported 128,184,320 bytes (122.25 MiB). The separate
+reopened process reported 120,676,352 bytes (115.09 MiB) for both fields. PID
+and start ticks identify the two distinct process lifetimes. All owned node
+processes have exited and the fixture remains retained.
+
+These are kernel-reported whole-node measurements from process start through
+the observation, not importer-only allocation, a post-exit maximum, or a
+strict resource ceiling. No baseline subtraction or extrapolation to a larger
+tree is justified by this single bounded-payload run. The report explicitly
+keeps `large_state_rss_bound_accepted=false` and `uno_sync_accepted=false`.
+Large-state, growth, GC/retention and adverse checkpoint-state tests remain
+open; M3 expansion remains paused.
+
+Thirteen Python state/client instrument tests passed. Removing the KiB-to-byte
+conversion fails on 2048 versus 2097152; removing the process-identity guard
+fails the changed-start-time rejection test. Both mutations were restored.

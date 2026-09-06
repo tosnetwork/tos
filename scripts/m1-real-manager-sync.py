@@ -50,6 +50,33 @@ async def counter_state(client, block, payload=None):
     return state
 
 
+def node_memory_observation(node, proc_root=Path("/proc")):
+    pid = node.process_id
+    if pid is None:
+        raise AssertionError("cannot measure memory of a stopped node")
+    directory = proc_root / str(pid)
+
+    def start_ticks():
+        # comm may contain spaces or parentheses; fields after it start at 3.
+        fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[19])
+
+    started = start_ticks()
+    status = (directory / "status").read_text()
+    values = {}
+    for field in ("VmRSS", "VmHWM"):
+        matches = re.findall(rf"^{field}:\s+([0-9]+) kB$", status, re.MULTILINE)
+        if len(matches) != 1 or int(matches[0]) == 0:
+            raise AssertionError(f"missing or invalid {field} memory observation")
+        values[field] = int(matches[0]) * 1024
+    if start_ticks() != started or node.process_id != pid:
+        raise AssertionError("node identity changed during memory observation")
+    return {"pid": pid, "process_start_ticks": started,
+            "rss_bytes": values["VmRSS"], "kernel_reported_peak_rss_bytes": values["VmHWM"],
+            "source": "/proc/pid/status", "scope": "whole node since start through observation, not importer-only",
+            "observed_monotonic_seconds": time.monotonic()}
+
+
 def require_membership_signers(signed, block, introduced, retired):
     if signed.id is None or signed.id.to_json() != block.to_json():
         raise AssertionError("membership signature response is not block-bound")
@@ -292,6 +319,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
         await cold.run(cold_options, seed_extra_states=False)
+        memory_observations = {}
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
             raise AssertionError("cold node must have only masterchain/native static states")
         cold_client, observed = await asyncio.wait_for(reach(cold, target.seqno + 2), join_timeout)
@@ -391,6 +419,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 raise AssertionError("cold node did not retain the Counter block header")
             # Reopen the actual observer database with every warm node stopped.
             # Preserve the first process log: run() otherwise truncates it.
+            memory_observations["cold_join"] = node_memory_observation(cold)
+            (root / "cold-memory.json").write_text(json.dumps(memory_observations, indent=2) + "\n")
             await cold.stop()
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
             await cold.run(cold_options)
@@ -404,12 +434,16 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             if restored.data != executor_state.data or restored.last_transaction_id.to_json() != executor_state.last_transaction_id.to_json():
                 raise AssertionError("Counter state changed across cold database reopening")
             (root / "counter-account-reopened.json").write_text(restored.to_json())
+            memory_observations["reopened"] = node_memory_observation(cold)
+            (root / "cold-memory.json").write_text(json.dumps(memory_observations, indent=2) + "\n")
         return {"scope": "Counter real-manager cold-join" if counter else "native/masterchain real-manager cold-join baseline only",
                 "counter_workchain_tested": counter, "uno_sync_accepted": False,
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
                 "bounded_payload_reopened": large_payload,
+                "cold_process_memory": memory_observations,
+                "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,
                 "committee_membership_rotation_tested": membership,

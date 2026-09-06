@@ -229,6 +229,12 @@ class Network:
         def announce_to(self, dht: "DHTNode"):
             self._static_nodes.append(dht)
 
+        @property
+        def process_id(self) -> int | None:
+            if self.__process is None or self.__process.returncode is not None:
+                return None
+            return self.__process.pid
+
         @abstractmethod
         async def run(self, options: StartOptions | None = None):
             pass
