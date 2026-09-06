@@ -130,6 +130,7 @@ struct Fixture {
     owner: Treasury,
     trader_b: Treasury,
     normal: Treasury,
+    normal_second: Treasury,
     appellate: Treasury,
     reserve: Treasury,
     market: MsgAddressInt,
@@ -339,9 +340,25 @@ impl Fixture {
         Self::new_with_global_version(14, configure)
     }
 
+    // A second normal reporter is test-only fixture identity. Keep it
+    // separate from the protocol-version constructor: callers that exercise
+    // a version gate must not accidentally inherit a different Oracle setup.
+    fn new_with_reporters(
+        configure: impl FnOnce(&mut PredictionMarketInitV1, &MsgAddressInt, &MsgAddressInt),
+    ) -> Self {
+        Self::new_with_global_version_and_reporters(14, configure)
+    }
+
     fn new_with_global_version(
         global_version: u32,
         configure: impl FnOnce(&mut PredictionMarketInitV1),
+    ) -> Self {
+        Self::new_with_global_version_and_reporters(global_version, |init, _, _| configure(init))
+    }
+
+    fn new_with_global_version_and_reporters(
+        global_version: u32,
+        configure: impl FnOnce(&mut PredictionMarketInitV1, &MsgAddressInt, &MsgAddressInt),
     ) -> Self {
         let mut bc = Blockchain::with_global_version(global_version).expect("blockchain");
         bc.set_workchain(-1);
@@ -349,6 +366,8 @@ impl Fixture {
         let owner = bc.treasury("prediction-owner", treasury_balance).expect("owner");
         let trader_b = bc.treasury("prediction-trader-b", treasury_balance).expect("trader b");
         let normal = bc.treasury("normal-reporter", 100 * TOS).expect("normal reporter");
+        let normal_second =
+            bc.treasury("normal-reporter-second", 100 * TOS).expect("second normal reporter");
         let appellate = bc.treasury("appellate-reporter", 100 * TOS).expect("appellate reporter");
         let reserve = bc.treasury("prediction-reserve", 100 * TOS).expect("reserve");
         let now = u64::from(bc.now());
@@ -394,7 +413,7 @@ impl Fixture {
                 reporters: vec![appellate.address().clone()],
             },
         };
-        configure(&mut init);
+        configure(&mut init, normal.address(), normal_second.address());
         let market = PredictionMarketContractV1::calculate_address(&init).expect("market address");
         let deploy = MessageBuilder::internal(owner.address(), &market, 2 * TOS)
             .bounce(false)
@@ -402,7 +421,7 @@ impl Fixture {
             .body(Cell::default())
             .build();
         bc.send_message(deploy).expect("deploy").expect_success();
-        Self { bc, owner, trader_b, normal, appellate, reserve, market, init }
+        Self { bc, owner, trader_b, normal, normal_second, appellate, reserve, market, init }
     }
 
     fn send(&mut self, sender: &MsgAddressInt, value: u64, body: Cell) -> SendResult {
@@ -418,6 +437,18 @@ impl Fixture {
             .expect("accounting getter");
         result.expect_success();
         (0..11).map(|index| result.int_at(index)).collect()
+    }
+
+    // The complete persistent state cell, used to prove rejected messages did
+    // not commit a partial state transition.
+    fn data_hash(&self) -> Vec<u8> {
+        self.bc
+            .get_account(&self.market)
+            .expect("market account")
+            .get_data_hash()
+            .expect("market data hash")
+            .as_slice()
+            .to_vec()
     }
 
     fn account(&self, owner: &MsgAddressInt) -> Vec<i128> {
@@ -473,7 +504,16 @@ impl Fixture {
     }
 
     fn register(&mut self, owner: &MsgAddressInt, key: &SigningKey, query_id: u64) {
-        let credited = 10 * TOS;
+        self.register_with_credit(owner, key, query_id, 10 * TOS);
+    }
+
+    fn register_with_credit(
+        &mut self,
+        owner: &MsgAddressInt,
+        key: &SigningKey,
+        query_id: u64,
+        credited: u64,
+    ) {
         let value = credited
             + self.init.participant_entry_fee
             + self.init.account_cleanup_bounty
@@ -492,18 +532,17 @@ impl Fixture {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn signed_order(
+    fn order(
         &self,
         owner: &MsgAddressInt,
-        key: &SigningKey,
         nonce: u64,
         action: PredictionOrderActionV1,
         outcome: PredictionOrderOutcomeV1,
         role: PredictionLiquidityRoleV1,
         price: u16,
         quantity: u64,
-    ) -> Cell {
-        let order = PredictionOrderV1 {
+    ) -> PredictionOrderV1 {
+        PredictionOrderV1 {
             global_id: self.init.global_id,
             workchain_id: self.init.workchain_id,
             market_address: self.market.clone(),
@@ -522,7 +561,22 @@ impl Fixture {
             valid_after: u64::from(self.bc.now()),
             valid_until: self.init.trade_close,
             optional_counterparty: None,
-        };
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn signed_order(
+        &self,
+        owner: &MsgAddressInt,
+        key: &SigningKey,
+        nonce: u64,
+        action: PredictionOrderActionV1,
+        outcome: PredictionOrderOutcomeV1,
+        role: PredictionLiquidityRoleV1,
+        price: u16,
+        quantity: u64,
+    ) -> Cell {
+        let order = self.order(owner, nonce, action, outcome, role, price, quantity);
         let digest = PredictionMarketContractV1::order_digest(&order).unwrap();
         let signature = key.sign(&digest).to_bytes();
         PredictionMarketContractV1::build_signed_order(
@@ -913,6 +967,124 @@ fn typed_reserve_top_up_is_exact_bounceable_and_state_neutral() {
 }
 
 #[test]
+fn malformed_and_unknown_messages_leave_state_and_liabilities_unchanged() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+
+    // Unknown opcodes must reach the contract dispatcher (rather than merely
+    // failing message construction) and cannot commit state on their way out.
+    for opcode in
+        [0x0000_0000, 0x0000_0001, 0xdead_beef, 0x504c_0007, 0x504d_001a, 0x7fff_ffff, 0xffff_ffff]
+    {
+        let mut body = BuilderData::new();
+        body.append_u32(opcode).expect("opcode");
+        body.append_u64(u64::from(opcode)).expect("opaque trailing bits");
+        f.send(&owner, OPERATION_BUDGET, body.into_cell().expect("unknown-op body"))
+            .expect_exit_code(2499);
+        assert_eq!(f.data_hash(), before_data_hash, "unknown opcode {opcode:#010x} changed state");
+        assert_eq!(
+            f.accounting(),
+            before_accounting,
+            "unknown opcode {opcode:#010x} changed liabilities"
+        );
+    }
+
+    // This is a real, recognized opcode with its required query id and
+    // quantity deliberately absent. Exit code 9 proves it reached the
+    // contract's decoder and failed on the truncated cell, not dispatch.
+    let mut truncated = BuilderData::new();
+    truncated.append_u32(contracts::prediction_market::PM_SPLIT_OPCODE).expect("split opcode");
+    f.send(&owner, OPERATION_BUDGET, truncated.into_cell().expect("truncated split body"))
+        .expect_exit_code(9);
+    assert_eq!(f.data_hash(), before_data_hash, "truncated split changed state");
+    assert_eq!(f.accounting(), before_accounting, "truncated split changed liabilities");
+}
+
+#[test]
+fn cancellation_tombstone_is_nonce_bound_and_prunes_cleanup_once() {
+    let mut f = Fixture::new();
+    f.activate();
+    let owner = f.owner.address().clone();
+    let keeper = f.trader_b.address().clone();
+    let key = SigningKey::from_bytes(&[0x63; 32]);
+    f.register(&owner, &key, 2);
+
+    let order = f.order(
+        &owner,
+        41,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        1,
+    );
+    let cancellation_value =
+        OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty;
+    f.send(
+        &owner,
+        cancellation_value,
+        PredictionMarketContractV1::cancel_exact(3, &order).expect("cancel body"),
+    )
+    .expect_success();
+    assert_eq!(f.accounting()[1], 1, "cancellation must retain one nonce tombstone");
+    assert_eq!(
+        f.accounting()[10],
+        i128::from(f.init.account_cleanup_bounty + f.init.order_cleanup_bounty),
+        "tombstone cleanup credit must remain a liability"
+    );
+
+    let after_cancel_data = f.data_hash();
+    let after_cancel_accounting = f.accounting();
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::cancel_exact(4, &order).expect("idempotent cancel body"),
+    )
+    .expect_success();
+    assert_eq!(f.data_hash(), after_cancel_data, "repeated exact cancellation changed state");
+    assert_eq!(
+        f.accounting(),
+        after_cancel_accounting,
+        "repeated exact cancellation changed liability"
+    );
+
+    let conflicting_order = f.order(
+        &owner,
+        41,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_001,
+        1,
+    );
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::cancel_exact(5, &conflicting_order)
+            .expect("conflicting cancel body"),
+    )
+    .expect_exit_code(2421);
+    assert_eq!(f.data_hash(), after_cancel_data, "conflicting nonce changed state");
+    assert_eq!(f.accounting(), after_cancel_accounting, "conflicting nonce changed liability");
+
+    f.send(
+        &keeper,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::prune_order(6, &owner, 0, 41, false).expect("prune body"),
+    )
+    .expect_success();
+    assert_eq!(f.accounting()[1], 0, "pruning must remove the cancelled tombstone");
+    assert_eq!(
+        f.accounting()[10],
+        i128::from(f.init.account_cleanup_bounty),
+        "pruning must release the order cleanup liability exactly once"
+    );
+}
+
+#[test]
 fn bounceable_state_init_message_can_deploy_and_activate_atomically() {
     let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
     bc.set_workchain(-1);
@@ -1138,6 +1310,45 @@ fn participant_cap_rejects_a_new_account_without_mutating_accounting() {
 }
 
 #[test]
+fn maximum_participant_state_rejects_the_ninth_account_atomically() {
+    const MAX_PARTICIPANTS: u8 = 8;
+    let mut f = Fixture::new_with(|init| init.max_participants = u32::from(MAX_PARTICIPANTS));
+    f.activate();
+    let owner = f.owner.address().clone();
+    let trader = f.trader_b.address().clone();
+    f.register(&owner, &SigningKey::from_bytes(&[0x81; 32]), 2);
+    f.register(&trader, &SigningKey::from_bytes(&[0x82; 32]), 3);
+
+    for index in 0..usize::from(MAX_PARTICIPANTS - 2) {
+        let participant =
+            f.bc.treasury(&format!("prediction-max-participant-{index}"), 25_000 * TOS)
+                .expect("participant treasury");
+        let address = participant.address().clone();
+        f.register(&address, &SigningKey::from_bytes(&[0x83 + index as u8; 32]), 4 + index as u64);
+    }
+    assert_eq!(f.accounting()[0], i128::from(MAX_PARTICIPANTS));
+
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+    let ninth =
+        f.bc.treasury("prediction-ninth-participant", 25_000 * TOS).expect("ninth treasury");
+    let ninth_address = ninth.address().clone();
+    f.send(
+        &ninth_address,
+        10 * TOS + f.init.participant_entry_fee + f.init.account_cleanup_bounty + OPERATION_BUDGET,
+        PredictionMarketContractV1::register_and_deposit(
+            20,
+            10 * TOS,
+            SigningKey::from_bytes(&[0x90; 32]).verifying_key().to_bytes(),
+        )
+        .unwrap(),
+    )
+    .expect_exit_code(2413);
+    assert_eq!(f.data_hash(), before_data_hash, "ninth participant changed maximum-state data");
+    assert_eq!(f.accounting(), before_accounting, "ninth participant changed liabilities");
+}
+
+#[test]
 fn owner_order_and_global_live_order_caps_fail_closed() {
     fn matched_buy_pair(
         fixture: &mut Fixture,
@@ -1231,6 +1442,101 @@ fn owner_order_and_global_live_order_caps_fail_closed() {
         "global live-order cap admitted excess records"
     );
     assert_eq!(global.accounting(), before, "failed global order admission mutated accounting");
+}
+
+#[test]
+fn maximum_live_order_state_has_bounded_gas_and_rejects_the_next_admission() {
+    const ORDERS_PER_OWNER: u64 = 128;
+    // The frozen production BOC measures 113,464 gas at this state. Keep a
+    // substantial regression envelope while making gas growth observable.
+    const MAX_MATCH_GAS_AT_FULL_ORDER_STATE: u64 = 200_000;
+    let mut f = Fixture::new_with(|init| {
+        init.max_order_lots = 1;
+        init.max_locked_collateral = 200 * TOS;
+        init.max_account_free_balance = 150 * TOS;
+        init.max_total_free_balance = 300 * TOS;
+        init.max_total_liability = 600 * TOS;
+        init.max_orders_per_participant = ORDERS_PER_OWNER as u32;
+        init.max_live_order_records = (2 * ORDERS_PER_OWNER) as u32;
+    });
+    f.activate();
+    let owner = f.owner.address().clone();
+    let trader = f.trader_b.address().clone();
+    let owner_key = SigningKey::from_bytes(&[0x64; 32]);
+    let trader_key = SigningKey::from_bytes(&[0x65; 32]);
+    f.register_with_credit(&owner, &owner_key, 2, 130 * TOS);
+    f.register_with_credit(&trader, &trader_key, 3, 130 * TOS);
+
+    let mut max_gas = 0;
+    for nonce in 1..=ORDERS_PER_OWNER {
+        let yes = f.signed_order(
+            &owner,
+            &owner_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::Yes,
+            PredictionLiquidityRoleV1::Maker,
+            6_000,
+            1,
+        );
+        let no = f.signed_order(
+            &trader,
+            &trader_key,
+            nonce,
+            PredictionOrderActionV1::Buy,
+            PredictionOrderOutcomeV1::No,
+            PredictionLiquidityRoleV1::Taker,
+            4_000,
+            1,
+        );
+        let result = f.send(
+            &owner,
+            2 * TOS,
+            PredictionMarketContractV1::match_pair(nonce + 1_000, 1, yes, no).unwrap(),
+        );
+        max_gas = max_gas.max(compute_gas_used(&result));
+        result.expect_success();
+    }
+    assert_eq!(f.accounting()[1], i128::from(2 * ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[2], i128::from(ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[3], i128::from(ORDERS_PER_OWNER));
+    assert_eq!(f.accounting()[5], i128::from(ORDERS_PER_OWNER * TOS));
+    assert!(
+        max_gas <= MAX_MATCH_GAS_AT_FULL_ORDER_STATE,
+        "maximum-state match used {max_gas} gas, exceeding the {MAX_MATCH_GAS_AT_FULL_ORDER_STATE} gas budget"
+    );
+
+    let before_data_hash = f.data_hash();
+    let before_accounting = f.accounting();
+    let next_nonce = ORDERS_PER_OWNER + 1;
+    let yes = f.signed_order(
+        &owner,
+        &owner_key,
+        next_nonce,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        1,
+    );
+    let no = f.signed_order(
+        &trader,
+        &trader_key,
+        next_nonce,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        1,
+    );
+    f.send(
+        &owner,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(next_nonce + 1_000, 1, yes, no).unwrap(),
+    )
+    .expect_exit_code(2413);
+    assert_eq!(f.data_hash(), before_data_hash, "capacity rejection changed maximum-state data");
+    assert_eq!(f.accounting(), before_accounting, "capacity rejection changed liabilities");
 }
 
 #[test]
@@ -1373,8 +1679,10 @@ fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     assert_eq!(f.account(&b)[3..6], [0, TOS as i128 / 1_000, 0]);
 }
 
-#[test]
-fn deterministic_random_sequences_match_an_independent_conservation_model() {
+fn run_conservation_sequence(
+    mut seed: u64,
+    steps: u64,
+) -> (Fixture, ReferenceMarket, [MsgAddressInt; 2], u8) {
     let mut f = Fixture::new();
     f.activate();
     let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
@@ -1399,10 +1707,9 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
     }
     model.assert_matches(&f, [&owners[0], &owners[1]]);
 
-    let mut seed = 0x8f3d_9a21_4c77_b105_u64;
     let mut nonce = 10_u64;
     let mut exercised = 0_u8;
-    for step in 0_u64..50 {
+    for step in 0_u64..steps {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         let quantity = 1 + ((seed >> 33) % 2);
         let first = usize::from(((seed >> 17) & 1) != 0);
@@ -1522,6 +1829,13 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         }
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
+    (f, model, owners, exercised)
+}
+
+#[test]
+fn deterministic_random_sequences_match_an_independent_conservation_model() {
+    let (mut f, mut model, owners, exercised) =
+        run_conservation_sequence(0x8f3d_9a21_4c77_b105, 50);
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
 
     // Finish the same randomized state through a production resolution, then
@@ -1608,6 +1922,29 @@ fn deterministic_random_sequences_match_an_independent_conservation_model() {
         assert_eq!(f.account(&owners[index])[0], 0, "withdraw must exhaust modeled free balance");
     }
     assert_eq!(f.accounting()[4], 0, "all participant free liability must be withdrawn");
+}
+
+#[test]
+fn multiple_randomized_conservation_sequences_match_the_production_boc() {
+    // These fixed seeds are deliberately reproducible regression vectors, not
+    // a probabilistic test that can hide an accounting failure on a later run.
+    // Together they exercise every operation class against the independent
+    // model after each real contract transaction.
+    let mut exercised = 0_u8;
+    for seed in [
+        0x134d_5c8e_219a_7bf0,
+        0x2d47_a9c1_5e38_b604,
+        0x4f83_1bd6_a297_0ce5,
+        0x65ba_e420_3d19_8f72,
+        0x8a17_3cf5_d860_24be,
+        0xa3e9_750b_4c21_df68,
+        0xc746_08ad_91fe_35b2,
+        0xed20_bf74_6a83_19cd,
+    ] {
+        let (_, _, _, seed_exercised) = run_conservation_sequence(seed, 100);
+        exercised |= seed_exercised;
+    }
+    assert_eq!(exercised, 31, "the multi-seed corpus missed an operation class");
 }
 
 fn run_partitioned_fill(parts: u64) -> ([i128; 3], [i128; 3], [i128; 4]) {
@@ -1752,6 +2089,47 @@ fn resolution_context_getter_uses_unambiguous_absence_before_a_round_opens() {
     let (current, review_base) = f.resolution_contexts();
     assert!(current.is_none());
     assert!(review_base.is_none());
+}
+
+#[test]
+fn normal_quorum_requires_distinct_reporters_and_counts_each_once() {
+    let mut f = Fixture::new_with_reporters(|init, normal, normal_second| {
+        init.normal_oracle_policy = PredictionOraclePolicyV1 {
+            threshold: 2,
+            reporters: vec![normal.clone(), normal_second.clone()],
+        };
+    });
+    f.activate();
+    let keeper = f.trader_b.address().clone();
+    let first = f.normal.address().clone();
+    let second = f.normal_second.address().clone();
+    let now = f.init.resolve_not_before;
+    let deadline = f.init.oracle_vote_deadline;
+
+    f.bc.set_now(now as u32);
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(1).unwrap())
+        .expect_success();
+    f.send(&keeper, OPERATION_BUDGET, PredictionMarketContractV1::advance_phase(2).unwrap())
+        .expect_success();
+    let context = f.phase().3;
+    assert_ne!(context, [0; 32]);
+
+    let report = |query_id| {
+        PredictionMarketContractV1::report_result(
+            query_id, 0, context, 0, [0xc1; 32], now, deadline,
+        )
+        .unwrap()
+    };
+    f.send(&first, OPERATION_BUDGET, report(3)).expect_success();
+    assert_eq!(f.phase().0, 1, "one 2-of-2 vote must not form a proposal");
+
+    f.send(&first, OPERATION_BUDGET, report(4)).expect_success();
+    assert_eq!(f.phase().0, 1, "a duplicate reporter vote must remain idempotent");
+
+    f.send(&second, OPERATION_BUDGET, report(5)).expect_success();
+    let (status, _, _, _, _, proposal, _) = f.phase();
+    assert_eq!(status, 2, "the second distinct reporter must form the proposal");
+    assert_ne!(proposal, [0; 32]);
 }
 
 #[test]
