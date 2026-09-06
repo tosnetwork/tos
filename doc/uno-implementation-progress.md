@@ -1440,13 +1440,6 @@ deterministic immutable continuation. Independently removing the entry bound,
 empty-marker check or non-resolving cell load made the corresponding tests fail;
 all mutations were restored.
 
-After rebuilding affected targets, the used-nullifier, tree/note-state and
-ordinary snapshot groups each passed twice (65.14 seconds total). Additional
-root-envelope negative tests were then rebuilt, and the used-nullifier and
-tree/note-state groups each passed three further runs (4.09 seconds total).
-No large snapshot performance result or complete UNO network acceptance is
-claimed by these checks.
-
 The database-reopening fixture now constructs this object from the reopened
 account payload, rejects an existing nullifier and stages a new one while
 preserving the original root. This stages a used-set update only; it does not
@@ -1950,3 +1943,10 @@ Cell hash unchanged and allows a subsequent retry. Three independent mutations
 removed pre-state anchor membership, tree/anchor equality and paired-count
 equality. Each accepted a specifically forbidden input and failed its test;
 all mutations were restored.
+
+After rebuilding affected targets, the used-nullifier, tree/note-state and
+ordinary snapshot groups each passed twice (65.14 seconds total). Additional
+root-envelope negative tests were then rebuilt, and the used-nullifier and
+tree/note-state groups each passed three further runs (4.09 seconds total).
+No large snapshot performance result or complete UNO network acceptance is
+claimed by these checks.
