@@ -847,6 +847,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   };
   reopen(); database->inc(state); (void)commit(); reopen();
   const auto baseline = read_cell_records(*kv);
+  const auto update_started = SnapshotClock::now();
   auto old = database->load_cell(old_hash.as_slice()).move_as_ok();
   ASSERT_TRUE(tlb::unpack_cell(old,record));
   vm::AugmentedDictionary updated(vm::load_cell_slice_ref(record.accounts),256,block::tlb::aug_ShardAccounts);
@@ -871,6 +872,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   ASSERT_TRUE(tlb::pack_cell(next,record));
   const auto next_hash = next->get_hash();
   ASSERT_TRUE(next_hash != old_hash);
+  const auto resolve_update_ms = snapshot_elapsed_ms(update_started);
   auto emit = [&](const char* phase, const CellRecordDelta& delta, const std::array<double,3>& times) {
     std::cout << "INCREMENTAL_RECORDS_CSV," << count << ",91," << page_count << ',' << shape << ',' << phase << ','
               << delta.added << ',' << delta.added_bytes << ',' << delta.removed << ',' << delta.removed_bytes << ','
@@ -915,6 +917,20 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   delta = cell_record_delta(retained,read_cell_records(*kv));
   ASSERT_TRUE(delta.added == 0 && delta.removed > 0);
   emit("release",delta,release_times);
+  // Deliberately after the commit observations: serializing the full closure
+  // beforehand would warm every page and change the incremental experiment.
+  const auto serialize_started = SnapshotClock::now();
+  auto serialized = vm::std_boc_serialize(newest).move_as_ok();
+  const auto serialize_ms = snapshot_elapsed_ms(serialize_started);
+  const auto decode_started = SnapshotClock::now();
+  auto decoded = vm::std_boc_deserialize(serialized.as_slice()).move_as_ok();
+  const auto decode_ms = snapshot_elapsed_ms(decode_started);
+  ASSERT_TRUE(decoded->get_hash() == next_hash);
+  ASSERT_TRUE(decoded->get_hash() != old_hash);
+  std::cout << "INCREMENTAL_STATE_CSV," << count << ",91," << page_count << ',' << shape << ','
+            << resolve_update_ms << ',' << serialize_ms << ',' << decode_ms << ',' << serialized.size() << ','
+            << snapshot_peak_rss_kib() << std::endl;
+  ASSERT_TRUE(std::cout.good());
   newest.clear(); final_accounts.reset(); record = {};
   database.reset(); kv.reset(); td::rmrf(directory).ensure();
 }
