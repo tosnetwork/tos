@@ -1,6 +1,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <random>
+#include "rocksdb/merge_operator.h"
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -8,15 +9,40 @@
 #include "td/actor/actor.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
+#include "td/db/RocksDb.h"
 #include "uno/core/used-nullifiers.h"
 #include "validator/downloaders/download-state.hpp"
 #include "validator/state-serializer.hpp"
 #include "validator/streaming-import-budget.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/db/CellStorage.h"
+#include "vm/db/DynamicBagOfCellsDb.h"
 #include "uno-snapshot-transport.h"
 
 namespace {
+class RetainedStateMergeOperator final : public rocksdb::MergeOperator {
+ public:
+  const char* Name() const override { return "RetainedStateMergeOperator"; }
+  bool FullMergeV2(const MergeOperationInput& input, MergeOperationOutput* output) const override {
+    if (!input.existing_value || input.operand_list.empty()) return false;
+    auto diff = input.operand_list.front().ToString();
+    for (std::size_t i = 1; i < input.operand_list.size(); ++i) {
+      const auto& operand = input.operand_list[i];
+      vm::CellStorer::merge_refcnt_diffs(diff, td::Slice(operand.data(), operand.size()));
+    }
+    output->new_value = input.existing_value->ToString();
+    vm::CellStorer::merge_value_and_refcnt_diff(output->new_value, diff);
+    return true;
+  }
+  bool PartialMerge(const rocksdb::Slice&, const rocksdb::Slice& left, const rocksdb::Slice& right,
+                    std::string* output, rocksdb::Logger*) const override {
+    *output = left.ToString();
+    vm::CellStorer::merge_refcnt_diffs(*output, td::Slice(right.data(), right.size()));
+    return true;
+  }
+};
+
 class SnapshotImportActor final : public td::actor::Actor {
  public:
   SnapshotImportActor(std::string directory, tos::validator::PersistentStateImportRequest request,
@@ -305,6 +331,97 @@ td::Ref<vm::Cell> single_account_state(td::Ref<vm::Cell> engine) {
   return root;
 }
 }  // namespace
+
+TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
+  const auto directory = td::mkdtemp("/tmp", "uno-root-retention-").move_as_ok();
+  LOG(WARNING) << "Root retention database: " << directory << " (removed on success, retained on failure)";
+  std::unique_ptr<td::RocksDb> kv;
+  std::unique_ptr<vm::DynamicBagOfCellsDb> database;
+  auto reopen = [&] {
+    database.reset();
+    kv.reset();
+    td::RocksDbOptions options;
+    options.merge_operator = std::make_shared<RetainedStateMergeOperator>();
+    kv = std::make_unique<td::RocksDb>(td::RocksDb::open(directory + "/cells", options).move_as_ok());
+    database = vm::DynamicBagOfCellsDb::create_v2({.extra_threads = 0});
+    database->set_loader(std::make_unique<vm::CellLoader>(kv->snapshot()));
+  };
+  auto commit = [&] {
+    database->prepare_commit().ensure();
+    kv->begin_write_batch().ensure();
+    vm::CellStorer storer(*kv);
+    database->commit(storer).ensure();
+    kv->commit_write_batch().ensure();
+  };
+  reopen();
+  std::mt19937 generator(91);
+  std::vector<td::Bits256> keys;
+  std::vector<vm::CellHash> retained, released;
+  for (unsigned epoch = 0; epoch < 12; ++epoch) {
+    {
+      uno_workchain::UsedNullifiers previous;
+      if (!retained.empty()) {
+        auto state = database->load_cell(retained.back().as_slice()).move_as_ok();
+        auto payload = block::extract_workchain_engine_state(state, 2, td::Bits256::zero()).move_as_ok();
+        previous = uno_workchain::UsedNullifiers::from_root(payload, keys.size()).move_as_ok();
+      }
+      std::vector<td::Bits256> added(64);
+      for (auto& key : added) {
+        for (auto& byte : key.as_slice()) byte = static_cast<char>(generator() & 255);
+      }
+      auto next = previous.with_used(added).move_as_ok();
+      keys.insert(keys.end(), added.begin(), added.end());
+      auto root = single_account_state(next.root());
+      database->inc(root);
+      retained.push_back(root->get_hash());
+      if (retained.size() > 3) {
+        database->dec(database->load_cell(retained.front().as_slice()).move_as_ok());
+        released.push_back(retained.front());
+        retained.erase(retained.begin());
+      }
+      commit();
+    }
+    // Drop both the V2 reader and the actual RocksDB handle, not just a cache.
+    reopen();
+    {
+      vm::CellHashSet reachable;
+      std::function<void(td::Ref<vm::Cell>)> visit = [&](td::Ref<vm::Cell> cell) {
+        if (!reachable.insert(cell).second) return;
+        auto slice = vm::load_cell_slice(cell);
+        for (unsigned i = 0; i < slice.size_refs(); ++i) visit(slice.prefetch_ref(i));
+      };
+      for (const auto& hash : retained) visit(database->load_cell(hash.as_slice()).move_as_ok());
+      std::size_t stored_cells = 0;
+      kv->for_each([&](td::Slice key, td::Slice) {
+        if (key.size() == vm::CellTraits::hash_bytes) {
+          ASSERT_TRUE(reachable.contains(vm::CellHash::from_slice(key)));
+          ++stored_cells;
+        }
+        return td::Status::OK();
+      }).ensure();
+      ASSERT_EQ(stored_cells, reachable.size());
+      for (const auto& hash : released) ASSERT_TRUE(database->load_cell(hash.as_slice()).is_error());
+      auto newest = database->load_cell(retained.back().as_slice()).move_as_ok();
+      auto payload = block::extract_workchain_engine_state(newest, 2, td::Bits256::zero()).move_as_ok();
+      auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys.size()).move_as_ok();
+      for (const auto& key : keys) ASSERT_TRUE(restored.contains(key));
+      ASSERT_TRUE(restored.with_used({keys.front()}).is_error());
+      LOG(INFO) << "Root retention epoch=" << epoch << " nullifiers=" << keys.size()
+                << " roots=" << retained.size() << " live_cells=" << stored_cells;
+    }
+  }
+  for (const auto& hash : retained) database->dec(database->load_cell(hash.as_slice()).move_as_ok());
+  commit();
+  reopen();
+  kv->for_each([&](td::Slice key, td::Slice) {
+    ASSERT_TRUE(key.size() != vm::CellTraits::hash_bytes);
+    return td::Status::OK();
+  }).ensure();
+  for (const auto& hash : retained) ASSERT_TRUE(database->load_cell(hash.as_slice()).is_error());
+  database.reset();
+  kv.reset();
+  td::rmrf(directory).ensure();
+}
 
 TEST(UnoStateSnapshot, EncodingBudgetCheckedArithmetic) {
   using tos::validator::streaming_import_encoding_bound;

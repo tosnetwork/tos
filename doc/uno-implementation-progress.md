@@ -3355,3 +3355,41 @@ binding and traced-child supervision. Logs are
 `build/uno-trace-mutation.log` and `build/uno-trace-restored.log`. Both real runs
 have ended and are retained. Long-run state growth, GC/retention and scalable
 state admission remain M1 work; M3 remains paused.
+
+### Growing nullifier state and retained-root reclamation
+
+`GrowingStateRetainsSharedCellsAfterRootRelease` exercises the V2 cell-store
+reference-count mechanism on a real RocksDB database. Twelve synthetic state
+versions each add 64 deterministic distinct nullifiers to the single-account
+state fixture. It retains the newest three roots, decrements expired roots,
+commits, then closes and reopens both the V2 database and RocksDB handle before
+checking results. The test merger uses the existing CellStorer value/refcount
+encoding operations, including merged refcount deltas.
+
+After every reopen, the set of physical 32-byte cell keys must equal the union
+of cells reachable from the retained roots: no missing shared cells and no
+extra unreachable cells. Every released shard-state root must be absent, all
+nullifiers accumulated so far remain readable through the newest root, and
+an already-used nullifier remains rejected. After releasing all remaining
+roots and reopening again, no cell records or retained roots remain. The
+last retained window contains 768 nullifiers and 2,021 distinct reachable
+cells across three roots. This is a logical key-deletion check; it does not
+measure filesystem space returned by compaction.
+
+Skipping only the expired-root decrement makes the test fail at the first
+expired version because an unreachable cell key remains in RocksDB. The
+failure is not rejection wording or setup failure. Its database remains at
+`/tmp/uno-root-retention-9fV6h8`, with evidence in
+`build/uno-retention-mutation.log`. After restoration, the default seven-test
+snapshot suite passed in `build/uno-retention-regression.log`; the opt-in
+two-million-key experiment was not enabled. Successful retention fixtures
+are removed after closing their database handles; failures retain their
+logged directory. The first successful prototype database was moved to
+recoverable trash.
+
+This is storage-level growth/reclamation evidence, not actor GC eligibility,
+RootDb block-descriptor unlinking, checkpoint/anchor retention policy or a
+long-running independent-network GC test. The state versions use the existing
+synthetic shard fixture, not twelve consensus-admitted blocks. No production
+retention window, account limit or GC scheduling rule was changed. Those
+remaining M1 gates must still be exercised; M3 remains paused.
