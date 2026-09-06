@@ -1,3 +1,6 @@
+#[cfg(panic = "abort")]
+compile_error!("uno-crypto requires panic=unwind for ABI containment");
+
 use orchard::Bundle;
 pub mod context;
 pub mod decode;

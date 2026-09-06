@@ -3638,3 +3638,11 @@ admission, and prices a measured larger single-account budget, native account
 partitioning and a separate authenticated engine store. It requests a design
 decision before changing the one-account host contract. No alternative is
 selected, no limit is raised, and no state-layout migration is implemented.
+
+The [fed3ca84e audit response](uno-security-audit-response.md) records the
+retryable verifier initialization and panic-strategy build gate, the ABI v0
+hybrid-profile scope clarification, and dynamic evidence that the reported
+malformed-fork issue is already prevented by LabelParser's default checks.
+H-2 queued-message liveness, policy preflight, zero settlement principals and
+the remaining listed items are not marked resolved. No storage-architecture
+decision or M3 expansion is implied by this audit response.

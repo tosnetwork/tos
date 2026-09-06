@@ -18,11 +18,22 @@ Amounts are high/low u64 words of u128 nanotomi, not host-endian byte strings.
 The entry point checks ABI/profile and representable context, checks lengths
 before constructing slices, decodes canonical primitive fields, and calls the
 combined context/proof/spend/binding verifier. Its process-local key cache is an
-immutable `OnceLock<Result<FixedVerifier, KeyConstructionFailed>>`; callers cannot
-replace the key. A construction error fails closed. Unwinding panics are contained
+immutable successful verifier, with serialized initialization; callers cannot
+replace the key. A construction error returns status 4 for that call without
+caching the error, so later calls retry. Unwinding panics are contained
 at the exported function and return status 5; OOM, process abort and invalid
 caller memory cannot be recovered by this mechanism. It must not be advertised
-as recovery from `panic=abort`.
+as recovery from `panic=abort`. Development and release profiles explicitly
+require unwind, and compiling this crate with `panic=abort` is rejected.
+
+ABI v0 does not carry a KEM ciphertext or implement the required hybrid
+encryption profile. Its raw encryption fields and integration fixtures are
+prototype inputs, not durable UNO transactions or activation vectors. When
+the hybrid profile changes the request contract, increment the ABI version
+and regenerate profile-dependent integration fixtures; do not reinterpret v0
+bytes as the new profile. Independently pinned primitive/VK reference vectors
+remain useful for their original scope and are not automatically invalidated
+by a change to the surrounding ABI.
 
 Status 0 means these checks passed, **not** that a transaction may be committed.
 The host must derive context/limits from authenticated state, derive the digest

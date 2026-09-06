@@ -15,6 +15,13 @@ orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153d
 
 [workspace]
 
+# ABI entry points contain recoverable panics rather than terminating the node.
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+
 [build-dependencies]
 cbindgen = { version = "=0.29.0", default-features = false }
 

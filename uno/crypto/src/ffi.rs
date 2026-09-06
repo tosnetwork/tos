@@ -5,7 +5,7 @@ use crate::{
     validate_proof_shape, FixedVerifier, KeyConstructionFailed,
 };
 use orchard::bundle::BundleVersion;
-use std::{mem, panic::catch_unwind, slice, sync::OnceLock};
+use std::{mem, panic::catch_unwind, slice, sync::{Mutex, OnceLock}};
 
 pub const UNO_CRYPTO_ABI_VERSION: u32 = 0;
 pub const UNO_CRYPTO_FIXED_PROFILE: u32 = 1;
@@ -72,7 +72,37 @@ pub(crate) fn bounded_span<T>(pointer: *const T, count: usize) -> bool {
         })
 }
 
-static VERIFIER: OnceLock<Result<FixedVerifier, KeyConstructionFailed>> = OnceLock::new();
+struct RetryingOnce<T> {
+    value: OnceLock<T>,
+    initializing: Mutex<()>,
+}
+
+impl<T> RetryingOnce<T> {
+    const fn new() -> Self {
+        Self { value: OnceLock::new(), initializing: Mutex::new(()) }
+    }
+
+    fn get_or_try_init(&self, build: impl FnOnce() -> Result<T, KeyConstructionFailed>)
+        -> Result<&T, KeyConstructionFailed>
+    {
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+        // Serialize expensive construction, but never cache failure. The lock
+        // protects initialization only; a published value is immutable.
+        let _guard = match self.initializing.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+        let value = build()?;
+        Ok(self.value.get_or_init(|| value))
+    }
+}
+
+static VERIFIER: RetryingOnce<FixedVerifier> = RetryingOnce::new();
 
 #[cfg(test)]
 std::thread_local! {
@@ -124,7 +154,7 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         request.max_proof_bytes,
     )
     .map_err(|_| AbiStatus::UNO_CRYPTO_DECODE)?;
-    let verifier = VERIFIER.get_or_init(FixedVerifier::new).as_ref().map_err(|_| AbiStatus::UNO_CRYPTO_KEY)?;
+    let verifier = VERIFIER.get_or_try_init(FixedVerifier::new).map_err(|_| AbiStatus::UNO_CRYPTO_KEY)?;
     verifier
         .verify_in_context(
             &bundle,
@@ -159,6 +189,39 @@ pub unsafe extern "C" fn uno_crypto_verify_v0(request: *const VerifyRequest) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn verifier_construction_failure_is_retryable() {
+        let cache = RetryingOnce::<FixedVerifier>::new();
+        assert!(cache.get_or_try_init(|| Err(KeyConstructionFailed)).is_err());
+        let key = cache.get_or_try_init(FixedVerifier::new).expect("retry constructs the fixed verifier");
+        let again = cache.get_or_try_init(|| panic!("successful construction must be cached"))
+            .expect("cached verifier");
+        assert!(std::ptr::eq(key, again));
+    }
+
+    #[test]
+    fn initializer_unwind_does_not_poison_retries() {
+        let cache = RetryingOnce::<u32>::new();
+        assert!(catch_unwind(|| cache.get_or_try_init(|| panic!("injected construction unwind"))).is_err());
+        assert_eq!(*cache.get_or_try_init(|| Ok(7)).expect("retry after unwind"), 7);
+    }
+
+    #[test]
+    fn concurrent_initializers_publish_once() {
+        let cache = RetryingOnce::<u32>::new();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    assert_eq!(*cache.get_or_try_init(|| {
+                        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(9)
+                    }).expect("shared initialization"), 9);
+                });
+            }
+        });
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
     #[test]
     fn abi_catches_verification_unwind() {
         INJECT_UNWIND.with(|flag| flag.set(true));

@@ -5,6 +5,26 @@
 
 using namespace uno_workchain;
 
+TEST(UnoUsedNullifiers, ForkRequiresExactlyTwoRefsAndNoBits) {
+  // Empty root label, then two 255-bit all-zero suffix leaves.
+  auto leaf = vm::CellBuilder().store_long(3, 2).store_long(0, 1).store_long(255, 8).finalize();
+  auto valid = vm::CellBuilder().store_long(0, 2).store_ref(leaf).store_ref(leaf).finalize();
+  auto restored = UsedNullifiers::from_root(valid, 2).move_as_ok();
+  ASSERT_EQ(restored.size(), 2u);
+  auto high = td::Bits256::zero();
+  high.as_slice()[0] = static_cast<char>(128);
+  ASSERT_TRUE(restored.contains(td::Bits256::zero()));
+  ASSERT_TRUE(restored.contains(high));
+  for (unsigned refs : {0u, 1u, 3u}) {
+    vm::CellBuilder fork;
+    fork.store_long(0, 2);
+    for (unsigned i = 0; i < refs; ++i) fork.store_ref(leaf);
+    ASSERT_TRUE(UsedNullifiers::from_root(fork.finalize(), 4).is_error());
+  }
+  auto extra_bit = vm::CellBuilder().store_long(0, 2).store_long(0, 1).store_ref(leaf).store_ref(leaf).finalize();
+  ASSERT_TRUE(UsedNullifiers::from_root(extra_bit, 2).is_error());
+}
+
 TEST(UnoUsedNullifiers, UpdateReturnsBudgetFailure) {
   auto original = UsedNullifiers{}.with_used({td::Bits256::zero()}).move_as_ok();
   auto fresh = td::Bits256::zero();
