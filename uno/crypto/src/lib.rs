@@ -274,6 +274,89 @@ mod tests {
         file.write_all(&bytes).expect("write public fixture");
     }
 
+    // Manual measurement producer, not a production wire or an activation gate.
+    // All keys, randomness and resulting notes are public test material.
+    #[test]
+    #[ignore = "manual multi-shape measurement; requires UNO_SHAPE_FIXTURE_DIR"]
+    fn export_measurement_shapes() {
+        use std::io::Write;
+        use orchard::{
+            builder::{Builder, BundleType},
+            circuit::ProvingKey,
+            keys::{FullViewingKey, Scope, SpendingKey},
+            value::NoteValue,
+        };
+        use rand::SeedableRng;
+
+        let directory = std::env::var_os("UNO_SHAPE_FIXTURE_DIR")
+            .expect("UNO_SHAPE_FIXTURE_DIR is required; missing output is not a successful measurement");
+        let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
+        let sk = SpendingKey::from_bytes([0; 32]).expect("public test spending key");
+        let recipient = FullViewingKey::from(&sk).address_at(0u32, Scope::External);
+        for count in [2usize, 4, 8] {
+            let seed = [u8::try_from(count).expect("shape seed"); 32];
+            let mut rng = rand::rngs::StdRng::from_seed(seed);
+            let count_u64 = u64::try_from(count).expect("shape count");
+            let per_output = 5000u64.checked_div(count_u64).expect("nonzero shape count");
+            assert_eq!(per_output.checked_mul(count_u64), Some(5000));
+            let mut builder = Builder::new(
+                BundleType::DEFAULT,
+                BundleVersion::orchard_v2(),
+                Flags::SPENDS_DISABLED,
+                Anchor::empty_tree(),
+            ).expect("shape builder");
+            for _ in 0..count {
+                builder.add_output(None, recipient, NoteValue::from_raw(per_output), [0; 512])
+                    .expect("shape output");
+            }
+            let (unsigned, _) = builder.build::<i64>(&mut rng).expect("shape build").expect("nonempty shape");
+            let begin = std::time::Instant::now();
+            let proven = unsigned.create_proof(&pk, &mut rng).expect("shape proof");
+            let prove_ns = begin.elapsed().as_nanos();
+            let bundle = proven.apply_signatures(&mut rng, [42; 32], &[]).expect("shape signatures");
+            assert_eq!(bundle.actions().len(), count, "builder must produce the requested shape");
+            assert_eq!(*bundle.value_balance(), -5000, "shape must preserve total principal");
+            let proof_bytes = count.checked_mul(2272).and_then(|n| n.checked_add(2720))
+                .expect("shape proof length");
+            assert_eq!(bundle.authorization().proof().as_ref().len(), proof_bytes);
+            let set_limits = |request: &mut ffi::VerifyRequest| {
+                request.max_actions = count;
+                request.max_proof_bytes = proof_bytes;
+            };
+            assert_eq!(ffi_status(&bundle, set_limits), 0, "real ABI must accept generated shape");
+            assert_eq!(ffi_status(&bundle, |request| {
+                set_limits(request);
+                request.sighash[0] ^= 1;
+            }), 3, "real ABI must reject a differently authorized shape");
+
+            // T1 is a private measurement-file revision with explicit u64 LE
+            // lengths. T0 fixtures and the production ABI remain unchanged.
+            let mut bytes = b"UNOABIT1".to_vec();
+            bytes.extend_from_slice(&count_u64.to_le_bytes());
+            bytes.extend_from_slice(&u64::try_from(proof_bytes).expect("proof length encoding").to_le_bytes());
+            bytes.push(bundle.flag_byte());
+            bytes.extend_from_slice(&bundle.value_balance().to_le_bytes());
+            bytes.extend_from_slice(&bundle.anchor().to_bytes());
+            bytes.extend_from_slice(&<[u8; 64]>::from(bundle.authorization().binding_signature()));
+            bytes.extend_from_slice(bundle.authorization().proof().as_ref());
+            for action in encoded_actions(&bundle) {
+                for field in [&action.cv_net, &action.nullifier, &action.rk, &action.cmx, &action.epk] {
+                    bytes.extend_from_slice(field);
+                }
+                bytes.extend_from_slice(&action.enc_ciphertext);
+                bytes.extend_from_slice(&action.out_ciphertext);
+                bytes.extend_from_slice(&action.spend_signature);
+            }
+            let path = std::path::PathBuf::from(&directory).join(format!("funding-{count}.bin"));
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true)
+                .open(&path).expect("create fresh shape fixture; never overwrite");
+            file.write_all(&bytes).expect("write shape fixture");
+            file.flush().expect("flush shape fixture");
+            println!("SHAPE_FIXTURE actions={count} proof_bytes={proof_bytes} prove_ns={prove_ns} seed_byte={} path={}",
+                     seed[0], path.display());
+        }
+    }
+
     fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
         use crate::decode::{decode_bundle, EncodedBundle};
         let actions = encoded_actions(bundle);
