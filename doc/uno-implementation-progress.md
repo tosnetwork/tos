@@ -3646,6 +3646,9 @@ malformed-fork issue is already prevented by LabelParser's default checks.
 Zero settlement principals are now rejected consistently by Rust, FFI and C++,
 with shared negative vectors and positive controls, while zero-fee Transfer
 and dummy-note semantics are preserved.
+Transcript profile admission and byte encoding now share an explicit mapping;
+existing digest vectors are unchanged, and bypassing the mapping fails the
+unsupported-profile test. No additional profile is activated.
 H-2 queued-message liveness, policy preflight and
 the remaining listed items are not marked resolved. No storage-architecture
 decision or M3 expansion is implied by this audit response.

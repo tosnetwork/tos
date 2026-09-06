@@ -67,14 +67,24 @@ fn domain(label: &[u8]) -> Result<blake3::Hasher, TranscriptError> {
     Ok(hash)
 }
 
+// Keep admission and transcript encoding in one mapping. New profiles require
+// an explicit ID decision instead of inheriting the existing profile byte.
+fn bundle_profile_id(profile: BundleVersion) -> Result<u8, TranscriptError> {
+    if profile == BundleVersion::orchard_v2() {
+        Ok(0)
+    } else {
+        Err(TranscriptError::Shape)
+    }
+}
+
 pub fn transfer_digests(
     header: &TransferHeader,
     bundle: &EncodedBundle<'_>,
     kem: &[&[u8]],
     limits: TranscriptLimits,
 ) -> Result<TransferDigests, TranscriptError> {
-    if bundle.profile != BundleVersion::orchard_v2()
-        || bundle.actions.is_empty()
+    let profile_id = bundle_profile_id(bundle.profile)?;
+    if bundle.actions.is_empty()
         || bundle.actions.len() > limits.max_actions
         || bundle.actions.len() != kem.len()
         || limits.kem_ciphertext_bytes == 0
@@ -103,7 +113,7 @@ pub fn transfer_digests(
     hash.update(&0u128.to_be_bytes());
     hash.update(&0u128.to_be_bytes());
     hash.update(&[0, 0, 0]);
-    hash.update(&[0, bundle.flags]); // fixed bundle profile candidate, then flags
+    hash.update(&[profile_id, bundle.flags]);
     hash.update(&bundle.value_balance.to_be_bytes());
     bytes(&mut hash, &bundle.anchor)?;
     let count = u64::try_from(bundle.actions.len()).map_err(|_| TranscriptError::Length)?;
@@ -348,7 +358,7 @@ mod tests {
             ordered.txid,
             digest(&original, &pair, 3, 100, [9; 32], &[10], [11; 64], &[&[12; 4], &[13; 4]]).txid
         );
-        let raw = EncodedBundle {
+        let mut raw = EncodedBundle {
             profile: BundleVersion::orchard_v2(),
             flags: 3,
             value_balance: 100,
@@ -357,6 +367,14 @@ mod tests {
             proof: &[10],
             binding_signature: [11; 64],
         };
+        assert_eq!(bundle_profile_id(BundleVersion::orchard_v2()), Ok(0));
+        for profile in [BundleVersion::orchard_insecure_v1(), BundleVersion::orchard_v3(),
+                        BundleVersion::ironwood_v3()] {
+            assert_eq!(bundle_profile_id(profile), Err(TranscriptError::Shape));
+            raw.profile = profile;
+            assert_eq!(transfer_digests(&original, &raw, &[&[12; 4]], limits), Err(TranscriptError::Shape));
+        }
+        raw.profile = BundleVersion::orchard_v2();
         assert_eq!(transfer_digests(&original, &raw, &[], limits), Err(TranscriptError::Shape));
         assert_eq!(
             transfer_digests(&original, &raw, &[&[0; 3]], limits),

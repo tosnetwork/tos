@@ -40,6 +40,14 @@ corpus tests failed on acceptance of zero genesis, and the direct FFI conversion
 test failed on acceptance of zero settlement principal. Positive-principal FFI
 controls exercise every settlement context without depending on proof decoding.
 
+L-1: transcript profile admission and encoding now share one explicit mapping.
+Only the existing accepted profile maps to byte zero; all other profiles fail.
+The existing digest vectors remain unchanged. Tests cover the mapped ID and
+three unsupported profiles through the actual transcript entry point. Replacing
+the mapping call with literal zero made the entry-point rejection test fail
+because it returned valid digests for an unsupported profile. The mapping was
+restored afterward. This does not activate a new profile or freeze the prototype.
+
 ## M-3: not reproduced; underlying API already checks the fork
 
 `vm::dict::LabelParser` defaults to `chk_all` in `crypto/vm/dict.h`.
@@ -68,7 +76,7 @@ default was restored with no source diff. No redundant fork guard was added.
   with the engine's existing `wire_bytes` without defining that contract.
   The Counter engine reports eight payload bytes, not the BoC container size.
   Keep post-execution accounting checks as well. No fix is claimed yet.
-- L-1/L-2 remain follow-ups; L-3/L-4 remain bounded performance observations.
+- L-2 remains a follow-up; L-3/L-4 remain bounded performance observations.
   No accounting transition or invariant was changed in this pass.
 
 ## Dynamic evidence for this disposition
