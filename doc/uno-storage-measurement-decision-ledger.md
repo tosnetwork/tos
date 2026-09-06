@@ -1,5 +1,26 @@
 # Storage comparison: evidence and remaining decision inputs
 
+## Current component regression
+
+At `279bc4be3`, after restoring the continuous-history mutations, eight named
+targets were rebuilt with `-j48` and nine registered CTests passed in 44.20
+seconds: amount, crypto-adapter, native-amount, used-nullifiers, state-snapshot,
+tree-cell, note-component-smoke, note-continuous-history and tree-errors.
+The build, registration, source identity, configuration observations and terminal
+CTest output are in `measurements/uno-component-regression-279bc4be3.tar.gz`.
+No production/component source edits were present; the unrelated prediction
+comment edit was not included. This is a scoped regression, not a full suite,
+new mutation experiment, latency bound or milestone acceptance.
+
+The disk activation negative still lacks receiver-side evidence. The import
+entry in `validator/manager-disk.cpp` validates an archived candidate against
+the receiver's authenticated masterchain context. Importing an activated-chain
+candidate into a different unactivated genesis is not by itself a valid gate
+test: the candidate's masterchain reference can disagree before activation is
+examined. A useful fixture must isolate the gate and demonstrate that removing
+it changes the outcome, without substituting a different early rejection.
+No production bypass or candidate construction scheme is introduced here.
+
 Snapshot: `31813e9cc`, 2026-09-06. This is the consolidated data-delivery ledger
 for the partition comparison, not approval of a production schema or completion
 of Y-1/D-3. It separates real component evidence from the missing joint host
