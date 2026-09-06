@@ -61,6 +61,10 @@ add_test(NAME test-uno-note-component-smoke COMMAND ${CMAKE_COMMAND} -E env
   $<TARGET_FILE:measure-uno-note-component> --filter ExistingComponentEnvelope)
 set_tests_properties(test-uno-note-component-smoke PROPERTIES TIMEOUT 60
   FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
+add_test(NAME test-uno-note-continuous-history COMMAND measure-uno-note-component
+  --filter ContinuousComponentHistory)
+set_tests_properties(test-uno-note-continuous-history PROPERTIES TIMEOUT 60
+  FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
 
 add_executable(test-uno-tree-errors ../../test/test-td-main.cpp tests/tree-errors.cpp)
 target_include_directories(test-uno-tree-errors PRIVATE ../..)

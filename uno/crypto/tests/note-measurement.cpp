@@ -34,6 +34,57 @@ NoteTreeState::Commitment commitment(std::uint64_t n) {
 }
 }
 
+// A reachable component history, not proof-bearing or financially authorized
+// transactions. Each event consumes two fresh keys and appends two leaves.
+TEST(UnoNoteMeasurement, ContinuousComponentHistory) {
+  auto tree = NoteTreeState::empty().move_as_ok();
+  auto anchors = AnchorWindow::genesis(3,3,tree.root()).move_as_ok();
+  auto state = NoteState::assemble(tree,{},anchors).move_as_ok();
+  std::vector<NoteTreeState::Commitment> all_outputs;
+  std::vector<AnchorWindow::Root> expected_roots{tree.root()};
+  std::vector<td::Bits256> all_keys;
+  for (std::uint64_t height = 1; height <= 5; height = checked_add(height,1)) {
+    const auto old_hash = state.to_cell().move_as_ok()->get_hash();
+    NoteState::SpendEffects event{state.anchors().latest(),{}};
+    for (unsigned slot = 0; slot < 2; ++slot) {
+      const auto ordinal = checked_add(all_keys.size(),1);
+      ASSERT_TRUE(ordinal <= 10);
+      auto key = td::Bits256::zero();
+      key.as_slice()[31] = static_cast<char>(ordinal); // Checked above before narrowing.
+      auto output = commitment(ordinal);
+      event.actions.push_back({key,output});
+      all_keys.push_back(key);
+      all_outputs.push_back(output);
+    }
+    auto next = state.apply_spend_effects(height,{event},{1,2,2}).move_as_ok();
+    // Independent full-prefix reconstruction checks the incremental frontier.
+    auto reference = NoteTreeState::empty().move_as_ok()
+        .append(all_outputs,0,all_outputs.size()).move_as_ok();
+    ASSERT_TRUE(next.tree().root() == reference.root());
+    ASSERT_EQ(next.tree().next_position(),all_outputs.size());
+    ASSERT_EQ(next.nullifiers().used_count(),all_keys.size());
+    ASSERT_TRUE(state.to_cell().move_as_ok()->get_hash() == old_hash);
+    ASSERT_TRUE(reference.root() != expected_roots.back());
+    expected_roots.push_back(reference.root());
+    auto bytes = vm::std_boc_serialize(next.to_cell().move_as_ok()).move_as_ok();
+    auto decoded = vm::std_boc_deserialize(bytes.as_slice()).move_as_ok();
+    state = NoteState::from_cell(decoded,3,3,{all_keys.size(),0,0,0}).move_as_ok();
+    ASSERT_EQ(state.anchors().height(),height);
+    for (std::size_t i = 0; i < expected_roots.size(); i = checked_add(i,1)) {
+      // i <= size, so size - i cannot underflow. Three newest roots survive.
+      ASSERT_EQ(state.anchors().contains(expected_roots[i]),expected_roots.size() - i <= 3);
+    }
+    for (const auto& key : all_keys) ASSERT_TRUE(state.nullifiers().try_is_used(key).move_as_ok());
+    const auto restored_hash = state.to_cell().move_as_ok()->get_hash();
+    event.anchor = state.anchors().latest();
+    ASSERT_TRUE(state.apply_spend_effects(checked_add(height,1),{event},{1,2,2}).is_error());
+    ASSERT_TRUE(state.to_cell().move_as_ok()->get_hash() == restored_hash);
+  }
+  std::cout << "continuous component history passed: five blocks, ten paired actions, rolling anchors, replay rejection\n";
+  std::cout.flush();
+  ASSERT_TRUE(std::cout.good());
+}
+
 TEST(UnoNoteMeasurement, ExistingComponentEnvelope) {
   std::uint64_t untouched = 7;
   ASSERT_TRUE(!try_add(UINT64_MAX,1,untouched));
