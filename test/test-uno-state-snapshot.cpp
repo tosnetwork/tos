@@ -6,6 +6,8 @@
 #include <chrono>
 #include <iostream>
 #include <functional>
+#include <map>
+#include <limits>
 #include "rocksdb/merge_operator.h"
 
 #include "block/block-auto.h"
@@ -31,6 +33,43 @@
 #endif
 
 namespace {
+using StoredCellRecords = std::map<std::string,std::string>;
+bool metric_add(td::uint64 a, td::uint64 b, td::uint64& result) {
+  if (b > std::numeric_limits<td::uint64>::max() - a) return false;
+  result = a + b;
+  return true;
+}
+StoredCellRecords read_cell_records(td::KeyValue& kv) {
+  StoredCellRecords records;
+  kv.for_each([&](td::Slice key, td::Slice value) {
+    if (key.size() == vm::CellTraits::hash_bytes) {
+      ASSERT_TRUE(records.emplace(key.str(),value.str()).second);
+    }
+    return td::Status::OK();
+  }).ensure();
+  return records;
+}
+struct CellRecordDelta {
+  td::uint64 added = 0, added_bytes = 0, removed = 0, removed_bytes = 0;
+  td::uint64 changed = 0, changed_bytes = 0;
+};
+CellRecordDelta cell_record_delta(const StoredCellRecords& before, const StoredCellRecords& after) {
+  CellRecordDelta result;
+  auto account = [](td::uint64& count, td::uint64& bytes, const auto& record) {
+    ASSERT_TRUE(metric_add(count,1,count));
+    ASSERT_TRUE(metric_add(bytes,record.first.size(),bytes));
+    ASSERT_TRUE(metric_add(bytes,record.second.size(),bytes));
+  };
+  for (const auto& record : after) {
+    auto old = before.find(record.first);
+    if (old == before.end()) account(result.added,result.added_bytes,record);
+    else if (old->second != record.second) account(result.changed,result.changed_bytes,record);
+  }
+  for (const auto& record : before) {
+    if (after.find(record.first) == after.end()) account(result.removed,result.removed_bytes,record);
+  }
+  return result;
+}
 class RetainedStateMergeOperator final : public rocksdb::MergeOperator {
  public:
   const char* Name() const override { return "RetainedStateMergeOperator"; }
@@ -737,6 +776,25 @@ TEST(UnoStorageMeasurement, PartitionPersistenceStages) {
 }
 #endif
 
+TEST(UnoStateSnapshot, CellRecordDeltaAccounting) {
+  StoredCellRecords before{{std::string(32,'a'),"old"},{std::string(32,'b'),"x"}};
+  StoredCellRecords after{{std::string(32,'a'),"new-value"},{std::string(32,'c'),"abc"}};
+  auto delta = cell_record_delta(before,after);
+  ASSERT_EQ(delta.added,1u);
+  ASSERT_EQ(delta.added_bytes,35u);
+  ASSERT_EQ(delta.removed,1u);
+  ASSERT_EQ(delta.removed_bytes,33u);
+  ASSERT_EQ(delta.changed,1u);
+  ASSERT_EQ(delta.changed_bytes,41u);
+  auto unchanged = cell_record_delta(after,after);
+  ASSERT_EQ(unchanged.added,0u);
+  ASSERT_EQ(unchanged.removed,0u);
+  ASSERT_EQ(unchanged.changed,0u);
+  td::uint64 value = 7;
+  ASSERT_TRUE(!metric_add(std::numeric_limits<td::uint64>::max(),1,value));
+  ASSERT_EQ(value,7u);
+}
+
 TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
   const auto directory = td::mkdtemp("/tmp", "uno-root-retention-").move_as_ok();
   LOG(WARNING) << "Root retention database: " << directory << " (removed on success, retained on failure)";
@@ -763,6 +821,7 @@ TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
   std::vector<td::Bits256> keys;
   std::vector<vm::CellHash> retained, released;
   for (unsigned epoch = 0; epoch < 12; ++epoch) {
+    const auto before_records = read_cell_records(*kv);
     {
       uno_workchain::UsedNullifiers previous;
       if (!retained.empty()) {
@@ -788,6 +847,18 @@ TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
     }
     // Drop both the V2 reader and the actual RocksDB handle, not just a cache.
     reopen();
+    const auto after_records = read_cell_records(*kv);
+    const auto delta = cell_record_delta(before_records,after_records);
+    td::uint64 before_plus_added, after_plus_removed;
+    ASSERT_TRUE(metric_add(before_records.size(),delta.added,before_plus_added));
+    ASSERT_TRUE(metric_add(after_records.size(),delta.removed,after_plus_removed));
+    ASSERT_EQ(before_plus_added,after_plus_removed);
+    ASSERT_TRUE(delta.added > 0);
+    // Actual key/value bytes of newly present Cell records, not BoC bytes,
+    // bytes written to the WAL/device, or the size of the whole database.
+    std::cout << "CELL_RECORD_DELTA," << epoch << ',' << delta.added << ',' << delta.added_bytes << ','
+              << delta.removed << ',' << delta.removed_bytes << ',' << delta.changed << ','
+              << delta.changed_bytes << std::endl;
     {
       vm::CellHashSet reachable;
       std::function<void(td::Ref<vm::Cell>)> visit = [&](td::Ref<vm::Cell> cell) {
