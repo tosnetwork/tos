@@ -81,7 +81,31 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
-async def exercise(root, build, port, join_timeout, counter, reencoded_state=False):
+async def watch_proof_acceptance(root):
+    while True:
+        for log in (root / "network").glob("node*/log"):
+            if "COUNTER_MISBOUND_PROOF_ACCEPTED" in log.read_text(errors="replace"):
+                raise AssertionError(f"real receiver accepted a misbound peer proof: {log}")
+        await asyncio.sleep(0.2)
+
+
+async def guarded_exercise(root, *args):
+    # Observe acceptance while synchronization runs. A broken verifier can
+    # stall later state acquisition; that timeout is not the property tested.
+    run = asyncio.create_task(exercise(root, *args))
+    watch = asyncio.create_task(watch_proof_acceptance(root))
+    try:
+        done, _ = await asyncio.wait((run, watch), return_when=asyncio.FIRST_COMPLETED)
+        if watch in done:
+            await watch
+        return await run
+    finally:
+        run.cancel()
+        watch.cancel()
+        await asyncio.gather(run, watch, return_exceptions=True)
+
+
+async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False):
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
     install.toslibjson.client_set_verbosity_level(1)
@@ -108,12 +132,14 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE": "268435456",
             "TOS_COUNTER_SIGNATURE_PROBE": "0",
             "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
+            "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
             await node.run(replace(options, env={
                 **options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1",
                 "TOS_COUNTER_REENCODE_ZERO_STATE": "1" if reencoded_state else "0",
+                "TOS_COUNTER_MISBOUND_PROOF_FILE": str(root / "proof-fault-armed") if misbound_proof else "",
             }) if counter else options)
         _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
@@ -124,6 +150,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
         cold.announce_to(dht)
+        if misbound_proof:
+            (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
         await cold.run(options, seed_extra_states=False)
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
@@ -144,6 +172,14 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
+            if misbound_proof:
+                if "COUNTER_MISBOUND_PROOF_ACCEPTED" in cold_log:
+                    raise AssertionError("real receiver accepted a misbound peer proof")
+                if "COUNTER_MISBOUND_PROOF_REJECTED" not in cold_log:
+                    raise AssertionError("real receiver did not reject a misbound peer proof")
+                if not any("COUNTER_MISBOUND_PROOF_SENT" in node.log_path.read_text(errors="replace")
+                           for node in validators):
+                    raise AssertionError("no remote server injected a misbound proof")
             zero_id = "(2,8000000000000000,0)"
             if (not any(f"downloading state {zero_id}" in line and " from " in line
                         for line in cold_log.splitlines()) or
@@ -192,6 +228,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_database_reopened": counter,
                 "cold_counter_zerostate_peer_download_tested": counter,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
+                "remote_misbound_proof_rejection_tested": misbound_proof,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
@@ -207,9 +244,13 @@ def main():
     parser.add_argument("--counter", action="store_true", help="use the explicit test-only Counter node target")
     parser.add_argument("--counter-reencoded-state", action="store_true",
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
+    parser.add_argument("--counter-misbound-proof", action="store_true",
+                        help="require real receiver rejection of a peer proof naming the wrong file hash")
     args = parser.parse_args()
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
+    if args.counter_misbound_proof and not args.counter:
+        parser.error("--counter-misbound-proof requires --counter")
     build = args.build.resolve(strict=True)
     if not 1 <= args.join_timeout <= 600:
         parser.error("join timeout must be between 1 and 600 seconds")
@@ -234,8 +275,8 @@ def main():
     report = {"passed": False, "root": str(root), "base_port": args.base_port,
               "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()}
     try:
-        report.update(asyncio.run(exercise(root, build, args.base_port, args.join_timeout, args.counter,
-                                          args.counter_reencoded_state)))
+        report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
+                                          args.counter_reencoded_state, args.counter_misbound_proof)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

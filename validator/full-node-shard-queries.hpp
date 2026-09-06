@@ -25,6 +25,10 @@
 
 #include "full-node-serializer.hpp"
 
+#ifdef TOS_COUNTER_NETWORK_TEST
+#include "test/counter-network-proof-fault.h"
+#endif
+
 namespace tos {
 
 namespace validator {
@@ -42,6 +46,15 @@ class BlockFullSender : public td::actor::Actor {
     stop();
   }
   void finish_query() {
+#ifdef TOS_COUNTER_NETWORK_TEST
+    auto injected = test::misbind_counter_proof(block_id_, std::move(proof_));
+    if (injected.is_error()) {
+      LOG(ERROR) << "COUNTER_PROOF_INJECTION_FAIL " << injected.error();
+      abort_query(injected.move_as_error());
+      return;
+    }
+    proof_ = injected.move_as_ok();
+#endif
     promise_.set_result(
         serialize_block_full(block_id_, proof_, data_, is_proof_link_, false));  // compression_enabled = false
     stop();

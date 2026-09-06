@@ -2371,3 +2371,42 @@ database reopening (Counter target 17, masterchain target 18, cold height 48).
 Both node targets and the Counter test executables rebuilt. BlockTransition
 and disk integration CTests passed in 1.37 seconds; the four Python state/request
 tests passed as well.
+
+### Misbound wc2 proof received over the network
+
+`--counter-misbound-proof` arms the isolated sender only after the initial four
+validators have produced blocks. BlockFullSender changes one bit in the
+proof_for file hash of its first wc2 response per process, preserving the
+requested block ID, genuine block bytes and Merkle root. The response travels
+through the ordinary full-block overlay/RLDP path. The test-only receiver
+observer decodes the declared identity and records the real manager callback's
+accept/reject result; it never substitutes its own verification result.
+
+Run `gq5i1y4p` passed with all four servers injecting responses and the cold
+node rejecting each. Rejection actually occurs during create_proof_link's
+virtual-root construction, before CheckProof's further identity checks. This
+is remote proof identity-binding coverage, not a signature-verifier test or a
+claim that any one of the repeated identity guards is independently necessary.
+
+Mutation run `5ttab80l` temporarily bypassed the manager's wc2 proof-link
+validation entry point. The receiver observer recorded acceptance and the
+concurrent Python watch failed immediately with `real receiver accepted a
+misbound peer proof`. It did not depend on an error-message change or a later
+state-sync timeout. The watch cancels and awaits the network exercise so its
+owned processes are stopped on failure. The bypass was restored exactly;
+validator/manager.cpp has no lasting diff. Production node marker searches
+exclude all three test injection/observation markers, while the test binary
+contains them.
+
+Previous completed state-fault runs were archived and verified in
+`build/m1-counter-reencoded-runs-20260906.tar.gz`, and original directories
+moved to trash without increasing the retention cap. Remote invalid signature
+and checkpoint cases and large-state synchronization remain open; the report
+records this narrow result separately as `remote_misbound_proof_rejection_tested`.
+
+The restored combined-fault run `3ewjis3v` passed both remote rejection modes,
+correct state persistence, pinned account checks and database reopening
+(Counter target 17, masterchain target 18, cold height 48). Both node targets
+rebuilt, the two Counter CTests passed in 1.48 seconds, and all four Python
+state/request tests passed. M1 is still not complete; M3 expansion remains
+paused.

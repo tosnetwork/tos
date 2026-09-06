@@ -27,6 +27,10 @@
 #include "download-block-new.hpp"
 #include "full-node-serializer.hpp"
 
+#ifdef TOS_COUNTER_NETWORK_TEST
+#include "test/counter-network-proof-fault.h"
+#endif
+
 namespace tos {
 
 namespace validator {
@@ -270,7 +274,22 @@ void DownloadBlockNew::got_ready_to_deserialize(tl_object_ptr<tos_api::tosNode_D
     return;
   }
 
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+#ifdef TOS_COUNTER_NETWORK_TEST
+  // Classify decodable envelopes only; malformed inputs still go unchanged
+  // to the real manager. This observer never supplies an acceptance result.
+  auto declared = test::proof_declared_block(proof.as_slice());
+  const bool misbound = declared.is_ok() && declared.ok() != block_id_;
+#endif
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)
+#ifdef TOS_COUNTER_NETWORK_TEST
+                                     , misbound
+#endif
+                                     ](td::Result<td::Unit> R) {
+#ifdef TOS_COUNTER_NETWORK_TEST
+    if (misbound) {
+      LOG(WARNING) << (R.is_ok() ? "COUNTER_MISBOUND_PROOF_ACCEPTED" : "COUNTER_MISBOUND_PROOF_REJECTED");
+    }
+#endif
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &DownloadBlockNew::abort_query, R.move_as_error_prefix("received bad proof: "));
     } else {
