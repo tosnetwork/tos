@@ -51,6 +51,17 @@ add_dependencies(test-uno-tree-cell uno-crypto-rust)
 add_dependencies(all-tests test-uno-tree-cell)
 add_test(NAME test-uno-tree-cell COMMAND test-uno-tree-cell)
 
+add_executable(measure-uno-note-component ../../test/test-td-main.cpp tests/note-measurement.cpp)
+target_include_directories(measure-uno-note-component PRIVATE ../..)
+target_link_libraries(measure-uno-note-component PRIVATE tos_crypto "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
+add_dependencies(measure-uno-note-component uno-crypto-rust)
+add_dependencies(all-tests measure-uno-note-component)
+add_test(NAME test-uno-note-component-smoke COMMAND ${CMAKE_COMMAND} -E env
+  TOS_UNO_NOTE_KEYS=8 TOS_UNO_NOTE_WINDOW=3 TOS_UNO_NOTE_HISTORY=owners
+  $<TARGET_FILE:measure-uno-note-component> --filter ExistingComponentEnvelope)
+set_tests_properties(test-uno-note-component-smoke PROPERTIES TIMEOUT 60
+  FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
+
 add_executable(test-uno-tree-errors ../../test/test-td-main.cpp tests/tree-errors.cpp)
 target_include_directories(test-uno-tree-errors PRIVATE ../..)
 target_link_libraries(test-uno-tree-errors PRIVATE tos_crypto)
