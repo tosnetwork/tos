@@ -92,6 +92,26 @@ default was restored with no source diff. No redundant fork guard was added.
 - L-3/L-4 remain bounded performance observations.
   No accounting transition or invariant was changed in this pass.
 
+### L-4 investigation: view reuse is not a Cell-load optimization
+
+A temporary experiment at base `4208c24ed` compared repeated `is_reserved`
+calls plus used-set insertion against `with_used` with a single reservation
+dictionary hoisted outside its key loop. The fixture starts with an empty used
+set, owner key 100 reserving keys 200 and 201, and consumes keys 0 through 19;
+each key is 31 zero bytes followed by the listed byte. Both operations produced
+the same used root and preserved the reservation/owner roots. A
+`VmStateInterface::register_cell_load` counter recorded 60 events in each path.
+The proposed assertion that reuse reduces these events failed after hoisting,
+not only before it.
+
+`DictionaryFixed::lookup` starts from the root and constructs a `LabelParser`
+on every lookup; keeping the Dictionary object does not cache the traversed
+paths. These events are not physical disk reads, elapsed time or RSS. This
+experiment neither disproves small constructor/refcount savings nor establishes
+a speedup. The temporary test and implementation change were removed rather
+than weakening the assertion into a claimed optimization. L-4 remains open for
+representative profiling; it is not a consensus defect or activation blocker.
+
 ## Dynamic evidence for this disposition
 
 Initial Rust release tests: 26 passed, one opt-in VK diagnostic ignored. FFI recovery and
