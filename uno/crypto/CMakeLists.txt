@@ -58,3 +58,12 @@ add_test(NAME test-uno-crypto-abi-real
     "-DUNO_CRYPTO_ABI_EXE=$<TARGET_FILE:test-uno-crypto-abi-real>"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/RunRealAbiTest.cmake")
 set_tests_properties(test-uno-crypto-abi-real PROPERTIES RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)
+
+add_test(NAME test-uno-crypto-header-guard
+  COMMAND ${CMAKE_COMMAND}
+    "-DUNO_CRYPTO_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DUNO_CRYPTO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+    "-DUNO_CRYPTO_CARGO=${UNO_CRYPTO_CARGO}"
+    "-DUNO_CRYPTO_BUILD_JOBS=${UNO_CRYPTO_BUILD_JOBS}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/TestHeaderGuard.cmake")
+set_tests_properties(test-uno-crypto-header-guard PROPERTIES RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)

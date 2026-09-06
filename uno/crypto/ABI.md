@@ -161,13 +161,21 @@ they do not claim to check it against a Rust library they do not build or link.
 To deliberately regenerate after reviewing an ABI change, from `uno/crypto`:
 
 ```sh
-UNO_CRYPTO_HEADER_OUT=include/uno_crypto.h cargo build --locked --offline --release -j48
-git diff -- include/uno_crypto.h
+unset UNO_CRYPTO_HEADER_OUT
 cargo build --locked --offline --release -j48
 ```
 
-The export variable writes a maintenance artifact; it does not disable the
-comparison. Exporting to another path still fails if the committed header differs.
+On drift, this command intentionally fails and prints the generated header's
+exact OUT_DIR path. Review that file, explicitly update `include/uno_crypto.h`,
+inspect its diff, then rerun the build. Do not set the export variable to the
+committed header: it is no longer a regeneration switch.
+
+`UNO_CRYPTO_HEADER_OUT` exports only after the committed-header comparison
+succeeds, and creates a new file exclusively. Existing files, symlinks and
+hardlinks are never overwritten. A stale variable therefore cannot repair a
+drifted header or silently rewrite an existing source file. The opt-in CTest
+`test-uno-crypto-header-guard` exercises the real build in a temporary source
+copy, retains failed fixtures, and removes successful fixtures.
 Review and commit the declarations, generated header and any ABI contract changes
 together. First-time dependency provisioning may require `cargo fetch --locked`;
 ordinary builds remain locked/offline after provisioning.

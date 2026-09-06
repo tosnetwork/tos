@@ -155,7 +155,13 @@ td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(cons
     return WorkchainNativeIngressTable{};
   }
   TRY_STATUS(validate_workchain_block_activation(configuration));
-  return decode_workchain_native_ingress_table(configuration.get_config_param(kWorkchainNativeIngressConfigParam));
+  auto root = configuration.get_config_param(kWorkchainNativeIngressConfigParam);
+  // Host activation alone does not require a configured block workchain.
+  // Per-workchain resolution still requires its own explicit ingress policy.
+  if (root.is_null()) {
+    return WorkchainNativeIngressTable{};
+  }
+  return decode_workchain_native_ingress_table(root);
 }
 
 td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(

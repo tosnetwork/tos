@@ -1729,6 +1729,32 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   send(anycast, true);
 }
 
+TEST(WorkchainBlock, ActivatedHostWithoutIngressPolicyIsIdle) {
+  vm::Dictionary dictionary(32);
+  vm::CellBuilder version;
+  ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(version, 15, tos::capBlockTransition));
+  ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{8}, version.finalize()));
+  ASSERT_TRUE(block::validate_native_ingress_presence(dictionary).is_ok());
+  auto config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
+                                             block::Config::needCapabilities).move_as_ok();
+  ASSERT_TRUE(block::load_workchain_native_ingress_table(*config).move_as_ok().empty());
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*config).move_as_ok().empty());
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  auto execution = registry.resolve_block(descriptor, *config);
+  ASSERT_TRUE(execution.is_error());
+  ASSERT_EQ(execution.error().message(), "block workchain has no public native ingress policy");
+  ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{84}, number(0)));
+  config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
+                                       block::Config::needCapabilities).move_as_ok();
+  ASSERT_TRUE(block::load_workchain_native_ingress_table(*config).is_error());
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*config).is_error());
+}
+
 TEST(WorkchainBlock, NativeIngressParameterPresenceRequiresActivation) {
   for (int version : {14, 15}) {
     for (td::uint64 capabilities : {td::uint64{0}, td::uint64{tos::capBlockTransition}}) {
@@ -1876,7 +1902,7 @@ TEST(WorkchainBlock, SenderResolvesIngressWithoutForeignEngine) {
   auto wrong_version = configuration(table, true, 1);
   ASSERT_TRUE(block::resolve_native_ingress_destinations(*wrong_version).is_error());
   auto missing_table = configuration({}, true);
-  ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_table).is_error());
+  ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_table).move_as_ok().empty());
   auto empty = configuration(block::encode_workchain_native_ingress_table({}).move_as_ok(), true);
   ASSERT_TRUE(block::resolve_native_ingress_destinations(*empty).move_as_ok().empty());
 }

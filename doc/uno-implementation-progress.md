@@ -3656,3 +3656,8 @@ transfer aggregate overflow.
 H-2 queued-message liveness, policy preflight and
 the remaining listed items are not marked resolved. No storage-architecture
 decision or M3 expansion is implied by this audit response.
+
+The [six-angle audit response](uno-six-angle-audit-response.md) records the
+capability-only/absent-ingress-table consistency fix and the non-overwriting
+header-export guard. These are partial dispositions, not activation acceptance;
+retirement, scope admission, CI coverage and state-capacity decisions remain open.
