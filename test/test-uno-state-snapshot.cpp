@@ -3,6 +3,8 @@
 #include <random>
 #include <condition_variable>
 #include <mutex>
+#include <chrono>
+#include <iostream>
 #include "rocksdb/merge_operator.h"
 
 #include "block/block-auto.h"
@@ -21,6 +23,11 @@
 #include "vm/db/CellStorage.h"
 #include "vm/db/DynamicBagOfCellsDb.h"
 #include "uno-snapshot-transport.h"
+#ifdef TOS_UNO_STORAGE_MEASUREMENT
+#include <sys/resource.h>
+#include "crypto/test/workchain-counter-engine.h"
+#include "block/transaction.h"
+#endif
 
 namespace {
 class RetainedStateMergeOperator final : public rocksdb::MergeOperator {
@@ -144,21 +151,33 @@ class ImportAdmissionActor final : public td::actor::Actor {
   td::actor::ActorOwn<tos::validator::CellDb> database_;
 };
 
+struct SnapshotPhaseMeasurements {
+  double import_request_ms = 0, first_lookup_ms = 0, root_store_ms = 0;
+  double reopen_root_ms = 0, reopen_validate_and_append_ms = 0;
+};
+
+using SnapshotClock = std::chrono::steady_clock;
+double snapshot_elapsed_ms(SnapshotClock::time_point start) {
+  return std::chrono::duration<double, std::milli>(SnapshotClock::now() - start).count();
+}
+
 class SnapshotImportActor final : public td::actor::Actor {
  public:
   SnapshotImportActor(std::string directory, tos::validator::PersistentStateImportRequest request,
                       td::Bits256 expected_payload, std::vector<td::Bits256> keys, std::atomic<bool>& completed,
-                      bool reopen = false, bool celldb_v2 = false)
+                      bool reopen = false, bool celldb_v2 = false, SnapshotPhaseMeasurements* measurements = nullptr)
       : directory_(std::move(directory))
       , request_(std::move(request))
       , expected_payload_(expected_payload)
       , keys_(std::move(keys))
       , completed_(completed)
       , reopen_(reopen)
-      , celldb_v2_(celldb_v2) {
+      , celldb_v2_(celldb_v2)
+      , measurements_(measurements) {
   }
 
   void start_up() override {
+    started_ = SnapshotClock::now();
     alarm_timestamp() = td::Timestamp::in(request_.file_size > (64ULL << 20) ? 1200 : 30);
     auto options = tos::validator::ValidatorManagerOptions::create({}, {});
     options.write().set_celldb_in_memory(false);
@@ -173,6 +192,13 @@ class SnapshotImportActor final : public td::actor::Actor {
                               [self = actor_id(this)](td::Result<td::Ref<vm::DataCell>> root) mutable {
                                 td::actor::send_closure(self, &SnapshotImportActor::reloaded, std::move(root));
                               });
+      return;
+    }
+    if (measurements_) {
+      td::actor::send_closure(database_, &tos::validator::CellDb::import_persistent_state_streaming, request_,
+          [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> result) mutable {
+            td::actor::send_closure(self, &SnapshotImportActor::accepted, std::move(result));
+          });
       return;
     }
     auto wrong = request_;
@@ -211,16 +237,20 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
   void accepted(td::Result<tos::validator::PersistentStateImportResult> result) {
     auto imported = result.move_as_ok();
+    if (measurements_) measurements_->import_request_ms = snapshot_elapsed_ms(started_);
     report_residency("imported-before-traversal");
     ASSERT_TRUE(imported.cells_persisted > keys_.size());
     ASSERT_TRUE(imported.gc_lease != nullptr);
     ASSERT_TRUE(td::Bits256(imported.hash_only_root->get_hash().bits()) == request_.expected_root_hash);
+    auto lookup_start = SnapshotClock::now();
     verify_root(imported.hash_only_root);
+    if (measurements_) measurements_->first_lookup_ms = snapshot_elapsed_ms(lookup_start);
     report_residency("imported-after-traversal");
     lease_ = std::move(imported.gc_lease);
     // Synthetic block identity: exercise CellDb root registration, without
     // claiming validation of a block header or a network checkpoint.
     tos::BlockIdExt block_id{tos::BlockId{2, tos::shardIdAll, 1}};
+    store_started_ = SnapshotClock::now();
     td::actor::send_closure(database_, &tos::validator::CellDb::store_cell, block_id,
                             std::move(imported.hash_only_root), vm::StoreCellHint{},
                             [self = actor_id(this)](td::Result<td::Ref<vm::DataCell>> root) mutable {
@@ -238,6 +268,7 @@ class SnapshotImportActor final : public td::actor::Actor {
     }
   }
   void stored(td::Result<td::Ref<vm::DataCell>> result) {
+    if (measurements_) measurements_->root_store_ms = snapshot_elapsed_ms(store_started_);
     report_residency("adopted-before-traversal");
     verify_root(result.move_as_ok());
     report_residency("adopted-after-traversal");
@@ -261,6 +292,8 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
   void reloaded(td::Result<td::Ref<vm::DataCell>> result) {
     auto root = result.move_as_ok();
+    if (measurements_) measurements_->reopen_root_ms = snapshot_elapsed_ms(started_);
+    auto validation_start = SnapshotClock::now();
     report_residency("reopened-before-traversal");
     verify_root(root);
     report_residency("reopened-after-traversal");
@@ -273,6 +306,7 @@ class SnapshotImportActor final : public td::actor::Actor {
     ASSERT_TRUE(next.contains(fresh));
     ASSERT_TRUE(!restored.contains(fresh));
     ASSERT_TRUE(restored.root()->get_hash() == payload->get_hash());
+    if (measurements_) measurements_->reopen_validate_and_append_ms = snapshot_elapsed_ms(validation_start);
     check_registration();
   }
   void check_registration() {
@@ -305,6 +339,8 @@ class SnapshotImportActor final : public td::actor::Actor {
   unsigned attempt_ = 0;
   bool reopen_ = false;
   bool celldb_v2_ = false;
+  SnapshotPhaseMeasurements* measurements_ = nullptr;
+  SnapshotClock::time_point started_, store_started_;
   std::unique_ptr<tos::validator::CellDbGcPauseLease> lease_;
   td::actor::ActorOwn<tos::validator::CellDb> database_;
 };
@@ -432,6 +468,138 @@ td::Ref<vm::Cell> single_account_state(td::Ref<vm::Cell> engine) {
   return root;
 }
 }  // namespace
+
+#ifdef TOS_UNO_STORAGE_MEASUREMENT
+namespace {
+std::vector<td::Bits256> measurement_keys(std::size_t count) {
+  std::mt19937 random(91);
+  std::vector<td::Bits256> keys(count);
+  for (auto& key : keys) {
+    for (auto& byte : key.as_slice()) byte = static_cast<char>(random());
+  }
+  return keys;
+}
+
+struct MeasuredStateCells {
+  td::uint64 batch_data, serialized_account;
+};
+
+td::Result<MeasuredStateCells> admit_measured_state(const uno_workchain::UsedNullifiers& used) {
+  block::WorkchainBlockInput input{
+      single_account_state(block::test::counter_number(40)), block::test::counter_number(2),
+      block::test::counter_number(1), block::test::counter_number(1)};
+  TRY_RESULT(effects, block::test::CounterEngine().execute_block(input));
+  effects.new_engine_state = used.root();
+  block::gen::ShardStateUnsplit::Record state;
+  if (!tlb::unpack_cell(input.previous_shard_state, state)) return td::Status::Error("measurement shard");
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  if (!account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial)) {
+    return td::Status::Error("measurement account");
+  }
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  cfg.size_limits.max_acc_state_cells = 65536;
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  TRY_STATUS(tx.prepare_workchain_batch(input, effects, cfg));
+  if (!tx.serialize(cfg)) return td::Status::Error("measurement batch serialization");
+  vm::CellStorageStat stat;
+  TRY_RESULT(depth, stat.compute_used_storage(tx.new_data));
+  (void)depth;
+  const auto data_cells = stat.cells;
+  TRY_RESULT(account_depth, stat.compute_used_storage(tx.new_total_state));
+  (void)account_depth;
+  return MeasuredStateCells{data_cells, stat.cells};
+}
+
+long snapshot_peak_rss_kib() {
+  struct rusage usage{};
+  ASSERT_EQ(getrusage(RUSAGE_SELF, &usage), 0);
+  ASSERT_TRUE(usage.ru_maxrss >= 0);
+  return usage.ru_maxrss;
+}
+}  // namespace
+
+TEST(UnoStorageMeasurement, CapacityGateInstrumentSelfCheck) {
+  auto keys = measurement_keys(32768);
+  auto oversized = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto rejected = admit_measured_state(oversized);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().code(), block::AccountStorageStat::errorcode_limits_exceeded);
+  keys.resize(32000);
+  auto accepted = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  ASSERT_TRUE(admit_measured_state(accepted).is_ok());
+}
+
+TEST(UnoStorageMeasurement, SnapshotStages) {
+  const char* requested = std::getenv("TOS_UNO_STORAGE_KEYS");
+  ASSERT_TRUE(requested != nullptr);
+  const std::string value(requested);
+  const std::size_t count = value == "1000" ? 1000 : value == "8000" ? 8000 : value == "32000" ? 32000 : 0;
+  ASSERT_TRUE(count != 0);
+  const auto rss_before = snapshot_peak_rss_kib();
+  auto started = SnapshotClock::now();
+  auto keys = measurement_keys(count);
+  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto state = single_account_state(used.root());
+  const auto generate_ms = snapshot_elapsed_ms(started);
+  started = SnapshotClock::now();
+  const auto admitted_cells = admit_measured_state(used).move_as_ok();
+  const auto host_admission_ms = snapshot_elapsed_ms(started);
+  const auto rss_generated = snapshot_peak_rss_kib();
+  started = SnapshotClock::now();
+  auto bytes = vm::std_boc_serialize(state).move_as_ok();
+  const auto serialize_ms = snapshot_elapsed_ms(started);
+  const auto rss_serialized = snapshot_peak_rss_kib();
+  vm::BagOfCells::Info info;
+  ASSERT_TRUE(info.parse_serialized_header(bytes.as_slice()) > 0);
+  auto file = td::mkstemp("/tmp").move_as_ok();
+  file.first.write_all(bytes.as_slice()).ensure();
+  file.first.close();
+  const auto directory = td::mkdtemp("/tmp", "uno-storage-measurement-").move_as_ok();
+  LOG(WARNING) << "Storage measurement database " << directory << " input " << file.second
+               << " (removed on success, retained on failure)";
+  tos::validator::PersistentStateImportRequest request;
+  request.tempfile_path = file.second;
+  request.file_size = bytes.size();
+  request.expected_root_hash = state->get_hash().bits();
+  request.opts.max_resident_bytes = 16ULL << 20;
+  SnapshotPhaseMeasurements measurements;
+  double whole_import_ms = 0, whole_reopen_ms = 0;
+  long rss_imported = 0, rss_reopened = 0;
+  for (bool reopen : {false, true}) {
+    std::atomic<bool> completed{false};
+    started = SnapshotClock::now();
+    {
+      td::actor::Scheduler scheduler({2});
+      td::actor::ActorOwn<SnapshotImportActor> actor;
+      scheduler.run_in_context([&] {
+        actor = td::actor::create_actor<SnapshotImportActor>("storage-measurement", directory, request,
+            td::Bits256(used.root()->get_hash().bits()), keys, completed, reopen, true, &measurements);
+      });
+      scheduler.run();
+    }
+    ASSERT_TRUE(completed.load());
+    if (reopen) {
+      whole_reopen_ms = snapshot_elapsed_ms(started);
+      rss_reopened = snapshot_peak_rss_kib();
+    } else {
+      whole_import_ms = snapshot_elapsed_ms(started);
+      rss_imported = snapshot_peak_rss_kib();
+    }
+  }
+  std::cout << "STORAGE_CSV," << count << ",91," << info.cell_count << ',' << bytes.size() << ','
+            << admitted_cells.batch_data << ',' << admitted_cells.serialized_account << ','
+            << generate_ms << ',' << host_admission_ms << ',' << serialize_ms << ','
+            << measurements.import_request_ms << ',' << measurements.first_lookup_ms << ','
+            << measurements.root_store_ms << ',' << measurements.reopen_root_ms << ','
+            << measurements.reopen_validate_and_append_ms << ',' << whole_import_ms << ',' << whole_reopen_ms << ','
+            << rss_before << ',' << rss_generated << ',' << rss_serialized << ',' << rss_imported << ',' << rss_reopened
+            << ',' << state->get_hash().to_hex() << std::endl;
+  td::rmrf(directory).ensure();
+  td::unlink(file.second).ensure();
+}
+#endif
 
 TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
   const auto directory = td::mkdtemp("/tmp", "uno-root-retention-").move_as_ok();

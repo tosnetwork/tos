@@ -36,6 +36,12 @@ target_compile_definitions(test-uno-crypto-abi-real PRIVATE UNO_TEST_HOST_ADAPTE
 target_include_directories(test-uno-crypto-abi-real PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(test-uno-crypto-abi-real PRIVATE tos_crypto)
 
+add_executable(test-uno-crypto-cost EXCLUDE_FROM_ALL tests/abi-cost.cpp)
+target_include_directories(test-uno-crypto-cost PRIVATE include)
+target_compile_features(test-uno-crypto-cost PRIVATE cxx_std_17)
+target_link_libraries(test-uno-crypto-cost PRIVATE "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
+add_dependencies(test-uno-crypto-cost uno-crypto-rust)
+
 add_executable(test-uno-tree-cell ../../test/test-td-main.cpp tests/tree-cell.cpp tests/note-state.cpp)
 target_include_directories(test-uno-tree-cell PRIVATE ../..)
 target_link_libraries(test-uno-tree-cell PRIVATE tos_crypto "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
