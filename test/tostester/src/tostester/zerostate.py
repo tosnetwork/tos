@@ -68,6 +68,9 @@ class NetworkConfig:
     # Isolated host network fixture, never a deployment profile.
     counter_workchain: bool = False
     counter_payload: bool = False
+    # Test-only aged genesis for crossing the native persistent-state time
+    # bucket. Explicit, shared by all shards; never changes the node clock.
+    counter_checkpoint_genesis_time: int | None = None
 
 
 def counter_payload_tree():
@@ -418,6 +421,13 @@ def create_zerostate(
 ) -> Zerostate:
     if config.counter_payload and not config.counter_workchain:
         raise ValueError("Counter payload requires the Counter network profile")
+    checkpoint_time = config.counter_checkpoint_genesis_time
+    if checkpoint_time is not None:
+        if not config.counter_workchain or config.validator_economics_profile:
+            raise ValueError("Counter checkpoint genesis requires the isolated Counter profile without economics overrides")
+        if (isinstance(checkpoint_time, bool) or not isinstance(checkpoint_time, int)
+                or not 0 < checkpoint_time < (1 << 32) - 3 * (1 << 17)):
+            raise ValueError("Counter checkpoint genesis time must leave uint32 room for its validator lifetime")
     if config.counter_workchain and (
         config.global_id != -23903 or config.global_version != 15
         or config.split != 0 or config.monitor_min_split != 0
@@ -516,6 +526,11 @@ def create_zerostate(
             "original_vset_valid_for": 3600,
         }
 
+    if checkpoint_time is not None:
+        # Keep the initial committee valid when genesis is in the preceding
+        # snapshot bucket. This is a fixture lifetime, not an election policy.
+        profile["original_vset_valid_for"] = 3 * (1 << 17)
+
     profile["punishment_params"] = _punishment_params(profile["election_params"])
 
     new_consensus_config = ""
@@ -567,7 +582,8 @@ def create_zerostate(
                 raise ValueError("Counter engine state marker changed")
             (state_dir / "counter-payload.boc").write_bytes(counter_payload_tree().to_boc())
             shard_source = shard_source.replace(marker, '<b 40 64 u, "counter-payload.boc" file>B B>boc ref, b>')
-        run_fift(install, shard_source.replace("-23901 setglobalid", "-23903 setglobalid"), state_dir)
+        run_fift(install, shard_source.replace("-23901 setglobalid", "-23903 setglobalid"), state_dir,
+                 source_date_epoch=checkpoint_time)
         extra_shards = (WorkchainState(
             file=state_dir / "counter-state.boc",
             file_hash=(state_dir / "counter-state.fhash").read_bytes(),
@@ -593,6 +609,7 @@ def create_zerostate(
             **profile,
         ),
         state_dir,
+        source_date_epoch=checkpoint_time,
     )
 
     pk = (state_dir / "main-wallet.pk").read_bytes()

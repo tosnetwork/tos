@@ -2748,3 +2748,39 @@ passed (the CTests took 1.34 seconds). The only production-path changes retained
 in downloader sources are test-macro observations; the authorization check is
 unchanged. Earlier terminal fixtures were archived, verified and moved to
 recoverable trash before admitting these runs.
+
+### Preparing a native persistent-checkpoint fixture
+
+Short real-manager runs have not yet demonstrated persistent-checkpoint
+download/import. The native serializer compares key-block timestamps in
+2^17-second buckets, including the genesis timestamp as its initial previous
+key-block time. Even after qualifying, it randomly delays serialization by
+0..21600 seconds. Cold checkpoint selection separately ignores blocks younger
+than `sync_blocks_before`; its CLI accepts positive values, not zero. These
+conditions explain why a short same-bucket run is not a persistent-state gate.
+
+An explicit test-only `counter_checkpoint_genesis_time` now supplies the same
+subprocess-local `SOURCE_DATE_EPOCH` to both Counter and master/native genesis
+generation. It requires the isolated Counter profile, excludes economics
+overrides, validates the timestamp and leaves uint32 room for the fixture's
+three-bucket initial committee lifetime. The parent environment and running
+node clock are unchanged. Without this option, inherited generator environment
+and the ordinary 3600-second committee lifetime are unchanged.
+
+The real generator test uses the final second of the preceding bucket and
+decodes all three state timestamps plus ConfigParam 34's validity interval.
+Removing subprocess timestamp propagation fails on the three actual timestamps;
+restoring the ordinary lifetime fails on the decoded committee expiry. Both
+mutations were restored. Admission tests reject invalid profiles before invoking
+the generator. This establishes fixture generation only, not that an aged
+network has produced a usable checkpoint.
+
+The downloader's heap threshold is currently a hardcoded 64 MiB, not an
+operator-configurable field. The existing approximately 2 MiB Counter payload
+therefore cannot exercise its OnDisk selection merely by enabling streaming
+import. Remaining implementation must cover serializer scheduling, authenticated
+checkpoint selection and actual download-to-import orchestration explicitly;
+an in-memory download is not evidence for the streaming path. No native
+time-bucket, consensus validation or account-size rule was changed here.
+Persistent-checkpoint and resource/retention gates remain open, and M3 expansion
+remains paused.

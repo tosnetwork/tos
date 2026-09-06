@@ -17,6 +17,40 @@ from tostester.zerostate import NetworkConfig, create_zerostate
 
 
 class CounterGenesis(unittest.TestCase):
+    def test_checkpoint_profile_admission_precedes_generation(self):
+        invalid = [NetworkConfig(counter_checkpoint_genesis_time=1788656400),
+                   NetworkConfig(counter_workchain=True, validator_economics_profile=True,
+                                 counter_checkpoint_genesis_time=1788656400)]
+        invalid += [NetworkConfig(counter_workchain=True, global_id=-23903, global_version=15,
+                                  counter_checkpoint_genesis_time=value)
+                    for value in (True, 0, -1, 1.5, "1788656400", (1 << 32) - 3 * (1 << 17))]
+        for config in invalid:
+            with self.subTest(config=config), patch("tostester.zerostate.run_fift") as run:
+                with self.assertRaisesRegex(ValueError, "Counter checkpoint genesis"):
+                    create_zerostate(Install(REPO / "build", REPO), REPO / "build", config, [])
+                run.assert_not_called()
+
+    def test_checkpoint_genesis_timestamp_and_committee_lifetime(self):
+        # A key block at current_time must cross the unchanged native bucket.
+        current_time = 1788656400
+        genesis_time = current_time // (1 << 17) * (1 << 17) - 1
+        config = NetworkConfig(counter_workchain=True, global_id=-23903, global_version=15,
+                               counter_checkpoint_genesis_time=genesis_time)
+        with tempfile.TemporaryDirectory(prefix="counter-checkpoint-genesis-", dir=REPO / "build") as directory:
+            with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": str(current_time)}):
+                state = create_zerostate(Install(REPO / "build", REPO), Path(directory), config, [Key()])
+                self.assertEqual(os.environ["SOURCE_DATE_EPOCH"], str(current_time))
+            parsed = [ShardStateUnsplit.deserialize(Cell.one_from_boc(shard.file.read_bytes()).begin_parse())
+                      for shard in (state.masterchain, state.shardchain, *state.extra_shards)]
+            self.assertEqual([shard.gen_utime for shard in parsed], [genesis_time] * 3)
+            self.assertNotEqual(parsed[0].gen_utime // (1 << 17), current_time // (1 << 17))
+            committee = parsed[0].custom.config.config[34]
+            self.assertEqual(committee.load_uint(8), 0x12)
+            self.assertEqual(committee.load_uint(32), genesis_time)
+            valid_until = committee.load_uint(32)
+            self.assertEqual(valid_until, genesis_time + 3 * (1 << 17))
+            self.assertGreater(valid_until, current_time + (1 << 17))
+
     def test_payload_requires_counter_profile_before_generation(self):
         with patch("tostester.zerostate.run_fift") as run:
             with self.assertRaisesRegex(ValueError, "payload requires"):
@@ -43,7 +77,12 @@ class CounterGenesis(unittest.TestCase):
                 with patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1788656400"}):
                     state = create_zerostate(Install(REPO / "build", REPO), Path(directory), config, [Key()])
                 parsed = ShardStateUnsplit.deserialize(Cell.one_from_boc(state.masterchain.file.read_bytes()).begin_parse())
+                self.assertEqual(parsed.gen_utime, 1788656400)
                 params = parsed.custom.config.config
+                committee = params[34]
+                self.assertEqual(committee.load_uint(8), 0x12)
+                self.assertEqual(committee.load_uint(32), 1788656400)
+                self.assertEqual(committee.load_uint(32), 1788656400 + 3600)
                 workchains = params[12].load_dict(32)
                 self.assertEqual(set(workchains), {0, 2} if enabled else {0})
                 version = params[8]

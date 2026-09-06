@@ -69,7 +69,7 @@ class Install:
         return self._toslibjson
 
 
-def run_fift(install: Install, code: str, working_dir: Path):
+def run_fift(install: Install, code: str, working_dir: Path, *, source_date_epoch: int | None = None):
     script_file = working_dir / "script.fif"
     _ = script_file.write_text(code)
 
@@ -78,6 +78,7 @@ def run_fift(install: Install, code: str, working_dir: Path):
         args += ["-I", include_dir]
     args += ["-s", "script.fif"]
 
-    _ = subprocess.run(args, cwd=working_dir, check=True)
+    env = None if source_date_epoch is None else {**os.environ, "SOURCE_DATE_EPOCH": str(source_date_epoch)}
+    _ = subprocess.run(args, cwd=working_dir, check=True, env=env)
 
     os.remove(script_file)
