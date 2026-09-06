@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO / "test/tostester/src"))
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.zerostate import counter_payload_tree
+from tostester.counter_committee import read_committee, submit_reweight, wait_reweighted
 from pytosiq_core import Address, Cell
 
 
@@ -127,7 +128,7 @@ async def guarded_exercise(root, *args):
 
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
-                   bad_signature=False, large_payload=False):
+                   bad_signature=False, large_payload=False, reweight=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -168,11 +169,31 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "TOS_COUNTER_MISBOUND_PROOF_FILE": str(root / "proof-fault-armed") if misbound_proof else "",
                 "TOS_COUNTER_BAD_SIGNATURE_FILE": str(root / "proof-fault-armed") if bad_signature else "",
             }) if counter else options)
-        _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
+        warm_client, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
         if counter:
             for node in validators:
                 await asyncio.wait_for(require_proof_probe(node, signatures=True), 10)
+        committee_key = None
+        if reweight:
+            pre_committee_header = await warm_client.get_block_header(target)
+            (root / "committee-before-header.json").write_text(pre_committee_header.to_json())
+            original_committee, new_committee = await submit_reweight(
+                install, network_dir / "state", warm_client, target)
+            target, committee_key = await asyncio.wait_for(wait_reweighted(warm_client, new_committee), join_timeout)
+            (root / "committee-before.boc").write_bytes(original_committee.to_boc())
+            (root / "committee-after.boc").write_bytes(new_committee.to_boc())
+            (root / "committee-key-block.json").write_text(committee_key.to_json())
+
+            async def post_committee_counter():
+                while True:
+                    tip = await counter_tip(validators[0])
+                    info = await warm_client.get_block_header(tip)
+                    if info.min_ref_mc_seqno >= committee_key.seqno:
+                        return tip
+                    await asyncio.sleep(0.2)
+
+            counter_target = await asyncio.wait_for(post_committee_counter(), join_timeout)
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -188,6 +209,16 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if same.to_json() != target.to_json():
             raise AssertionError("cold node disagrees on the pre-existing finalized block")
         header = await cold_client.get_block_header(same)
+        if committee_key is not None:
+            (root / "committee-after-header.json").write_text(header.to_json())
+            if header.validator_list_hash_short == pre_committee_header.validator_list_hash_short:
+                raise AssertionError("post-transition block still names the original signing committee")
+            cold_committee, _ = await read_committee(cold_client, same)
+            if cold_committee.hash != new_committee.hash or cold_committee.hash == original_committee.hash:
+                raise AssertionError("cold node retained the pre-transition committee")
+            cold_key = await cold_client.lookup_block(-1, committee_key.shard, seqno=committee_key.seqno)
+            if cold_key.to_json() != committee_key.to_json():
+                raise AssertionError("cold node disagrees on the committee key block")
         counter_header = None
         executor_state = None
         if counter_target is not None:
@@ -250,6 +281,10 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
             await cold.run(options)
             restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
+            if committee_key is not None:
+                reopened_committee, _ = await asyncio.wait_for(read_committee(restarted, same), 20)
+                if reopened_committee.hash != new_committee.hash:
+                    raise AssertionError("committee changed across cold database reopening")
             restored = await asyncio.wait_for(counter_state(restarted, counter_target, payload), 20)
             if restored.data != executor_state.data or restored.last_transaction_id.to_json() != executor_state.last_transaction_id.to_json():
                 raise AssertionError("Counter state changed across cold database reopening")
@@ -260,6 +295,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
                 "bounded_payload_reopened": large_payload,
+                "committee_reweight_cold_join_tested": reweight,
+                "committee_key_block_seqno": committee_key.seqno if committee_key else None,
+                "committee_membership_rotation_tested": False,
                 "executor_data_boc_bytes": len(executor_state.data) if executor_state else None,
                 "payload_cells": 32767 if large_payload else 0,
                 "cold_counter_zerostate_peer_download_tested": counter,
@@ -281,6 +319,8 @@ def main():
     parser.add_argument("--counter", action="store_true", help="use the explicit test-only Counter node target")
     parser.add_argument("--counter-payload", action="store_true",
                         help="preserve a bounded 32,767-cell payload through cold join and reopening")
+    parser.add_argument("--counter-reweight", action="store_true",
+                        help="cold-join after a signed config-owner validator-weight update (not an election)")
     parser.add_argument("--counter-reencoded-state", action="store_true",
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
     parser.add_argument("--counter-misbound-proof", action="store_true",
@@ -290,6 +330,8 @@ def main():
     args = parser.parse_args()
     if args.counter_payload and not args.counter:
         parser.error("--counter-payload requires --counter")
+    if args.counter_reweight and not args.counter:
+        parser.error("--counter-reweight requires --counter")
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
     if args.counter_misbound_proof and not args.counter:
@@ -322,7 +364,7 @@ def main():
     try:
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
-                                      args.counter_bad_signature, args.counter_payload)))
+                                      args.counter_bad_signature, args.counter_payload, args.counter_reweight)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

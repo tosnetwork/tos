@@ -2594,3 +2594,44 @@ The combined repeat `rybe58tv` also passed with payload, remote reencoded-state,
 misbound-proof and bad-signature modes all enabled (Counter 17, masterchain
 target 18, cold height 48). The final six Python state instrument tests and
 three genesis tests passed; both host/disk CTests passed in 1.32 seconds.
+
+### Cold join across a signed committee-weight configuration change
+
+The runner's explicit `--counter-reweight` mode uses the isolated genesis
+config-owner key and the existing update-config.fif signing path to submit a
+real external configuration-contract message. It increments the first validator's
+weight by one, recomputes total weight, and preserves every key, ADNL identity,
+membership count and validity interval. This is deliberately a weight transition,
+not a stake-election or membership-rotation test. No production consensus code,
+database, global clock or validator key is rewritten.
+
+The harness waits for the updated configuration and its real masterchain key
+block, then for a Counter block referencing at least that masterchain height.
+Only then does the independent cold observer start. Its block-pinned config
+account must contain the new, not old, committee; its post-transition header
+must name a changed signing-list hash and its key-block identity must agree.
+The restarted observer must retain both the new committee and Counter account
+with all warm servers stopped. Before/after config cells and headers, key-block
+identity and signing-tool output are retained with the run.
+
+Initial run `j6vdv3en` passed: key block 25, masterchain target 26, Counter target
+25, cold height 57. The encoder's positive control independently decodes all
+four descriptors and checks that only the intended weight changed. Replacing
+the encoder with an identity function makes that test fail because the output
+equals the input; restoring it passes. Invalid total weights are also rejected.
+These are encoder controls, not evidence that an old committee's unauthorized
+post-transition proof is rejected.
+
+Remaining trust gates include actual membership replacement and adversarial
+old/new committee boundary proofs. A successful weight-update cold join does
+not close those gates or prove persistent-checkpoint streaming import. Source
+tracing also confirms native persistent-state selection uses 2^17-second time
+buckets, while serialization has a random delay of up to six hours; a short
+local run cannot claim that path merely because it crosses a key block.
+M1 remains open, and M3 expansion remains paused.
+
+The payload repeat `e_74_cqd` passed with key block 19, masterchain target 20,
+Counter target 19 and cold height 51. It additionally checked the committee
+after database reopening and retained the 2,097,263-byte executor-data BoC.
+All three committee-encoder tests and six state instrument tests passed;
+host/disk CTests passed in 1.34 seconds.
