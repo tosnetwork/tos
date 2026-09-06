@@ -1,0 +1,14 @@
+// Test-only insertion into the real-manager network genesis template.
+// Every participating binary must support the activated host before genesis.
+// This profile is not an upgrade sequence or a UNO asset allocation.
+globalid@ -23903 <> abort"Counter network global ID required"
+{ <b x{a7} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x434e5431 32 i, 0 64 u,
+  x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  dup isWorkchainDescr? not abort"invalid Counter network descriptor"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"duplicate Counter workchain"
+  workchain-dict !
+} : add-counter-network-workchain
+"counter-state.rhash" file>B 256 B>u@
+"counter-state.fhash" file>B 256 B>u@
+now 0 0 0 2 add-counter-network-workchain

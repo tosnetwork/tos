@@ -65,6 +65,8 @@ class NetworkConfig:
     # override (60 s minimum storage, one win) to rehearse governance
     # activation of ordinary parameters.
     enable_config_voting: bool = False
+    # Isolated host network fixture, never a deployment profile.
+    counter_workchain: bool = False
 
 
 @dataclass
@@ -80,6 +82,7 @@ class Zerostate:
     shardchain: WorkchainState
     main_wallet_key: nacl.signing.SigningKey
     main_wallet_address: Address
+    extra_shards: tuple[WorkchainState, ...] = ()
 
     def as_block(self):
         return tos_api.TosNode_blockIdExt(
@@ -124,7 +127,7 @@ Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
 basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
 
-config.workchains!
+{counter_workchain_config}config.workchains!
 
 // Genesis balances reserved for system contracts, carved out of the fixed
 // 5 B TOS total supply. Defined once here and reused at both the
@@ -241,7 +244,7 @@ Masterchain swap
  *
  */
 // version capabilities (Native Registry SHA256C requires version 14)
-{global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
+{global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or {counter_capability}config.version!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
@@ -403,6 +406,11 @@ def _punishment_params(election_params: str) -> str:
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
+    if config.counter_workchain and (
+        config.global_id != -23903 or config.global_version != 15
+        or config.split != 0 or config.monitor_min_split != 0
+    ):
+        raise ValueError("Counter network requires isolated global ID -23903, version 15 and unsplit shards")
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
     experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
@@ -535,6 +543,20 @@ def create_zerostate(
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
+    counter_workchain_config = ""
+    extra_shards = ()
+    if config.counter_workchain:
+        shard_source = (install.source_dir / "test/counter-shard-genesis.fif").read_text()
+        if shard_source.count("-23901 setglobalid") != 1:
+            raise ValueError("Counter shard fixture global ID marker changed")
+        run_fift(install, shard_source.replace("-23901 setglobalid", "-23903 setglobalid"), state_dir)
+        extra_shards = (WorkchainState(
+            file=state_dir / "counter-state.boc",
+            file_hash=(state_dir / "counter-state.fhash").read_bytes(),
+            root_hash=(state_dir / "counter-state.rhash").read_bytes(),
+        ),)
+        counter_workchain_config = (install.source_dir / "test/counter-network-config.fif").read_text()
+
     run_fift(
         install,
         _TEMPLATE.format(
@@ -542,6 +564,8 @@ def create_zerostate(
             split=config.split,
             global_id=config.global_id,
             global_version=config.global_version,
+            counter_workchain_config=counter_workchain_config,
+            counter_capability="1024 or " if config.counter_workchain else "",
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
             mc_validators=len(keys),
@@ -571,4 +595,5 @@ def create_zerostate(
         ),
         main_wallet_key=nacl.signing.SigningKey(pk),
         main_wallet_address=Address((addr_wc, addr_hash)),
+        extra_shards=extra_shards,
     )

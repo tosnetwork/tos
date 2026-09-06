@@ -2091,3 +2091,24 @@ candidate source are required before this harness can drive wc2 batch replay.
 Authenticated invalid-proof/state tests, Counter committee consensus and cold
 state acquisition, large valid state, reopening and resource bounds remain
 open M1 gates. No UNO synchronization gate is accepted by this baseline.
+
+### Counter real-network genesis prerequisite
+
+The tostester configuration now has an opt-in `counter_workchain` fixture.
+It requires global ID -23903, version 15 and unsplit shards before invoking
+the genesis generator. It reuses the existing Counter account-state generator,
+adds a v2 wc2 descriptor and capBlockTransition, and makes the extra trusted
+zerostate available in each node's static directory. No positive configuration
+parameter is added by this fixture. The default template rendering remains
+unchanged; ordinary networks have no extra shard or host capability.
+
+`test/tostester/test_counter_genesis.py`, run with the local Python environment,
+passes two tests including real create-state generation with the option both
+off and on. It independently parses generated configuration and checks wc2
+presence, capability, descriptor engine ID, split depths, state hashes and the
+extra state's global/workchain identity. Omitting descriptor injection makes
+the enabled test fail because wc2 is absent. Removing profile admission makes
+all four rejection cases fail at the explicit generator-invocation sentinel;
+the restored checks reject before invoking the generator. Both mutations were
+restored. These tests do not start nodes or establish batch replay. Candidate
+production and test-only Counter registration remain the next integration work.
