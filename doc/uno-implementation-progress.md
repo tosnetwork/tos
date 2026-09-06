@@ -3541,3 +3541,22 @@ restore normal serving and finish cold join/reopening. The actor importer has
 an explicit parsed-root comparison before spool sealing and database writes;
 the planned test must reach that boundary rather than fail in BoC parsing.
 No root comparison, downloader validation or production state format changed.
+
+The controller profile `--counter-wrong-checkpoint` now supplies the test chain's
+valid large zerostate as a differently rooted checkpoint response. It derives
+the control root from the warm serialized checkpoint, binds rejection to both
+root hashes and the full checkpoint shard-block identity, requires an offset-0
+peer send, and rejects evidence that the supplied root reached spool sealing or
+commit. Only after rejection does it remove its override file and run the
+ordinary authenticated cold-join/reopen assertions. It excludes the GC profile.
+All 20 Python instrument tests passed; removing the precommit observation check
+made its negative control fail.
+
+The first live controller run, `build/m1-counter-network-run-kk8qmccy`, exposed
+a test-hook error before state import: the size override answered a promise
+already moved into the serialization callback. It repeatedly served size
+queries without reaching the required root-mismatch evidence. The response now
+uses the owning callback promise. This run is not negative-state acceptance;
+the corrected node still needs a live repeat, and removing the real importer
+root gate must also demonstrate that the network test fails for premature
+sealing/commit rather than merely different error wording.

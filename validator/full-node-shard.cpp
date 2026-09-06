@@ -824,9 +824,9 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
                         << " (" << persistent_state_type_to_string(block_id.shard_full(), state_type) << ") from "
                         << src;
 #ifdef TOS_COUNTER_NETWORK_TEST
-  TRY_RESULT_PROMISE(promise, alternate, counter_checkpoint_override(block_id, state_type));
+  TRY_RESULT_PROMISE(P, alternate, counter_checkpoint_override(block_id, state_type));
   if (alternate) {
-    promise.set_value(create_serialize_tl_object<tos_api::tosNode_persistentStateSize>(alternate.value().size()));
+    P.set_value(alternate.value().size());
     return;
   }
 #endif

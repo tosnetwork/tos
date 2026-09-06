@@ -23,6 +23,26 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    def test_checkpoint_rejection_binds_roots_block_and_precommit_boundary(self):
+        block = toslib_api.Tos_blockIdExt(workchain=2, shard=-(1 << 63), seqno=18,
+                                        root_hash=b'\xab' * 32, file_hash=b'\xcd' * 32)
+        identity = '(2,8000000000000000,18):' + 'AB' * 32 + ':' + 'CD' * 32
+        expected, supplied = '11' * 32, '22' * 32
+        sent = 'COUNTER_CHECKPOINT_STATE_SLICE_SENT ' + identity + ' offset=0 bytes=100'
+        rejected = ('OnDisk import failed for ' + identity + ': [Error : root hash mismatch: expected ' +
+                    expected + ' got ' + supplied + ']')
+        evidence = module.checkpoint_rejection_evidence(sent, rejected, block, expected, supplied)
+        self.assertTrue(evidence['rejected_before_spool_sealing'])
+        for wrong in (rejected.replace(expected, '33' * 32), rejected.replace(supplied, '33' * 32),
+                      rejected.replace(',18)', ',19)'), 'invalid BoC', ''):
+            self.assertIsNone(module.checkpoint_rejection_evidence(sent, wrong, block, expected, supplied))
+        self.assertIsNone(module.checkpoint_rejection_evidence('', rejected, block, expected, supplied))
+        for marker in ('SpoolingImportSink sealed 12 cell(s); root=',
+                       'CellDbIn::import_persistent_state_streaming: committed 12 cell(s); root='):
+            with self.assertRaisesRegex(AssertionError, 'spool sealing or commit'):
+                module.checkpoint_rejection_evidence(sent, marker + supplied + '\n' + rejected,
+                                                     block, expected, supplied)
+
     def test_archive_gate_requires_completed_counter_download(self):
         marker = 'Downloaded shard archive #21 (2,8000000000000000)'
         self.assertEqual(module.require_counter_archive_download(marker), [21])

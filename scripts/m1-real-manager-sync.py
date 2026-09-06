@@ -208,6 +208,34 @@ def require_counter_archive_download(log):
     return seqnos
 
 
+def checkpoint_rejection_evidence(served, received, block, expected_root, supplied_root):
+    identity = (f"(2,8000000000000000,{block.seqno}):"
+                f"{block.root_hash.hex().upper()}:{block.file_hash.hex().upper()}")
+    if block.workchain != 2 or block.shard != -(1 << 63) or block.seqno <= 0 or expected_root == supplied_root:
+        raise AssertionError("invalid mismatched checkpoint control")
+    for line in received.splitlines():
+        if ("SpoolingImportSink sealed" in line or "CellDbIn::import_persistent_state_streaming: committed" in line):
+            if f"root={supplied_root}".lower() in line.lower():
+                raise AssertionError("supplied checkpoint root reached spool sealing or commit")
+    sent = "COUNTER_CHECKPOINT_STATE_SLICE_SENT " + identity + " offset=0 "
+    rejection = (r"OnDisk import failed for " + re.escape(identity) +
+                 r":[^\n]*root hash mismatch: expected " + expected_root + r" got " + supplied_root + r"(?=\s|\]|$)")
+    if sent not in served or not re.search(rejection, received, re.IGNORECASE):
+        return None
+    return {"block": identity, "expected_root": expected_root, "supplied_root": supplied_root,
+            "rejected_before_spool_sealing": True}
+
+
+async def wait_checkpoint_rejected(nodes, cold, block, expected_root, supplied_root):
+    while True:
+        served = "\n".join(node.log_path.read_text(errors="replace") for node in nodes)
+        received = cold.log_path.read_text(errors="replace")
+        evidence = checkpoint_rejection_evidence(served, received, block, expected_root, supplied_root)
+        if evidence is not None:
+            return evidence
+        await asyncio.sleep(0.2)
+
+
 def require_collected_counter_state(log, block):
     if block.workchain != 2 or block.shard != -(1 << 63) or block.seqno <= 0:
         raise AssertionError("GC evidence requires a nonzero unsplit Counter block")
@@ -303,7 +331,7 @@ async def guarded_exercise(root, *args, monitor_proofs=True):
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
                    bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False,
-                   checkpoint=False, streaming=False, trace_replacement=False, gc=False):
+                   checkpoint=False, streaming=False, trace_replacement=False, gc=False, wrong_checkpoint=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -339,7 +367,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
             "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
-            "TOS_COUNTER_CHECKPOINT_STATE_FILE": "",
+            "TOS_COUNTER_CHECKPOINT_STATE_FILE": str(root / "checkpoint-override.boc") if wrong_checkpoint else "",
             "TOS_COUNTER_PAYLOAD": "1" if large_payload else "0",
             "TOS_COUNTER_CHECKPOINT": "1" if checkpoint else "0",
             "TOS_COUNTER_RETIRED_SIGNATURE_FILE": str(root / "retired-signature.bin") if retired_signature else "",
@@ -409,6 +437,24 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             target = (await warm_client.get_masterchain_info()).last
             counter_target = await counter_tip(validators[0])
             await counter_state(warm_client, counter_target, payload)
+        checkpoint_control = None
+        if wrong_checkpoint:
+            checkpoint_shards = await warm_client.get_shards(committee_key)
+            checkpoint_blocks = [block for block in checkpoint_shards.shards if block.workchain == 2]
+            if len(checkpoint_blocks) != 1:
+                raise AssertionError("expected one Counter checkpoint shard")
+            checkpoint_block = checkpoint_blocks[0]
+            snapshots = [path for node in validators for path in (node.log_path.parent / "archive/states").glob(
+                f"state_{committee_key.seqno}_2_8000000000000000_*")]
+            if not snapshots:
+                raise AssertionError("missing serialized Counter checkpoint control")
+            expected_root = Cell.one_from_boc(snapshots[0].read_bytes()).hash.hex().upper()
+            alternate = (network_dir / "state/counter-state.boc").read_bytes()
+            supplied_root = Cell.one_from_boc(alternate).hash.hex().upper()
+            if supplied_root == expected_root or not 1048576 < len(alternate) <= 1 << 24:
+                raise AssertionError("checkpoint control must have a different root and use file import")
+            (root / "checkpoint-override.boc").write_bytes(alternate)
+            (root / "checkpoint-supplied.boc").write_bytes(alternate)
         if retired_signature:
             signed = await warm_client.get_masterchain_block_signatures(target.seqno)
             manifest, transcript = retired_signature_manifest(
@@ -418,7 +464,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             pending = root / "retired-signature.pending"
             pending.write_bytes(manifest)
             pending.replace(root / "retired-signature.bin")
-        cold_options = replace(options, env={**options.env, "TOS_COUNTER_RETIRED_SIGNATURE_FILE": ""})
+        cold_options = replace(options, env={**options.env, "TOS_COUNTER_RETIRED_SIGNATURE_FILE": "",
+                                            "TOS_COUNTER_CHECKPOINT_STATE_FILE": ""})
         if checkpoint:
             cold_options = replace(cold_options, args=(*cold_options.args, "--sync-before", "1"))
         if streaming:
@@ -444,6 +491,12 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         memory_observations = {}
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
             raise AssertionError("cold node must have only masterchain/native static states")
+        if wrong_checkpoint:
+            checkpoint_control = await asyncio.wait_for(wait_checkpoint_rejected(
+                validators, cold, checkpoint_block, expected_root, supplied_root), join_timeout)
+            (root / "checkpoint-rejection.json").write_text(json.dumps(checkpoint_control, indent=2) + "\n")
+            (root / "checkpoint-override.boc").unlink()
+            print("mismatched checkpoint rejected before spool sealing; restored normal serving", flush=True)
         cold_client, observed = await asyncio.wait_for(reach(cold, target.seqno + 2), join_timeout)
         await asyncio.wait_for(reach_authenticated(cold_client, target.seqno), join_timeout)
         same = await cold_client.lookup_block(-1, target.shard, seqno=target.seqno)
@@ -592,6 +645,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_counter_zerostate_peer_download_tested": counter and not checkpoint,
                 "persistent_checkpoint_cold_join_tested": checkpoint,
                 "persistent_checkpoint_streaming_import_tested": streaming,
+                "mismatched_checkpoint_rejection": checkpoint_control,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
                 "remote_committee_signature_rejection_tested": bad_signature,
@@ -623,6 +677,8 @@ def main():
                         help="trace replacement I/O/wait syscalls without buffer contents; diagnostic overhead, requires membership")
     parser.add_argument("--counter-gc", action="store_true",
                         help="wait beyond the native 1024-block GC margin with test TTL=1s; requires checkpoint/payload, up to 30 minutes")
+    parser.add_argument("--counter-wrong-checkpoint", action="store_true",
+                        help="serve a valid differently rooted Counter state, require rejection, then restore serving")
     parser.add_argument("--counter-retired-signature", action="store_true",
                         help="require rejection of a genuine retired-member signature after replacement")
     parser.add_argument("--counter-reencoded-state", action="store_true",
@@ -632,6 +688,8 @@ def main():
     parser.add_argument("--counter-bad-signature", action="store_true",
                         help="require rejection of a masterchain proof with one corrupted committee signature")
     args = parser.parse_args()
+    if args.counter_wrong_checkpoint and (not args.counter_checkpoint_streaming or args.counter_gc):
+        parser.error("--counter-wrong-checkpoint requires --counter-checkpoint-streaming and excludes --counter-gc")
     if args.counter_gc and (not args.counter_checkpoint or not args.counter_payload):
         parser.error("--counter-gc requires --counter-checkpoint and --counter-payload")
     if args.trace_replacement and (not args.counter_membership or shutil.which("strace") is None):
@@ -684,6 +742,7 @@ def main():
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
                                       args.counter_membership, args.counter_retired_signature, args.counter_checkpoint,
                                       args.counter_checkpoint_streaming, args.trace_replacement, args.counter_gc,
+                                      args.counter_wrong_checkpoint,
                                       monitor_proofs=not args.counter_gc)))
         report["passed"] = True
     except BaseException as error:
