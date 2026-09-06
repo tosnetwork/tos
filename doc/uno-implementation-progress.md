@@ -3129,3 +3129,44 @@ original directories with `tar -d`, then moved to the recoverable trash.
 No unrelated build trees were removed. First cold-validator replay cost,
 long-run state growth and GC/retention, validator RSS and scalable state
 admission still keep M1 resource acceptance open. M3 remains paused.
+
+### Whole-validator memory during checkpoint service and replay
+
+The real-manager harness now records `/proc` memory for every active committee
+validator immediately before cold join and again before stopping the warm
+nodes. Both observations require full committee coverage, distinct process
+identities and unchanged PID/start-time pairs. The membership profile selects
+the replacement and retained members explicitly; an unexpectedly stopped
+member is not silently omitted. These are sequential per-process samples,
+not a simultaneous machine-wide peak or an importer-only measurement.
+
+The streaming-checkpoint run
+`build/m1-counter-network-run-c81slr5x` passed, selecting checkpoint 20 and
+pinning target masterchain height 21 before the cold node reached height 30.
+Four validators shared 54 distinct cache-hit replay transaction identities.
+File-to-actor checkpoint import, full executor-state checks and cold database
+reopening passed. `validator-memory.json` records these RSS values in bytes:
+
+| Validator | Before cold join | After cold join |
+| --- | ---: | ---: |
+| node1 | 145,752,064 | 174,583,808 |
+| node2 | 163,237,888 | 170,184,704 |
+| node3 | 159,100,928 | 162,488,320 |
+| node4 | 136,986,624 | 158,121,984 |
+
+Kernel-reported high-water values equalled RSS at these observations. The
+samples include collation, validation, state service, caches and all other
+work by each process. They do not isolate cache cost or prove steady state;
+state growth, long-duration retention/GC and first cold-validator replay remain
+open. The fixed payload still has 32,767 cells under the existing account
+limit. No resource ceiling or slot duration is frozen from this run.
+
+All 15 Python instrument tests passed. Removing the duplicate-process-identity
+check made the distinct-process control fail; the guard was restored and the
+suite passed again (`build/uno-validator-memory-mutation.log` and
+`build/uno-validator-memory-restored.log`). The prior attempt at
+`build/m1-counter-network-run-x0_zbpz7` failed before sampling because the
+harness accessed Network.config after zerostate generation, which that API
+forbids. Committee size is now saved before generation. That failed run was
+retained and is not memory or synchronization evidence. Both runs have ended;
+no child node remains active. M1 resource gates remain open, with M3 paused.

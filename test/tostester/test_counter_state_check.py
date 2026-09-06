@@ -21,6 +21,29 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_validator_memory_covers_distinct_live_processes(self):
+        nodes = [SimpleNamespace(log_path=Path(f"/fixture/node{i}/log")) for i in range(4)]
+        def sample(node):
+            index = int(node.log_path.parent.name[-1])
+            return {"pid": 100 + index, "process_start_ticks": 200 + index}
+        with patch.object(module, "node_memory_observation", side_effect=sample) as observer:
+            first = module.validator_memory_observation(nodes, 4)
+            self.assertEqual(observer.call_count, 4)
+            self.assertEqual(module.validator_memory_observation(nodes, 4, first), first)
+            with self.assertRaisesRegex(AssertionError, "incomplete committee"):
+                module.validator_memory_observation(nodes[:3], 4)
+            with self.assertRaisesRegex(AssertionError, "duplicate process"):
+                module.validator_memory_observation([nodes[0], nodes[0], *nodes[2:]], 4)
+            first["node0"]["process_start_ticks"] += 1
+            with self.assertRaisesRegex(AssertionError, "changed between"):
+                module.validator_memory_observation(nodes, 4, first)
+        with patch.object(module, "node_memory_observation", side_effect=AssertionError("stopped node")):
+            with self.assertRaisesRegex(AssertionError, "stopped node"):
+                module.validator_memory_observation(nodes, 4)
+        with patch.object(module, "node_memory_observation", return_value=sample(nodes[0])):
+            with self.assertRaisesRegex(AssertionError, "duplicate process"):
+                module.validator_memory_observation(nodes, 4)
+
     async def test_replay_cache_requires_two_validators_and_same_transaction(self):
         hit = "Batch replay storage cache: hit=true transaction=" + "ab" * 32 + "\n"
         logs = {"node1": hit, "node2": hit}

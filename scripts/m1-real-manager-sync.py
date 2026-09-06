@@ -94,6 +94,25 @@ def node_memory_observation(node, proc_root=Path("/proc")):
             "observed_monotonic_seconds": time.monotonic()}
 
 
+def validator_memory_observation(nodes, expected_count, previous=None):
+    if len(nodes) != expected_count:
+        raise AssertionError("validator memory observation has incomplete committee coverage")
+    readings = {}
+    identities = set()
+    for node in nodes:
+        name = node.log_path.parent.name
+        reading = node_memory_observation(node)
+        identity = (reading["pid"], reading["process_start_ticks"])
+        if name in readings or identity in identities:
+            raise AssertionError("validator memory observation has duplicate process identity")
+        if previous is not None and (name not in previous or identity != (
+                previous[name]["pid"], previous[name]["process_start_ticks"])):
+            raise AssertionError("validator process changed between memory observations")
+        identities.add(identity)
+        readings[name] = reading
+    return readings
+
+
 def require_membership_signers(signed, block, introduced, retired):
     if signed.id is None or signed.id.to_json() != block.to_json():
         raise AssertionError("membership signature response is not block-bound")
@@ -243,7 +262,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 # Older than the native two-day early-start heuristic as well
                 # as the current snapshot bucket; the committee remains valid.
                 network.config.counter_checkpoint_genesis_time = int(time.time()) - 2 * 86400 - 60
-        network.config.shard_validators = 4
+        committee_size = 4
+        network.config.shard_validators = committee_size
         dht = network.create_dht_node()
         validators = [network.create_full_node() for _ in range(4)]
         for node in validators:
@@ -335,6 +355,10 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if misbound_proof or bad_signature:
             (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
+        active_validators = [*validators[1:], replacement_node] if membership else validators
+        validator_memory = {"before_cold_join": validator_memory_observation(
+            active_validators, committee_size)}
+        (root / "validator-memory.json").write_text(json.dumps(validator_memory, indent=2) + "\n")
         await cold.run(cold_options, seed_extra_states=False)
         memory_observations = {}
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
@@ -421,6 +445,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         (root / "cold-header.json").write_text(header.to_json())
         (root / "target-block.json").write_text(target.to_json())
         print(f"cold node reached height {observed.seqno}; stopping all validators", flush=True)
+        validator_memory["after_cold_join"] = validator_memory_observation(
+            active_validators, committee_size, validator_memory["before_cold_join"])
+        (root / "validator-memory.json").write_text(json.dumps(validator_memory, indent=2) + "\n")
         for node in validators:
             await node.stop()
         if membership:
@@ -465,6 +492,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_database_reopened": counter,
                 "bounded_payload_reopened": large_payload,
                 "cold_process_memory": memory_observations,
+                "validator_process_memory": validator_memory,
                 "validator_replay_cache": replay_cache,
                 "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
