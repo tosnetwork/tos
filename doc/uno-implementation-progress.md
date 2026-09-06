@@ -1372,6 +1372,39 @@ a fixed wall-clock duration under missed slots or stalled height. Preserve the
 continuous scheduling-epoch requirement if slot duration changes. No measured
 slot lower bound is available yet, and these transport tests do not supply one.
 
+#### M0 open decisions: Simplex scheduling and checkpoint identity
+
+ConfigParam 30, not an assumed legacy consensus cadence, supplies the Simplex
+target. The current `gen-zerostate.fif` first-testnet profile sets protocol v2,
+QUIC, four slots per leader window and a 400 ms target for both masterchain
+and shards. This is a checked configuration value, not evidence of a deployed
+mainnet setting or a guaranteed 400 ms finalization interval. Activation must
+read the authenticated effective configuration; measurements still need to
+establish achieved finality, execution/serialization cost and deadline margin.
+
+The following remain M0 freeze decisions, alongside UNO duration, idle cadence
+and anchor/expiry windows; no policy is activated by this entry:
+
+- Specify whether UNO scheduling remains based on authenticated MC time or is
+  coupled to Simplex slots. The present formula uses integer-second
+  `gen_utime`, not Simplex slot numbers. Its 75-second candidate duration being
+  187.5 configured 400 ms targets is not by itself an inconsistency or a
+  requirement to round the duration. With time-based scheduling, changing the
+  Simplex target need not change the UNO epoch or divisor, but changes service
+  opportunities and must trigger a deadline/capacity review. Explicitly freeze
+  that behavior, including missed/empty consensus slots and timestamp resolution.
+- Decide whether checkpoint data explicitly includes a Simplex session/slot or
+  instead relies on its authenticated block/finality proof. The existing
+  `block_signatures_simplex` proof already carries session_id, slot and candidate
+  data. Absence of a duplicate checkpoint field is not itself missing proof
+  authentication. Freeze the exact proof-to-checkpoint binding and configuration
+  transition rules. If an explicit slot is included, bind its session and
+  chain/shard context and require consistency with the validated proof; a bare
+  slot number is not a globally unique checkpoint identity.
+
+These are unresolved design choices, not a measured UNO slot lower bound or
+an accepted checkpoint format. M3 expansion remains paused behind M1 gates.
+
 ### Large single-account file acquisition through database reopening
 
 The state-import fixture now accepts the downloader's `DownloadedPersistentState`
