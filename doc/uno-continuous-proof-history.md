@@ -56,3 +56,34 @@ remains pending; no consensus judgement or error classification was changed.
 The small test's duration is not a capacity, throughput, latency percentile or
 WCET measurement. A larger shared-history driver and its storage projection,
 pending/terminal mixture and authenticated integration remain separate work.
+
+## Fixed inputs and C++ restored-state replay
+
+Follow-up source base `dcec55a82` plus the final patch in
+`measurements/uno-real-history-bridge.tar.gz`. Four generated `UNOABIT0` inputs
+are committed under `uno/crypto/testdata/continuous-history`; no new wire
+format is introduced. The explicit manual exporter requires its output
+directory setting. Ordinary Rust verification remains non-ignored.
+
+The registered `test-uno-real-history`, also built by `all-tests` when crypto
+tests are enabled, bounds every input to the fixed 9145-byte shape before
+reading it. It accepts only this fixture's expected balances and fields, not a
+general transaction format. Missing files fail, not skip.
+
+The C++ driver verifies the initial funding bundle and explicitly bootstraps
+test accounting. It then verifies and applies each real spend, checks the
+bundle anchor against the restored current frontier, and serializes/restores
+PrivateTransferState between events. Expected note balances 5000/4900/4800/4700,
+fees 0/100/200/300, paired counts 2/4/6/8, immutable source state and every
+historical public nullifier are checked. This joins real proof data to the
+existing C++ state codec, not to Native Reserve, production host or CellDb.
+
+Replacing apply_block with an unchanged state makes the new test fail at the
+independent 5000-versus-4900 balance assertion (CTest exit 8). Temporarily
+withholding history-2.bin also makes CTest fail; the fixture was restored.
+Exact patches and terminal logs are archived. These are manual historical
+controls, not proof of exhaustive mutation coverage. Milestone review is pending.
+
+The initial test funding is not authenticated minting; ABI-v0 authorization and
+hybrid-profile limitations above remain. No capacity/latency recommendation,
+production schema, unique ABI entry or candidate-source implementation follows.

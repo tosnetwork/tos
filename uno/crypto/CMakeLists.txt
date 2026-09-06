@@ -55,6 +55,16 @@ add_executable(measure-uno-note-component ../../test/test-td-main.cpp tests/note
 target_include_directories(measure-uno-note-component PRIVATE ../..)
 target_link_libraries(measure-uno-note-component PRIVATE tos_crypto "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
 add_dependencies(measure-uno-note-component uno-crypto-rust)
+add_executable(test-uno-real-history ../../test/test-td-main.cpp tests/continuous-history.cpp)
+target_include_directories(test-uno-real-history PRIVATE ../..)
+target_compile_definitions(test-uno-real-history PRIVATE
+  UNO_HISTORY_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/testdata/continuous-history")
+target_link_libraries(test-uno-real-history PRIVATE tos_crypto "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
+add_dependencies(test-uno-real-history uno-crypto-rust)
+add_dependencies(all-tests test-uno-real-history)
+add_test(NAME test-uno-real-history COMMAND test-uno-real-history)
+set_tests_properties(test-uno-real-history PROPERTIES TIMEOUT 60
+  FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
 add_dependencies(all-tests measure-uno-note-component)
 add_test(NAME test-uno-note-component-smoke COMMAND ${CMAKE_COMMAND} -E env
   TOS_UNO_NOTE_KEYS=8 TOS_UNO_NOTE_WINDOW=3 TOS_UNO_NOTE_HISTORY=owners

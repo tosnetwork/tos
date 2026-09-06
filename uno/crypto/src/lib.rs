@@ -497,6 +497,7 @@ mod tests {
             assert_eq!(ffi_status(&bundle, |_| {}),0,"sequence real ABI acceptance");
             assert_eq!(ffi_status(&bundle, |request| request.sighash[0] ^= 1),3,
                 "sequence changed authorization rejection");
+            export_abi_fixture(&bundle,&format!("history-{round}.bin"));
             let offset = leaves.len();
             let commitments: Vec<_> = bundle.actions().iter().map(|action| {
                 assert!(used.insert(action.nullifier().to_bytes()),"history repeats a public nullifier");
@@ -515,6 +516,13 @@ mod tests {
         }
         assert_eq!(remaining,4700);
         assert_eq!(leaves.len(),8);
+    }
+
+    #[test]
+    #[ignore = "manual public history export"]
+    fn export_continuous_real_history() {
+        std::env::var_os("UNO_ABI_FIXTURE_DIR").expect("history export requires UNO_ABI_FIXTURE_DIR");
+        continuous_real_spend_history();
     }
 
     fn decode_real_bundle(bundle: &Bundle<Authorized, i64>) -> Bundle<Authorized, i64> {
