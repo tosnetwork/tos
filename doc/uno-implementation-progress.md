@@ -3512,3 +3512,15 @@ state admission, anchor/checkpoint retention policy, physical disk compaction,
 resource ceilings, or malicious checkpoint-state transport tests. The payload
 tree is preserved, not enlarged every block. `uno_sync_accepted` remains false
 and M3 expansion remains paused pending the remaining M1 gates.
+
+The GC profile now additionally requires completed wc=2 archive-download
+markers and records their starting MC sequence numbers in its GC evidence.
+This prevents a future recent-block-only route from silently substituting for
+the archive regression. Applying the instrument to the preserved successful
+log returned `[21, 120, 220, 320, 420, 520, 620, 720, 820, 920]`; the preserved
+pre-fix log failed for missing Counter archive completion. These historical
+reports were not rewritten. All 19 Python instrument tests passed; allowing
+any workchain made the wc=0 negative control fail. Download completion alone
+does not prove archive application: the existing authenticated target-state
+and database-reopen assertions remain mandatory. This is a fast observation
+control, not a unit replacement for the real archive-selection regression.

@@ -23,6 +23,18 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    def test_archive_gate_requires_completed_counter_download(self):
+        marker = 'Downloaded shard archive #21 (2,8000000000000000)'
+        self.assertEqual(module.require_counter_archive_download(marker), [21])
+        self.assertEqual(module.require_counter_archive_download(
+            marker + '\n' + marker.replace('#21', '#120') + '\n' + marker), [21, 120])
+        for wrong in ('', marker.replace('Downloaded', 'Downloading'),
+                      marker.replace('(2,', '(0,'), marker.replace('8000000000000000', '4000000000000000'),
+                      marker + 'trailing'):
+            with self.subTest(log=wrong):
+                with self.assertRaisesRegex(AssertionError, 'completed Counter archive'):
+                    module.require_counter_archive_download(wrong)
+
     def test_gc_requires_exact_committed_state_identity(self):
         block = toslib_api.Tos_blockIdExt(workchain=2, shard=-(1 << 63), seqno=17,
                                         root_hash=b'\xab' * 32, file_hash=b'\xcd' * 32)

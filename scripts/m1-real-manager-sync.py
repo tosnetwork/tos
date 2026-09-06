@@ -200,6 +200,14 @@ async def require_checkpoint_serialized(nodes, seqno):
         await asyncio.sleep(0.2)
 
 
+def require_counter_archive_download(log):
+    seqnos = sorted({int(match) for match in re.findall(
+        r"Downloaded shard archive #([0-9]+) \(2,8000000000000000\)(?=\s|\x1b|$)", log)})
+    if not seqnos:
+        raise AssertionError("missing completed Counter archive download")
+    return seqnos
+
+
 def require_collected_counter_state(log, block):
     if block.workchain != 2 or block.shard != -(1 << 63) or block.seqno <= 0:
         raise AssertionError("GC evidence requires a nonzero unsplit Counter block")
@@ -473,6 +481,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired, payload), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
+            if gc:
+                gc_evidence["downloaded_counter_archive_seqnos"] = require_counter_archive_download(cold_log)
+                (root / "gc-evidence.json").write_text(json.dumps(gc_evidence, indent=2) + "\n")
             if streaming:
                 require_checkpoint_streamed(cold_log)
             if retired_signature:
