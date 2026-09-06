@@ -5,6 +5,12 @@ Branch: `feature/uno-privacy-workchain-v1`.
 Design baseline: `memo@0c3fc8d0:TOS_UNO_PRIVACY_WORKCHAIN_V1.md`.
 Base node revision: `5a6145cce`.
 
+Artifact retention correction (2026-09-06): successful Counter fixture directories
+are now removed automatically. Most legacy paths cited below were reclaimed after
+archiving their top-level diagnostics; they are historical run identifiers, not
+promises of retained databases. See [retention policy](counter-fixture-retention.md)
+and the cleanup/revalidation entry at the end of this document.
+
 ## Implemented
 
 - Immutable block input/result interface and side-effect-free replay comparison.
@@ -1819,3 +1825,44 @@ registration remain open; a small frontier cannot replace the full output archiv
 After restoration, the Cell, tree-ABI and real-ABI CTest groups each passed three
 consecutive runs (35.20 seconds total). No large database experiment was required
 or counted as evidence for this bounded codec.
+
+### Disk exhaustion correction and clean-space revalidation (2026-09-06)
+
+Counter disk integration left every completed fixture behind. Before maintenance,
+the filesystem had only 1.9 GiB available and reported 100% usage. After checking
+for live test processes and accessible fixture file descriptors/working directories,
+explicit maintenance removed 900 exact Counter fixture directories and retained
+the newest ten complete fixtures. Before deletion, 15,294 top-level diagnostic
+files were archived in
+`build/counter-fixture-diagnostics-1788652918935140968.tar.gz` (about 14 MiB).
+Deleted database directories are not recoverable from that archive; they require
+rerunning their fixtures. No unrelated Rust, integration or worktree artifacts
+were cleaned. Available space rose to 176 GiB, then remained about 175 GiB after
+revalidation (81% filesystem usage).
+
+The parent-owned Counter lifecycle now removes a fixture only on successful
+child completion, including early returns. Failures retain the complete fixture,
+save child output in `lifecycle.log`, and report the path. The path is also printed
+before execution for interrupted runs. Serialized admission permits at most 16
+managed fixtures by default, counting active, failed and interrupted runs; reaching
+the limit refuses new work rather than evicting potentially live diagnostics.
+See [the retention policy](counter-fixture-retention.md) for explicit maintenance.
+
+Three independent mutations proved the regression tests detect missing success
+cleanup, deletion on failure, and bypassed admission limits. All were restored.
+The final 13-test Counter group passed twice per test (3.12 seconds total), with
+zero managed integration fixtures remaining and all ten legacy fixtures preserved.
+The ordinary state-snapshot and real-crypto-ABI tests also each passed twice
+(75.04 seconds total). The maintenance utility refused a dry run while CTest was
+live, confirming its process guard.
+
+With ample disk headroom, the opt-in `LargeSingleAccountDownloadAndImport` test
+passed again in 184.1 seconds: 2,000,000 nullifiers, an 83,933,657-byte BoC,
+4,000,006 imported Cells and 371,934,035 spool bytes. It exercised TCP download,
+import, database reopening and continued state use. Its retained database is
+`/tmp/uno-snapshot-celldb-cwvxb8`; the root is
+`20BBED0D6F111FC861106DC4AFB1712F61633C90699CA8D1552CF3BD14513FAF`.
+These are fresh functional results, not slot-performance measurements or full
+validator-network acceptance. Earlier explicit ENOSPC failures are environmental
+failures, not implementation-defect evidence; this does not claim to reproduce
+every historical disk-adjacent failure.

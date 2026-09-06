@@ -772,6 +772,10 @@ add_test(NAME test-counter-disk-integration
     -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-disk-integration PROPERTIES TIMEOUT 180)
+add_test(NAME test-counter-fixture-lifecycle
+  COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-fixture-lifecycle.cmake)
+set_tests_properties(test-counter-fixture-lifecycle PROPERTIES TIMEOUT 30)
 add_test(NAME test-counter-idle-replay
   COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
     -DCREATE_STATE=$<TARGET_FILE:create-state> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
