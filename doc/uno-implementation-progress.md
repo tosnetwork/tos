@@ -3256,3 +3256,45 @@ control fail; restoration passed. Evidence is in
 `build/uno-replay-timing-mutation.log`, `build/uno-replay-timing-restored.log`
 and the retained network fixture's `validator-replay-cache.json`. The run
 has ended. M1 latency/resource acceptance remains open and M3 paused.
+
+### Removing controller-dependent log transport, without hiding the tail
+
+Inspection of the 809 ms sample found nearly the whole gap between storage
+info unpacking and the end of Account.unpack. The enclosing validation
+reported 0.809592 seconds of thread CPU time. Native stderr logging uses a
+spin-protected writer, while the harness previously drained stderr pipes on
+the same Python event loop that decodes large account responses. This is a
+possible measurement coupling, not proof of that sample's exact cause.
+
+An independent child-process control demonstrates the coupling: while the
+controller event loop is deliberately occupied, a child reaches its ready
+marker but cannot finish writing 2 MiB through the stderr pipe. With direct
+file stderr, it reaches its completion marker and all 2 MiB are retained.
+The new `StartOptions.stderr_to_file` option defaults to false; the M1 harness
+enables it. The parent closes its file handle after spawn, and shutdown handles
+both direct-file and existing streamed-log modes. No native consensus or
+logging implementation was changed. Direct file writes can still block on
+filesystem I/O; this is not a nonblocking logging implementation.
+
+The direct-log membership run
+`build/m1-counter-network-run-mt6k2fyl` passed, with target masterchain height
+52 and cold observer height 62. Its new validator's first cache-miss replay
+took 69,207,676 ns. The 46 hit samples had a middle value of 334,221 ns but a
+maximum of 1,639,462,153 ns at Counter height 94, transaction
+`40089fccbc5bdf1ff0c5f349d057843e73f370d16f5f73bd667726f44e219e49`.
+The enclosing validation reported 1.639919 seconds of work wall time and only
+0.001778 seconds of thread CPU time. Thus the long tail remains after removal
+of controller-pipe draining and is not explained by computation alone. These
+observations do not distinguish I/O, blocking synchronization and scheduling,
+nor establish that the previous CPU-heavy sample had the same cause.
+
+All 16 instrument tests passed. Forcing direct-log requests back to streamed
+pipes made the completion-marker assertion fail (`False != True`); restoration
+passed, with cleanup of both child modes. Evidence is in
+`build/uno-direct-log-instruments.log`, `build/uno-direct-log-mutation.log`
+and `build/uno-direct-log-restored.log`. The real run has ended, and its raw
+per-node files and report remain available. The preceding three replacement
+fixtures were archived and verified as
+`build/m1-counter-replacement-timing-runs-20260906.tar.gz`, then moved to
+recoverable trash. No latency acceptance is claimed; M1 remains open and
+M3 paused.

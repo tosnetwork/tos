@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import ExitStack
 import functools
 import logging
 import os
@@ -58,6 +59,7 @@ class StartOptions:
     args: Sequence[str] = ()
     threads: int = 0
     verbosity: int = 3
+    stderr_to_file: bool = False
 
 
 def _get_install_and_options(
@@ -196,35 +198,23 @@ class Network:
             process_env = os.environ.copy()
             process_env.update(start_options.env)
 
-            match start_options.debug:
-                case None:
-                    self.__process = await asyncio.create_subprocess_exec(
-                        executable,
-                        *cmd_flags,
-                        cwd=self._directory,
-                        env=process_env,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                case "rr":
-                    l.info(f"Recording {self.name} with rr")
-                    self.__process = await asyncio.create_subprocess_exec(
-                        "rr",
-                        "record",
-                        executable,
-                        *cmd_flags,
-                        cwd=self._directory,
-                        env=process_env,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-
-            assert self.__process.stderr is not None  # to placate pyright
+            command = [executable, *cmd_flags]
+            if start_options.debug == "rr":
+                l.info(f"Recording {self.name} with rr")
+                command = ["rr", "record", *command]
+            elif start_options.debug is not None:
+                raise ValueError(f"unsupported debugger: {start_options.debug}")
+            with ExitStack() as files:
+                # Direct logs must not depend on the controller event loop
+                # draining a pipe while it decodes large state responses.
+                stderr = files.enter_context(open(self.log_path, "wb", buffering=0)) if start_options.stderr_to_file else asyncio.subprocess.PIPE
+                self.__process = await asyncio.create_subprocess_exec(
+                    *command, cwd=self._directory, env=process_env, stderr=stderr)
             self.__process_watcher = asyncio.create_task(process_watcher())
-
-            self.__log_streamer = LogStreamer(
-                open(self.log_path, "wb", buffering=0),
-                self.name,
-                self.__process.stderr,
-            )
+            if not start_options.stderr_to_file:
+                assert self.__process.stderr is not None
+                self.__log_streamer = LogStreamer(
+                    open(self.log_path, "wb", buffering=0), self.name, self.__process.stderr)
 
         def announce_to(self, dht: "DHTNode"):
             self._static_nodes.append(dht)
@@ -241,8 +231,6 @@ class Network:
 
         async def stop(self):
             if self.__process:
-                # No exception can occur between self.__process and self._log_streamer creation
-                assert self.__log_streamer is not None
                 assert self.__process_watcher is not None
 
                 if not self.__process_watcher.done():
@@ -255,7 +243,8 @@ class Network:
                         pass
 
                 await self.__process_watcher
-                await self.__log_streamer.aclose()
+                if self.__log_streamer is not None:
+                    await self.__log_streamer.aclose()
 
                 self.__process = None
                 self.__process_watcher = None

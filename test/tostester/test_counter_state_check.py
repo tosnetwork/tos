@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import unittest
 import tempfile
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -21,6 +22,38 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_node_log_progresses_while_controller_loop_is_busy(self):
+        from tostester.network import Network, StartOptions
+        class TestNode(Network.Node):
+            async def run(self, options=None):
+                raise NotImplementedError
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            writer = root / "writer"
+            writer.write_text(f"#!{sys.executable}\n"
+                              "from pathlib import Path\nimport sys\n"
+                              "Path('ready').touch()\n"
+                              "sys.stderr.buffer.write(b'x' * (2 * 1024 * 1024))\n"
+                              "sys.stderr.buffer.flush()\nPath('finished').touch()\n")
+            writer.chmod(0o700)
+            network = SimpleNamespace(_directory=root, _node_idx=0, _status=0)
+            for direct in (False, True):
+                node = TestNode(network, f"writer-{direct}")
+                with patch("tostester.network._write_model"):
+                    await node._run(writer, None, None, StartOptions(stderr_to_file=direct))
+                try:
+                    # Deliberately occupy the controller thread. The child
+                    # signals readiness before filling more than pipe capacity.
+                    deadline = time.monotonic() + 2
+                    while not (node._directory / "finished").exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue((node._directory / "ready").exists())
+                    self.assertEqual((node._directory / "finished").exists(), direct)
+                finally:
+                    await asyncio.wait_for(node.stop(), 5)
+                if direct:
+                    self.assertEqual(node.log_path.read_bytes(), b'x' * (2 * 1024 * 1024))
+
     async def test_validator_memory_covers_distinct_live_processes(self):
         nodes = [SimpleNamespace(log_path=Path(f"/fixture/node{i}/log")) for i in range(4)]
         def sample(node):

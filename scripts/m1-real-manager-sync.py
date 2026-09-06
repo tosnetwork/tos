@@ -279,7 +279,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         for node in validators:
             node.make_initial_validator()
             node.announce_to(dht)
-        options = StartOptions(threads=4, verbosity=4 if large_payload else 3, args=(
+        options = StartOptions(threads=4, verbosity=4 if large_payload else 3, stderr_to_file=True, args=(
             "--max-archive-fd", "64", "--celldb-cache-size", "67108864",
             "--celldb-cache-min-size", "67108864"), env={
             "TOS_ROCKSDB_BLOCK_CACHE_SIZE": "67108864",
