@@ -51,3 +51,17 @@ if (JEMALLOC_FOUND)
 endif()
 
 install(TARGETS validator-engine RUNTIME DESTINATION bin)
+
+# Explicit opt-in executable: real manager/consensus, test engine and candidate
+# source. Excluded from normal builds and installation; the production binary
+# never compiles the registration or fixed candidate supplier.
+add_executable(test-counter-validator-engine EXCLUDE_FROM_ALL ${VALIDATOR_ENGINE_SOURCE})
+get_target_property(counter_node_libraries validator-engine LINK_LIBRARIES)
+get_target_property(counter_node_options validator-engine COMPILE_OPTIONS)
+target_link_libraries(test-counter-validator-engine PRIVATE ${counter_node_libraries})
+target_compile_options(test-counter-validator-engine PRIVATE ${counter_node_options})
+target_compile_definitions(test-counter-validator-engine PRIVATE TOS_COUNTER_NETWORK_TEST=1)
+if (JEMALLOC_FOUND)
+  target_include_directories(test-counter-validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
+  target_compile_definitions(test-counter-validator-engine PRIVATE TOS_USE_JEMALLOC=1)
+endif()

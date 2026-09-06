@@ -2422,6 +2422,14 @@ td::actor::Task<> Collator::do_collate_inner() {
   auto execution = execution_result.move_as_ok();
   const auto* block_execution = execution.has_value()
       ? std::get_if<block::ResolvedWorkchainBlockExecution>(&*execution) : nullptr;
+  if (block_execution && params_.workchain_block_candidate.is_null() &&
+      params_.collator_opts->workchain_candidate_source) {
+    auto candidate = params_.collator_opts->workchain_candidate_source(params_.shard);
+    if (candidate.is_error()) {
+      co_return candidate.move_as_error();
+    }
+    params_.workchain_block_candidate = candidate.move_as_ok();
+  }
   auto candidate_status = block::validate_workchain_candidate_scope(
       params_.workchain_block_candidate, block_execution ? block::WorkchainExecutionScope::BlockTransition
                                                          : block::WorkchainExecutionScope::AccountCompute);

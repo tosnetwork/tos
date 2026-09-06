@@ -33,6 +33,9 @@
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api.h"
 #include "block/workchain-execution-dispatch.h"
+#ifdef TOS_COUNTER_NETWORK_TEST
+#include "crypto/test/workchain-counter-engine.h"
+#endif
 #include "common/errorlog.h"
 #include "crypto/fift/utils.h"
 #include "crypto/vm/vm.h"
@@ -1769,6 +1772,16 @@ td::Status ValidatorEngine::load_global_config() {
   }
 
   validator_options_ = tos::validator::ValidatorManagerOptions::create(zero_state, init_block);
+#ifdef TOS_COUNTER_NETWORK_TEST
+  auto counter_options = td::Ref<tos::validator::CollatorOptions>{true};
+  counter_options.write().workchain_candidate_source = [](tos::ShardIdFull shard) -> td::Result<td::Ref<vm::Cell>> {
+    if (shard != tos::ShardIdFull{2, tos::shardIdAll}) {
+      return td::Status::Error("Counter network candidate requires unsplit workchain 2");
+    }
+    return block::test::counter_number(1);
+  };
+  validator_options_.write().set_collator_options(std::move(counter_options));
+#endif
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
   }
@@ -6010,6 +6023,15 @@ void dump_stats() {
 
 int main(int argc, char *argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
+#ifdef TOS_COUNTER_NETWORK_TEST
+  LOG(WARNING) << "TEST-ONLY Counter network node; not for deployment";
+  auto counter_registration = block::default_workchain_execution_registry().register_block_engine(
+      std::make_unique<block::test::CounterEngine>());
+  if (counter_registration.is_error()) {
+    LOG(ERROR) << counter_registration;
+    return 2;
+  }
+#endif
 
   td::set_default_failure_signal_handler().ensure();
 

@@ -2098,8 +2098,9 @@ The tostester configuration now has an opt-in `counter_workchain` fixture.
 It requires global ID -23903, version 15 and unsplit shards before invoking
 the genesis generator. It reuses the existing Counter account-state generator,
 adds a v2 wc2 descriptor and capBlockTransition, and makes the extra trusted
-zerostate available in each node's static directory. No positive configuration
-parameter is added by this fixture. The default template rendering remains
+zerostate available in each node's static directory. Initially no ingress
+parameter was included; the real-node follow-up below adds the required test
+ingress envelope. The default template rendering remains
 unchanged; ordinary networks have no extra shard or host capability.
 
 `test/tostester/test_counter_genesis.py`, run with the local Python environment,
@@ -2112,3 +2113,49 @@ all four rejection cases fail at the explicit generator-invocation sentinel;
 the restored checks reject before invoking the generator. Both mutations were
 restored. These tests do not start nodes or establish batch replay. Candidate
 production and test-only Counter registration remain the next integration work.
+
+### First Counter committee and cold-join run
+
+The explicit `test-counter-validator-engine` target now compiles test-only
+Counter registration and a fixed increment-one candidate source. It is excluded
+from default builds and installation. Production startup compiles neither. An
+optional bounded, thread-safe in-process source in CollatorOptions can acquire
+candidate data only after BlockTransition resolution, when no explicit candidate
+exists; source errors and null results fail closed. Candidates still use the
+normal commitments and independent validation. This is not a production UNO
+mempool implementation or an engine execution bypass.
+
+`scripts/m1-real-manager-sync.py --counter` selects the test binary and isolated
+wc2 genesis. Real startup first exposed a missing `needCapabilities` flag in
+MasterchainStateQ configuration extraction: the local execution gate saw zero
+version/capabilities despite correctly encoded ConfigParam 8. The flag is now
+requested. The next startup rejected the absent ingress table; the isolated
+fixture now includes the same development ConfigParam 84 envelope as the disk
+fixture. All participants use the new binary with version 15 and capability;
+this is explicitly not an old-node compatibility or deployment/upgrade test.
+The two failed startup runs were stopped after their validator processes had
+exited. Their full directories were verified against
+`build/m1-counter-startup-failures-20260906.tar.gz` before moving originals to
+trash. No unrelated files or running nodes were targeted.
+
+Run `m1-counter-network-run-bk5p2m96` then passed: four real validators produced
+wc2 blocks, the cold observer acquired the exact pre-existing wc2 block 17,
+and both that header and masterchain block 18's header remained available after
+all validators stopped. Cold masterchain height was 48. Validator logs show
+wc2 ValidateQuery execution and real three-signature simplex finalization.
+The observer is not a committee member: its header acquisition is not evidence
+that it independently executed the batch. Cold executor-state checks, forged
+proof rejection, large authenticated snapshots and resource bounds remain open.
+The runner keeps explicit unaccepted/untested fields in its report and caps
+retained directories at three per native/Counter profile.
+
+Mutation run `m1-counter-network-run-j96n30tn` compiled the test candidate source
+to return null instead of increment one. Masterchain progress succeeded, but
+the wc2 collator rejected the candidate/scope mismatch and the runner timed out
+specifically in counter_tip (passed=false). Restoring and rebuilding the source
+passed again in `m1-counter-network-run-sa3gs785`: Counter target 17, masterchain
+target 18, cold masterchain 48. Production validator-engine also rebuilt, and
+`test-workchain-block` plus `test-counter-disk-integration` passed (1.23 seconds).
+The real-genesis tests passed with the required ingress table both present in
+the enabled fixture and absent in the default fixture. Logs now write without
+file buffering so early node failures are visible before harness shutdown.

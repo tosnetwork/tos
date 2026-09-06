@@ -44,6 +44,7 @@ class CounterGenesis(unittest.TestCase):
                 self.assertEqual(version.load_uint(32), 15)
                 self.assertEqual(bool(version.load_uint(64) & 1024), enabled)
                 self.assertEqual(len(state.extra_shards), int(enabled))
+                self.assertEqual(84 in params, enabled)
                 if enabled:
                     extra = state.extra_shards[0]
                     descriptor = workchains[2]

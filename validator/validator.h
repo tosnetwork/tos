@@ -56,6 +56,11 @@ struct PerfTimerStats {
 };
 
 struct CollatorOptions : public td::CntObject {
+  // Optional in-process candidate acquisition. Invoked only for a configured
+  // BlockTransition with no explicit candidate. Must be bounded, non-blocking
+  // and thread-safe; returned data remains untrusted and is committed/replayed
+  // exactly like an explicitly supplied candidate. Not a JSON configuration field.
+  std::function<td::Result<td::Ref<vm::Cell>>(ShardIdFull)> workchain_candidate_source;
   bool deferring_enabled = true;
 
   // Defer messages from account after Xth message in block (excluding first messages from transactions)

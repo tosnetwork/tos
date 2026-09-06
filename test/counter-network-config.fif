@@ -12,3 +12,13 @@ globalid@ -23903 <> abort"Counter network global ID required"
 "counter-state.rhash" file>B 256 B>u@
 "counter-state.fhash" file>B 256 B>u@
 now 0 0 0 2 add-counter-network-workchain
+// Development ingress envelope already used by the disk host fixture. All
+// nodes in this isolated experiment run the new test binary. This does not
+// exercise old-node compatibility or the mandatory pre-activation upgrade.
+variable counter-network-ingress
+dictnew counter-network-ingress !
+<b x{57495031} s, 2 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
+  0 32 u, 0 256 u, empty_cell ref, b>
+<b swap ref, b> <s 2 counter-network-ingress @ 32 idict!+ 0= abort"duplicate Counter ingress"
+counter-network-ingress !
+<b x{57495431} s, counter-network-ingress @ dict, b> 84 config!

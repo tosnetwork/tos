@@ -9,10 +9,11 @@ from toslib import ToslibCDLL
 
 @final
 class Install:
-    def __init__(self, build_dir: Path, source_dir: Path):
+    def __init__(self, build_dir: Path, source_dir: Path, *, validator_engine: Path | None = None):
         self._build_dir = build_dir.absolute()
         self._source_dir = source_dir.absolute()
         self._toslibjson = None
+        self._validator_engine = validator_engine
 
     @property
     def build_dir(self):
@@ -40,7 +41,7 @@ class Install:
 
     @property
     def validator_engine_exe(self):
-        return self.build_dir / "validator-engine/validator-engine"
+        return self._validator_engine or self.build_dir / "validator-engine/validator-engine"
 
     @property
     def dht_server_exe(self):

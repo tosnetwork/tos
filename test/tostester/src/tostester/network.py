@@ -221,7 +221,7 @@ class Network:
             self.__process_watcher = asyncio.create_task(process_watcher())
 
             self.__log_streamer = LogStreamer(
-                open(self.log_path, "wb"),
+                open(self.log_path, "wb", buffering=0),
                 self.name,
                 self.__process.stderr,
             )
