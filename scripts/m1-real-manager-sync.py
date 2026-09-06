@@ -200,6 +200,33 @@ async def require_checkpoint_serialized(nodes, seqno):
         await asyncio.sleep(0.2)
 
 
+def require_collected_counter_state(log, block):
+    if block.workchain != 2 or block.shard != -(1 << 63) or block.seqno <= 0:
+        raise AssertionError("GC evidence requires a nonzero unsplit Counter block")
+    identity = (f"(2,8000000000000000,{block.seqno}):"
+                f"{block.root_hash.hex().upper()}:{block.file_hash.hex().upper()}")
+    if not re.search(re.escape("Deleted state " + identity) + r"(?=\s|\x1b|$)", log):
+        raise AssertionError("missing committed CellDb deletion for the exact Counter block")
+    return identity
+
+
+async def wait_counter_gc(node, client, block, minimum_height):
+    next_status = 0.0
+    while True:
+        info = await client.get_masterchain_info()
+        if time.monotonic() >= next_status:
+            print(f"GC wait: masterchain={info.last.seqno}, required>={minimum_height}, Counter={block.seqno}", flush=True)
+            next_status = time.monotonic() + 30
+        if info.last.seqno >= minimum_height:
+            try:
+                identity = require_collected_counter_state(node.log_path.read_text(errors="replace"), block)
+                return {"deleted_block": identity, "observed_masterchain_height": info.last.seqno,
+                        "scope": "committed actor GC on one validator; not a disk-compaction or RSS bound"}
+            except AssertionError:
+                pass
+        await asyncio.sleep(2)
+
+
 def require_checkpoint_acquired(log, block):
     identity = json.loads(block.to_json())
     marker = (f"best handle is [ w=-1 s=9223372036854775808 seq={block.seqno} "
@@ -248,9 +275,11 @@ async def watch_proof_acceptance(root):
         await asyncio.sleep(0.2)
 
 
-async def guarded_exercise(root, *args):
+async def guarded_exercise(root, *args, monitor_proofs=True):
     # Observe acceptance while synchronization runs. A broken verifier can
     # stall later state acquisition; that timeout is not the property tested.
+    if not monitor_proofs:
+        return await exercise(root, *args)
     run = asyncio.create_task(exercise(root, *args))
     watch = asyncio.create_task(watch_proof_acceptance(root))
     try:
@@ -266,7 +295,7 @@ async def guarded_exercise(root, *args):
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
                    bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False,
-                   checkpoint=False, streaming=False, trace_replacement=False):
+                   checkpoint=False, streaming=False, trace_replacement=False, gc=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -306,6 +335,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_CHECKPOINT": "1" if checkpoint else "0",
             "TOS_COUNTER_RETIRED_SIGNATURE_FILE": str(root / "retired-signature.bin") if retired_signature else "",
         })
+        if gc:
+            options = replace(options, args=(*options.args, "--state-ttl", "1"))
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
             await node.run(replace(options, args=(*options.args, "--skip-key-sync") if checkpoint else options.args, env={
@@ -316,6 +347,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             }) if counter else options)
         warm_client, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
+        gc_target = counter_target
+        gc_evidence = None
         if counter:
             for node in validators:
                 await asyncio.wait_for(require_proof_probe(node, signatures=True), 10)
@@ -359,6 +392,14 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if checkpoint:
             await asyncio.wait_for(require_checkpoint_serialized(validators, committee_key.seqno), join_timeout)
             print(f"persistent checkpoint {committee_key.seqno} serialized; starting cold selection", flush=True)
+        if gc:
+            (root / "gc-target.json").write_text(gc_target.to_json())
+            gc_evidence = await asyncio.wait_for(
+                wait_counter_gc(validators[0], warm_client, gc_target, committee_key.seqno + 1025), 1800)
+            (root / "gc-evidence.json").write_text(json.dumps(gc_evidence, indent=2) + "\n")
+            target = (await warm_client.get_masterchain_info()).last
+            counter_target = await counter_tip(validators[0])
+            await counter_state(warm_client, counter_target, payload)
         if retired_signature:
             signed = await warm_client.get_masterchain_block_signatures(target.seqno)
             manifest, transcript = retired_signature_manifest(
@@ -529,6 +570,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "validator_replay_cache": replay_cache,
                 "replacement_validator_replay_tested": large_payload and membership,
                 "replacement_syscalls_traced": trace_replacement,
+                "counter_gc": gc_evidence,
                 "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,
@@ -567,6 +609,8 @@ def main():
                         help="replace one committee member with an independent node, then cold-join")
     parser.add_argument("--trace-replacement", action="store_true",
                         help="trace replacement I/O/wait syscalls without buffer contents; diagnostic overhead, requires membership")
+    parser.add_argument("--counter-gc", action="store_true",
+                        help="wait beyond the native 1024-block GC margin with test TTL=1s; requires checkpoint/payload, up to 30 minutes")
     parser.add_argument("--counter-retired-signature", action="store_true",
                         help="require rejection of a genuine retired-member signature after replacement")
     parser.add_argument("--counter-reencoded-state", action="store_true",
@@ -576,6 +620,8 @@ def main():
     parser.add_argument("--counter-bad-signature", action="store_true",
                         help="require rejection of a masterchain proof with one corrupted committee signature")
     args = parser.parse_args()
+    if args.counter_gc and (not args.counter_checkpoint or not args.counter_payload):
+        parser.error("--counter-gc requires --counter-checkpoint and --counter-payload")
     if args.trace_replacement and (not args.counter_membership or shutil.which("strace") is None):
         parser.error("--trace-replacement requires --counter-membership and strace")
     if args.counter_payload and not args.counter:
@@ -625,7 +671,8 @@ def main():
                                       args.counter_reencoded_state, args.counter_misbound_proof,
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
                                       args.counter_membership, args.counter_retired_signature, args.counter_checkpoint,
-                                      args.counter_checkpoint_streaming, args.trace_replacement)))
+                                      args.counter_checkpoint_streaming, args.trace_replacement, args.counter_gc,
+                                      monitor_proofs=not args.counter_gc)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

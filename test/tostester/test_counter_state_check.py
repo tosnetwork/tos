@@ -23,6 +23,22 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    def test_gc_requires_exact_committed_state_identity(self):
+        block = toslib_api.Tos_blockIdExt(workchain=2, shard=-(1 << 63), seqno=17,
+                                        root_hash=b'\xab' * 32, file_hash=b'\xcd' * 32)
+        identity = '(2,8000000000000000,17):' + 'AB' * 32 + ':' + 'CD' * 32
+        marker = 'Deleted state ' + identity
+        self.assertEqual(module.require_collected_counter_state('[DEBUG] ' + marker + '\n', block), identity)
+        for wrong in ('', marker.replace('Deleted state', 'Deleting state'),
+                      marker.replace(',17)', ',18)'), marker.replace('(2,', '(0,'),
+                      marker.replace('AB' * 32, 'EF' * 32),
+                      marker.replace('CD' * 32, 'EF' * 32), marker + 'F'):
+            with self.subTest(log=wrong):
+                with self.assertRaisesRegex(AssertionError, 'exact Counter block'):
+                    module.require_collected_counter_state(wrong, block)
+        with self.assertRaisesRegex(AssertionError, 'nonzero unsplit'):
+            module.require_collected_counter_state(marker, toslib_api.Tos_blockIdExt(workchain=-1, seqno=17))
+
     async def test_direct_node_log_progresses_while_controller_loop_is_busy(self):
         from tostester.network import Network, StartOptions, _get_install_and_options
         class TestNode(Network.Node):

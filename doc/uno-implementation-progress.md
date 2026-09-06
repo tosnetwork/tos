@@ -3393,3 +3393,21 @@ long-running independent-network GC test. The state versions use the existing
 synthetic shard fixture, not twelve consensus-admitted blocks. No production
 retention window, account limit or GC scheduling rule was changed. Those
 remaining M1 gates must still be exercised; M3 remains paused.
+
+### Preparing the native actor-GC long-run gate
+
+The independent-node harness now offers `--counter-gc`, requiring the payload
+and persistent-checkpoint/reweight profiles. It changes only the isolated
+test nodes' state TTL to one second. The native 1024-block masterchain margin,
+rotation, minimum references, key-block, confirmation and serializer gates
+remain unchanged. Before cold joining, it waits for the exact initial Counter
+block's committed `Deleted state` marker from one validator and refreshes the
+target to the current chain. This is a pending experiment, not GC acceptance.
+The ordinary injected-proof watcher remains enabled on fault profiles; the
+mutually exclusive long-run profile avoids repeatedly rescanning all node logs.
+
+All 17 Python instrument tests passed. Removing the deletion marker's complete
+block-identity binding made five negative controls fail (wrong workchain,
+height, root hash, file hash and appended hash digit); restoring it passed.
+This checks the observation instrument, not native GC scheduling or physical
+disk compaction. The long-run result and resource behavior remain unverified.
