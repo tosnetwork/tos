@@ -774,6 +774,150 @@ TEST(UnoStorageMeasurement, PartitionPersistenceStages) {
   td::rmrf(directory).ensure();
   td::unlink(file.second).ensure();
 }
+TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
+  const char* size_text = std::getenv("TOS_UNO_STORAGE_KEYS");
+  const char* pages_text = std::getenv("TOS_UNO_STORAGE_PAGES");
+  const char* shape_text = std::getenv("TOS_UNO_STORAGE_SHAPE");
+  ASSERT_TRUE(size_text && pages_text && shape_text);
+  const std::string size(size_text), mode(pages_text), shape(shape_text);
+  const std::size_t count = size == "1000" ? 1000 : size == "8000" ? 8000 :
+      size == "32000" ? 32000 : size == "65536" ? 65536 : 0;
+  const std::size_t page_count = mode == "1" ? 1 : mode == "16" ? 16 : 0;
+  ASSERT_TRUE(count && page_count && (shape == "uniform" || shape == "prefix"));
+  auto keys = measurement_keys(count);
+  if (shape == "prefix") for (auto& key : keys) for (unsigned i = 0; i < 16; ++i) key.as_slice()[i] = 0;
+  auto route = [&](const td::Bits256& key) {
+    return page_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> 4;
+  };
+  std::vector<std::vector<td::Bits256>> grouped(page_count);
+  for (const auto& key : keys) grouped[route(key)].push_back(key);
+  std::vector<uno_workchain::UsedNullifiers> pages;
+  std::vector<td::Ref<vm::Cell>> expected_data;
+  auto data_root = [](const uno_workchain::UsedNullifiers& used) {
+    return used.root().is_null() ? vm::CellBuilder().finalize() : used.root();
+  };
+  auto put = [&](vm::AugmentedDictionary& dictionary, std::size_t page, td::Ref<vm::Cell> data) {
+    ASSERT_TRUE(page < page_count && page_count <= 16);
+    auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(page);
+    vm::CellBuilder account;
+    account.store_long(1,1).store_long(4,3).store_long(2,8).store_bits(address.bits(),256)
+        .store_zeroes(42).store_long(2,64);
+    ASSERT_TRUE(block::CurrencyCollection(0).store(account));
+    account.store_long(1,1).store_zeroes(3).store_long(1,1).store_ref(data).store_long(0,1);
+    vm::CellBuilder entry;
+    entry.store_ref(account.finalize()).store_zeroes(256).store_long(1,64);
+    ASSERT_TRUE(dictionary.set_builder(address,entry));
+  };
+  vm::AugmentedDictionary accounts(256,block::tlb::aug_ShardAccounts);
+  for (std::size_t i = 0; i < page_count; ++i) {
+    pages.push_back(uno_workchain::UsedNullifiers{}.with_used(grouped[i]).move_as_ok());
+    expected_data.push_back(data_root(pages.back()));
+    put(accounts,i,expected_data.back());
+  }
+  auto state = single_account_state(expected_data.front());
+  block::gen::ShardStateUnsplit::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(state,record));
+  record.accounts = accounts.get_wrapped_dict_root();
+  ASSERT_TRUE(tlb::pack_cell(state,record));
+  const auto old_hash = state->get_hash();
+  const auto directory = td::mkdtemp("/tmp","uno-incremental-records-").move_as_ok();
+  LOG(WARNING) << "Incremental records database " << directory << " (removed on success, retained on failure)";
+  std::unique_ptr<td::RocksDb> kv;
+  std::unique_ptr<vm::DynamicBagOfCellsDb> database;
+  auto reopen = [&] {
+    database.reset(); kv.reset();
+    td::RocksDbOptions options;
+    options.merge_operator = std::make_shared<RetainedStateMergeOperator>();
+    kv = std::make_unique<td::RocksDb>(td::RocksDb::open(directory + "/cells",options).move_as_ok());
+    database = vm::DynamicBagOfCellsDb::create_v2({.extra_threads = 0});
+    database->set_loader(std::make_unique<vm::CellLoader>(kv->snapshot())).ensure();
+  };
+  auto commit = [&] {
+    auto started = SnapshotClock::now();
+    database->prepare_commit().ensure();
+    const auto prepare = snapshot_elapsed_ms(started);
+    started = SnapshotClock::now();
+    kv->begin_write_batch().ensure();
+    vm::CellStorer storer(*kv);
+    database->commit(storer).ensure();
+    const auto stage = snapshot_elapsed_ms(started);
+    started = SnapshotClock::now();
+    kv->commit_write_batch().ensure();
+    return std::array<double,3>{prepare,stage,snapshot_elapsed_ms(started)};
+  };
+  reopen(); database->inc(state); (void)commit(); reopen();
+  const auto baseline = read_cell_records(*kv);
+  auto old = database->load_cell(old_hash.as_slice()).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell(old,record));
+  vm::AugmentedDictionary updated(vm::load_cell_slice_ref(record.accounts),256,block::tlb::aug_ShardAccounts);
+  std::vector<td::Bits256> fresh(2,td::Bits256::zero());
+  fresh[0].as_slice()[31] = 1; fresh[1].as_slice()[31] = 2;
+  if (shape == "uniform") fresh[1].as_slice()[0] = static_cast<char>(0xf0);
+  for (const auto& key : fresh) {
+    const auto page = route(key);
+    auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(page);
+    block::Account account(2,address.bits());
+    ASSERT_TRUE(account.unpack(updated.lookup(address),10,false));
+    ASSERT_TRUE(account.data->get_hash() == expected_data[page]->get_hash());
+    auto used = pages[page].size() == 0 ? uno_workchain::UsedNullifiers{} :
+        uno_workchain::UsedNullifiers::from_root(account.data,pages[page].size()).move_as_ok();
+    ASSERT_TRUE(!used.try_contains(key).move_as_ok());
+    pages[page] = used.with_used({key}).move_as_ok();
+    expected_data[page] = data_root(pages[page]);
+    put(updated,page,expected_data[page]);
+  }
+  record.accounts = updated.get_wrapped_dict_root();
+  td::Ref<vm::Cell> next;
+  ASSERT_TRUE(tlb::pack_cell(next,record));
+  const auto next_hash = next->get_hash();
+  ASSERT_TRUE(next_hash != old_hash);
+  auto emit = [&](const char* phase, const CellRecordDelta& delta, const std::array<double,3>& times) {
+    std::cout << "INCREMENTAL_RECORDS_CSV," << count << ",91," << page_count << ',' << shape << ',' << phase << ','
+              << delta.added << ',' << delta.added_bytes << ',' << delta.removed << ',' << delta.removed_bytes << ','
+              << delta.changed << ',' << delta.changed_bytes << ',' << times[0] << ',' << times[1] << ',' << times[2]
+              << ',' << snapshot_peak_rss_kib() << std::endl;
+  };
+  database->inc(next);
+  const auto update_times = commit();
+  std::vector<vm::CellHash> expected_hashes;
+  std::vector<td::uint64> expected_sizes;
+  for (std::size_t i = 0; i < page_count; ++i) {
+    expected_hashes.push_back(expected_data[i]->get_hash());
+    expected_sizes.push_back(pages[i].size());
+  }
+  // Lazy Cells own readers. Drop every database-derived reference before
+  // destroying the handles; retaining one would make this a false reopen.
+  old.clear(); next.clear(); updated.reset(); record = {};
+  pages.clear(); expected_data.clear();
+  reopen();
+  ASSERT_TRUE(database->load_cell(old_hash.as_slice()).is_ok());
+  ASSERT_TRUE(database->load_cell(next_hash.as_slice()).is_ok());
+  const auto retained = read_cell_records(*kv);
+  auto delta = cell_record_delta(baseline,retained);
+  ASSERT_TRUE(delta.added > 0 && delta.removed == 0);
+  emit("retain",delta,update_times);
+  database->dec(database->load_cell(old_hash.as_slice()).move_as_ok());
+  const auto release_times = commit(); reopen();
+  ASSERT_TRUE(database->load_cell(old_hash.as_slice()).is_error());
+  auto newest = database->load_cell(next_hash.as_slice()).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell(newest,record));
+  vm::AugmentedDictionary final_accounts(vm::load_cell_slice_ref(record.accounts),256,block::tlb::aug_ShardAccounts);
+  for (std::size_t i = 0; i < page_count; ++i) {
+    auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(i);
+    block::Account account(2,address.bits());
+    ASSERT_TRUE(account.unpack(final_accounts.lookup(address),10,false));
+    ASSERT_TRUE(account.data->get_hash() == expected_hashes[i]);
+    auto used = expected_sizes[i] == 0 ? uno_workchain::UsedNullifiers{} :
+        uno_workchain::UsedNullifiers::from_root(account.data,expected_sizes[i]).move_as_ok();
+    for (const auto& key : grouped[i]) ASSERT_TRUE(used.try_contains(key).move_as_ok());
+    for (const auto& key : fresh) if (route(key) == i) ASSERT_TRUE(used.with_used({key}).is_error());
+  }
+  delta = cell_record_delta(retained,read_cell_records(*kv));
+  ASSERT_TRUE(delta.added == 0 && delta.removed > 0);
+  emit("release",delta,release_times);
+  newest.clear(); final_accounts.reset(); record = {};
+  database.reset(); kv.reset(); td::rmrf(directory).ensure();
+}
 #endif
 
 TEST(UnoStateSnapshot, CellRecordDeltaAccounting) {
