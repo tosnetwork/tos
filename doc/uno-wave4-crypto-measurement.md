@@ -2,6 +2,12 @@
 
 ## Scope and instrument
 
+Subsequent unit review and self-test integration are recorded in
+`uno-d3-semantic-review-disposition.md`. The recorded performance data below
+remain tied to their original instrument commit; they are not measurements of
+later guard/test changes. The self-test is now part of the opt-in crypto CTest
+suite and all-tests build graph; the timed `--measure` run remains manual.
+
 `test-uno-crypto-cost` is test-only, not a production engine, wire/profile,
 ConfigParam 84 parser, or consensus-entry admission session. It first meters the
 entire logical request list, then calls the real `uno_crypto_verify_v0` for each
@@ -26,6 +32,10 @@ each of the three limit checks, bypassed proof shape, or discounted repeated
 pointers: each made the backend invocation assertion fail with two calls.
 Removing checked addition and multiplication separately also made the self-test
 fail. Every mutation was restored. Logs are `build/wave4-cost-*-mutation.log`.
+The durable original archives are `doc/measurements/uno-wave4-mutations.tar.gz`
+and `doc/measurements/uno-wave4-703935250.tar.gz`. Two original arithmetic log
+members contain no output and do not by themselves prove an exit status; the
+subsequent unit reran these checks with explicit diagnostics and exit codes.
 
 ## Recorded workload
 

@@ -41,6 +41,8 @@ target_include_directories(test-uno-crypto-cost PRIVATE include)
 target_compile_features(test-uno-crypto-cost PRIVATE cxx_std_17)
 target_link_libraries(test-uno-crypto-cost PRIVATE "${UNO_CRYPTO_ARCHIVE}" Threads::Threads ${CMAKE_DL_LIBS} m)
 add_dependencies(test-uno-crypto-cost uno-crypto-rust)
+add_dependencies(all-tests test-uno-crypto-cost)
+add_test(NAME test-uno-crypto-cost-self COMMAND test-uno-crypto-cost --self-test)
 
 add_executable(test-uno-tree-cell ../../test/test-td-main.cpp tests/tree-cell.cpp tests/note-state.cpp)
 target_include_directories(test-uno-tree-cell PRIVATE ../..)

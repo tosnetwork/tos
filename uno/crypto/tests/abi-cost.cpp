@@ -34,10 +34,11 @@ Admission admit(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usag
         request->profile != UNO_CRYPTO_FIXED_PROFILE || !request->actions || !request->proof ||
         !request->action_count || request->action_count > request->max_actions) return Admission::Shape;
     std::size_t proof_size, actions_size, payload;
-    if (!multiply(request->action_count, 2272, proof_size) || !add(proof_size, 2720, proof_size) ||
-        !multiply(request->action_count, sizeof(UnoCryptoAction), actions_size) ||
-        !add(actions_size, request->proof_bytes, payload)) return Admission::Overflow;
+    if (!multiply(request->action_count, 2272, proof_size) || !add(proof_size, 2720, proof_size))
+      return Admission::Overflow;
     if (proof_size != request->proof_bytes || proof_size > request->max_proof_bytes) return Admission::Shape;
+    if (!multiply(request->action_count, sizeof(UnoCryptoAction), actions_size) ||
+        !add(actions_size, proof_size, payload)) return Admission::Overflow;
     if (!add(next.proofs, 1, next.proofs) || !add(next.actions, request->action_count, next.actions) ||
         !add(next.payload_bytes, payload, next.payload_bytes)) return Admission::Overflow;
     if (next.proofs > limits.proofs || next.actions > limits.actions ||
@@ -58,6 +59,7 @@ bool self_test() {
   UnoCryptoAction actions[2]{};
   uint8_t proof[7264]{};
   UnoCryptoVerifyRequest request{};
+  request.abi_version = UNO_CRYPTO_ABI_VERSION;
   request.profile = UNO_CRYPTO_FIXED_PROFILE;
   request.actions = actions;
   request.action_count = request.max_actions = 2;
@@ -66,7 +68,8 @@ bool self_test() {
   const std::vector<const UnoCryptoVerifyRequest*> repeated{&request, &request};
   Usage exact{2, 4, 18064};
   std::size_t calls = 0;
-  auto backend = [&](const UnoCryptoVerifyRequest*) { ++calls; };
+  bool call_overflow = false;
+  auto backend = [&](const UnoCryptoVerifyRequest*) { if (!add(calls, 1, calls)) call_overflow = true; };
   if (run(repeated, exact, backend) != Admission::Ok || calls != 2) return false;
   for (Usage short_limit : {Usage{1, 4, 18064}, Usage{2, 3, 18064}, Usage{2, 4, 18063}}) {
     calls = 0;
@@ -88,10 +91,49 @@ bool self_test() {
     return false;
   }
   if (malformed != Admission::Shape) return false;
-  std::size_t unchanged = 17;
+  // Oversized metadata must be rejected without dereferencing the tiny fixture
+  // buffers. The first case exceeds a single proof multiplication; the second
+  // consists of individually representable requests whose combined bytes wrap.
   const auto max = std::numeric_limits<std::size_t>::max();
-  if (add(max, 1, unchanged) || unchanged != 17 || multiply(max, 2, unchanged) || unchanged != 17) return false;
-  if (!add(max, 0, unchanged) || unchanged != max || !multiply(max, 1, unchanged) || unchanged != max) return false;
+  UnoCryptoVerifyRequest huge = request;
+  if (!add(max / 2272, 1, huge.action_count)) return false;
+  huge.max_actions = huge.action_count;
+  huge.proof_bytes = huge.max_proof_bytes = max;
+  for (bool aggregate : {false, true}) {
+    if (aggregate) {
+      if (!add(max / 6312, 1, huge.action_count)) return false;
+      huge.max_actions = huge.action_count;
+      if (!multiply(huge.action_count, 2272, huge.proof_bytes) ||
+          !add(huge.proof_bytes, 2720, huge.proof_bytes)) return false;
+      huge.max_proof_bytes = huge.proof_bytes;
+      Usage individual;
+      if (admit({&huge}, {max, max, max}, individual) != Admission::Ok ||
+          individual.payload_bytes <= max / 2) {
+        std::cerr << "aggregate overflow fixture did not pass individual admission\n";
+        return false;
+      }
+    }
+    const std::vector<const UnoCryptoVerifyRequest*> oversized = aggregate
+        ? std::vector<const UnoCryptoVerifyRequest*>{&huge, &huge}
+        : std::vector<const UnoCryptoVerifyRequest*>{&huge};
+    calls = 0;
+    if (run(oversized, {max, max, max}, backend) != Admission::Overflow || calls != 0 || call_overflow) {
+      std::cerr << "metadata overflow admission failed: aggregate=" << aggregate << " calls=" << calls << '\n';
+      return false;
+    }
+    Usage untouched{7, 11, 13};
+    if (admit(oversized, {max, max, max}, untouched) != Admission::Overflow ||
+        untouched.proofs != 7 || untouched.actions != 11 || untouched.payload_bytes != 13) return false;
+  }
+  std::size_t unchanged = 17;
+  if (add(max, 1, unchanged) || unchanged != 17 || multiply(max, 2, unchanged) || unchanged != 17) {
+    std::cerr << "checked arithmetic failed to reject overflow without publishing output\n";
+    return false;
+  }
+  if (!add(max, 0, unchanged) || unchanged != max || !multiply(max, 1, unchanged) || unchanged != max) {
+    std::cerr << "checked arithmetic rejected exact representable boundary\n";
+    return false;
+  }
   std::cout << "semantic budget exact/one-over, duplicate occurrence, shape and checked arithmetic passed\n";
   return true;
 }
@@ -101,6 +143,7 @@ struct Fixture {
   std::array<UnoCryptoAction, 2> actions{};
   std::array<uint8_t, 7264> proof{};
   bool load(const char* path, bool funding) {
+    request.abi_version = UNO_CRYPTO_ABI_VERSION;
     std::ifstream input(path, std::ios::binary);
     const auto bytes = [&](void* output, std::size_t count) {
       return static_cast<bool>(input.read(static_cast<char*>(output), static_cast<std::streamsize>(count)));
