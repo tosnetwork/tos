@@ -1312,7 +1312,7 @@ fn participant_cap_rejects_a_new_account_without_mutating_accounting() {
 #[test]
 fn maximum_participant_state_rejects_the_ninth_account_atomically() {
     const MAX_PARTICIPANTS: u8 = 8;
-    let mut f = Fixture::new_with(|init, _, _| init.max_participants = u32::from(MAX_PARTICIPANTS));
+    let mut f = Fixture::new_with(|init| init.max_participants = u32::from(MAX_PARTICIPANTS));
     f.activate();
     let owner = f.owner.address().clone();
     let trader = f.trader_b.address().clone();
@@ -1450,7 +1450,7 @@ fn maximum_live_order_state_has_bounded_gas_and_rejects_the_next_admission() {
     // The frozen production BOC measures 113,464 gas at this state. Keep a
     // substantial regression envelope while making gas growth observable.
     const MAX_MATCH_GAS_AT_FULL_ORDER_STATE: u64 = 200_000;
-    let mut f = Fixture::new_with(|init, _, _| {
+    let mut f = Fixture::new_with(|init| {
         init.max_order_lots = 1;
         init.max_locked_collateral = 200 * TOS;
         init.max_account_free_balance = 150 * TOS;
@@ -1679,7 +1679,10 @@ fn all_three_match_classes_conserve_collateral_on_the_production_boc() {
     assert_eq!(f.account(&b)[3..6], [0, TOS as i128 / 1_000, 0]);
 }
 
-fn run_conservation_sequence(mut seed: u64, steps: u64) -> u8 {
+fn run_conservation_sequence(
+    mut seed: u64,
+    steps: u64,
+) -> (Fixture, ReferenceMarket, [MsgAddressInt; 2], u8) {
     let mut f = Fixture::new();
     f.activate();
     let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
@@ -1826,12 +1829,13 @@ fn run_conservation_sequence(mut seed: u64, steps: u64) -> u8 {
         }
         model.assert_matches(&f, [&owners[0], &owners[1]]);
     }
-    exercised
+    (f, model, owners, exercised)
 }
 
 #[test]
 fn deterministic_random_sequences_match_an_independent_conservation_model() {
-    let exercised = run_conservation_sequence(0x8f3d_9a21_4c77_b105, 50);
+    let (mut f, mut model, owners, exercised) =
+        run_conservation_sequence(0x8f3d_9a21_4c77_b105, 50);
     assert_eq!(exercised, 31, "the deterministic sequence missed an operation class");
 
     // Finish the same randomized state through a production resolution, then
@@ -1937,7 +1941,8 @@ fn multiple_randomized_conservation_sequences_match_the_production_boc() {
         0xc746_08ad_91fe_35b2,
         0xed20_bf74_6a83_19cd,
     ] {
-        exercised |= run_conservation_sequence(seed, 100);
+        let (_, _, _, seed_exercised) = run_conservation_sequence(seed, 100);
+        exercised |= seed_exercised;
     }
     assert_eq!(exercised, 31, "the multi-seed corpus missed an operation class");
 }
