@@ -13,6 +13,12 @@ and the cleanup/revalidation entry at the end of this document.
 
 ## Implemented
 
+Current sequencing (2026-09-06): further M3 expansion is paused for M1's
+real-manager authenticated block/state acquisition, receiving-side batch replay,
+and non-fake committee-consensus acceptance. A stable M3 state shape is not a
+prerequisite for beginning these checks. Transport component results below do
+not constitute this trust-path acceptance.
+
 - Immutable block input/result interface and side-effect-free replay comparison.
 - Engine-result commitments cover engine state, outbound messages, actions,
   receipts, events, data availability and resource accounting. The synthetic
@@ -2035,3 +2041,53 @@ After rebuilding the C++ linked targets, the Rust, real-ABI and tree/note-state
 CTest groups each passed twice (45.80 seconds total). A final test-only change
 made the fee mutation use checked arithmetic, then both transcript tests passed
 again. The generated C header did not change.
+
+## M1 real-manager network baseline (2026-09-06)
+
+`scripts/m1-real-manager-sync.py` now runs four actual validator-engine processes,
+one DHT process and a subsequently created cold observer, each with its own
+database. It reuses the existing tostester network infrastructure, a private
+test genesis (global ID -23902), and loopback peer addresses. It does not use
+manager-disk or fake block acceptance. Only trusted genesis files are shared;
+no warm database, archive or later block is copied to the observer.
+
+This is **native/masterchain baseline evidence, not Counter or UNO acceptance**.
+The script waits for a finalized masterchain target before creating the cold
+node, waits for that node to catch up, compares the exact pre-existing block ID,
+and requests its header again after stopping all four warm validators. That
+last request proves local availability in the still-running cold node, not a
+database-reopen or persistent-snapshot test. Warm logs contain real simplex
+finalization with three-signature certificates; this is not yet evidence of
+BlockTransition committee validation.
+
+Reproduction requires Python 3.14 with tostester's bitarray, pynacl and
+pycryptodome dependencies, and these freshly built targets:
+
+```sh
+cmake --build build --target validator-engine dht-server create-state generate-random-id toslibjson -- -j48
+build/m1-real-network-env/bin/python scripts/m1-real-manager-sync.py
+```
+
+The local interpreter environment is not a checked-in dependency artifact.
+The runner retains logs and report.json for success and failure, refuses fewer
+than 20 GiB free, and admits at most three retained runs under its own prefix.
+An operator must inspect those runs before making room for additional runs;
+it never deletes another experiment or stops processes to acquire ports.
+
+At base revision `2990c7699`, the initial run `m1-real-manager-run-e_wc69xk`
+passed (target 17, cold height 47). The mutation stopped all warm validators
+immediately before starting the cold node: `m1-real-manager-run-lv0hyfcw`
+failed at the cold reach deadline with TimeoutError and passed=false, using
+`--join-timeout 15`. Restoring the source passed again in
+`m1-real-manager-run-duqmz1am` (target 18, cold height 48). This mutation tests
+the harness's dependency on a live advancing network, **not** rejection of
+forged proofs, altered state roots or invalid signatures.
+
+The next concrete integration gap is candidate production: the real collator
+requires a non-null candidate for BlockTransition, but the only current supplier
+of `CollateParams::workchain_block_candidate` is manager-disk. Real node
+startup also does not register Counter. A test-only real-node Counter setup and
+candidate source are required before this harness can drive wc2 batch replay.
+Authenticated invalid-proof/state tests, Counter committee consensus and cold
+state acquisition, large valid state, reopening and resource bounds remain
+open M1 gates. No UNO synchronization gate is accepted by this baseline.
