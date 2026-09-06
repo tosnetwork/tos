@@ -6036,8 +6036,12 @@ int main(int argc, char *argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
 #ifdef TOS_COUNTER_NETWORK_TEST
   LOG(WARNING) << "TEST-ONLY Counter network node; not for deployment";
+  const char* counter_payload = std::getenv("TOS_COUNTER_PAYLOAD");
+  auto payload_mode = counter_payload && std::string(counter_payload) == "1"
+      ? block::test::CounterEngine::PayloadMode::PreserveReference
+      : block::test::CounterEngine::PayloadMode::None;
   auto counter_registration = block::default_workchain_execution_registry().register_block_engine(
-      std::make_unique<block::test::CounterEngine>());
+      std::make_unique<block::test::CounterEngine>(block::WorkchainBlockResourceUsage{8, 1, 3}, 1, 2, payload_mode));
   if (counter_registration.is_error()) {
     LOG(ERROR) << counter_registration;
     return 2;

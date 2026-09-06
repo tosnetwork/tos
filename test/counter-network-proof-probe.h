@@ -85,7 +85,9 @@ class CounterProofProbe final : public td::actor::Actor {
   td::actor::Task<> check_shard_signatures() {
     auto full_manager = td::actor::actor_dynamic_cast<ValidatorManager>(manager_);
     td::Ref<ShardTopBlockDescription> description;
-    for (unsigned attempt = 0; attempt != 25; ++attempt) {
+    // Descriptions disappear when the masterchain incorporates them. Sample
+    // this live cache more frequently than block production, within five seconds.
+    for (unsigned attempt = 0; attempt != 250; ++attempt) {
       auto descriptions = co_await td::actor::ask(full_manager,
           &ValidatorManager::get_shard_blocks_for_collator, block_);
       for (auto& candidate : descriptions) {
@@ -97,7 +99,7 @@ class CounterProofProbe final : public td::actor::Actor {
       if (description.not_null()) {
         break;
       }
-      co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
     }
     if (description.is_null()) {
       co_return td::Status::Error("no live Counter description for signature probe");

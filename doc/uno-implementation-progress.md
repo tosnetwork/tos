@@ -2549,3 +2549,48 @@ remains paused.
 
 After restoration, the BlockTransition test, disk collator and test node targets
 rebuilt; BlockTransition and disk integration CTests passed in 1.35 seconds.
+
+### Bounded multi-cell state through independent-manager cold join
+
+The real-manager runner now accepts explicit `--counter --counter-payload`.
+Only the test node target enables the payload-preserving Counter mode through
+TOS_COUNTER_PAYLOAD. The isolated genesis carries the same 16,384-leaf tree
+used by the host replay test; normal genesis and account-cell limits are
+unchanged. Python instrument checks independently traverse all 32,767 distinct
+payload cells, check the binary-tree shape, leaf labels and 960-bit leaf width.
+
+Run `pvioeo75` passed with the payload plus remote committee-signature rejection:
+four real validator processes produced Counter block 17 and masterchain block
+18 before a fifth, independent cold observer started. The observer had no
+Counter static state, downloaded its zerostate through peers, reached
+masterchain height 48 and returned the pinned transitioned executor account.
+Its returned data BoC was 2,097,263 bytes.
+The checker requires both the expected counter and the unchanged payload root.
+After all warm validators stopped, the cold database reopened and returned
+identical account bytes and transaction identity. The actual receiving manager
+also rejected a remote proof containing a corrupted committee signature.
+
+The first run, `ozhnq83b`, failed before cold join: one warm local signature
+probe found no live shard description in its five-second sample window.
+Descriptions are a transient manager cache, invalidated as masterchain state
+advances. Sampling every 200 ms could miss them on this 400-ms test schedule;
+the probe now samples every 20 ms with the same five-second bound. This changes
+only test fixture acquisition, not signature checks or their success criteria.
+That setup failure remains retained and is not counted as synchronization
+evidence; a finer interval is not a guarantee against arbitrary scheduling delays.
+
+Removing the payload-content comparison makes the Python negative control
+fail because a wrong payload with a correct counter is accepted. Restoring it
+passes; a missing reference is separately rejected by the shape check.
+
+Scope: real peer zerostate transfer, incremental block acquisition and account
+reopening at this bounded size, not a private-note workload or arbitrary state
+scalability. This does not test persistent-checkpoint streaming import, committee
+rotation, GC/retention under growth, or peak memory bounds. The fixed tree does
+not measure append/nullifier insertion costs. M1 stays open and M3 expansion
+stays paused.
+
+The combined repeat `rybe58tv` also passed with payload, remote reencoded-state,
+misbound-proof and bad-signature modes all enabled (Counter 17, masterchain
+target 18, cold height 48). The final six Python state instrument tests and
+three genesis tests passed; both host/disk CTests passed in 1.32 seconds.

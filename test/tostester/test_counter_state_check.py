@@ -57,10 +57,13 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
         query = client._toslib_wrapper.execute.call_args.args[0].to_dict()
         self.assertEqual(query["@type"], "raw.getAccountState")
 
-    async def check_value(self, value):
+    async def check_value(self, value, payload=None, expected_payload=None):
         block = toslib_api.Tos_blockIdExt(workchain=2, shard=-(1 << 63), seqno=17,
                                         root_hash=bytes(32), file_hash=bytes(32))
-        engine = Builder().store_uint(value, 64).end_cell()
+        builder = Builder().store_uint(value, 64)
+        if payload is not None:
+            builder.store_ref(payload)
+        engine = builder.end_cell()
         # Only wrapper/engine shape is tested here. Witness proof semantics are
         # deliberately not represented by this synthetic empty second reference.
         wrapper = (Builder().store_uint(0x57424531, 32).store_bit(1)
@@ -75,7 +78,7 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
                 calls.append((address, block_id))
                 return response
 
-        result = await module.counter_state(Client(), block)
+        result = await module.counter_state(Client(), block, expected_payload)
         self.assertIs(result, response)
         self.assertEqual(len(calls), 1)
         self.assertIs(calls[0][1], block)
@@ -83,6 +86,34 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
 
     async def test_exact_transition_value(self):
         await self.check_value(57)
+
+    async def test_payload_content_is_checked_independently_of_counter(self):
+        payload = module.counter_payload_tree()
+        pending = [(payload, 14)]
+        cells, leaves = set(), []
+        while pending:
+            cell, depth = pending.pop()
+            self.assertNotIn(cell.hash, cells)
+            cells.add(cell.hash)
+            part = cell.begin_parse()
+            if depth:
+                self.assertEqual(part.remaining_bits, 0)
+                self.assertEqual(part.remaining_refs, 2)
+                left, right = part.load_ref(), part.load_ref()
+                pending.extend(((right, depth - 1), (left, depth - 1)))
+            else:
+                self.assertEqual(part.remaining_bits, 960)
+                self.assertEqual(part.remaining_refs, 0)
+                leaves.append(part.load_uint(64))
+                self.assertEqual(part.load_bytes(112), bytes(112))
+        self.assertEqual(len(cells), 32767)
+        self.assertEqual(leaves, list(range(16384)))
+        await self.check_value(57, payload, payload)
+        wrong = Builder().store_uint(0, 64).end_cell()
+        with self.assertRaisesRegex(AssertionError, "payload content changed"):
+            await self.check_value(57, wrong, payload)
+        with self.assertRaisesRegex(AssertionError, "invalid Counter engine state"):
+            await self.check_value(57, None, payload)
 
     async def test_genesis_state_cannot_masquerade_as_synced_state(self):
         with self.assertRaisesRegex(AssertionError, "one increment per confirmed block"):

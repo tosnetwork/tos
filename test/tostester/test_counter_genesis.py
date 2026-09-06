@@ -17,6 +17,13 @@ from tostester.zerostate import NetworkConfig, create_zerostate
 
 
 class CounterGenesis(unittest.TestCase):
+    def test_payload_requires_counter_profile_before_generation(self):
+        with patch("tostester.zerostate.run_fift") as run:
+            with self.assertRaisesRegex(ValueError, "payload requires"):
+                create_zerostate(Install(REPO / "build", REPO), REPO / "build",
+                                 NetworkConfig(counter_payload=True), [])
+            run.assert_not_called()
+
     def test_requires_isolated_activated_unsplit_profile(self):
         for changes in ({"global_id": 3}, {"global_version": 14}, {"split": 1}, {"monitor_min_split": 1}):
             config = NetworkConfig(counter_workchain=True, global_id=-23903, global_version=15)

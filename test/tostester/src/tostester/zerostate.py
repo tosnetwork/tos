@@ -3,7 +3,7 @@ from pathlib import Path
 
 import nacl.signing
 from contract import Provider, WalletV1
-from pytosiq_core import Address
+from pytosiq_core import Address, Builder
 from tosapi import tos_api
 
 from .install import Install, run_fift
@@ -67,6 +67,16 @@ class NetworkConfig:
     enable_config_voting: bool = False
     # Isolated host network fixture, never a deployment profile.
     counter_workchain: bool = False
+    counter_payload: bool = False
+
+
+def counter_payload_tree():
+    """Fixed host fixture: 32,767 cells, not a private-note state schema."""
+    layer = [Builder().store_uint(i, 64).store_bytes(bytes(112)).end_cell() for i in range(1 << 14)]
+    while len(layer) > 1:
+        layer = [Builder().store_ref(layer[i]).store_ref(layer[i + 1]).end_cell()
+                 for i in range(0, len(layer), 2)]
+    return layer[0]
 
 
 @dataclass
@@ -406,6 +416,8 @@ def _punishment_params(election_params: str) -> str:
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
+    if config.counter_payload and not config.counter_workchain:
+        raise ValueError("Counter payload requires the Counter network profile")
     if config.counter_workchain and (
         config.global_id != -23903 or config.global_version != 15
         or config.split != 0 or config.monitor_min_split != 0
@@ -549,6 +561,12 @@ def create_zerostate(
         shard_source = (install.source_dir / "test/counter-shard-genesis.fif").read_text()
         if shard_source.count("-23901 setglobalid") != 1:
             raise ValueError("Counter shard fixture global ID marker changed")
+        if config.counter_payload:
+            marker = "<b 40 64 u, b>"
+            if shard_source.count(marker) != 1:
+                raise ValueError("Counter engine state marker changed")
+            (state_dir / "counter-payload.boc").write_bytes(counter_payload_tree().to_boc())
+            shard_source = shard_source.replace(marker, '<b 40 64 u, "counter-payload.boc" file>B B>boc ref, b>')
         run_fift(install, shard_source.replace("-23901 setglobalid", "-23903 setglobalid"), state_dir)
         extra_shards = (WorkchainState(
             file=state_dir / "counter-state.boc",

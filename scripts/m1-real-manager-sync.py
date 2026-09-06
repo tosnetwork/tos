@@ -22,10 +22,11 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.zerostate import counter_payload_tree
 from pytosiq_core import Address, Cell
 
 
-async def counter_state(client, block):
+async def counter_state(client, block, payload=None):
     state = await client.raw_get_account_state(Address((2, bytes(32))), block_id=block)
     if state.block_id is None or state.block_id.to_json() != block.to_json():
         raise AssertionError("Counter account response is not bound to the requested block")
@@ -37,11 +38,13 @@ async def counter_state(client, block):
     if wrapper.load_uint(1) != 1:
         raise AssertionError("confirmed Counter block has no batch witness")
     engine = wrapper.load_ref().begin_parse()
-    if engine.remaining_bits != 64 or engine.remaining_refs != 0:
+    if engine.remaining_bits != 64 or engine.remaining_refs != int(payload is not None):
         raise AssertionError("invalid Counter engine state")
     value = engine.load_uint(64)
     if value != 40 + block.seqno:
         raise AssertionError("Counter state does not reflect one increment per confirmed block")
+    if payload is not None and engine.load_ref().hash != payload.hash:
+        raise AssertionError("Counter payload content changed during synchronization")
     return state
 
 
@@ -124,7 +127,8 @@ async def guarded_exercise(root, *args):
 
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
-                   bad_signature=False):
+                   bad_signature=False, large_payload=False):
+    payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
     install.toslibjson.client_set_verbosity_level(1)
@@ -136,6 +140,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             network.config.global_id = -23903
             network.config.global_version = 15
             network.config.counter_workchain = True
+            network.config.counter_payload = large_payload
         network.config.shard_validators = 4
         dht = network.create_dht_node()
         validators = [network.create_full_node() for _ in range(4)]
@@ -153,6 +158,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
             "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
+            "TOS_COUNTER_PAYLOAD": "1" if large_payload else "0",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
@@ -190,7 +196,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             if acquired.to_json() != counter_target.to_json():
                 raise AssertionError("cold node disagrees on the finalized Counter block")
             counter_header = await cold_client.get_block_header(acquired)
-            executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
+            executor_state = await asyncio.wait_for(counter_state(cold_client, acquired, payload), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
             if bad_signature:
@@ -244,7 +250,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
             await cold.run(options)
             restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
-            restored = await asyncio.wait_for(counter_state(restarted, counter_target), 20)
+            restored = await asyncio.wait_for(counter_state(restarted, counter_target, payload), 20)
             if restored.data != executor_state.data or restored.last_transaction_id.to_json() != executor_state.last_transaction_id.to_json():
                 raise AssertionError("Counter state changed across cold database reopening")
             (root / "counter-account-reopened.json").write_text(restored.to_json())
@@ -253,6 +259,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
+                "bounded_payload_reopened": large_payload,
+                "executor_data_boc_bytes": len(executor_state.data) if executor_state else None,
+                "payload_cells": 32767 if large_payload else 0,
                 "cold_counter_zerostate_peer_download_tested": counter,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
@@ -270,6 +279,8 @@ def main():
     parser.add_argument("--base-port", type=int, default=38600)
     parser.add_argument("--join-timeout", type=int, default=150)
     parser.add_argument("--counter", action="store_true", help="use the explicit test-only Counter node target")
+    parser.add_argument("--counter-payload", action="store_true",
+                        help="preserve a bounded 32,767-cell payload through cold join and reopening")
     parser.add_argument("--counter-reencoded-state", action="store_true",
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
     parser.add_argument("--counter-misbound-proof", action="store_true",
@@ -277,6 +288,8 @@ def main():
     parser.add_argument("--counter-bad-signature", action="store_true",
                         help="require rejection of a masterchain proof with one corrupted committee signature")
     args = parser.parse_args()
+    if args.counter_payload and not args.counter:
+        parser.error("--counter-payload requires --counter")
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
     if args.counter_misbound_proof and not args.counter:
@@ -309,7 +322,7 @@ def main():
     try:
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
-                                      args.counter_bad_signature)))
+                                      args.counter_bad_signature, args.counter_payload)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"
