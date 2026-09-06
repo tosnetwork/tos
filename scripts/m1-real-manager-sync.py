@@ -20,6 +20,27 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from pytosiq_core import Address, Cell
+
+
+async def counter_state(client, block):
+    state = await client.raw_get_account_state(Address((2, bytes(32))), block_id=block)
+    if state.block_id is None or state.block_id.to_json() != block.to_json():
+        raise AssertionError("Counter account response is not bound to the requested block")
+    if state.last_transaction_id is None:
+        raise AssertionError("Counter account has no transaction identity")
+    wrapper = Cell.one_from_boc(state.data).begin_parse()
+    if wrapper.remaining_bits != 33 or wrapper.remaining_refs != 2 or wrapper.load_uint(32) != 0x57424531:
+        raise AssertionError("invalid Counter executor wrapper")
+    if wrapper.load_uint(1) != 1:
+        raise AssertionError("confirmed Counter block has no batch witness")
+    engine = wrapper.load_ref().begin_parse()
+    if engine.remaining_bits != 64 or engine.remaining_refs != 0:
+        raise AssertionError("invalid Counter engine state")
+    value = engine.load_uint(64)
+    if value != 40 + block.seqno:
+        raise AssertionError("Counter state does not reflect one increment per confirmed block")
+    return state
 
 
 async def reach(node, seqno):
@@ -90,12 +111,15 @@ async def exercise(root, build, port, join_timeout, counter):
             raise AssertionError("cold node disagrees on the pre-existing finalized block")
         header = await cold_client.get_block_header(same)
         counter_header = None
+        executor_state = None
         if counter_target is not None:
             await asyncio.wait_for(counter_tip(cold), join_timeout)
             acquired = await cold_client.lookup_block(2, counter_target.shard, seqno=counter_target.seqno)
             if acquired.to_json() != counter_target.to_json():
                 raise AssertionError("cold node disagrees on the finalized Counter block")
             counter_header = await cold_client.get_block_header(acquired)
+            executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
+            (root / "counter-account.json").write_text(executor_state.to_json())
             (root / "counter-target.json").write_text(counter_target.to_json())
             (root / "counter-header.json").write_text(counter_header.to_json())
         (root / "cold-header.json").write_text(header.to_json())
@@ -112,10 +136,21 @@ async def exercise(root, build, port, join_timeout, counter):
             again = await asyncio.wait_for(cold_client.get_block_header(counter_target), 20)
             if again.to_json() != counter_header.to_json():
                 raise AssertionError("cold node did not retain the Counter block header")
+            # Reopen the actual observer database with every warm node stopped.
+            # Preserve the first process log: run() otherwise truncates it.
+            await cold.stop()
+            shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
+            await cold.run(options)
+            restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
+            restored = await asyncio.wait_for(counter_state(restarted, counter_target), 20)
+            if restored.data != executor_state.data or restored.last_transaction_id.to_json() != executor_state.last_transaction_id.to_json():
+                raise AssertionError("Counter state changed across cold database reopening")
+            (root / "counter-account-reopened.json").write_text(restored.to_json())
         return {"scope": "Counter real-manager cold-join" if counter else "native/masterchain real-manager cold-join baseline only",
                 "counter_workchain_tested": counter, "uno_sync_accepted": False,
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
-                "invalid_proof_rejection_tested": False, "cold_executor_state_tested": False,
+                "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
+                "cold_database_reopened": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
                 "target_seqno": target.seqno, "cold_seqno": observed.seqno,
                 "block": json.loads(target.to_json()), "served_without_warm_validators": True}

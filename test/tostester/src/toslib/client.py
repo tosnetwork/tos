@@ -125,13 +125,14 @@ class ToslibClient:
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
     async def raw_get_account_state(
-        self, account_address: Address
+        self, account_address: Address, *, block_id: toslib_api.Tos_blockIdExt | None = None
     ) -> toslib_api.Raw_fullAccountState:
         assert self._toslib_wrapper is not None
         request = toslib_api.Raw_getAccountStateRequest(
             account_address=toslib_api.AccountAddress(account_address.to_str(is_user_friendly=True))
         )
-        return request.parse_result(await self._toslib_wrapper.execute(request))
+        query = request if block_id is None else toslib_api.WithBlockRequest(id=block_id, function=request)
+        return request.parse_result(await self._toslib_wrapper.execute(query))
 
     async def lookup_block(
         self,

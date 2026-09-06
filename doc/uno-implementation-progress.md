@@ -2159,3 +2159,38 @@ target 18, cold masterchain 48. Production validator-engine also rebuilt, and
 The real-genesis tests passed with the required ingress table both present in
 the enabled fixture and absent in the default fixture. Logs now write without
 file buffering so early node failures are visible before harness shutdown.
+
+### Cold Counter executor state and database reopening
+
+The Counter runner now queries the executor account at the exact wc2 block ID
+obtained before cold join. The Python client wraps raw.getAccountState in
+withBlock; the existing C++ client validates the account proof against that
+requested block. The runner checks response block identity, transaction identity,
+wrapper/engine shape and value `40 + block.seqno` for the fixed increment-one
+fixture. It then stops all warm validators, stops and starts the actual observer
+on its existing database, creates a fresh client, and compares the same block's
+executor data and transaction ID. No warm database is copied. The original cold
+process log is saved separately before the restart would truncate it.
+
+Initial run `m1-counter-network-run-8ascnmf1` passed for wc2 block 16 (value 56),
+masterchain target 17 and cold height 48, including the offline-warm restart.
+The harness had retained a closed client after stop; clearing that reference
+enables the new connection. Removing the reset in the independent mutation run
+`m1-counter-network-run-ogynv9_f` let initial synchronization/state checks pass
+but failed specifically at the restarted-node reach deadline. The reset was
+restored. The reports still do not claim malicious proof rejection, large-state
+snapshot acquisition or full UNO synchronization acceptance.
+
+Four small instrument tests in `test/tostester/test_counter_state_check.py`
+cover the pinned/default request encoding and correct/genesis/off-by-one values.
+They use synthetic responses, not cryptographic proofs. Removing the value
+check makes both forbidden-value tests fail; removing withBlock makes the
+request-encoding test fail. Both mutations were restored and all four passed.
+The three previous header-run directories were compared against the complete
+`build/m1-counter-header-runs-20260906.tar.gz` archive before moving them to
+trash; the per-profile retention cap remains three directories.
+
+The final restored run `m1-counter-network-run-wks1grij` also passed: wc2 block
+17 (value 57), masterchain target 18 and cold height 48. The account data and
+transaction identity remained identical after the observer process/database
+reopened with all warm validators stopped.

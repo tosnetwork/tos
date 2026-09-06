@@ -679,6 +679,7 @@ class FullNode(Network.Node):
     async def stop(self):
         if self._client:
             await self._client.aclose()
+            self._client = None
         if self._engine_console:
             self._engine_console.close()
         if self._blockchain_explorer:
