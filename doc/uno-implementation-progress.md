@@ -3631,3 +3631,10 @@ rebuilt; all 41 WorkchainBlock tests passed. Evidence is in
 `build/uno-nullifier-capacity-regression.log`. This measures admission only,
 not growing-state network synchronization, steady-state RSS or Halo2 cost.
 M3 expansion remains paused; the full growth/resource gate is not accepted.
+
+The follow-up [state-capacity decision note](uno-state-capacity-decision.md)
+records why more Cells inside the same reachable account DAG do not solve
+admission, and prices a measured larger single-account budget, native account
+partitioning and a separate authenticated engine store. It requests a design
+decision before changing the one-account host contract. No alternative is
+selected, no limit is raised, and no state-layout migration is implemented.
