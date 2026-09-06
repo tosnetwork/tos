@@ -20,6 +20,39 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_authenticated_cursor_must_reach_target(self):
+        client = SimpleNamespace(sync_toslib=AsyncMock(side_effect=[
+            toslib_api.Tos_blockIdExt(seqno=57), toslib_api.Tos_blockIdExt(seqno=58)]))
+        result = await module.reach_authenticated(client, 58)
+        self.assertEqual(result.seqno, 58)
+        self.assertEqual(client.sync_toslib.await_count, 2)
+
+    async def test_client_encodes_signature_request(self):
+        client = object.__new__(ToslibClient)
+        response = toslib_api.Blocks_blockSignatures_simplex().to_dict()
+        client._toslib_wrapper = SimpleNamespace(execute=AsyncMock(return_value=response))
+        await client.get_masterchain_block_signatures(58)
+        query = client._toslib_wrapper.execute.call_args.args[0].to_dict()
+        self.assertEqual(query, {"@type": "blocks.getMasterchainBlockSignatures", "seqno": 58})
+
+    async def test_membership_signer_instrument(self):
+        block = toslib_api.Tos_blockIdExt(workchain=-1, seqno=58)
+        new, old, other = bytes([1]) * 32, bytes([2]) * 32, bytes([3]) * 32
+
+        def response(keys):
+            return toslib_api.Blocks_blockSignatures_simplex(id=block, signatures=[
+                toslib_api.Blocks_signature(node_id_short=key, signature=bytes(64)) for key in keys])
+
+        # Synthetic signature bytes exercise observation only, not cryptography.
+        module.require_membership_signers(response([new, other]), block, new, old)
+        for keys in ([other], [old, new]):
+            with self.subTest(keys=keys), self.assertRaisesRegex(AssertionError, "replacement signer"):
+                module.require_membership_signers(response(keys), block, new, old)
+        with self.assertRaisesRegex(AssertionError, "not block-bound"):
+            module.require_membership_signers(response([new]), toslib_api.Tos_blockIdExt(seqno=59), new, old)
+        with self.assertRaisesRegex(AssertionError, "list shape"):
+            module.require_membership_signers(response([new, new]), block, new, old)
+
     async def test_signature_results_match_the_injected_proof(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -38,6 +71,13 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
             sent, accepted, rejected = module.signature_proof_results(root)
             self.assertEqual(sent & rejected, {bad.upper()})
             self.assertFalse(sent & accepted)
+            sent, _, rejected = module.signature_proof_results(root, "node6")
+            self.assertFalse(sent & rejected)
+            observer = root / "network/node6"
+            observer.mkdir()
+            (observer / "log").write_text(f"COUNTER_REMOTE_PROOF_REJECTED {bad}\n")
+            sent, _, rejected = module.signature_proof_results(root, "node6")
+            self.assertEqual(sent & rejected, {bad.upper()})
             log.write_text(log.read_text() + f"COUNTER_REMOTE_PROOF_ACCEPTED {bad}\n")
             with self.assertRaisesRegex(AssertionError, "corrupted committee signature"):
                 await asyncio.wait_for(module.watch_proof_acceptance(root), 1)

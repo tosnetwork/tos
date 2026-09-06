@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / "test/tostester/src"))
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.zerostate import counter_payload_tree
-from tostester.counter_committee import read_committee, submit_reweight, wait_reweighted
+from tostester.counter_committee import read_committee, submit_committee_update, wait_committee_updated
 from pytosiq_core import Address, Cell
 
 
@@ -49,6 +49,16 @@ async def counter_state(client, block, payload=None):
     return state
 
 
+def require_membership_signers(signed, block, introduced, retired):
+    if signed.id is None or signed.id.to_json() != block.to_json():
+        raise AssertionError("membership signature response is not block-bound")
+    signers = {signature.node_id_short for signature in signed.signatures}
+    if len(signers) != len(signed.signatures) or any(len(signature.signature) != 64 for signature in signed.signatures):
+        raise AssertionError("invalid membership signature list shape")
+    if introduced not in signers or retired in signers:
+        raise AssertionError("post-transition proof does not demonstrate the replacement signer")
+
+
 async def reach(node, seqno):
     client = await node.toslib_client()
     while True:
@@ -61,6 +71,15 @@ async def reach(node, seqno):
             # expiry fails the run rather than producing a successful report.
             print(f"waiting for {node.name}: {type(error).__name__}", flush=True)
         await asyncio.sleep(1)
+
+
+async def reach_authenticated(client, seqno):
+    # Server readiness is not the client's verified proof-chain cursor.
+    while True:
+        verified = await client.sync_toslib()
+        if verified.seqno >= seqno:
+            return verified
+        await asyncio.sleep(0.2)
 
 
 async def counter_tip(node):
@@ -86,9 +105,9 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
-def signature_proof_results(root):
+def signature_proof_results(root, cold_name="node5"):
     logs = "\n".join(log.read_text(errors="replace") for log in (root / "network").glob("node*/log"))
-    cold_path = root / "network/node5/log"
+    cold_path = root / "network" / cold_name / "log"
     cold_log = cold_path.read_text(errors="replace") if cold_path.exists() else ""
 
     def fingerprints(marker, text):
@@ -128,7 +147,7 @@ async def guarded_exercise(root, *args):
 
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
-                   bad_signature=False, large_payload=False, reweight=False):
+                   bad_signature=False, large_payload=False, reweight=False, membership=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -175,19 +194,33 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             for node in validators:
                 await asyncio.wait_for(require_proof_probe(node, signatures=True), 10)
         committee_key = None
-        if reweight:
+        replacement = None
+        if membership:
+            replacement_node = network.create_full_node()
+            replacement_node.announce_to(dht)
+            await replacement_node.run(options)
+            await asyncio.wait_for(reach(replacement_node, target.seqno), join_timeout)
+            replacement = (validators[0].validator_key.public_key.key,
+                           replacement_node.validator_key.public_key.key, replacement_node.validator_key.id)
+        if reweight or membership:
             pre_committee_header = await warm_client.get_block_header(target)
             (root / "committee-before-header.json").write_text(pre_committee_header.to_json())
-            original_committee, new_committee = await submit_reweight(
-                install, network_dir / "state", warm_client, target)
-            target, committee_key = await asyncio.wait_for(wait_reweighted(warm_client, new_committee), join_timeout)
+            original_committee, new_committee = await submit_committee_update(
+                install, network_dir / "state", warm_client, target, replacement)
+            target, committee_key = await asyncio.wait_for(wait_committee_updated(warm_client, new_committee), join_timeout)
             (root / "committee-before.boc").write_bytes(original_committee.to_boc())
             (root / "committee-after.boc").write_bytes(new_committee.to_boc())
             (root / "committee-key-block.json").write_text(committee_key.to_json())
+            if membership:
+                # Two retained members alone cannot reach the four-member quorum.
+                # Require subsequent production and a proof carrying the new key.
+                await validators[0].stop()
+                await validators[1].stop()
+                warm_client, target = await asyncio.wait_for(reach(validators[2], target.seqno + 8), join_timeout)
 
             async def post_committee_counter():
                 while True:
-                    tip = await counter_tip(validators[0])
+                    tip = await counter_tip(validators[2] if membership else validators[0])
                     info = await warm_client.get_block_header(tip)
                     if info.min_ref_mc_seqno >= committee_key.seqno:
                         return tip
@@ -205,10 +238,15 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
             raise AssertionError("cold node must have only masterchain/native static states")
         cold_client, observed = await asyncio.wait_for(reach(cold, target.seqno + 2), join_timeout)
+        await asyncio.wait_for(reach_authenticated(cold_client, target.seqno), join_timeout)
         same = await cold_client.lookup_block(-1, target.shard, seqno=target.seqno)
         if same.to_json() != target.to_json():
             raise AssertionError("cold node disagrees on the pre-existing finalized block")
         header = await cold_client.get_block_header(same)
+        if membership:
+            signed = await cold_client.get_masterchain_block_signatures(same.seqno)
+            require_membership_signers(signed, same, replacement_node.validator_key.id, validators[0].validator_key.id)
+            (root / "membership-signatures.json").write_text(signed.to_json())
         if committee_key is not None:
             (root / "committee-after-header.json").write_text(header.to_json())
             if header.validator_list_hash_short == pre_committee_header.validator_list_hash_short:
@@ -231,7 +269,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
             if bad_signature:
-                sent, accepted, rejected = signature_proof_results(root)
+                sent, accepted, rejected = signature_proof_results(root, cold.log_path.parent.name)
                 if sent & accepted:
                     raise AssertionError("real receiver accepted a peer proof with a corrupted committee signature")
                 if not (sent & rejected):
@@ -266,6 +304,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         print(f"cold node reached height {observed.seqno}; stopping all validators", flush=True)
         for node in validators:
             await node.stop()
+        if membership:
+            await replacement_node.stop()
         # The warm servers are gone: fetching the already acquired block again
         # must be served by the joining node's own manager/database.
         header_again = await asyncio.wait_for(cold_client.get_block_header(same), 20)
@@ -281,6 +321,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
             await cold.run(options)
             restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
+            await asyncio.wait_for(reach_authenticated(restarted, observed.seqno), join_timeout)
             if committee_key is not None:
                 reopened_committee, _ = await asyncio.wait_for(read_committee(restarted, same), 20)
                 if reopened_committee.hash != new_committee.hash:
@@ -297,7 +338,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "bounded_payload_reopened": large_payload,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,
-                "committee_membership_rotation_tested": False,
+                "committee_membership_rotation_tested": membership,
                 "executor_data_boc_bytes": len(executor_state.data) if executor_state else None,
                 "payload_cells": 32767 if large_payload else 0,
                 "cold_counter_zerostate_peer_download_tested": counter,
@@ -306,7 +347,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "remote_committee_signature_rejection_tested": bad_signature,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
-                "validator_processes": 4, "cold_observer_processes": 1,
+                "validator_processes": 5 if membership else 4, "cold_observer_processes": 1,
                 "target_seqno": target.seqno, "cold_seqno": observed.seqno,
                 "block": json.loads(target.to_json()), "served_without_warm_validators": True}
 
@@ -321,6 +362,8 @@ def main():
                         help="preserve a bounded 32,767-cell payload through cold join and reopening")
     parser.add_argument("--counter-reweight", action="store_true",
                         help="cold-join after a signed config-owner validator-weight update (not an election)")
+    parser.add_argument("--counter-membership", action="store_true",
+                        help="replace one committee member with an independent node, then cold-join")
     parser.add_argument("--counter-reencoded-state", action="store_true",
                         help="require rejection/recovery after peers reencode one Counter zerostate response each")
     parser.add_argument("--counter-misbound-proof", action="store_true",
@@ -332,6 +375,8 @@ def main():
         parser.error("--counter-payload requires --counter")
     if args.counter_reweight and not args.counter:
         parser.error("--counter-reweight requires --counter")
+    if args.counter_membership and (not args.counter or args.counter_reweight):
+        parser.error("--counter-membership requires --counter and excludes --counter-reweight")
     if args.counter_reencoded_state and not args.counter:
         parser.error("--counter-reencoded-state requires --counter")
     if args.counter_misbound_proof and not args.counter:
@@ -349,7 +394,7 @@ def main():
         parser.error("build the test-counter-validator-engine target first")
     prefix = "m1-counter-network-run-" if args.counter else "m1-real-manager-run-"
     # Refuse occupied ports; never stop another experiment to acquire them.
-    for port in range(args.base_port + 1, args.base_port + 18):
+    for port in range(args.base_port + 1, args.base_port + (21 if args.counter_membership else 18)):
         for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
             with socket.socket(socket.AF_INET, kind) as check:
                 check.bind(("127.0.0.1", port))
@@ -364,7 +409,8 @@ def main():
     try:
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
-                                      args.counter_bad_signature, args.counter_payload, args.counter_reweight)))
+                                      args.counter_bad_signature, args.counter_payload, args.counter_reweight,
+                                      args.counter_membership)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

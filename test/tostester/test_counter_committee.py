@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from pytosiq_core import Builder, HashMap
 from pytosiq_core.tlb.config import ValidatorSet
-from tostester.counter_committee import reweight_first_validator
+from tostester.counter_committee import rewrite_committee
 
 
 def fixture(weight=4):
@@ -22,7 +22,7 @@ def fixture(weight=4):
 class CounterCommittee(unittest.TestCase):
     def test_reweight_preserves_members_and_lifetime(self):
         original = fixture()
-        changed = reweight_first_validator(original)
+        changed = rewrite_committee(original)
         self.assertNotEqual(changed.hash, original.hash)
         parsed = ValidatorSet.deserialize(changed.begin_parse())
         self.assertEqual((parsed.utime_since, parsed.utime_until, parsed.total, parsed.main), (100, 1000, 4, 4))
@@ -34,11 +34,28 @@ class CounterCommittee(unittest.TestCase):
 
     def test_inconsistent_total_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "total weight mismatch"):
-            reweight_first_validator(fixture(5))
+            rewrite_committee(fixture(5))
+
+    def test_replacement_preserves_weights_and_other_members(self):
+        key, adnl = bytes([9]) * 32, bytes([10]) * 32
+        changed = rewrite_committee(fixture(), (bytes([1]) * 32, key, adnl))
+        parsed = ValidatorSet.deserialize(changed.begin_parse())
+        self.assertEqual(parsed.total_weight, 4)
+        self.assertEqual([entry.weight for entry in parsed.list.values()], [1, 1, 1, 1])
+        self.assertEqual(parsed.list[0].public_key.pubkey, key)
+        self.assertEqual(parsed.list[0].adnl_addr, adnl)
+        for i in range(1, 4):
+            self.assertEqual(parsed.list[i].public_key.pubkey, bytes([i + 1]) * 32)
+            self.assertEqual(parsed.list[i].adnl_addr, bytes([i + 5]) * 32)
+
+    def test_replacement_must_introduce_a_new_member(self):
+        for old, new in ((1, 2), (9, 10)):
+            with self.subTest(old=old, new=new), self.assertRaisesRegex(ValueError, "remove one member"):
+                rewrite_committee(fixture(), (bytes([old]) * 32, bytes([new]) * 32, bytes(32)))
 
     def test_total_overflow_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "total weight overflow"):
-            reweight_first_validator(fixture((1 << 64) - 1))
+            rewrite_committee(fixture((1 << 64) - 1))
 
 
 if __name__ == "__main__":

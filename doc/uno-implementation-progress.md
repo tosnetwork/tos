@@ -2635,3 +2635,61 @@ Counter target 19 and cold height 51. It additionally checked the committee
 after database reopening and retained the 2,097,263-byte executor-data BoC.
 All three committee-encoder tests and six state instrument tests passed;
 host/disk CTests passed in 1.34 seconds.
+
+### Membership replacement, new-signer evidence and cold join
+
+`--counter-membership` starts an independent replacement node with its own
+registered validator key and ADNL identity. A normal signed config-owner
+message replaces one existing member while preserving all four weights and
+the validity interval. This is a configured membership replacement, not an
+elector/stake workflow. After the key block, the retired member and one retained
+member stop; the two remaining old members cannot independently reach the
+four-member quorum. The test requires another eight masterchain heights before
+starting the sixth process as a cold observer.
+
+The cold node must agree on the updated committee, key block, later masterchain
+block and Counter account. The existing masterchain-signature API additionally
+returns the actual target's signature set: the checker binds the response to
+the exact block, requires unique 64-byte signatures, requires the introduced
+signer and excludes the retired signer. The signed-set artifact is retained;
+this supplements, rather than replaces, native manager proof verification.
+All warm servers, including the replacement, stop before database reopening.
+The enlarged profile checks the additional port range before starting, and
+remote-rejection observers identify the actual cold-node directory rather
+than assuming node5 (which is the replacement in this mode).
+
+The first run `nltuhk9k` passed: key block 49, masterchain target 58, Counter
+target 55, cold height 83. Five validator-capable processes were used over the
+run, but only four committee members at a time and only three active after the
+two stops. The observer was a sixth independent process/database.
+
+Instrument mutations: retaining the old descriptor instead of substituting
+the new public key makes the membership-encoding test fail at the decoded key
+comparison. Removing the signer-membership predicate makes both missing-new-
+signer and included-retired-signer controls fail because no rejection occurs.
+Both operations were restored. Synthetic signature controls test observation,
+not cryptographic verification; the network run uses genuine signed blocks.
+
+This establishes positive cold-join/liveness evidence for one configured member
+replacement. It does not yet test a remotely supplied post-transition proof
+signed by the retired committee, repeated rotations, stake election, or native
+persistent-checkpoint streaming synchronization. Those remain M1 trust/sync
+work; M3 expansion remains paused.
+
+The first payload combination `jn735fjw` failed in the client, not block
+verification: lookupBlockWithProof requested masterchain block 58 using the
+client's still-verified block 57 as its reference, despite the server reporting
+a later head. The liteserver correctly rejected that request. Cold join and
+reopening now explicitly synchronize the client proof-chain cursor to the
+target before pinned lookups. A control supplies cursors 57 then 58; removing
+the target-height condition fails at `57 != 58`. No liteserver or proof
+validation check was weakened. The failed run remains retained.
+
+Restored payload run `11_gif0d` passed: key block 49, masterchain target 58,
+Counter target 55 and cold height 83, including replacement-signer evidence,
+new committee persistence and the 2,097,263-byte executor-data BoC after
+reopening. Five committee-encoder tests and nine state/client instrument tests
+passed; the host and disk integration CTests passed in 1.74 seconds. Historical
+weight/first-membership runs were archived and verified before their original
+directories were moved to recoverable trash; active run directories were not
+touched.

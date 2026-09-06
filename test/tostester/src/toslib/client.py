@@ -107,6 +107,11 @@ class ToslibClient:
         request = toslib_api.Raw_sendMessageRequest(body=serialized_boc)
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
+    async def get_masterchain_block_signatures(self, seqno: int) -> toslib_api.TypeBlocks_BlockSignatures:
+        assert self._toslib_wrapper is not None
+        request = toslib_api.Blocks_getMasterchainBlockSignaturesRequest(seqno=seqno)
+        return request.parse_result(await self._toslib_wrapper.execute(request))
+
     async def get_libraries(self, library_list: list[bytes]) -> toslib_api.Smc_libraryResult:
         assert self._toslib_wrapper is not None
         request = toslib_api.Smc_getLibrariesRequest(library_list)
