@@ -1,4 +1,5 @@
 #include <limits>
+#include <random>
 #include "workchain-counter-engine.h"
 
 #include "block/workchain-block-execution.h"
@@ -12,6 +13,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "emulator/transaction-emulator.h"
+#include "uno/core/used-nullifiers.h"
 
 namespace {
 
@@ -690,6 +692,58 @@ TEST(WorkchainBlock, ResolvedBatchStaging) {
   ASSERT_EQ(limited.error().message(), "block execution exceeds configured resource limits");
   ASSERT_TRUE(account.total_state->get_hash() == original->get_hash());
   ASSERT_TRUE(account.transactions.empty());
+}
+
+TEST(WorkchainBlock, UsedNullifierGrowthReachesNativeAccountLimit) {
+  std::mt19937 random(91);
+  std::vector<td::Bits256> keys(32768);
+  for (auto& key : keys) {
+    for (auto& byte : key.as_slice()) {
+      byte = static_cast<char>(random());
+    }
+  }
+  auto in = input();
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  ASSERT_EQ(cfg.size_limits.max_acc_state_cells, 65536u);
+  auto fits = [&](std::size_t count) {
+    auto used = uno_workchain::UsedNullifiers{}.with_used(
+        std::vector<td::Bits256>(keys.begin(), keys.begin() + count)).move_as_ok();
+    auto effects = CounterEngine().execute_block(in).move_as_ok();
+    // Use the real persistent used-set representation as host payload. This
+    // measures account admission, not a complete private-transfer execution.
+    effects.new_engine_state = used.root();
+    block::gen::ShardStateUnsplit::Record state;
+    ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    block::Account account(2, td::Bits256::zero().bits());
+    ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial));
+    const auto original = account.total_state->get_hash();
+    block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+    auto result = tx.prepare_workchain_batch(in, effects, cfg);
+    ASSERT_TRUE(account.total_state->get_hash() == original);
+    if (result.is_error()) {
+      ASSERT_EQ(result.error().code(), block::AccountStorageStat::errorcode_limits_exceeded);
+      ASSERT_TRUE(tx.new_data->get_hash() == account.data->get_hash());
+      ASSERT_TRUE(!tx.serialize(cfg));
+      return false;
+    }
+    ASSERT_TRUE(tx.serialize(cfg));
+    return true;
+  };
+  std::size_t lower = 32000, upper = keys.size();
+  ASSERT_TRUE(fits(lower));
+  ASSERT_TRUE(!fits(upper));
+  while (upper - lower > 1) {
+    auto middle = lower + (upper - lower) / 2;
+    if (fits(middle)) lower = middle;
+    else upper = middle;
+  }
+  ASSERT_TRUE(fits(lower));
+  ASSERT_TRUE(!fits(upper));
+  LOG(INFO) << "Used-nullifier host capacity: accepted=" << lower << " rejected=" << upper
+            << " account_cell_limit=" << cfg.size_limits.max_acc_state_cells
+            << " scope=used-set-only payload plus host wrapper; not complete UNO state";
 }
 
 TEST(WorkchainBlock, BatchExecutorCellBudgetIncludesFullWrapper) {

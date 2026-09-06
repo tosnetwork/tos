@@ -3600,3 +3600,34 @@ The earlier GC run pair was archived and verified in
 `build/m1-native-gc-runs-20260906.tar.gz`; originals were moved to recoverable
 trash. The failed size-hook run, successful rejection run and mutation run
 remain retained separately under the three-run cap.
+
+### Measured used-nullifier admission boundary
+
+`WorkchainBlock.UsedNullifierGrowthReachesNativeAccountLimit` now stages the
+actual `UsedNullifiers` persistent dictionary as the engine payload through
+native batch preparation and serialization. With deterministic random keys
+(seed 91), binary search found 32,765 entries accepted and 32,766 rejected
+under the serializer's unchanged default 65,536-cell account limit. The
+rejection must carry the account-storage-limit error, leave the original
+account and transaction data unchanged, and remain unserializable. This is
+not an activated UNO capacity parameter or a measurement of deployed config.
+
+The payload here is only the used-set plus the real host wrapper/result,
+not the full StateV2 note tree, anchors, reservations, fee/system state or
+other indexes. It is an optimistic fixture boundary, not a safe transaction
+quota: one action contributes a nullifier, and transactions can have multiple
+actions. No nullifier deletion, account-limit increase or state migration was
+introduced. Permanent growth within this one-account representation needs an
+explicit admission and safe exit/migration decision; transport improvements
+alone cannot remove the native account limit. This remains an M1/M0 state
+layout constraint, not permission to truncate spent history or freeze exits.
+
+Temporarily removing the native account cell-limit comparison made the test
+fail at the required upper-bound rejection (`!fits(upper)`), independently of
+error wording. The comparison was restored with no source diff and the target
+rebuilt; all 41 WorkchainBlock tests passed. Evidence is in
+`build/uno-nullifier-capacity.log`,
+`build/uno-nullifier-capacity-mutation.log` and
+`build/uno-nullifier-capacity-regression.log`. This measures admission only,
+not growing-state network synchronization, steady-state RSS or Halo2 cost.
+M3 expansion remains paused; the full growth/resource gate is not accepted.
