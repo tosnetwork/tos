@@ -56,7 +56,15 @@ jobs:
     - name: Install repository-pinned Rust toolchain
       run: scripts/install-rust-toolchain.sh
 
+    - name: Provision locked UNO and Python test dependencies
+      run: |
+        (cd uno/crypto && CARGO_NET_OFFLINE=false cargo fetch --locked)
+        uv sync --locked --no-dev
+
     - name: Build TOS
+      env:
+        TOS_UNO_AUDIT_TESTS: '1'
+        CARGO_NET_OFFLINE: 'true'
       run: |
         mkdir -p ~/.ccache
         cp assembly/native/build-ubuntu-shared.sh .
@@ -70,6 +78,9 @@ jobs:
         git -C "$GITHUB_WORKSPACE" \
           -c safe.directory="$GITHUB_WORKSPACE" \
           diff --exit-code
+
+    - name: Generate Python API for registered Counter tests
+      run: uv run --no-sync test/tostester/generate_tl.py
 
     - name: Run unit tests
       run: |

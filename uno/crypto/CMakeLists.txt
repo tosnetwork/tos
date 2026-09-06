@@ -5,6 +5,8 @@ find_program(UNO_CRYPTO_CARGO cargo)
 if (NOT UNO_CRYPTO_CARGO)
   message(FATAL_ERROR "UNO crypto prototype tests require cargo and the pinned Rust toolchain")
 endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/RequireCargo.cmake")
+uno_require_cargo("${UNO_CRYPTO_CARGO}" "${CMAKE_CURRENT_SOURCE_DIR}")
 find_package(Threads REQUIRED)
 set(UNO_CRYPTO_BUILD_JOBS 48 CACHE STRING "Parallel Rust build jobs for UNO prototype tests")
 if (NOT UNO_CRYPTO_BUILD_JOBS MATCHES "^[1-9][0-9]*$")
@@ -15,7 +17,7 @@ set(UNO_CRYPTO_ARCHIVE "${UNO_CRYPTO_TARGET_DIR}/release/libtos_uno_crypto_proto
 
 # Let the locked build tool track its complete dependency graph on every invocation.
 add_custom_target(uno-crypto-rust
-  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_NET_OFFLINE=true" "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
     ${UNO_CRYPTO_CARGO} build --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS}
   BYPRODUCTS "${UNO_CRYPTO_ARCHIVE}"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -48,7 +50,7 @@ add_dependencies(all-tests test-uno-tree-errors)
 add_test(NAME test-uno-tree-errors COMMAND test-uno-tree-errors)
 
 add_test(NAME test-uno-crypto-rust
-  COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_NET_OFFLINE=true" "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
     ${UNO_CRYPTO_CARGO} test --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS} --lib)
 set_tests_properties(test-uno-crypto-rust PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   RESOURCE_LOCK uno_crypto_cargo TIMEOUT 600)

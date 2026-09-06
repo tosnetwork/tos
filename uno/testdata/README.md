@@ -17,7 +17,7 @@ Transfer principal and output-only fees are zero because those fields cannot
 be represented in the Rust context variants. Invalid extra fields and unknown
 wire tags require separate decoder/host tests.
 
-Both readers require the full 26-row corpus, parse without ignoring malformed
+Both readers require the full 31-row corpus, parse without ignoring malformed
 rows, and compare acceptance against the same expected result. This supplies
 cross-language agreement evidence for these cases, not proof of equivalence for
 all inputs or of an FFI implementation. The C++ test reads the source-tree file

@@ -10,7 +10,7 @@ if (EXISTS "${fixture_dir}")
 endif()
 file(MAKE_DIRECTORY "${fixture_dir}")
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
+  COMMAND "${CMAKE_COMMAND}" -E env "CARGO_NET_OFFLINE=true" "CARGO_TARGET_DIR=${UNO_CRYPTO_TARGET_DIR}"
     "UNO_ABI_FIXTURE_DIR=${fixture_dir}" "${UNO_CRYPTO_CARGO}"
     test --locked --offline --release -j${UNO_CRYPTO_BUILD_JOBS} --lib real_bundle_requires_proof_and_signatures
   WORKING_DIRECTORY "${UNO_CRYPTO_SOURCE}"

@@ -20,6 +20,7 @@
 #pragma once
 
 #include <memory>
+#include <atomic>
 
 #include <tos/tos-tl.hpp>
 
@@ -74,6 +75,9 @@ struct PersistentStateImportRequest {
   td::uint64 file_size{0};
   RootHash expected_root_hash{};
   vm::StreamingBocImportOptions opts{};
+  // Shared with the download owner; cancellation is sticky for this request.
+  // A retry after cancellation must supply a fresh flag.
+  std::shared_ptr<std::atomic<bool>> cancel_requested;
 };
 
 // Result of a successful actor-local streaming import. The

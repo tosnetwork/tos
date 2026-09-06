@@ -1,6 +1,8 @@
 #include <atomic>
 #include <cstdlib>
 #include <random>
+#include <condition_variable>
+#include <mutex>
 #include "rocksdb/merge_operator.h"
 
 #include "block/block-auto.h"
@@ -41,6 +43,105 @@ class RetainedStateMergeOperator final : public rocksdb::MergeOperator {
     vm::CellStorer::merge_refcnt_diffs(*output, td::Slice(right.data(), right.size()));
     return true;
   }
+};
+
+class ImportAdmissionActor final : public td::actor::Actor {
+ public:
+  ImportAdmissionActor(std::string directory, tos::validator::PersistentStateImportRequest request,
+                       td::uint64 bound, std::atomic<bool>& completed)
+      : directory_(std::move(directory)), request_(std::move(request)), bound_(bound), completed_(completed) {}
+
+  void start_up() override {
+    auto options = tos::validator::ValidatorManagerOptions::create({}, {});
+    options.write().set_celldb_in_memory(false);
+    options.write().set_disable_rocksdb_stats(true);
+    database_ = td::actor::create_actor<tos::validator::CellDb>(
+        "admission-celldb", td::actor::ActorId<tos::validator::RootDb>{}, directory_, options);
+    deadline_ = td::Timestamp::in(30);
+    alarm_timestamp() = td::Timestamp::in(0.01);
+    request_.opts.is_cancelled = [this] { entered_parse_.store(true); return false; };
+    submit();
+  }
+
+  void submit() {
+    td::actor::send_closure(database_, &tos::validator::CellDb::import_persistent_state_streaming, request_,
+        [self = actor_id(this)](td::Result<tos::validator::PersistentStateImportResult> result) mutable {
+          td::actor::send_closure(self, &ImportAdmissionActor::imported, std::move(result));
+        });
+  }
+
+  void imported(td::Result<tos::validator::PersistentStateImportResult> result) {
+    if (phase_ == 2) {
+      auto value = result.move_as_ok();
+      ASSERT_TRUE(value.cells_persisted > 0);
+      ASSERT_TRUE(td::Bits256(value.hash_only_root->get_hash().bits()) == request_.expected_root_hash);
+      ASSERT_TRUE(!request_.cancel_requested->load());
+      completed_.store(true);
+      td::actor::SchedulerContext::get().stop();
+      return;
+    }
+    ASSERT_TRUE(result.is_error());
+    if (phase_ == 0) {
+      // No worker/parser was entered; its only write path is after that worker.
+      ASSERT_TRUE(!entered_parse_.load());
+    } else {
+      ASSERT_TRUE(worker_blocked_.load());
+      ASSERT_TRUE(request_.cancel_requested->load());
+    }
+    td::actor::send_closure(database_, &tos::validator::CellDb::get_cell_db_reader,
+        [self = actor_id(this)](td::Result<std::shared_ptr<vm::CellDbReader>> reader) mutable {
+          td::actor::send_closure(self, &ImportAdmissionActor::verify_no_root, std::move(reader));
+        });
+  }
+
+  void verify_no_root(td::Result<std::shared_ptr<vm::CellDbReader>> reader) {
+    ASSERT_TRUE(reader.move_as_ok()->load_cell(request_.expected_root_hash.as_slice()).is_error());
+    if (phase_ == 0) {
+      auto config = tos::validator::fullnode::persistent_state_budget_config();
+      config.max_spool_bytes_per_import = bound_;
+      tos::validator::fullnode::configure_persistent_state_budgets(config);
+      phase_ = 1;
+      request_.cancel_requested = std::make_shared<std::atomic<bool>>(false);
+      request_.opts.is_cancelled = [this] {
+        std::unique_lock<std::mutex> lock(mutex_);
+        worker_blocked_.store(true);
+        condition_.wait(lock, [this] { return released_; });
+        // The shared request flag, not this instrumentation, must cancel parsing.
+        return false;
+      };
+    } else {
+      phase_ = 2;
+      request_.cancel_requested = std::make_shared<std::atomic<bool>>(false);
+      request_.opts.is_cancelled = {};
+    }
+    submit();
+  }
+
+  void alarm() override {
+    ASSERT_TRUE(!deadline_.is_in_past());
+    if (phase_ == 1 && worker_blocked_.load()) {
+      request_.cancel_requested->store(true);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        released_ = true;
+      }
+      condition_.notify_one();
+    }
+    alarm_timestamp() = td::Timestamp::in(0.01);
+  }
+
+ private:
+  std::string directory_;
+  tos::validator::PersistentStateImportRequest request_;
+  td::uint64 bound_;
+  std::atomic<bool>& completed_;
+  std::atomic<bool> entered_parse_{false}, worker_blocked_{false};
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool released_ = false;
+  unsigned phase_ = 0;
+  td::Timestamp deadline_;
+  td::actor::ActorOwn<tos::validator::CellDb> database_;
 };
 
 class SnapshotImportActor final : public td::actor::Actor {
@@ -435,6 +536,44 @@ TEST(UnoStateSnapshot, EncodingBudgetCheckedArithmetic) {
   ASSERT_TRUE(streaming_import_encoding_bound(max / 2, 1).is_error());
 }
 
+TEST(UnoStateSnapshot, HeaderBudgetAndCancellationReleaseImport) {
+  auto root = vm::CellBuilder().store_long(0x73506172654d6531, 64)
+      .store_ref(vm::CellBuilder().store_long(0x73506172654d6532, 64).finalize()).finalize();
+  auto bytes = vm::std_boc_serialize(root).move_as_ok();
+  vm::BagOfCells::Info info;
+  ASSERT_TRUE(info.parse_serialized_header(bytes.as_slice()) > 0);
+  auto bound = tos::validator::streaming_import_encoding_bound(bytes.size(), info.cell_count).move_as_ok();
+  td::uint64 too_small;
+  ASSERT_TRUE(!__builtin_sub_overflow(bound, td::uint64{1}, &too_small));
+  auto saved = tos::validator::fullnode::persistent_state_budget_config();
+  auto config = saved;
+  config.max_spool_bytes_per_import = too_small;
+  tos::validator::fullnode::configure_persistent_state_budgets(config);
+  auto file = td::mkstemp("/tmp").move_as_ok();
+  file.first.write_all(bytes.as_slice()).ensure();
+  file.first.close();
+  const auto directory = td::mkdtemp("/tmp", "uno-import-admission-").move_as_ok();
+  LOG(WARNING) << "Import admission fixture: " << directory << ", input " << file.second
+               << " (removed on success, retained on failure)";
+  tos::validator::PersistentStateImportRequest request;
+  request.tempfile_path = file.second;
+  request.file_size = bytes.size();
+  request.expected_root_hash = root->get_hash().bits();
+  std::atomic<bool> completed{false};
+  {
+    td::actor::Scheduler scheduler({2});
+    td::actor::ActorOwn<ImportAdmissionActor> actor;
+    scheduler.run_in_context([&] {
+      actor = td::actor::create_actor<ImportAdmissionActor>("import-admission", directory, request, bound, completed);
+    });
+    scheduler.run();
+  }
+  ASSERT_TRUE(completed.load());
+  tos::validator::fullnode::configure_persistent_state_budgets(saved);
+  td::rmrf(directory).ensure();
+  td::unlink(file.second).ensure();
+}
+
 TEST(UnoStateSnapshot, V2ActorImportPublishesFreshReader) {
   std::mt19937 generator(73);
   std::vector<td::Bits256> keys(32);
@@ -495,11 +634,8 @@ TEST(UnoStateSnapshot, TcpFileDownloadOwnership) {
   set_persistent_state_tempfile_dir(saved_directory);
 }
 
+#ifdef UNO_SNAPSHOT_LARGE_TEST
 TEST(UnoStateSnapshot, LargeSingleAccountDownloadAndImport) {
-  if (std::getenv("UNO_SNAPSHOT_LARGE_TEST") == nullptr) {
-    LOG(WARNING) << "Large state experiment not run: set UNO_SNAPSHOT_LARGE_TEST=1 explicitly";
-    return;
-  }
   // Opt-in integration experiment, not a protocol size limit or a benchmark.
   constexpr std::size_t count = 2000000;
   std::mt19937 generator(45);
@@ -518,6 +654,8 @@ TEST(UnoStateSnapshot, LargeSingleAccountDownloadAndImport) {
                   "process RSS includes input construction and verification, not just import";
   actor_import_snapshot(state, used.root(), keys, true);
 }
+
+#endif
 
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
   // Reproducible synthetic keys, not cryptographic test vectors. Random-looking

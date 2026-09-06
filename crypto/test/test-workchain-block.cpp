@@ -53,7 +53,7 @@ using CounterEngine = block::test::CounterEngine;
 
 std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
                                                  td::uint64 capabilities = tos::capBlockTransition,
-                                                 td::uint64 vm_mode = 0) {
+                                                 td::uint64 vm_mode = 0, bool include_ingress = true) {
   vm::CellBuilder param;
   CHECK(block::gen::t_GlobalVersion.pack_capabilities(param, version, capabilities));
   vm::Dictionary config(32);
@@ -64,7 +64,9 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
   policy.vm_mode = vm_mode;
   policy.executor_address.set_zero();
   policy.engine_configuration = vm::CellBuilder().finalize();
-  CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+  if (include_ingress) {
+    CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+  }
   return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
                                      block::Config::needCapabilities).move_as_ok();
 }
@@ -1700,11 +1702,67 @@ TEST(WorkchainBlock, RegistryScopeIsolation) {
   ASSERT_EQ(missing.error().message(), "descriptor has no registered block engine");
   auto& native_registry = block::default_workchain_execution_registry();
   descriptor.vm_mode = 0;
+  descriptor.workchain_id = 0;
   ASSERT_TRUE(native_registry.execution_scope(block::tvm_workchain_engine_key()) ==
               block::WorkchainExecutionScope::AccountCompute);
   ASSERT_TRUE(native_registry.resolve(descriptor, configuration).is_ok());
   ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainExecution>(
       native_registry.resolve_scoped(descriptor, configuration).move_as_ok()));
+}
+
+TEST(WorkchainBlock, IngressProtocolScopeDoesNotDependOnRegistry) {
+  block::WorkchainNativeIngressPolicy ingress;
+  ingress.workchain_id = 2;
+  ingress.engine_key = block::tvm_workchain_engine_key();
+  ingress.engine_configuration = vm::CellBuilder().finalize();
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = static_cast<std::int32_t>(ingress.engine_key.selector);
+  block::WorkchainExecutionRegistry empty;
+  ASSERT_TRUE(!empty.has_engine(ingress.engine_key));
+  ASSERT_TRUE(block::reserved_workchain_engine_scope(ingress.engine_key) ==
+              block::WorkchainExecutionScope::AccountCompute);
+  ASSERT_TRUE(block::validate_workchain_native_ingress_binding(ingress, descriptor).is_error());
+  ingress.engine_key = CounterEngine().engine_key();
+  descriptor.vm_version = static_cast<std::int32_t>(ingress.engine_key.selector);
+  ASSERT_TRUE(!empty.has_engine(ingress.engine_key));
+  ASSERT_TRUE(block::validate_workchain_native_ingress_binding(ingress, descriptor).is_ok());
+}
+
+TEST(WorkchainBlock, DeclaredScopePreventsLocalComputeFallback) {
+  class WrongLocalEngine final : public block::WorkchainEngine {
+   public:
+    explicit WrongLocalEngine(unsigned* calls) : calls_(calls) {}
+    block::WorkchainEngineKey engine_key() const override { return CounterEngine().engine_key(); }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&) const override {
+      ++*calls_;
+      return std::shared_ptr<const block::WorkchainEngineConfig>(std::make_shared<block::WorkchainEngineConfig>());
+    }
+    block::AccountExecutionPolicy account_policy(const block::WorkchainExecutionDescriptor&,
+        const block::WorkchainEngineConfig&) const override { return {}; }
+    td::Result<block::WorkchainComputeOutput> run_compute(const block::WorkchainComputeInput&,
+        const block::WorkchainComputeContext&) const override { return td::Status::Error("not invoked"); }
+   private:
+    unsigned* calls_;
+  };
+  unsigned calls = 0;
+  block::WorkchainExecutionRegistry registry;
+  registry.register_engine(std::make_unique<WrongLocalEngine>(&calls));
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = static_cast<std::int32_t>(CounterEngine().engine_key().selector);
+  auto declared = block_configuration();
+  auto scoped = registry.resolve_scoped(descriptor, *declared);
+  auto direct = registry.resolve(descriptor, *declared);
+  ASSERT_EQ(calls, 0u);
+  ASSERT_TRUE(scoped.is_error());
+  ASSERT_TRUE(direct.is_error());
+  auto ordinary = block_configuration(block::kBlockTransitionMinGlobalVersion, tos::capBlockTransition, 0, false);
+  ASSERT_TRUE(registry.resolve_scoped(descriptor, *ordinary).is_ok());
+  ASSERT_EQ(calls, 1u);
 }
 
 TEST(WorkchainBlock, RegistryRequiresConsensusActivation) {
@@ -2135,5 +2193,5 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   workchains[2].write().workchain = 2;
   workchains[2].write().vm_version = static_cast<std::int32_t>(block::tvm_workchain_engine_key().selector);
   ASSERT_TRUE(block::default_workchain_execution_registry()
-                  .validate_required_workchains(workchains, configuration, roles).is_ok());
+                  .validate_required_workchains(workchains, configuration, roles).is_error());
 }

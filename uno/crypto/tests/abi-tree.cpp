@@ -1,4 +1,5 @@
 #include "uno_crypto.h"
+#include "abi-concurrency.h"
 #include <cstring>
 #include <cstddef>
 #include <limits>
@@ -7,7 +8,49 @@ static_assert(sizeof(UnoTreeFrontier) == 1072);
 static_assert(sizeof(UnoTreeResult) == 1104);
 static_assert(offsetof(UnoTreeFrontier, ommers) == 48);
 
+bool concurrent_tree() {
+  UnoTreeFrontier empty{};
+  std::array<UnoTreeResult, 8> expected{};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    uint8_t leaves[2][32]{};
+    leaves[0][0] = static_cast<uint8_t>(index + 1);
+    leaves[1][0] = 42;
+    UnoTreeRequest request{};
+    request.profile = UNO_CRYPTO_FIXED_PROFILE;
+    request.frontier = &empty;
+    request.commitments = leaves;
+    request.commitment_count = request.max_commitments = 2;
+    if (uno_crypto_tree_append_v0(&request, &expected[index]) != UNO_CRYPTO_OK ||
+        expected[index].frontier.next_position != 2) return false;
+  }
+  return concurrent_abi_calls([&](std::size_t index) {
+    uint8_t leaves[2][32]{};
+    leaves[0][0] = static_cast<uint8_t>(index + 1);
+    leaves[1][0] = 42;
+    UnoTreeRequest request{};
+    request.profile = UNO_CRYPTO_FIXED_PROFILE;
+    request.frontier = &empty;
+    request.commitments = leaves;
+    request.commitment_count = request.max_commitments = 2;
+    request.reserved_leaves = 7;
+    for (unsigned iteration = 0; iteration < 4; ++iteration) {
+      UnoTreeResult output;
+      std::memset(&output, 0xa5, sizeof(output));
+      if (uno_crypto_tree_append_v0(&request, &output) != UNO_CRYPTO_OK ||
+          std::memcmp(&output, &expected[index], sizeof(output))) return false;
+      const auto before = output;
+      std::memset(leaves[1], 0xff, 32);
+      if (uno_crypto_tree_append_v0(&request, &output) != UNO_CRYPTO_DECODE ||
+          std::memcmp(&output, &before, sizeof(output))) return false;
+      std::memset(leaves[1], 0, 32);
+      leaves[1][0] = 42;
+    }
+    return true;
+  });
+}
+
 int main() {
+  if (!concurrent_tree()) return 18;
   UnoTreeFrontier empty{};
   UnoTreeResult output{};
   UnoTreeRequest request{};

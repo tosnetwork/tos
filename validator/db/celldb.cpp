@@ -1867,10 +1867,9 @@ td::Result<td::uint64> streaming_import_spool_reservation_bytes(const Persistent
     return td::Status::Error("invalid or over-budget streaming import header");
   }
   TRY_RESULT(encoding_bound, streaming_import_encoding_bound(file_size, info.cell_count));
-  // A conservative bound above the configured cap is not proof the actual
-  // spool will exceed it. Reserve up to that cap and keep per-record checks;
-  // do not reject an otherwise admissible import solely for overestimation.
-  reservation_bytes = std::max(reservation_bytes, std::min(encoding_bound, cfg.max_spool_bytes_per_import));
+  // Admission requires room for the encoding bound including rollback. Reject
+  // before starting a worker rather than discovering a shortfall during commit.
+  reservation_bytes = std::max(reservation_bytes, encoding_bound);
   if (reservation_bytes > cfg.max_spool_bytes_per_import) {
     return td::Status::Error(PSTRING() << "streaming import spool budget exceeded before import: "
                                        << "file_size=" << file_size
@@ -2613,6 +2612,10 @@ td::Result<td::uint64> CellDbIn::recover_streaming_import_rollbacks_at_startup()
 // abort-or-lease handshake the in-actor version used.
 void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest request,
                                                  td::Promise<PersistentStateImportResult> promise) {
+  if (request.cancel_requested && request.cancel_requested->load(std::memory_order_relaxed)) {
+    promise.set_error(td::Status::Error("streaming import request cancelled"));
+    return;
+  }
   // Defer to the action queue if a snapshot/store/gc operation is
   // currently using the DB; this preserves CellDbIn's existing
   // serialization contract for the validation prologue. The worker will
@@ -2724,6 +2727,9 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // pointer because the sink's lifetime is tied to the job (we move
   // it into a shared_ptr inside the lambda for clean teardown).
   streaming_job_ = std::make_unique<StreamingImportJob>();
+  if (request.cancel_requested) {
+    streaming_job_->cancel_requested = request.cancel_requested;
+  }
   streaming_job_->request = std::move(request);
   streaming_job_->promise = std::move(promise);
   streaming_job_->provider = std::move(provider);
@@ -2812,6 +2818,10 @@ void CellDbIn::continue_import_after_worker() {
 void CellDbIn::commit_streaming_import_spool_batch() {
   if (streaming_job_ == nullptr) {
     LOG(ERROR) << "CellDbIn::commit_streaming_import_spool_batch: no streaming job in flight";
+    return;
+  }
+  if (streaming_job_->cancel_requested->load(std::memory_order_relaxed)) {
+    fail_streaming_import(td::Status::Error("streaming import cancelled before commit batch"));
     return;
   }
   if (db_busy_) {

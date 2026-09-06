@@ -98,6 +98,9 @@ td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const Workc
 td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root);
 td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
                                                     const WorkchainExecutionDescriptor& descriptor);
+// The ingress constructor declares BlockTransition; reserved native engines
+// have an intrinsic protocol scope which that declaration cannot override.
+std::optional<WorkchainExecutionScope> reserved_workchain_engine_scope(const WorkchainEngineKey& key);
 using WorkchainNativeIngressTable = std::map<tos::WorkchainId, WorkchainNativeIngressPolicy>;
 td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
     const std::vector<WorkchainNativeIngressPolicy>& policies);

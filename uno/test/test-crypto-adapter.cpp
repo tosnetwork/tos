@@ -87,3 +87,33 @@ TEST(UnoCryptoAdapter, ShapeBoundariesWithoutAllocation) {
   const auto wrapped_bytes = overflow_count * 2272 + 2720;
   ASSERT_TRUE(!crypto_bundle_shape_valid(overflow_count, wrapped_bytes, {max, max}));
 }
+
+TEST(UnoCryptoAdapter, EmptyAndOversizedShapesNeverInvokeBackend) {
+  CryptoBundle valid;
+  valid.flags = 3;
+  valid.value_balance = 100;
+  valid.actions.resize(1);
+  valid.proof.resize(4992);
+  result_code = UNO_CRYPTO_OK;
+  for (unsigned kind = 0; kind < 3; ++kind) {
+    auto bundle = valid;
+    if (kind == 0) bundle.actions.clear();
+    if (kind == 1) bundle.proof.clear();
+    if (kind == 2) {
+      bundle.actions.resize(2);
+      bundle.proof.resize(7264);
+    }
+    calls = 0;
+    auto result = verify_crypto_bundle(bundle, BundleContext::Transfer, {},
+                                      Amount::from_nanotomi(100), {}, {1, 7264});
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(!result.ok());
+    ASSERT_EQ(calls, 0u);
+  }
+  calls = 0;
+  auto accepted = verify_crypto_bundle(valid, BundleContext::Transfer, {},
+                                      Amount::from_nanotomi(100), {}, {1, 7264});
+  ASSERT_TRUE(accepted.is_ok());
+  ASSERT_TRUE(accepted.ok());
+  ASSERT_EQ(calls, 1u);
+}

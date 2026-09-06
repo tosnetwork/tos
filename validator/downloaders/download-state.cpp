@@ -1019,6 +1019,7 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // operator seeing this error has a real CellDb wiring problem and
   // must fix it.
   PersistentStateImportRequest req;
+  req.cancel_requested = import_cancel_requested_;
   req.tempfile_path = data_file_.path;
   req.file_size = data_file_.size;
   req.expected_root_hash = handle_->state();
@@ -1300,6 +1301,7 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   // does not match before committing the write batch, so the header's
   // identity is verified exactly once at the source-of-truth point.
   PersistentStateImportRequest req;
+  req.cancel_requested = import_cancel_requested_;
   req.tempfile_path = file.path;
   req.file_size = file.size;
   req.expected_root_hash = handle_->state();
@@ -1561,6 +1563,7 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
   }
 
   PersistentStateImportRequest req;
+  req.cancel_requested = import_cancel_requested_;
   req.tempfile_path = file.path;
   req.file_size = file.size;
   req.expected_root_hash = RootHash{parts_[idx].root_hash.bits()};
@@ -1780,11 +1783,16 @@ void DownloadShardState::alarm() {
 }
 
 void DownloadShardState::abort_query(td::Status reason) {
+  import_cancel_requested_->store(true, std::memory_order_relaxed);
   gc_leases_.clear();
   if (promise_) {
     promise_.set_error(std::move(reason));
   }
   stop();
+}
+
+void DownloadShardState::tear_down() {
+  import_cancel_requested_->store(true, std::memory_order_relaxed);
 }
 
 void DownloadShardState::fail_handler(td::actor::ActorId<DownloadShardState> SelfId, td::Status error) {

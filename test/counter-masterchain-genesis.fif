@@ -4,6 +4,7 @@
 
 // Test-only masterchain configuration for the deterministic Counter engine.
 -23901 setglobalid
+globalid@ -23901 <> abort"Counter genesis contains public test keys: test global_id required"
 wc_master setworkchain
 256 1<<1- 15 / constant AllOnes
 

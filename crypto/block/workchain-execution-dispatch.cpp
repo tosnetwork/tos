@@ -123,9 +123,18 @@ td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(co
   }
 }
 
+std::optional<WorkchainExecutionScope> reserved_workchain_engine_scope(const WorkchainEngineKey& key) {
+  if (workchain_engine_key_is_tvm(key)) return WorkchainExecutionScope::AccountCompute;
+  return std::nullopt;
+}
+
 td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
                                                     const WorkchainExecutionDescriptor& descriptor) {
   TRY_STATUS(check_ingress_policy(policy));
+  const auto reserved_scope = reserved_workchain_engine_scope(policy.engine_key);
+  if (reserved_scope && *reserved_scope != WorkchainExecutionScope::BlockTransition) {
+    return td::Status::Error("native ingress scope conflicts with reserved engine protocol scope");
+  }
   if (!descriptor.active || descriptor.min_split != 0 || descriptor.max_split != 0 ||
       policy.workchain_id != descriptor.workchain_id ||
       !(policy.engine_key == workchain_engine_key_from_descriptor(descriptor)) ||
@@ -538,6 +547,10 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
   if (block_engines_.count(key)) {
     return td::Status::Error("block engine cannot execute through account compute");
   }
+  TRY_RESULT(ingress, load_workchain_native_ingress_table(block_transition_config));
+  if (ingress.count(descriptor.workchain_id)) {
+    return td::Status::Error("declared block scope cannot execute through account compute");
+  }
   auto it = engines_.find(key);
   if (it == engines_.end()) {
     return td::Status::Error(PSTRING() << "missing workchain engine " << workchain_engine_key_to_string(key)
@@ -556,7 +569,9 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
 
 td::Result<ResolvedScopedWorkchainExecution> WorkchainExecutionRegistry::resolve_scoped(
     const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
-  if (execution_scope(workchain_engine_key_from_descriptor(descriptor)) == WorkchainExecutionScope::BlockTransition) {
+  TRY_RESULT(ingress, load_workchain_native_ingress_table(configuration));
+  if (ingress.count(descriptor.workchain_id) ||
+      execution_scope(workchain_engine_key_from_descriptor(descriptor)) == WorkchainExecutionScope::BlockTransition) {
     TRY_RESULT(resolved, resolve_block(descriptor, configuration));
     return ResolvedScopedWorkchainExecution{std::move(resolved)};
   }

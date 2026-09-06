@@ -233,11 +233,13 @@ class DownloadShardState : public td::actor::Actor {
 
   void finish_query();
   void alarm() override;
+  void tear_down() override;
   void abort_query(td::Status reason);
 
   static void fail_handler(td::actor::ActorId<DownloadShardState> SelfId, td::Status error);
 
  private:
+  std::shared_ptr<std::atomic<bool>> import_cancel_requested_ = std::make_shared<std::atomic<bool>>(false);
   BlockIdExt block_id_;
   BlockIdExt masterchain_block_id_;
   td::uint32 split_depth_;

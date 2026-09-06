@@ -1,4 +1,5 @@
 #include "uno_crypto.h"
+#include "abi-concurrency.h"
 #include <array>
 #include <algorithm>
 #include <charconv>
@@ -136,6 +137,22 @@ bool check(const char* label, uint32_t actual, uint32_t expected) {
   return false;
 }
 
+bool concurrent_verify(const UnoCryptoVerifyRequest& input) {
+  const bool valid = concurrent_abi_calls([&](std::size_t index) {
+    auto request = input;
+    for (unsigned iteration = 0; iteration < 4; ++iteration) {
+      if (uno_crypto_verify_v0(&request) != UNO_CRYPTO_OK) return false;
+      // Requests and digests are thread-local; actions/proof remain immutable.
+      request.sighash[0] ^= static_cast<uint8_t>(index + 1);
+      if (uno_crypto_verify_v0(&request) != UNO_CRYPTO_VERIFY) return false;
+      request.sighash[0] ^= static_cast<uint8_t>(index + 1);
+    }
+    return true;
+  });
+  if (!valid) std::cerr << "Concurrent real verifier result mismatch\n";
+  return valid;
+}
+
 // Serial warm measurements of the full ABI call, including decoding and all
 // verification. Fixture loading, proof generation and key construction are out
 // of this loop. Every sample checks its result, including a rejection workload.
@@ -214,6 +231,10 @@ bool fixture(const char* path, uint32_t context, uint64_t principal, uint64_t fe
         result.frontier.next_position != 2) return false;
     std::memcpy(produced_anchor, result.root, 32);
   }
+  // Run before any serial verification in normal tests: the output-only fixture
+  // exercises concurrent cold key initialization at the real exported entry.
+  // Measurement mode remains serial and retains its first-call definition.
+  if (!samples && !concurrent_verify(request)) return false;
   auto first_start = std::chrono::steady_clock::now();
   auto first_status = uno_crypto_verify_v0(&request);
   auto first_stop = std::chrono::steady_clock::now();

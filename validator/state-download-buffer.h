@@ -341,8 +341,9 @@ struct PersistentStateBudgetConfig {
   td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
   // Phase B import-spool budget. A 16 GiB state can transiently need an
   // import spool plus a rollback manifest with CellDb serialization
-  // overhead. Reserve a configurable ratio of the source file size
-  // (default 3x) and cap it by max_spool_bytes_per_import; the global
+  // overhead. Reserve the larger of a configurable file-size ratio
+  // (default 3x) and the encoding/rollback bound; reject either above
+  // max_spool_bytes_per_import during header admission. The global
   // default allows two such imports across the process before failing
   // closed.
   td::uint64 max_spool_bytes_per_import = 48ULL << 30;
