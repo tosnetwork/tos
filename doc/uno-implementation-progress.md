@@ -3560,3 +3560,43 @@ uses the owning callback promise. This run is not negative-state acceptance;
 the corrected node still needs a live repeat, and removing the real importer
 root gate must also demonstrate that the network test fails for premature
 sealing/commit rather than merely different error wording.
+
+### Real-network mismatched checkpoint rejection and recovery
+
+The corrected run at `396cb974b`, retained in
+`build/m1-counter-network-run-lkh2wxe4`, passed. Warm peers served the valid
+32,775-cell old Counter state as the response for checkpoint shard block 18
+under MC checkpoint 20. The receiving node downloaded it through the file
+path and rejected the parsed root against the authenticated expected root
+before spool sealing. `checkpoint-rejection.json` records both roots and the
+complete shard-block identity; `cold-before-restart.log` preserves the actor
+error with the same identity. This was not a truncated/invalid-BoC rejection.
+
+After the controller removed only its override file, ordinary serving resumed.
+The cold node matched the pinned MC height 21 and Counter data, reached MC 33,
+served the acquired state after all warm validators stopped, and reopened its
+database with unchanged executor data and last-transaction identity. The run
+exited zero and all child nodes stopped. Whole cold-process RSS observations
+were 128,405,504 bytes before restart and 120,143,872 after reopening; these
+are not hard resource limits or importer-only measurements.
+
+The real-boundary mutation temporarily removed the parsed-root comparison in
+`CellDbIn::import_persistent_state_streaming`, rebuilt the Counter node and ran
+the same profile in `build/m1-counter-network-run-jqstcr38`. It failed with
+`supplied checkpoint root reached spool sealing or commit`: the receiver log
+shows the supplied wrong root sealing 32,775 cells. No root-mismatch error or
+timeout was needed to make the instrument fail. The mutated nodes exited,
+the comparison was restored without a source diff, both node/snapshot targets
+were rebuilt, and all seven default snapshot tests passed in
+`build/uno-wrong-checkpoint-snapshot-regression.log`. The mutation was not
+committed; the live success above precedes this mutation, not a claimed second
+post-restoration network run.
+
+This closes the bounded unsplit Counter file-import wrong-root/retry gate.
+It does not cover every malformed or split-state transport, arbitrary partial
+downloads, growing note/nullifier admission, steady-state resource ceilings or
+retention policy. M1 resource/growth gates remain open and M3 remains paused.
+The earlier GC run pair was archived and verified in
+`build/m1-native-gc-runs-20260906.tar.gz`; originals were moved to recoverable
+trash. The failed size-hook run, successful rejection run and mutation run
+remain retained separately under the three-run cap.
