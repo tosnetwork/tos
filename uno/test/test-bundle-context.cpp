@@ -36,7 +36,7 @@ TEST(UnoBundleContext, SharedCrossLanguageVectors) {
     ++count;
   }
   ASSERT_TRUE(input.eof());
-  ASSERT_EQ(count, 26u);
+  ASSERT_EQ(count, 31u);
 }
 
 TEST(UnoBundleContext, BindPublicValuesAndPermissions) {

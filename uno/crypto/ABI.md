@@ -15,6 +15,11 @@ Never pass untrusted RPC pointer values. No pointers are retained, no secret
 witness is accepted, and no allocation/free ownership crosses the boundary.
 Amounts are high/low u64 words of u128 nanotomi, not host-endian byte strings.
 
+All settlement contexts require a positive public principal in nanotomi,
+including Unshield with a nonzero fee. Transfer may have a zero fee and must
+have zero public principal. These public-context rules do not prohibit
+zero-valued protocol dummy notes.
+
 The entry point checks ABI/profile and representable context, checks lengths
 before constructing slices, decodes canonical primitive fields, and calls the
 combined context/proof/spend/binding verifier. Its process-local key cache is an

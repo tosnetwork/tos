@@ -3643,6 +3643,9 @@ The [fed3ca84e audit response](uno-security-audit-response.md) records the
 retryable verifier initialization and panic-strategy build gate, the ABI v0
 hybrid-profile scope clarification, and dynamic evidence that the reported
 malformed-fork issue is already prevented by LabelParser's default checks.
-H-2 queued-message liveness, policy preflight, zero settlement principals and
+Zero settlement principals are now rejected consistently by Rust, FFI and C++,
+with shared negative vectors and positive controls, while zero-fee Transfer
+and dummy-note semantics are preserved.
+H-2 queued-message liveness, policy preflight and
 the remaining listed items are not marked resolved. No storage-architecture
 decision or M3 expansion is implied by this audit response.

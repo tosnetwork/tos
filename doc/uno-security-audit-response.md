@@ -31,6 +31,15 @@ an ABI version change and regenerated integration fixtures. This does not
 automatically invalidate independent primitive/VK reference vectors; those
 remain valid evidence for their original, narrower scope.
 
+M-4: Rust public-context validation, FFI request conversion and C++ public-context
+validation now reject zero principal for all five settlement contexts. A fee
+does not make a zero-principal Unshield valid. Transfer's zero fee and dummy
+note semantics are unchanged. The shared corpus has 31 vectors, including all
+zero-principal contexts and Unshield with a fee. Before the fix, both shared
+corpus tests failed on acceptance of zero genesis, and the direct FFI conversion
+test failed on acceptance of zero settlement principal. Positive-principal FFI
+controls exercise every settlement context without depending on proof decoding.
+
 ## M-3: not reproduced; underlying API already checks the fork
 
 `vm::dict::LabelParser` defaults to `chk_all` in `crypto/vm/dict.h`.
@@ -59,17 +68,21 @@ default was restored with no source diff. No redundant fork guard was added.
   with the engine's existing `wire_bytes` without defining that contract.
   The Counter engine reports eight payload bytes, not the BoC container size.
   Keep post-execution accounting checks as well. No fix is claimed yet.
-- M-4: zero settlement principal and shared Rust/C++ vectors remain to be
-  addressed together, preserving zero-valued protocol dummy notes separately.
 - L-1/L-2 remain follow-ups; L-3/L-4 remain bounded performance observations.
   No accounting transition or invariant was changed in this pass.
 
 ## Dynamic evidence for this disposition
 
-Rust release tests: 26 passed, one opt-in measurement ignored. FFI recovery and
+Initial Rust release tests: 26 passed, one opt-in VK diagnostic ignored. FFI recovery and
 panic tests are included. State-container tests: 16 passed. Logs are
 `build/uno-audit-crypto-regression.log`, `build/uno-audit-key-cache-mutation.log`,
 `build/uno-audit-panic-abort.log`, `build/uno-audit-panic-guard-mutation.log`,
 `build/uno-audit-fork-before.log`, `build/uno-audit-fork-mutation.log`, and
 `build/uno-audit-state-regression.log`. All deliberate mutations were restored.
 These tests do not expand the external audit's reviewed coverage.
+
+After M-4: Rust release tests passed 27, with the VK diagnostic ignored;
+the C++ amount/context suite passed 19 and the adapter suite passed three.
+The initial zero-test C++ invocation used a nonmatching dotted filter; it was
+discarded and rerun with the actual test-name substring, which failed before
+the fix. The final C++ runs used no filter.

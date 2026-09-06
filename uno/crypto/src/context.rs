@@ -14,6 +14,7 @@ pub enum PublicContext {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextError {
+    ZeroPrincipal,
     AmountOverflow,
     BalanceRange,
     ValueBalance,
@@ -28,12 +29,20 @@ pub(crate) fn check_context(
     let (magnitude, spends) = match context {
         PublicContext::Transfer { fee } => (fee, true),
         PublicContext::Unshield { amount, fee } => {
+            if amount == 0 {
+                return Err(ContextError::ZeroPrincipal);
+            }
             (amount.checked_add(fee).ok_or(ContextError::AmountOverflow)?, true)
         }
         PublicContext::ShieldClaim { amount }
         | PublicContext::WithdrawalRefund { amount }
         | PublicContext::Genesis { amount }
-        | PublicContext::PrivateFeeDistribution { amount } => (amount, false),
+        | PublicContext::PrivateFeeDistribution { amount } => {
+            if amount == 0 {
+                return Err(ContextError::ZeroPrincipal);
+            }
+            (amount, false)
+        }
     };
     let magnitude = i64::try_from(magnitude).map_err(|_| ContextError::BalanceRange)?;
     let expected = if spends {
@@ -98,7 +107,7 @@ mod tests {
             assert_eq!(check_context(context, balance, &flags).is_ok(), bit(9), "{}", fields[0]);
             count = count.checked_add(1).expect("fixture count");
         }
-        assert_eq!(count, 26);
+        assert_eq!(count, 31);
     }
 
     #[test]
@@ -145,7 +154,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(check_context(PublicContext::Transfer { fee: 0 }, 0, &spending), Ok(()));
-        assert_eq!(check_context(PublicContext::Genesis { amount: 0 }, 0, &output), Ok(()));
+        assert_eq!(check_context(PublicContext::Genesis { amount: 0 }, 0, &output), Err(ContextError::ZeroPrincipal));
         assert_eq!(
             check_context(PublicContext::Unshield { amount: u128::MAX, fee: 1 }, 0, &spending),
             Err(ContextError::AmountOverflow)

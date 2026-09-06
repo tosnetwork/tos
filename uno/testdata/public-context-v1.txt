@@ -5,7 +5,12 @@ refund WithdrawalRefund 0 5000 0 0 -5000 0 1 1
 genesis Genesis 0 5000 0 0 -5000 0 1 1
 fee_distribution PrivateFeeDistribution 0 5000 0 0 -5000 0 1 1
 zero_transfer Transfer 0 0 0 0 0 1 1 1
-zero_genesis Genesis 0 0 0 0 0 0 1 1
+zero_genesis Genesis 0 0 0 0 0 0 1 0
+zero_claim ShieldClaim 0 0 0 0 0 0 1 0
+zero_refund WithdrawalRefund 0 0 0 0 0 0 1 0
+zero_distribution PrivateFeeDistribution 0 0 0 0 0 0 1 0
+zero_unshield Unshield 0 0 0 0 0 1 1 0
+zero_unshield_with_fee Unshield 0 0 0 20 20 1 1 0
 max_transfer Transfer 0 0 0 9223372036854775807 9223372036854775807 1 1 1
 max_genesis Genesis 0 9223372036854775807 0 0 -9223372036854775807 0 1 1
 max_unshield Unshield 0 9223372036854775806 0 1 9223372036854775807 1 1 1

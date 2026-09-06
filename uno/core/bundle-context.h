@@ -23,6 +23,9 @@ inline td::Status validate_bundle_context(BundleContext context, td::int64 value
       requires_spends = true;
       break;
     case BundleContext::Unshield: {
+      if (public_amount.high() == 0 && public_amount.low() == 0) {
+        return td::Status::Error("UNO settlement principal must be positive");
+      }
       TRY_RESULT(debit, public_amount.checked_add(fee));
       magnitude = debit;
       requires_spends = true;
@@ -32,6 +35,9 @@ inline td::Status validate_bundle_context(BundleContext context, td::int64 value
     case BundleContext::WithdrawalRefund:
     case BundleContext::Genesis:
     case BundleContext::PrivateFeeDistribution:
+      if (public_amount.high() == 0 && public_amount.low() == 0) {
+        return td::Status::Error("UNO settlement principal must be positive");
+      }
       if (fee.high() != 0 || fee.low() != 0) {
         return td::Status::Error("UNO output-only settlement has an unexpected fee");
       }

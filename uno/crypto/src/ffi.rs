@@ -55,11 +55,11 @@ fn context(request: &VerifyRequest) -> Result<PublicContext, AbiStatus> {
     let fee = (u128::from(request.fee_hi) << 64) | u128::from(request.fee_lo);
     match request.context {
         UNO_TRANSFER if amount == 0 => Ok(PublicContext::Transfer { fee }),
-        UNO_UNSHIELD => Ok(PublicContext::Unshield { amount, fee }),
-        UNO_SHIELD_CLAIM if fee == 0 => Ok(PublicContext::ShieldClaim { amount }),
-        UNO_WITHDRAWAL_REFUND if fee == 0 => Ok(PublicContext::WithdrawalRefund { amount }),
-        UNO_GENESIS if fee == 0 => Ok(PublicContext::Genesis { amount }),
-        UNO_PRIVATE_FEE_DISTRIBUTION if fee == 0 => Ok(PublicContext::PrivateFeeDistribution { amount }),
+        UNO_UNSHIELD if amount > 0 => Ok(PublicContext::Unshield { amount, fee }),
+        UNO_SHIELD_CLAIM if amount > 0 && fee == 0 => Ok(PublicContext::ShieldClaim { amount }),
+        UNO_WITHDRAWAL_REFUND if amount > 0 && fee == 0 => Ok(PublicContext::WithdrawalRefund { amount }),
+        UNO_GENESIS if amount > 0 && fee == 0 => Ok(PublicContext::Genesis { amount }),
+        UNO_PRIVATE_FEE_DISTRIBUTION if amount > 0 && fee == 0 => Ok(PublicContext::PrivateFeeDistribution { amount }),
         _ => Err(AbiStatus::UNO_CRYPTO_ARGUMENTS),
     }
 }
@@ -189,6 +189,31 @@ pub unsafe extern "C" fn uno_crypto_verify_v0(request: *const VerifyRequest) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn settlement_context_requires_positive_principal() {
+        let mut request = VerifyRequest {
+            abi_version: UNO_CRYPTO_ABI_VERSION, profile: UNO_CRYPTO_FIXED_PROFILE,
+            context: UNO_TRANSFER, flags: 3, value_balance: 0,
+            principal_hi: 0, principal_lo: 0, fee_hi: 0, fee_lo: 0,
+            anchor: [0; 32], sighash: [0; 32], binding_signature: [0; 64],
+            actions: std::ptr::null(), action_count: 0,
+            proof: std::ptr::null(), proof_bytes: 0, max_actions: 0, max_proof_bytes: 0,
+        };
+        assert!(context(&request).is_ok());
+        for kind in [UNO_UNSHIELD, UNO_SHIELD_CLAIM, UNO_WITHDRAWAL_REFUND,
+                     UNO_GENESIS, UNO_PRIVATE_FEE_DISTRIBUTION] {
+            request.context = kind;
+            request.principal_lo = 0;
+            assert!(matches!(context(&request), Err(AbiStatus::UNO_CRYPTO_ARGUMENTS)));
+            request.principal_lo = 1;
+            assert!(context(&request).is_ok());
+        }
+        request.context = UNO_UNSHIELD;
+        request.principal_lo = 0;
+        request.fee_lo = 20;
+        assert!(matches!(context(&request), Err(AbiStatus::UNO_CRYPTO_ARGUMENTS)));
+    }
+
     #[test]
     fn verifier_construction_failure_is_retryable() {
         let cache = RetryingOnce::<FixedVerifier>::new();
