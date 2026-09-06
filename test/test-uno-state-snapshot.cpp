@@ -782,12 +782,15 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   const std::string size(size_text), mode(pages_text), shape(shape_text);
   const std::size_t count = size == "1000" ? 1000 : size == "8000" ? 8000 :
       size == "32000" ? 32000 : size == "65536" ? 65536 : 0;
-  const std::size_t page_count = mode == "1" ? 1 : mode == "16" ? 16 : 0;
-  ASSERT_TRUE(count && page_count && (shape == "uniform" || shape == "prefix"));
+  std::size_t page_count = mode == "1" ? 1 : mode == "16" ? 16 : 0;
+  const auto initial_page_count = page_count;
+  const bool split = shape == "split" || shape == "split-prefix";
+  const bool concentrated = shape == "prefix" || shape == "split-prefix";
+  ASSERT_TRUE(count && page_count && (shape == "uniform" || shape == "prefix" || split));
   auto keys = measurement_keys(count);
-  if (shape == "prefix") for (auto& key : keys) for (unsigned i = 0; i < 16; ++i) key.as_slice()[i] = 0;
+  if (concentrated) for (auto& key : keys) for (unsigned i = 0; i < 16; ++i) key.as_slice()[i] = 0;
   auto route = [&](const td::Bits256& key) {
-    return page_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> 4;
+    return page_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> (page_count == 16 ? 4 : 3);
   };
   std::vector<std::vector<td::Bits256>> grouped(page_count);
   for (const auto& key : keys) grouped[route(key)].push_back(key);
@@ -797,7 +800,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     return used.root().is_null() ? vm::CellBuilder().finalize() : used.root();
   };
   auto put = [&](vm::AugmentedDictionary& dictionary, std::size_t page, td::Ref<vm::Cell> data) {
-    ASSERT_TRUE(page < page_count && page_count <= 16);
+    ASSERT_TRUE(page < page_count && page_count <= 32);
     auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(page);
     vm::CellBuilder account;
     account.store_long(1,1).store_long(4,3).store_long(2,8).store_bits(address.bits(),256)
@@ -853,7 +856,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   vm::AugmentedDictionary updated(vm::load_cell_slice_ref(record.accounts),256,block::tlb::aug_ShardAccounts);
   std::vector<td::Bits256> fresh(2,td::Bits256::zero());
   fresh[0].as_slice()[31] = 1; fresh[1].as_slice()[31] = 2;
-  if (shape == "uniform") fresh[1].as_slice()[0] = static_cast<char>(0xf0);
+  if (!concentrated) fresh[1].as_slice()[0] = static_cast<char>(0xf0);
   for (const auto& key : fresh) {
     const auto page = route(key);
     auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(page);
@@ -867,6 +870,47 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     expected_data[page] = data_root(pages[page]);
     put(updated,page,expected_data[page]);
   }
+  if (split) {
+    // Bulk storage-only control: enumerate persisted account contents, not
+    // the fixture key generator. The single-account control rebuilds one page.
+    const std::size_t destination_count = page_count == 1 ? 1 : 32;
+    std::vector<std::vector<td::Bits256>> relocated(destination_count);
+    td::uint64 migrated = 0, expected_total = 0;
+    ASSERT_TRUE(metric_add(count,fresh.size(),expected_total));
+    for (std::size_t i = 0; i < page_count; ++i) {
+      auto address = td::Bits256::zero(); address.as_slice()[31] = static_cast<char>(i);
+      block::Account account(2,address.bits());
+      ASSERT_TRUE(account.unpack(updated.lookup(address),10,false));
+      ASSERT_TRUE(account.data->get_hash() == expected_data[i]->get_hash());
+      auto used = pages[i].size() == 0 ? uno_workchain::UsedNullifiers{} :
+          uno_workchain::UsedNullifiers::from_root(account.data,pages[i].size()).move_as_ok();
+      vm::Dictionary entries(used.root(),256);
+      ASSERT_TRUE(entries.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr bits, int width) {
+        ASSERT_TRUE(width == 256 && value->empty_ext());
+        td::Bits256 key(bits);
+        ASSERT_TRUE(route(key) == i);
+        ASSERT_TRUE(metric_add(migrated,1,migrated));
+        ASSERT_TRUE(migrated <= expected_total);
+        const auto destination = destination_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> 3;
+        relocated[destination].push_back(key);
+        return true;
+      }));
+    }
+    ASSERT_EQ(migrated,expected_total);
+    page_count = destination_count;
+    updated.reset(); pages.clear(); expected_data.clear();
+    td::uint64 rebuilt = 0;
+    for (std::size_t i = 0; i < page_count; ++i) {
+      pages.push_back(uno_workchain::UsedNullifiers{}.with_used(relocated[i]).move_as_ok());
+      ASSERT_TRUE(metric_add(rebuilt,pages.back().size(),rebuilt));
+      expected_data.push_back(data_root(pages.back()));
+      put(updated,i,expected_data.back());
+    }
+    ASSERT_EQ(rebuilt,expected_total);
+    // Independent post-reopen membership oracle, not the enumeration output.
+    grouped.assign(page_count,{});
+    for (const auto& key : keys) grouped[route(key)].push_back(key);
+  }
   record.accounts = updated.get_wrapped_dict_root();
   td::Ref<vm::Cell> next;
   ASSERT_TRUE(tlb::pack_cell(next,record));
@@ -874,7 +918,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   ASSERT_TRUE(next_hash != old_hash);
   const auto resolve_update_ms = snapshot_elapsed_ms(update_started);
   auto emit = [&](const char* phase, const CellRecordDelta& delta, const std::array<double,3>& times) {
-    std::cout << "INCREMENTAL_RECORDS_CSV," << count << ",91," << page_count << ',' << shape << ',' << phase << ','
+    std::cout << "INCREMENTAL_RECORDS_CSV," << count << ",91," << initial_page_count << ',' << shape << ',' << phase << ','
               << delta.added << ',' << delta.added_bytes << ',' << delta.removed << ',' << delta.removed_bytes << ','
               << delta.changed << ',' << delta.changed_bytes << ',' << times[0] << ',' << times[1] << ',' << times[2]
               << ',' << snapshot_peak_rss_kib() << std::endl;
@@ -914,9 +958,20 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     for (const auto& key : grouped[i]) ASSERT_TRUE(used.try_contains(key).move_as_ok());
     for (const auto& key : fresh) if (route(key) == i) ASSERT_TRUE(used.with_used({key}).is_error());
   }
-  delta = cell_record_delta(retained,read_cell_records(*kv));
+  const auto final_records = read_cell_records(*kv);
+  delta = cell_record_delta(retained,final_records);
   ASSERT_TRUE(delta.added == 0 && delta.removed > 0);
   emit("release",delta,release_times);
+  const auto baseline_footprint = cell_record_delta({},baseline);
+  const auto retained_footprint = cell_record_delta({},retained);
+  const auto final_footprint = cell_record_delta({},final_records);
+  ASSERT_EQ(baseline_footprint.added,baseline.size());
+  ASSERT_EQ(retained_footprint.added,retained.size());
+  ASSERT_EQ(final_footprint.added,final_records.size());
+  std::cout << "INCREMENTAL_FOOTPRINT_CSV," << count << ",91," << initial_page_count << ',' << shape << ','
+            << page_count << ',' << baseline_footprint.added << ',' << baseline_footprint.added_bytes << ','
+            << retained_footprint.added << ',' << retained_footprint.added_bytes << ','
+            << final_footprint.added << ',' << final_footprint.added_bytes << std::endl;
   // Deliberately after the commit observations: serializing the full closure
   // beforehand would warm every page and change the incremental experiment.
   const auto serialize_started = SnapshotClock::now();
@@ -927,7 +982,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   const auto decode_ms = snapshot_elapsed_ms(decode_started);
   ASSERT_TRUE(decoded->get_hash() == next_hash);
   ASSERT_TRUE(decoded->get_hash() != old_hash);
-  std::cout << "INCREMENTAL_STATE_CSV," << count << ",91," << page_count << ',' << shape << ','
+  std::cout << "INCREMENTAL_STATE_CSV," << count << ",91," << initial_page_count << ',' << shape << ','
             << resolve_update_ms << ',' << serialize_ms << ',' << decode_ms << ',' << serialized.size() << ','
             << snapshot_peak_rss_kib() << std::endl;
   ASSERT_TRUE(std::cout.good());

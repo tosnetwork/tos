@@ -914,6 +914,13 @@ add_test(NAME test-uno-incremental-storage-smoke COMMAND ${CMAKE_COMMAND} -E env
   $<TARGET_FILE:test-uno-storage-measurement> --filter PartitionIncrementalRecords)
 set_tests_properties(test-uno-incremental-storage-smoke PROPERTIES LABELS "uno;storage;smoke" TIMEOUT 60
   FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
+foreach(uno_split_shape split split-prefix)
+  add_test(NAME test-uno-${uno_split_shape}-storage-smoke COMMAND ${CMAKE_COMMAND} -E env
+    TOS_UNO_STORAGE_KEYS=1000 TOS_UNO_STORAGE_PAGES=16 TOS_UNO_STORAGE_SHAPE=${uno_split_shape}
+    $<TARGET_FILE:test-uno-storage-measurement> --filter PartitionIncrementalRecords)
+  set_tests_properties(test-uno-${uno_split_shape}-storage-smoke PROPERTIES LABELS "uno;storage;smoke" TIMEOUT 60
+    FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
+endforeach()
 option(TOS_UNO_LARGE_SNAPSHOT_TEST "Run the resource-heavy UNO snapshot experiment" OFF)
 if (TOS_UNO_LARGE_SNAPSHOT_TEST)
   add_executable(test-uno-state-snapshot-large test/test-td-main.cpp test/test-uno-state-snapshot.cpp test/uno-snapshot-transport.cpp)
