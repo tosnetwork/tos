@@ -48,6 +48,14 @@ Each key doubles as its synthetic owner ID; this is not a proposed production
 identity scheme. All old owner records are checked after the new event. The
 restore bounds include historical owners/manifests using checked additions.
 
+Additional `reservation_cells` records scan the deduplicated closure of all
+three roots per experimental page and across all pages. They report maxima of
+page Cells/bits, root depth, global union Cells/bits and `roots_fit_65536`.
+This is a diagnostic control, not candidate admission: out-of-bound controls
+still finish and report false. No wrapper, code, note tree or coordinator is
+included. See `uno-reservation-capacity-pilot.md` for an observed pending/refund
+boundary and the limitations of this lower-bound measurement.
+
 ## Timing and counters
 
 stdout is CSV; stderr contains per-sample structural metrics. Capture both.

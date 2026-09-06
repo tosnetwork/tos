@@ -111,13 +111,12 @@ struct Metrics {
   std::uint64_t cells = 0, bits = 0;
   std::set<vm::CellHash> hashes;
 };
-Metrics metrics(const Pages& pages) {
+Metrics root_metrics(std::vector<td::Ref<vm::Cell>> pending) {
   Metrics result;
-  std::vector<td::Ref<vm::Cell>> pending;
-  for (const auto& page : pages) if (page.root().not_null()) pending.push_back(page.root());
   while (!pending.empty()) {
     auto cell = std::move(pending.back());
     pending.pop_back();
+    if (cell.is_null()) continue;
     if (!result.hashes.insert(cell->get_hash()).second) continue;
     auto data = take(cell->load_cell()).data_cell;
     require(data.not_null() && !data->is_special(), "unexpected measurement cell");
@@ -126,6 +125,17 @@ Metrics metrics(const Pages& pages) {
     for (unsigned i = 0; i < data->get_refs_cnt(); ++i) pending.push_back(data->get_ref(i));
   }
   return result;
+}
+Metrics metrics(const Pages& pages) {
+  std::vector<td::Ref<vm::Cell>> roots;
+  for (const auto& page : pages) roots.push_back(page.root());
+  return root_metrics(std::move(roots));
+}
+Metrics reservation_metrics(const NullifierState& state) {
+  return root_metrics({state.used_root(),state.reserved_root(),state.owners_root()});
+}
+bool roots_fit(const Metrics& metrics, std::uint64_t cell_limit) {
+  return metrics.cells <= cell_limit;
 }
 
 struct Envelopes {
@@ -236,6 +246,12 @@ std::vector<NullifierState> terminal_history(const std::vector<Key>& history, st
   return states;
 }
 void reservation_codec_self_test() {
+  auto leaf = vm::CellBuilder().store_long(1,1).finalize();
+  auto left = vm::CellBuilder().store_long(0,2).store_ref(leaf).finalize();
+  auto right = vm::CellBuilder().store_long(1,2).store_ref(leaf).finalize();
+  auto shared = root_metrics({left,right,leaf,left,{}});
+  require(shared.cells == 3 && shared.bits == 5, "root union did not deduplicate shared Cells");
+  require(roots_fit(shared,3) && !roots_fit(shared,2), "root union cell control boundary ignored");
   auto input = keys(45,4,false);
   auto owner = Key::zero();
   auto pending = take(take(NullifierState{}.with_used({input[0]})).reserve(owner,{input[1],input[2]}));
@@ -247,6 +263,14 @@ void reservation_codec_self_test() {
             "reservation codec reopened pending keys");
   }
   auto refunded = decode_nullifiers(encode_nullifiers(take(loaded.refund(owner))),{3,0,1,2});
+  auto complete = reservation_metrics(refunded);
+  auto used_only = root_metrics({refunded.used_root()});
+  require(complete.cells > used_only.cells, "root union omitted terminal owner closure");
+  vm::CellStorageStat native_stat;
+  for (const auto& root : {refunded.used_root(),refunded.reserved_root(),refunded.owners_root()})
+    if (root.not_null()) (void)take(native_stat.add_used_storage(root));
+  require(complete.cells == native_stat.cells && complete.bits == native_stat.bits,
+          "root union differs from Native closure accounting");
   require(refunded.used_count() == 3 && take(refunded.reserved_count(0)) == 0,
           "refund codec lost terminal state");
   for (const auto& key : {input[0],input[1],input[2]})
@@ -388,6 +412,26 @@ void measure(const Run& run) {
           }
         }
         states = std::move(restored_states);
+        std::vector<td::Ref<vm::Cell>> all_roots;
+        std::uint64_t max_cells = 0, max_bits = 0;
+        unsigned max_depth = 0;
+        for (const auto& state : states) {
+          const auto page_metrics = reservation_metrics(state);
+          max_cells = std::max(max_cells,page_metrics.cells);
+          max_bits = std::max(max_bits,page_metrics.bits);
+          for (const auto& root : {state.used_root(),state.reserved_root(),state.owners_root()}) {
+            all_roots.push_back(root);
+            if (root.not_null()) max_depth = std::max<unsigned>(max_depth,root->get_depth());
+          }
+        }
+        const auto union_metrics = root_metrics(std::move(all_roots));
+        Metrics largest;
+        largest.cells = max_cells;
+        std::cerr << "reservation_cells mode=" << run.mode << " scenario=" << run.scenario
+                  << " history=" << run.entries << " sample=" << sample << " phase=" << encode_phase
+                  << " max_page_cells=" << max_cells << " max_page_bits=" << max_bits
+                  << " max_root_depth=" << max_depth << " union_cells=" << union_metrics.cells
+                  << " union_bits=" << union_metrics.bits << " roots_fit_65536=" << roots_fit(largest,65536) << '\n';
         std::cerr << "reservation_bytes mode=" << run.mode << " scenario=" << run.scenario
                   << " history=" << run.entries << " sample=" << sample
                   << " phase=" << encode_phase << " used=" << sizes[0] << " reserved=" << sizes[1]
