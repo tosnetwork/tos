@@ -941,7 +941,7 @@ class InMemoryBagOfCellsDb : public DynamicBagOfCellsDb {
   }
 
   // Not implemented or trivial or deprecated methods
-  td::Status set_loader(std::unique_ptr<CellLoader> loader) override {
+  td::Status set_loader(std::unique_ptr<CellLoader> loader, bool /*force_refresh*/ = false) override {
     return td::Status::OK();
   }
 

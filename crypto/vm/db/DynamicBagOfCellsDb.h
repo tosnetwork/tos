@@ -110,7 +110,8 @@ class DynamicBagOfCellsDb {
   virtual std::shared_ptr<CellDbReader> get_cell_db_reader() = 0;
 
   // restart with new loader will also reset stats_diff
-  virtual td::Status set_loader(std::unique_ptr<CellLoader> loader) = 0;
+  // Force a fresh reader after writes made outside this object's commit path.
+  virtual td::Status set_loader(std::unique_ptr<CellLoader> loader, bool force_refresh = false) = 0;
 
   virtual void set_celldb_compress_depth(td::uint32 value) = 0;
   virtual vm::ExtCellCreator &as_ext_cell_creator() = 0;

@@ -188,7 +188,7 @@ struct BudgetedStateFile {
 };
 
 // Buffer-or-file variant produced by DownloadState. Small states (<=
-// kHeapThreshold) take the InMemory branch and ride the existing heap
+// the configured heap threshold) take the InMemory branch and ride the existing heap
 // path; large states take the OnDisk branch where the downloader streams
 // chunks into a tempfile via pwrite without any single full-state heap
 // allocation.
@@ -306,6 +306,9 @@ struct PersistentStateSpoolReservation {
 //   InMemory catch-up: still returns a full DataCell DAG; bounded
 //   by max_returned_dag_bytes_per_parse.
 struct PersistentStateBudgetConfig {
+  // Operators may route smaller snapshots to disk without increasing the
+  // maximum heap allocation. Valid range: 1 byte through 64 MiB.
+  td::uint64 heap_threshold_bytes = 64ULL << 20;
   td::uint64 max_download_bytes = 16ULL << 30;
   td::uint64 max_processing_bytes = 16ULL << 30;
   // True-streaming default: the OnDisk catch-up path can stream cells

@@ -176,6 +176,9 @@ void release_persistent_state_download_memory(td::uint64 size) {
 // undersized cap is refused so a misconfigured operator does not
 // silently disable persistent-state downloads.
 td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
+  if (cfg.heap_threshold_bytes == 0 || cfg.heap_threshold_bytes > kHeapThreshold) {
+    return td::Status::Error("heap_threshold_bytes must be between 1 byte and 64 MiB");
+  }
   if (cfg.max_download_bytes < kHeapThreshold) {
     return td::Status::Error(PSTRING() << "max_download_bytes " << cfg.max_download_bytes
                                        << " < kHeapThreshold " << kHeapThreshold);
@@ -709,7 +712,7 @@ td::Status validate_persistent_state_size(td::uint64 size) {
 }
 
 td::uint64 persistent_state_heap_threshold_bytes() {
-  return kHeapThreshold;
+  return load_budget_config_locked().heap_threshold_bytes;
 }
 
 td::uint64 persistent_state_max_file_bytes() {

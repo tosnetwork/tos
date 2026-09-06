@@ -2651,6 +2651,18 @@ void test_h03_budget_config_overrides() {
   // immediately. The validate-budget-config layer must reject obviously
   // undersized values.
   auto saved = persistent_state_budget_config();
+  EXPECT_EQ(persistent_state_heap_threshold_bytes(), 64 * kMiB);
+  auto disk_preferred = saved;
+  disk_preferred.heap_threshold_bytes = 1 * kMiB;
+  EXPECT_TRUE(configure_persistent_state_budgets(disk_preferred).is_ok());
+  EXPECT_EQ(persistent_state_heap_threshold_bytes(), 1 * kMiB);
+  for (auto invalid_threshold : {td::uint64{0}, td::uint64{64 * kMiB + 1}}) {
+    auto invalid = disk_preferred;
+    invalid.heap_threshold_bytes = invalid_threshold;
+    EXPECT_TRUE(configure_persistent_state_budgets(invalid).is_error());
+    EXPECT_EQ(persistent_state_heap_threshold_bytes(), 1 * kMiB);
+  }
+  EXPECT_TRUE(configure_persistent_state_budgets(saved).is_ok());
 
   PersistentStateBudgetConfig override_cfg = saved;
   override_cfg.max_processing_bytes = 8ULL << 30;       // 8 GiB

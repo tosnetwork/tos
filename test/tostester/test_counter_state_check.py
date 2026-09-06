@@ -21,6 +21,18 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_streaming_requires_matching_file_and_actor_import(self):
+        identity = "(2,8000000000000000,18):" + "AB" * 32 + ":" + "CD" * 32
+        file_log = f"finished downloading state {identity}: 2178KB (file)\n"
+        actor_log = f"import_persistent_state_streaming for {identity}, cells_persisted=32780\n"
+        module.require_checkpoint_streamed(file_log + actor_log)
+        for log in (file_log, actor_log, file_log.replace(" (file)", "") + actor_log,
+                    file_log + actor_log.replace("CD" * 32, "EF" * 32),
+                    file_log + actor_log.replace("cells_persisted=32780", "cells_persisted=0"),
+                    (file_log + actor_log).replace(",18)", ",0)")):
+            with self.subTest(log=log), self.assertRaisesRegex(AssertionError, "file download and actor-local"):
+                module.require_checkpoint_streamed(log)
+
     async def test_checkpoint_requires_identity_completion_and_nonzero_snapshot(self):
         block = toslib_api.Tos_blockIdExt(workchain=-1, shard=-(1 << 63), seqno=17,
                                          root_hash=bytes([1]) * 32, file_hash=bytes([2]) * 32)

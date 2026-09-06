@@ -1137,12 +1137,12 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
     return cell_db_reader_;
   }
 
-  td::Status set_loader(std::unique_ptr<CellLoader> loader) override {
+  td::Status set_loader(std::unique_ptr<CellLoader> loader, bool force_refresh = false) override {
     if (cell_db_reader_) {
       auto cache_size = cell_db_reader_->cache_size();
       bool force_drop_cache = cell_db_reader_->force_drop_cache();
       if (loader && cache_size < options_.cache_size_max && cell_db_reader_ttl_ < options_.cache_ttl_max &&
-          !force_drop_cache) {
+          !force_drop_cache && !force_refresh) {
         // keep cache
         cell_db_reader_ttl_++;
         return td::Status::OK();

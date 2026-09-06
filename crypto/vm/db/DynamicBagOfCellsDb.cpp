@@ -284,7 +284,7 @@ class DynamicBagOfCellsDbImpl : public DynamicBagOfCellsDb, private ExtCellCreat
     return cell_db_reader_;
   }
 
-  td::Status set_loader(std::unique_ptr<CellLoader> loader) override {
+  td::Status set_loader(std::unique_ptr<CellLoader> loader, bool /*force_refresh*/ = false) override {
     reset_cell_db_reader();
     loader_ = std::move(loader);
     //cell_db_reader_ = std::make_shared<CellDbReaderImpl>(this);

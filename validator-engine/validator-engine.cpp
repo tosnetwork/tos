@@ -6661,6 +6661,15 @@ int main(int argc, char *argv[]) {
                          cfg.max_download_bytes = v;
                          return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                        });
+  p.add_checked_option('\0', "persistent-state-heap-threshold",
+                       "largest persistent snapshot downloaded into heap, in bytes (1..67108864; default 64 MiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.heap_threshold_bytes = v;
+                         return tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                       });
   p.add_checked_option('\0', "persistent-state-processing-cap",
                        "cumulative outstanding persistent-state processing budget in bytes (default 16 GiB)",
                        [&](td::Slice arg) -> td::Status {
@@ -6815,6 +6824,7 @@ int main(int argc, char *argv[]) {
       return std::string{buf};
     };
     LOG(WARNING) << "persistent-state: download_cap=" << fmt_bytes(cfg.max_download_bytes)
+                 << " heap_threshold=" << fmt_bytes(cfg.heap_threshold_bytes)
                  << " processing_cap=" << fmt_bytes(cfg.max_processing_bytes)
                  << " single_file_cap=" << fmt_bytes(cfg.max_single_file_bytes)
                  << " resident_per_parse=" << fmt_bytes(cfg.max_resident_bytes_per_parse)

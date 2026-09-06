@@ -656,7 +656,9 @@ td::Status CellDbIn::refresh_loader_after_celldb_mutation(td::Slice context) {
   if (opts_->get_celldb_in_memory()) {
     return td::Status::OK();
   }
-  auto status = boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_));
+  // Import and rollback write directly to CellDb. A retained reader can still
+  // hold the pre-mutation snapshot even when the new loader is supplied.
+  auto status = boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_), true);
   if (status.is_error()) {
     return status.move_as_error_prefix(PSLICE() << "CellDbIn::" << context
                                                 << ": failed to refresh CellDb loader after CellDb mutation: ");

@@ -2830,3 +2830,63 @@ in-memory download path. `persistent_checkpoint_streaming_import_tested`
 remains false, as does `uno_sync_accepted`. The OnDisk selection and actor-local
 streaming import, resource/RSS bounds, growth/GC and retention remain required.
 M3 expansion remains paused.
+
+### File-backed checkpoint import exposed a V2 reader refresh defect
+
+`--persistent-state-heap-threshold` now allows operators to lower the download
+heap cutoff from its unchanged 64 MiB default. The accepted range is 1 byte
+through 64 MiB; larger values and zero are rejected without changing the live
+configuration. Download, processing, file and spool ceilings are unchanged.
+The startup budget log includes the effective threshold. The opt-in
+`--counter-checkpoint-streaming` profile requires the checkpoint and payload
+profiles and passes a 1 MiB cutoff only to the cold node. This routes the
+approximately 2 MiB valid snapshot through the normal file downloader without
+raising the account cell limit or manufacturing a larger invalid state.
+
+The first real run `7jyw9ybj` downloaded the Counter snapshot into a file and
+committed 32,781 cells, but repeatedly failed normal shard-state construction
+with an invalid-header error and eventually timed out. It remains a failed
+run. Investigation found that the earlier standalone actor fixture explicitly
+selected CellDb V1, whereas the real node uses V2. V2's `set_loader` can retain
+its old reader and ignore a newly supplied loader while its cache TTL and size
+are below their limits. Import/rollback writes bypass that reader's ordinary
+commit path, so it still observes the pre-mutation database snapshot.
+
+`set_loader` now accepts an explicit force-refresh argument, default false.
+Only the existing CellDb direct-mutation refresh helper requests it. V2 then
+replaces its reader before publishing the post-import provider; ordinary
+commit cache retention is unchanged. V1 already refreshes on every loader
+replacement. This changes storage-reader visibility, not root or proof checks.
+
+The new V2 actor fixture imports, reads the root and descendants, registers the
+state, and reopens the database. Initial fixture attempts failed before testing
+this property: unset cache options hit an existing empty-optional logging
+failure, and highly shared sequential keys violated the fixture's cell-count
+assumption. Explicit 64 MiB cache settings and deterministic dispersed keys
+corrected those setup issues. They are not counted as reader-refresh evidence.
+With that setup fixed, removing only V2's force-refresh condition produces
+`Cell load failed: not in db` immediately after 70 cells have been committed;
+restoring it passes the same root and reopening checks. The mutation log is
+`build/uno-v2-reader-mutation.log`. Separately, restoring the hardcoded heap
+cutoff makes the budget test fail on 64 MiB versus the requested 1 MiB; that
+mutation was also restored.
+
+Real run `zr55o736` passed checkpoint 20, masterchain target 21, Counter target
+19 and cold height 53. Its log binds the identical full Counter block identity
+to file download and actor-local import of 32,781 cells in 33 batches. With all
+warm validators stopped, cold database reopening preserved the complete
+2,097,263-byte executor-data BoC and transaction identity. The new observation
+test rejects heap-only downloads, missing import completion, mismatched block
+hashes, zero imported cells and genesis-only transfers. Previous checkpoint
+fixtures were archived, compared and moved to recoverable trash; both current
+network runs are terminal and retained.
+
+This closes the bounded real-network file-download-to-actor-import/reopening
+path, not scalable UNO state synchronization. No large-state RSS ceiling,
+growth cost, GC/retention policy or adversarial checkpoint-state rejection gate
+is claimed by this run. `uno_sync_accepted` remains false and M3 remains paused.
+
+After restoration, both node targets and relevant test binaries rebuilt. The
+host, disk integration, download-budget and snapshot CTests passed in 36.24
+seconds with `TOS_FAST_TESTS=1`; large opt-in experiments were not run. All
+twelve Python state/client observation tests passed.

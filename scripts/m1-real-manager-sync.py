@@ -128,6 +128,13 @@ def require_checkpoint_acquired(log, block):
         raise AssertionError("cold node did not download a non-genesis Counter snapshot")
 
 
+def require_checkpoint_streamed(log):
+    downloaded = set(re.findall(r"finished downloading state (\(2,8000000000000000,[1-9][0-9]*\):[A-F0-9]+:[A-F0-9]+):[^\n]*\(file\)", log))
+    imported = set(re.findall(r"import_persistent_state_streaming for (\(2,8000000000000000,[1-9][0-9]*\):[A-F0-9]+:[A-F0-9]+), cells_persisted=[1-9][0-9]*", log))
+    if not downloaded & imported:
+        raise AssertionError("cold Counter snapshot did not traverse file download and actor-local streaming import")
+
+
 def signature_proof_results(root, cold_name="node5", sent_marker="COUNTER_BAD_SIGNATURE_SENT"):
     logs = "\n".join(log.read_text(errors="replace") for log in (root / "network").glob("node*/log"))
     cold_path = root / "network" / cold_name / "log"
@@ -174,7 +181,7 @@ async def guarded_exercise(root, *args):
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
                    bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False,
-                   checkpoint=False):
+                   checkpoint=False, streaming=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -275,6 +282,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         cold_options = replace(options, env={**options.env, "TOS_COUNTER_RETIRED_SIGNATURE_FILE": ""})
         if checkpoint:
             cold_options = replace(cold_options, args=(*cold_options.args, "--sync-before", "1"))
+        if streaming:
+            cold_options = replace(cold_options, args=(*cold_options.args, "--persistent-state-heap-threshold", "1048576"))
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -323,6 +332,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired, payload), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
             cold_log = cold.log_path.read_text(errors="replace")
+            if streaming:
+                require_checkpoint_streamed(cold_log)
             if retired_signature:
                 sent, accepted, rejected = signature_proof_results(
                     root, cold.log_path.parent.name, "COUNTER_RETIRED_SIGNATURE_SENT")
@@ -406,7 +417,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "payload_cells": 32767 if large_payload else 0,
                 "cold_counter_zerostate_peer_download_tested": counter and not checkpoint,
                 "persistent_checkpoint_cold_join_tested": checkpoint,
-                "persistent_checkpoint_streaming_import_tested": False,
+                "persistent_checkpoint_streaming_import_tested": streaming,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
                 "remote_committee_signature_rejection_tested": bad_signature,
@@ -430,6 +441,8 @@ def main():
                         help="cold-join after a signed config-owner validator-weight update (not an election)")
     parser.add_argument("--counter-checkpoint", action="store_true",
                         help="use aged genesis and require native persistent-checkpoint cold join; requires --counter-reweight")
+    parser.add_argument("--counter-checkpoint-streaming", action="store_true",
+                        help="require file download and actor-local import; requires --counter-checkpoint and --counter-payload")
     parser.add_argument("--counter-membership", action="store_true",
                         help="replace one committee member with an independent node, then cold-join")
     parser.add_argument("--counter-retired-signature", action="store_true",
@@ -443,6 +456,8 @@ def main():
     args = parser.parse_args()
     if args.counter_payload and not args.counter:
         parser.error("--counter-payload requires --counter")
+    if args.counter_checkpoint_streaming and (not args.counter_checkpoint or not args.counter_payload):
+        parser.error("--counter-checkpoint-streaming requires --counter-checkpoint and --counter-payload")
     if args.counter_reweight and not args.counter:
         parser.error("--counter-reweight requires --counter")
     if args.counter_checkpoint and (not args.counter_reweight or args.counter_reencoded_state
@@ -485,7 +500,8 @@ def main():
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
-                                      args.counter_membership, args.counter_retired_signature, args.counter_checkpoint)))
+                                      args.counter_membership, args.counter_retired_signature, args.counter_checkpoint,
+                                      args.counter_checkpoint_streaming)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"
