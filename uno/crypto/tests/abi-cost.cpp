@@ -270,7 +270,14 @@ bool sample_with_backend(const char* context, const char* workload, const UnoCry
   if (late_failure && !requests.empty()) requests.back() = &wrong;
   Usage limits, usage;
   limits.proofs = count;
-  if (!multiply(count, 2, limits.actions) || !multiply(count, 9032, limits.payload_bytes)) return false;
+  std::size_t action_bytes, payload_bytes;
+  if (!multiply(count, input.action_count, limits.actions) ||
+      !multiply(input.action_count, sizeof(UnoCryptoAction), action_bytes) ||
+      !add(action_bytes, input.proof_bytes, payload_bytes) ||
+      !multiply(count, payload_bytes, limits.payload_bytes)) {
+    std::cerr << "measurement limit arithmetic overflow\n";
+    return false;
+  }
   const auto begin = Clock::now();
   Clock::time_point ready;
   std::size_t calls = 0;
@@ -281,8 +288,16 @@ bool sample_with_backend(const char* context, const char* workload, const UnoCry
     const auto expected = request == &wrong ? UNO_CRYPTO_VERIFY : UNO_CRYPTO_OK;
     backend_ok = actual == expected && add(calls, 1, calls);
   }, &usage, [&] { ready = Clock::now(); });
-  if (admitted != Admission::Ok || !backend_ok) return false;
+  if (admitted != Admission::Ok || !backend_ok) {
+    std::cerr << "measurement failed: admission=" << static_cast<int>(admitted)
+              << " backend_ok=" << backend_ok << '\n';
+    return false;
+  }
   const auto end = Clock::now();
+  if (ready < begin || end < ready) {
+    std::cerr << "measurement clock observation is missing or out of order\n";
+    return false;
+  }
   output << "{\"context\":\"" << context << "\",\"workload\":\"" << workload
             << "\",\"sample\":" << index << ",\"proof_calls\":" << calls
             << ",\"actions\":" << usage.actions << ",\"payload_bytes\":" << usage.payload_bytes
@@ -296,15 +311,16 @@ bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequ
                             uno_crypto_verify_v0, std::cout);
 }
 bool sample_boundary_self_test() {
-  UnoCryptoAction actions[2]{};
-  uint8_t proof[7264]{};
+  std::cerr << "checking measurement sample boundaries\n";
+  UnoCryptoAction actions[4]{};
+  uint8_t proof[11808]{};
   UnoCryptoVerifyRequest input{};
   input.abi_version = UNO_CRYPTO_ABI_VERSION;
   input.profile = UNO_CRYPTO_FIXED_PROFILE;
   input.actions = actions;
   input.action_count = input.max_actions = 2;
   input.proof = proof;
-  input.proof_bytes = input.max_proof_bytes = sizeof(proof);
+  input.proof_bytes = input.max_proof_bytes = 7264;
   std::size_t calls = 0;
   bool count_ok = true;
   auto backend = [&](const UnoCryptoVerifyRequest*) {
@@ -313,13 +329,60 @@ bool sample_boundary_self_test() {
   };
   std::ostringstream output;
   if (!sample_with_backend("test", "valid", input, 2, 0, false, backend, output) ||
-      calls != 2 || !count_ok || output.str().empty()) {
-    std::cerr << "measurement positive control failed: calls=" << calls << '\n';
+      calls != 2 || !count_ok ||
+      output.str().find("\"proof_calls\":2,\"actions\":4,\"payload_bytes\":18064,") == std::string::npos) {
+    std::cerr << "measurement positive control failed: calls=" << calls
+              << " record=" << output.str() << '\n';
+    return false;
+  }
+  calls = 0;
+  output.str("");
+  std::size_t wrong_calls = 0;
+  auto late_backend = [&](const UnoCryptoVerifyRequest* request) {
+    count_ok = add(calls, 1, calls) && count_ok;
+    if (request->sighash[0] != input.sighash[0]) {
+      count_ok = add(wrong_calls, 1, wrong_calls) && count_ok;
+      return UNO_CRYPTO_VERIFY;
+    }
+    return UNO_CRYPTO_OK;
+  };
+  if (!sample_with_backend("test", "late", input, 2, 0, true, late_backend, output) ||
+      calls != 2 || wrong_calls != 1 || !count_ok ||
+      output.str().find("\"proof_calls\":2,") == std::string::npos) {
+    std::cerr << "late-failure sample missing failed request: calls=" << calls
+              << " wrong_calls=" << wrong_calls << '\n';
+    return false;
+  }
+  calls = 0;
+  output.str("");
+  auto failed_backend = [&](const UnoCryptoVerifyRequest*) {
+    count_ok = add(calls, 1, calls) && count_ok;
+    return UNO_CRYPTO_DECODE;
+  };
+  std::cerr << "checking expected-failure control: backend status\n";
+  if (sample_with_backend("test", "backend failure", input, 2, 0, false, failed_backend, output) ||
+      calls != 1 || !count_ok || !output.str().empty()) {
+    std::cerr << "backend failure published a sample or continued verification\n";
+    return false;
+  }
+  // Both shapes fit the backing buffers. The stub still checks instrument
+  // behavior only; these bytes are not real proof material.
+  auto four = input;
+  four.action_count = four.max_actions = 4;
+  four.proof_bytes = four.max_proof_bytes = 11808;
+  calls = 0;
+  output.str("");
+  if (!sample_with_backend("test", "four actions", four, 2, 0, false, backend, output) ||
+      calls != 2 || !count_ok ||
+      output.str().find("\"proof_calls\":2,\"actions\":8,\"payload_bytes\":30688,") == std::string::npos) {
+    std::cerr << "measurement limits or output retained fixed two-Action shape: calls="
+              << calls << " record=" << output.str() << '\n';
     return false;
   }
   calls = 0;
   output.str("");
   input.proof_bytes = 0;
+  std::cerr << "checking expected-failure control: malformed proof shape\n";
   if (sample_with_backend("test", "invalid", input, 2, 0, false, backend, output) ||
       calls != 0 || !count_ok || !output.str().empty()) {
     std::cerr << "measurement admitted malformed input: calls=" << calls << '\n';
