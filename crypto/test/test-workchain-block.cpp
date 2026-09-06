@@ -41,7 +41,7 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
                               std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
-                              std::uint64_t operating_balance = 0) {
+                              std::uint64_t operating_balance = 0, td::Ref<vm::Cell> payload = {}) {
   vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
   for (unsigned i = 0; i < account_count; ++i) {
     td::Bits256 address = td::Bits256::zero();
@@ -51,7 +51,10 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
         .store_zeroes(42).store_long(2, 64);
     ASSERT_TRUE(block::CurrencyCollection(td::make_refint(operating_balance)).store(account));
     if (active) {
-      auto executor = block::encode_workchain_executor_state({number(counter_value), {}, {}}).move_as_ok();
+      vm::CellBuilder engine;
+      engine.store_long(counter_value, 64);
+      if (payload.not_null()) engine.store_ref(payload);
+      auto executor = block::encode_workchain_executor_state({engine.finalize(), {}, {}}).move_as_ok();
       account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(executor).store_long(0, 1);
     } else {
       account.store_long(0, 2);
@@ -150,6 +153,58 @@ TEST(WorkchainBlock, CounterReplay) {
   ASSERT_TRUE(validated.new_engine_state->get_hash() == produced.new_engine_state->get_hash());
   auto previous = block::extract_workchain_engine_state(in.previous_shard_state, 2, td::Bits256::zero()).move_as_ok();
   ASSERT_EQ(vm::load_cell_slice(previous).fetch_ulong(64), 40u);
+}
+
+TEST(WorkchainBlock, CounterPayloadSurvivesBatchReplay) {
+  // Wide unique leaves model account-cell storage, not private-note semantics.
+  std::vector<td::Ref<vm::Cell>> layer;
+  for (unsigned i = 0; i < (1u << 14); ++i) {
+    layer.push_back(vm::CellBuilder().store_long(i, 64).store_zeroes(896).finalize());
+  }
+  while (layer.size() > 1) {
+    std::vector<td::Ref<vm::Cell>> next;
+    for (std::size_t i = 0; i < layer.size(); i += 2) {
+      next.push_back(vm::CellBuilder().store_ref(layer[i]).store_ref(layer[i + 1]).finalize());
+    }
+    layer = std::move(next);
+  }
+  auto payload = layer.front();
+  auto in = input();
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, payload);
+  const auto previous_hash = in.previous_shard_state->get_hash();
+  CounterEngine engine({8, 1, 3}, 1, 2, CounterEngine::PayloadMode::PreserveReference);
+  ASSERT_TRUE(CounterEngine().execute_block(in).is_error());
+  ASSERT_TRUE(engine.execute_block(input()).is_error());
+  auto effects = engine.execute_block(in).move_as_ok();
+  auto result_state = vm::load_cell_slice(effects.new_engine_state);
+  ASSERT_EQ(result_state.fetch_ulong(64), 42u);
+  ASSERT_EQ(result_state.size_refs(), 1u);
+  ASSERT_TRUE(result_state.fetch_ref()->get_hash() == payload->get_hash());
+
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, td::Bits256::zero().bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial));
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  ASSERT_EQ(cfg.size_limits.max_acc_state_cells, 65536u);
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(tx.prepare_workchain_batch(in, effects, cfg).is_ok());
+  ASSERT_TRUE(tx.serialize(cfg));
+  auto replayed = block::replay_workchain_batch_transaction(
+      engine, in, tx.root, 2, td::Bits256::zero(), 10, 10, cfg).move_as_ok();
+  ASSERT_TRUE(replayed->get_hash() == tx.new_total_state->get_hash());
+  auto wire = vm::std_boc_serialize(tx.new_data).move_as_ok();
+  auto restored = vm::std_boc_deserialize(wire.as_slice()).move_as_ok();
+  ASSERT_TRUE(restored->get_hash() == tx.new_data->get_hash());
+  vm::CellStorageStat stat;
+  ASSERT_TRUE(stat.compute_used_storage(restored).is_ok());
+  ASSERT_TRUE(stat.cells > 32767u);
+  ASSERT_TRUE(stat.cells < cfg.size_limits.max_acc_state_cells);
+  ASSERT_TRUE(wire.size() > (1u << 20));
+  ASSERT_TRUE(in.previous_shard_state->get_hash() == previous_hash);
+  LOG(INFO) << "Counter payload batch: wrapper cells=" << stat.cells << " boc bytes=" << wire.size();
 }
 
 TEST(WorkchainBlock, CanonicalInboundList) {

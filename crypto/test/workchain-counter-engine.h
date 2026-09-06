@@ -34,9 +34,11 @@ inline td::Ref<vm::Cell> counter_message_candidate(std::uint64_t increment, bool
 
 class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
  public:
+  enum class PayloadMode { None, PreserveReference };
+
   explicit CounterEngine(block::WorkchainBlockResourceUsage limits = {8, 1, 3}, std::uint64_t verification_units = 1,
-                         std::int32_t workchain = 2)
-      : limits_(limits), verification_units_(verification_units), workchain_(workchain) {
+                         std::int32_t workchain = 2, PayloadMode payload_mode = PayloadMode::None)
+      : limits_(limits), verification_units_(verification_units), workchain_(workchain), payload_mode_(payload_mode) {
   }
 
   td::Result<block::WorkchainBlockPolicy> block_policy(
@@ -67,7 +69,8 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
     TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, workchain_, td::Bits256::zero()));
     auto state = vm::load_cell_slice(engine_state);
     auto candidate = vm::load_cell_slice(input.candidate);
-    if (state.size() != 64 || state.size_refs() != 0 || candidate.size() != 64 || candidate.size_refs() > 1) {
+    const unsigned expected_refs = payload_mode_ == PayloadMode::PreserveReference ? 1 : 0;
+    if (state.size() != 64 || state.size_refs() != expected_refs || candidate.size() != 64 || candidate.size_refs() > 1) {
       return td::Status::Error("counter input shape");
     }
     const auto value = state.fetch_ulong(64);
@@ -76,7 +79,12 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
       return td::Status::Error("counter overflow");
     }
     block::WorkchainBlockResult result;
-    result.new_engine_state = counter_number(value + increment);
+    vm::CellBuilder next_state;
+    next_state.store_long(value + increment, 64);
+    if (payload_mode_ == PayloadMode::PreserveReference) {
+      next_state.store_ref(state.fetch_ref());
+    }
+    result.new_engine_state = next_state.finalize();
     result.outbound_messages = candidate.size_refs() ? candidate.fetch_ref()
         : vm::CellBuilder().store_long(0, 1).finalize();
     result.actions = input.candidate;
@@ -91,6 +99,7 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   block::WorkchainBlockResourceUsage limits_;
   std::uint64_t verification_units_;
   std::int32_t workchain_;
+  PayloadMode payload_mode_;
 };
 
 }  // namespace block::test

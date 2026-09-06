@@ -2517,3 +2517,35 @@ reopening and resource use against it. M1 remains open.
 
 After restoring the check, both node targets and both Counter test targets
 rebuilt; BlockTransition and disk integration CTests passed in 1.65 seconds.
+
+### Payload-preserving Counter prerequisite for larger network state
+
+The test-only Counter engine now has an explicit PreserveReference mode. Its
+default remains a 64-bit counter without references; the opt-in mode requires
+exactly one payload reference and preserves it across increments. No node
+registration, genesis setting, production engine or global limit is changed.
+
+`CounterPayloadSurvivesBatchReplay` supplies 16,384 uniquely labelled 960-bit
+leaves in a balanced binary tree. It verifies the increment and unchanged
+payload, prepares and serializes a real batch transaction under the default
+65,536-cell limit, replays that transaction and compares the complete account
+state. A subsequent executor-data BoC round-trip retains the same root. The
+measured full executor data contains 32,774 cells and serializes to 2,097,259
+bytes. The ordinary Counter rejects this state, and the opt-in mode rejects
+the ordinary no-payload state, preventing silent fixture-mode substitution.
+
+Mutation evidence: replacing the preserved reference with a different cell
+while retaining the correct counter value and one-reference shape makes this
+test fail at the payload-content comparison, not a parse error or timeout.
+The preservation operation was restored before the final build.
+
+This is a valid host-engine test payload, not a private-note schema or a
+network result. It establishes a bounded state fixture that can execute and
+replay before wiring it into the independent-manager cold-join test. It does
+not establish authenticated large-state download, production persistent-state
+import, database reopening, peak RSS, tree growth cost or scalable UNO state.
+Those gates and committee/checkpoint transitions remain open; M3 expansion
+remains paused.
+
+After restoration, the BlockTransition test, disk collator and test node targets
+rebuilt; BlockTransition and disk integration CTests passed in 1.35 seconds.
