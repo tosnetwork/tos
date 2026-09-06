@@ -3078,3 +3078,54 @@ This closes the missing replay-cache connection in code, not the real-node
 resource gate: independent-node cache-hit observations, first cold replay,
 peak RSS, cache retention/GC and growing state still require measurement.
 M3 remains paused.
+
+### Independent-validator replay-cache evidence
+
+Successful batch replay now emits a debug observation with the complete
+transaction hash and whether account storage-stat initialization succeeded
+from cache. It is emitted only after the reconstructed transaction hash
+matches the claim. The bounded-payload network profile enables debug logs
+and requires a common cache-hit transaction in at least two separate warm
+validator logs. Repeated lines in one log, misses, differing transaction
+identities and malformed hashes do not satisfy that check.
+
+The streaming-checkpoint experiment at
+`build/m1-counter-network-run-4yp6671z` passed on the cache implementation
+`c1e0b35bd` plus this observation/harness change. Each of four independent
+validator processes recorded one distinct miss transaction and 83 distinct
+hit transactions; all 83 hit identities are shared across the validators.
+`validator-replay-cache.json` retains the full identities and node mapping.
+This exercises the real candidate-validation path and manager cache wiring,
+not merely the standalone replay helper. It does not measure the number of
+database reads or bytes retained by each cache hit.
+
+The same run selected masterchain checkpoint 21, downloaded workchain-2
+checkpoint 19 through the file path, and imported 32,781 cells through the
+CellDb actor with matching complete block identities. The pinned target was
+masterchain height 22 and Counter height 22; the cold observer reached height
+53. The 2,097,263-byte executor data remained identical after all warm
+validators stopped and the cold database reopened. The run is terminal and
+all its child nodes have stopped.
+
+The observer's measured RSS and kernel-reported peak were 141,139,968 bytes
+at the pre-restart observation and 119,603,200 bytes after reopening. These
+are separate whole-process observations, not importer-only budgets, warm
+validator RSS, or a comparative memory improvement. A cold observer acquiring
+authenticated state is not evidence that it independently reexecutes each
+historical batch. Replay-cache evidence here comes specifically from the
+four committee validator processes; the two properties remain separate.
+
+All 40 WorkchainBlock tests and 14 Python instrument tests passed. Weakening
+the log instrument from two validator owners to one made its negative
+controls fail; the original threshold was restored and retested. Logs are
+`build/uno-real-cache-block-regression.log`,
+`build/uno-real-cache-instruments.log`,
+`build/uno-real-cache-instrument-mutation.log` and
+`build/uno-real-cache-instrument-restored.log`.
+
+The three preceding terminal streaming fixtures were archived in
+`build/m1-counter-streaming-pre-cache-20260906.tar.gz`, verified against the
+original directories with `tar -d`, then moved to the recoverable trash.
+No unrelated build trees were removed. First cold-validator replay cost,
+long-run state growth and GC/retention, validator RSS and scalable state
+admission still keep M1 resource acceptance open. M3 remains paused.

@@ -50,6 +50,23 @@ async def counter_state(client, block, payload=None):
     return state
 
 
+def require_validator_replay_cache(logs):
+    evidence = {}
+    owners = {}
+    for name, log in logs.items():
+        matches = re.findall(r"Batch replay storage cache: hit=(true|false) transaction=([0-9A-Fa-f]{64})(?![0-9A-Fa-f])", log)
+        hits = {tx.lower() for hit, tx in matches if hit == "true"}
+        for tx in hits:
+            owners.setdefault(tx, []).append(name)
+        evidence[name] = {"hit_transactions": sorted(hits),
+                          "miss_transactions": sorted({tx.lower() for hit, tx in matches if hit == "false"})}
+    shared = {tx: names for tx, names in owners.items() if len(names) >= 2}
+    if not shared:
+        raise AssertionError("need the same cache-hit replay in two independent validators")
+    return {"validators": evidence, "shared_hit_transactions": shared,
+            "scope": "validator candidate replay, not cold observer replay or an RSS bound"}
+
+
 def node_memory_observation(node, proc_root=Path("/proc")):
     pid = node.process_id
     if pid is None:
@@ -232,7 +249,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         for node in validators:
             node.make_initial_validator()
             node.announce_to(dht)
-        options = StartOptions(threads=4, verbosity=3, args=(
+        options = StartOptions(threads=4, verbosity=4 if large_payload else 3, args=(
             "--max-archive-fd", "64", "--celldb-cache-size", "67108864",
             "--celldb-cache-min-size", "67108864"), env={
             "TOS_ROCKSDB_BLOCK_CACHE_SIZE": "67108864",
@@ -436,6 +453,11 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             (root / "counter-account-reopened.json").write_text(restored.to_json())
             memory_observations["reopened"] = node_memory_observation(cold)
             (root / "cold-memory.json").write_text(json.dumps(memory_observations, indent=2) + "\n")
+        replay_cache = None
+        if large_payload:
+            replay_cache = require_validator_replay_cache({
+                node.log_path.parent.name: node.log_path.read_text(errors="replace") for node in validators})
+            (root / "validator-replay-cache.json").write_text(json.dumps(replay_cache, indent=2) + "\n")
         return {"scope": "Counter real-manager cold-join" if counter else "native/masterchain real-manager cold-join baseline only",
                 "counter_workchain_tested": counter, "uno_sync_accepted": False,
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
@@ -443,6 +465,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_database_reopened": counter,
                 "bounded_payload_reopened": large_payload,
                 "cold_process_memory": memory_observations,
+                "validator_replay_cache": replay_cache,
                 "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,

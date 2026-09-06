@@ -536,6 +536,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     if (!account.unpack(accounts.lookup(executor_address), expected_utime, kWorkchainExecutorIsSpecial)) {
       return td::Status::Error("invalid batch replay account");
     }
+    bool storage_cache_hit = false;
     if (storage_cache && storage_cache->lookup && account.storage_dict_hash) {
       auto dict = storage_cache->lookup(account.storage_dict_hash.value());
       if (dict.not_null() && td::Bits256(dict->get_hash().bits()) == account.storage_dict_hash.value()) {
@@ -543,6 +544,8 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
         auto initialized = account.init_account_storage_stat(std::move(dict));
         if (initialized.is_error()) {
           account.account_storage_stat = {};
+        } else {
+          storage_cache_hit = true;
         }
       }
     }
@@ -555,6 +558,8 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     if (actual.root->get_hash() != claimed->get_hash()) {
       return td::Status::Error("batch transaction wrapper differs from replay");
     }
+    LOG(DEBUG) << "Batch replay storage cache: hit=" << storage_cache_hit
+               << " transaction=" << claimed->get_hash().to_hex();
     if (storage_cache && storage_cache->remember && actual.new_storage_dict_hash &&
         actual.new_account_storage_stat && actual.new_storage_used.cells <= std::numeric_limits<td::uint32>::max()) {
       TRY_RESULT(dict, actual.new_account_storage_stat.value().get_dict_root());

@@ -21,6 +21,17 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_replay_cache_requires_two_validators_and_same_transaction(self):
+        hit = "Batch replay storage cache: hit=true transaction=" + "ab" * 32 + "\n"
+        logs = {"node1": hit, "node2": hit}
+        result = module.require_validator_replay_cache(logs)
+        self.assertEqual(result["shared_hit_transactions"], {"ab" * 32: ["node1", "node2"]})
+        for bad in ({}, {"node1": hit + hit}, {"node1": hit, "node2": hit.replace("true", "false")},
+                    {"node1": hit, "node2": hit.replace("ab", "cd")},
+                    {"node1": hit, "node2": hit.replace("ab" * 32, "ab" * 33)}):
+            with self.subTest(logs=bad), self.assertRaisesRegex(AssertionError, "two independent validators"):
+                module.require_validator_replay_cache(bad)
+
     async def test_process_memory_requires_live_identity_and_explicit_units(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
