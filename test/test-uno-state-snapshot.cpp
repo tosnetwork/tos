@@ -5,6 +5,7 @@
 #include <mutex>
 #include <chrono>
 #include <iostream>
+#include <functional>
 #include "rocksdb/merge_operator.h"
 
 #include "block/block-auto.h"
@@ -165,7 +166,8 @@ class SnapshotImportActor final : public td::actor::Actor {
  public:
   SnapshotImportActor(std::string directory, tos::validator::PersistentStateImportRequest request,
                       td::Bits256 expected_payload, std::vector<td::Bits256> keys, std::atomic<bool>& completed,
-                      bool reopen = false, bool celldb_v2 = false, SnapshotPhaseMeasurements* measurements = nullptr)
+                      bool reopen = false, bool celldb_v2 = false, SnapshotPhaseMeasurements* measurements = nullptr,
+                      std::function<void(td::Ref<vm::Cell>,bool)> verify_state = {})
       : directory_(std::move(directory))
       , request_(std::move(request))
       , expected_payload_(expected_payload)
@@ -173,7 +175,8 @@ class SnapshotImportActor final : public td::actor::Actor {
       , completed_(completed)
       , reopen_(reopen)
       , celldb_v2_(celldb_v2)
-      , measurements_(measurements) {
+      , measurements_(measurements)
+      , verify_state_(std::move(verify_state)) {
   }
 
   void start_up() override {
@@ -260,6 +263,10 @@ class SnapshotImportActor final : public td::actor::Actor {
   void verify_root(td::Ref<vm::Cell> root) {
     ASSERT_TRUE(td::Bits256(root->get_hash().bits()) == request_.expected_root_hash);
     root->load_cell().ensure();
+    if (verify_state_) {
+      verify_state_(root, false);
+      return;
+    }
     auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
     ASSERT_TRUE(td::Bits256(payload->get_hash().bits()) == expected_payload_);
     vm::Dictionary dictionary(payload, 256);
@@ -297,6 +304,9 @@ class SnapshotImportActor final : public td::actor::Actor {
     report_residency("reopened-before-traversal");
     verify_root(root);
     report_residency("reopened-after-traversal");
+    if (verify_state_) {
+      verify_state_(root, true);
+    } else {
     auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
     auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys_.size()).move_as_ok();
     ASSERT_TRUE(restored.with_used({keys_.front()}).is_error());
@@ -306,6 +316,7 @@ class SnapshotImportActor final : public td::actor::Actor {
     ASSERT_TRUE(next.contains(fresh));
     ASSERT_TRUE(!restored.contains(fresh));
     ASSERT_TRUE(restored.root()->get_hash() == payload->get_hash());
+    }
     if (measurements_) measurements_->reopen_validate_and_append_ms = snapshot_elapsed_ms(validation_start);
     check_registration();
   }
@@ -340,6 +351,7 @@ class SnapshotImportActor final : public td::actor::Actor {
   bool reopen_ = false;
   bool celldb_v2_ = false;
   SnapshotPhaseMeasurements* measurements_ = nullptr;
+  std::function<void(td::Ref<vm::Cell>,bool)> verify_state_;
   SnapshotClock::time_point started_, store_started_;
   std::unique_ptr<tos::validator::CellDbGcPauseLease> lease_;
   td::actor::ActorOwn<tos::validator::CellDb> database_;
@@ -596,6 +608,130 @@ TEST(UnoStorageMeasurement, SnapshotStages) {
             << measurements.reopen_validate_and_append_ms << ',' << whole_import_ms << ',' << whole_reopen_ms << ','
             << rss_before << ',' << rss_generated << ',' << rss_serialized << ',' << rss_imported << ',' << rss_reopened
             << ',' << state->get_hash().to_hex() << std::endl;
+  td::rmrf(directory).ensure();
+  td::unlink(file.second).ensure();
+}
+TEST(UnoStorageMeasurement, PartitionPersistenceStages) {
+  const char* requested = std::getenv("TOS_UNO_STORAGE_KEYS");
+  const char* requested_pages = std::getenv("TOS_UNO_STORAGE_PAGES");
+  ASSERT_TRUE(requested && requested_pages);
+  const std::string value(requested), page_value(requested_pages);
+  const std::size_t count = value == "1000" ? 1000 : value == "8000" ? 8000 :
+      value == "32000" ? 32000 : value == "65536" ? 65536 : 0;
+  const std::size_t page_count = page_value == "1" ? 1 : page_value == "16" ? 16 : 0;
+  ASSERT_TRUE(count && page_count);
+  auto started = SnapshotClock::now();
+  auto keys = measurement_keys(count);
+  std::vector<std::vector<td::Bits256>> grouped(page_count);
+  for (const auto& key : keys) {
+    auto page = page_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> 4;
+    grouped[page].push_back(key);
+  }
+  std::vector<uno_workchain::UsedNullifiers> pages;
+  vm::AugmentedDictionary accounts(256,block::tlb::aug_ShardAccounts);
+  td::uint64 max_data_cells = 0;
+  for (std::size_t i = 0; i < page_count; ++i) {
+    pages.push_back(uno_workchain::UsedNullifiers{}.with_used(grouped[i]).move_as_ok());
+    ASSERT_TRUE(pages.back().root().not_null()); // All selected seeded groups are nonempty.
+    auto data = pages.back().root();
+    vm::CellStorageStat stat;
+    stat.compute_used_storage(data).ensure();
+    max_data_cells = std::max<td::uint64>(max_data_cells, stat.cells);
+    auto address = td::Bits256::zero();
+    address.as_slice()[31] = static_cast<char>(i); // page_count <= 16.
+    vm::CellBuilder account;
+    account.store_long(1,1).store_long(4,3).store_long(2,8).store_bits(address.bits(),256)
+        .store_zeroes(42).store_long(2,64);
+    ASSERT_TRUE(block::CurrencyCollection(0).store(account));
+    account.store_long(1,1).store_zeroes(3).store_long(1,1).store_ref(data).store_long(0,1);
+    auto root = account.finalize();
+    ASSERT_TRUE(block::gen::t_Account.validate_ref(1000000,root));
+    vm::CellBuilder entry;
+    entry.store_ref(root).store_zeroes(256).store_long(1,64);
+    ASSERT_TRUE(accounts.set_builder(address,entry));
+  }
+  auto state = single_account_state(pages.front().root());
+  block::gen::ShardStateUnsplit::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(state,record));
+  record.accounts = accounts.get_wrapped_dict_root();
+  ASSERT_TRUE(tlb::pack_cell(state,record));
+  const auto generate_ms = snapshot_elapsed_ms(started);
+  auto verify = [&](td::Ref<vm::Cell> root, bool probe, bool wrong_expected) {
+    block::gen::ShardStateUnsplit::Record restored;
+    if (!tlb::unpack_cell(root,restored)) return false;
+    vm::AugmentedDictionary dictionary(vm::load_cell_slice_ref(restored.accounts),256,block::tlb::aug_ShardAccounts);
+    for (std::size_t i = 0; i < page_count; ++i) {
+      auto address = td::Bits256::zero();
+      address.as_slice()[31] = static_cast<char>(i);
+      block::Account account(2,address.bits());
+      if (!account.unpack(dictionary.lookup(address),10,false) || account.data.is_null()) return false;
+      td::Bits256 expected(pages[i].root()->get_hash().bits());
+      if (wrong_expected && i == 0) expected.as_slice()[0] ^= 1;
+      if (td::Bits256(account.data->get_hash().bits()) != expected) return false;
+      auto used = uno_workchain::UsedNullifiers::from_root(account.data,grouped[i].size()).move_as_ok();
+      for (const auto& key : grouped[i]) if (!used.try_contains(key).move_as_ok()) return false;
+      if (probe) {
+        if (used.with_used({grouped[i].front()}).is_ok()) return false;
+        auto fresh = td::Bits256::zero();
+        fresh.as_slice()[0] = static_cast<char>(i << 4);
+        if (used.try_contains(fresh).move_as_ok()) return false;
+        auto next = used.with_used({fresh}).move_as_ok();
+        if (!next.try_contains(fresh).move_as_ok() || used.try_contains(fresh).move_as_ok()) return false;
+      }
+    }
+    return true;
+  };
+  ASSERT_TRUE(verify(state,false,false));
+  ASSERT_TRUE(!verify(state,false,true)); // Same valid pages, wrong expected data binding only.
+  started = SnapshotClock::now();
+  auto bytes = vm::std_boc_serialize(state).move_as_ok();
+  const auto serialize_ms = snapshot_elapsed_ms(started);
+  vm::BagOfCells::Info info;
+  ASSERT_TRUE(info.parse_serialized_header(bytes.as_slice()) > 0);
+  auto file = td::mkstemp("/tmp").move_as_ok();
+  file.first.write_all(bytes.as_slice()).ensure();
+  file.first.close();
+  const auto directory = td::mkdtemp("/tmp","uno-partition-storage-").move_as_ok();
+  LOG(WARNING) << "Partition storage database " << directory << " input " << file.second
+               << " (removed on success, retained on failure)";
+  tos::validator::PersistentStateImportRequest request;
+  request.tempfile_path = file.second;
+  request.file_size = bytes.size();
+  request.expected_root_hash = state->get_hash().bits();
+  request.opts.max_resident_bytes = 16ULL << 20;
+  SnapshotPhaseMeasurements measurements;
+  for (bool reopen : {false,true}) {
+    std::atomic<bool> completed{false};
+    unsigned checks = 0, probes = 0;
+    {
+      td::actor::Scheduler scheduler({2});
+      td::actor::ActorOwn<SnapshotImportActor> actor;
+      scheduler.run_in_context([&] {
+        actor = td::actor::create_actor<SnapshotImportActor>("partition-storage-measurement",directory,request,
+            td::Bits256::zero(),keys,completed,reopen,true,&measurements,
+            [&](td::Ref<vm::Cell> root, bool probe) {
+              ASSERT_TRUE(checks < 5); // Bounds the increment and detects extra callback paths.
+              ++checks;
+              if (probe) {
+                ASSERT_TRUE(probes == 0);
+                ++probes;
+              }
+              ASSERT_TRUE(verify(root,probe,false));
+            });
+      });
+      scheduler.run();
+    }
+    ASSERT_TRUE(completed.load());
+    ASSERT_EQ(checks,reopen ? 2u : 3u);
+    ASSERT_EQ(probes,reopen ? 1u : 0u);
+  }
+  std::cout << "PARTITION_STORAGE_CSV," << count << ",91," << page_count << ',' << max_data_cells << ','
+            << info.cell_count << ',' << bytes.size() << ',' << generate_ms << ',' << serialize_ms << ','
+            << measurements.import_request_ms << ',' << measurements.first_lookup_ms << ','
+            << measurements.root_store_ms << ',' << measurements.reopen_root_ms << ','
+            << measurements.reopen_validate_and_append_ms << ',' << snapshot_peak_rss_kib() << ','
+            << state->get_hash().to_hex() << std::endl;
+  // Storage-only root adoption, not a consensus-valid multi-account UNO batch.
   td::rmrf(directory).ensure();
   td::unlink(file.second).ensure();
 }

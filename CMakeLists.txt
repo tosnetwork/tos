@@ -903,6 +903,12 @@ target_link_libraries(test-uno-state-snapshot PRIVATE validator validator-common
 add_executable(test-uno-storage-measurement EXCLUDE_FROM_ALL test/test-td-main.cpp test/test-uno-state-snapshot.cpp test/uno-snapshot-transport.cpp)
 target_compile_definitions(test-uno-storage-measurement PRIVATE TOS_UNO_STORAGE_MEASUREMENT=1)
 target_link_libraries(test-uno-storage-measurement PRIVATE validator validator-common full-node adnl dht tos_crypto tl_api tdactor tdutils)
+add_dependencies(all-tests test-uno-storage-measurement)
+add_test(NAME test-uno-partition-storage-smoke COMMAND ${CMAKE_COMMAND} -E env
+  TOS_UNO_STORAGE_KEYS=1000 TOS_UNO_STORAGE_PAGES=16
+  $<TARGET_FILE:test-uno-storage-measurement> --filter PartitionPersistenceStages)
+set_tests_properties(test-uno-partition-storage-smoke PROPERTIES LABELS "uno;storage;smoke" TIMEOUT 60
+  FAIL_REGULAR_EXPRESSION "0 test[(]s[)] passed")
 option(TOS_UNO_LARGE_SNAPSHOT_TEST "Run the resource-heavy UNO snapshot experiment" OFF)
 if (TOS_UNO_LARGE_SNAPSHOT_TEST)
   add_executable(test-uno-state-snapshot-large test/test-td-main.cpp test/test-uno-state-snapshot.cpp test/uno-snapshot-transport.cpp)
