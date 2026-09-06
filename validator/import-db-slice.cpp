@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <delay.h>
+#include <set>
 
 #include "common/checksum.h"
 #include "downloaders/download-state.hpp"
@@ -319,21 +320,30 @@ static bool have_new_shards(td::Ref<MasterchainState> new_state, td::Ref<Masterc
 
 void ArchiveImporter::download_shard_archives(td::Ref<MasterchainState> start_state) {
   start_state_ = start_state;
-  td::uint32 monitor_min_split = start_state->monitor_min_split_depth(basechainId);
-  LOG(DEBUG) << "Monitor min split = " << monitor_min_split
-             << (have_shard_blocks_ ? ", shard blocks in the main package" : ", no shard blocks in the main package");
   // If masterchain package has shard blocks then it's old archive format, don't need to download shards
   if (!have_shard_blocks_ && !use_imported_files_) {
-    for (td::uint64 i = 0; i < (1ULL << monitor_min_split); ++i) {
-      ShardIdFull shard_prefix{basechainId, (i * 2 + 1) << (64 - monitor_min_split - 1)};
-      if (opts_->need_monitor(shard_prefix, start_state)) {
-        if (have_new_shards(last_masterchain_state_, start_state_, shard_prefix)) {
-          ++pending_shard_archives_;
-          LOG(INFO) << "Downloading shard archive #" << start_import_seqno_ << " " << shard_prefix.to_str();
-          download_shard_archive(shard_prefix);
-        } else {
-          LOG(INFO) << "Not downloading shard archive #" << start_import_seqno_ << " " << shard_prefix.to_str()
-                    << " : no new shard blocks";
+    // Apply walks every monitored workchain. Fetch matching archives, including
+    // workchains first referenced after the checkpoint, before starting replay.
+    std::set<WorkchainId> workchains;
+    for (const auto& state : {start_state_, last_masterchain_state_}) {
+      for (const auto& shard : state->get_shards()) {
+        workchains.insert(shard->shard().workchain);
+      }
+    }
+    for (auto workchain : workchains) {
+      td::uint32 monitor_min_split = start_state->monitor_min_split_depth(workchain);
+      LOG(DEBUG) << "Archive workchain " << workchain << " monitor min split = " << monitor_min_split;
+      for (td::uint64 i = 0; i < (1ULL << monitor_min_split); ++i) {
+        ShardIdFull shard_prefix{workchain, (i * 2 + 1) << (64 - monitor_min_split - 1)};
+        if (opts_->need_monitor(shard_prefix, start_state)) {
+          if (have_new_shards(last_masterchain_state_, start_state_, shard_prefix)) {
+            ++pending_shard_archives_;
+            LOG(INFO) << "Downloading shard archive #" << start_import_seqno_ << " " << shard_prefix.to_str();
+            download_shard_archive(shard_prefix);
+          } else {
+            LOG(INFO) << "Not downloading shard archive #" << start_import_seqno_ << " " << shard_prefix.to_str()
+                      << " : no new shard blocks";
+          }
         }
       }
     }

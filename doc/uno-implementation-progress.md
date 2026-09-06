@@ -3450,3 +3450,28 @@ after the height threshold and for a deletion marker already present before it.
 Removing the height gate fails the latter control by returning without waiting.
 After restoring the gate, all 18 Python instrument tests passed. The live
 experiment remains separate from these mocked scheduling controls.
+
+### Native GC reached; archive catch-up exposed a workchain omission
+
+The terminal run `build/m1-counter-network-run-v7moi15m` observed committed
+actor deletion of Counter block 16 at masterchain height 1048, with complete
+block identity in `gc-evidence.json`. It then started a cold observer after
+height 1054. The observer selected MC checkpoint 20, downloaded Counter state
+18 through the file path and committed 32,781 cells through the CellDb actor.
+It nevertheless failed the 150-second cold-join gate. All child nodes exited;
+the fixture and `build/uno-native-gc-network.log` are retained.
+
+The receiver repeatedly reported missing data/proof for Counter block 19
+during archive catch-up. Source inspection identified the mismatch:
+`ArchiveImporter::download_shard_archives` enumerated only `basechainId`,
+whereas shard application walks every monitored workchain. The receiver log
+confirmed requests for workchain 0 archives but none for workchain 2. This is
+not evidence of failed checkpoint authentication or failed CellDb import, and
+the successful deletion is not a successful end-to-end synchronization gate.
+
+Archive selection now enumerates workchains referenced by the start/end MC
+states, preserving per-workchain monitor-depth, monitoring and changed-shard
+checks. Legacy combined archives and explicit local-import behavior are
+unchanged. No proof check, consensus rule or GC threshold is relaxed. The
+Counter node target builds successfully with `-j48`; a live repeat is still
+required before claiming that this fixes catch-up. M3 remains paused.
