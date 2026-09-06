@@ -4,6 +4,10 @@ Not registered in the node, not a production verifier, and not an activation
 manifest. This isolated crate starts M2 dependency/API validation without adding
 the upstream transaction, consensus or wallet backend to the host.
 
+The [private-transfer transcript candidate](TRANSFER_TRANSCRIPT.md) now derives
+a signing digest from typed data and exercises it with a real proof. It is not
+yet connected to the C++ ABI or host transaction admission.
+
 ## Reproduction
 
 From this directory, run `cargo test --locked --release -j48`. Rust 1.97.1 is selected by

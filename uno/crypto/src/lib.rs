@@ -4,6 +4,7 @@ pub mod decode;
 pub mod ffi;
 pub mod tree;
 pub mod tree_ffi;
+pub mod transfer_transcript;
 #[cfg(test)]
 mod vk_snapshot;
 use orchard::{
@@ -420,13 +421,42 @@ mod tests {
             spender.build::<i64>(&mut rng).expect("spend build").expect("nonempty spend");
         assert_eq!(*unsigned_spend.value_balance(), 100);
         let real_spend_index = spend_metadata.spend_action_index(0).expect("real spend index");
-        let spent = unsigned_spend
+        let proven_spend = unsigned_spend
             .clone()
             .create_proof(&pk, &mut rng)
-            .expect("spend proof")
+            .expect("spend proof");
+        let spent = proven_spend.clone()
             .apply_signatures(&mut rng, digest, &[SpendAuthorizingKey::from(&sk)])
             .expect("real spend authorization");
         assert_eq!(verifier.verify_bundle(&spent, &digest, 2, 7264), Ok(()));
+        {
+            use transfer_transcript::*;
+            let header = test_header();
+            let limits = TranscriptLimits { max_actions: 2, max_proof_bytes: 7264, kem_ciphertext_bytes: 4 };
+            // Opaque transcript test bytes, not a working hybrid encryption profile.
+            let kem: &[&[u8]] = &[&[31;4], &[32;4]];
+            let actions = encoded_actions(&spent);
+            let raw = decode::EncodedBundle { profile: spent.bundle_version(), flags: spent.flag_byte(),
+                value_balance: *spent.value_balance(), anchor: spent.anchor().to_bytes(), actions: &actions,
+                proof: spent.authorization().proof().as_ref(), binding_signature: spent.authorization().binding_signature().into() };
+            let digests = transfer_digests(&header, &raw, kem, limits).expect("signing transcript");
+            let signed = proven_spend.apply_signatures(&mut rng, digests.sighash, &[SpendAuthorizingKey::from(&sk)])
+                .expect("transcript authorization");
+            let signed_actions = encoded_actions(&signed);
+            let signed_raw = decode::EncodedBundle { actions: &signed_actions,
+                binding_signature: signed.authorization().binding_signature().into(), ..raw };
+            let accepted = verify_transfer(&verifier, &header.domain, &header, &signed_raw, kem, limits)
+                .expect("verified transcript");
+            assert_eq!(accepted.txid, digests.txid);
+            assert_ne!(accepted.authorization, digests.authorization);
+            let mut changed = header.clone(); changed.nonce[0] ^= 1;
+            assert!(matches!(verify_transfer(&verifier, &header.domain, &changed, &signed_raw, kem, limits),
+                             Err(TranscriptError::Verification(VerificationError::SpendSignature))));
+            assert!(matches!(verify_transfer(&verifier, &header.domain, &header, &signed_raw, &[&[30;4], &[32;4]], limits),
+                             Err(TranscriptError::Verification(VerificationError::SpendSignature))));
+            changed = header.clone(); changed.domain.network_id[0] ^= 1;
+            assert_eq!(verify_transfer(&verifier, &header.domain, &changed, &signed_raw, kem, limits), Err(TranscriptError::Domain));
+        }
         let spend_outputs: Vec<_> = spent.actions().iter().map(|action| action.cmx().to_bytes()).collect();
         let next_tree = restored_tree.append_batch(&spend_outputs, 0).expect("spend output append");
         assert_eq!(next_tree.next_position(), 4);
