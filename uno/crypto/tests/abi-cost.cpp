@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <sys/resource.h>
@@ -51,11 +52,15 @@ Admission admit(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usag
   output = next;
   return Admission::Ok;
 }
-template <class Verify>
-Admission run(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usage limits, Verify&& verify) {
+struct AdmissionObserved { void operator()() const {} };
+template <class Verify, class Ready = AdmissionObserved>
+Admission run(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usage limits, Verify&& verify,
+              Usage* admitted_usage = nullptr, Ready ready = {}) {
   Usage usage;
   const auto result = admit(requests, limits, usage);
+  ready();
   if (result != Admission::Ok) return result;
+  if (admitted_usage) *admitted_usage = usage;
   for (const auto* request : requests) verify(request);
   return Admission::Ok;
 }
@@ -255,8 +260,10 @@ long rss() {
   rusage usage{};
   return getrusage(RUSAGE_SELF, &usage) == 0 ? usage.ru_maxrss : -1;
 }
-bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
-            std::size_t count, unsigned index, bool late_failure) {
+template <class Verify>
+bool sample_with_backend(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
+                         std::size_t count, unsigned index, bool late_failure,
+                         Verify&& verify, std::ostream& output) {
   auto wrong = input;
   wrong.sighash[0] ^= 1;
   std::vector<const UnoCryptoVerifyRequest*> requests(count, &input);
@@ -265,21 +272,59 @@ bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequ
   limits.proofs = count;
   if (!multiply(count, 2, limits.actions) || !multiply(count, 9032, limits.payload_bytes)) return false;
   const auto begin = Clock::now();
-  const auto admitted = admit(requests, limits, usage);
-  const auto ready = Clock::now();
-  if (admitted != Admission::Ok) return false;
+  Clock::time_point ready;
   std::size_t calls = 0;
-  for (const auto* request : requests) {
-    const auto actual = uno_crypto_verify_v0(request);
+  bool backend_ok = true;
+  const auto admitted = run(requests, limits, [&](const UnoCryptoVerifyRequest* request) {
+    if (!backend_ok) return;
+    const auto actual = verify(request);
     const auto expected = request == &wrong ? UNO_CRYPTO_VERIFY : UNO_CRYPTO_OK;
-    if (actual != expected || !add(calls, 1, calls)) return false;
-  }
+    backend_ok = actual == expected && add(calls, 1, calls);
+  }, &usage, [&] { ready = Clock::now(); });
+  if (admitted != Admission::Ok || !backend_ok) return false;
   const auto end = Clock::now();
-  std::cout << "{\"context\":\"" << context << "\",\"workload\":\"" << workload
+  output << "{\"context\":\"" << context << "\",\"workload\":\"" << workload
             << "\",\"sample\":" << index << ",\"proof_calls\":" << calls
             << ",\"actions\":" << usage.actions << ",\"payload_bytes\":" << usage.payload_bytes
             << ",\"preflight_ns\":" << nanos(begin, ready) << ",\"abi_ns\":" << nanos(ready, end)
             << ",\"total_ns\":" << nanos(begin, end) << ",\"process_hwm_rss_kib\":" << rss() << "}\n";
+  return true;
+}
+bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
+            std::size_t count, unsigned index, bool late_failure) {
+  return sample_with_backend(context, workload, input, count, index, late_failure,
+                            uno_crypto_verify_v0, std::cout);
+}
+bool sample_boundary_self_test() {
+  UnoCryptoAction actions[2]{};
+  uint8_t proof[7264]{};
+  UnoCryptoVerifyRequest input{};
+  input.abi_version = UNO_CRYPTO_ABI_VERSION;
+  input.profile = UNO_CRYPTO_FIXED_PROFILE;
+  input.actions = actions;
+  input.action_count = input.max_actions = 2;
+  input.proof = proof;
+  input.proof_bytes = input.max_proof_bytes = sizeof(proof);
+  std::size_t calls = 0;
+  bool count_ok = true;
+  auto backend = [&](const UnoCryptoVerifyRequest*) {
+    count_ok = add(calls, 1, calls) && count_ok;
+    return UNO_CRYPTO_OK;
+  };
+  std::ostringstream output;
+  if (!sample_with_backend("test", "valid", input, 2, 0, false, backend, output) ||
+      calls != 2 || !count_ok || output.str().empty()) {
+    std::cerr << "measurement positive control failed: calls=" << calls << '\n';
+    return false;
+  }
+  calls = 0;
+  output.str("");
+  input.proof_bytes = 0;
+  if (sample_with_backend("test", "invalid", input, 2, 0, false, backend, output) ||
+      calls != 0 || !count_ok || !output.str().empty()) {
+    std::cerr << "measurement admitted malformed input: calls=" << calls << '\n';
+    return false;
+  }
   return true;
 }
 bool measure(const char* funding_path, const char* spend_path) {
@@ -316,7 +361,8 @@ bool measure(const char* funding_path, const char* spend_path) {
 }
 
 int main(int argc, char** argv) {
-  if (argc == 2 && std::string(argv[1]) == "--self-test") return self_test() ? 0 : 1;
+  if (argc == 2 && std::string(argv[1]) == "--self-test")
+    return self_test() && sample_boundary_self_test() ? 0 : 1;
   if (argc == 4 && std::string(argv[1]) == "--measure") return measure(argv[2], argv[3]) ? 0 : 2;
   std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin\n";
   return 3;
