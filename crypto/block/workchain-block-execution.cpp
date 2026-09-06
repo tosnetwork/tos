@@ -4,6 +4,7 @@
 #include "block/transaction.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
+#include "td/utils/port/Clocks.h"
 #include <algorithm>
 #include <limits>
 
@@ -514,6 +515,7 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
     std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg,
     const WorkchainReplayStorageCache* storage_cache) {
+  const auto replay_started_ns = td::Clocks::monotonic_nano();
   if (claimed.is_null()) {
     return td::Status::Error("missing batch transaction");
   }
@@ -558,13 +560,16 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     if (actual.root->get_hash() != claimed->get_hash()) {
       return td::Status::Error("batch transaction wrapper differs from replay");
     }
-    LOG(DEBUG) << "Batch replay storage cache: hit=" << storage_cache_hit
-               << " transaction=" << claimed->get_hash().to_hex();
     if (storage_cache && storage_cache->remember && actual.new_storage_dict_hash &&
         actual.new_account_storage_stat && actual.new_storage_used.cells <= std::numeric_limits<td::uint32>::max()) {
       TRY_RESULT(dict, actual.new_account_storage_stat.value().get_dict_root());
       storage_cache->remember(std::move(dict), static_cast<td::uint32>(actual.new_storage_used.cells));
     }
+    // Host-local wall time, excluding peer acquisition, actor queueing and
+    // enclosing block checks. Never used for consensus or resource admission.
+    const auto replay_elapsed_ns = td::Clocks::monotonic_nano() - replay_started_ns;
+    LOG(DEBUG) << "Batch replay storage cache: hit=" << storage_cache_hit
+               << " transaction=" << claimed->get_hash().to_hex() << " elapsed_ns=" << replay_elapsed_ns;
     return actual.new_total_state;
   } catch (vm::VmError&) {
     return td::Status::Error("invalid batch transaction replay cells");

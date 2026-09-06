@@ -54,14 +54,20 @@ def require_validator_replay_cache(logs, required_validator=None):
     evidence = {}
     owners = {}
     for name, log in logs.items():
-        matches = re.findall(r"Batch replay storage cache: hit=(true|false) transaction=([0-9A-Fa-f]{64})(?![0-9A-Fa-f])", log)
+        raw = re.findall(r"Batch replay storage cache: hit=(true|false) transaction=([0-9A-Fa-f]{64}) elapsed_ns=([0-9]+)(?![0-9A-Za-z_.])", log)
+        if any(int(ns) <= 0 for _, _, ns in raw):
+            raise AssertionError("replay timing must be positive nanoseconds")
+        matches = [(hit, tx) for hit, tx, _ in raw]
         hits = {tx.lower() for hit, tx in matches if hit == "true"}
         for tx in hits:
             owners.setdefault(tx, []).append(name)
         evidence[name] = {"hit_transactions": sorted(hits),
                           "miss_transactions": sorted({tx.lower() for hit, tx in matches if hit == "false"}),
                           "first_observed_replay": {"cache_hit": matches[0][0] == "true",
-                                                    "transaction": matches[0][1].lower()} if matches else None}
+                                                    "transaction": matches[0][1].lower(),
+                                                    "elapsed_ns": int(raw[0][2])} if matches else None,
+                          "timing_samples": [{"cache_hit": hit == "true", "transaction": tx.lower(),
+                                              "elapsed_ns": int(ns)} for hit, tx, ns in raw]}
     shared = {tx: names for tx, names in owners.items() if len(names) >= 2}
     if not shared:
         raise AssertionError("need the same cache-hit replay in two independent validators")

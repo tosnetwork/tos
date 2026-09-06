@@ -3216,3 +3216,43 @@ restored (`build/uno-replacement-replay-mutation.log` and
 timing cold replay itself, long-run growth and GC/retention, and scalable
 admission beyond the current account-cell limit. M1 is not fully accepted;
 M3 remains paused.
+
+### Replay wall-time samples and an unresolved long tail
+
+The replay helper now records monotonic elapsed nanoseconds from entry
+through transaction validation, account extraction, engine execution,
+storage-stat calculation, serialization, full transaction-hash comparison
+and local cache-update collection. The observation is emitted on success;
+it excludes peer acquisition, actor queueing before entry, enclosing block
+checks and local destruction after the sample. It is host-local diagnostic
+data and is never used for consensus or admission. The harness keeps raw
+per-transaction timings alongside cache hit/miss and first-replay identity.
+
+The new member experiment `build/m1-counter-network-run-9n23giyy` passed
+membership, peer state acquisition, replay-cache, cold observer and database
+reopen checks. Target masterchain height was 50 and the observer reached 59.
+Node5's first observed replay (Counter height 52, cache miss) took
+49,202,998 ns, approximately 49.2 ms. Its 43 cache-hit samples ranged from
+216,851 ns to 809,118,270 ns, with median 363,348 ns. The maximum was Counter
+height 74, transaction
+`27c6f2465ee093e75e9b497bbd9085f3a35aa893d7fea4320a4797e4ee0d61e6`.
+Node4 also had a 621,083,922 ns cache-hit sample; node3's maximum hit sample
+was 874,606 ns. The long tail must not be hidden by the sub-millisecond
+typical samples or by reporting only the first cache miss.
+
+These timings include scheduling and synchronous waiting within the helper;
+they do not identify CPU work, storage waits or debug-output contention as
+the cause. The run uses debug logging, a fixed 32,767-cell Counter payload,
+and no privacy proof verification. Its first miss is a storage-index-cache
+miss after state acquisition, not a controlled cold operating-system page
+cache experiment. Neither a latency ceiling nor the UNO slot can be derived
+from this run. Separating the long-tail cause is the next latency task.
+
+All 40 WorkchainBlock tests and 15 instrument tests passed. Timing controls
+reject missing, nonpositive and malformed elapsed values and preserve exact
+nanoseconds. Removing the positive-duration check made the zero-duration
+control fail; restoration passed. Evidence is in
+`build/uno-replay-timing-blocks.log`, `build/uno-replay-timing-instruments.log`,
+`build/uno-replay-timing-mutation.log`, `build/uno-replay-timing-restored.log`
+and the retained network fixture's `validator-replay-cache.json`. The run
+has ended. M1 latency/resource acceptance remains open and M3 paused.

@@ -45,11 +45,16 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
                 module.validator_memory_observation(nodes, 4)
 
     async def test_replay_cache_requires_two_validators_and_same_transaction(self):
-        hit = "Batch replay storage cache: hit=true transaction=" + "ab" * 32 + "\n"
+        hit = "Batch replay storage cache: hit=true transaction=" + "ab" * 32 + " elapsed_ns=125000\n"
         logs = {"node1": hit, "node2": hit}
         result = module.require_validator_replay_cache(logs)
         self.assertEqual(result["shared_hit_transactions"], {"ab" * 32: ["node1", "node2"]})
         self.assertTrue(result["validators"]["node1"]["first_observed_replay"]["cache_hit"])
+        self.assertEqual(result["validators"]["node1"]["first_observed_replay"]["elapsed_ns"], 125000)
+        self.assertEqual(result["validators"]["node1"]["timing_samples"][0]["elapsed_ns"], 125000)
+        for invalid in ("", " elapsed_ns=-1", " elapsed_ns=1.5", " elapsed_ns=1ms", " elapsed_ns=0"):
+            with self.subTest(timing=invalid), self.assertRaises(AssertionError):
+                module.require_validator_replay_cache({"node1": hit, "node2": hit.replace(" elapsed_ns=125000", invalid)})
         module.require_validator_replay_cache(logs, "node2")
         with self.assertRaisesRegex(AssertionError, "replacement validator"):
             module.require_validator_replay_cache({**logs, "replacement": hit.replace("ab", "cd")}, "replacement")
