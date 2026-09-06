@@ -107,12 +107,30 @@ class NullifierState {
     return td::Status::Error("UNO reservation counting exhausted execution budget");
   }
 
+  // Low-level lookups require an enclosing VM exception boundary. Successful
+  // restoration does not guarantee that a later cell load cannot fail.
   bool is_used(const td::Bits256& key) const {
     return used_.contains(key);
   }
   bool is_reserved(const td::Bits256& key) const {
     vm::Dictionary reserved(reserved_, 256);
     return reserved.lookup(key).not_null();
+  }
+
+  // Actor-facing queries preserve load failure as Error, never as absence.
+  // The caller classifies that failure using the authenticated root's origin;
+  // these storage primitives do not decide candidate validity.
+  td::Result<bool> try_is_used(const td::Bits256& key) const {
+    return used_.try_contains(key);
+  }
+  td::Result<bool> try_is_reserved(const td::Bits256& key) const try {
+    return is_reserved(key);
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO reserved nullifier lookup failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO reserved nullifier lookup encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO reserved nullifier lookup exhausted execution budget");
   }
 
   td::Result<NullifierState> with_used(const std::vector<td::Bits256>& keys) const try {

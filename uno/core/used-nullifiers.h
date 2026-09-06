@@ -40,9 +40,25 @@ class UsedNullifiers {
   }
   std::uint64_t size() const { return size_; }
 
+  // Low-level lookup: may throw VmError, VmVirtError or VmNoGas while loading
+  // cells, even after successful restore. Use only inside an enclosing VM
+  // exception boundary; actor-facing callers should use try_contains instead.
   bool contains(const td::Bits256& nullifier) const {
     vm::Dictionary dictionary(root_, 256);
     return dictionary.lookup(nullifier).not_null();
+  }
+
+  // A lookup failure is never evidence that a nullifier is absent. This API
+  // contains VM exceptions, but does not classify consensus validity: the
+  // caller must retain whether the root is candidate or authenticated state.
+  td::Result<bool> try_contains(const td::Bits256& nullifier) const try {
+    return contains(nullifier);
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO used nullifier lookup failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO used nullifier lookup encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO used nullifier lookup exhausted execution budget");
   }
 
   // Stage against a private root; even a late duplicate leaves this object

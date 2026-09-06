@@ -67,8 +67,16 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
 
   td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput& input) const override {
     TRY_RESULT(engine_state, block::extract_workchain_engine_state(input.previous_shard_state, workchain_, td::Bits256::zero()));
-    auto state = vm::load_cell_slice(engine_state);
-    auto candidate = vm::load_cell_slice(input.candidate);
+    bool special = false;
+    auto candidate = vm::load_cell_slice_special(input.candidate, special);
+    if (special) {
+      return td::Status::Error("counter candidate must be ordinary");
+    }
+    auto state = vm::load_cell_slice_special(engine_state, special);
+    if (special) {
+      return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                               "counter authenticated state must be ordinary");
+    }
     const unsigned expected_refs = payload_mode_ == PayloadMode::PreserveReference ? 1 : 0;
     if (state.size() != 64 || state.size_refs() != expected_refs || candidate.size() != 64 || candidate.size_refs() > 1) {
       return td::Status::Error("counter input shape");

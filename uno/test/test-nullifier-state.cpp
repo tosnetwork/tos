@@ -25,6 +25,47 @@ td::Result<NullifierState> restore(const NullifierState& state,
 }
 }  // namespace
 
+TEST(UnoNullifierState, ActorQueriesContainLoadFailuresWithoutReportingAbsence) {
+  const auto used = UsedNullifiers{}.with_used({key(1)}).move_as_ok();
+  const auto state = NullifierState{}.with_used({key(1)}).move_as_ok()
+                         .reserve(key(10), {key(2)}).move_as_ok();
+  const auto used_hash = state.used_root()->get_hash();
+  const auto reserved_hash = state.reserved_root()->get_hash();
+  const auto owners_hash = state.owners_root()->get_hash();
+  class FailingLoad final : public vm::VmStateInterface {
+   public:
+    unsigned kind = 0;
+    bool called = false;
+    void register_cell_load(const vm::CellHash&) override {
+      called = true;
+      if (kind == 0) throw vm::VmError{vm::Excno::cell_und};
+      if (kind == 1) throw vm::VmVirtError{1};
+      throw vm::VmNoGas{};
+    }
+  } load;
+  auto exercise = [&](auto query, const td::Bits256& present) {
+    ASSERT_TRUE(query(present).move_as_ok());
+    ASSERT_TRUE(!query(key(3)).move_as_ok());
+    for (unsigned kind = 0; kind < 3; ++kind) {
+      load.kind = kind;
+      for (const auto& queried : {present, key(3)}) {
+        load.called = false;
+        vm::VmStateInterface::Guard guard(&load);
+        ASSERT_TRUE(query(queried).is_error());
+        ASSERT_TRUE(load.called);
+      }
+    }
+    ASSERT_TRUE(query(present).move_as_ok());
+    ASSERT_TRUE(!query(key(3)).move_as_ok());
+    ASSERT_TRUE(state.used_root()->get_hash() == used_hash);
+    ASSERT_TRUE(state.reserved_root()->get_hash() == reserved_hash);
+    ASSERT_TRUE(state.owners_root()->get_hash() == owners_hash);
+  };
+  exercise([&](const td::Bits256& value) { return used.try_contains(value); }, key(1));
+  exercise([&](const td::Bits256& value) { return state.try_is_used(value); }, key(1));
+  exercise([&](const td::Bits256& value) { return state.try_is_reserved(value); }, key(2));
+}
+
 TEST(UnoNullifierState, EveryReadFailureLeavesSourceUnchanged) {
   const auto original = NullifierState{}.with_used({key(1)}).move_as_ok()
                             .reserve(key(10), {key(0), key(2)}).move_as_ok();

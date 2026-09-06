@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 #include "td/utils/Status.h"
+#include "uno/core/tree-error.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
@@ -21,7 +22,7 @@ class NoteTreeState {
 
   static td::Result<NoteTreeState> empty() {
     UnoTreeFrontier frontier{};
-    return transition(frontier, {}, 0, 0);
+    return transition(frontier, {}, 0, 0, TreeFailure::LocalFailure);
   }
 
   std::uint64_t next_position() const { return state_.frontier.next_position; }
@@ -33,7 +34,12 @@ class NoteTreeState {
 
   td::Result<NoteTreeState> append(const std::vector<Commitment>& commitments,
                                  std::uint64_t reserved, std::size_t max_commitments) const {
-    return transition(state_.frontier, commitments, reserved, max_commitments);
+    // The ABI reports both frontier and commitment decode failures with the
+    // same status. Check the immutable prestate separately before attributing a
+    // failure to candidate commitments or their capacity reservation.
+    TRY_RESULT(checked, transition(state_.frontier, {}, 0, 0, TreeFailure::AuthenticatedStateCorrupt));
+    return transition(checked.state_.frontier, commitments, reserved, max_commitments,
+                      TreeFailure::CandidateInvalid);
   }
 
   td::Result<td::Ref<vm::Cell>> to_cell() const try {
@@ -51,55 +57,65 @@ class NoteTreeState {
     if (tail.not_null()) header.store_ref(tail);
     return header.finalize();
   } catch (vm::CellBuilder::CellWriteError&) {
-    return td::Status::Error("UNO frontier encoding exceeds cell limits");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier encoding exceeds cell limits");
   } catch (vm::CellBuilder::CellCreateError&) {
-    return td::Status::Error("UNO frontier cell construction failed");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier cell construction failed");
   } catch (vm::VmError&) {
-    return td::Status::Error("UNO frontier cell encoding failed");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier cell encoding failed");
   } catch (vm::VmVirtError&) {
-    return td::Status::Error("UNO frontier cell encoding encountered incomplete proof");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier cell encoding encountered incomplete proof");
   } catch (vm::VmNoGas&) {
-    return td::Status::Error("UNO frontier cell encoding exhausted execution budget");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier cell encoding exhausted execution budget");
   }
 
-  static td::Result<NoteTreeState> from_cell(const td::Ref<vm::Cell>& cell) try {
-    if (cell.is_null()) return td::Status::Error("UNO missing frontier cell");
+  static td::Result<NoteTreeState> from_cell(const td::Ref<vm::Cell>& cell) {
+    return decode_cell(cell, TreeFailure::CandidateInvalid);
+  }
+
+  // Only for a prestate whose enclosing checkpoint/state has been authenticated.
+  // This entry does not itself authenticate the cell or its source.
+  static td::Result<NoteTreeState> from_authenticated_cell(const td::Ref<vm::Cell>& cell) {
+    return decode_cell(cell, TreeFailure::AuthenticatedStateCorrupt);
+  }
+
+ private:
+  static td::Result<NoteTreeState> decode_cell(const td::Ref<vm::Cell>& cell, TreeFailure invalid) try {
+    if (cell.is_null()) return tree_error(invalid, "UNO missing frontier cell");
     bool special = false;
     auto header = vm::load_cell_slice_special(cell, special);
     if (special || header.size() != 358 || header.fetch_ulong(32) != 0x554e4630) {
-      return td::Status::Error("UNO invalid frontier cell header");
+      return tree_error(invalid, "UNO invalid frontier cell header");
     }
     UnoTreeFrontier value{};
     value.next_position = header.fetch_ulong(64);
-    if (!header.fetch_bytes(value.leaf, 32)) return td::Status::Error("UNO missing frontier leaf");
+    if (!header.fetch_bytes(value.leaf, 32)) return tree_error(invalid, "UNO missing frontier leaf");
     value.ommer_count = header.fetch_ulong(6);
     if (value.ommer_count > 32 || header.size_refs() != (value.ommer_count ? 1u : 0u)) {
-      return td::Status::Error("UNO invalid frontier node count");
+      return tree_error(invalid, "UNO invalid frontier node count");
     }
     auto next = value.ommer_count ? header.fetch_ref() : td::Ref<vm::Cell>{};
     for (std::uint64_t i = 0; i < value.ommer_count; ++i) {
       auto node = vm::load_cell_slice_special(next, special);
       if (special || node.size() != 256 || node.size_refs() != (i + 1 < value.ommer_count ? 1u : 0u) ||
           !node.fetch_bytes(value.ommers[i], 32)) {
-        return td::Status::Error("UNO invalid frontier node cell");
+        return tree_error(invalid, "UNO invalid frontier node cell");
       }
       next = node.size_refs() ? node.fetch_ref() : td::Ref<vm::Cell>{};
     }
-    return transition(value, {}, 0, 0);
+    return transition(value, {}, 0, 0, invalid);
   } catch (vm::VmError&) {
-    return td::Status::Error("UNO malformed frontier cells");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier cell loading failed");
   } catch (vm::VmVirtError&) {
-    return td::Status::Error("UNO incomplete frontier cells");
+    return tree_error(TreeFailure::LocalFailure, "UNO incomplete frontier cells");
   } catch (vm::VmNoGas&) {
-    return td::Status::Error("UNO frontier loading exhausted execution budget");
+    return tree_error(TreeFailure::LocalFailure, "UNO frontier loading exhausted execution budget");
   }
 
- private:
   explicit NoteTreeState(const UnoTreeResult& state) : state_(state) {}
   static td::Result<NoteTreeState> transition(const UnoTreeFrontier& frontier,
                                             const std::vector<Commitment>& commitments,
-                                            std::uint64_t reserved, std::size_t limit) {
-    if (commitments.size() > limit) return td::Status::Error("UNO tree action limit exceeded");
+                                            std::uint64_t reserved, std::size_t limit, TreeFailure invalid) {
+    if (commitments.size() > limit) return tree_error(invalid, "UNO tree action limit exceeded");
     static_assert(sizeof(Commitment) == 32 && alignof(Commitment) == 1);
     UnoTreeRequest request{};
     request.abi_version = UNO_CRYPTO_ABI_VERSION;
@@ -111,7 +127,10 @@ class NoteTreeState {
     request.reserved_leaves = reserved;
     UnoTreeResult result{};
     const auto status = uno_crypto_tree_append_v0(&request, &result);
-    if (status != UNO_CRYPTO_OK) return td::Status::Error(static_cast<int>(status), "UNO tree ABI rejected transition");
+    if (status == UNO_CRYPTO_DECODE) return tree_error(invalid, "UNO tree ABI rejected transition");
+    if (status != UNO_CRYPTO_OK) {
+      return tree_error(TreeFailure::LocalFailure, "UNO tree ABI reported a local failure");
+    }
     return NoteTreeState(result);
   }
   UnoTreeResult state_;

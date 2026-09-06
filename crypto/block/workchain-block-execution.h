@@ -7,6 +7,7 @@
 #include "td/utils/Status.h"
 #include "td/utils/bits.h"
 #include "vm/cells/Cell.h"
+#include "block/workchain-execution-errors.h"
 
 namespace block {
 
@@ -128,6 +129,10 @@ td::Status validate_workchain_candidate_scope(const td::Ref<vm::Cell>& candidate
 class WorkchainBlockEngine {
  public:
   virtual ~WorkchainBlockEngine() = default;
+  // Use load_cell_slice_special with the input's own wire policy, not implicit
+  // library resolution. Reject forbidden candidate representations explicitly;
+  // authenticated-state corruption and local failures use the reserved codes.
+  // Do not apply the candidate's ordinary-only rule to native message bodies.
   virtual td::Result<WorkchainBlockResult> execute_block(const WorkchainBlockInput& input) const = 0;
 };
 

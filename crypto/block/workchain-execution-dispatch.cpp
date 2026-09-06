@@ -416,7 +416,7 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
 }
 
 td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
-    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input) {
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input) try {
   if (!execution.executor || !execution.engine_config) {
     return td::Status::Error("missing resolved block execution configuration");
   }
@@ -431,6 +431,21 @@ td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
     return td::Status::Error("block execution exceeds configured resource limits");
   }
   return result;
+} catch (vm::VmError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine VM failure");
+} catch (vm::VmVirtError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine virtual-cell failure");
+} catch (vm::VmNoGas&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine gas failure");
+} catch (vm::CellBuilder::CellCreateError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine cell construction failure");
+} catch (vm::CellBuilder::CellWriteError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine cell write failure");
 }
 
 td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(

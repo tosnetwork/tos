@@ -10,6 +10,7 @@
 #include "vm/cellslice.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/cells/MerkleUpdate.h"
 #include "vm/cells/UsageCell.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -71,7 +72,8 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
                               std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
-                              std::uint64_t operating_balance = 0, td::Ref<vm::Cell> payload = {}) {
+                              std::uint64_t operating_balance = 0, td::Ref<vm::Cell> payload = {},
+                              td::Ref<vm::Cell> engine_override = {}) {
   vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
   for (unsigned i = 0; i < account_count; ++i) {
     td::Bits256 address = td::Bits256::zero();
@@ -84,7 +86,8 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
       vm::CellBuilder engine;
       engine.store_long(counter_value, 64);
       if (payload.not_null()) engine.store_ref(payload);
-      auto executor = block::encode_workchain_executor_state({engine.finalize(), {}, {}}).move_as_ok();
+      auto executor = block::encode_workchain_executor_state(
+          {engine_override.not_null() ? engine_override : engine.finalize(), {}, {}}).move_as_ok();
       account.store_long(1, 1).store_zeroes(3).store_long(1, 1).store_ref(executor).store_long(0, 1);
     } else {
       account.store_long(0, 2);
@@ -1567,6 +1570,87 @@ TEST(WorkchainBlock, InputPreflightUnavailableAndSpecial) {
   ASSERT_TRUE(special.add(proof).is_error());
   block::WorkchainInputPreflight missing({1, 1, 1});
   ASSERT_TRUE(missing.add({}).is_error());
+}
+
+TEST(WorkchainBlock, EngineSpecialInputClassification) {
+  const td::Ref<vm::Cell> special_cells[] = {
+      vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
+      vm::CellBuilder::do_create_pruned_branch(number(2), 1, 0),
+      vm::CellBuilder::create_merkle_proof(number(2))};
+  ASSERT_TRUE(CounterEngine().execute_block(input()).is_ok());
+  for (const auto& special : special_cells) {
+    bool is_special = false;
+    vm::load_cell_slice_special(special, is_special);
+    ASSERT_TRUE(is_special);
+    auto in = input();
+    in.candidate = special;
+    auto result = CounterEngine().execute_block(in);
+    ASSERT_TRUE(result.is_error());
+    ASSERT_TRUE(!block::workchain_execution_requires_local_failure(result.error()));
+  }
+
+  // Native state/update transport permits library cells below account data;
+  // transport authentication does not enforce an engine-specific state schema.
+  auto before = shard_fixture();
+  auto after = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, {}, special_cells[0]);
+  auto update = vm::CellBuilder::create_merkle_update(before, after);
+  ASSERT_TRUE(vm::MerkleUpdate::validate(update).is_ok());
+  auto applied = vm::MerkleUpdate::apply(before, update).move_as_ok();
+  ASSERT_TRUE(applied->get_hash() == after->get_hash());
+  auto in = input();
+  in.previous_shard_state = applied;
+  auto state = block::extract_workchain_engine_state(applied, 2, td::Bits256::zero()).move_as_ok();
+  ASSERT_TRUE(state->get_hash() == special_cells[0]->get_hash());
+  auto result = CounterEngine().execute_block(in);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.error().code(), static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(result.error()));
+}
+
+TEST(WorkchainBlock, EngineExceptionIsNotCandidateInvalid) {
+  class ThrowingEngine final : public block::RegisteredWorkchainBlockEngine {
+   public:
+    explicit ThrowingEngine(unsigned kind) : kind_(kind) {}
+    block::WorkchainEngineKey engine_key() const override { return CounterEngine().engine_key(); }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor& d, const block::Config& c,
+        const td::Ref<vm::Cell>& root) const override {
+      return CounterEngine().validate_and_resolve_config(d, c, root);
+    }
+    td::Result<block::WorkchainBlockPolicy> block_policy(
+        const block::WorkchainExecutionDescriptor& d, const block::WorkchainEngineConfig& c) const override {
+      return CounterEngine().block_policy(d, c);
+    }
+    td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput&) const override {
+      ++calls;
+      switch (kind_) {
+        case 0: throw vm::VmError(vm::Excno::cell_und);
+        case 1: throw vm::VmVirtError();
+        case 2: throw vm::VmNoGas();
+        case 3: throw vm::CellBuilder::CellCreateError();
+        default: throw vm::CellBuilder::CellWriteError();
+      }
+    }
+    mutable unsigned calls = 0;
+   private:
+    unsigned kind_;
+  };
+  for (unsigned kind = 0; kind < 5; ++kind) {
+    ThrowingEngine engine(kind);
+    block::ResolvedWorkchainBlockExecution execution;
+    execution.executor = &engine;
+    execution.descriptor.workchain_id = 2;
+    execution.engine_config = std::make_shared<block::WorkchainEngineConfig>();
+    execution.policy.limits = {8, 1, 3};
+    auto result = block::execute_resolved_workchain_block(execution, input());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    auto prefixed = result.move_as_error().move_as_error_prefix("replay: ");
+    ASSERT_TRUE(block::workchain_execution_requires_local_failure(prefixed));
+  }
+  ASSERT_TRUE(!block::workchain_execution_requires_local_failure(td::Status::Error("invalid candidate")));
+  ASSERT_TRUE(!block::workchain_execution_requires_local_failure(td::Status::OK()));
 }
 
 TEST(WorkchainBlock, RegistryScopeIsolation) {

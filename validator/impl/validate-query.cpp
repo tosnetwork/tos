@@ -6526,6 +6526,9 @@ bool ValidateQuery::check_transactions() {
           auto status = block::replay_resolved_workchain_account_block(
               execution, context, state_root_, account_block, now_, serialize_cfg_, &action_phase_cfg_);
           if (status.is_error()) {
+            if (block::workchain_execution_requires_local_failure(status)) {
+              return fatal_error(status.move_as_error_prefix("block execution unavailable: "));
+            }
             return reject_query(status.move_as_error_prefix("block execution replay: ").to_string());
           }
           block::gen::AccountBlock::Record record;
