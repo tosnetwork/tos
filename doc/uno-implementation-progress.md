@@ -2234,3 +2234,56 @@ flip and rebuilding passed in `m1-counter-network-run-c_tb1d1w` (Counter target
 17, masterchain target 18, cold height 48), including executor-state reopening.
 The ordinary validator-engine target rebuilt successfully with the test actor
 excluded, and all four state/request instrument tests passed.
+
+### Uncached Counter broadcast-signature probe
+
+The test-only actor now also obtains a live wc2 TopBlockDescr from the real
+manager's collator-facing interface, extracts its genuine committee signatures
+and first proof-chain link, and reconstructs the equivalent BlockProof link.
+It calls validate_block_broadcast_signatures with original signatures, then with
+one bit changed in a 64-byte signature, then with the original signatures again.
+All four validator processes must pass this probe; the cold non-committee
+observer retains the proof/state probes without a signature-storage obligation.
+The report distinguishes manager_broadcast_signature_rejection_tested from
+remote transport rejection, which remains untested.
+
+This signature-only ValidateBroadcast path does not take CheckProof's
+already-verified-proof shortcut. The original block identity, session, slot,
+candidate transcript, signer identifiers and signature length are retained.
+Following the Ed25519 skill's encoding constraints, the test changes signature
+content rather than malformed lengths or keys, and uses the actual consensus
+verifier rather than a generic detached-signature replacement.
+
+Two setup runs (`eeveyzps`, `e1pzpx0a`) demonstrated that the separate signature
+DB record is unsuitable for this lookup: RootDb explicitly returns notready
+once its block moves to archive. Bounded retry did not resolve it. Those runs
+are in `build/m1-counter-signature-setup-failures-20260906.tar.gz` with full
+directories verified before moving originals to trash. The live description
+keeps the desired wc2 test scope without changing database retention.
+
+Run `syj573ah` then caught a mutation-fixture bug: BufferSlice::clone shares
+storage, so modifying the TL signature also corrupted the retained positive
+control. Its third (original-signature) check correctly failed. The test now
+deep-copies the selected signature bytes before flipping the bit. That failed
+run is preserved in `build/m1-counter-signature-alias-failure-20260906.tar.gz`.
+The earlier proof-only runs were likewise archived and verified in
+`build/m1-counter-proof-runs-20260906.tar.gz`. These are test-fixture corrections,
+not changes to production signature validation or archive policy.
+
+Run `m1-counter-network-run-57xajl95` passed all four validators' signature
+probes and the existing cold-state/reopening checks (Counter target 17,
+masterchain target 18, cold height 48). The rejection reached the actual
+signature verifier (`failed signature check: bad signature: Wrong signature`).
+An independent mutation replaced ValidateBroadcast's final-signature check
+with success in the isolated test binary. Run `m1-counter-network-run-qzl2k0yx`
+then failed because the corrupted committee signature was accepted. The actual
+verification call was restored; validator/validate-broadcast.cpp has no lasting
+diff. This mutation tests loss of the verifier, not a changed error string.
+
+The restored full run `m1-counter-network-run-slng2pmd` passed (Counter target
+17, masterchain target 18, cold height 48), including the old proof-root and
+database-reopening checks. Production and test node targets rebuilt; the probe
+marker is present only in the test binary. The BlockTransition unit and disk
+integration CTests passed (1.12 seconds), as did all four Python state/request
+instrument tests. Remote malicious-download orchestration and large-state
+synchronization remain outside this result; M1 is not marked complete.

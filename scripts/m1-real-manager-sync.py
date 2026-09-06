@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
@@ -68,12 +69,14 @@ async def counter_tip(node):
         await asyncio.sleep(1)
 
 
-async def require_proof_probe(node):
+async def require_proof_probe(node, signatures=False):
     while True:
         log = node.log_path.read_text(errors="replace")
         if "COUNTER_PROOF_PROBE_FAIL" in log:
             raise AssertionError(f"real-manager proof probe failed: {node.log_path}")
-        if "COUNTER_PROOF_PROBE_PASS root-binding" in log:
+        if "COUNTER_PROOF_PROBE_PASS root-binding" in log and (
+            not signatures or "COUNTER_SIGNATURE_PROBE_PASS" in log
+        ):
             return
         await asyncio.sleep(0.2)
 
@@ -103,15 +106,16 @@ async def exercise(root, build, port, join_timeout, counter):
             "TOS_ROCKSDB_WRITE_BUFFER_SIZE": "16777216",
             "TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE": "268435456",
             "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE": "268435456",
+            "TOS_COUNTER_SIGNATURE_PROBE": "0",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
-            await node.run(options)
+            await node.run(replace(options, env={**options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1"}) if counter else options)
         _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
         if counter:
             for node in validators:
-                await asyncio.wait_for(require_proof_probe(node), 10)
+                await asyncio.wait_for(require_proof_probe(node, signatures=True), 10)
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -166,6 +170,7 @@ async def exercise(root, build, port, join_timeout, counter):
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
                 "manager_proof_root_binding_tested": counter,
+                "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
                 "target_seqno": target.seqno, "cold_seqno": observed.seqno,
                 "block": json.loads(target.to_json()), "served_without_warm_validators": True}

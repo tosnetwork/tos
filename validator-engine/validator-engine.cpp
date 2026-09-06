@@ -1718,9 +1718,11 @@ void ValidatorEngine::got_state(td::Ref<tos::validator::MasterchainState> state)
 #ifdef TOS_COUNTER_NETWORK_TEST
   static bool proof_probe_started = false;
   if (!proof_probe_started && state_->get_block_id().seqno() >= 3) {
+    const char* signature_probe = std::getenv("TOS_COUNTER_SIGNATURE_PROBE");
     proof_probe_started = true;
     td::actor::create_actor<tos::validator::test::CounterProofProbe>(
-        "counter-proof-probe", validator_manager_.get(), state_->get_block_id()).release();
+        "counter-proof-probe", validator_manager_.get(), state_->get_block_id(),
+        signature_probe && std::string(signature_probe) == "1").release();
   }
 #endif
   validator_set_ = state_->get_total_validator_set(0);
