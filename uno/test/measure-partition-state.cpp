@@ -7,6 +7,7 @@
 #include "vm/boc.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -205,8 +206,50 @@ struct Run {
   }
 };
 
+// Three independent BoCs, not a production account or settlement wire format.
+// Byte totals include each BoC's framing and any repeated reachable Cells.
+using EncodedNullifiers = std::array<td::BufferSlice, 3>;
+EncodedNullifiers encode_nullifiers(const NullifierState& state) {
+  EncodedNullifiers result;
+  std::array<td::Ref<vm::Cell>, 3> roots{state.used_root(), state.reserved_root(), state.owners_root()};
+  for (std::size_t i = 0; i < roots.size(); ++i) {
+    if (roots[i].not_null()) result[i] = take(vm::std_boc_serialize(roots[i]));
+  }
+  return result;
+}
+NullifierState decode_nullifiers(const EncodedNullifiers& encoded, NullifierState::LoadLimits limits) {
+  std::array<td::Ref<vm::Cell>, 3> roots;
+  for (std::size_t i = 0; i < roots.size(); ++i) {
+    if (!encoded[i].empty()) roots[i] = take(vm::std_boc_deserialize(encoded[i].as_slice()));
+  }
+  return take(NullifierState::from_roots(roots[0], roots[1], roots[2], limits));
+}
+void reservation_codec_self_test() {
+  auto input = keys(45,4,false);
+  auto owner = Key::zero();
+  auto pending = take(take(NullifierState{}.with_used({input[0]})).reserve(owner,{input[1],input[2]}));
+  auto loaded = decode_nullifiers(encode_nullifiers(pending),{1,2,1,2});
+  require(take(loaded.try_is_used(input[0])) && take(loaded.reserved_count(2)) == 2,
+          "reservation codec omitted historical or reserved entries");
+  for (std::size_t i : {1u,2u}) {
+    require(take(loaded.try_is_reserved(input[i])) && loaded.with_used({input[i]}).is_error(),
+            "reservation codec reopened pending keys");
+  }
+  auto refunded = decode_nullifiers(encode_nullifiers(take(loaded.refund(owner))),{3,0,1,2});
+  require(refunded.used_count() == 3 && take(refunded.reserved_count(0)) == 0,
+          "refund codec lost terminal state");
+  for (const auto& key : {input[0],input[1],input[2]})
+    require(refunded.with_used({key}).is_error(), "refund codec reopened spent key");
+  require(refunded.reserve(owner,{input[3]}).is_error(), "refund codec reopened terminal owner");
+  auto paid = decode_nullifiers(encode_nullifiers(take(loaded.paid(owner))),{1,0,1,2});
+  require(paid.with_used({input[1],input[2]}).is_ok(), "paid codec retained released reservations");
+  require(paid.reserve(owner,{input[3]}).is_error(), "paid codec reopened terminal owner");
+  std::cout << "reservation codec self-test passed: pending, refunded, paid, permanent owner\n";
+}
+
 void self_test() {
   envelope_self_test();
+  reservation_codec_self_test();
   auto input = keys(45, 4, false);
   Pages original = build({input[0]}, 16);
   const auto saved = original;
@@ -290,16 +333,45 @@ void measure(const Run& run) {
         for (const auto& [index, manifest] : manifests) states[index] = take(states[index].reserve(owner, manifest));
       });
       for (const auto& key : fresh) require(take(states[route(key, page_count)].try_is_reserved(key)), "reserve missing");
+      auto observe_reservations = [&](const char* encode_phase, const char* decode_phase) {
+        std::vector<EncodedNullifiers> encoded;
+        std::array<std::uint64_t,3> sizes{};
+        run.phase(sample,encode_phase,next,[&] {
+          for (const auto& state : states) {
+            encoded.push_back(encode_nullifiers(state));
+            for (std::size_t i = 0; i < sizes.size(); ++i) sizes[i] = add(sizes[i],encoded.back()[i].size());
+          }
+        });
+        std::vector<NullifierState> restored_states;
+        run.phase(sample,decode_phase,next,[&] {
+          for (std::size_t i = 0; i < states.size(); ++i)
+            restored_states.push_back(decode_nullifiers(encoded[i],{states[i].used_count(),2,1,2}));
+        });
+        for (std::size_t i = 0; i < states.size(); ++i) {
+          std::array<td::Ref<vm::Cell>,3> before{states[i].used_root(),states[i].reserved_root(),states[i].owners_root()};
+          std::array<td::Ref<vm::Cell>,3> after{restored_states[i].used_root(),restored_states[i].reserved_root(),restored_states[i].owners_root()};
+          for (std::size_t j = 0; j < before.size(); ++j) {
+            require(before[j].is_null() == after[j].is_null(), "reservation roundtrip omitted root");
+            if (before[j].not_null()) require(before[j]->get_hash() == after[j]->get_hash(), "reservation roundtrip changed root");
+          }
+        }
+        states = std::move(restored_states);
+        std::cerr << "reservation_bytes mode=" << run.mode << " history=" << run.entries << " sample=" << sample
+                  << " phase=" << encode_phase << " used=" << sizes[0] << " reserved=" << sizes[1]
+                  << " owners=" << sizes[2] << " total=" << add(add(sizes[0],sizes[1]),sizes[2]) << '\n';
+      };
+      observe_reservations("serialize_pending_roots","decode_validate_pending_roots");
       run.phase(sample, "refund_primitive", original, [&] {
         for (const auto& [index, manifest] : manifests) states[index] = take(states[index].refund(owner));
       });
+      next.clear();
+      for (const auto& state : states) next.push_back(take(UsedNullifiers::from_root(state.used_root(), state.used_count())));
+      observe_reservations("serialize_refunded_roots","decode_validate_refunded_roots");
       for (const auto& key : fresh) {
         require(take(states[route(key, page_count)].try_is_used(key)), "refund did not consume");
         require(!take(states[route(key, page_count)].try_is_reserved(key)), "refund reservation remains");
       }
-      // Serialization below remains used-set-only, not full settlement state.
-      next.clear();
-      for (const auto& state : states) next.push_back(take(UsedNullifiers::from_root(state.used_root(), state.used_count())));
+      // Keep the earlier used-set-only rows for comparison with all-root rows.
     }
     std::vector<td::BufferSlice> bytes;
     std::uint64_t byte_count = 0;
@@ -354,15 +426,21 @@ void measure(const Run& run) {
               << '\n';
   }
 }
+void finish_output() {
+  std::cout.flush();
+  std::cerr.flush();
+  require(std::cout.good() && std::cerr.good(), "measurement output failed");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (argc == 2 && std::string(argv[1]) == "--self-test") { self_test(); return 0; }
+    if (argc == 2 && std::string(argv[1]) == "--self-test") { self_test(); finish_output(); return 0; }
     require(argc == 6, "usage: measure-partition-state single|pages16 idle|insert|prefix|split|duplicate|refund entries samples seed");
     Run run{argv[1], argv[2], number(argv[5]), number(argv[3]), number(argv[4])};
     require(run.samples >= 1 && run.samples <= 100, "samples outside experiment bound");
     measure(run);
+    finish_output();
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "measurement failed: " << error.what() << '\n';

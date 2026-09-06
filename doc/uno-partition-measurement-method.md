@@ -29,8 +29,14 @@ canonical route check must reject before any source-root publication. `refund`
 uses the actual per-page `NullifierState` reservation/refund primitives with an
 owner ID, but does not authenticate a prepare/terminal receipt, lock funds,
 reserve note-tree leaves, charge fees or implement the Native Reserve machine.
-Its serialization rows measure used sets only, excluding reservation/owner
-tombstone roots. Do not interpret them as full settlement serialization costs.
+The original serialization rows measure used sets only. Additional
+`serialize_pending_roots` / `serialize_refunded_roots` and corresponding
+`decode_validate_*` rows include used, reservation and owner/manifest roots as
+three independent BoCs per page. This is not a production account encoding:
+framing and shared contents may be repeated between those BoCs. Neither set of
+rows includes note-tree reservations, authenticated receipts, funds or full
+settlement serialization. See `uno-reservation-roots-pilot.md` for the measured
+scope and permanent-owner roundtrip checks.
 
 ## Timing and counters
 
