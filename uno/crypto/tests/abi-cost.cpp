@@ -256,14 +256,28 @@ using Clock = std::chrono::steady_clock;
 std::int64_t nanos(Clock::time_point begin, Clock::time_point end) {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
 }
-long rss() {
+template <class Query>
+bool read_rss(Query&& query, long& output) {
   rusage usage{};
-  return getrusage(RUSAGE_SELF, &usage) == 0 ? usage.ru_maxrss : -1;
+  if (query(&usage) != 0 || usage.ru_maxrss <= 0) return false;
+  output = usage.ru_maxrss;
+  return true;
+}
+bool rss(long& output) {
+  return read_rss([](rusage* usage) { return getrusage(RUSAGE_SELF, usage); }, output);
+}
+bool finish_output(std::ostream& output) {
+  output.flush();
+  if (!output) {
+    std::cerr << "measurement output write failed\n";
+    return false;
+  }
+  return true;
 }
 template <class Verify>
 bool sample_with_backend(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
                          std::size_t count, unsigned index, bool late_failure,
-                         Verify&& verify, std::ostream& output) {
+                         Verify&& verify, std::ostream& output, bool (*read_memory)(long&) = rss) {
   auto wrong = input;
   wrong.sighash[0] ^= 1;
   std::vector<const UnoCryptoVerifyRequest*> requests(count, &input);
@@ -298,12 +312,17 @@ bool sample_with_backend(const char* context, const char* workload, const UnoCry
     std::cerr << "measurement clock observation is missing or out of order\n";
     return false;
   }
+  long peak;
+  if (!read_memory(peak)) {
+    std::cerr << "measurement RSS unavailable\n";
+    return false;
+  }
   output << "{\"context\":\"" << context << "\",\"workload\":\"" << workload
             << "\",\"sample\":" << index << ",\"proof_calls\":" << calls
             << ",\"actions\":" << usage.actions << ",\"payload_bytes\":" << usage.payload_bytes
             << ",\"preflight_ns\":" << nanos(begin, ready) << ",\"abi_ns\":" << nanos(ready, end)
-            << ",\"total_ns\":" << nanos(begin, end) << ",\"process_hwm_rss_kib\":" << rss() << "}\n";
-  return true;
+            << ",\"total_ns\":" << nanos(begin, end) << ",\"process_hwm_rss_kib\":" << peak << "}\n";
+  return finish_output(output);
 }
 bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
             std::size_t count, unsigned index, bool late_failure) {
@@ -390,6 +409,64 @@ bool sample_boundary_self_test() {
   }
   return true;
 }
+bool measurement_io_self_test() {
+  std::cerr << "checking expected-failure controls: RSS and output\n";
+  long preserved = 17;
+  if (read_rss([](rusage* value) { value->ru_maxrss = 123; return -1; }, preserved) || preserved != 17) {
+    std::cerr << "RSS failed query was accepted or published output\n";
+    return false;
+  }
+  if (read_rss([](rusage* value) { value->ru_maxrss = -1; return 0; }, preserved) || preserved != 17) {
+    std::cerr << "RSS invalid value was accepted or published output\n";
+    return false;
+  }
+  if (!read_rss([](rusage* value) { value->ru_maxrss = 123; return 0; }, preserved) || preserved != 123) {
+    std::cerr << "RSS valid query failed or published the wrong value\n";
+    return false;
+  }
+  UnoCryptoAction actions[2]{};
+  uint8_t proof[7264]{};
+  UnoCryptoVerifyRequest input{};
+  input.abi_version = UNO_CRYPTO_ABI_VERSION;
+  input.profile = UNO_CRYPTO_FIXED_PROFILE;
+  input.actions = actions;
+  input.action_count = input.max_actions = 2;
+  input.proof = proof;
+  input.proof_bytes = input.max_proof_bytes = sizeof(proof);
+  std::size_t calls = 0;
+  bool count_ok = true;
+  auto backend = [&](const UnoCryptoVerifyRequest*) {
+    count_ok = add(calls, 1, calls) && count_ok;
+    return UNO_CRYPTO_OK;
+  };
+  std::ostringstream output;
+  const auto unavailable = [](long& value) { value = -1; return false; };
+  if (sample_with_backend("test", "RSS failure", input, 1, 0, false, backend, output, unavailable) ||
+      calls != 1 || !count_ok || !output.str().empty()) {
+    std::cerr << "RSS failure published or accepted a sample\n";
+    return false;
+  }
+  calls = 0;
+  output.setstate(std::ios::badbit);
+  const auto known_memory = [](long& value) { value = 123; return true; };
+  if (sample_with_backend("test", "output failure", input, 1, 0, false, backend, output, known_memory) ||
+      calls != 1 || !count_ok) {
+    std::cerr << "failed measurement output reported success\n";
+    return false;
+  }
+  struct FlushFails : std::stringbuf {
+    int sync() override { return -1; }
+  } buffer;
+  std::ostream delayed_failure(&buffer);
+  calls = 0;
+  if (!delayed_failure.good() ||
+      sample_with_backend("test", "flush failure", input, 1, 0, false, backend, delayed_failure, known_memory) ||
+      calls != 1 || !count_ok || buffer.str().empty()) {
+    std::cerr << "delayed measurement output failure was not detected\n";
+    return false;
+  }
+  return true;
+}
 bool measure(const char* funding_path, const char* spend_path) {
   Fixture funding, spend;
   if (!funding.load(funding_path, true) || !spend.load(spend_path, false)) return false;
@@ -413,10 +490,19 @@ bool measure(const char* funding_path, const char* spend_path) {
       const auto begin = Clock::now();
       const auto status = admit(requests, {700, 1400, 6322400}, usage);
       const auto end = Clock::now();
-      if (status != Admission::Shape) return false;
+      if (status != Admission::Shape) {
+        std::cerr << "shape timing unexpected admission status=" << static_cast<int>(status) << '\n';
+        return false;
+      }
+      long peak;
+      if (!rss(peak)) {
+        std::cerr << "shape timing RSS unavailable\n";
+        return false;
+      }
       std::cout << "{\"context\":\"" << context << "\",\"workload\":\"shape_reject\",\"sample\":"
                 << i << ",\"logical_entries\":700,\"proof_calls\":0,\"preflight_ns\":" << nanos(begin,end)
-                << ",\"process_hwm_rss_kib\":" << rss() << "}\n";
+                << ",\"process_hwm_rss_kib\":" << peak << "}\n";
+      if (!finish_output(std::cout)) return false;
     }
   }
   return true;
@@ -425,7 +511,7 @@ bool measure(const char* funding_path, const char* spend_path) {
 
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--self-test")
-    return self_test() && sample_boundary_self_test() ? 0 : 1;
+    return self_test() && sample_boundary_self_test() && measurement_io_self_test() ? 0 : 1;
   if (argc == 4 && std::string(argv[1]) == "--measure") return measure(argv[2], argv[3]) ? 0 : 2;
   std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin\n";
   return 3;
