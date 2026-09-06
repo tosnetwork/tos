@@ -1,9 +1,33 @@
 #include "uno/core/note-tree-state.h"
+#include "uno/core/anchor-window.h"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "vm/vmstate.h"
 
 using uno_workchain::NoteTreeState;
+
+TEST(UnoTreeCell, OnlyBlockEndRootEntersNextAnchorWindow) {
+  auto tree = NoteTreeState::empty().move_as_ok();
+  const auto prestate = uno_workchain::AnchorWindow::genesis(3, 3, tree.root()).move_as_ok();
+  NoteTreeState::Commitment first{}, second{};
+  first[0] = 1;
+  second[0] = 3;
+  tree = tree.append({first}, 0, 1).move_as_ok();
+  const auto intermediate = tree.root();
+  ASSERT_TRUE(!prestate.contains(intermediate));
+  tree = tree.append({second}, 0, 1).move_as_ok();
+  ASSERT_TRUE(intermediate != tree.root());
+  ASSERT_TRUE(!prestate.contains(tree.root()));
+  auto poststate = prestate.finish_block(1, tree.root()).move_as_ok();
+  ASSERT_TRUE(poststate.contains(tree.root()));
+  ASSERT_TRUE(!poststate.contains(intermediate));
+  ASSERT_EQ(poststate.size(), 2u);
+  auto restored = uno_workchain::AnchorWindow::from_cell(poststate.to_cell().move_as_ok(), 3, 3).move_as_ok();
+  ASSERT_TRUE(restored.latest() == NoteTreeState::from_cell(tree.to_cell().move_as_ok()).move_as_ok().root());
+  // Idle blocks retain the same tree root but still consume window entries.
+  restored = restored.finish_block(2, tree.root()).move_as_ok().finish_block(3, tree.root()).move_as_ok();
+  ASSERT_TRUE(!restored.contains(prestate.latest()));
+}
 
 namespace {
 NoteTreeState::Commitment leaf(unsigned value) {

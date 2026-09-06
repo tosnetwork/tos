@@ -637,7 +637,7 @@ target_include_directories(test-uno-crypto-adapter PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-uno-crypto-adapter PRIVATE tdutils)
 add_executable(test-uno-native-amount test/test-td-main.cpp uno/test/test-native-amount.cpp)
 add_executable(test-uno-used-nullifiers test/test-td-main.cpp uno/test/test-used-nullifiers.cpp
-  uno/test/test-nullifier-state.cpp)
+  uno/test/test-nullifier-state.cpp uno/test/test-anchor-window.cpp)
 target_include_directories(test-uno-used-nullifiers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-uno-used-nullifiers PRIVATE tos_crypto)
 target_include_directories(test-uno-native-amount PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

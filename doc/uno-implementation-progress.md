@@ -1866,3 +1866,40 @@ These are fresh functional results, not slot-performance measurements or full
 validator-network acceptance. Earlier explicit ENOSPC failures are environmental
 failures, not implementation-defect evidence; this does not claim to reproduce
 every historical disk-adjacent failure.
+
+### Height-indexed Anchor Window persistence
+
+`uno/core/anchor-window.h` reuses the historical oldest-to-newest root-chain
+storage idea, but not its mutable push API or permissive decoder. This is an
+unactivated codec (`0x554e4130`), not a frozen StateV2 constructor. Capacity and
+resource ceiling are explicit caller inputs: neither 100 blocks nor a wall-clock
+duration is silently chosen. The prototype starts with the genesis root at height
+zero and requires each subsequent height exactly once. Repeated roots occupy
+separate entries so empty blocks still age old anchors. Immutable return values
+let the engine retain its block pre-state window while constructing the next one.
+
+A 128-bit header stores tag, height and count with exactly one reference. Each
+following ordinary Cell contains exactly 256 root bits and only the required next
+reference. Count must equal the lesser of capacity and the number of heights
+since genesis, calculated without wrapping at maximum height. Oversized counts
+reject before traversing the chain. Library Cells are not implicitly resolved;
+VM read errors, incomplete proofs and execution-budget exhaustion return errors.
+Configuration changes to capacity require a separate migration policy; decoding
+with a different capacity is not such a policy.
+
+Tests cover eviction, repeated idle roots, immutable pre-state, rejected repeated
+or skipped heights, maximum height, BoC round trips and continued execution,
+trailing bits/references, special Cells, and faults at every Cell read. A linked
+tree test appends two distinct leaves and includes only the block-end root in
+the successor window, then restores both tree and window and advances empty
+blocks. The initial synthetic second leaf was the upstream empty-leaf encoding,
+so it did not change the root; the corrected test explicitly asserts that the
+intermediate and final roots differ before checking exclusion.
+
+Independent mutations removed eviction and exact node bit-length validation.
+The tests failed respectively on excess window size and acceptance of trailing
+data. Both mutations were restored; `test-uno-used-nullifiers` and
+`test-uno-tree-cell` then each passed three consecutive runs (1.88 seconds total).
+This is component/composition evidence only:
+production StateV2 authentication, transaction admission against the frozen
+pre-state window, and the single end-of-block commit still require integration.
