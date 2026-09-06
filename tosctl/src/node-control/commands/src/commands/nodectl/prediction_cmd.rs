@@ -9,7 +9,10 @@
 //! durable before any optional broadcast so the same bytes can be retried
 //! after a crash without rebuilding against a different wallet seqno.
 
-use super::agent_cmd::{build_wallet_message_boc, confirm, open_economic_controller_journal};
+use super::agent_cmd::{
+    await_prediction_recovery_checkpoint_pause, build_wallet_message_boc, confirm,
+    open_economic_controller_journal, write_prediction_recovery_checkpoint,
+};
 use super::utils::{get_wallet_config, load_config_vault_rpc_client, make_wallet, wallet_info};
 use anyhow::Context;
 use base64::Engine;
@@ -155,6 +158,17 @@ struct PredictionPrepareAgentCmd {
     yes: bool,
     #[arg(long, help = "Optional explicit owner-private custody journal directory")]
     journal_directory: Option<String>,
+    #[arg(
+        long,
+        help = "Write an owner-private durable-boundary checkpoint after signing and before broadcast state"
+    )]
+    checkpoint_file: Option<String>,
+    #[arg(
+        long,
+        requires = "checkpoint_file",
+        help = "Hold at the checkpoint for at most 30 seconds so an external crash-recovery supervisor can terminate this process"
+    )]
+    checkpoint_pause_ms: Option<u32>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -992,8 +1006,8 @@ impl PredictionPrepareAgentCmd {
             record.status != ControllerActionStatus::Resolved,
             "Prediction effect sequence was consumed; resolve before retry"
         );
-        let boc = if let Some(encoded) = record.exact_signed_boc_base64 {
-            base64::engine::general_purpose::STANDARD.decode(encoded)?
+        let (boc, newly_signed) = if let Some(encoded) = record.exact_signed_boc_base64 {
+            (base64::engine::general_purpose::STANDARD.decode(encoded)?, false)
         } else {
             let payload = AgentAccountContract::build_checked_contract_call_v2_payload(
                 global_id,
@@ -1025,8 +1039,18 @@ impl PredictionPrepareAgentCmd {
                 &digest,
                 now,
             )?;
-            boc
+            (boc, true)
         };
+        if newly_signed {
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&boc)));
+            write_prediction_recovery_checkpoint(
+                self.checkpoint_file.as_deref(),
+                "signed",
+                &authorization.stable_action_id,
+                &digest,
+            )?;
+            await_prediction_recovery_checkpoint_pause(self.checkpoint_pause_ms).await?;
+        }
         // A BOC byte digest identifies the durable local artifact, whereas the
         // relay history walk identifies the external message by its TVM cell
         // representation hash.  Export both: serializing a valid cell in a

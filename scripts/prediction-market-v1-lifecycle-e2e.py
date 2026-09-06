@@ -35,6 +35,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -191,6 +192,51 @@ class Lifecycle:
                                    env=self.env, timeout=180, check=False)
         if completed.returncode == 0:
             raise RuntimeError(f"tosctl unexpectedly accepted negative test: {' '.join(args)}")
+
+    def tosctl_kill_at_prediction_checkpoint(self, checkpoint: Path, phase: str,
+                                              *args: str) -> dict[str, Any]:
+        """Kill the actual tosctl process after its durable checkpoint write.
+
+        The command itself opts into a short, bounded checkpoint pause.  This
+        avoids treating an ordinary fast exit as a crash and gives the parent
+        a deterministic point at which SIGKILL is delivered.
+        """
+        if checkpoint.exists():
+            raise RuntimeError(f"Prediction crash checkpoint already exists: {checkpoint}")
+        command = [str(self.tosctl), *args, "--checkpoint-file", str(checkpoint),
+                   "--checkpoint-pause-ms", "30000", "-c", str(self.config)]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
+
+        def checkpoint_written() -> dict[str, Any] | None:
+            if checkpoint.exists():
+                metadata = checkpoint.stat()
+                if not checkpoint.is_file() or checkpoint.is_symlink() or metadata.st_size > 4096:
+                    raise RuntimeError("Prediction crash checkpoint is not a bounded regular file")
+                if metadata.st_mode & 0o077:
+                    raise RuntimeError("Prediction crash checkpoint is not owner-private")
+                marker = json.loads(checkpoint.read_text())
+                if marker.get("schema") != "tosctl.prediction-recovery-checkpoint.v1" or marker.get("phase") != phase:
+                    raise RuntimeError(f"unexpected Prediction crash checkpoint: {marker}")
+                return marker
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                raise RuntimeError(
+                    f"tosctl exited before {phase} checkpoint ({process.returncode}):\n"
+                    f"{stdout.decode()}\n{stderr.decode()}"
+                )
+            return None
+
+        marker = wait_until(checkpoint_written, f"Prediction {phase} durable checkpoint", 30)
+        process.send_signal(signal.SIGKILL)
+        stdout, stderr = process.communicate(timeout=30)
+        if process.returncode != -signal.SIGKILL:
+            raise RuntimeError(
+                f"tosctl did not die from SIGKILL at {phase}: {process.returncode}\n"
+                f"{stdout.decode()}\n{stderr.decode()}"
+            )
+        if stdout:
+            raise RuntimeError(f"tosctl emitted output after {phase} checkpoint before SIGKILL: {stdout.decode()}")
+        return marker
 
     def json_call(self, *args: str) -> Any:
         return json.loads(self.tosctl_call(*args, "--format", "json"))
@@ -404,7 +450,8 @@ class Lifecycle:
         return boc_path
 
     def prepare_and_send_agent(self, operation: dict[str, Any], amount: int, sequence: int,
-                               market_state: dict[str, Any]) -> Path:
+                               market_state: dict[str, Any], crash_recovery: bool = False,
+                               defer_broadcast: bool = False) -> Path | tuple[Path, dict[str, Any], Path]:
         """Use tosctl's real custody journal to prepare one checked-call V2 BOC."""
         if self.agent_account_address is None:
             raise RuntimeError("Prediction Agent Account is unavailable")
@@ -451,24 +498,32 @@ class Lifecycle:
         )
         if rejected_path.exists():
             raise RuntimeError("rejected Prediction custody authorization wrote an executable BOC")
-        prepared = json.loads(self.tosctl_call(
+        prepare_args = (
             "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
             "--operation", str(operation_path), "--wallet", "prediction-solver",
             "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
             "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
             "--output-boc", str(boc_path), "--yes",
-        ))
+        )
+        signed_marker: dict[str, Any] | None = None
+        if crash_recovery:
+            checkpoint = self.workdir / f"prediction-signed-{sequence}.checkpoint.json"
+            signed_marker = self.tosctl_kill_at_prediction_checkpoint(checkpoint, "signed", *prepare_args)
+            if boc_path.exists():
+                raise RuntimeError("killed signed preparer wrote an executable BOC output file")
+        prepared = json.loads(self.tosctl_call(*prepare_args))
+        if crash_recovery and (
+                signed_marker is None
+                or signed_marker.get("stable_action_id") != prepared["stable_action_id"]
+                or signed_marker.get("evidence_digest") != prepared["exact_signed_boc_digest"]):
+            raise RuntimeError(f"signed crash checkpoint does not bind the recovered BOC: {signed_marker}")
         # The first process has now exited with the signed BOC only in the
         # durable custody journal and the owner-private output file. A fresh
         # process must resume that exact record rather than sign a new
         # controller sequence or reconstruct the payload.
         retry_path = self.workdir / f"agent-retry-message-{sequence}.boc"
         retried = json.loads(self.tosctl_call(
-            "agent", "prediction", "prepare-agent", "--definition", str(self.definition),
-            "--operation", str(operation_path), "--wallet", "prediction-solver",
-            "--amount-nanotos", str(amount), "--fee-reserve-nanotos", str(100_000_000),
-            "--valid-until", str(valid_until), "--authorization-file", str(authorization_path),
-            "--output-boc", str(retry_path), "--yes",
+            *prepare_args[:-3], "--output-boc", str(retry_path), "--yes",
         ))
         if boc_path.read_bytes() != retry_path.read_bytes():
             raise RuntimeError("Prediction custody retry rebuilt a different signed BOC")
@@ -481,8 +536,33 @@ class Lifecycle:
                 or not prepared["submitted_external_message_hash"].startswith("tvm-cell-sha256:")
                 or prepared.get("journal_state") != "broadcasting" or prepared.get("broadcast") is not False):
             raise RuntimeError(f"prepared Prediction effect omitted exact external cell hash: {prepared}")
+        if defer_broadcast:
+            # A caller may deliberately change only the destination's chain
+            # state before broadcasting this already durable BOC. It must not
+            # reconstruct the operation or create a second custody action.
+            return boc_path, prepared, body_path
+        self.broadcast_agent_effect(prepared, body_path, sequence, crash_recovery)
+        return boc_path
+
+    def broadcast_agent_effect(self, prepared: dict[str, Any], body_path: Path, sequence: int,
+                               crash_recovery: bool = False) -> None:
+        """Submit one previously durable Agent effect, then prove its relay outcome."""
+        if self.agent_account_address is None:
+            raise RuntimeError("Prediction Agent Account is unavailable")
         before = self.json_call("agent", "account", "show", "--address", self.agent_account_address)
         prior_seqno = int(before["seqno"])
+        if crash_recovery:
+            checkpoint = self.workdir / f"prediction-broadcast-{sequence}.checkpoint.json"
+            marker = self.tosctl_kill_at_prediction_checkpoint(
+                checkpoint, "broadcasting", "agent", "account", "economic-effect-broadcast",
+                "--wallet", "prediction-solver", "--stable-action-id", prepared["stable_action_id"], "--yes",
+            )
+            if (marker.get("stable_action_id") != prepared["stable_action_id"]
+                    or marker.get("evidence_digest") != prepared["exact_signed_boc_digest"]):
+                raise RuntimeError(f"broadcast crash checkpoint does not bind the prepared BOC: {marker}")
+            after_kill = self.json_call("agent", "account", "show", "--address", self.agent_account_address)
+            if int(after_kill["seqno"]) != prior_seqno:
+                raise RuntimeError("killed pre-submission broadcaster advanced Agent Account seqno")
         broadcast = json.loads(self.tosctl_call(
             "agent", "account", "economic-effect-broadcast", "--wallet", "prediction-solver",
             "--stable-action-id", prepared["stable_action_id"], "--yes",
@@ -495,10 +575,60 @@ class Lifecycle:
             lambda: int(self.json_call("agent", "account", "show", "--address", self.agent_account_address)["seqno"]) > prior_seqno,
             f"Prediction Agent Account seqno advancement for operation {sequence}",
         )
-        self.resolve_agent_prediction_relay(prepared, body_path)
-        return boc_path
+        if crash_recovery:
+            self.run_openfox_destination_crash_gate(prepared, body_path)
+            return
+        self.resolve_agent_prediction_relay(prepared, body_path, crash_recovery)
 
-    def resolve_agent_prediction_relay(self, prepared: dict[str, Any], body_path: Path) -> None:
+    def run_openfox_destination_crash_gate(self, prepared: dict[str, Any], body_path: Path) -> None:
+        """Run OpenFox's actual three-node destination-process-death release gate."""
+        if self.openfox_root is None:
+            raise RuntimeError("agent-crash-recovery requires --openfox-root for the OpenFox destination gate")
+        quorum_configs = self.relay_quorum_configs()
+        observer = self.relay_observer_profile(prepared["network_domain"], quorum_configs)
+        profile = {
+            "network_domain_hash": observer["network_domain_hash"],
+            "source_agent_account": prepared["source"],
+            "source_agent_account_code_hash": prepared["source_agent_account_code_hash"],
+            "market_address": prepared["destination"], "market_id": prepared["market_id"],
+            "market_code_hash": prepared["market_code_hash"], "market_config_hash": prepared["market_config_hash"],
+            "observer_ids": observer["observer_ids"], "quorum_threshold": observer["quorum_threshold"],
+            "maximum_outstanding": 8, "maximum_signed_boc_bytes": 64 << 10,
+            "minimum_no_bounce_masterchain_blocks": 8,
+        }
+        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-relay-crash-", dir="/home/tomi"))
+        trusted_dir.chmod(0o700)
+        try:
+            trusted_tosctl = trusted_dir / "tosctl"
+            shutil.copyfile(self.tosctl, trusted_tosctl)
+            subprocess.run(["strip", "--strip-unneeded", str(trusted_tosctl)], check=True, timeout=60)
+            trusted_tosctl.chmod(0o700)
+            input_path = self.workdir / "openfox-prediction-relay-crash-input.json"
+            input_path.write_text(json.dumps({
+                "profile": profile, "prepared": prepared, "network": prepared["network_domain"],
+                "body_boc_path": str(body_path), "tosctl": str(trusted_tosctl),
+                "primary_config": str(self.config), "quorum_configs": [str(path) for path in quorum_configs],
+                "vault_url": self.vault_url,
+            }))
+            input_path.chmod(0o600)
+            env = dict(self.env)
+            env.update({
+                "GOWORK": "off", "OPENFOX_PREDICTION_RELAY_CRASH_THREE_NODE_E2E": "1",
+                "OPENFOX_PREDICTION_RELAY_CRASH_THREE_NODE_INPUT": str(input_path),
+            })
+            completed = subprocess.run(
+                ["go", "test", "./pkg/earning", "-run",
+                 "TestPredictionRelayDestinationThreeNodeProcessDeathReleaseGate", "-count=1", "-v"],
+                cwd=self.openfox_root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                timeout=300, check=False,
+            )
+            if completed.returncode:
+                raise RuntimeError(f"OpenFox three-node destination crash gate failed:\n{completed.stdout.decode()}")
+        finally:
+            shutil.rmtree(trusted_dir, ignore_errors=False)
+
+    def resolve_agent_prediction_relay(self, prepared: dict[str, Any], body_path: Path,
+                                       crash_recovery: bool = False) -> None:
         """Prove one exact V2 source and destination path through tosctl's durable resolver."""
         required = ("stable_action_id", "source", "source_agent_account_code_hash", "destination",
                     "market_id", "market_code_hash", "market_config_hash", "amount_nanotos", "body_hash",
@@ -526,10 +656,18 @@ class Lifecycle:
         source_path = self.workdir / "prediction-relay-source-request.json"
         source_path.write_text(json.dumps(source_request))
         source_path.chmod(0o600)
-        source = json.loads(self.tosctl_call(
+        source_args = (
             "agent", "account", "prediction-relay-source-resolve", "--wallet", "prediction-solver",
             "--stable-action-id", prepared["stable_action_id"], "--relay-request", str(source_path),
             "--max-transactions", "1000", "--quorum-config", *(str(path) for path in quorum_configs),
+        )
+        if crash_recovery:
+            checkpoint = self.workdir / "prediction-source-finalized.checkpoint.json"
+            marker = self.tosctl_kill_at_prediction_checkpoint(checkpoint, "source_finalized", *source_args)
+            if marker.get("stable_action_id") != prepared["stable_action_id"]:
+                raise RuntimeError(f"source crash checkpoint binds another action: {marker}")
+        source = json.loads(self.tosctl_call(
+            *source_args,
         ))
         if source.get("schema") != "tosctl.prediction-relay-source-evidence.v1" or source.get("state") != "source_finalized":
             raise RuntimeError(f"Prediction source resolver did not prove the checked call: {source}")
@@ -862,7 +1000,7 @@ class Lifecycle:
         if withdrawn["total_free"] != 0:
             raise RuntimeError(f"withdraw did not exhaust the owner's free collateral: {withdrawn}")
 
-    def run_signed_match_lifecycle(self, agent_source: bool = False) -> None:
+    def run_signed_match_lifecycle(self, agent_source: bool = False, crash_recovery: bool = False) -> None:
         """Prove a two-owner complementary BUY match from exact signed BOCs."""
         definition = self.write_definition()
         state = json.loads(self.tosctl_call(
@@ -908,7 +1046,9 @@ class Lifecycle:
         scan_start = int(rpc(self.rpc_urls[0], "getMasterchainInfo")["result"]["last"]["seqno"])
         amount = order_contribution + OPERATION_BUDGET
         if agent_source:
-            external_boc = self.prepare_and_send_agent(match_operation, amount, 3, state)
+            external_boc = self.prepare_and_send_agent(
+                match_operation, amount, 3, state, crash_recovery,
+            )
             self.match_source_address = self.agent_account_address
             self.match_source_code_hash = self.agent_account_code_hash
         else:
@@ -1130,7 +1270,7 @@ def parse_args() -> argparse.Namespace:
         help="controlled normal-oracle outcome to exercise (not an external-fact assertion)",
     )
     parser.add_argument(
-        "--scenario", choices=("normal", "signed-match", "agent-signed-match", "challenged-appellate", "challenged-uphold", "challenged-timeout", "double-timeout"), default="normal",
+        "--scenario", choices=("normal", "signed-match", "agent-signed-match", "agent-crash-recovery", "challenged-appellate", "challenged-uphold", "challenged-timeout", "double-timeout"), default="normal",
         help="lifecycle branch to exercise",
     )
     return parser.parse_args()
@@ -1138,8 +1278,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.openfox_root and not args.evidence_dir:
+    if args.openfox_root and not args.evidence_dir and args.scenario != "agent-crash-recovery":
         raise RuntimeError("--openfox-root requires --evidence-dir for exact match inputs")
+    if args.scenario == "agent-crash-recovery" and not args.openfox_root:
+        raise RuntimeError("agent-crash-recovery requires --openfox-root")
     if not args.tosctl.is_file() or not os.access(args.tosctl, os.X_OK):
         raise RuntimeError(f"tosctl binary is not executable: {args.tosctl}")
     parent = args.workdir.resolve() if args.workdir else Path(tempfile.gettempdir())
@@ -1190,6 +1332,10 @@ def main() -> int:
             lifecycle.provision_wallets(MATCH_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_signed_match_lifecycle(agent_source=True)
             print("PredictionMarket Agent Account signed-order match three-node lifecycle: PASS")
+        elif args.scenario == "agent-crash-recovery":
+            lifecycle.provision_wallets(MATCH_SCENARIO_FUNDED_WALLETS)
+            lifecycle.run_signed_match_lifecycle(agent_source=True, crash_recovery=True)
+            print("PredictionMarket Agent Account crash-recovery three-node lifecycle: PASS")
         elif args.scenario == "challenged-appellate":
             lifecycle.provision_wallets(CHALLENGED_SCENARIO_FUNDED_WALLETS)
             lifecycle.run_challenged_lifecycle(1)

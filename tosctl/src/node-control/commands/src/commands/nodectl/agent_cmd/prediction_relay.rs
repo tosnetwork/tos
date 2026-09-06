@@ -90,6 +90,17 @@ pub struct AgentAccountPredictionRelaySourceResolveCmd {
         help = "Maximum hash-linked source transactions inspected per observer"
     )]
     max_transactions: u32,
+    #[arg(
+        long,
+        help = "Write an owner-private durable-boundary checkpoint before returning source evidence"
+    )]
+    checkpoint_file: Option<String>,
+    #[arg(
+        long,
+        requires = "checkpoint_file",
+        help = "Hold at the checkpoint for at most 30 seconds so an external crash-recovery supervisor can terminate this process"
+    )]
+    checkpoint_pause_ms: Option<u32>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -776,13 +787,18 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             resolution,
             time_format::now(),
         )?;
-        println!(
-            "{}",
-            resolved
-                .exact_winner_resolution
-                .context("resolved Prediction source lost its durable evidence")?
-                .evidence
-        );
+        let resolution = resolved
+            .exact_winner_resolution
+            .as_ref()
+            .context("resolved Prediction source lost its durable evidence")?;
+        write_prediction_recovery_checkpoint(
+            self.checkpoint_file.as_deref(),
+            "source_finalized",
+            &self.stable_action_id,
+            &resolution.evidence_digest,
+        )?;
+        await_prediction_recovery_checkpoint_pause(self.checkpoint_pause_ms).await?;
+        println!("{}", resolution.evidence);
         Ok(())
     }
 }
@@ -1539,8 +1555,8 @@ fn validate_bounce_credit_request(
         "Prediction destination failure flags contradict its transaction"
     );
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -1550,7 +1566,7 @@ fn validate_bounce_credit_request(
     let bounce_bytes =
         base64::engine::general_purpose::STANDARD.decode(&bounce.exact_message_boc_base64)?;
     anyhow::ensure!(
-        write_boc(&outputs[0].serialize()?)? == bounce_bytes,
+        write_boc(&outputs[0].1)? == bounce_bytes,
         "Prediction destination did not create the declared exact bounce"
     );
     Ok(())
@@ -2101,8 +2117,8 @@ fn parse_prediction_destination_candidate(
     };
     let opcode_success = ordinary && !aborted && compute_success && action_success;
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -2118,7 +2134,7 @@ fn parse_prediction_destination_candidate(
         );
         outputs
             .first()
-            .map(|message| prediction_observed_bounce(market, request, message))
+            .map(|(message, cell)| prediction_observed_bounce(market, request, message, cell))
             .transpose()?
     };
     Ok(Some(PredictionDestinationCandidate {
@@ -2149,6 +2165,7 @@ fn prediction_observed_bounce(
     market: &MsgAddressInt,
     request: &PredictionRelayDestinationRequest,
     message: &Message,
+    message_cell: &Cell,
 ) -> anyhow::Result<PredictionObservedMessage> {
     let header = match message.header() {
         CommonMsgInfo::IntMsgInfo(value) => value,
@@ -2165,11 +2182,10 @@ fn prediction_observed_bounce(
         "Prediction failure output is not the protocol bounce for this checked call"
     );
     let body = message.body().cloned().context("Prediction bounce has no body")?.into_cell()?;
-    let message_cell = message.serialize()?;
     Ok(PredictionObservedMessage {
         message_hash: format!("tvm-cell-sha256:{}", hex::encode(message_cell.hash(0))),
         exact_message_boc_base64: base64::engine::general_purpose::STANDARD
-            .encode(write_boc(&message_cell)?),
+            .encode(write_boc(message_cell)?),
         source_address: market.to_string(),
         destination_address: header.dst.to_string(),
         value_nanotos: header
@@ -2563,8 +2579,8 @@ fn prediction_source_candidate(
         "Prediction Agent Account source transaction did not execute successfully"
     );
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -2573,7 +2589,7 @@ fn prediction_source_candidate(
     );
     let outbound_messages = outputs
         .iter()
-        .map(|message| prediction_observed_checked_call(account, record, message))
+        .map(|(message, cell)| prediction_observed_checked_call(account, record, message, cell))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let block_identity = block_identity_from_rpc(&block, 0)?;
     Ok(PredictionSourceCandidate {
@@ -2597,6 +2613,7 @@ fn prediction_observed_checked_call(
     source: &MsgAddressInt,
     record: &ControllerActionRecord,
     message: &Message,
+    message_cell: &Cell,
 ) -> anyhow::Result<PredictionObservedMessage> {
     let header = match message.header() {
         CommonMsgInfo::IntMsgInfo(value) => value,
@@ -2621,8 +2638,7 @@ fn prediction_observed_checked_call(
             && record.claim.body_hash.as_deref() == Some(body_hash.as_str()),
         "Prediction source output differs from the custody-authorized checked call"
     );
-    let message_cell = message.serialize()?;
-    let message_boc = write_boc(&message_cell)?;
+    let message_boc = write_boc(message_cell)?;
     Ok(PredictionObservedMessage {
         message_hash: format!("tvm-cell-sha256:{}", hex::encode(message_cell.hash(0))),
         exact_message_boc_base64: base64::engine::general_purpose::STANDARD.encode(message_boc),
