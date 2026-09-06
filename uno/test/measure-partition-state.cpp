@@ -224,6 +224,17 @@ NullifierState decode_nullifiers(const EncodedNullifiers& encoded, NullifierStat
   }
   return take(NullifierState::from_roots(roots[0], roots[1], roots[2], limits));
 }
+std::vector<NullifierState> terminal_history(const std::vector<Key>& history, std::size_t page_count) {
+  std::vector<NullifierState> states(page_count);
+  for (const auto& key : history) {
+    // Fixture identities only: one unique owner per unique historical key.
+    // Zero is reserved for the new event, not a production identity scheme.
+    require(key != Key::zero(), "history owner collides with current fixture event");
+    const auto page = route(key,page_count);
+    states[page] = take(take(states[page].reserve(key,{key})).refund(key));
+  }
+  return states;
+}
 void reservation_codec_self_test() {
   auto input = keys(45,4,false);
   auto owner = Key::zero();
@@ -244,6 +255,13 @@ void reservation_codec_self_test() {
   auto paid = decode_nullifiers(encode_nullifiers(take(loaded.paid(owner))),{1,0,1,2});
   require(paid.with_used({input[1],input[2]}).is_ok(), "paid codec retained released reservations");
   require(paid.reserve(owner,{input[3]}).is_error(), "paid codec reopened terminal owner");
+  auto history = terminal_history({input[0],input[1]},16);
+  for (const auto& key : {input[0],input[1]}) {
+    const auto& page = history[route(key,16)];
+    auto restored = decode_nullifiers(encode_nullifiers(page),{page.used_count(),0,page.used_count(),page.used_count()});
+    require(take(restored.try_is_used(key)), "history fixture lost spent key");
+    require(restored.reserve(key,{input[3]}).is_error(), "history fixture omitted permanent owner");
+  }
   std::cout << "reservation codec self-test passed: pending, refunded, paid, permanent owner\n";
 }
 
@@ -276,15 +294,19 @@ void self_test() {
 }
 
 void measure(const Run& run) {
+  const bool owner_history = run.scenario == "owner-refund";
+  const bool refund = run.scenario == "refund" || owner_history;
   require(run.mode == "single" || run.mode == "pages16", "unknown mode");
   require(run.scenario == "idle" || run.scenario == "insert" || run.scenario == "prefix" ||
-          run.scenario == "split" || run.scenario == "duplicate" || run.scenario == "refund", "unknown scenario");
+          run.scenario == "split" || run.scenario == "duplicate" || refund, "unknown scenario");
   const bool concentrated = run.scenario == "prefix";
   auto all = keys(run.seed, add(run.entries, 2), concentrated);
   std::vector<Key> history(all.begin(), all.begin() + run.entries);
   std::vector<Key> fresh(all.begin() + run.entries, all.end());
   const auto page_count = run.mode == "single" ? 1u : 16u;
   Pages original = build(history, page_count);
+  std::vector<NullifierState> historical_states;
+  if (owner_history) historical_states = terminal_history(history,page_count);
   require(count(original) == run.entries, "construction count mismatch");
   const auto base_metrics = metrics(original);
   std::cout << "mode,scenario,seed,history_entries,sample,phase,pages,result_entries,wall_us,process_highwater_rss_kib\n";
@@ -317,15 +339,22 @@ void measure(const Run& run) {
         auto result = apply(original, batch, add(run.entries, 2));
         require(result.is_error() && same(next, original), "duplicate did not leave roots unchanged");
       });
-    } else if (run.scenario != "idle" && run.scenario != "refund") {
+    } else if (run.scenario != "idle" && !refund) {
       run.phase(sample, "update_two", next, [&] { next = take(apply(loaded, claim(fresh, page_count), add(run.entries, 2))); });
       require(count(next) == add(run.entries, 2), "update count mismatch");
     }
-    if (run.scenario == "refund") {
+    if (refund) {
       // One owner ID across independent in-memory page primitives. No Native
       // prepare, reserve funds, terminal receipt, fee or atomic host commit.
       std::vector<NullifierState> states;
-      for (const auto& page : loaded) states.push_back(take(NullifierState::from_roots(page.root(), {}, {}, {page.size(), 0, 0, 0})));
+      run.phase(sample,"load_reservation_state",original,[&] {
+        for (std::size_t i = 0; i < loaded.size(); ++i) {
+          const auto owners = owner_history ? loaded[i].size() : 0;
+          states.push_back(take(NullifierState::from_roots(loaded[i].root(), {},
+              owner_history ? historical_states[i].owners_root() : td::Ref<vm::Cell>{},
+              {loaded[i].size(),0,owners,owners})));
+        }
+      });
       std::map<std::size_t, std::vector<Key>> manifests;
       for (const auto& key : fresh) manifests[route(key, page_count)].push_back(key);
       Key owner = Key::zero();
@@ -344,8 +373,11 @@ void measure(const Run& run) {
         });
         std::vector<NullifierState> restored_states;
         run.phase(sample,decode_phase,next,[&] {
-          for (std::size_t i = 0; i < states.size(); ++i)
-            restored_states.push_back(decode_nullifiers(encoded[i],{states[i].used_count(),2,1,2}));
+          for (std::size_t i = 0; i < states.size(); ++i) {
+            const auto history_owners = owner_history ? original[i].size() : 0;
+            restored_states.push_back(decode_nullifiers(encoded[i],
+                {states[i].used_count(),2,add(history_owners,1),add(history_owners,2)}));
+          }
         });
         for (std::size_t i = 0; i < states.size(); ++i) {
           std::array<td::Ref<vm::Cell>,3> before{states[i].used_root(),states[i].reserved_root(),states[i].owners_root()};
@@ -356,7 +388,8 @@ void measure(const Run& run) {
           }
         }
         states = std::move(restored_states);
-        std::cerr << "reservation_bytes mode=" << run.mode << " history=" << run.entries << " sample=" << sample
+        std::cerr << "reservation_bytes mode=" << run.mode << " scenario=" << run.scenario
+                  << " history=" << run.entries << " sample=" << sample
                   << " phase=" << encode_phase << " used=" << sizes[0] << " reserved=" << sizes[1]
                   << " owners=" << sizes[2] << " total=" << add(add(sizes[0],sizes[1]),sizes[2]) << '\n';
       };
@@ -370,6 +403,13 @@ void measure(const Run& run) {
       for (const auto& key : fresh) {
         require(take(states[route(key, page_count)].try_is_used(key)), "refund did not consume");
         require(!take(states[route(key, page_count)].try_is_reserved(key)), "refund reservation remains");
+      }
+      if (owner_history) for (const auto& key : history) {
+        const auto& state = states[route(key,page_count)];
+        require(take(state.try_is_used(key)), "historical refunded key missing");
+        vm::Dictionary owners(state.owners_root(),256);
+        auto record = owners.lookup(key);
+        require(record.not_null() && record->prefetch_ulong(2) == 2, "historical refunded owner missing");
       }
       // Keep the earlier used-set-only rows for comparison with all-root rows.
     }
@@ -436,7 +476,7 @@ void finish_output() {
 int main(int argc, char** argv) {
   try {
     if (argc == 2 && std::string(argv[1]) == "--self-test") { self_test(); finish_output(); return 0; }
-    require(argc == 6, "usage: measure-partition-state single|pages16 idle|insert|prefix|split|duplicate|refund entries samples seed");
+    require(argc == 6, "usage: measure-partition-state single|pages16 idle|insert|prefix|split|duplicate|refund|owner-refund entries samples seed");
     Run run{argv[1], argv[2], number(argv[5]), number(argv[3]), number(argv[4])};
     require(run.samples >= 1 && run.samples <= 100, "samples outside experiment bound");
     measure(run);

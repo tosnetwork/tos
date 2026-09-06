@@ -14,6 +14,9 @@ Native dictionary/Cell implementations and identical deterministic key seeds:
 The executable accepts `mode scenario history_entries samples seed`. Suggested
 comparison matrix: both modes; history 0, 1024, 8192, 32768, 65536; three samples;
 seed 45; scenarios `idle`, `insert`, `prefix`, `split`, `duplicate`, `refund`.
+The additional `owner-refund` scenario has one permanent refunded owner and
+single-key manifest for every historical spent key; compare it with `refund`
+using the same mode, history, samples and seed. See `uno-owner-history-pilot.md`.
 Run separate invocations serially on the same hardware/build, with no competing
 benchmark or compilation. The empty/idle combination is an empty used-set
 operation, **not** a complete UNO empty block. All input counts are experiment
@@ -37,6 +40,13 @@ framing and shared contents may be repeated between those BoCs. Neither set of
 rows includes note-tree reservations, authenticated receipts, funds or full
 settlement serialization. See `uno-reservation-roots-pilot.md` for the measured
 scope and permanent-owner roundtrip checks.
+
+`load_reservation_state` measures full used/owner consistency restoration before
+the current reservation event. `owner-refund` prepares its terminal history
+outside sample timers by actually reserving and refunding each historical key.
+Each key doubles as its synthetic owner ID; this is not a proposed production
+identity scheme. All old owner records are checked after the new event. The
+restore bounds include historical owners/manifests using checked additions.
 
 ## Timing and counters
 
