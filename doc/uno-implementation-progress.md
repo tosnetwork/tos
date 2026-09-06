@@ -2194,3 +2194,43 @@ The final restored run `m1-counter-network-run-wks1grij` also passed: wc2 block
 17 (value 57), masterchain target 18 and cold height 48. The account data and
 transaction identity remained identical after the observer process/database
 reopened with all warm validators stopped.
+
+### Real-manager proof root-binding probe
+
+The independent Counter executable now launches a test-only actor after it
+receives a non-genesis masterchain state. It obtains that real network-produced
+block's stored proof through the real manager, submits the original proof for
+successful revalidation, then flips one bit of the declared root hash while
+retaining the genuine Merkle proof. It rebuilds a structurally valid BlockProof
+envelope and submits it under the conflicting identity to validate_block_proof.
+Success requires rejection at the incorrect-root-hash check, not a timeout or
+BoC parsing error. The runner requires a passing probe from all four validators
+and the cold observer; a failed or missing marker fails the run.
+
+Run `m1-counter-network-run-9xsigcq3` passed this probe as well as Counter state
+acquisition/reopening (wc2 target 17, masterchain target 18, cold height 47).
+The original proof may hit an already-verified handle, so this is deliberately
+**not** an uncached signature revalidation test. The conflicting declaration is
+checked before that cache shortcut. There are two root-binding checks in the
+parser path; this test claims rejection of conflicting roots, not that either
+individual check is uniquely necessary.
+
+The forged bytes enter through a local call to a real manager after proof
+acquisition, not through a malicious peer's download response. Accordingly the
+report adds manager_proof_root_binding_tested while leaving the broader
+invalid_proof_rejection_tested and uno_sync_accepted false. Hostile remote proof
+transport, new-block signature rejection and large authenticated snapshot
+acquisition remain unaccepted. No production proof verification code is changed.
+Previous state-run directories were verified against the complete
+`build/m1-counter-state-runs-20260906.tar.gz` archive and moved to trash, retaining
+recoverability without increasing the three-directory per-profile cap.
+
+The negative-control build disabled the root flip, submitting an unchanged
+valid proof in the negative step. Run `m1-counter-network-run-8q2bt_z3` failed
+with the probe's acceptance assertion (`conflicting proof root was accepted`),
+not a timeout or setup error. This proves the rejection test does not always
+pass; it is not a mutation of either production root-check guard. Restoring the
+flip and rebuilding passed in `m1-counter-network-run-c_tb1d1w` (Counter target
+17, masterchain target 18, cold height 48), including executor-state reopening.
+The ordinary validator-engine target rebuilt successfully with the test actor
+excluded, and all four state/request instrument tests passed.

@@ -68,6 +68,16 @@ async def counter_tip(node):
         await asyncio.sleep(1)
 
 
+async def require_proof_probe(node):
+    while True:
+        log = node.log_path.read_text(errors="replace")
+        if "COUNTER_PROOF_PROBE_FAIL" in log:
+            raise AssertionError(f"real-manager proof probe failed: {node.log_path}")
+        if "COUNTER_PROOF_PROBE_PASS root-binding" in log:
+            return
+        await asyncio.sleep(0.2)
+
+
 async def exercise(root, build, port, join_timeout, counter):
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -99,6 +109,9 @@ async def exercise(root, build, port, join_timeout, counter):
             await node.run(options)
         _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
+        if counter:
+            for node in validators:
+                await asyncio.wait_for(require_proof_probe(node), 10)
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -119,6 +132,7 @@ async def exercise(root, build, port, join_timeout, counter):
                 raise AssertionError("cold node disagrees on the finalized Counter block")
             counter_header = await cold_client.get_block_header(acquired)
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
+            await asyncio.wait_for(require_proof_probe(cold), 10)
             (root / "counter-account.json").write_text(executor_state.to_json())
             (root / "counter-target.json").write_text(counter_target.to_json())
             (root / "counter-header.json").write_text(counter_header.to_json())
@@ -151,6 +165,7 @@ async def exercise(root, build, port, join_timeout, counter):
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
+                "manager_proof_root_binding_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
                 "target_seqno": target.seqno, "cold_seqno": observed.seqno,
                 "block": json.loads(target.to_json()), "served_without_warm_validators": True}

@@ -35,6 +35,7 @@
 #include "block/workchain-execution-dispatch.h"
 #ifdef TOS_COUNTER_NETWORK_TEST
 #include "crypto/test/workchain-counter-engine.h"
+#include "test/counter-network-proof-probe.h"
 #endif
 #include "common/errorlog.h"
 #include "crypto/fift/utils.h"
@@ -1714,6 +1715,14 @@ void ValidatorEngine::got_state(td::Ref<tos::validator::MasterchainState> state)
                << status.move_as_error();
   }
   state_ = std::move(state);
+#ifdef TOS_COUNTER_NETWORK_TEST
+  static bool proof_probe_started = false;
+  if (!proof_probe_started && state_->get_block_id().seqno() >= 3) {
+    proof_probe_started = true;
+    td::actor::create_actor<tos::validator::test::CounterProofProbe>(
+        "counter-proof-probe", validator_manager_.get(), state_->get_block_id()).release();
+  }
+#endif
   validator_set_ = state_->get_total_validator_set(0);
   validator_set_next_ = state_->get_total_validator_set(1);
   validator_set_prev_ = state_->get_total_validator_set(-1);
