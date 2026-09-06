@@ -50,7 +50,7 @@ async def counter_state(client, block, payload=None):
     return state
 
 
-def require_validator_replay_cache(logs):
+def require_validator_replay_cache(logs, required_validator=None):
     evidence = {}
     owners = {}
     for name, log in logs.items():
@@ -59,10 +59,14 @@ def require_validator_replay_cache(logs):
         for tx in hits:
             owners.setdefault(tx, []).append(name)
         evidence[name] = {"hit_transactions": sorted(hits),
-                          "miss_transactions": sorted({tx.lower() for hit, tx in matches if hit == "false"})}
+                          "miss_transactions": sorted({tx.lower() for hit, tx in matches if hit == "false"}),
+                          "first_observed_replay": {"cache_hit": matches[0][0] == "true",
+                                                    "transaction": matches[0][1].lower()} if matches else None}
     shared = {tx: names for tx, names in owners.items() if len(names) >= 2}
     if not shared:
         raise AssertionError("need the same cache-hit replay in two independent validators")
+    if required_validator is not None and not any(required_validator in names for names in shared.values()):
+        raise AssertionError("replacement validator must share a cache-hit replay with its committee")
     return {"validators": evidence, "shared_hit_transactions": shared,
             "scope": "validator candidate replay, not cold observer replay or an RSS bound"}
 
@@ -302,7 +306,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if membership:
             replacement_node = network.create_full_node()
             replacement_node.announce_to(dht)
-            await replacement_node.run(options)
+            await replacement_node.run(options, seed_extra_states=False)
+            if len(list((replacement_node.log_path.parent / "static").iterdir())) != 2:
+                raise AssertionError("replacement validator must start with only masterchain/native static states")
             await asyncio.wait_for(reach(replacement_node, target.seqno), join_timeout)
             replacement = (validators[0].validator_key.public_key.key,
                            replacement_node.validator_key.public_key.key, replacement_node.validator_key.id)
@@ -355,9 +361,12 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if misbound_proof or bad_signature:
             (root / "proof-fault-armed").touch()
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
-        active_validators = [*validators[1:], replacement_node] if membership else validators
+        # Membership tests deliberately stop both the retired validator and
+        # one retained validator, forcing the new member to complete quorum.
+        active_validators = [*validators[2:], replacement_node] if membership else validators
+        expected_active_count = committee_size - 1 if membership else committee_size
         validator_memory = {"before_cold_join": validator_memory_observation(
-            active_validators, committee_size)}
+            active_validators, expected_active_count)}
         (root / "validator-memory.json").write_text(json.dumps(validator_memory, indent=2) + "\n")
         await cold.run(cold_options, seed_extra_states=False)
         memory_observations = {}
@@ -446,7 +455,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         (root / "target-block.json").write_text(target.to_json())
         print(f"cold node reached height {observed.seqno}; stopping all validators", flush=True)
         validator_memory["after_cold_join"] = validator_memory_observation(
-            active_validators, committee_size, validator_memory["before_cold_join"])
+            active_validators, expected_active_count, validator_memory["before_cold_join"])
         (root / "validator-memory.json").write_text(json.dumps(validator_memory, indent=2) + "\n")
         for node in validators:
             await node.stop()
@@ -483,7 +492,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         replay_cache = None
         if large_payload:
             replay_cache = require_validator_replay_cache({
-                node.log_path.parent.name: node.log_path.read_text(errors="replace") for node in validators})
+                node.log_path.parent.name: node.log_path.read_text(errors="replace") for node in active_validators},
+                replacement_node.log_path.parent.name if membership else None)
             (root / "validator-replay-cache.json").write_text(json.dumps(replay_cache, indent=2) + "\n")
         return {"scope": "Counter real-manager cold-join" if counter else "native/masterchain real-manager cold-join baseline only",
                 "counter_workchain_tested": counter, "uno_sync_accepted": False,
@@ -494,6 +504,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "cold_process_memory": memory_observations,
                 "validator_process_memory": validator_memory,
                 "validator_replay_cache": replay_cache,
+                "replacement_validator_replay_tested": large_payload and membership,
                 "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,

@@ -3170,3 +3170,49 @@ harness accessed Network.config after zerostate generation, which that API
 forbids. Committee size is now saved before generation. That failed run was
 retained and is not memory or synchronization evidence. Both runs have ended;
 no child node remains active. M1 resource gates remain open, with M3 paused.
+
+### Replacement validator executes replay after peer state acquisition
+
+The membership/payload profile now starts its replacement with only the
+masterchain/native static states, rather than copying the Counter zerostate.
+Its replay evidence must include a transaction it replayed with a cache hit
+that was also replayed with a cache hit by another active committee member.
+Old members alone cannot satisfy this requirement. The report additionally
+preserves the first observed replay's hash and hit/miss outcome in log order;
+it does not assume the first replay must miss, since collation may already
+have populated a shared local cache.
+
+Run `build/m1-counter-network-run-dwc_lzni` passed. The new node5 downloaded
+workchain-2 zerostate through the network, then its first observed candidate
+replay at Counter height 51 was a cache miss; the next at height 52 was a hit.
+It recorded one distinct miss and 37 distinct hit transactions. Its first
+replayed transaction hash is retained in `validator-replay-cache.json`.
+The membership signature check also passed with the replacement signer and
+without the retired signer. Target masterchain height was 51; the separate
+cold observer reached 62 and passed its state/database reopening checks.
+This is functional new-validator replay evidence on peer-acquired state,
+not just observer synchronization. It is not a measured first-replay latency
+or proof that the whole synchronization path has a fixed resource bound.
+
+The membership fixture intentionally stops both the retired validator and
+one retained validator, leaving two retained members plus the replacement
+to reach quorum. Memory/replay observations now use exactly those three
+expected live processes; they still reject an unexpectedly missing process.
+Node5 RSS was 148,815,872 bytes before cold observer join and 175,935,488 bytes
+afterwards, with unchanged PID/start identity. These samples occur after its
+first replay and include the entire process, not the miss operation alone.
+
+The preceding attempt `build/m1-counter-network-run-o4sim4qv` correctly failed
+the live-process memory check because the harness mistakenly included the
+deliberately stopped retained member. It remains retained, not counted as a
+passing network run. The earlier three cache/memory fixtures were archived
+and verified in `build/m1-counter-cache-memory-runs-20260906.tar.gz`, then moved
+to recoverable trash. All these runs are terminal.
+
+All 15 instrument tests passed. Removing the required-replacement check made
+the control with only old members sharing a replay fail; the check was
+restored (`build/uno-replacement-replay-mutation.log` and
+`build/uno-replacement-replay-restored.log`). Remaining resource work includes
+timing cold replay itself, long-run growth and GC/retention, and scalable
+admission beyond the current account-cell limit. M1 is not fully accepted;
+M3 remains paused.

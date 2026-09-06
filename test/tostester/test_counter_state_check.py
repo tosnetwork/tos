@@ -49,6 +49,13 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
         logs = {"node1": hit, "node2": hit}
         result = module.require_validator_replay_cache(logs)
         self.assertEqual(result["shared_hit_transactions"], {"ab" * 32: ["node1", "node2"]})
+        self.assertTrue(result["validators"]["node1"]["first_observed_replay"]["cache_hit"])
+        module.require_validator_replay_cache(logs, "node2")
+        with self.assertRaisesRegex(AssertionError, "replacement validator"):
+            module.require_validator_replay_cache({**logs, "replacement": hit.replace("ab", "cd")}, "replacement")
+        ordered = module.require_validator_replay_cache(
+            {"node1": hit, "node2": hit.replace("true", "false") + hit}, "node2")
+        self.assertFalse(ordered["validators"]["node2"]["first_observed_replay"]["cache_hit"])
         for bad in ({}, {"node1": hit + hit}, {"node1": hit, "node2": hit.replace("true", "false")},
                     {"node1": hit, "node2": hit.replace("ab", "cd")},
                     {"node1": hit, "node2": hit.replace("ab" * 32, "ab" * 33)}):
