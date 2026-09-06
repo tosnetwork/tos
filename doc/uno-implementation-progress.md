@@ -3475,3 +3475,40 @@ checks. Legacy combined archives and explicit local-import behavior are
 unchanged. No proof check, consensus rule or GC threshold is relaxed. The
 Counter node target builds successfully with `-j48`; a live repeat is still
 required before claiming that this fixes catch-up. M3 remains paused.
+
+### Native GC followed by successful multi-workchain archive catch-up
+
+The repeat at `0256f22b9`, retained in
+`build/m1-counter-network-run-8tzvi58s`, passed the unchanged end-to-end gate.
+At MC height 1048 the first validator recorded committed deletion of Counter
+block 16 (the complete identity is in `gc-evidence.json`). The cold observer
+started after MC height 1053, selected MC checkpoint 20, and downloaded Counter
+checkpoint state 18 through the file path. The CellDb actor committed 32,781
+cells with the matching full block identity.
+
+The preserved `cold-before-restart.log` shows archive requests for both wc=0
+and wc=2, starting at MC archive 21 and continuing through 920. This exercises
+the previously failing selection path, not merely ordinary recent-block sync.
+The manager's prestart decision includes an 80-second freshness check; the
+earlier short checkpoint joins did not establish this aged archive path.
+The cold node reached MC height 1087, matched the pinned block/account data,
+served them after all warm validators stopped, and reopened its own database
+with the same executor data and last-transaction identity. The run exited zero
+and all child nodes stopped. The failed pre-fix run remains retained separately.
+
+Cold-process RSS at observation was 192,991,232 bytes, with kernel-reported
+peak 202,452,992 bytes; the reopened process observation was 140,726,272 bytes.
+The four validators' RSS before cold join ranged from 754,114,560 to
+759,586,816 bytes and afterward from 796,897,280 to 800,133,120 bytes. These are
+whole-process observations, not isolated importer budgets or steady-state
+memory ceilings. The fixture occupies about 4.6 GiB including debug logs.
+Both host and snapshot regressions passed (40 and 7 tests respectively), in
+`build/uno-archive-host-regression.log` and
+`build/uno-archive-snapshot-regression.log`; the large opt-in test was not run.
+
+This closes the bounded Counter experiment's native actor-GC plus subsequent
+checkpoint/archive/reopen gate. It does not close growing UNO note/nullifier
+state admission, anchor/checkpoint retention policy, physical disk compaction,
+resource ceilings, or malicious checkpoint-state transport tests. The payload
+tree is preserved, not enlarged every block. `uno_sync_accepted` remains false
+and M3 expansion remains paused pending the remaining M1 gates.
