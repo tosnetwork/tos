@@ -236,6 +236,101 @@ TEST(WorkchainBlock, CounterPayloadSurvivesBatchReplay) {
   LOG(INFO) << "Counter payload batch: wrapper cells=" << stat.cells << " boc bytes=" << wire.size();
 }
 
+TEST(WorkchainBlock, ReplayStorageCachePreservesValidation) {
+  std::vector<td::Ref<vm::Cell>> layer;
+  for (unsigned i = 0; i < 256; ++i) layer.push_back(number(i));
+  while (layer.size() > 1) {
+    std::vector<td::Ref<vm::Cell>> next;
+    for (std::size_t i = 0; i < layer.size(); i += 2) {
+      next.push_back(vm::CellBuilder().store_ref(layer[i]).store_ref(layer[i + 1]).finalize());
+    }
+    layer = std::move(next);
+  }
+  auto payload = layer.front();
+  CounterEngine engine({8, 1, 3}, 1, 2, CounterEngine::PayloadMode::PreserveReference);
+  block::SerializeConfig cfg;
+  cfg.global_version = block::kBlockTransitionMinGlobalVersion;
+  cfg.extra_currency_v2 = true;
+  cfg.store_storage_dict_hash = true;
+  auto in = input();
+  in.previous_shard_state = shard_fixture(2, 2, true, 1, false, 0, 40, false, 0, payload);
+  auto unpack_account = [&](const td::Ref<vm::Cell>& root, block::Account& account) {
+    block::gen::ShardStateUnsplit::Record state;
+    ASSERT_TRUE(tlb::unpack_cell(root, state));
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    ASSERT_TRUE(account.unpack(accounts.lookup(td::Bits256::zero()), 10, block::kWorkchainExecutorIsSpecial));
+  };
+  block::Account first_account(2, td::Bits256::zero().bits());
+  unpack_account(in.previous_shard_state, first_account);
+  block::transaction::Transaction first(first_account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(first.prepare_workchain_batch(in, engine.execute_block(in).move_as_ok(), cfg).is_ok());
+  ASSERT_TRUE(first.serialize(cfg));
+  ASSERT_TRUE(first.new_storage_dict_hash);
+  auto previous_index = first.new_account_storage_stat.value().get_dict_root().move_as_ok();
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
+  vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+  vm::CellBuilder entry;
+  entry.store_ref(first.new_total_state).store_bits(first.root->get_hash().bits(), 256).store_long(first.start_lt, 64);
+  ASSERT_TRUE(accounts.set_builder(td::Bits256::zero(), entry));
+  state.accounts = accounts.get_wrapped_dict_root();
+  state.gen_lt = first.end_lt;
+  state.gen_utime = 10;
+  ASSERT_TRUE(tlb::pack_cell(in.previous_shard_state, state));
+  block::Account second_account(2, td::Bits256::zero().bits());
+  unpack_account(in.previous_shard_state, second_account);
+  block::transaction::Transaction second(second_account, block::transaction::Transaction::tr_workchain_batch, 20, 10);
+  ASSERT_TRUE(second.prepare_workchain_batch(in, engine.execute_block(in).move_as_ok(), cfg).is_ok());
+  ASSERT_TRUE(second.serialize(cfg));
+
+  auto run = [&](td::Ref<vm::Cell> cached, bool expect_hit, bool valid_claim) {
+    std::size_t loads = 0, lookups = 0, remembered = 0;
+    auto usage = std::make_shared<vm::CellUsageTree>();
+    usage->set_cell_load_callback([&](const vm::LoadedCell&) { ++loads; });
+    auto observed = in;
+    observed.previous_shard_state = vm::UsageCell::create(in.previous_shard_state, usage->root_ptr());
+    block::WorkchainReplayStorageCache cache{
+        [&](const td::Bits256& hash) {
+          ++lookups;
+          ASSERT_TRUE(hash == first.new_storage_dict_hash.value());
+          return cached;
+        },
+        [&](td::Ref<vm::Cell> root, td::uint32 cells) {
+          ++remembered;
+          ASSERT_TRUE(td::Bits256(root->get_hash().bits()) == second.new_storage_dict_hash.value());
+          ASSERT_EQ(cells, second.new_storage_used.cells);
+        }};
+    auto claimed = second.root;
+    if (!valid_claim) {
+      block::gen::Transaction::Record wrong;
+      ASSERT_TRUE(tlb::unpack_cell(claimed, wrong));
+      wrong.prev_trans_hash.set_zero();
+      td::Ref<vm::Cell> messages;
+      ASSERT_TRUE(tlb::pack_cell(messages, wrong.r1));
+      claimed = vm::CellBuilder().store_long(7, 4).store_bits(wrong.account_addr.bits(), 256)
+          .store_long(wrong.lt, 64).store_bits(wrong.prev_trans_hash.bits(), 256)
+          .store_long(wrong.prev_trans_lt, 64).store_long(wrong.now, 32).store_long(wrong.outmsg_cnt, 15)
+          .store_long(wrong.orig_status, 2).store_long(wrong.end_status, 2).store_ref(messages)
+          .append_cellslice(wrong.total_fees).store_ref(wrong.state_update).store_ref(wrong.description).finalize();
+      ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, claimed));
+    }
+    auto replayed = block::replay_workchain_batch_transaction(
+        engine, observed, claimed, 2, td::Bits256::zero(), 20, 10, cfg, nullptr, &cache);
+    ASSERT_EQ(lookups, 1u);
+    ASSERT_EQ(remembered, valid_claim ? 1u : 0u);
+    ASSERT_EQ(replayed.is_ok(), valid_claim);
+    if (valid_claim) ASSERT_TRUE(replayed.ok()->get_hash() == second.new_total_state->get_hash());
+    LOG(INFO) << "Replay storage cache: hit=" << expect_hit << " valid_claim=" << valid_claim << " reads=" << loads;
+    // A hit must avoid the 511-node payload; a miss remains the reference path.
+    if (expect_hit) ASSERT_TRUE(loads < 100u);
+    return loads;
+  };
+  auto cold_loads = run({}, false, true);
+  ASSERT_TRUE(run(previous_index, true, true) < cold_loads);
+  ASSERT_EQ(run(number(999), false, true), cold_loads);
+  run(previous_index, true, false);
+}
+
 TEST(WorkchainBlock, CanonicalInboundList) {
   auto first = inbound_envelope(3);
   auto second = inbound_envelope(4);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "td/utils/Status.h"
@@ -36,12 +37,22 @@ struct WorkchainBlockInput {
 // or traverse queue contents, and engines cannot return a replacement queue.
 td::Result<td::Ref<vm::Cell>> extract_workchain_native_queue_state(const WorkchainBlockInput& input);
 
+// Optional host-local acceleration. Entries are bound to the storage dictionary
+// hash in the authenticated account, never used as an alternative state source.
+struct WorkchainReplayStorageCache {
+  std::function<td::Ref<vm::Cell>(const td::Bits256&)> lookup;
+  // Collect computed indexes locally; the host publishes them only after the
+  // enclosing block passes all checks. This callback never commits chain state.
+  std::function<void(td::Ref<vm::Cell>, td::uint32)> remember;
+};
+
 // Candidate data is recovered from the claimed state, never supplied by a local cache.
 struct WorkchainBlockReplayContext {
   td::Ref<vm::Cell> previous_shard_state;
   td::Ref<vm::Cell> configuration;
   td::Ref<vm::Cell> finality_context;
   td::Ref<vm::Cell> inbound_messages = {};
+  const WorkchainReplayStorageCache* storage_cache = nullptr;
 };
 
 // Select a start LT strictly after host/message events, leaving one LT for end.
@@ -129,7 +140,8 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
 td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr,
+    const WorkchainReplayStorageCache* storage_cache = nullptr);
 
 // Checks the persisted witness, reconstructed Account and final transaction link.
 // The host separately authenticates context and validates shard header/queues/value flow.

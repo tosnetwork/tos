@@ -512,7 +512,8 @@ td::Result<WorkchainBlockResult> replay_workchain_batch(const WorkchainBlockEngi
 td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     const WorkchainBlockEngine& engine, const WorkchainBlockInput& input, const td::Ref<vm::Cell>& claimed,
     std::int32_t workchain_id, const td::Bits256& executor_address, std::uint64_t expected_lt,
-    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg,
+    const WorkchainReplayStorageCache* storage_cache) {
   if (claimed.is_null()) {
     return td::Status::Error("missing batch transaction");
   }
@@ -535,6 +536,16 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     if (!account.unpack(accounts.lookup(executor_address), expected_utime, kWorkchainExecutorIsSpecial)) {
       return td::Status::Error("invalid batch replay account");
     }
+    if (storage_cache && storage_cache->lookup && account.storage_dict_hash) {
+      auto dict = storage_cache->lookup(account.storage_dict_hash.value());
+      if (dict.not_null() && td::Bits256(dict->get_hash().bits()) == account.storage_dict_hash.value()) {
+        // A stale or unrelated cache entry must not change block acceptance.
+        auto initialized = account.init_account_storage_stat(std::move(dict));
+        if (initialized.is_error()) {
+          account.account_storage_stat = {};
+        }
+      }
+    }
     TRY_RESULT(effects, replay_workchain_batch(engine, input, record.description));
     transaction::Transaction actual(account, transaction::Transaction::tr_workchain_batch, expected_lt, expected_utime);
     TRY_STATUS(actual.prepare_workchain_batch(input, effects, cfg, message_cfg));
@@ -543,6 +554,11 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_transaction(
     }
     if (actual.root->get_hash() != claimed->get_hash()) {
       return td::Status::Error("batch transaction wrapper differs from replay");
+    }
+    if (storage_cache && storage_cache->remember && actual.new_storage_dict_hash &&
+        actual.new_account_storage_stat && actual.new_storage_used.cells <= std::numeric_limits<td::uint32>::max()) {
+      TRY_RESULT(dict, actual.new_account_storage_stat.value().get_dict_root());
+      storage_cache->remember(std::move(dict), static_cast<td::uint32>(actual.new_storage_used.cells));
     }
     return actual.new_total_state;
   } catch (vm::VmError&) {
@@ -581,7 +597,8 @@ td::Result<td::Ref<vm::Cell>> replay_workchain_batch_state(
     WorkchainBlockInput input{context.previous_shard_state, witness.candidate,
                               context.configuration, context.finality_context, context.inbound_messages};
     TRY_RESULT(reconstructed, replay_workchain_batch_transaction(
-        engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg, message_cfg));
+        engine, input, claimed_transaction, workchain_id, executor_address, expected_lt, expected_utime, cfg, message_cfg,
+        context.storage_cache));
     if (!same_cell(reconstructed, account.total_state)) {
       return td::Status::Error("claimed executor account differs from batch replay");
     }

@@ -6508,8 +6508,13 @@ bool ValidateQuery::check_transactions() {
     if (inbox.is_error()) {
       return reject_query(inbox.move_as_error_prefix("cannot reconstruct native batch inbox: ").to_string());
     }
+    block::WorkchainReplayStorageCache storage_cache{
+        storage_stat_cache_, [this](Ref<vm::Cell> root, td::uint32 cells) {
+          storage_stat_cache_update_.emplace_back(std::move(root), cells);
+        }};
     block::WorkchainBlockReplayContext context{
         prev_state_root_, config_->get_root_cell(), mc_state_root_, inbox.move_as_ok()};
+    context.storage_cache = &storage_cache;
     bool found = false;
     bool valid = account_blocks_dict_->check_for_each_extra(
         [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int) {

@@ -3034,3 +3034,47 @@ root load inside Counter execution made the zero-read assertion fail with
 target rebuilt, and all 39 WorkchainBlock tests passed in
 `build/uno-payload-read-regression.log`. No production traversal or resource
 policy was changed in this step; M1 resource gates remain open and M3 paused.
+
+### Reusing authenticated storage statistics during batch replay
+
+Batch replay now accepts an optional host-local storage-index cache. Lookup is
+keyed by the storage dictionary hash in the previous Account; an unrelated
+root is ignored, and `Account::init_account_storage_stat` validates matching
+indexes through the existing account mechanism. Missing or unusable indexes
+fall back to full computation. The engine input, consensus encoding, limits
+and complete transaction-wrapper comparison are unchanged.
+
+ValidateQuery passes its existing storage-stat cache into the batch replay
+context. A successfully reconstructed transaction supplies its computed index
+to the query's existing pending cache-update list, which is published only
+after the enclosing block succeeds. No new persistent state or cache policy
+is introduced. This also gives a cold replay a way to populate the cache for
+later blocks; it does not eliminate that first traversal or make the index
+survive a process restart.
+
+`ReplayStorageCachePreservesValidation` constructs two consecutive transactions
+with storage-dictionary commitments enabled. Replaying the second against a
+511-node unchanged payload reads 521 previous-state tree positions on a miss,
+11 on a matching hit, and 521 with an unrelated index. All successful cases
+reconstruct exactly the same Account hash and report the expected new index
+and cell count. A structurally valid transaction with a wrong predecessor
+hash is rejected and supplies no cache update, including on a cache hit.
+These are in-memory UsageCell observations, not database I/O or RSS numbers.
+
+Removing only index initialization, while leaving lookup active, causes the
+hit case to read 521 positions and fail its bounded-read assertion. Removing
+the complete transaction comparison instead causes the wrong-wrapper case
+to supply an unexpected cache update and fail. Both changes were restored.
+Evidence is in `build/uno-replay-cache-test.log`,
+`build/uno-replay-cache-init-mutation.log` and
+`build/uno-replay-cache-wrapper-mutation.log`. An earlier mutation that skipped
+lookup entirely failed the lookup-count control; that result alone was not
+used as evidence of reduced traversal.
+
+Both validator executables and the disk collator test were rebuilt with the
+restored implementation. CTest passed `test-workchain-block` and
+`test-counter-disk-integration` (`build/uno-replay-cache-regression.log`).
+This closes the missing replay-cache connection in code, not the real-node
+resource gate: independent-node cache-hit observations, first cold replay,
+peak RSS, cache retention/GC and growing state still require measurement.
+M3 remains paused.
