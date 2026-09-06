@@ -13,6 +13,7 @@
 
 namespace {
 static_assert(sizeof(UnoCryptoAction) == 884);
+constexpr std::size_t kProofBaseBytes = 2720;
 // Test-only semantic meter. These are logical occurrences, never DAG-unique
 // nodes. Payload bytes mean proof + action ABI payload, not a production wire.
 struct Usage { std::size_t proofs = 0, actions = 0, payload_bytes = 0; };
@@ -34,7 +35,7 @@ Admission admit(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usag
         request->profile != UNO_CRYPTO_FIXED_PROFILE || !request->actions || !request->proof ||
         !request->action_count || request->action_count > request->max_actions) return Admission::Shape;
     std::size_t proof_size, actions_size, payload;
-    if (!multiply(request->action_count, 2272, proof_size) || !add(proof_size, 2720, proof_size))
+    if (!multiply(request->action_count, 2272, proof_size) || !add(proof_size, kProofBaseBytes, proof_size))
       return Admission::Overflow;
     if (proof_size != request->proof_bytes || proof_size > request->max_proof_bytes) return Admission::Shape;
     // The current proof multiplier makes Action multiplication overflow
@@ -73,6 +74,46 @@ bool self_test() {
   std::size_t calls = 0;
   bool call_overflow = false;
   auto backend = [&](const UnoCryptoVerifyRequest*) { if (!add(calls, 1, calls)) call_overflow = true; };
+  // Isolate each shape predicate: all other metadata remains admissible, so
+  // a later shape failure cannot conceal a removed guard. No real ABI calls.
+  auto rejects_shape = [&](const char* name, const UnoCryptoVerifyRequest* input) {
+    std::cerr << "checking shape predicate: " << name << '\n';
+    calls = 0;
+    Usage preserved{7, 11, 13};
+    const Usage unlimited{std::numeric_limits<std::size_t>::max(),
+                          std::numeric_limits<std::size_t>::max(),
+                          std::numeric_limits<std::size_t>::max()};
+    const auto result = run({input}, unlimited, backend);
+    if (result != Admission::Shape || calls != 0 || call_overflow ||
+        admit({input}, unlimited, preserved) != Admission::Shape ||
+        preserved.proofs != 7 || preserved.actions != 11 || preserved.payload_bytes != 13) {
+      std::cerr << "shape predicate failed: " << name << " result=" << static_cast<int>(result)
+                << " calls=" << calls << '\n';
+      return false;
+    }
+    return true;
+  };
+  if (!rejects_shape("null request", nullptr)) return false;
+  for (unsigned field = 0; field != 8; ++field) {
+    auto invalid = request;
+    const char* name = "unknown shape fixture";
+    switch (field) {
+      case 0: name = "ABI version"; invalid.abi_version ^= 1; break;
+      case 1: name = "profile"; invalid.profile ^= 1; break;
+      case 2: name = "null actions"; invalid.actions = nullptr; break;
+      case 3: name = "null proof"; invalid.proof = nullptr; break;
+      case 4:
+        name = "zero actions";
+        invalid.action_count = 0;
+        invalid.proof_bytes = kProofBaseBytes;  // Isolate the zero-count guard.
+        break;
+      case 5: name = "action limit"; invalid.max_actions = 1; break;
+      case 6: name = "proof limit"; invalid.max_proof_bytes = 0; break;
+      case 7: name = "proof shape"; invalid.proof_bytes = 0; break;
+    }
+    if (!rejects_shape(name, &invalid)) return false;
+  }
+  calls = 0;
   if (run(repeated, exact, backend) != Admission::Ok || calls != 2) return false;
   for (Usage short_limit : {Usage{1, 4, 18064}, Usage{2, 3, 18064}, Usage{2, 4, 18063}}) {
     calls = 0;
