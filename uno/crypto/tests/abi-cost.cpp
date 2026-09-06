@@ -7,7 +7,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <sstream>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -372,21 +374,29 @@ bool finish_output(std::ostream& output) {
 template <class Verify>
 bool sample_with_backend(const char* context, const char* workload, const UnoCryptoVerifyRequest& input,
                          std::size_t count, unsigned index, bool late_failure,
-                         Verify&& verify, std::ostream& output, bool (*read_memory)(long&) = rss) {
-  auto wrong = input;
-  wrong.sighash[0] ^= 1;
-  std::vector<const UnoCryptoVerifyRequest*> requests(count, &input);
-  if (late_failure && !requests.empty()) requests.back() = &wrong;
-  Usage limits, usage;
-  limits.proofs = count;
-  std::size_t action_bytes, payload_bytes;
-  if (!multiply(count, input.action_count, limits.actions) ||
-      !multiply(input.action_count, sizeof(UnoCryptoAction), action_bytes) ||
-      !add(action_bytes, input.proof_bytes, payload_bytes) ||
-      !multiply(count, payload_bytes, limits.payload_bytes)) {
-    std::cerr << "measurement limit arithmetic overflow\n";
+                         Verify&& verify, std::ostream& output, bool (*read_memory)(long&) = rss,
+                         const std::vector<const UnoCryptoVerifyRequest*>* distinct = nullptr) {
+  std::vector<const UnoCryptoVerifyRequest*> requests = distinct ? *distinct :
+      std::vector<const UnoCryptoVerifyRequest*>(count, &input);
+  if (requests.size() != count || requests.empty()) {
+    std::cerr << "measurement request count mismatch or empty batch\n";
     return false;
   }
+  Usage limits, usage;
+  for (const auto* request : requests) {
+    std::size_t action_bytes, payload_bytes;
+    if (!request || !multiply(request->action_count, sizeof(UnoCryptoAction), action_bytes) ||
+        !add(action_bytes, request->proof_bytes, payload_bytes) ||
+        !add(limits.proofs, 1, limits.proofs) ||
+        !add(limits.actions, request->action_count, limits.actions) ||
+        !add(limits.payload_bytes, payload_bytes, limits.payload_bytes)) {
+      std::cerr << "measurement limit arithmetic overflow or missing request\n";
+      return false;
+    }
+  }
+  auto wrong = *requests.back();
+  wrong.sighash[0] ^= 1;
+  if (late_failure && !requests.empty()) requests.back() = &wrong;
   const auto begin = Clock::now();
   Clock::time_point ready;
   std::size_t calls = 0;
@@ -423,6 +433,40 @@ bool sample(const char* context, const char* workload, const UnoCryptoVerifyRequ
             std::size_t count, unsigned index, bool late_failure) {
   return sample_with_backend(context, workload, input, count, index, late_failure,
                             uno_crypto_verify_v0, std::cout);
+}
+bool distinct_sample_self_test() {
+  UnoCryptoAction actions[4]{};
+  uint8_t proof[11808]{};
+  UnoCryptoVerifyRequest first{};
+  first.abi_version = UNO_CRYPTO_ABI_VERSION;
+  first.profile = UNO_CRYPTO_FIXED_PROFILE;
+  first.actions = actions;
+  first.action_count = first.max_actions = 2;
+  first.proof = proof;
+  first.proof_bytes = first.max_proof_bytes = 7264;
+  first.sighash[1] = 11;
+  auto second = first;
+  second.sighash[1] = 22;
+  second.action_count = second.max_actions = 4;
+  second.proof_bytes = second.max_proof_bytes = sizeof(proof);
+  const std::vector<const UnoCryptoVerifyRequest*> requests{&first,&second};
+  auto memory = [](long& value) { value = 1; return true; };
+  for (bool late : {false,true}) {
+    std::vector<unsigned> visited;
+    auto backend = [&](const UnoCryptoVerifyRequest* request) {
+      visited.push_back(request->sighash[1]);
+      return request->sighash[0] == 0 ? UNO_CRYPTO_OK : UNO_CRYPTO_VERIFY;
+    };
+    std::ostringstream output;
+    if (!sample_with_backend("test", "distinct", first, 2, 0, late, backend, output, memory, &requests) ||
+        visited != std::vector<unsigned>{11,22} ||
+        output.str().find("\"proof_calls\":2,\"actions\":6,\"payload_bytes\":24376") == std::string::npos) {
+      std::cerr << "distinct sampler lost request identity or last-request failure\n";
+      return false;
+    }
+  }
+  std::cout << "Distinct sample self-test passed\n";
+  return true;
 }
 bool sample_boundary_self_test() {
   std::cerr << "checking measurement sample boundaries\n";
@@ -621,14 +665,52 @@ bool measure_shapes(char** paths, bool funding) {
   }
   return true;
 }
+bool measure_corpus(const char* directory) {
+  for (bool funding : {true,false}) {
+    const char* context = funding ? "funding" : "spend";
+    for (unsigned actions : {2u,4u,8u}) {
+      std::vector<std::unique_ptr<Fixture>> fixtures;
+      std::vector<const UnoCryptoVerifyRequest*> requests;
+      std::set<std::array<uint8_t,32>> nullifiers;
+      for (unsigned sample_id = 1; sample_id <= 8; ++sample_id) {
+        auto fixture = std::make_unique<Fixture>();
+        const auto path = std::string(directory) + "/" + std::to_string(sample_id) + "/" +
+            context + "-" + std::to_string(actions) + ".bin";
+        if (!fixture->load(path.c_str(), funding) || fixture->request.action_count != actions) return false;
+        for (const auto& action : fixture->actions) {
+          std::array<uint8_t,32> nullifier;
+          std::memcpy(nullifier.data(), action.nullifier, nullifier.size());
+          if (!nullifiers.insert(nullifier).second) {
+            std::cerr << "measurement corpus repeats a nullifier: " << path << '\n';
+            return false;
+          }
+        }
+        requests.push_back(&fixture->request);
+        fixtures.push_back(std::move(fixture));
+      }
+      // Distinct fixture objects remain alive for every measured call.
+      // Public nullifiers were checked before measurement, not deduplicated.
+      if (!sample_with_backend(context, "corpus_first", *requests.front(), requests.size(), 0,
+          false, uno_crypto_verify_v0, std::cout, rss, &requests)) return false;
+      for (unsigned i = 0; i < 20; ++i) {
+        for (bool late : {false,true}) {
+          if (!sample_with_backend(context, late ? "corpus_late_failure" : "corpus_valid",
+              *requests.front(), requests.size(), i, late, uno_crypto_verify_v0, std::cout, rss, &requests)) return false;
+        }
+      }
+    }
+  }
+  return true;
+}
 }
 
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--self-test")
-    return self_test() && sample_boundary_self_test() && measurement_io_self_test() && fixture_reader_self_test() ? 0 : 1;
+    return self_test() && sample_boundary_self_test() && measurement_io_self_test() && fixture_reader_self_test() && distinct_sample_self_test() ? 0 : 1;
+  if (argc == 3 && std::string(argv[1]) == "--measure-corpus") return measure_corpus(argv[2]) ? 0 : 2;
   if (argc == 5 && std::string(argv[1]) == "--measure-funding-shapes") return measure_shapes(argv + 2, true) ? 0 : 2;
   if (argc == 5 && std::string(argv[1]) == "--measure-spend-shapes") return measure_shapes(argv + 2, false) ? 0 : 2;
   if (argc == 4 && std::string(argv[1]) == "--measure") return measure(argv[2], argv[3]) ? 0 : 2;
-  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin | --measure-funding-shapes funding-2.bin funding-4.bin funding-8.bin | --measure-spend-shapes spend-2.bin spend-4.bin spend-8.bin\n";
+  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin | --measure-funding-shapes funding-2.bin funding-4.bin funding-8.bin | --measure-spend-shapes spend-2.bin spend-4.bin spend-8.bin | --measure-corpus directory\n";
   return 3;
 }

@@ -18,7 +18,11 @@ manual fixture production out of ordinary tests; it is not an activation gate.
 The producer makes funding and spend bundles with 2, 4 and 8 Actions and constant
 funding principal 5000 nanotomi. Output amounts use checked division and multiplication;
 the resulting bundle balance must be exactly -5000. Seeds are respectively
-32 repetitions of byte 2, 4 and 8 using the pinned `StdRng`. Keys and notes are
+32 repetitions of byte 2, 4 and 8 using the pinned `StdRng`, with the final byte
+XORed with `UNO_SHAPE_SAMPLE` (an optional integer in [0,255], default 0). Thus
+sample zero preserves the archived fixtures; distinct sample IDs select distinct
+deterministic random streams. An invalid sample ID fails before key construction.
+Keys and notes are
 public test material, unsuitable for holding funds. Proof construction timing
 excludes key construction, building/encryption, signatures, ABI checks and I/O.
 One timing observation per shape is not a latency distribution.
@@ -76,7 +80,31 @@ Removing the length, dimension and trailing-byte checks independently makes
 the registered self-test fail. Shape data are parsed structurally here; real
 cryptographic validation still occurs in the measured ABI call.
 
-Independent seeded samples, full lifecycle workloads and stage/RSS measurements
+Larger and more varied corpora, full lifecycle workloads and stage/RSS measurements
 remain outstanding. These fixtures alone do not determine verification weights,
 input limits, a production partition schema, or a WCET envelope. D-3/B3-1 and
 the capacity/claim-only feasibility gates remain open.
+
+## Distinct-request corpus
+
+`--measure-corpus DIRECTORY` loads samples 1 through 8 from numbered
+subdirectories, each containing `funding-{2,4,8}.bin` and `spend-{2,4,8}.bin`.
+Each measured batch contains eight different fixture objects with independent
+backing buffers. Public nullifiers must be unique within each context/shape
+group; duplicates fail before that group's first measured call. No records are
+silently deduplicated. This is an instrument-validity check, not a new protocol
+rule. It does not enforce a joint authenticated anchor, Deposit or chain state.
+
+For each context/shape, the command emits one first-batch row, then twenty valid
+and twenty last-request signature-failure rows. Only the first context/shape
+includes cold key construction. The same corpus is reused across repetitions;
+these are distinct witnesses, not statistically independent fresh draws on each
+iteration. The sample streams share public keys and controlled amounts.
+
+The default tests include literal seed-identity expectations on the Rust
+side and a mixed two-/four-Action request-list check on the C++ side. Removing
+sample identity from the seed makes the former fail; replacing the request list
+with repetitions of its first entry makes the latter fail. Corpus population and
+performance measurements remain manually invoked, not default CI tests. The
+corpus pilot supplements, rather than replaces, full lifecycle, capacity and
+synchronous-deadline measurements.

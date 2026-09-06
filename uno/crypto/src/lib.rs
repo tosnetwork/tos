@@ -274,6 +274,20 @@ mod tests {
         file.write_all(&bytes).expect("write public fixture");
     }
 
+    fn measurement_seed(actions: u8, sample: u8) -> [u8; 32] {
+        let mut seed = [actions; 32];
+        seed[31] ^= sample;
+        seed
+    }
+
+    #[test]
+    fn measurement_seed_has_independent_sample_identity() {
+        let seed = measurement_seed(4, 7);
+        assert_eq!(&seed[..31], &[4; 31]);
+        assert_eq!(seed[31], 3, "sample identity must change the generator seed");
+        assert_eq!(measurement_seed(4, 0), [4; 32], "sample zero preserves archived fixtures");
+    }
+
     // Manual measurement producer, not a production wire or an activation gate.
     // All keys, randomness and resulting notes are public test material.
     #[test]
@@ -292,11 +306,16 @@ mod tests {
 
         let directory = std::env::var_os("UNO_SHAPE_FIXTURE_DIR")
             .expect("UNO_SHAPE_FIXTURE_DIR is required; missing output is not a successful measurement");
+        let sample = match std::env::var("UNO_SHAPE_SAMPLE") {
+            Ok(value) => value.parse::<u8>().expect("UNO_SHAPE_SAMPLE must be an integer in [0,255]"),
+            Err(std::env::VarError::NotPresent) => 0,
+            Err(error) => panic!("invalid UNO_SHAPE_SAMPLE: {error}"),
+        };
         let pk = ProvingKey::build(OrchardCircuitVersion::FixedPostNu6_2);
         let sk = SpendingKey::from_bytes([0; 32]).expect("public test spending key");
         let recipient = FullViewingKey::from(&sk).address_at(0u32, Scope::External);
         for count in [2usize, 4, 8] {
-            let seed = [u8::try_from(count).expect("shape seed"); 32];
+            let seed = measurement_seed(u8::try_from(count).expect("shape seed"), sample);
             let mut rng = rand::rngs::StdRng::from_seed(seed);
             let count_u64 = u64::try_from(count).expect("shape count");
             let per_output = 5000u64.checked_div(count_u64).expect("nonzero shape count");
@@ -355,8 +374,8 @@ mod tests {
                 .open(&path).expect("create fresh shape fixture; never overwrite");
             file.write_all(&bytes).expect("write shape fixture");
             file.flush().expect("flush shape fixture");
-            println!("SHAPE_FIXTURE kind={kind} actions={count} proof_bytes={proof_bytes} prove_ns={prove_ns} seed_byte={} path={}",
-                     seed[0], path.display());
+            println!("SHAPE_FIXTURE kind={kind} actions={count} proof_bytes={proof_bytes} prove_ns={prove_ns} sample={sample} seed_first={} seed_last={} path={}",
+                     seed[0], seed[31], path.display());
             };
             export(&bundle, "funding", prove_ns);
 
