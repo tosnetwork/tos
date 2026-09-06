@@ -45,6 +45,12 @@
 #include "full-node-shard.hpp"
 #include "overlays.h"
 
+#ifdef TOS_COUNTER_NETWORK_TEST
+#include <atomic>
+#include <cstdlib>
+#include "vm/boc.h"
+#endif
+
 namespace tos {
 
 namespace validator {
@@ -587,16 +593,46 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
 
 void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadZeroState &query,
                                       td::Promise<td::BufferSlice> promise) {
+  auto block_id = create_block_id(query.block_);
   auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+      [
+#ifdef TOS_COUNTER_NETWORK_TEST
+       block_id,
+#endif
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_error(R.move_as_error_prefix("failed to get state from db: "));
           return;
         }
 
-        promise.set_value(R.move_as_ok());
+        auto data = R.move_as_ok();
+#ifdef TOS_COUNTER_NETWORK_TEST
+        const auto *fault = std::getenv("TOS_COUNTER_REENCODE_ZERO_STATE");
+        static std::atomic<bool> injected{false};
+        if (block_id.id.workchain == 2 && block_id.seqno() == 0 && fault && std::string(fault) == "1" &&
+            !injected.exchange(true)) {
+          // Change only the wire representation, not the state root. A parser
+          // or root comparison must not substitute for file-hash binding.
+          auto root = vm::std_boc_deserialize(data);
+          if (root.is_error()) {
+            promise.set_error(root.move_as_error());
+            return;
+          }
+          auto changed = vm::std_boc_serialize(root.move_as_ok(), 0);
+          if (changed.is_error()) {
+            promise.set_error(changed.move_as_error());
+            return;
+          }
+          data = changed.move_as_ok();
+          if (sha256_bits256(data.as_slice()) == block_id.file_hash) {
+            promise.set_error(td::Status::Error("Counter fault did not change zerostate file hash"));
+            return;
+          }
+          LOG(WARNING) << "COUNTER_ZERO_STATE_REENCODED " << block_id;
+        }
+#endif
+        promise.set_value(std::move(data));
       });
-  auto block_id = create_block_id(query.block_);
   VLOG(FULL_NODE_DEBUG) << "Got query downloadZeroState " << block_id.to_str() << " from " << src;
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::get_zero_state, block_id, std::move(P));
 }

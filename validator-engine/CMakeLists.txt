@@ -57,6 +57,7 @@ install(TARGETS validator-engine RUNTIME DESTINATION bin)
 # never compiles the registration or fixed candidate supplier.
 add_executable(test-counter-validator-engine EXCLUDE_FROM_ALL ${VALIDATOR_ENGINE_SOURCE})
 get_target_property(counter_node_libraries validator-engine LINK_LIBRARIES)
+list(TRANSFORM counter_node_libraries REPLACE "^full-node$" "full-node-counter-network")
 get_target_property(counter_node_options validator-engine COMPILE_OPTIONS)
 target_link_libraries(test-counter-validator-engine PRIVATE ${counter_node_libraries})
 target_compile_options(test-counter-validator-engine PRIVATE ${counter_node_options})

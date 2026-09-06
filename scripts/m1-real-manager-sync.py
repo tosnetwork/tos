@@ -81,7 +81,7 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
-async def exercise(root, build, port, join_timeout, counter):
+async def exercise(root, build, port, join_timeout, counter, reencoded_state=False):
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
     install.toslibjson.client_set_verbosity_level(1)
@@ -107,10 +107,14 @@ async def exercise(root, build, port, join_timeout, counter):
             "TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE": "268435456",
             "TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE": "268435456",
             "TOS_COUNTER_SIGNATURE_PROBE": "0",
+            "TOS_COUNTER_REENCODE_ZERO_STATE": "0",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
-            await node.run(replace(options, env={**options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1"}) if counter else options)
+            await node.run(replace(options, env={
+                **options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1",
+                "TOS_COUNTER_REENCODE_ZERO_STATE": "1" if reencoded_state else "0",
+            }) if counter else options)
         _, target = await asyncio.wait_for(reach(validators[0], 5), 150)
         counter_target = await asyncio.wait_for(counter_tip(validators[0]), join_timeout) if counter else None
         if counter:
@@ -145,6 +149,15 @@ async def exercise(root, build, port, join_timeout, counter):
                         for line in cold_log.splitlines()) or
                     f"finished downloading state {zero_id}" not in cold_log):
                 raise AssertionError("cold node did not download Counter zerostate through peers")
+            if reencoded_state:
+                if not any("COUNTER_ZERO_STATE_REENCODED" in node.log_path.read_text(errors="replace")
+                           for node in validators):
+                    raise AssertionError("no peer served a reencoded Counter zerostate")
+                stored = list((cold.log_path.parent / "archive/states").glob("zerostate_2_*"))
+                if len(stored) != 1 or stored[0].read_bytes() != (network_dir / "state/counter-state.boc").read_bytes():
+                    raise AssertionError("cold node persisted an unbound Counter zerostate representation")
+                if "received bad state from net: file hash mismatch" not in cold_log:
+                    raise AssertionError("cold node did not reject the peer's reencoded zerostate")
             (root / "counter-account.json").write_text(executor_state.to_json())
             (root / "counter-target.json").write_text(counter_target.to_json())
             (root / "counter-header.json").write_text(counter_header.to_json())
@@ -178,6 +191,7 @@ async def exercise(root, build, port, join_timeout, counter):
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
                 "cold_counter_zerostate_peer_download_tested": counter,
+                "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,
@@ -191,7 +205,11 @@ def main():
     parser.add_argument("--base-port", type=int, default=38600)
     parser.add_argument("--join-timeout", type=int, default=150)
     parser.add_argument("--counter", action="store_true", help="use the explicit test-only Counter node target")
+    parser.add_argument("--counter-reencoded-state", action="store_true",
+                        help="require rejection/recovery after peers reencode one Counter zerostate response each")
     args = parser.parse_args()
+    if args.counter_reencoded_state and not args.counter:
+        parser.error("--counter-reencoded-state requires --counter")
     build = args.build.resolve(strict=True)
     if not 1 <= args.join_timeout <= 600:
         parser.error("join timeout must be between 1 and 600 seconds")
@@ -216,7 +234,8 @@ def main():
     report = {"passed": False, "root": str(root), "base_port": args.base_port,
               "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()}
     try:
-        report.update(asyncio.run(exercise(root, build, args.base_port, args.join_timeout, args.counter)))
+        report.update(asyncio.run(exercise(root, build, args.base_port, args.join_timeout, args.counter,
+                                          args.counter_reencoded_state)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

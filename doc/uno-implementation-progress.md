@@ -2322,3 +2322,52 @@ masterchain target 18, cold height 48), including peer acquisition and database
 reopening. The four state/request instrument tests and two genesis tests also
 passed. M1 remains open for remote malicious-response rejection and large-state
 synchronization; M3 expansion remains paused.
+
+### Remote zerostate file-binding rejection and recovery
+
+`--counter --counter-reencoded-state` enables one faulty wc2 zerostate response
+per serving process. The test-only full-node library reserializes the genuine
+state with BoC mode 0 after the server's archive integrity check, before the
+normal overlay/RLDP response. The resulting 224-byte BoC is valid and has the
+same Cell root as the genuine 245-byte file, but a different SHA-256 file hash.
+Thus it reaches the receiver's file-binding check without relying on malformed
+serialization or a changed state root. Subsequent responses are genuine so the
+same run must reject, retry, synchronize, and reopen its own database.
+
+The injector is compiled only into `full-node-counter-network`, an excluded
+test library replacing `full-node` for `test-counter-validator-engine` alone.
+The normal validator-engine links the normal library. Binary marker checks
+find `COUNTER_ZERO_STATE_REENCODED` in the test binary and not the production
+binary. No receiver validation policy is changed by this feature.
+
+The first run (`ocej5x1i`) exposed an incorrect test expectation: this live
+cold-join uses WaitBlockState::got_state_from_net, not
+DownloadShardState::downloaded_zero_state. It rejected the bytes correctly but
+the runner looked for the other actor's diagnostic. Correcting the expected
+path passed in `zeoqah_z`. The runner also compares the observer's archived
+wc2 zerostate bytes with the genuine source before checking the rejection log;
+this is the independent persistence property, not an error-message assertion.
+
+Mutation run `vx2numu5` removed WaitBlockState's in-memory zerostate file-hash
+guard. The node still acquired the expected account state, but persisted the
+224-byte representation, and the archive-byte assertion failed. Independent
+parsing confirmed identical Cell roots for both files. The crypto-hash skill's
+SHA-256 backend confirmed different file digests: genuine `b23a56f0...c4c265b4`,
+persisted `7f57e012...ae489383`. Restoring the guard leaves no diff in
+validator/downloaders/wait-block-state.cpp. This tests removal of the actual
+binding check, not rejection-message wording.
+
+The previous peer-acquisition runs were archived and verified in
+`build/m1-counter-peer-state-runs-20260906.tar.gz`; the diagnostic-mismatch run
+was archived and verified in `build/m1-counter-reencoded-setup-20260906.tar.gz`.
+Original directories were moved to trash and remain recoverable, without
+raising the retention cap. This result covers one remote zerostate corruption
+class, not remote invalid block proofs/signatures, hostile checkpoint selection,
+large-state import, or full UNO synchronization. M1 remains open.
+
+The restored final run `m1-counter-network-run-x3cwezg7` passed the independent
+archive-byte assertion, remote rejection/recovery, pinned account state and
+database reopening (Counter target 17, masterchain target 18, cold height 48).
+Both node targets and the Counter test executables rebuilt. BlockTransition
+and disk integration CTests passed in 1.37 seconds; the four Python state/request
+tests passed as well.

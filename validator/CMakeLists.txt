@@ -264,3 +264,11 @@ target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
 
 target_link_libraries(full-node PUBLIC validator-state-download-budget)
 target_link_libraries(full-node PRIVATE tdactor adnl rldp2 tl_api dht tdfec overlay tos_db)
+
+# Isolated network fault injection; never linked by production executables.
+add_library(full-node-counter-network STATIC EXCLUDE_FROM_ALL ${FULL_NODE_SOURCE})
+get_target_property(counter_full_node_includes full-node INCLUDE_DIRECTORIES)
+get_target_property(counter_full_node_libraries full-node LINK_LIBRARIES)
+target_include_directories(full-node-counter-network PUBLIC ${counter_full_node_includes})
+target_link_libraries(full-node-counter-network PUBLIC ${counter_full_node_libraries})
+target_compile_definitions(full-node-counter-network PRIVATE TOS_COUNTER_NETWORK_TEST=1)
