@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import replace
 
 REPO = Path(__file__).resolve().parents[1]
@@ -105,6 +106,28 @@ async def require_proof_probe(node, signatures=False):
         await asyncio.sleep(0.2)
 
 
+async def require_checkpoint_serialized(nodes, seqno):
+    marker = f"finished serializing persistent state for (-1,8000000000000000,{seqno})"
+    while True:
+        for node in nodes:
+            if marker in node.log_path.read_text(errors="replace"):
+                return
+        await asyncio.sleep(0.2)
+
+
+def require_checkpoint_acquired(log, block):
+    identity = json.loads(block.to_json())
+    marker = (f"best handle is [ w=-1 s=9223372036854775808 seq={block.seqno} "
+              f"{identity['root_hash']} {identity['file_hash']} ]")
+    if block.seqno == 0 or marker not in log:
+        raise AssertionError("cold node did not select the generated persistent checkpoint")
+    if "persistent state download finished" not in log:
+        raise AssertionError("cold node did not finish persistent checkpoint acquisition")
+    if not any("finished downloading state (2,8000000000000000," in line
+               and "(2,8000000000000000,0)" not in line for line in log.splitlines()):
+        raise AssertionError("cold node did not download a non-genesis Counter snapshot")
+
+
 def signature_proof_results(root, cold_name="node5", sent_marker="COUNTER_BAD_SIGNATURE_SENT"):
     logs = "\n".join(log.read_text(errors="replace") for log in (root / "network").glob("node*/log"))
     cold_path = root / "network" / cold_name / "log"
@@ -150,7 +173,8 @@ async def guarded_exercise(root, *args):
 
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
-                   bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False):
+                   bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False,
+                   checkpoint=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -164,6 +188,10 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             network.config.global_version = 15
             network.config.counter_workchain = True
             network.config.counter_payload = large_payload
+            if checkpoint:
+                # Older than the native two-day early-start heuristic as well
+                # as the current snapshot bucket; the committee remains valid.
+                network.config.counter_checkpoint_genesis_time = int(time.time()) - 2 * 86400 - 60
         network.config.shard_validators = 4
         dht = network.create_dht_node()
         validators = [network.create_full_node() for _ in range(4)]
@@ -182,11 +210,12 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             "TOS_COUNTER_MISBOUND_PROOF_FILE": "",
             "TOS_COUNTER_BAD_SIGNATURE_FILE": "",
             "TOS_COUNTER_PAYLOAD": "1" if large_payload else "0",
+            "TOS_COUNTER_CHECKPOINT": "1" if checkpoint else "0",
             "TOS_COUNTER_RETIRED_SIGNATURE_FILE": str(root / "retired-signature.bin") if retired_signature else "",
         })
         await dht.run(StartOptions(threads=2, verbosity=3))
         for node in validators:
-            await node.run(replace(options, env={
+            await node.run(replace(options, args=(*options.args, "--skip-key-sync") if checkpoint else options.args, env={
                 **options.env, "TOS_COUNTER_SIGNATURE_PROBE": "1",
                 "TOS_COUNTER_REENCODE_ZERO_STATE": "1" if reencoded_state else "0",
                 "TOS_COUNTER_MISBOUND_PROOF_FILE": str(root / "proof-fault-armed") if misbound_proof else "",
@@ -231,6 +260,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                     await asyncio.sleep(0.2)
 
             counter_target = await asyncio.wait_for(post_committee_counter(), join_timeout)
+        if checkpoint:
+            await asyncio.wait_for(require_checkpoint_serialized(validators, committee_key.seqno), join_timeout)
+            print(f"persistent checkpoint {committee_key.seqno} serialized; starting cold selection", flush=True)
         if retired_signature:
             signed = await warm_client.get_masterchain_block_signatures(target.seqno)
             manifest, transcript = retired_signature_manifest(
@@ -241,6 +273,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             pending.write_bytes(manifest)
             pending.replace(root / "retired-signature.bin")
         cold_options = replace(options, env={**options.env, "TOS_COUNTER_RETIRED_SIGNATURE_FILE": ""})
+        if checkpoint:
+            cold_options = replace(cold_options, args=(*cold_options.args, "--sync-before", "1"))
         # Construct the joining node only after the target already exists. No
         # warm database, block archive or proof is copied into its directory.
         cold = network.create_full_node()
@@ -268,9 +302,16 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             cold_committee, _ = await read_committee(cold_client, same)
             if cold_committee.hash != new_committee.hash or cold_committee.hash == original_committee.hash:
                 raise AssertionError("cold node retained the pre-transition committee")
-            cold_key = await cold_client.lookup_block(-1, committee_key.shard, seqno=committee_key.seqno)
-            if cold_key.to_json() != committee_key.to_json():
-                raise AssertionError("cold node disagrees on the committee key block")
+            if checkpoint:
+                # Checkpoint bootstrap stores proofs and state, not necessarily
+                # the checkpoint's historical block body required by lookup.
+                # Bind selection to both hashes, then verify post-checkpoint
+                # state and the authenticated client cursor independently.
+                require_checkpoint_acquired(cold.log_path.read_text(errors="replace"), committee_key)
+            else:
+                cold_key = await cold_client.lookup_block(-1, committee_key.shard, seqno=committee_key.seqno)
+                if cold_key.to_json() != committee_key.to_json():
+                    raise AssertionError("cold node disagrees on the committee key block")
         counter_header = None
         executor_state = None
         if counter_target is not None:
@@ -305,7 +346,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                            for node in validators):
                     raise AssertionError("no remote server injected a misbound proof")
             zero_id = "(2,8000000000000000,0)"
-            if (not any(f"downloading state {zero_id}" in line and " from " in line
+            if not checkpoint and (not any(f"downloading state {zero_id}" in line and " from " in line
                         for line in cold_log.splitlines()) or
                     f"finished downloading state {zero_id}" not in cold_log):
                 raise AssertionError("cold node did not download Counter zerostate through peers")
@@ -363,7 +404,9 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "committee_membership_rotation_tested": membership,
                 "executor_data_boc_bytes": len(executor_state.data) if executor_state else None,
                 "payload_cells": 32767 if large_payload else 0,
-                "cold_counter_zerostate_peer_download_tested": counter,
+                "cold_counter_zerostate_peer_download_tested": counter and not checkpoint,
+                "persistent_checkpoint_cold_join_tested": checkpoint,
+                "persistent_checkpoint_streaming_import_tested": False,
                 "remote_reencoded_zerostate_rejection_tested": reencoded_state,
                 "remote_misbound_proof_rejection_tested": misbound_proof,
                 "remote_committee_signature_rejection_tested": bad_signature,
@@ -385,6 +428,8 @@ def main():
                         help="preserve a bounded 32,767-cell payload through cold join and reopening")
     parser.add_argument("--counter-reweight", action="store_true",
                         help="cold-join after a signed config-owner validator-weight update (not an election)")
+    parser.add_argument("--counter-checkpoint", action="store_true",
+                        help="use aged genesis and require native persistent-checkpoint cold join; requires --counter-reweight")
     parser.add_argument("--counter-membership", action="store_true",
                         help="replace one committee member with an independent node, then cold-join")
     parser.add_argument("--counter-retired-signature", action="store_true",
@@ -400,6 +445,9 @@ def main():
         parser.error("--counter-payload requires --counter")
     if args.counter_reweight and not args.counter:
         parser.error("--counter-reweight requires --counter")
+    if args.counter_checkpoint and (not args.counter_reweight or args.counter_reencoded_state
+                                   or args.counter_misbound_proof or args.counter_bad_signature):
+        parser.error("--counter-checkpoint requires --counter-reweight and excludes proof/zerostate fault profiles")
     if args.counter_membership and (not args.counter or args.counter_reweight):
         parser.error("--counter-membership requires --counter and excludes --counter-reweight")
     if args.counter_retired_signature and (not args.counter_membership or args.counter_bad_signature):
@@ -437,7 +485,7 @@ def main():
         report.update(asyncio.run(guarded_exercise(root, build, args.base_port, args.join_timeout, args.counter,
                                       args.counter_reencoded_state, args.counter_misbound_proof,
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
-                                      args.counter_membership, args.counter_retired_signature)))
+                                      args.counter_membership, args.counter_retired_signature, args.counter_checkpoint)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

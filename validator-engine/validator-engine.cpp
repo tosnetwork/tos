@@ -1785,6 +1785,11 @@ td::Status ValidatorEngine::load_global_config() {
   validator_options_ = tos::validator::ValidatorManagerOptions::create(zero_state, init_block);
 #ifdef TOS_COUNTER_NETWORK_TEST
   auto counter_options = td::Ref<tos::validator::CollatorOptions>{true};
+  const char* checkpoint_profile = std::getenv("TOS_COUNTER_CHECKPOINT");
+  if (checkpoint_profile && std::string(checkpoint_profile) == "1") {
+    // Only scheduling jitter is removed; native checkpoint eligibility remains.
+    validator_options_.write().set_state_serializer_random_delay_enabled(false);
+  }
   counter_options.write().workchain_candidate_source = [](tos::ShardIdFull shard) -> td::Result<td::Ref<vm::Cell>> {
     if (shard != tos::ShardIdFull{2, tos::shardIdAll}) {
       return td::Status::Error("Counter network candidate requires unsplit workchain 2");

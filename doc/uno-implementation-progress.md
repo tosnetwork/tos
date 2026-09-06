@@ -2784,3 +2784,49 @@ an in-memory download is not evidence for the streaming path. No native
 time-bucket, consensus validation or account-size rule was changed here.
 Persistent-checkpoint and resource/retention gates remain open, and M3 expansion
 remains paused.
+
+### Real-manager persistent-checkpoint cold join, in-memory download
+
+The opt-in `--counter-checkpoint --counter-reweight` profile now bootstraps
+four independent validators with aged genesis, creates a key block through the
+existing signed config-owner update and waits for the native serializer to
+finish that checkpoint before starting an independent cold node. A manager
+option controls serialization jitter only; it defaults to enabled. Only the
+test node target reads `TOS_COUNTER_CHECKPOINT=1` to disable that jitter. The
+ordinary rebuilt node does not contain this environment-variable marker.
+Native bucket eligibility, TTL, signatures and state-root validation are not
+modified. Initial warm validators use the existing `--skip-key-sync` bootstrap
+option; the cold observer does not, and uses `--sync-before 1`.
+
+The first run `utg6s73u` produced checkpoint 17 but correctly failed the cold
+selection gate: before peers were discovered, the native two-day early-start
+heuristic selected genesis. The runtime fixture now uses genesis 172860 seconds
+before startup, older than that heuristic and the current snapshot bucket,
+while remaining within its explicit three-bucket committee lifetime. The second
+run `8tfc9x9n` selected checkpoint 20 and downloaded all three persistent states,
+but failed an old harness assumption that historical checkpoint block-body
+lookup must succeed. Bootstrap stores the checkpoint proof and state, not
+necessarily its block body. The checkpoint mode instead binds the selected
+identity to both expected hashes, requires completed snapshot acquisition,
+and retains independently authenticated post-checkpoint block, committee and
+Counter-state checks. It does not claim historical block-body availability.
+
+Run `bi9v30_p` passed with checkpoint 20, masterchain target 21, Counter target
+19 and cold height 52. Its real cold manager selected the expected checkpoint,
+downloaded a non-genesis Counter snapshot through peers, caught up, and reopened
+its own database after all four warm nodes stopped. The 32,767-cell payload's
+2,097,263-byte executor-data BoC and transaction identity remained identical.
+No block archive, proof or warm database was copied into the cold directory.
+
+The observation test rejects a wrong checkpoint height/hash, missing completion
+and a genesis-only state download. Removing the identity check makes both
+identity cases fail on missing rejection; the check was restored. The eleven
+state/client instrument tests pass. All three runs are terminal and retained;
+the preceding retired-signature runs were archived, compared against their
+sources and moved to recoverable trash before admitting these runs.
+
+This is a real persistent-checkpoint cold-join/reopening result using the
+in-memory download path. `persistent_checkpoint_streaming_import_tested`
+remains false, as does `uno_sync_accepted`. The OnDisk selection and actor-local
+streaming import, resource/RSS bounds, growth/GC and retention remain required.
+M3 expansion remains paused.

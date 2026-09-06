@@ -1,6 +1,7 @@
 """Instrument checks for the real-network state assertions, not proof validation."""
 import importlib.util
 import asyncio
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -20,6 +21,22 @@ spec.loader.exec_module(module)
 
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
+    async def test_checkpoint_requires_identity_completion_and_nonzero_snapshot(self):
+        block = toslib_api.Tos_blockIdExt(workchain=-1, shard=-(1 << 63), seqno=17,
+                                         root_hash=bytes([1]) * 32, file_hash=bytes([2]) * 32)
+        identity = json.loads(block.to_json())
+        selected = ("best handle is [ w=-1 s=9223372036854775808 seq=17 "
+                    f"{identity['root_hash']} {identity['file_hash']} ]\n")
+        finished = "persistent state download finished\n"
+        snapshot = "finished downloading state (2,8000000000000000,15):root:file\n"
+        module.require_checkpoint_acquired(selected + finished + snapshot, block)
+        for log, reason in ((selected.replace("seq=17 ", "seq=0 ") + finished + snapshot, "select"),
+                            (selected.replace(identity["root_hash"], identity["file_hash"]) + finished + snapshot, "select"),
+                            (selected + snapshot, "finish persistent"),
+                            (selected + finished + snapshot.replace(",15)", ",0)"), "non-genesis")):
+            with self.subTest(reason=reason), self.assertRaisesRegex(AssertionError, reason):
+                module.require_checkpoint_acquired(log, block)
+
     async def test_retired_member_acceptance_is_observed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

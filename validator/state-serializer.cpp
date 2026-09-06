@@ -221,7 +221,7 @@ void AsyncStateSerializer::next_iteration() {
         LOG(ERROR) << "started serializing persistent state for " << masterchain_handle_->id().id.to_str();
         // block next attempts immediately, but send actual request later
         running_ = true;
-        double delay = td::Random::fast(0, 3600 * 6);
+        double delay = opts_->get_state_serializer_random_delay_enabled() ? td::Random::fast(0, 3600 * 6) : 0;
         LOG(WARNING) << "serializer delay = " << delay << "s";
         delay_action(
             [SelfId = actor_id(this)]() {
