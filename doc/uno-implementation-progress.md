@@ -2921,3 +2921,39 @@ open; M3 expansion remains paused.
 Thirteen Python state/client instrument tests passed. Removing the KiB-to-byte
 conversion fails on 2048 versus 2097152; removing the process-identity guard
 fails the changed-start-time rejection test. Both mutations were restored.
+
+### Large single-account storage experiment on CellDb V2
+
+The explicit `UNO_SNAPSHOT_LARGE_TEST=1` experiment now selects CellDb V2,
+matching the real node, rather than inheriting the helper's V1 default. Its
+fixed two million deterministic nullifiers serialize to 83,933,657 bytes and
+4,000,006 cells. The experiment retains the 64 MiB RocksDB block cache and
+16 MiB parser budget, uses the existing localhost TCP file-transfer fixture,
+and exercises actor import, root adoption, lease release and database reopening.
+The default small V1 tests and separate V2 regression remain unchanged.
+
+This is a storage stress fixture, not a legal account under the current
+65,536-cell executor limit, and not an independent authenticated P2P cold-node
+experiment. Whole-process memory includes construction of the source tree,
+serialization, serving, multiple full lookup passes, imported cells and cache
+retention; it cannot be attributed to the importer alone.
+
+The run's log is `build/uno-large-v2-20260906.log` and its process resource
+report is `build/uno-large-v2-20260906.time`. Actor import committed 4,000,006
+cells in 3,907 batches; the worker spool contained 371,934,035 bytes. The
+successful import's slowest reported worker slice was 285.13 ms at cell 1,
+against a 5 ms target. That timer starts before parsing begins, so the first
+sample includes setup before the first persisted cell; it is not a measured
+single-cell arithmetic cost. Root adoption also logged a V2 reader reset with
+4,000,005 cached cells despite the configured 1,000,000-cell cache target.
+The cache target therefore cannot be claimed as an operation-time hard bound.
+These observations remain resource-design work, not accepted RSS or latency
+ceilings, and M3 expansion remains paused.
+
+The experiment completed successfully in 192.50 seconds (whole process), with
+maximum RSS reported as 2,464,512 KiB (about 2.35 GiB), no major page faults and
+no swaps during the run. All two million keys remained readable after adoption
+and reopening; duplicate-nullifier rejection and a fresh insertion after
+reopening also passed. The retained database is
+`/tmp/uno-snapshot-celldb-2jJsId`. This is a passing V2 functional stress result
+with measured whole-process cost, not proof of a 16 MiB process-memory bound.

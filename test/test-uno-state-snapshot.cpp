@@ -384,7 +384,9 @@ TEST(UnoStateSnapshot, LargeSingleAccountDownloadAndImport) {
   LOG(WARNING) << "Large single-account state serialized bytes=" << bytes.size();
   ASSERT_TRUE(bytes.size() > tos::validator::fullnode::persistent_state_heap_threshold_bytes());
   bytes = {};
-  actor_import_snapshot(state, used.root(), keys);
+  LOG(WARNING) << "Large snapshot experiment uses CellDb V2 with 64 MiB cache and 16 MiB parser budget; "
+                  "process RSS includes input construction and verification, not just import";
+  actor_import_snapshot(state, used.root(), keys, true);
 }
 
 TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
