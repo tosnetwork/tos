@@ -121,7 +121,9 @@ async def exercise(root, build, port, join_timeout, counter):
         cold = network.create_full_node()
         cold.announce_to(dht)
         print(f"cold join starts after masterchain height {target.seqno}", flush=True)
-        await cold.run(options)
+        await cold.run(options, seed_extra_states=False)
+        if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
+            raise AssertionError("cold node must have only masterchain/native static states")
         cold_client, observed = await asyncio.wait_for(reach(cold, target.seqno + 2), join_timeout)
         same = await cold_client.lookup_block(-1, target.shard, seqno=target.seqno)
         if same.to_json() != target.to_json():
@@ -137,6 +139,12 @@ async def exercise(root, build, port, join_timeout, counter):
             counter_header = await cold_client.get_block_header(acquired)
             executor_state = await asyncio.wait_for(counter_state(cold_client, acquired), 20)
             await asyncio.wait_for(require_proof_probe(cold), 10)
+            cold_log = cold.log_path.read_text(errors="replace")
+            zero_id = "(2,8000000000000000,0)"
+            if (not any(f"downloading state {zero_id}" in line and " from " in line
+                        for line in cold_log.splitlines()) or
+                    f"finished downloading state {zero_id}" not in cold_log):
+                raise AssertionError("cold node did not download Counter zerostate through peers")
             (root / "counter-account.json").write_text(executor_state.to_json())
             (root / "counter-target.json").write_text(counter_target.to_json())
             (root / "counter-header.json").write_text(counter_header.to_json())
@@ -169,6 +177,7 @@ async def exercise(root, build, port, join_timeout, counter):
                 "counter_block": json.loads(counter_target.to_json()) if counter_target else None,
                 "invalid_proof_rejection_tested": False, "cold_executor_state_tested": counter,
                 "cold_database_reopened": counter,
+                "cold_counter_zerostate_peer_download_tested": counter,
                 "manager_proof_root_binding_tested": counter,
                 "manager_broadcast_signature_rejection_tested": counter,
                 "validator_processes": 4, "cold_observer_processes": 1,

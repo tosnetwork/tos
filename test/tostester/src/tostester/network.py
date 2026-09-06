@@ -550,13 +550,17 @@ class FullNode(Network.Node):
         return self._validator_key
 
     @override
-    async def run(self, options: StartOptions | None = None):
+    async def run(self, options: StartOptions | None = None, *, seed_extra_states: bool = True):
+        """Start the node; seed_extra_states controls first-start static files only."""
         zerostate = self._get_or_generate_zerostate()
 
         if not self._static_populated:
             static_dir = self._directory / "static"
             static_dir.mkdir()
-            for state in (zerostate.masterchain, zerostate.shardchain, *zerostate.extra_shards):
+            # Cold-join tests can require extra workchains to obtain their
+            # genesis state through peers, retaining only the trusted base.
+            extra_states = zerostate.extra_shards if seed_extra_states else ()
+            for state in (zerostate.masterchain, zerostate.shardchain, *extra_states):
                 (static_dir / state.file_hash.hex().upper()).symlink_to(state.file)
             self._static_populated = True
 

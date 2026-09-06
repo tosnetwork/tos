@@ -2287,3 +2287,38 @@ marker is present only in the test binary. The BlockTransition unit and disk
 integration CTests passed (1.12 seconds), as did all four Python state/request
 instrument tests. Remote malicious-download orchestration and large-state
 synchronization remain outside this result; M1 is not marked complete.
+
+### Cold Counter zerostate acquired from peers
+
+The cold-join runner now withholds extra-workchain static state files from the
+observer's first startup. FullNode.run exposes an opt-in `seed_extra_states`
+argument (default true, affecting only initial static-file population); the
+runner passes false and checks that only the masterchain/native static files
+exist. No production node behavior or genesis definition changes.
+
+Run `m1-counter-network-run-0yxo59ae` passed with the observer obtaining the
+245-byte wc2 zerostate from a peer. Its log records DownloadState's peer
+selection and completed download of `(2,8000000000000000,0)`. The runner now
+requires both events, as well as the existing pinned executor-state and
+database-reopening checks. The report exposes
+`cold_counter_zerostate_peer_download_tested` separately from full UNO sync.
+The ordinary zerostate downloader checks the received file hash and parsed
+state root; this run exercises successful acquisition, not rejection of a
+hostile peer's bytes. This is a small Counter genesis, not a large UNO snapshot
+or the persistent-state streaming importer.
+
+The negative control restored local extra-state seeding and adjusted the
+static-file-count check to allow that deliberate setup. Run
+`m1-counter-network-run-ukc2fqlp` then passed account acquisition but failed the
+peer-download assertion. Thus the new evidence requirement detects the old
+local-static shortcut independently of the setup count. Both temporary edits
+were restored before the final run. The previous three completed signature
+runs were archived and verified in
+`build/m1-counter-signature-runs-20260906.tar.gz`; originals were moved to trash
+without raising the three-run retention cap.
+
+The restored run `m1-counter-network-run-u762rx3s` passed (Counter target 17,
+masterchain target 18, cold height 48), including peer acquisition and database
+reopening. The four state/request instrument tests and two genesis tests also
+passed. M1 remains open for remote malicious-response rejection and large-state
+synchronization; M3 expansion remains paused.
