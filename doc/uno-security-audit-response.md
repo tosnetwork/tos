@@ -86,6 +86,9 @@ default was restored with no source diff. No redundant fork guard was added.
   with the engine's existing `wire_bytes` without defining that contract.
   The Counter engine reports eight payload bytes, not the BoC container size.
   Keep post-execution accounting checks as well. No fix is claimed yet.
+  [The preflight design note](uno-block-preflight-design.md) separates host
+  Cell-graph admission from engine payload accounting and records the earlier
+  inbox-decoding boundary. Limits and activation are not frozen by that note.
 - L-3/L-4 remain bounded performance observations.
   No accounting transition or invariant was changed in this pass.
 
