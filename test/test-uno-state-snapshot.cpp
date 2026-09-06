@@ -84,10 +84,12 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
   void accepted(td::Result<tos::validator::PersistentStateImportResult> result) {
     auto imported = result.move_as_ok();
+    report_residency("imported-before-traversal");
     ASSERT_TRUE(imported.cells_persisted > keys_.size());
     ASSERT_TRUE(imported.gc_lease != nullptr);
     ASSERT_TRUE(td::Bits256(imported.hash_only_root->get_hash().bits()) == request_.expected_root_hash);
     verify_root(imported.hash_only_root);
+    report_residency("imported-after-traversal");
     lease_ = std::move(imported.gc_lease);
     // Synthetic block identity: exercise CellDb root registration, without
     // claiming validation of a block header or a network checkpoint.
@@ -109,7 +111,9 @@ class SnapshotImportActor final : public td::actor::Actor {
     }
   }
   void stored(td::Result<td::Ref<vm::DataCell>> result) {
+    report_residency("adopted-before-traversal");
     verify_root(result.move_as_ok());
+    report_residency("adopted-after-traversal");
     ASSERT_TRUE(lease_->active());
     lease_->release_after_root_store_committed();
     ASSERT_TRUE(!lease_->active());
@@ -123,12 +127,16 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
   void read_after_release(td::Result<std::shared_ptr<vm::CellDbReader>> result) {
     auto reader = result.move_as_ok();
+    report_residency("lease-released-before-traversal");
     verify_root(reader->load_cell(request_.expected_root_hash.as_slice()).move_as_ok());
+    report_residency("lease-released-after-traversal");
     check_registration();
   }
   void reloaded(td::Result<td::Ref<vm::DataCell>> result) {
     auto root = result.move_as_ok();
+    report_residency("reopened-before-traversal");
     verify_root(root);
+    report_residency("reopened-after-traversal");
     auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
     auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys_.size()).move_as_ok();
     ASSERT_TRUE(restored.with_used({keys_.front()}).is_error());
@@ -157,6 +165,11 @@ class SnapshotImportActor final : public td::actor::Actor {
   }
 
  private:
+  void report_residency(const char* phase) const {
+    LOG(WARNING) << "Snapshot residency phase=" << phase << " celldb_v2=" << celldb_v2_
+                 << " live_data_cells=" << vm::DataCell::get_total_data_cells()
+                 << " includes_source_and_all_process_owners=true";
+  }
   std::string directory_;
   tos::validator::PersistentStateImportRequest request_;
   td::Bits256 expected_payload_;

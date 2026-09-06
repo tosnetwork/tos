@@ -2957,3 +2957,43 @@ and reopening; duplicate-nullifier rejection and a fresh insertion after
 reopening also passed. The retained database is
 `/tmp/uno-snapshot-celldb-2jJsId`. This is a passing V2 functional stress result
 with measured whole-process cost, not proof of a 16 MiB process-memory bound.
+
+### Separating import residency from traversal residency
+
+The actor fixture now logs live DataCell counts before and after its import,
+adoption, lease-release and reopen traversals. These counts include the source
+tree and all process owners; they are not byte budgets or peak counters. The
+underlying DataCell counter increments at construction and decrements at
+destruction. No assertion freezes a particular residency count, so a future
+memory improvement is not required to preserve today's materialization cost.
+
+The repeated two-million-nullifier V2 experiment records phase observations in
+`build/uno-large-v2-residency-20260906.log`. Before any imported-root traversal,
+4,000,006 DataCells are live, matching the retained source state. After the
+first traversal there are 8,000,011: almost a second complete tree. At adoption
+the observed count is 7,998,404, then 8,000,011 after traversal. After lease
+release it remains 8,000,011. Reopening starts with 4,000,007 cells, showing that
+the previous imported graph was released when its owners and database ended.
+
+This distinguishes two mechanisms. `CellInfoStorage` provides stable pointers
+used during commit, so synchronous eviction while that operation is in flight
+is unsafe. Independently, `ExtCell` stores its loaded DataCell in a strong
+atomic reference; traversing a root can retain loaded descendants even after
+the reader cache is reset. The helper formerly named `enforce_cache_limit` is
+now named `request_cache_reset_if_needed`, and its comment explicitly states
+that it requests a later reset rather than imposing a hard insertion bound.
+No cache eviction or cell-lifetime behavior was changed by that rename.
+
+The next resource work must therefore cover caller-held state and traversal,
+not merely lower the cache target. The pre-traversal result supports absence
+of a second fully resident DataCell tree immediately after streaming import;
+it does not bound parser scaffolding, database buffers, metadata or total RSS.
+The fixture is still oversized for consensus admission and is not an
+authenticated independent-node experiment. M1 resource gates remain open.
+
+The repeated large experiment passed in 181.61 seconds with maximum whole-
+process RSS of 2,463,476 KiB (about 2.35 GiB), zero major page faults and zero
+swaps. Reopened traversal again reached 8,000,011 live DataCells. The resource
+report is `build/uno-large-v2-residency-20260906.time`; timing differences from
+the previous run are not claimed as a performance improvement. M3 remains
+paused.

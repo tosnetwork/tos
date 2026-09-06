@@ -846,7 +846,7 @@ struct CellInfoStorage {
 
   // O(1): backed by an atomic counter maintained by on_cell_created(),
   // rather than a full scan over every bucket's mutex. This is called on
-  // the insertion hot path (see enforce_cache_limit in CellDbReaderImpl),
+  // the insertion hot path (see request_cache_reset_if_needed in CellDbReaderImpl),
   // so a per-call scan across all 8192 bucket locks would turn every single
   // cell load into an 8192-mutex operation.
   size_t cache_size() const {
@@ -1256,7 +1256,7 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
     }
     CellInfo *register_ext_cell_inner(Ref<DynamicBocExtCell> ext_cell, CellInfoStorage &storage) {
       auto &info = storage.create_cell_info(std::move(ext_cell), this, stats_);
-      enforce_cache_limit(storage);
+      request_cache_reset_if_needed(storage);
       return &info;
     }
 
@@ -1446,19 +1446,15 @@ class DynamicBagOfCellsDbImplV2 : public DynamicBagOfCellsDb {
         return load_result.cell_;
       }
       auto &cell_info = storage->create_cell_info_from_db(std::move(load_result.cell()), load_result.refcnt());
-      enforce_cache_limit(*storage);
+      request_cache_reset_if_needed(*storage);
       return cell_info.cell->load_cell().move_as_ok().data_cell;
     }
 
-    // Called on every insertion (see register_ext_cell_inner / load_cell_slow_path)
-    // so the cache is bounded at the actual insertion boundary instead of only
-    // being checked periodically in DynamicBagOfCellsDbImplV2::set_loader() --
-    // that periodic check alone let cache_size grow ~10x past cache_size_max_
-    // between checks. We don't evict synchronously here (an in-flight commit
-    // may still need cells it just read), we just flag the reader for reset at
-    // the next set_loader() call, which is the same mechanism already used for
-    // "cell cached from another db" (see force_drop_cache_ above).
-    void enforce_cache_limit(CellInfoStorage &storage) {
+    // Observe the target at insertion, but defer reset until set_loader().
+    // This is not a hard bound: an in-flight commit may retain CellInfo pointers
+    // and must not have its entries evicted. The cache can continue growing
+    // during that operation; caller-held loaded cells may also outlive reset.
+    void request_cache_reset_if_needed(CellInfoStorage &storage) {
       if (storage.cache_size() >= cache_size_max_ && storage.mark_force_drop_cache()) {
         // mark_force_drop_cache() only returns true for the first caller to
         // cross the line, so this fires once per reader instead of once per
