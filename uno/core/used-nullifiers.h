@@ -25,7 +25,7 @@ class UsedNullifiers {
                                              [](const vm::CellSlice& value) { return value.empty_ext(); })) {
         return td::Status::Error("UNO invalid used nullifier dictionary or entry limit exceeded");
       }
-      return UsedNullifiers(std::move(root));
+      return UsedNullifiers(std::move(root), max_entries - remaining);
     } catch (vm::VmError&) {
       return td::Status::Error("UNO malformed used nullifier cells");
     } catch (vm::VmVirtError&) {
@@ -38,6 +38,7 @@ class UsedNullifiers {
   td::Ref<vm::Cell> root() const {
     return root_;
   }
+  std::uint64_t size() const { return size_; }
 
   bool contains(const td::Bits256& nullifier) const {
     vm::Dictionary dictionary(root_, 256);
@@ -54,7 +55,8 @@ class UsedNullifiers {
         return td::Status::Error("UNO nullifier already used");
       }
     }
-    return UsedNullifiers(std::move(staged).extract_root_cell());
+    if (nullifiers.size() > UINT64_MAX - size_) return td::Status::Error("UNO used nullifier count overflow");
+    return UsedNullifiers(std::move(staged).extract_root_cell(), size_ + nullifiers.size());
   } catch (vm::VmError&) {
     return td::Status::Error("UNO used nullifier update failed on cells");
   } catch (vm::VmVirtError&) {
@@ -66,9 +68,10 @@ class UsedNullifiers {
  private:
   // Roots enter only through construction or bounded validation. The complete
   // StateV2 decoder must separately validate schema and cross-field invariants.
-  explicit UsedNullifiers(td::Ref<vm::Cell> root) : root_(std::move(root)) {
+  explicit UsedNullifiers(td::Ref<vm::Cell> root, std::uint64_t size) : root_(std::move(root)), size_(size) {
   }
   td::Ref<vm::Cell> root_;
+  std::uint64_t size_ = 0;
 };
 
 }  // namespace uno_workchain

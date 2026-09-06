@@ -1440,6 +1440,13 @@ deterministic immutable continuation. Independently removing the entry bound,
 empty-marker check or non-resolving cell load made the corresponding tests fail;
 all mutations were restored.
 
+After rebuilding affected targets, the used-nullifier, tree/note-state and
+ordinary snapshot groups each passed twice (65.14 seconds total). Additional
+root-envelope negative tests were then rebuilt, and the used-nullifier and
+tree/note-state groups each passed three further runs (4.09 seconds total).
+No large snapshot performance result or complete UNO network acceptance is
+claimed by these checks.
+
 The database-reopening fixture now constructs this object from the reopened
 account payload, rejects an existing nullifier and stages a new one while
 preserving the original root. This stages a used-set update only; it does not
@@ -1903,3 +1910,43 @@ data. Both mutations were restored; `test-uno-used-nullifiers` and
 This is component/composition evidence only:
 production StateV2 authentication, transaction admission against the frozen
 pre-state window, and the single end-of-block commit still require integration.
+
+### Atomic note-state composition and cross-field restoration
+
+`uno/core/note-state.h` combines the real tree frontier, full NullifierState
+(used, reserved and owner dictionaries) and Anchor Window. Its prototype Cell
+tag is `0x554e5330`, with three references and a strict three-bit optional-root
+envelope for the dictionaries. This is a note-state component, not the complete
+StateV2, transaction-admission interface or a production engine registration.
+
+Block-end assembly/restoration requires tree root == latest anchor and used
+nullifier count == next note position, counting every paired Action. Used-set
+count is derived during dictionary validation and maintained only by successful
+immutable insertion; it is not trusted as a serialized counter. Reserved leaf
+count is derived from the authoritative reserved-nullifier dictionary, bounded by
+remaining tree capacity, because every reserved paired Action needs one leaf.
+Owner/manifest consistency remains validated by NullifierState. Reservation
+counting scans pending keys; the cost must be measured and included in resource
+policy, not advertised as constant-time restoration.
+
+`apply_spend_effects` consumes effects from already verified spend bundles. It
+checks explicit bundle/per-bundle/aggregate limits and successor height, freezes
+the original Anchor Window, stages nullifier consumption in candidate order,
+appends all outputs without consuming reserved capacity, and pushes one final
+anchor. A duplicate in a later bundle or a late tree-ABI rejection discards all
+staged changes. Empty blocks advance height/window without adding leaves. The
+method deliberately does not claim to verify proofs/signatures, fees, expiry,
+cmx reservation rules, system receipts or complete envelope authorization: the
+future engine must verify those and atomically commit accounting, messages and
+the output archive with this result. Mixed system/user execution remains open.
+
+Tests cover late duplicates, malformed commitment rejection after dictionary
+staging, successful retries, historical replay rejection after BoC restoration,
+same-block intermediate-root rejection and next-block acceptance, cheap limits,
+empty-block aging, reserved-key exclusion, terminal reservation release, and
+cross-field/root-envelope corruption. Injecting each of the three VM read failure
+classes at every read during restore and spend application leaves the source
+Cell hash unchanged and allows a subsequent retry. Three independent mutations
+removed pre-state anchor membership, tree/anchor equality and paired-count
+equality. Each accepted a specifically forbidden input and failed its test;
+all mutations were restored.

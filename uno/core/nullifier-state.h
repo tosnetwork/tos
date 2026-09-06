@@ -80,11 +80,31 @@ class NullifierState {
   td::Ref<vm::Cell> used_root() const {
     return used_.root();
   }
+  std::uint64_t used_count() const { return used_.size(); }
   td::Ref<vm::Cell> reserved_root() const {
     return reserved_;
   }
   td::Ref<vm::Cell> owners_root() const {
     return owners_;
+  }
+
+  // Each reserved paired Action consumes one future tree leaf. Count the
+  // authoritative dictionary, never a separately trusted caller counter.
+  td::Result<std::uint64_t> reserved_count(std::uint64_t max_entries) const try {
+    std::uint64_t count = 0;
+    vm::Dictionary reserved(reserved_, 256);
+    if (!reserved.check_for_each([&](td::Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+          if (count == max_entries) return false;
+          ++count;
+          return true;
+        })) return td::Status::Error("UNO reservation count exceeds limit");
+    return count;
+  } catch (vm::VmError&) {
+    return td::Status::Error("UNO reservation counting failed on cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("UNO reservation counting encountered incomplete proof");
+  } catch (vm::VmNoGas&) {
+    return td::Status::Error("UNO reservation counting exhausted execution budget");
   }
 
   bool is_used(const td::Bits256& key) const {

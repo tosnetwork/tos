@@ -33,10 +33,15 @@ class AnchorWindow {
   std::size_t size() const { return roots_.size(); }
   const Root& latest() const { return roots_.back(); }
 
-  td::Result<AnchorWindow> finish_block(std::uint64_t height, const Root& root) const {
+  td::Status validate_next_height(std::uint64_t height) const {
     if (height_ == std::numeric_limits<std::uint64_t>::max() || height != height_ + 1) {
       return td::Status::Error("UNO anchor requires the next block height");
     }
+    return td::Status::OK();
+  }
+
+  td::Result<AnchorWindow> finish_block(std::uint64_t height, const Root& root) const {
+    TRY_STATUS(validate_next_height(height));
     auto next = *this;
     if (next.roots_.size() == capacity_) next.roots_.erase(next.roots_.begin());
     // Equal roots still occupy separate heights; idle blocks age the window.
