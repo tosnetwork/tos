@@ -36,7 +36,8 @@ T0 fixture layout: flags (one byte), signed balance (eight LE bytes), anchor
 (32), binding signature (64), proof, then each Action's cv/nf/rk/cmx/epk
 (32 each), encrypted ciphertext (580), outgoing ciphertext (80), spend signature
 (64). This is not TL-B, ConfigParam 84, or a change to the exported ABI.
-The previous `UNOABIT0` and its two-Action readers remain unchanged.
+The previous `UNOABIT0` encoding remains unchanged. The cost instrument accepts
+both versions; the separate ABI integration driver still reads T0 only.
 
 ## Evidence and remaining work
 
@@ -52,7 +53,18 @@ and output failures terminate this manual command; they do not classify blocks.
 No new C++ exception boundary is present. Per the milestone review policy,
 external review is pending the milestone, not claimed for this producer.
 
-The C++ measurement reader does not yet consume T1. Diverse spend shapes,
+The C++ cost reader now consumes T1 and rejects unsupported dimensions before
+allocation. Run `test-uno-crypto-cost --measure-funding-shapes` followed by the
+2, 4 and 8 Action file paths, in that order. It records one first-call row per
+shape and ten valid/late-failure samples at each of 1, 16 and 64 repeated calls.
+Only the first shape's first call includes cold key construction. Existing
+`--self-test` exercises T0 compatibility, all three T1 dimensions, incorrect
+declared proof size, unsupported dimensions, truncation and trailing bytes.
+Removing the length, dimension and trailing-byte checks independently makes
+the registered self-test fail. Shape data are parsed structurally here; real
+cryptographic validation still occurs in the measured ABI call.
+
+Diverse spend shapes,
 independent seeded samples, full lifecycle workloads and stage/RSS measurements
 remain outstanding. These fixtures alone do not determine verification weights,
 input limits, a production partition schema, or a WCET envelope. D-3/B3-1 and

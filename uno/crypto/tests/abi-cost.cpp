@@ -9,6 +9,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <sys/resource.h>
 
@@ -216,18 +217,48 @@ bool self_test() {
 
 struct Fixture {
   UnoCryptoVerifyRequest request{};
-  std::array<UnoCryptoAction, 2> actions{};
-  std::array<uint8_t, 7264> proof{};
+  std::vector<UnoCryptoAction> actions;
+  std::vector<uint8_t> proof;
   bool load(const char* path, bool funding) {
-    request.abi_version = UNO_CRYPTO_ABI_VERSION;
     std::ifstream input(path, std::ios::binary);
+    if (!load_stream(input, funding)) {
+      std::cerr << "invalid or unavailable measurement fixture: " << path << '\n';
+      return false;
+    }
+    return true;
+  }
+  bool load_stream(std::istream& input, bool funding) {
+    request = {};
+    actions.clear();
+    proof.clear();
+    request.abi_version = UNO_CRYPTO_ABI_VERSION;
     const auto bytes = [&](void* output, std::size_t count) {
+      if (count > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) return false;
       return static_cast<bool>(input.read(static_cast<char*>(output), static_cast<std::streamsize>(count)));
+    };
+    const auto u64 = [&](std::uint64_t& value) {
+      uint8_t encoded[8];
+      if (!bytes(encoded, sizeof(encoded))) return false;
+      value = 0;
+      for (unsigned i = 0; i < 8; ++i) value |= std::uint64_t(encoded[i]) << (8 * i);
+      return true;
     };
     std::array<char, 8> magic{};
     uint8_t balance[8];
-    if (!bytes(magic.data(), magic.size()) || magic != std::array<char,8>{'U','N','O','A','B','I','T','0'} ||
-        !bytes(&request.flags, 1) || !bytes(balance, 8) || !bytes(request.anchor, 32) ||
+    if (!bytes(magic.data(), magic.size())) return false;
+    std::uint64_t count = 2, proof_size = 7264;
+    if (magic == std::array<char,8>{'U','N','O','A','B','I','T','1'}) {
+      if (!u64(count) || !u64(proof_size)) return false;
+    } else if (magic != std::array<char,8>{'U','N','O','A','B','I','T','0'}) return false;
+    // This manual instrument supports only measured dimensions, not arbitrary
+    // untrusted allocation lengths or production admission limits.
+    if (count != 2 && count != 4 && count != 8) return false;
+    std::size_t expected;
+    if (!multiply(static_cast<std::size_t>(count), 2272, expected) ||
+        !add(expected, kProofBaseBytes, expected) || proof_size != expected) return false;
+    actions.resize(static_cast<std::size_t>(count));
+    proof.resize(expected);
+    if (!bytes(&request.flags, 1) || !bytes(balance, 8) || !bytes(request.anchor, 32) ||
         !bytes(request.binding_signature, 64) || !bytes(proof.data(), proof.size())) return false;
     for (auto& action : actions) {
       if (!bytes(action.cv_net, 32) || !bytes(action.nullifier, 32) || !bytes(action.rk, 32) ||
@@ -251,6 +282,59 @@ struct Fixture {
     return true;
   }
 };
+
+bool fixture_reader_self_test() {
+  auto encoded = [](unsigned count, unsigned proof_bytes) {
+    std::string wire = "UNOABIT1";
+    auto le = [&](std::uint64_t value) {
+      for (unsigned i = 0; i < 8; ++i) wire.push_back(static_cast<char>((value >> (8 * i)) & 255));
+    };
+    le(count);
+    le(proof_bytes);
+    wire.push_back(0);
+    le(static_cast<std::uint64_t>(std::int64_t{-5000}));
+    wire.append(32, '\0');
+    wire.append(64, '\0');
+    wire.append(proof_bytes, '\0');
+    for (unsigned i = 0; i < count; ++i) wire.append(884, '\0');
+    return wire;
+  };
+  // Literal pairs are independent expected lengths, not the reader's formula.
+  for (const auto pair : {std::pair<unsigned,unsigned>{2,7264}, {4,11808}, {8,20896}}) {
+    Fixture fixture;
+    auto wire = encoded(pair.first, pair.second);
+    std::istringstream input(wire);
+    if (!fixture.load_stream(input, true) || fixture.request.action_count != pair.first ||
+        fixture.request.proof_bytes != pair.second || fixture.request.actions != fixture.actions.data() ||
+        fixture.request.proof != fixture.proof.data()) {
+      std::cerr << "fixture reader lost a valid shape\n";
+      return false;
+    }
+  }
+  auto bad_length = encoded(4,11808);
+  bad_length[16] ^= 1; // Only declared length changes; payload remains complete.
+  auto truncated = encoded(2,7264);
+  truncated.pop_back();
+  for (const auto& wire : {bad_length, encoded(3,9536), truncated, encoded(2,7264) + "x"}) {
+    Fixture fixture;
+    std::istringstream input(wire);
+    if (fixture.load_stream(input, true)) {
+      std::cerr << "fixture reader accepted an invalid shape or framing\n";
+      return false;
+    }
+  }
+  auto legacy = encoded(2,7264);
+  legacy.erase(8,16);
+  legacy[7] = '0';
+  Fixture fixture;
+  std::istringstream input(legacy);
+  if (!fixture.load_stream(input, true) || fixture.request.action_count != 2) {
+    std::cerr << "fixture reader broke the T0 fixture\n";
+    return false;
+  }
+  std::cout << "Fixture reader self-test passed\n";
+  return true;
+}
 
 using Clock = std::chrono::steady_clock;
 std::int64_t nanos(Clock::time_point begin, Clock::time_point end) {
@@ -507,12 +591,31 @@ bool measure(const char* funding_path, const char* spend_path) {
   }
   return true;
 }
+bool measure_shapes(char** paths) {
+  for (unsigned shape = 0; shape < 3; ++shape) {
+    Fixture fixture;
+    const unsigned expected[] = {2,4,8};
+    if (!fixture.load(paths[shape], true) || fixture.request.action_count != expected[shape]) {
+      std::cerr << "expected funding shapes in 2,4,8 order\n";
+      return false;
+    }
+    if (!sample("funding", "shape_first_verify", fixture.request, 1, 0, false)) return false;
+    for (std::size_t count : {1u,16u,64u}) {
+      for (unsigned i = 0; i < 10; ++i) {
+        if (!sample("funding", "shape_valid", fixture.request, count, i, false) ||
+            !sample("funding", "shape_late_failure", fixture.request, count, i, true)) return false;
+      }
+    }
+  }
+  return true;
+}
 }
 
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--self-test")
-    return self_test() && sample_boundary_self_test() && measurement_io_self_test() ? 0 : 1;
+    return self_test() && sample_boundary_self_test() && measurement_io_self_test() && fixture_reader_self_test() ? 0 : 1;
+  if (argc == 5 && std::string(argv[1]) == "--measure-funding-shapes") return measure_shapes(argv + 2) ? 0 : 2;
   if (argc == 4 && std::string(argv[1]) == "--measure") return measure(argv[2], argv[3]) ? 0 : 2;
-  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin\n";
+  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin | --measure-funding-shapes funding-2.bin funding-4.bin funding-8.bin\n";
   return 3;
 }
