@@ -1,6 +1,9 @@
 // Isolated dictionary experiment. Page vectors are not Native accounts, a
 // coordinator schema, authenticated partition proofs or a CellDb transaction.
 #include "uno/core/nullifier-state.h"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/transaction.h"
 #include "vm/boc.h"
 
 #include <algorithm>
@@ -123,6 +126,68 @@ Metrics metrics(const Pages& pages) {
   }
   return result;
 }
+
+struct Envelopes {
+  td::Ref<vm::Cell> accounts;
+  std::uint64_t max_data_cells = 0, max_data_bits = 0, max_data_depth = 0;
+  std::uint64_t account_count = 0;
+};
+Envelopes native_envelopes(const Pages& pages) {
+  Envelopes result;
+  vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+  for (std::size_t i = 0; i < pages.size(); ++i) {
+    require(i < 256, "experimental account address bound");
+    auto address = Key::zero();
+    address.as_slice()[31] = static_cast<char>(i);
+    auto data = pages[i].root().is_null() ? vm::CellBuilder().finalize() : pages[i].root();
+    vm::CellStorageStat stat;
+    (void)take(stat.compute_used_storage(data));
+    result.max_data_cells = std::max<std::uint64_t>(result.max_data_cells, stat.cells);
+    result.max_data_bits = std::max<std::uint64_t>(result.max_data_bits, stat.bits);
+    result.max_data_depth = std::max<std::uint64_t>(result.max_data_depth, data->get_depth());
+    // Structurally valid Native Account only. No code, participant transaction,
+    // executor wrapper, actual storage-charge calculation or coordinator schema.
+    vm::CellBuilder account;
+    account.store_long(1,1).store_long(4,3).store_long(2,8).store_bits(address.bits(),256)
+        .store_zeroes(42).store_long(2,64);
+    require(block::CurrencyCollection(0).store(account), "account balance encoding");
+    account.store_long(1,1).store_zeroes(3).store_long(1,1).store_ref(data).store_long(0,1);
+    auto root = account.finalize();
+    require(block::gen::t_Account.validate_ref(1000000, root), "Native Account structure");
+    vm::CellBuilder entry;
+    entry.store_ref(root).store_zeroes(256).store_long(1,64);
+    require(accounts.set_builder(address, entry), "unique account dictionary entry");
+    result.account_count = add(result.account_count, 1);
+  }
+  result.accounts = accounts.get_wrapped_dict_root();
+  return result;
+}
+bool data_fits(const Envelopes& envelopes, std::uint64_t cells) {
+  return envelopes.max_data_cells <= cells;
+}
+void envelope_self_test() {
+  auto input = keys(45, 4, false);
+  auto original = build(input,16);
+  auto envelopes = native_envelopes(original);
+  require(envelopes.account_count == 16, "Native envelope omitted pages");
+  require(envelopes.max_data_cells > 0, "Native data count missing");
+  require(data_fits(envelopes, envelopes.max_data_cells), "exact data-cell bound rejected");
+  // max_data_cells > 0 above guarantees this subtraction cannot underflow.
+  require(!data_fits(envelopes, envelopes.max_data_cells - 1), "data-cell bound ignored");
+  vm::AugmentedDictionary restored(vm::load_cell_slice_ref(envelopes.accounts),256,block::tlb::aug_ShardAccounts);
+  for (std::size_t i = 0; i < original.size(); ++i) {
+    auto address = Key::zero();
+    address.as_slice()[31] = static_cast<char>(i);
+    block::Account account(2, address.bits());
+    require(account.unpack(restored.lookup(address),10,false), "Native account dictionary lost a page");
+    auto expected = original[i].root().is_null() ? vm::CellBuilder().finalize() : original[i].root();
+    require(account.data.not_null() && account.data->get_hash() == expected->get_hash(),
+            "Native account data differs from its assigned page");
+  }
+  auto roundtrip = take(vm::std_boc_deserialize(take(vm::std_boc_serialize(envelopes.accounts)).as_slice()));
+  require(roundtrip->get_hash() == envelopes.accounts->get_hash(), "Native account dictionary roundtrip");
+  std::cout << "Native envelope self-test passed\n";
+}
 std::uint64_t rss() {
   rusage usage{};
   require(getrusage(RUSAGE_SELF, &usage) == 0 && usage.ru_maxrss >= 0, "RSS unavailable");
@@ -141,6 +206,7 @@ struct Run {
 };
 
 void self_test() {
+  envelope_self_test();
   auto input = keys(45, 4, false);
   Pages original = build({input[0]}, 16);
   const auto saved = original;
@@ -271,6 +337,21 @@ void measure(const Run& run) {
     unsigned depth = 0;
     for (const auto& page : next) if (page.root().not_null()) depth = std::max<unsigned>(depth, page.root()->get_depth());
     std::cerr << depth << '\n';
+    Envelopes envelopes;
+    run.phase(sample, "native_account_envelopes", next, [&] { envelopes = native_envelopes(next); });
+    vm::CellStorageStat account_stat;
+    (void)take(account_stat.compute_used_storage(envelopes.accounts));
+    td::BufferSlice account_boc;
+    run.phase(sample, "native_account_dictionary_boc", next, [&] {
+      account_boc = take(vm::std_boc_serialize(envelopes.accounts));
+    });
+    std::cerr << "native_envelopes mode=" << run.mode << " scenario=" << run.scenario
+              << " entries=" << run.entries << " sample=" << sample << " accounts=" << envelopes.account_count
+              << " max_data_cells=" << envelopes.max_data_cells << " max_data_bits=" << envelopes.max_data_bits
+              << " max_data_depth=" << envelopes.max_data_depth << " data_fits_65536=" << data_fits(envelopes,65536)
+              << " dictionary_cells=" << account_stat.cells << " dictionary_bits=" << account_stat.bits
+              << " dictionary_depth=" << envelopes.accounts->get_depth() << " dictionary_boc_bytes=" << account_boc.size()
+              << '\n';
   }
 }
 }  // namespace

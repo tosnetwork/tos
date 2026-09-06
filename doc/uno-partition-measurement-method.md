@@ -7,7 +7,9 @@ Native dictionary/Cell implementations and identical deterministic key seeds:
 - `single`: one dictionary root.
 - `pages16`: a C++ vector of 16 dictionary roots, routed by the first four key
   bits. No coordinator Cell references that vector or its roots. There are no
-  Native partition accounts, participant records or block commitments here.
+  Native partition transactions, participant records or block commitments here.
+  The additional storage-only envelope phases project the roots into Native
+  Account/ShardAccounts structures, without making this vector a host schema.
 
 The executable accepts `mode scenario history_entries samples seed`. Suggested
 comparison matrix: both modes; history 0, 1024, 8192, 32768, 65536; three samples;
@@ -170,6 +172,42 @@ the largest observed time was the single 65,536-key rebuild: **399.279 ms**;
 the paged maximum was **268.100 ms** for the same scenario. These maxima omit
 proof verification, complete transaction construction and persistent commit,
 and therefore cannot be compared as end-to-end validation bounds to an alarm.
+
+## Native account envelope extension
+
+`native_account_envelopes` builds a structurally valid Native Account for each
+experimental page at addresses 0 through page-count minus one in workchain 2,
+and a real augmented ShardAccounts dictionary. An empty page has one empty data
+Cell. Accounts have no code/library, zero balance and placeholder zero storage
+usage metadata. These addresses and payloads are experiment controls, not a
+proposed partition-addressing or account schema. There are no participant
+transactions, last_trans updates, coordinator, candidates/effects, authenticated
+read/write witnesses, fee calculation or settlement reservations.
+
+The phase includes a full per-page data-closure scan and TL-B Account structural
+validation; it is not an incremental hot-path cost. `native_account_dictionary_boc`
+serializes the whole account dictionary, not only changed accounts or persistent
+CellDb deltas. Additional stderr rows report per-account maxima of data Cells,
+bits and depth, account count, union dictionary Cells/bits/depth and BoC bytes.
+Account metadata remains a simplified lower-bound fixture, not a deployable
+state with correctly computed storage charges.
+
+`data_fits_65536` compares the maximum page data closure with the fixed experiment
+control 65536. The Native size check in `transaction.cpp` counts code/data/library
+roots, not the whole Account/ShardAccounts envelope; these two metrics must stay
+separate. A false result rules out even this minimal data payload at that control.
+A true result does not validate a complete UNO account or prove production
+headroom. No shared ConfigParam 43 value is changed.
+
+The instrument's self-test is now a dependency of `all-tests` and registered as
+`test-uno-partition-measurement-self`. It unpacks each Native account and compares
+its data hash with the assigned page, checks exact/one-cell-over bounds and a
+BoC roundtrip. Removing the data-cell comparison or replacing stored page data
+with an empty Cell independently makes it fail. Performance matrices remain
+manual. See `uno-native-envelope-pilot.md` for the new measured rows; the earlier
+703935250 tables above retain their original primitive-only scope.
+
+## Historical run completion notes (703935250)
 
 All duplicate cases rejected without publishing source changes and had zero
 introduced hashes/changed bytes. Refund samples checked actual reservation
