@@ -9,7 +9,7 @@ import subprocess
 import types
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum, auto
 from ipaddress import IPv4Address
 from pathlib import Path
@@ -48,7 +48,7 @@ def _write_model(file: Path, model: TLObject):
     _ = file.write_text(model.to_json())
 
 
-type DebugType = None | Literal["rr"]
+type DebugType = None | Literal["rr", "strace"]
 
 
 @dataclass(frozen=True)
@@ -72,13 +72,9 @@ def _get_install_and_options(
         install = options.install
 
     return (
-        StartOptions(
+        replace(options,
             install=install,
-            debug=options.debug,
-            env=options.env,
             args=additional_args + list(options.args),
-            threads=options.threads,
-            verbosity=options.verbosity,
         ),
         install,
     )
@@ -202,6 +198,12 @@ class Network:
             if start_options.debug == "rr":
                 l.info(f"Recording {self.name} with rr")
                 command = ["rr", "record", *command]
+            elif start_options.debug == "strace":
+                # Detached tracer preserves the child's PID for supervision
+                # and memory observations. Do not record buffer contents.
+                command = ["strace", "-D", "-f", "-ttt", "-T", "-s", "0", "-yy",
+                           "-e", "trace=read,write,pread64,pwrite64,fsync,fdatasync,futex,clock_nanosleep,sched_yield",
+                           "-o", self._directory / "syscalls.log", *command]
             elif start_options.debug is not None:
                 raise ValueError(f"unsupported debugger: {start_options.debug}")
             with ExitStack() as files:

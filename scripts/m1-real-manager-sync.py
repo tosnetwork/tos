@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,17 @@ def node_memory_observation(node, proc_root=Path("/proc")):
             "rss_bytes": values["VmRSS"], "kernel_reported_peak_rss_bytes": values["VmHWM"],
             "source": "/proc/pid/status", "scope": "whole node since start through observation, not importer-only",
             "observed_monotonic_seconds": time.monotonic()}
+
+
+def require_direct_node_log(node, proc_root=Path("/proc")):
+    pid = node.process_id
+    if pid is None:
+        raise AssertionError("cannot inspect log sink of a stopped node")
+    actual = (proc_root / str(pid) / "fd/2").stat()
+    expected = node.log_path.stat()
+    if (not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) !=
+            (expected.st_dev, expected.st_ino) or node.process_id != pid):
+        raise AssertionError("node stderr is not its direct regular log file")
 
 
 def validator_memory_observation(nodes, expected_count, previous=None):
@@ -254,7 +266,7 @@ async def guarded_exercise(root, *args):
 
 async def exercise(root, build, port, join_timeout, counter, reencoded_state=False, misbound_proof=False,
                    bad_signature=False, large_payload=False, reweight=False, membership=False, retired_signature=False,
-                   checkpoint=False, streaming=False):
+                   checkpoint=False, streaming=False, trace_replacement=False):
     payload = counter_payload_tree() if large_payload else None
     install = Install(build, REPO, validator_engine=(
         build / "validator-engine/test-counter-validator-engine" if counter else None))
@@ -312,7 +324,8 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         if membership:
             replacement_node = network.create_full_node()
             replacement_node.announce_to(dht)
-            await replacement_node.run(options, seed_extra_states=False)
+            replacement_options = replace(options, debug="strace") if trace_replacement else options
+            await replacement_node.run(replacement_options, seed_extra_states=False)
             if len(list((replacement_node.log_path.parent / "static").iterdir())) != 2:
                 raise AssertionError("replacement validator must start with only masterchain/native static states")
             await asyncio.wait_for(reach(replacement_node, target.seqno), join_timeout)
@@ -371,10 +384,13 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
         # one retained validator, forcing the new member to complete quorum.
         active_validators = [*validators[2:], replacement_node] if membership else validators
         expected_active_count = committee_size - 1 if membership else committee_size
+        for node in active_validators:
+            require_direct_node_log(node)
         validator_memory = {"before_cold_join": validator_memory_observation(
             active_validators, expected_active_count)}
         (root / "validator-memory.json").write_text(json.dumps(validator_memory, indent=2) + "\n")
         await cold.run(cold_options, seed_extra_states=False)
+        require_direct_node_log(cold)
         memory_observations = {}
         if counter and len(list((cold.log_path.parent / "static").iterdir())) != 2:
             raise AssertionError("cold node must have only masterchain/native static states")
@@ -483,6 +499,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
             await cold.stop()
             shutil.copyfile(cold.log_path, root / "cold-before-restart.log")
             await cold.run(cold_options)
+            require_direct_node_log(cold)
             restarted, _ = await asyncio.wait_for(reach(cold, observed.seqno), join_timeout)
             await asyncio.wait_for(reach_authenticated(restarted, observed.seqno), join_timeout)
             if committee_key is not None:
@@ -511,6 +528,7 @@ async def exercise(root, build, port, join_timeout, counter, reencoded_state=Fal
                 "validator_process_memory": validator_memory,
                 "validator_replay_cache": replay_cache,
                 "replacement_validator_replay_tested": large_payload and membership,
+                "replacement_syscalls_traced": trace_replacement,
                 "large_state_rss_bound_accepted": False,
                 "committee_reweight_cold_join_tested": reweight,
                 "committee_key_block_seqno": committee_key.seqno if committee_key else None,
@@ -547,6 +565,8 @@ def main():
                         help="require file download and actor-local import; requires --counter-checkpoint and --counter-payload")
     parser.add_argument("--counter-membership", action="store_true",
                         help="replace one committee member with an independent node, then cold-join")
+    parser.add_argument("--trace-replacement", action="store_true",
+                        help="trace replacement I/O/wait syscalls without buffer contents; diagnostic overhead, requires membership")
     parser.add_argument("--counter-retired-signature", action="store_true",
                         help="require rejection of a genuine retired-member signature after replacement")
     parser.add_argument("--counter-reencoded-state", action="store_true",
@@ -556,6 +576,8 @@ def main():
     parser.add_argument("--counter-bad-signature", action="store_true",
                         help="require rejection of a masterchain proof with one corrupted committee signature")
     args = parser.parse_args()
+    if args.trace_replacement and (not args.counter_membership or shutil.which("strace") is None):
+        parser.error("--trace-replacement requires --counter-membership and strace")
     if args.counter_payload and not args.counter:
         parser.error("--counter-payload requires --counter")
     if args.counter_checkpoint_streaming and (not args.counter_checkpoint or not args.counter_payload):
@@ -603,7 +625,7 @@ def main():
                                       args.counter_reencoded_state, args.counter_misbound_proof,
                                       args.counter_bad_signature, args.counter_payload, args.counter_reweight,
                                       args.counter_membership, args.counter_retired_signature, args.counter_checkpoint,
-                                      args.counter_checkpoint_streaming)))
+                                      args.counter_checkpoint_streaming, args.trace_replacement)))
         report["passed"] = True
     except BaseException as error:
         report["error"] = f"{type(error).__name__}: {error}"

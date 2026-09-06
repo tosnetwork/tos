@@ -7,6 +7,7 @@ import sys
 import unittest
 import tempfile
 import time
+import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -23,7 +24,7 @@ spec.loader.exec_module(module)
 
 class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
     async def test_direct_node_log_progresses_while_controller_loop_is_busy(self):
-        from tostester.network import Network, StartOptions
+        from tostester.network import Network, StartOptions, _get_install_and_options
         class TestNode(Network.Node):
             async def run(self, options=None):
                 raise NotImplementedError
@@ -31,16 +32,22 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             writer = root / "writer"
             writer.write_text(f"#!{sys.executable}\n"
-                              "from pathlib import Path\nimport sys\n"
+                              "from pathlib import Path\nimport sys, os, time\n"
+                              "Path('pid').write_text(str(os.getpid()))\n"
                               "Path('ready').touch()\n"
                               "sys.stderr.buffer.write(b'x' * (2 * 1024 * 1024))\n"
-                              "sys.stderr.buffer.flush()\nPath('finished').touch()\n")
+                              "sys.stderr.buffer.flush()\nPath('finished').touch()\ntime.sleep(10)\n")
             writer.chmod(0o700)
             network = SimpleNamespace(_directory=root, _node_idx=0, _status=0)
-            for direct in (False, True):
+            modes = [(False, None), (True, None)]
+            if shutil.which("strace"):
+                modes.append((True, "strace"))
+            for direct, debug in modes:
                 node = TestNode(network, f"writer-{direct}")
                 with patch("tostester.network._write_model"):
-                    await node._run(writer, None, None, StartOptions(stderr_to_file=direct))
+                    prepared, _ = _get_install_and_options(
+                        StartOptions(stderr_to_file=direct, debug=debug), SimpleNamespace(), [])
+                    await node._run(writer, None, None, prepared)
                 try:
                     # Deliberately occupy the controller thread. The child
                     # signals readiness before filling more than pipe capacity.
@@ -48,11 +55,19 @@ class CounterStateCheck(unittest.IsolatedAsyncioTestCase):
                     while not (node._directory / "finished").exists() and time.monotonic() < deadline:
                         time.sleep(0.01)
                     self.assertTrue((node._directory / "ready").exists())
+                    self.assertEqual(int((node._directory / "pid").read_text()), node.process_id)
                     self.assertEqual((node._directory / "finished").exists(), direct)
+                    if direct:
+                        module.require_direct_node_log(node)
+                    else:
+                        with self.assertRaisesRegex(AssertionError, "direct regular log"):
+                            module.require_direct_node_log(node)
                 finally:
                     await asyncio.wait_for(node.stop(), 5)
                 if direct:
                     self.assertEqual(node.log_path.read_bytes(), b'x' * (2 * 1024 * 1024))
+                if debug == "strace":
+                    self.assertIn("write(2", (node._directory / "syscalls.log").read_text())
 
     async def test_validator_memory_covers_distinct_live_processes(self):
         nodes = [SimpleNamespace(log_path=Path(f"/fixture/node{i}/log")) for i in range(4)]

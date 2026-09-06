@@ -3257,7 +3257,13 @@ control fail; restoration passed. Evidence is in
 and the retained network fixture's `validator-replay-cache.json`. The run
 has ended. M1 latency/resource acceptance remains open and M3 paused.
 
-### Removing controller-dependent log transport, without hiding the tail
+### Initial direct-log attempt (activation corrected below)
+
+Correction: the direct-log option described in this subsection was dropped
+by the FullNode option-merging helper. The child-process control was valid,
+but the network run below still used stderr pipes. Its timing observations
+remain real, but they cannot show that a tail survives direct-file logging.
+The subsequent subsection records the corrected activation and evidence.
 
 Inspection of the 809 ms sample found nearly the whole gap between storage
 info unpacking and the end of Account.unpack. The enclosing validation
@@ -3276,15 +3282,15 @@ both direct-file and existing streamed-log modes. No native consensus or
 logging implementation was changed. Direct file writes can still block on
 filesystem I/O; this is not a nonblocking logging implementation.
 
-The direct-log membership run
+The intended direct-log membership run (actually still pipe-backed)
 `build/m1-counter-network-run-mt6k2fyl` passed, with target masterchain height
 52 and cold observer height 62. Its new validator's first cache-miss replay
 took 69,207,676 ns. The 46 hit samples had a middle value of 334,221 ns but a
 maximum of 1,639,462,153 ns at Counter height 94, transaction
 `40089fccbc5bdf1ff0c5f349d057843e73f370d16f5f73bd667726f44e219e49`.
 The enclosing validation reported 1.639919 seconds of work wall time and only
-0.001778 seconds of thread CPU time. Thus the long tail remains after removal
-of controller-pipe draining and is not explained by computation alone. These
+0.001778 seconds of thread CPU time. This is not explained by computation
+alone; it does not prove the tail survives removal of pipe draining. These
 observations do not distinguish I/O, blocking synchronization and scheduling,
 nor establish that the previous CPU-heavy sample had the same cause.
 
@@ -3298,3 +3304,54 @@ fixtures were archived and verified as
 `build/m1-counter-replacement-timing-runs-20260906.tar.gz`, then moved to
 recoverable trash. No latency acceptance is claimed; M1 remains open and
 M3 paused.
+
+### Closing the dropped-option gap and verifying the live log sink
+
+The optional replacement syscall trace exposed stderr writes to a pipe,
+despite the requested direct-log option. `_get_install_and_options` rebuilt
+StartOptions by hand and omitted the new field. It now uses dataclass
+replacement, preserving every option while modifying only install/arguments.
+The child-progress test now traverses this same merging helper; before the
+fix it failed with `False != True`. The M1 harness also inspects each expected
+live validator's `/proc/PID/fd/2` before cold join, and the observer's after
+start/restart: the sink must be a regular file with the exact device/inode
+of that node's log. Requested options alone no longer count as activation.
+
+The trace mode is explicit (`--trace-replacement`, membership only), covers
+one node's I/O/wait syscalls, suppresses buffer contents, and uses a detached
+tracer so supervision and memory observations retain the tracee PID. A real
+child test checks that PID, complete output and presence of traced writes.
+Omitting write tracing makes that control fail. Trace overhead means its
+timings are not performance baselines.
+
+The diagnostic run `build/m1-counter-network-run-9tbfv4s3` recorded pipe
+stderr writes lasting 0.542110, 0.813276, 0.942002 and 1.333121 seconds, among
+others, in `network/node5/syscalls.log`. It failed the replacement replay
+gate (no shared cache-hit replay from that node), so it is syscall evidence,
+not a passing network acceptance run. It does not identify the syscall of
+the earlier 809 ms or 1.64 s sample retroactively.
+
+After the fix, untraced run `build/m1-counter-network-run-4av5p62s` passed
+the live log-sink checks, replacement/committee replay, peer state acquisition,
+cold observer and database reopen checks. Target masterchain height was 59,
+and the observer reached 90. Cache-hit wall times were:
+
+| Validator | Samples | Middle sample (ns) | Maximum (ns) |
+| --- | ---: | ---: | ---: |
+| node3 | 98 | 481,039 | 1,284,249 |
+| node4 | 98 | 433,158 | 1,445,431 |
+| node5 (replacement) | 49 | 442,926 | 1,060,895 |
+
+The replacement's first cache miss took 68,884,901 ns. No second-scale hit
+appeared in this finite run. The controlled pipe experiment, actual blocked
+pipe writes, dropped option and corrected run establish a measurement-path
+defect; the older samples must not be treated as clean replay benchmarks.
+They do not prove absence of all I/O/scheduling tails or establish a hard
+latency ceiling, and do not include privacy proof costs.
+
+All 16 instrument tests passed, including option propagation, live log-file
+binding and traced-child supervision. Logs are
+`build/uno-log-option-regression-before.log`, `build/uno-log-option-restored.log`,
+`build/uno-trace-mutation.log` and `build/uno-trace-restored.log`. Both real runs
+have ended and are retained. Long-run state growth, GC/retention and scalable
+state admission remain M1 work; M3 remains paused.
