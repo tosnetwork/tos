@@ -15,6 +15,13 @@ and the cleanup/revalidation entry at the end of this document.
 
 ## Current acceptance status and evidence limits
 
+The storage/measurement decision inputs through `31813e9cc` are consolidated in
+[Storage comparison: evidence and remaining decision inputs](uno-storage-measurement-decision-ledger.md).
+The component and real persistence pilots do not close Y-1/D-3, select a
+production partition schema or provide the complete validation deadline
+envelope. Fixed-prefix concentration, terminal-owner growth and wrapper
+headroom are measured limitations, not untested reasons to assume more capacity.
+
 This summary is the authoritative status for this entire document, including
 the historical remaining-work list below. Later sections record historical work,
 not a second set of current acceptance gates.
