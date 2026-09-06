@@ -37,6 +37,9 @@ Admission admit(const std::vector<const UnoCryptoVerifyRequest*>& requests, Usag
     if (!multiply(request->action_count, 2272, proof_size) || !add(proof_size, 2720, proof_size))
       return Admission::Overflow;
     if (proof_size != request->proof_bytes || proof_size > request->max_proof_bytes) return Admission::Shape;
+    // The current proof multiplier makes Action multiplication overflow
+    // unreachable. Keep that multiply checked for independent layout changes;
+    // payload addition overflow remains reachable and is tested below.
     if (!multiply(request->action_count, sizeof(UnoCryptoAction), actions_size) ||
         !add(actions_size, proof_size, payload)) return Admission::Overflow;
     if (!add(next.proofs, 1, next.proofs) || !add(next.actions, request->action_count, next.actions) ||
@@ -124,6 +127,33 @@ bool self_test() {
     Usage untouched{7, 11, 13};
     if (admit(oversized, {max, max, max}, untouched) != Admission::Overflow ||
         untouched.proofs != 7 || untouched.actions != 11 || untouched.payload_bytes != 13) return false;
+  }
+  // Canonical proof and Action sizes fit separately, but their sum does not.
+  // max >= 2720 by the fixture's size_t requirement; subtraction is bounded.
+  static_assert(std::numeric_limits<std::size_t>::max() >= 2720);
+  if (!add((max - 2720) / 3156, 1, huge.action_count) ||
+      !multiply(huge.action_count, 2272, huge.proof_bytes) ||
+      !add(huge.proof_bytes, 2720, huge.proof_bytes)) {
+    std::cerr << "per-request overflow fixture proof sizing failed\n";
+    return false;
+  }
+  huge.max_actions = huge.action_count;
+  huge.max_proof_bytes = huge.proof_bytes;
+  std::size_t action_bytes;
+  // proof_bytes is size_t, hence <= max; the subtraction cannot underflow.
+  if (!multiply(huge.action_count, sizeof(UnoCryptoAction), action_bytes) ||
+      action_bytes <= max - huge.proof_bytes) {
+    std::cerr << "per-request overflow fixture did not exceed payload capacity\n";
+    return false;
+  }
+  calls = 0;
+  Usage preserved{7, 11, 13};
+  if (run({&huge}, {max, max, max}, backend) != Admission::Overflow ||
+      calls != 0 || call_overflow ||
+      admit({&huge}, {max, max, max}, preserved) != Admission::Overflow ||
+      preserved.proofs != 7 || preserved.actions != 11 || preserved.payload_bytes != 13) {
+    std::cerr << "per-request payload overflow admitted or published: calls=" << calls << '\n';
+    return false;
   }
   std::size_t unchanged = 17;
   if (add(max, 1, unchanged) || unchanged != 17 || multiply(max, 2, unchanged) || unchanged != 17) {

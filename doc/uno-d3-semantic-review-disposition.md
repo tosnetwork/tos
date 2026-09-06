@@ -69,3 +69,17 @@ shape-predicate witnesses remain deferred to a subsequent test unit. The checked
 Action-size multiplication is currently dominated by the larger proof-size
 multiplier; retaining checked arithmetic does not imply independent coverage of
 that unreachable overflow branch. No claim of complete guard coverage is made.
+
+The subsequent payload-overflow unit closes the per-request witness gap: proof
+and Action sizes are separately representable, their sum is not. Replacing only
+the payload checked add with raw addition invokes the stub backend once and
+exits 1; the restored CTest passes. Four build/test logs are retained in
+`measurements/uno-d3-payload-mutations.tar.gz`. These are historical manual
+mutation observations, not an automated mutation facility or a recurring CI
+mutation gate. The regression self-test itself is registered in CTest.
+
+Read-only review found no blocking issue. Its subtraction-invariant and guard
+comment clarifications were applied. The suggested derived denominator remains
+the explicit 3156 fixture literal: the 884-byte ABI static assertion and fixture
+premise checks make layout drift fail, without introducing unchecked arithmetic.
+The transcript is in `~/memo/reviews/uno-d3-payload-overflow-review.txt`.
