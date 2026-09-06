@@ -60,3 +60,51 @@ still limit interpretation. No coefficients, maximum verification count, safety
 factor, input limits or production schema are installed or recommended here.
 This is not a WCET result or evidence that the full synchronous validation path
 fits its deadline. D-3/B3-1 and the capacity/claim-only gates remain open.
+
+## Spend follow-up
+
+Base `1e406f9a2` plus the archived `spend-shape-final.patch`. This follow-up uses
+2/4/8 real spends, all consuming distinct notes recovered from each corresponding
+funding bundle, with a 100 nanotomi fee. The observation bracket was
+2026-09-06 12:28:00–12:29:07 UTC (the latter was recorded after observing process
+completion, not an exact process exit timestamp). The same Release target was
+rebuilt with 48 jobs; verification used `RAYON_NUM_THREADS=48`. CPU/build metadata
+and start/end load are archived; one-minute load rose from 2.99 to 9.39. No
+affinity, cache eviction or workload isolation was applied.
+
+Command: `env RAYON_NUM_THREADS=48 build/uno/crypto/test-uno-crypto-cost
+--measure-spend-shapes build/uno-spend-restored-eR7sfD/spend-2.bin
+build/uno-spend-restored-eR7sfD/spend-4.bin
+build/uno-spend-restored-eR7sfD/spend-8.bin` (one shell command).
+
+Exit 0; all 183 records had the expected context, dimension, call count, sample
+count and ABI payload size. Valid-call ABI milliseconds, ten samples per row:
+
+| Actions / real spends | Calls | Median | Maximum |
+|---:|---:|---:|---:|
+| 2 | 1 | 10.248195 | 11.427614 |
+| 2 | 16 | 110.275092 | 146.572783 |
+| 2 | 64 | 337.677084 | 444.194017 |
+| 4 | 1 | 10.349431 | 10.693228 |
+| 4 | 16 | 146.183745 | 174.978032 |
+| 4 | 64 | 513.339908 | 663.688010 |
+| 8 | 1 | 17.504120 | 18.203118 |
+| 8 | 16 | 242.343022 | 293.292514 |
+| 8 | 64 | 877.154647 | 1155.363396 |
+
+First call with key construction: 2089.691046 ms total; process HWM 10752 KiB.
+The same small-fixture/repeated-request and sequential-order limitations apply;
+these observations are not a controlled funding-versus-spend comparison or a
+claim that later runs improved performance. No admission coefficients or limits
+are inferred.
+
+Evidence `measurements/uno-d3-spend-shapes.tar.gz` contains public fixtures,
+source/base and mutation patches, build/test logs, environment observations and
+raw JSON. Repeating the first output position made the distinct-input assertion
+fail; choosing the current node instead of its sibling made the root comparison
+fail (both exit 101). Removing the C++ balance/context check made its self-test
+accept spend as funding and fail (exit 1). Restored fixture generation and the
+single registered cost self-test passed. Original and restored spend fixtures
+were byte-identical. This is manual evidence; external milestone review remains
+pending. Independent seeds and distinct-request working sets, full lifecycle
+workloads and the full synchronous validation envelope are still missing.

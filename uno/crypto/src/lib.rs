@@ -280,10 +280,12 @@ mod tests {
     #[ignore = "manual multi-shape measurement; requires UNO_SHAPE_FIXTURE_DIR"]
     fn export_measurement_shapes() {
         use std::io::Write;
+        use incrementalmerkletree::Hashable;
         use orchard::{
             builder::{Builder, BundleType},
             circuit::ProvingKey,
-            keys::{FullViewingKey, Scope, SpendingKey},
+            keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey},
+            tree::{MerkleHashOrchard, MerklePath},
             value::NoteValue,
         };
         use rand::SeedableRng;
@@ -309,7 +311,7 @@ mod tests {
                 builder.add_output(None, recipient, NoteValue::from_raw(per_output), [0; 512])
                     .expect("shape output");
             }
-            let (unsigned, _) = builder.build::<i64>(&mut rng).expect("shape build").expect("nonempty shape");
+            let (unsigned, metadata) = builder.build::<i64>(&mut rng).expect("shape build").expect("nonempty shape");
             let begin = std::time::Instant::now();
             let proven = unsigned.create_proof(&pk, &mut rng).expect("shape proof");
             let prove_ns = begin.elapsed().as_nanos();
@@ -331,6 +333,7 @@ mod tests {
 
             // T1 is a private measurement-file revision with explicit u64 LE
             // lengths. T0 fixtures and the production ABI remain unchanged.
+            let export = |bundle: &Bundle<Authorized, i64>, kind: &str, prove_ns: u128| {
             let mut bytes = b"UNOABIT1".to_vec();
             bytes.extend_from_slice(&count_u64.to_le_bytes());
             bytes.extend_from_slice(&u64::try_from(proof_bytes).expect("proof length encoding").to_le_bytes());
@@ -347,13 +350,72 @@ mod tests {
                 bytes.extend_from_slice(&action.out_ciphertext);
                 bytes.extend_from_slice(&action.spend_signature);
             }
-            let path = std::path::PathBuf::from(&directory).join(format!("funding-{count}.bin"));
+            let path = std::path::PathBuf::from(&directory).join(format!("{kind}-{count}.bin"));
             let mut file = std::fs::OpenOptions::new().write(true).create_new(true)
                 .open(&path).expect("create fresh shape fixture; never overwrite");
             file.write_all(&bytes).expect("write shape fixture");
             file.flush().expect("flush shape fixture");
-            println!("SHAPE_FIXTURE actions={count} proof_bytes={proof_bytes} prove_ns={prove_ns} seed_byte={} path={}",
+            println!("SHAPE_FIXTURE kind={kind} actions={count} proof_bytes={proof_bytes} prove_ns={prove_ns} seed_byte={} path={}",
                      seed[0], path.display());
+            };
+            export(&bundle, "funding", prove_ns);
+
+            // Every requested spend consumes a distinct real funding output.
+            // Build authentication paths from the actual randomized Action order.
+            let mut layers = vec![bundle.actions().iter()
+                .map(|action| MerkleHashOrchard::from_cmx(action.cmx())).collect::<Vec<_>>()];
+            let mut level = 0u8;
+            while layers.last().expect("leaf layer").len() > 1 {
+                let nodes = layers.last().expect("tree layer");
+                assert_eq!(nodes.len().checked_rem(2), Some(0), "power-of-two fixture layer");
+                let parents = nodes.chunks_exact(2)
+                    .map(|pair| MerkleHashOrchard::combine(level.into(), &pair[0], &pair[1])).collect();
+                layers.push(parents);
+                level = level.checked_add(1).expect("fixture tree level");
+            }
+            let commitments: Vec<_> = bundle.actions().iter().map(|action| action.cmx().to_bytes()).collect();
+            let note_tree = tree::NoteTree::default().append_batch(&commitments, 0).expect("funding tree");
+            let anchor = Option::<Anchor>::from(Anchor::from_bytes(note_tree.root())).expect("funding anchor");
+            let fvk = FullViewingKey::from(&sk);
+            let mut spender = Builder::new(BundleType::DEFAULT, BundleVersion::orchard_v2(),
+                BundleVersion::orchard_v2().default_flags(), anchor).expect("multi-spend builder");
+            let mut positions = std::collections::BTreeSet::new();
+            for output in 0..count {
+                let position = metadata.output_action_index(output).expect("funding output position");
+                assert!(positions.insert(position), "each spend must consume a different output");
+                let (note, _, _) = bundle.decrypt_output_with_key(position, &fvk.to_ivk(Scope::External))
+                    .expect("recover real funding output");
+                assert_eq!(note.value(), NoteValue::from_raw(per_output));
+                let path = MerklePath::from_parts(u32::try_from(position).expect("position"),
+                    std::array::from_fn(|depth| {
+                        let sibling = (position >> depth) ^ 1;
+                        layers.get(depth).and_then(|nodes| nodes.get(sibling)).copied()
+                            .unwrap_or_else(|| MerkleHashOrchard::empty_root(u8::try_from(depth).expect("depth").into()))
+                    }));
+                assert_eq!(path.root(note.commitment().into()), anchor, "path must reach the funding tree");
+                spender.add_spend(fvk.clone(), note, path).expect("distinct real spend");
+            }
+            let change = 5000u64.checked_sub(100).expect("principal covers fee");
+            spender.add_output(None, recipient, NoteValue::from_raw(change), [0;512]).expect("change output");
+            let (unsigned_spend, spend_metadata) = spender.build::<i64>(&mut rng)
+                .expect("multi-spend build").expect("nonempty spend");
+            assert_eq!(unsigned_spend.actions().len(), count);
+            for spend in 0..count {
+                assert!(spend_metadata.spend_action_index(spend).is_some(), "no requested spend may disappear");
+            }
+            let begin = std::time::Instant::now();
+            let proven = unsigned_spend.create_proof(&pk, &mut rng).expect("multi-spend proof");
+            let prove_ns = begin.elapsed().as_nanos();
+            let spent = proven.apply_signatures(&mut rng, [42;32], &[SpendAuthorizingKey::from(&sk)])
+                .expect("multi-spend signatures");
+            assert_eq!(*spent.value_balance(), 100, "spent principal minus change equals fee");
+            assert_eq!(spent.authorization().proof().as_ref().len(), proof_bytes);
+            assert_eq!(ffi_status(&spent, set_limits), 0, "real ABI accepts multi-spend shape");
+            assert_eq!(ffi_status(&spent, |request| {
+                set_limits(request);
+                request.sighash[0] ^= 1;
+            }), 3, "real ABI rejects differently authorized multi-spend shape");
+            export(&spent, "spend", prove_ns);
         }
     }
 

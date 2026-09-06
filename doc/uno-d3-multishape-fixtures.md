@@ -15,8 +15,8 @@ Explicit invocation without the directory variable fails rather than skipping.
 Existing output files are never overwritten. The ignored marker keeps expensive
 manual fixture production out of ordinary tests; it is not an activation gate.
 
-The producer makes output-only bundles with 2, 4 and 8 Actions and constant
-principal 5000 nanotomi. Output amounts use checked division and multiplication;
+The producer makes funding and spend bundles with 2, 4 and 8 Actions and constant
+funding principal 5000 nanotomi. Output amounts use checked division and multiplication;
 the resulting bundle balance must be exactly -5000. Seeds are respectively
 32 repetitions of byte 2, 4 and 8 using the pinned `StdRng`. Keys and notes are
 public test material, unsuitable for holding funds. Proof construction timing
@@ -27,6 +27,15 @@ Each bundle must pass the real ABI and fail with verification status 3 when its
 authorization digest changes. The proof byte lengths are 7264, 11808 and 20896,
 checked against the actual bundles. This does not establish valid ShieldClaim
 authorization: no terminal Deposit, Reserve or chain context is supplied here.
+
+For each funding shape, the producer recovers all real notes through the
+builder's output-to-Action mapping, checks distinct positions, reconstructs
+authentication paths and compares each path root with the separately appended
+frontier root. The spend bundle consumes all those notes, not one real input
+with extra output padding. It pays a 100 nanotomi fee and returns 4900 nanotomi
+change, using checked subtraction. The test checks every requested spend has a
+builder metadata entry. This still uses the selected upstream ciphertext profile,
+not the future hybrid profile, and provides no privacy guarantee for test notes.
 
 ## Measurement file only
 
@@ -57,6 +66,9 @@ The C++ cost reader now consumes T1 and rejects unsupported dimensions before
 allocation. Run `test-uno-crypto-cost --measure-funding-shapes` followed by the
 2, 4 and 8 Action file paths, in that order. It records one first-call row per
 shape and ten valid/late-failure samples at each of 1, 16 and 64 repeated calls.
+Use `--measure-spend-shapes` with the corresponding spend files for the same
+matrix under Transfer context. The reader checks the selected context's balance;
+it cannot silently interpret a spend file as funding.
 Only the first shape's first call includes cold key construction. Existing
 `--self-test` exercises T0 compatibility, all three T1 dimensions, incorrect
 declared proof size, unsupported dimensions, truncation and trailing bytes.
@@ -64,8 +76,7 @@ Removing the length, dimension and trailing-byte checks independently makes
 the registered self-test fail. Shape data are parsed structurally here; real
 cryptographic validation still occurs in the measured ABI call.
 
-Diverse spend shapes,
-independent seeded samples, full lifecycle workloads and stage/RSS measurements
+Independent seeded samples, full lifecycle workloads and stage/RSS measurements
 remain outstanding. These fixtures alone do not determine verification weights,
 input limits, a production partition schema, or a WCET envelope. D-3/B3-1 and
 the capacity/claim-only feasibility gates remain open.

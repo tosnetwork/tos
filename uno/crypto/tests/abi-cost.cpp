@@ -284,7 +284,7 @@ struct Fixture {
 };
 
 bool fixture_reader_self_test() {
-  auto encoded = [](unsigned count, unsigned proof_bytes) {
+  auto encoded = [](unsigned count, unsigned proof_bytes, std::int64_t balance = -5000) {
     std::string wire = "UNOABIT1";
     auto le = [&](std::uint64_t value) {
       for (unsigned i = 0; i < 8; ++i) wire.push_back(static_cast<char>((value >> (8 * i)) & 255));
@@ -292,7 +292,7 @@ bool fixture_reader_self_test() {
     le(count);
     le(proof_bytes);
     wire.push_back(0);
-    le(static_cast<std::uint64_t>(std::int64_t{-5000}));
+    le(static_cast<std::uint64_t>(balance));
     wire.append(32, '\0');
     wire.append(64, '\0');
     wire.append(proof_bytes, '\0');
@@ -330,6 +330,17 @@ bool fixture_reader_self_test() {
   std::istringstream input(legacy);
   if (!fixture.load_stream(input, true) || fixture.request.action_count != 2) {
     std::cerr << "fixture reader broke the T0 fixture\n";
+    return false;
+  }
+  std::istringstream spend_input(encoded(4,11808,100));
+  if (!fixture.load_stream(spend_input, false) || fixture.request.context != UNO_TRANSFER ||
+      fixture.request.value_balance != 100 || fixture.request.fee_lo != 100 || fixture.request.principal_lo != 0) {
+    std::cerr << "fixture reader lost spend context\n";
+    return false;
+  }
+  std::istringstream wrong_context(encoded(4,11808,100));
+  if (fixture.load_stream(wrong_context, true)) {
+    std::cerr << "fixture reader accepted spend balance as funding\n";
     return false;
   }
   std::cout << "Fixture reader self-test passed\n";
@@ -591,19 +602,20 @@ bool measure(const char* funding_path, const char* spend_path) {
   }
   return true;
 }
-bool measure_shapes(char** paths) {
+bool measure_shapes(char** paths, bool funding) {
   for (unsigned shape = 0; shape < 3; ++shape) {
     Fixture fixture;
     const unsigned expected[] = {2,4,8};
-    if (!fixture.load(paths[shape], true) || fixture.request.action_count != expected[shape]) {
-      std::cerr << "expected funding shapes in 2,4,8 order\n";
+    if (!fixture.load(paths[shape], funding) || fixture.request.action_count != expected[shape]) {
+      std::cerr << "expected shapes in 2,4,8 order with the selected context\n";
       return false;
     }
-    if (!sample("funding", "shape_first_verify", fixture.request, 1, 0, false)) return false;
+    const char* context = funding ? "funding" : "spend";
+    if (!sample(context, "shape_first_verify", fixture.request, 1, 0, false)) return false;
     for (std::size_t count : {1u,16u,64u}) {
       for (unsigned i = 0; i < 10; ++i) {
-        if (!sample("funding", "shape_valid", fixture.request, count, i, false) ||
-            !sample("funding", "shape_late_failure", fixture.request, count, i, true)) return false;
+        if (!sample(context, "shape_valid", fixture.request, count, i, false) ||
+            !sample(context, "shape_late_failure", fixture.request, count, i, true)) return false;
       }
     }
   }
@@ -614,8 +626,9 @@ bool measure_shapes(char** paths) {
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--self-test")
     return self_test() && sample_boundary_self_test() && measurement_io_self_test() && fixture_reader_self_test() ? 0 : 1;
-  if (argc == 5 && std::string(argv[1]) == "--measure-funding-shapes") return measure_shapes(argv + 2) ? 0 : 2;
+  if (argc == 5 && std::string(argv[1]) == "--measure-funding-shapes") return measure_shapes(argv + 2, true) ? 0 : 2;
+  if (argc == 5 && std::string(argv[1]) == "--measure-spend-shapes") return measure_shapes(argv + 2, false) ? 0 : 2;
   if (argc == 4 && std::string(argv[1]) == "--measure") return measure(argv[2], argv[3]) ? 0 : 2;
-  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin | --measure-funding-shapes funding-2.bin funding-4.bin funding-8.bin\n";
+  std::cerr << "usage: abi-cost --self-test | --measure output-only.bin spend.bin | --measure-funding-shapes funding-2.bin funding-4.bin funding-8.bin | --measure-spend-shapes spend-2.bin spend-4.bin spend-8.bin\n";
   return 3;
 }
