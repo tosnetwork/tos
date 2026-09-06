@@ -48,6 +48,16 @@ the mapping call with literal zero made the entry-point rejection test fail
 because it returned valid digests for an unsupported profile. The mapping was
 restored afterward. This does not activate a new profile or freeze the prototype.
 
+L-2: `PrivateTransferState::apply_block` now returns through `assemble`, leaving
+that factory as the only direct constructor call. This centralizes construction
+validation for future maintenance; it does not fix a currently reachable
+aggregate overflow, since the existing transfer operation preserves N+F+W.
+The state/codec suite and real-proof C++ ABI transfer fixture both passed after
+the refactor, including fee movement, failed-block atomicity, reload, replay
+rejection and idle advancement. These are behavior-preservation checks, not a
+claim that reverting this one-line refactor would fail them. No claim/refund
+transition is added and no accounting arithmetic is changed.
+
 ## M-3: not reproduced; underlying API already checks the fork
 
 `vm::dict::LabelParser` defaults to `chk_all` in `crypto/vm/dict.h`.
@@ -76,7 +86,7 @@ default was restored with no source diff. No redundant fork guard was added.
   with the engine's existing `wire_bytes` without defining that contract.
   The Counter engine reports eight payload bytes, not the BoC container size.
   Keep post-execution accounting checks as well. No fix is claimed yet.
-- L-2 remains a follow-up; L-3/L-4 remain bounded performance observations.
+- L-3/L-4 remain bounded performance observations.
   No accounting transition or invariant was changed in this pass.
 
 ## Dynamic evidence for this disposition

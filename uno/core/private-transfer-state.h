@@ -75,7 +75,7 @@ class PrivateTransferState {
       effects.push_back(std::move(effect));
     }
     TRY_RESULT(notes, notes_.apply_spend_effects(height, effects, limits));
-    return PrivateTransferState(std::move(notes), accounting);
+    return assemble(std::move(notes), accounting);
   }
 
   td::Result<td::Ref<vm::Cell>> to_cell() const try {

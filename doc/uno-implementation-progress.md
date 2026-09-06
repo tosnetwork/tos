@@ -3649,6 +3649,10 @@ and dummy-note semantics are preserved.
 Transcript profile admission and byte encoding now share an explicit mapping;
 existing digest vectors are unchanged, and bypassing the mapping fails the
 unsupported-profile test. No additional profile is activated.
+Private-transfer block application now uses the same checked state factory as
+construction and loading. State/codec and real-proof ABI regression tests pass;
+this is constructor centralization, not a new transition or a fix for reachable
+transfer aggregate overflow.
 H-2 queued-message liveness, policy preflight and
 the remaining listed items are not marked resolved. No storage-architecture
 decision or M3 expansion is implied by this audit response.
