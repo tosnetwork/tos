@@ -956,3 +956,39 @@ standalone header compile pass after restoration. Raw output, substitutions and
 hashes are archived in `measurements/uno-v2-inbound-allocation-evidence.json`.
 These are manual controls, not mutation CI. M1 milestone review remains pending;
 no named production consensus-judgement file or error classification changed.
+
+### Independent payout currency-validation budget (M1 prerequisite)
+
+Payout pair construction, private overlay and replay now receive the same
+explicit currency-validation budget as allocation settlement. Neither the pair
+accounting nor the independently reconstructed Native value-flow rows borrow
+`max_acc_state_cells`. The runner no longer narrows that storage setting to an
+integer before payout; storage limits still apply to actual Native account
+serialization. No fallback policy value is introduced. The enclosing resolved
+policy and source-aware admission remain required before production wiring.
+
+The budget is rejected when nonpositive. Tests use a Native-encoded coordinator
+account with an actual extra-currency dictionary: a sufficient budget preserves
+that currency while debiting only the Native forwarding fee; a positive but
+insufficient budget rejects. Both runner branches produce identical artifacts
+with the same currency budget and an account-storage setting above the signed
+integer range. This is a width/independence probe, not a proposed storage limit.
+The tests do not claim that each repeated defensive check is indispensable.
+
+This prerequisite does not yet integrate a full coordinator entry into the
+payout pair, combined allocations/payouts or custody inbound settlement. Those
+remain M1 work; existing scopes still reject the inactive participant formats.
+
+The consensus-boundary review prompted extra overlay/replay fixtures, explicit
+zero-load ordering assertions at invalid budgets, a persisted-balance decode,
+and two legal storage-limit comparisons with real extra currencies. Review
+disposition and limitations are in `uno-v2-payout-budget-review-disposition.md`.
+Early rejection preserves ordering but does not itself classify the Status.
+Production integration still must supply the resolved policy and attach each
+failure to its actual source; test-only entry points cannot settle that gate.
+
+Nine successful rebuilds followed by failing controls and the restored five-target
+regression are archived with substitutions and hashes in
+`measurements/uno-v2-payout-budget-evidence.json`. They are manual evidence, not
+mutation CI. The boundary review is complete for this substitution and its
+test repairs; the full M1 milestone review and production integration remain open.

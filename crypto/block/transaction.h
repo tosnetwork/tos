@@ -536,11 +536,13 @@ struct Transaction {
   // serialize/commit privately without exposing mutable transactions to engines.
   // No live account is committed, no role or effects authorization is implied.
   // Same admitted-input exception contract as price_workchain_payout applies.
+  // Currency traversal uses an explicit resolved budget, not a storage limit.
   static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
       const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
       Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
       Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
-      td::RefInt256 fee_budget, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg);
+      td::RefInt256 fee_budget, int extra_validation_cells,
+      const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

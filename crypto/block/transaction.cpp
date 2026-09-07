@@ -4626,14 +4626,13 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
     Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
     Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
-    td::RefInt256 fee_budget, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    td::RefInt256 fee_budget, int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
   if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
   if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
   if (cfg.global_version != message_cfg.global_version) return td::Status::Error("payout configuration versions differ");
   if (start_lt < coordinator.last_trans_end_lt_) return td::Status::Error("payout coordinator LT precedes old end");
-  if (cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
-    return td::Status::Error("payout account validation limit cannot be represented");
-  }
   gen::UnoV2HostRecord::Record first, second;
   if (!tlb::unpack_cell(custody_binding, first) || !tlb::unpack_cell(coordinator_binding, second) ||
       first.input_hash != second.input_hash || first.effects_hash != second.effects_hash ||
@@ -4643,7 +4642,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
   TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody.balance,
       coordinator.balance, priced.payment, priced.total_fee, priced.collected_fee,
-      static_cast<int>(cfg.size_limits.max_acc_state_cells)));
+      extra_validation_cells));
   // Pricing checked both LT additions. Both old end LTs are <= start_lt,
   // so neither constructor's max(requested_start, old_end) can raise that bound.
   std::vector<std::unique_ptr<Transaction>> pair;

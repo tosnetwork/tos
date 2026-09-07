@@ -26,7 +26,9 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     std::uint64_t after_lt, const td::Bits256& input_hash, const td::Bits256& effects_hash,
     const std::vector<WorkchainStorageWrite>& writes, const td::Bits256& custody,
     const td::Bits256& coordinator, td::Ref<vm::Cell> request, td::RefInt256 fee_budget,
-    std::uint64_t max_participants, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    std::uint64_t max_participants, int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid payout overlay currency budget");
   if (workchain < 0 || writes.empty() || writes.size() > max_participants || custody == coordinator) {
     return td::Status::Error("invalid payout overlay domain or count");
   }
@@ -62,7 +64,7 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
   using Transaction = transaction::Transaction;
   TRY_RESULT(pair, Transaction::build_workchain_payout_pair(*accounts[custody_index], *accounts[coordinator_index],
       bindings[custody_index], bindings[coordinator_index], writes[custody_index].data, writes[coordinator_index].data,
-      request, schedule.start_lt, now, fee_budget, cfg, message_cfg));
+      request, schedule.start_lt, now, fee_budget, extra_validation_cells, cfg, message_cfg));
   std::vector<std::unique_ptr<Transaction>> transactions(writes.size());
   transactions[custody_index] = std::move(pair.transactions[0]);
   transactions[coordinator_index] = std::move(pair.transactions[1]);
@@ -131,7 +133,7 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     participants.push_back(account.addr);
   }
   TRY_STATUS(verify_workchain_value_flow(rows, {pair.accounting.fee_funding}, max_participants, 1,
-      static_cast<int>(cfg.size_limits.max_acc_state_cells)));
+      extra_validation_cells));
   auto next_root = staged.get_wrapped_dict_root();
   WorkchainAccountDictionary next(next_root);
   TRY_RESULT(changed, original.changed_accounts(next, max_participants));
@@ -148,13 +150,14 @@ inline td::Result<WorkchainPayoutOverlay> replay_workchain_payout_overlay(
     std::uint64_t after_lt, const td::Bits256& input_hash, const td::Bits256& effects_hash,
     const std::vector<WorkchainStorageWrite>& writes, const td::Bits256& custody,
     const td::Bits256& coordinator, td::Ref<vm::Cell> request, td::RefInt256 fee_budget,
-    std::uint64_t max_participants, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    std::uint64_t max_participants, int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const ClaimedWorkchainPayoutOverlay& claimed) {
   if (claimed.accounts.is_null() || claimed.account_blocks.is_null() || claimed.message.is_null()) {
     return td::Status::Error("missing claimed payout overlay artifact");
   }
   TRY_RESULT(rebuilt, build_workchain_payout_overlay(old_accounts, workchain, now, after_lt, input_hash, effects_hash,
-      writes, custody, coordinator, request, fee_budget, max_participants, cfg, message_cfg));
+      writes, custody, coordinator, request, fee_budget, max_participants, extra_validation_cells, cfg, message_cfg));
   if (claimed.accounts->get_hash() != rebuilt.state.accounts->get_hash()) {
     return td::Status::Error("claimed payout accounts differ from replay");
   }

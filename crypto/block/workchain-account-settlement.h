@@ -35,12 +35,6 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
       authenticated_inbox, max_reads, max_writes, max_inbound));
-  // The older payout helper still narrows this storage field for currency
-  // validation. The allocation path uses the explicit independent argument.
-  if (executed.effects.payout_request.not_null() &&
-      cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
-    return td::Status::Error("payout currency validation limit cannot be represented");
-  }
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
       extra_validation_cells));
   if (!executed.effects.native_transfers.empty() && executed.effects.payout_request.not_null()) {
@@ -68,7 +62,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   } else {
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
-        executed.effects.payout_request, fee_budget, max_writes, cfg, message_cfg));
+        executed.effects.payout_request, fee_budget, max_writes, extra_validation_cells, cfg, message_cfg));
     state = std::move(payout.state);
     message = std::move(payout.message);
   }

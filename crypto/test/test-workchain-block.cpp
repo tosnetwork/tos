@@ -1450,6 +1450,13 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       }
     }
     ASSERT_EQ(value.message.not_null(), with_payout);
+    // API-width probe, not a proposed production storage limit.
+    auto independent_storage = cfg;
+    independent_storage.size_limits.max_acc_state_cells = std::numeric_limits<unsigned>::max();
+    auto wide = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, independent_storage, pricing).move_as_ok();
+    ASSERT_TRUE(wide.state.accounts->get_hash() == value.state.accounts->get_hash());
+    ASSERT_TRUE(wide.state.account_blocks->get_hash() == value.state.account_blocks->get_hash());
   }
   engine.with_transfer = true;
   // Mixed payout/allocation remains explicitly closed, not silently ignored.
@@ -2640,10 +2647,49 @@ TEST(WorkchainBlock, NativePayoutPair) {
   using Transaction = block::transaction::Transaction;
   auto build = [&](td::Ref<vm::Cell> second_data) {
     return Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
-        number(70), second_data, request, 20, 10, td::make_refint(500), cfg, pricing);
+        number(70), second_data, request, 20, 10, td::make_refint(500), 4096, cfg, pricing);
   };
   auto result = build(number(71));
   ASSERT_TRUE(result.is_ok());
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
+      number(70), number(71), request, 20, 10, td::make_refint(500), 0, cfg, pricing).is_error());
+  unsigned binding_loads = 0;
+  auto observed_binding = td::make_ref<PreflightObservedCell>(bindings[0], &binding_loads);
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, observed_binding, bindings[1],
+      number(70), number(71), request, 20, 10, td::make_refint(500), 0, cfg, pricing).is_error());
+  ASSERT_EQ(binding_loads, 0u);
+  vm::Dictionary extra_values(32);
+  vm::CellBuilder extra_value;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(extra_value, *td::make_refint(5)));
+  ASSERT_TRUE(extra_values.set_builder(td::BitArray<32>(7u), extra_value));
+  block::gen::Account::Record_account extra_root;
+  block::gen::AccountStorage::Record extra_storage;
+  ASSERT_TRUE(tlb::unpack_cell(coordinator.total_state, extra_root));
+  ASSERT_TRUE(tlb::csr_unpack(extra_root.storage, extra_storage));
+  block::CurrencyCollection opening_extra(1000, extra_values.get_root_cell());
+  ASSERT_TRUE(opening_extra.pack_to(extra_storage.balance));
+  ASSERT_TRUE(tlb::csr_pack(extra_root.storage, extra_storage));
+  td::Ref<vm::Cell> extra_cell;
+  ASSERT_TRUE(tlb::pack_cell(extra_cell, extra_root));
+  auto extra_shard = vm::CellBuilder().store_ref(extra_cell)
+      .store_bits(coordinator.last_trans_hash_.bits(), 256).store_long(coordinator.last_trans_lt_, 64).finalize();
+  block::Account extra_coordinator(2, b.bits());
+  ASSERT_TRUE(extra_coordinator.unpack(vm::load_cell_slice_ref(extra_shard), 10, false));
+  auto build_extra = [&](int budget) {
+    return Transaction::build_workchain_payout_pair(custody, extra_coordinator, bindings[0], bindings[1],
+        number(70), number(71), request, 20, 10, td::make_refint(500), budget, cfg, pricing);
+  };
+  auto enough = build_extra(4096).move_as_ok();
+  ASSERT_TRUE(enough.transactions[1]->balance == block::CurrencyCollection(900, extra_values.get_root_cell()));
+  block::gen::Account::Record_account serialized_extra;
+  block::gen::AccountStorage::Record serialized_storage;
+  block::CurrencyCollection serialized_balance;
+  ASSERT_TRUE(tlb::unpack_cell(enough.transactions[1]->new_total_state, serialized_extra));
+  ASSERT_TRUE(tlb::csr_unpack(serialized_extra.storage, serialized_storage));
+  ASSERT_TRUE(serialized_balance.unpack(serialized_storage.balance));
+  ASSERT_TRUE(serialized_balance == block::CurrencyCollection(900, extra_values.get_root_cell()));
+  ASSERT_TRUE(build_extra(1).is_error());
+  ASSERT_TRUE(extra_coordinator.balance == opening_extra);
   auto prepared = result.move_as_ok();
   auto& pair = prepared.transactions;
   ASSERT_EQ(pair.size(), 2u);
@@ -2704,11 +2750,11 @@ TEST(WorkchainBlock, NativePayoutPair) {
   block::Account poor_coordinator(2, b.bits());
   ASSERT_TRUE(poor_coordinator.unpack(poor_accounts.lookup(b), 10, false));
   ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, poor_coordinator, bindings[0], bindings[1],
-      number(70), number(71), request, 20, 10, td::make_refint(500), cfg, pricing).is_error());
+      number(70), number(71), request, 20, 10, td::make_refint(500), 4096, cfg, pricing).is_error());
   auto mismatch = pricing;
   mismatch.global_version = 17;
   ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
-      number(70), number(71), request, 20, 10, td::make_refint(500), cfg, mismatch).is_error());
+      number(70), number(71), request, 20, 10, td::make_refint(500), 4096, cfg, mismatch).is_error());
   for (unsigned field = 0; field < 3; ++field) {
     block::gen::UnoV2HostRecord::Record changed;
     ASSERT_TRUE(tlb::unpack_cell(bindings[1], changed));
@@ -2718,7 +2764,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
     td::Ref<vm::Cell> altered;
     ASSERT_TRUE(tlb::pack_cell(altered, changed));
     ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], altered,
-        number(70), number(71), request, 20, 10, td::make_refint(500), cfg, pricing).is_error());
+        number(70), number(71), request, 20, 10, td::make_refint(500), 4096, cfg, pricing).is_error());
   }
   ASSERT_TRUE(custody.total_state->get_hash() == old_custody);
   ASSERT_TRUE(coordinator.total_state->get_hash() == old_coordinator);
@@ -2736,8 +2782,36 @@ TEST(WorkchainBlock, NativePayoutPair) {
     writes.push_back({key, td::Bits256(before.account->get_hash().bits()), number(72)});
   }
   std::sort(writes.begin(), writes.end(), [](const auto& x, const auto& y) { return x.account < y.account; });
+  unsigned state_loads = 0;
+  auto observed_state = td::make_ref<PreflightObservedCell>(larger.accounts, &state_loads);
+  ASSERT_TRUE(block::build_workchain_payout_overlay(observed_state, 2, 10, 20, a, b, writes,
+      a, b, request, td::make_refint(500), 4, 0, cfg, pricing).is_error());
+  ASSERT_EQ(state_loads, 0u);
+  vm::AugmentedDictionary extra_accounts(vm::load_cell_slice_ref(larger.accounts), 256,
+                                        block::tlb::aug_ShardAccounts);
+  vm::CellBuilder extra_entry;
+  extra_entry.append_cellslice(vm::load_cell_slice(extra_shard));
+  ASSERT_TRUE(extra_accounts.set_builder(b, extra_entry, vm::Dictionary::SetMode::Replace));
+  auto extra_writes = writes;
+  for (auto& write : extra_writes) if (write.account == b) write.old_account_hash = extra_cell->get_hash().bits();
+  auto extra_state = extra_accounts.get_wrapped_dict_root();
+  auto extra_overlay = [&](int budget, const block::SerializeConfig& config) {
+    return block::build_workchain_payout_overlay(extra_state, 2, 10, 20, a, b, extra_writes,
+        a, b, request, td::make_refint(500), 4, budget, config, pricing);
+  };
+  auto ample_overlay = extra_overlay(4096, cfg).move_as_ok();
+  ASSERT_TRUE(extra_overlay(1, cfg).is_error());
+  auto alternate_storage = cfg;
+  alternate_storage.size_limits.max_acc_state_cells = 32768;
+  auto independent_overlay = extra_overlay(4096, alternate_storage).move_as_ok();
+  ASSERT_TRUE(ample_overlay.state.accounts->get_hash() == independent_overlay.state.accounts->get_hash());
+  ASSERT_TRUE(ample_overlay.state.account_blocks->get_hash() == independent_overlay.state.account_blocks->get_hash());
+  block::ClaimedWorkchainPayoutOverlay extra_claim{ample_overlay.state.accounts, ample_overlay.state.account_blocks,
+      ample_overlay.message, ample_overlay.state.end_lt};
+  ASSERT_TRUE(block::replay_workchain_payout_overlay(extra_state, 2, 10, 20, a, b, extra_writes,
+      a, b, request, td::make_refint(500), 4, 1, cfg, pricing, extra_claim).is_error());
   auto overlay = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-      b, a, request, td::make_refint(500), 4, cfg, pricing);
+      b, a, request, td::make_refint(500), 4, 4096, cfg, pricing);
   ASSERT_TRUE(overlay.is_ok());
   auto materialized = overlay.move_as_ok();
   ASSERT_EQ(materialized.state.end_lt, 23u);
@@ -2778,7 +2852,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
     }
   }
   auto repeat = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-      b, a, request, td::make_refint(500), 4, cfg, pricing);
+      b, a, request, td::make_refint(500), 4, 4096, cfg, pricing);
   ASSERT_TRUE(repeat.is_ok());
   ASSERT_TRUE(repeat.ok().state.accounts->get_hash() == materialized.state.accounts->get_hash());
   ASSERT_TRUE(repeat.ok().state.account_blocks->get_hash() == materialized.state.account_blocks->get_hash());
@@ -2786,7 +2860,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
                                            materialized.message, materialized.state.end_lt};
   auto replay = [&](const block::ClaimedWorkchainPayoutOverlay& claimed) {
     return block::replay_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-        b, a, request, td::make_refint(500), 4, cfg, pricing, claimed);
+        b, a, request, td::make_refint(500), 4, 4096, cfg, pricing, claimed);
   };
   auto replayed = replay(claim);
   ASSERT_TRUE(replayed.is_ok());
@@ -2831,11 +2905,11 @@ TEST(WorkchainBlock, NativePayoutPair) {
   auto wrong_read = writes;
   wrong_read[0].old_account_hash = td::Bits256::zero();
   ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, wrong_read,
-      b, a, request, td::make_refint(500), 4, cfg, pricing).is_error());
+      b, a, request, td::make_refint(500), 4, 4096, cfg, pricing).is_error());
   auto invalid_writes = writes;
   for (auto& write : invalid_writes) if (write.account == third) write.data.clear();
   ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, invalid_writes,
-      b, a, request, td::make_refint(500), 4, cfg, pricing).is_error());
+      b, a, request, td::make_refint(500), 4, 4096, cfg, pricing).is_error());
 }
 
 TEST(WorkchainBlock, NativePayoutPricing) {
