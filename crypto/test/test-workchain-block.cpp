@@ -1795,6 +1795,59 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     block::WorkchainOutboundQueuePolicy queue_policy{{2, tos::shardIdAll}, 10, 16, false, true, 3};
     std::vector<block::WorkchainQueuedOutput> choices;
     for (const auto& output : joint_settled.exports) choices.push_back({output, false});
+    // Compare shared Native encoding with the independent generated record
+    // packers. Boundary LTs exercise bit preservation, not message admission.
+    for (bool defer : {false, true}) {
+      for (bool with_metadata : {false, true}) {
+        for (std::uint64_t lt : {std::uint64_t{0}, std::uint64_t{22}, UINT64_MAX}) {
+          td::optional<block::MsgMetadata> metadata;
+          if (with_metadata) metadata = block::MsgMetadata{2, 2, a, 21};
+          block::tlb::MsgEnvelope::Record_std env{defer ? 0 : 96, defer ? 0 : 96,
+              td::make_refint(7), choices.front().output.msg, {}, metadata};
+          auto encoded_result = block::encode_native_new_export(env, choices.front().output.trans, lt, defer);
+          ASSERT_TRUE(encoded_result.is_ok());
+          auto encoded = encoded_result.move_as_ok();
+          // Independent fixed-field wire oracle, not the inverse of the
+          // hand-written envelope packer. Address zeroing is caller policy.
+          vm::CellBuilder expected_envelope;
+          expected_envelope.store_long(with_metadata ? 5 : 4, 4)
+              .store_long(defer ? 0 : 96, 8).store_long(defer ? 0 : 96, 8)
+              .store_long(1, 4).store_long(7, 8).store_ref(choices.front().output.msg);
+          if (with_metadata) {
+            expected_envelope.store_long(0, 1).store_long(1, 1) // no emitted LT, metadata present
+                .store_long(0, 4).store_long(2, 32) // metadata tag and depth
+                .store_long(4, 3).store_long(2, 8).store_bits(a.bits(), 256).store_long(21, 64);
+          }
+          ASSERT_EQ(encoded.envelope->get_hash(), expected_envelope.finalize()->get_hash());
+          try {
+            ASSERT_TRUE(block::encode_native_new_export(env, {}, lt, defer).is_error());
+          } catch (vm::CellBuilder::CellCreateError&) {
+            ASSERT_TRUE(false); // Missing transaction must be an explicit argument error.
+          } catch (vm::CellBuilder::CellWriteError&) {
+            ASSERT_TRUE(false);
+          }
+          td::Ref<vm::Cell> expected_descriptor, expected_enqueued;
+          if (defer) {
+            block::gen::OutMsg::Record_msg_export_new_defer rec{encoded.envelope, choices.front().output.trans};
+            ASSERT_TRUE(tlb::pack_cell(expected_descriptor, rec));
+          } else {
+            block::gen::OutMsg::Record_msg_export_new rec{encoded.envelope, choices.front().output.trans};
+            ASSERT_TRUE(tlb::pack_cell(expected_descriptor, rec));
+          }
+          block::gen::EnqueuedMsg::Record rec{lt, encoded.envelope};
+          ASSERT_TRUE(tlb::pack_cell(expected_enqueued, rec));
+          ASSERT_EQ(encoded.descriptor->get_hash(), expected_descriptor->get_hash());
+          ASSERT_EQ(encoded.enqueued->get_hash(), expected_enqueued->get_hash());
+          block::tlb::MsgEnvelope::Record_std decoded;
+          ASSERT_TRUE(tlb::unpack_cell(encoded.envelope, decoded));
+          ASSERT_EQ(decoded.cur_addr, defer ? 0 : 96);
+          ASSERT_EQ(decoded.next_addr, defer ? 0 : 96);
+          ASSERT_TRUE(decoded.metadata == metadata);
+          ASSERT_TRUE(block::CurrencyCollection(decoded.fwd_fee_remaining) == block::CurrencyCollection(7));
+          ASSERT_EQ(decoded.msg->get_hash(), choices.front().output.msg->get_hash());
+        }
+      }
+    }
     auto plain_result = block::build_workchain_outbound_queues(empty, choices, {}, queue_policy);
     ASSERT_TRUE(plain_result.is_ok());
     auto plain = plain_result.move_as_ok();
@@ -1803,6 +1856,7 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_EQ(plain.roots.dispatch->get_hash(), empty.dispatch->get_hash());
     vm::AugmentedDictionary descriptors(vm::load_cell_slice_ref(plain.roots.descriptors), 256, augmentation);
     vm::AugmentedDictionary outgoing(vm::load_cell_slice_ref(plain.roots.outgoing), 352, block::tlb::aug_OutMsgQueue);
+    ASSERT_EQ(outgoing.get_root_extra()->prefetch_ulong(64), 22u);
     block::CurrencyCollection exported_total;
     ASSERT_TRUE(exported_total.unpack(descriptors.get_root_extra()));
     ASSERT_TRUE(exported_total == block::CurrencyCollection(712));

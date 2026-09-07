@@ -27,6 +27,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/native-new-export.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
 #include "crypto/openssl/rand.hpp"
@@ -5023,22 +5024,13 @@ bool Collator::enqueue_message(block::NewOutMsg msg, td::RefInt256 fwd_fees_rema
   // 2. create a new MsgEnvelope
   block::tlb::MsgEnvelope::Record_std msg_env_rec{
       defer ? 0 : route_info.first, defer ? 0 : route_info.second, fwd_fees_remaining, msg.msg, {}, msg.metadata};
-  Ref<vm::Cell> msg_env;
-  CHECK(block::tlb::pack_cell(msg_env, msg_env_rec));
-  // 3. create a new OutMsg
-  vm::CellBuilder cb;
-  Ref<vm::Cell> out_msg;
-  if (defer) {
-    CHECK(cb.store_long_bool(0b10100, 5)     // msg_export_new_defer$10100
-          && cb.store_ref_bool(msg_env)      // out_msg:^MsgEnvelope
-          && cb.store_ref_bool(msg.trans));  // transaction:^Transaction
-    out_msg = cb.finalize();
-  } else {
-    CHECK(cb.store_long_bool(1, 3)           // msg_export_new$001
-          && cb.store_ref_bool(msg_env)      // out_msg:^MsgEnvelope
-          && cb.store_ref_bool(msg.trans));  // transaction:^Transaction
-    out_msg = cb.finalize();
-  }
+  // 3. construct the same Native records used by private batch settlement.
+  // Keep the existing local invariant-failure boundary: these are locally
+  // generated messages, not untrusted candidate rejection decisions.
+  auto encoded = block::encode_native_new_export(msg_env_rec, msg.trans, enqueued_lt, defer);
+  CHECK(encoded.is_ok());
+  auto records = encoded.move_as_ok();
+  auto out_msg = records.descriptor;
   // 4. insert OutMsg into OutMsgDescr
   if (verbosity > 2) {
     FLOG(INFO) {
@@ -5049,9 +5041,8 @@ bool Collator::enqueue_message(block::NewOutMsg msg, td::RefInt256 fwd_fees_rema
   if (!insert_out_msg(out_msg)) {
     return fatal_error("cannot insert a new OutMsg into OutMsgDescr");
   }
-  // 5. create EnqueuedMsg
-  CHECK(cb.store_long_bool(enqueued_lt)  // _ enqueued_lt:uint64
-        && cb.store_ref_bool(msg_env));  // out_msg:^MsgEnvelope = EnqueuedMsg;
+  // 5. use the encoded EnqueuedMsg without changing its queue ownership.
+  auto enqueued = vm::load_cell_slice_ref(records.enqueued);
 
   // 6. insert EnqueuedMsg into OutMsgQueue (or DispatchQueue)
   if (defer) {
@@ -5063,7 +5054,7 @@ bool Collator::enqueue_message(block::NewOutMsg msg, td::RefInt256 fwd_fees_rema
     }
     td::BitArray<64> key;
     key.store_ulong(msg.lt);
-    if (!dispatch_dict.set_builder(key, cb, vm::Dictionary::SetMode::Add)) {
+    if (!dispatch_dict.set(key, enqueued, vm::Dictionary::SetMode::Add)) {
       return fatal_error(PSTRING() << "cannot add message to AccountDispatchQueue for account " << src_addr.to_hex()
                                    << ", lt=" << msg.lt);
     }
@@ -5081,7 +5072,7 @@ bool Collator::enqueue_message(block::NewOutMsg msg, td::RefInt256 fwd_fees_rema
   try {
     LOG(DEBUG) << "inserting into outbound queue a new message with (lt,key)=(" << start_lt << "," << key.to_hex()
                << ")";
-    ok = out_msg_queue_->set_builder(key.bits(), 352, cb, vm::Dictionary::SetMode::Add);
+    ok = out_msg_queue_->set(key.bits(), 352, enqueued, vm::Dictionary::SetMode::Add);
     ++out_msg_queue_size_;
   } catch (vm::VmError&) {
     ok = false;

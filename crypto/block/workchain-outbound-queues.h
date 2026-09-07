@@ -5,6 +5,7 @@
 
 #include "block/transaction.h"
 #include "block/block-parse.h"
+#include "block/native-new-export.h"
 #include "block/workchain-participant-lt.h"
 
 namespace block {
@@ -109,16 +110,12 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
     }
     tlb::MsgEnvelope::Record_std envelope{item.defer ? 0 : route.first, item.defer ? 0 : route.second,
                                         remaining, output.msg, {}, metadata};
-    td::Ref<vm::Cell> envelope_root;
-    if (!tlb::pack_cell(envelope_root, envelope)) return td::Status::Error("cannot encode outbound envelope");
-    vm::CellBuilder record;
-    record.store_long(item.defer ? 0b10100 : 0b001, item.defer ? 5 : 3).store_ref(envelope_root).store_ref(output.trans);
-    if (!descriptors.set(output.msg->get_hash().bits(), 256, vm::load_cell_slice(record.finalize()),
+    TRY_RESULT(encoded, encode_native_new_export(envelope, output.trans, output.lt, item.defer));
+    if (!descriptors.set(output.msg->get_hash().bits(), 256, vm::load_cell_slice(encoded.descriptor),
                          vm::Dictionary::SetMode::Add)) {
       return td::Status::Error("duplicate outbound descriptor");
     }
-    vm::CellBuilder enqueued;
-    enqueued.store_long(output.lt, 64).store_ref(envelope_root);
+    auto enqueued = vm::load_cell_slice_ref(encoded.enqueued);
     if (item.defer) {
       vm::Dictionary account_queue(64);
       std::uint64_t count;
@@ -127,7 +124,7 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
       }
       TRY_RESULT(next_count, participant_lt_detail::checked_add(count, 1));
       if (next_count >= (std::uint64_t{1} << 48)) return td::Status::Error("account dispatch count exceeds wire width");
-      if (!account_queue.set_builder(td::BitArray<64>(output.lt), enqueued, vm::Dictionary::SetMode::Add)) {
+      if (!account_queue.set(td::BitArray<64>(output.lt), enqueued, vm::Dictionary::SetMode::Add)) {
         return td::Status::Error("duplicate account dispatch logical time");
       }
       vm::CellBuilder account_record;
@@ -139,8 +136,8 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
       result.deferred = next;
     } else {
       td::BitArray<352> key;
-      if (!compute_out_msg_queue_key(envelope_root, key)) return td::Status::Error("cannot derive outbound queue key");
-      if (!outgoing.set_builder(key.bits(), 352, enqueued, vm::Dictionary::SetMode::Add)) {
+      if (!compute_out_msg_queue_key(encoded.envelope, key)) return td::Status::Error("cannot derive outbound queue key");
+      if (!outgoing.set(key.bits(), 352, enqueued, vm::Dictionary::SetMode::Add)) {
         return td::Status::Error("duplicate outbound queue message");
       }
       TRY_RESULT(next, participant_lt_detail::checked_add(result.queued, 1));
