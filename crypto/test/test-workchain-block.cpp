@@ -8,6 +8,7 @@
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
 #include "block/workchain-host-identity.h"
+#include "block/workchain-host-input.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -503,6 +504,70 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, HostInputCommitment) {
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto resolved = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(resolved));
+  auto policy = std::get<block::ResolvedInputPolicy>(resolved);
+  block::CandidateAdmissionSession session(candidate, policy);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(session.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(session.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 1, 1, number(1)};
+  block::WorkchainAccountDeclarations access{{{td::Bits256::zero(), hash}}, {td::Bits256::zero()}};
+  auto first = inbound_envelope(3);
+  auto second = inbound_envelope(4);
+  auto encode = [&](const auto& id, const auto& input, const auto& set,
+                    const std::vector<td::Ref<vm::Cell>>& inbox) {
+    return block::encode_workchain_host_input(id, input, set, inbox, 2, 2, 2);
+  };
+  auto encoded = encode(identity, admitted, access, {first, second});
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  ASSERT_TRUE(block::gen::t_UnoV2HostInput.validate_ref(4096, root));
+  auto cs = vm::load_cell_slice(root);
+  ASSERT_EQ(cs.size(), 33u);
+  ASSERT_EQ(cs.size_refs(), 4u);
+  ASSERT_EQ(cs.fetch_ulong(32), 0x7c0766c8u);
+  ASSERT_TRUE(cs.fetch_ref()->get_hash() == block::encode_admitted_workchain_host_identity(identity, admitted).move_as_ok()->get_hash());
+  ASSERT_TRUE(cs.fetch_ref()->get_hash() == block::encode_workchain_account_declarations(access, 2, 2).move_as_ok()->get_hash());
+  ASSERT_TRUE(cs.fetch_ref()->get_hash() == candidate->get_hash());
+  ASSERT_EQ(cs.fetch_ulong(1), 1u);
+  auto inbox = block::decode_workchain_batch_inbound(cs.fetch_ref()).move_as_ok();
+  ASSERT_EQ(inbox.size(), 2u);
+  ASSERT_TRUE(inbox[0]->get_hash() == first->get_hash());
+  ASSERT_TRUE(inbox[1]->get_hash() == second->get_hash());
+  ASSERT_TRUE(encode(identity, admitted, access, {second, first}).move_as_ok()->get_hash() == root->get_hash());
+  auto different = [&](td::Result<td::Ref<vm::Cell>> changed) {
+    ASSERT_TRUE(changed.is_ok());
+    ASSERT_TRUE(block::gen::t_UnoV2HostInput.validate_ref(4096, changed.ok()));
+    ASSERT_TRUE(changed.ok()->get_hash() != root->get_hash());
+  };
+  different(encode(identity, admitted, access, {first}));
+  auto empty = encode(identity, admitted, access, {}).move_as_ok();
+  ASSERT_TRUE(block::gen::t_UnoV2HostInput.validate_ref(4096, empty));
+  ASSERT_EQ(vm::load_cell_slice(empty).size_refs(), 3u);
+  ASSERT_TRUE(empty->get_hash() != root->get_hash());
+  auto changed_access = access;
+  changed_access.reads[0].old_account_hash = std::nullopt;
+  different(encode(identity, admitted, changed_access, {first, second}));
+  changed_access = access;
+  changed_access.writes.clear();
+  different(encode(identity, admitted, changed_access, {first, second}));
+  auto changed_identity = identity;
+  changed_identity.height = 2;
+  different(encode(changed_identity, admitted, access, {first, second}));
+  block::CandidateAdmissionSession another(number(12), policy);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(another.evaluate()));
+  different(encode(identity, std::get<block::AdmittedInput>(another.evaluate()), access, {first, second}));
+  changed_identity.vm_mode = 0;
+  ASSERT_TRUE(encode(changed_identity, admitted, access, {first, second}).is_error());
+  ASSERT_TRUE(encode(identity, admitted, access, {first, first}).is_error());
+  ASSERT_TRUE(block::encode_workchain_host_input(identity, admitted, access, {first, second}, 2, 2, 1).is_error());
 }
 
 td::Ref<vm::Cell> inbound_transaction(td::Ref<vm::Cell> description, td::Ref<vm::Cell> ordinary_input = {}) {
