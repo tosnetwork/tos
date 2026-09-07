@@ -402,6 +402,7 @@ trans_storage$0001 storage_ph:TrStoragePhase
 
 // Structural support only; existing scope dispatch rejects this new profile.
 trans_workchain_storage_participant_v3$1010 binding:^UnoV2HostRecord = TransactionDescr;
+trans_workchain_settlement_participant_v3$1011 binding:^UnoV2HostRecord = TransactionDescr;
 // Commit effects before constructing the transaction and final shard wrapper.
 trans_workchain_batch_v2$1001 input_hash:bits256 effects_hash:bits256
   wire_bytes:uint64 verification_units:uint64 written_cells:uint64

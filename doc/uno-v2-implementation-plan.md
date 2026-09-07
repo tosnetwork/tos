@@ -272,3 +272,76 @@ coordinator debit and custody wrapper construction, independent validator
 replay, and live shard publication remain M1 work. No retirement transition
 removes configuration 84, the descriptor or custody: economic settlement is
 not proof that Native messages no longer need those destinations.
+
+### Two-account payout wrapper construction (boundary reviewed; admission pending)
+
+`build_workchain_payout_pair` constructs two private Native transactions from
+the real priced message and checked allocation. It returns custody/coordinator
+transactions **and** `WorkchainPayoutAccounting`, preserving the internal fee
+funding edge and derived flow rows. Those rows are construction results, not
+independent verification of external evidence. The enclosing validator must
+reconstruct them from authenticated effects and actual Native account/message
+artifacts before comparing wrappers and publishing any state.
+
+The new descriptor uses explicit prefix `1011`, following the existing
+TransactionDescr four-bit allocation, not an implicit CRC32 tag. It does not
+overlap `0000` through `0111`, retired `1000`, batch `1001`, or storage `1010`.
+Its referenced UnoV2HostRecord keeps its existing derived tag. Both current
+execution scopes reject `1011`; adding structural parser support is not
+activation. Old single-account semantics are unchanged. Handwritten skip,
+validation and storage-fee extraction must agree with the generated parser.
+
+The strengthened fixture uses principal 137, total fee 100, collected fee 25
+and remaining forwarding fee 75. Starting from 1000 each, the serialized
+custody and coordinator accounts contain 863 and 900 respectively. Exported
+value is 212. The test unpacks Native accounts, checks data and end LTs, reads
+transaction fees and message counts, and checks each descriptor's exact binding.
+An underfunded coordinator has a real encoded old balance of 99. Failure while
+preparing the second account returns no pair and does not commit either old
+account; this is not a live CellDb rollback demonstration.
+
+Review transcript: `~/memo/reviews/uno-v2-native-payout-pair-review.txt`.
+Disposition:
+
+- Fixed symmetric test values and added serialized-value checks, fee-funding
+  evidence, coordinator shortage, configuration and individual binding cases.
+  Added skip/storage-phase/storage-fee extraction checks for the new prefix.
+- Returned the accounting artifact instead of discarding it. A hash binding
+  does not replace effects availability, role authorization or independent
+  message/value reconstruction. Neither participant satisfies the ordinary
+  per-transaction equation without its internal funding edge; only a dedicated,
+  version-gated batch validator may account for that edge.
+- Renamed `batch_storage_only` to `batch_metadata_sealed`: it enforces metadata
+  preservation and cached serialization checks, not a claim of zero value
+  movement. Removed the repeated state-limit traversal; the data/code/library
+  roots do not change after storage preparation. This does not establish a
+  complete account/message/wrapper resource budget.
+- Kept amount/LT arithmetic checked, and documented both old-end LT bounds
+  that keep constructors from increasing the already-checked start LT.
+- Split context diagnostics, but **deferred source-aware failure classification
+  to the enclosing admission boundary**. A configuration mismatch in locally
+  derived inputs is not evidence of a bad candidate. Generic serialize failure
+  still lacks a detailed Native failure reason, and escaping VM/builder/dictionary
+  exceptions still require tested handling at that boundary. This is an explicit
+  prerequisite for integration, not an accepted error-classification gate.
+- Disputed treating additional error-string assertions as adequate negative
+  evidence. Independent removal/publication controls are required; a null data
+  case covers construction failure isolation, not every new guard. Also, the
+  reseal test already fails if the flag is disabled: the flag's misleading name
+  is real, but it is not an untested cache bypass.
+
+The pair is returned in role order, not sorted account-key order. The final
+overlay must own the referenced Accounts, derive the complete batch LT plan,
+bind roles and all data changes from effects, handle coordinator batch entry
+and inbox processing, re-sort for exact write-set coverage, and commit only
+after every wrapper and value-flow check succeeds. This factory is a building
+block for that overlay, not a replacement for it or evidence of complete I13.
+
+Seven independent manual controls changed the coordinator debit role, collected
+fee, input/effects/index binding checks, configuration agreement and published
+binding reference. Every rebuilt mutant failed its numeric or acceptance/hash
+assertion. Logs, patches and artifact hashes are retained in
+`measurements/uno-v2-native-payout-pair-evidence.json`. This is not a CI mutation
+facility, nor removal coverage of every context guard. The original stub failed
+the positive construction case; ordinary tests run in the registered block
+target. Review comments and their scope do not replace M1 end-to-end acceptance.

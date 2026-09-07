@@ -529,11 +529,16 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
     ASSERT_TRUE(accounts.set_builder(dictionary_address, entry));
   }
   auto queue = vm::CellBuilder().store_zeroes(67).finalize();
-  // Funded fixtures have one account; keep the public shard balance consistent.
-  ASSERT_TRUE(operating_balance == 0 || account_count == 1);
+  block::CurrencyCollection total_balance(0);
+  for (unsigned i = 0; i < account_count; ++i) {
+    block::CurrencyCollection next;
+    ASSERT_TRUE(block::CurrencyCollection::add(total_balance,
+        block::CurrencyCollection(td::make_refint(operating_balance)), next));
+    total_balance = std::move(next);
+  }
   vm::CellBuilder aux_builder;
   aux_builder.store_zeroes(128);
-  ASSERT_TRUE(block::CurrencyCollection(td::make_refint(operating_balance)).store(aux_builder));
+  ASSERT_TRUE(total_balance.store(aux_builder));
   auto aux = aux_builder.store_zeroes(7).finalize();
   auto root = vm::CellBuilder().store_long(0x9023afe2, 32).store_long(1, 32)
       .store_long(0, 2).store_long(prefix_bits, 6).store_long(shard_wc, 32).store_long(0, 64)
@@ -1591,6 +1596,124 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   tx.new_data = number(99);
   ASSERT_TRUE(!tx.serialize(cfg));
   ASSERT_TRUE(account.total_state->get_hash() == account.orig_total_state->get_hash());
+}
+
+TEST(WorkchainBlock, NativePayoutPair) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  block::Account custody(2, a.bits()), coordinator(2, b.bits());
+  ASSERT_TRUE(custody.unpack(accounts.lookup(a), 10, false));
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(b), 10, false));
+  const auto old_custody = custody.total_state->get_hash();
+  const auto old_coordinator = coordinator.total_state->get_hash();
+  auto bindings = block::build_workchain_participant_records(a, b, {a, b}, 2).move_as_ok();
+  vm::CellBuilder cb;
+  cb.store_long(6, 4).store_zeroes(2).store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+  // Distinct principal and fee amounts expose swapped debit roles.
+  ASSERT_TRUE(block::CurrencyCollection(137).store(cb));
+  ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(cb, td::make_refint(3)));
+  auto request = cb.store_zeroes(4).store_zeroes(96).store_zeroes(2).store_bits(b.bits(), 256).finalize();
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = cfg.extra_currency_v2 = true;
+  block::ActionPhaseConfig pricing;
+  pricing.global_version = 16;
+  pricing.disable_custom_fess = pricing.disable_anycast = pricing.extra_currency_v2 = true;
+  pricing.action_fine_enabled = pricing.bounce_on_fail_enabled = pricing.message_skip_enabled = true;
+  block::WorkchainSet workchains;
+  pricing.workchains = &workchains;
+  pricing.fwd_mc.lump_price = 100;
+  pricing.fwd_mc.first_frac = 16384;
+  using Transaction = block::transaction::Transaction;
+  auto build = [&](td::Ref<vm::Cell> second_data) {
+    return Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
+        number(70), second_data, request, 20, 10, td::make_refint(500), cfg, pricing);
+  };
+  auto result = build(number(71));
+  ASSERT_TRUE(result.is_ok());
+  auto prepared = result.move_as_ok();
+  auto& pair = prepared.transactions;
+  ASSERT_EQ(pair.size(), 2u);
+  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(863));
+  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(900));
+  ASSERT_TRUE(pair[0]->total_fees == block::CurrencyCollection(25));
+  ASSERT_TRUE(pair[1]->total_fees.is_zero());
+  ASSERT_EQ(pair[0]->out_msgs.size(), 1u);
+  ASSERT_TRUE(pair[1]->out_msgs.empty());
+  ASSERT_EQ(pair[0]->end_lt, 22u);
+  ASSERT_EQ(pair[1]->end_lt, 21u);
+  ASSERT_TRUE(prepared.accounting.exported == block::CurrencyCollection(212));
+  ASSERT_TRUE(prepared.accounting.fee_funding.from == b);
+  ASSERT_TRUE(prepared.accounting.fee_funding.to == a);
+  ASSERT_TRUE(prepared.accounting.fee_funding.value == block::CurrencyCollection(100));
+  for (std::size_t i = 0; i < pair.size(); ++i) {
+    auto& tx = pair[i];
+    ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, tx->root));
+    ASSERT_TRUE(block::tlb::t_Transaction.validate_ref(4096, tx->root));
+    block::gen::Transaction::Record record;
+    ASSERT_TRUE(tlb::unpack_cell(tx->root, record));
+    const auto& key = i == 0 ? a : b;
+    ASSERT_TRUE(record.account_addr == key);
+    ASSERT_EQ(record.lt, 20u);
+    ASSERT_EQ(record.outmsg_cnt, i == 0 ? 1 : 0);
+    block::CurrencyCollection recorded_fees;
+    ASSERT_TRUE(recorded_fees.validate_unpack(record.total_fees));
+    ASSERT_TRUE(recorded_fees == block::CurrencyCollection(i == 0 ? 25 : 0));
+    auto entry = vm::CellBuilder().store_ref(tx->new_total_state)
+        .store_bits(tx->root->get_hash().bits(), 256).store_long(20, 64).finalize();
+    block::Account decoded(2, key.bits());
+    ASSERT_TRUE(decoded.unpack(vm::load_cell_slice_ref(entry), 10, false));
+    ASSERT_TRUE(decoded.balance == block::CurrencyCollection(i == 0 ? 863 : 900));
+    ASSERT_EQ(decoded.last_trans_end_lt_, i == 0 ? 22u : 21u);
+    ASSERT_TRUE(decoded.data->get_hash() == number(i == 0 ? 70 : 71)->get_hash());
+    ASSERT_EQ(vm::load_cell_slice(record.description).prefetch_ulong(4), 11u);
+    auto description = vm::load_cell_slice(record.description);
+    ASSERT_TRUE(description.prefetch_ref()->get_hash() == bindings[i]->get_hash());
+    ASSERT_TRUE(block::tlb::t_TransactionDescr.skip(description));
+    ASSERT_TRUE(description.empty_ext());
+    description = vm::load_cell_slice(record.description);
+    bool found = true;
+    ASSERT_TRUE(block::tlb::t_TransactionDescr.skip_to_storage_phase(description, found));
+    ASSERT_TRUE(!found && description.empty_ext());
+    td::RefInt256 storage_fees;
+    ASSERT_TRUE(block::tlb::t_TransactionDescr.get_storage_fees(record.description, storage_fees));
+    ASSERT_EQ(td::sgn(storage_fees), 0);
+    ASSERT_TRUE(block::validate_transaction_execution_scope(record.description,
+        block::WorkchainExecutionScope::BlockTransition).is_error());
+    ASSERT_TRUE(block::validate_transaction_execution_scope(record.description,
+        block::WorkchainExecutionScope::AccountCompute).is_error());
+    ASSERT_TRUE(!tx->storage_phase && !tx->compute_phase && !tx->action_phase && !tx->bounce_phase);
+  }
+  ASSERT_TRUE(build({}).is_error());
+  block::gen::ShardStateUnsplit::Record poor_state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 99), poor_state));
+  vm::AugmentedDictionary poor_accounts(vm::load_cell_slice_ref(poor_state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account poor_coordinator(2, b.bits());
+  ASSERT_TRUE(poor_coordinator.unpack(poor_accounts.lookup(b), 10, false));
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, poor_coordinator, bindings[0], bindings[1],
+      number(70), number(71), request, 20, 10, td::make_refint(500), cfg, pricing).is_error());
+  auto mismatch = pricing;
+  mismatch.global_version = 17;
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
+      number(70), number(71), request, 20, 10, td::make_refint(500), cfg, mismatch).is_error());
+  for (unsigned field = 0; field < 3; ++field) {
+    block::gen::UnoV2HostRecord::Record changed;
+    ASSERT_TRUE(tlb::unpack_cell(bindings[1], changed));
+    if (field == 0) changed.input_hash = b;
+    if (field == 1) changed.effects_hash = a;
+    if (field == 2) changed.effect_index = 0;
+    td::Ref<vm::Cell> altered;
+    ASSERT_TRUE(tlb::pack_cell(altered, changed));
+    ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], altered,
+        number(70), number(71), request, 20, 10, td::make_refint(500), cfg, pricing).is_error());
+  }
+  ASSERT_TRUE(custody.total_state->get_hash() == old_custody);
+  ASSERT_TRUE(coordinator.total_state->get_hash() == old_coordinator);
+  pair[0]->balance = block::CurrencyCollection(901);
+  ASSERT_TRUE(!pair[0]->serialize(cfg));
 }
 
 TEST(WorkchainBlock, NativePayoutPricing) {

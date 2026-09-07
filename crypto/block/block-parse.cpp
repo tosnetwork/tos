@@ -1468,6 +1468,7 @@ const SplitMergeInfo t_SplitMergeInfo;
 
 bool TransactionDescr::skip(vm::CellSlice& cs) const {
   switch (get_tag(cs)) {
+    case trans_workchain_settlement_participant_v3:
     case trans_workchain_storage_participant_v3:
       return cs.advance(4) && cs.advance_refs(1);
     case trans_workchain_batch_v2:
@@ -1522,6 +1523,7 @@ bool TransactionDescr::skip(vm::CellSlice& cs) const {
 
 bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
   switch (get_tag(cs)) {
+    case trans_workchain_settlement_participant_v3:
     case trans_workchain_storage_participant_v3:
       return cs.advance(4) && gen::t_UnoV2HostRecord.validate_ref(ops, cs.fetch_ref(), weak);
     case trans_workchain_batch_v2:
@@ -1577,13 +1579,15 @@ bool TransactionDescr::validate_skip(int* ops, vm::CellSlice& cs, bool weak) con
 
 int TransactionDescr::get_tag(const vm::CellSlice& cs) const {
   int t = (int)cs.prefetch_ulong(4);
-  return (t >= 0 && (t < 8 || t == trans_workchain_batch_v2 || t == trans_workchain_storage_participant_v3))
+  return (t >= 0 && (t < 8 || t == trans_workchain_batch_v2 || t == trans_workchain_storage_participant_v3 ||
+                    t == trans_workchain_settlement_participant_v3))
              ? (t == 3 ? 2 : t) : -1;
 }
 
 bool TransactionDescr::skip_to_storage_phase(vm::CellSlice& cs, bool& found) const {
   found = false;
   switch (get_tag(cs)) {
+    case trans_workchain_settlement_participant_v3:
     case trans_workchain_storage_participant_v3:
       return cs.advance(4) && cs.advance_refs(1);
     case trans_workchain_batch_v2:

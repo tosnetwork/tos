@@ -23,6 +23,7 @@
 #include "block/block-auto.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/workchain-payout-accounting.h"
 #include "common/refcnt.hpp"
 #include "common/refint.h"
 #include "precompiled-smc/PrecompiledSmartContract.h"
@@ -56,6 +57,10 @@ struct PricedWorkchainPayout {
   tos::LogicalTime end_lt;
 };
 struct Transaction;
+struct PreparedWorkchainPayoutPair {
+  std::vector<std::unique_ptr<Transaction>> transactions;
+  WorkchainPayoutAccounting accounting;
+};
 }  // namespace transaction
 
 struct CollatorError {
@@ -432,7 +437,7 @@ struct Transaction {
   CurrencyCollection batch_balance{0}, batch_fees{0};
   std::vector<Ref<vm::Cell>> batch_out_msgs;
   tos::LogicalTime batch_end_lt{0};
-  bool batch_storage_only{false};
+  bool batch_metadata_sealed{false};
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                   const ActionPhaseConfig& cfg,
                                                   const CurrencyCollection& initial_balance,
@@ -504,6 +509,16 @@ struct Transaction {
   static td::Result<PricedWorkchainPayout> price_workchain_payout(
       const Account& custody, Ref<vm::Cell> request, tos::LogicalTime start_lt,
       tos::UnixTime now, td::RefInt256 fee_budget, const ActionPhaseConfig& cfg);
+  // Private-overlay construction only, returned in custody/coordinator order.
+  // Account references must outlive the returned transactions. The overlay must
+  // serialize/commit privately without exposing mutable transactions to engines.
+  // No live account is committed, no role or effects authorization is implied.
+  // Same admitted-input exception contract as price_workchain_payout applies.
+  static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
+      const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
+      Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
+      Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
+      td::RefInt256 fee_budget, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

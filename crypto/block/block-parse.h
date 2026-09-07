@@ -723,7 +723,8 @@ struct TransactionDescr final : TLB_Complex {
     trans_merge_prepare = 6,
     trans_merge_install = 7,
     trans_workchain_batch_v2 = 9,
-    trans_workchain_storage_participant_v3 = 10
+    trans_workchain_storage_participant_v3 = 10,
+    trans_workchain_settlement_participant_v3 = 11
   };
   bool skip(vm::CellSlice& cs) const override;
   bool validate_skip(int* ops, vm::CellSlice& cs, bool weak = false) const override;

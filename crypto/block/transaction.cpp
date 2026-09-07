@@ -23,6 +23,7 @@
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
+#include "block/workchain-payout-accounting.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4611,6 +4612,55 @@ td::Result<PricedWorkchainPayout> Transaction::price_workchain_payout(
                                staged.total_action_fees, staged.end_lt};
 }
 
+td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair(
+    const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
+    Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
+    Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
+    td::RefInt256 fee_budget, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
+  if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
+  if (cfg.global_version != message_cfg.global_version) return td::Status::Error("payout configuration versions differ");
+  if (start_lt < coordinator.last_trans_end_lt_) return td::Status::Error("payout coordinator LT precedes old end");
+  if (cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
+    return td::Status::Error("payout account validation limit cannot be represented");
+  }
+  gen::UnoV2HostRecord::Record first, second;
+  if (!tlb::unpack_cell(custody_binding, first) || !tlb::unpack_cell(coordinator_binding, second) ||
+      first.input_hash != second.input_hash || first.effects_hash != second.effects_hash ||
+      first.effect_index == second.effect_index) {
+    return td::Status::Error("payout pair bindings belong to different batches");
+  }
+  TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
+  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody.balance,
+      coordinator.balance, priced.payment, priced.total_fee, priced.collected_fee,
+      static_cast<int>(cfg.size_limits.max_acc_state_cells)));
+  // Pricing checked both LT additions. Both old end LTs are <= start_lt,
+  // so neither constructor's max(requested_start, old_end) can raise that bound.
+  std::vector<std::unique_ptr<Transaction>> pair;
+  pair.push_back(std::make_unique<Transaction>(custody, tr_workchain_batch, start_lt, now));
+  pair.push_back(std::make_unique<Transaction>(coordinator, tr_workchain_batch, start_lt, now));
+  TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
+  TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
+  pair[0]->balance = allocation.custody_after;
+  pair[1]->balance = allocation.operator_after;
+  pair[0]->total_fees = CurrencyCollection(priced.collected_fee);
+  pair[0]->out_msgs.push_back(priced.message);
+  pair[0]->end_lt = priced.end_lt;
+  for (std::size_t i = 0; i < pair.size(); ++i) {
+    auto& tx = *pair[i];
+    tx.batch_description = vm::CellBuilder()
+        .store_long(tlb::TransactionDescr::trans_workchain_settlement_participant_v3, 4)
+        .store_ref(i == 0 ? custody_binding : coordinator_binding).finalize();
+    tx.batch_balance = tx.balance;
+    tx.batch_fees = tx.total_fees;
+    tx.batch_out_msgs = tx.out_msgs;
+    tx.batch_end_lt = tx.end_lt;
+    // Retain restricted-metadata and cached-root revalidation for both roles.
+    if (!tx.serialize(cfg)) return td::Status::Error("cannot serialize payout pair participant");
+  }
+  return PreparedWorkchainPayoutPair{std::move(pair), std::move(allocation)};
+}
+
 td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                              const SerializeConfig& cfg) {
   if (cfg.global_version < kStorageParticipantMinGlobalVersion || trans_type != tr_workchain_batch || account.status != Account::acc_active ||
@@ -4640,15 +4690,15 @@ td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> bind
   batch_fees = total_fees;
   batch_out_msgs = out_msgs;
   batch_end_lt = end_lt;
-  batch_storage_only = true;
+  batch_metadata_sealed = true;
   return td::Status::OK();
 }
 
 bool Transaction::serialize(const SerializeConfig& cfg) {
-  if (root.not_null() && !batch_storage_only) {
+  if (root.not_null() && !batch_metadata_sealed) {
     return true;
   }
-  if (batch_storage_only &&
+  if (batch_metadata_sealed &&
       (cfg.global_version < kStorageParticipantMinGlobalVersion || new_code.get() != account.code.get() || new_library.get() != account.library.get() ||
        my_addr.is_null() || account.my_addr.is_null() || !my_addr->contents_equal(*account.my_addr) ||
        new_tick != account.tick || new_tock != account.tock || new_fixed_prefix_length != account.fixed_prefix_length ||
@@ -4672,7 +4722,7 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
       }
     }
   }
-  if (batch_storage_only && root.not_null()) {
+  if (batch_metadata_sealed && root.not_null()) {
     return true;
   }
   if (!compute_state(cfg)) {
