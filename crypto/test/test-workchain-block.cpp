@@ -1,3 +1,5 @@
+#include "block/workchain-outbound-queues.h"
+
 #include <limits>
 #include <random>
 #include <type_traits>
@@ -1781,6 +1783,95 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(joint_replay.is_ok());
   ASSERT_EQ(engine.calls, 1u);
   ASSERT_EQ(joint_replay.ok().exports.size(), 3u);
+  {
+    // Exercise real Native dictionary/envelope encodings with simultaneous
+    // emitters. The processing account and actual bounce source differ.
+    block::tlb::Aug_OutMsgDescr augmentation(16);
+    vm::AugmentedDictionary empty_descriptors(256, augmentation);
+    vm::AugmentedDictionary empty_outgoing(352, block::tlb::aug_OutMsgQueue);
+    vm::AugmentedDictionary empty_dispatch(256, block::tlb::aug_DispatchQueue);
+    block::WorkchainOutboundQueueRoots empty{empty_descriptors.get_wrapped_dict_root(),
+        empty_outgoing.get_wrapped_dict_root(), empty_dispatch.get_wrapped_dict_root()};
+    block::WorkchainOutboundQueuePolicy queue_policy{{2, tos::shardIdAll}, 10, 16, false, true, 3};
+    std::vector<block::WorkchainQueuedOutput> choices;
+    for (const auto& output : joint_settled.exports) choices.push_back({output, false});
+    auto plain_result = block::build_workchain_outbound_queues(empty, choices, {}, queue_policy);
+    ASSERT_TRUE(plain_result.is_ok());
+    auto plain = plain_result.move_as_ok();
+    ASSERT_EQ(plain.queued, 3u);
+    ASSERT_EQ(plain.deferred, 0u);
+    ASSERT_EQ(plain.roots.dispatch->get_hash(), empty.dispatch->get_hash());
+    vm::AugmentedDictionary descriptors(vm::load_cell_slice_ref(plain.roots.descriptors), 256, augmentation);
+    vm::AugmentedDictionary outgoing(vm::load_cell_slice_ref(plain.roots.outgoing), 352, block::tlb::aug_OutMsgQueue);
+    block::CurrencyCollection exported_total;
+    ASSERT_TRUE(exported_total.unpack(descriptors.get_root_extra()));
+    ASSERT_TRUE(exported_total == block::CurrencyCollection(712));
+    for (const auto& choice : choices) {
+      auto record = descriptors.lookup(choice.output.msg->get_hash().bits(), 256);
+      ASSERT_TRUE(record.not_null());
+      ASSERT_EQ(record->prefetch_ulong(3), 1u);
+      auto envelope = record->prefetch_ref();
+      ASSERT_EQ(record->prefetch_ref(1)->get_hash(), choice.output.trans->get_hash());
+      td::BitArray<352> queue_key;
+      ASSERT_TRUE(block::compute_out_msg_queue_key(envelope, queue_key));
+      auto queued = outgoing.lookup(queue_key.bits(), 352);
+      ASSERT_TRUE(queued.not_null());
+      ASSERT_EQ(queued->prefetch_ulong(64), choice.output.lt);
+      ASSERT_EQ(queued->prefetch_ref()->get_hash(), envelope->get_hash());
+    }
+    ASSERT_TRUE(block::build_workchain_outbound_queues(plain.roots, choices, {}, queue_policy).is_error());
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {foreign}, queue_policy).is_error());
+    // A processing-account backlog is not a backlog for a foreign-source bounce.
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {a}, queue_policy).is_ok());
+    for (auto& choice : choices) choice.defer = choice.output.trans->get_hash() == pair[1]->root->get_hash();
+    auto deferred_result = block::build_workchain_outbound_queues(empty, choices, {foreign}, queue_policy);
+    ASSERT_TRUE(deferred_result.is_ok());
+    const auto& deferred = deferred_result.ok();
+    ASSERT_EQ(deferred.queued, 1u);
+    ASSERT_EQ(deferred.deferred, 2u);
+    vm::AugmentedDictionary dispatch(vm::load_cell_slice_ref(deferred.roots.dispatch), 256, block::tlb::aug_DispatchQueue);
+    ASSERT_TRUE(dispatch.lookup(a).is_null());
+    vm::Dictionary account_queue(64);
+    std::uint64_t dispatch_count;
+    ASSERT_TRUE(block::unpack_account_dispatch_queue(dispatch.lookup(foreign), account_queue, dispatch_count));
+    ASSERT_EQ(dispatch_count, 2u);
+    ASSERT_TRUE(account_queue.lookup(td::BitArray<64>(22)).not_null());
+    ASSERT_TRUE(account_queue.lookup(td::BitArray<64>(23)).not_null());
+    auto first = choices.front();
+    for (const auto& choice : choices) if (choice.defer && choice.output.msg_idx == 0) first = choice;
+    auto second = first;
+    for (const auto& choice : choices) if (choice.defer && choice.output.msg_idx == 1) second = choice;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, {first}, {}, queue_policy).is_error());
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, {second}, {}, queue_policy).is_ok());
+    auto disabled_deferral = queue_policy;
+    disabled_deferral.deferring_enabled = false;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, {second}, {}, disabled_deferral).is_error());
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, {first}, {foreign}, disabled_deferral).is_ok());
+    auto limited_outputs = queue_policy;
+    limited_outputs.max_outputs = 2;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {foreign}, limited_outputs).is_error());
+    auto wrong_lt = first;
+    wrong_lt.output.lt = block::participant_lt_detail::checked_add(first.output.lt, 1).move_as_ok();
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, {wrong_lt}, {foreign}, queue_policy).is_error());
+    auto seeded = block::build_workchain_outbound_queues(empty, {first}, {foreign}, queue_policy).move_as_ok();
+    block::WorkchainOutboundQueueRoots resumed{empty.descriptors, empty.outgoing, seeded.roots.dispatch};
+    second.defer = false;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(resumed, {second}, {}, queue_policy).is_error());
+    second.defer = true;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(resumed, {second}, {}, queue_policy).is_ok());
+    queue_policy.metadata_enabled = true;
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {foreign}, queue_policy).is_error());
+    for (auto& choice : choices) {
+      const auto processing = choice.defer ? a : b;
+      choice.output.metadata = block::MsgMetadata{0, 2, processing, 21};
+    }
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {foreign}, queue_policy).is_ok());
+    for (auto& choice : choices) if (choice.defer) choice.output.metadata = block::MsgMetadata{0, 2, foreign, 21};
+    ASSERT_TRUE(block::build_workchain_outbound_queues(empty, choices, {foreign}, queue_policy).is_error());
+    ASSERT_EQ(empty.descriptors->get_hash(), empty_descriptors.get_wrapped_dict_root()->get_hash());
+    ASSERT_EQ(empty.outgoing->get_hash(), empty_outgoing.get_wrapped_dict_root()->get_hash());
+    ASSERT_EQ(empty.dispatch->get_hash(), empty_dispatch.get_wrapped_dict_root()->get_hash());
+  }
   ASSERT_EQ(old.accounts->get_hash(), original_hash);
   // A touched storage participant is not another Native receiving role.
   // Its misdirected import belongs to the coordinator, even in this write set.
