@@ -22,6 +22,7 @@
 #include "block/block.h"
 #include "block/transaction.h"
 #include "block/native-bounce-body.h"
+#include "block/native-bounce-storage.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
@@ -4056,17 +4057,18 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
   }
   // fetch message pricing info
   const MsgPrices& msg_prices = cfg.fetch_msg_prices(to_mc || account.is_masterchain());
-  // compute size of message
-  vm::CellStorageStat sstat;  // for message size
-  // preliminary storage estimation of the resulting message
-  if (!cfg.extra_currency_v2 || cfg.global_version < 13) {
-    sstat.add_used_storage(info.value->prefetch_ref());
+  // Do not price or debit against a failed partial storage walk.
+  auto measured = measure_native_bounce_storage(!cfg.extra_currency_v2 || cfg.global_version < 13,
+      info.value->prefetch_ref(), body.get_refs());
+  if (measured.is_error()) {
+    LOG(ERROR) << "cannot measure bounce message storage: " << measured.error();
+    bounce_phase.reset();
+    return false;
   }
-  sstat.add_used_storage(body.get_refs());
-  bp.msg_bits = sstat.bits;
-  bp.msg_cells = sstat.cells;
+  bp.msg_bits = measured.ok().bits;
+  bp.msg_cells = measured.ok().cells;
   // compute forwarding fees
-  bp.fwd_fees = msg_prices.compute_fwd_fees(sstat.cells, sstat.bits);
+  bp.fwd_fees = msg_prices.compute_fwd_fees(bp.msg_cells, bp.msg_bits);
   // check whether the message has enough funds
   auto msg_balance = msg_balance_remaining;
   if (compute_phase && compute_phase->gas_fees.not_null()) {

@@ -1240,3 +1240,28 @@ not mutation evidence. Review disposition is in
 `uno-v2-native-bounce-body-review-disposition.md`; logs and hashes are in
 `measurements/uno-v2-native-bounce-body-evidence.json`. This remains an encoding
 component, not full pricing, disposal or production activation.
+
+### Shared Native bounce storage measurement (M1, shared component)
+
+A stateless wrapper now measures the Native bounce pricing closure with one
+CellStorageStat, preserving deduplication across optional currency and body
+roots. An absent currency root explicitly contributes zero; actual traversal
+errors are returned rather than used as partial sizes. The ordinary caller
+checks the result before calculating fees or debiting balances. Source
+failures are not reclassified. The inherited NoVm walker can fail fatally on
+unavailable descendants: future batch callers must authenticate, admit and
+fully materialize/validate the closure first, not rely on root is_loaded().
+The legacy walker and fee arithmetic are unchanged;
+this helper is not resource admission or a source-classification boundary.
+
+Direct tests cover separate/shared currency roots, optional absence and an
+actual null body root. Existing ordinary bounce tests now assert exact pricing
+cells/bits for legacy and both rich modes. Twelve additional actual Native
+calls cover the version/currency switch and exact-funds/nofunds pricing.
+Six rebuilt controls fail for currency inclusion, optional absence, shared-root
+deduplication, actual body-root failure, caller switch and caller pricing input.
+These are manual controls, not recurring mutation CI. Review disposition is in
+`uno-v2-native-bounce-storage-review-disposition.md`; raw evidence is in
+`measurements/uno-v2-native-bounce-storage-evidence.json`. The defensive phase
+reset has no independently demonstrated canonical Native wire trigger.
+This is not completed disposal, live admission or M1 acceptance.

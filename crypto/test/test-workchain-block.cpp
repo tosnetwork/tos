@@ -11,6 +11,7 @@
 #include "block/workchain-import-evidence.h"
 #include "block/workchain-native-inbox.h"
 #include "block/native-bounce-body.h"
+#include "block/native-bounce-storage.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -655,6 +656,91 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   return envelope;
 }
 
+TEST(WorkchainBlock, NativeBounceStorage) {
+  auto leaf = vm::CellBuilder().store_zeroes(9).finalize();
+  auto parent = vm::CellBuilder().store_zeroes(17).store_ref(leaf).finalize();
+  auto extra = vm::CellBuilder().store_zeroes(7).finalize();
+  std::vector<td::Ref<vm::Cell>> roots{leaf, parent};
+  auto excluded = block::measure_native_bounce_storage(false, extra, roots).move_as_ok();
+  ASSERT_EQ(excluded.cells, 2u);
+  ASSERT_EQ(excluded.bits, 26u);
+  auto included = block::measure_native_bounce_storage(true, extra, roots).move_as_ok();
+  ASSERT_EQ(included.cells, 3u);
+  ASSERT_EQ(included.bits, 33u);
+  auto shared = block::measure_native_bounce_storage(true, leaf, roots).move_as_ok();
+  ASSERT_EQ(shared.cells, 2u);
+  ASSERT_EQ(shared.bits, 26u);
+  auto absent = block::measure_native_bounce_storage(true, {}, roots).move_as_ok();
+  ASSERT_EQ(absent.cells, 2u);
+  ASSERT_EQ(absent.bits, 26u);
+  std::vector<td::Ref<vm::Cell>> empty;
+  auto zero = block::measure_native_bounce_storage(true, {}, empty).move_as_ok();
+  ASSERT_EQ(zero.cells, 0u);
+  ASSERT_EQ(zero.bits, 0u);
+  roots.push_back({});
+  // A failed actual root must not yield the successful prefix's 2/26 totals.
+  ASSERT_TRUE(block::measure_native_bounce_storage(false, {}, roots).is_error());
+}
+
+TEST(WorkchainBlock, NativeBounceStorageCaller) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto address = td::Bits256::zero();
+  block::Account account(2, address.bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(address), 100, false));
+  vm::Dictionary extra(32);
+  vm::CellBuilder extra_value;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(extra_value, *td::make_refint(5)));
+  ASSERT_TRUE(extra.set_builder(td::BitArray<32>::zero(), extra_value));
+  auto extra_root = extra.get_root_cell();
+  ASSERT_EQ(vm::load_cell_slice(extra_root).size(), 22u);
+  block::CurrencyCollection input_value(td::make_refint(123), extra_root);
+  struct PricingCase { int version; bool extra_v2; bool counted; };
+  for (auto profile : {PricingCase{12, false, true}, {12, true, true}, {13, false, true},
+                       {13, true, false}, {16, false, true}, {16, true, false}}) {
+    for (unsigned lump : {100u, 101u}) {
+      block::ActionPhaseConfig config;
+      config.global_version = profile.version;
+      config.extra_currency_v2 = profile.extra_v2;
+      config.bounce_msg_body = 256;
+      config.fwd_mc = block::MsgPrices(lump, 65536, 65536, 0, 16384, 0);
+      config.fwd_std = config.fwd_mc;
+      vm::CellBuilder incoming;
+      incoming.store_long(6, 4).store_long(4, 3).store_long(-1, 8).store_zeroes(256)
+          .store_long(4, 3).store_long(2, 8).store_zeroes(256);
+      ASSERT_TRUE(input_value.store(incoming));
+      auto message = incoming.store_zeroes(8).store_long(77, 64).store_long(99, 32)
+          .store_zeroes(2).store_long(0x1234, 16).finalize();
+      block::transaction::Transaction tx(account, block::transaction::Transaction::tr_ord, 100, 100);
+      tx.in_msg = message;
+      ASSERT_TRUE(tx.unpack_input_msg(false, &config));
+      ASSERT_TRUE(tx.prepare_credit_phase());
+      tx.compute_phase = std::make_unique<block::ComputePhase>();
+      tx.compute_phase->skip_reason = block::ComputePhase::sk_no_state;
+      ASSERT_TRUE(tx.prepare_bounce_phase(config));
+      ASSERT_TRUE(tx.bounce_phase != nullptr);
+      ASSERT_EQ(tx.bounce_phase->msg_cells, profile.counted ? 1u : 0u);
+      ASSERT_EQ(tx.bounce_phase->msg_bits, profile.counted ? 22u : 0u);
+      const bool nofunds = profile.counted && lump == 101;
+      ASSERT_EQ(tx.bounce_phase->nofunds, nofunds);
+      ASSERT_EQ(tx.bounce_phase->ok, !nofunds);
+      ASSERT_EQ(tx.out_msgs.size(), nofunds ? 0u : 1u);
+      if (nofunds) {
+        ASSERT_TRUE(tx.balance == block::CurrencyCollection(td::make_refint(1123), extra_root));
+      } else {
+        ASSERT_TRUE(tx.balance == block::CurrencyCollection(1000));
+        block::gen::CommonMsgInfo::Record_int_msg_info returned;
+        ASSERT_TRUE(tlb::unpack_cell_inexact(tx.out_msgs[0], returned));
+        block::CurrencyCollection returned_value;
+        ASSERT_TRUE(returned_value.unpack(returned.value));
+        ASSERT_TRUE(returned_value == block::CurrencyCollection(
+            td::make_refint(profile.counted ? 0 : lump == 100 ? 23 : 22), extra_root));
+      }
+    }
+  }
+}
+
 TEST(WorkchainBlock, NativeBounceBody) {
   auto child = number(55);
   auto original = vm::CellBuilder().store_long(0x1234, 16).store_zeroes(304).store_ref(child).finalize();
@@ -773,6 +859,10 @@ TEST(WorkchainBlock, NativeBounceBody) {
         }
         ASSERT_TRUE(transaction.prepare_bounce_phase(config));
         ASSERT_TRUE(transaction.bounce_phase && transaction.bounce_phase->ok);
+        // The inline output root is excluded from pricing. Rich refs contain
+        // a 320-bit body, optional 64-bit child, and 109-bit original info.
+        ASSERT_EQ(transaction.bounce_phase->msg_cells, !(flags & 1u) ? 0u : flags == 3 ? 3u : 2u);
+        ASSERT_EQ(transaction.bounce_phase->msg_bits, !(flags & 1u) ? 0u : flags == 3 ? 493u : 429u);
         ASSERT_EQ(transaction.out_msgs.size(), 1u);
         block::gen::Message::Record bounced;
         ASSERT_TRUE(tlb::type_unpack_cell(transaction.out_msgs[0], block::gen::t_Message_Any, bounced));
