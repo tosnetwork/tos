@@ -1736,6 +1736,47 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(extra_imports.value_imported == block::CurrencyCollection(167, imported_extra_values.get_root_cell()));
   ASSERT_TRUE(extra_imports.fees_collected == block::CurrencyCollection(67));
   ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {extra_import_envelope}, processing, 2, 2, 1).is_error());
+  // Record-shape primitive only: these existing transaction fixtures are not
+  // claims that the changed inbox has already been settled by the full host.
+  auto foreign = td::Bits256::ones();
+  ASSERT_TRUE(foreign != a && foreign != b);
+  auto misdirected = inbound_envelope(5, 81, {}, foreign, extra_import_value);
+  auto routed = [&](const auto& inputs, const auto& txs, const auto& entry, const auto& reserve) {
+    return block::build_workchain_routed_final_imports(2, 16, inputs, txs, entry, reserve, 3, 2, 4096);
+  };
+  std::vector<td::Ref<vm::Cell>> routed_inbox{inbox[0], inbox[2], misdirected};
+  auto routed_result = routed(routed_inbox, import_transactions, a, b);
+  ASSERT_TRUE(routed_result.is_ok());
+  auto routed_evidence = routed_result.move_as_ok();
+  ASSERT_TRUE(routed_evidence.account_credits.at(a) == block::CurrencyCollection(200, imported_extra_values.get_root_cell()));
+  ASSERT_TRUE(routed_evidence.account_credits.at(b) == block::CurrencyCollection(100));
+  ASSERT_TRUE(routed_evidence.account_credits.find(foreign) == routed_evidence.account_credits.end());
+  ASSERT_TRUE(routed_evidence.value_imported == block::CurrencyCollection(501, imported_extra_values.get_root_cell()));
+  ASSERT_TRUE(routed_evidence.fees_collected == block::CurrencyCollection(201));
+  ASSERT_TRUE(native_imports.validate_ref(4096, routed_evidence.in_msg_descr));
+  ASSERT_TRUE(block::gen::t_InMsgDescr.validate_ref(4096, routed_evidence.in_msg_descr));
+  vm::AugmentedDictionary routed_records(vm::load_cell_slice_ref(routed_evidence.in_msg_descr), 256, native_imports.aug);
+  block::tlb::MsgEnvelope::Record_std original_misdirected;
+  ASSERT_TRUE(tlb::unpack_cell(misdirected, original_misdirected));
+  auto routed_record = routed_records.lookup(original_misdirected.msg->get_hash().bits(), 256);
+  ASSERT_TRUE(routed_record.not_null());
+  auto routed_slice = *routed_record;
+  ASSERT_EQ(routed_slice.fetch_ulong(3), 4u);
+  ASSERT_TRUE(routed_slice.fetch_ref()->get_hash() == misdirected->get_hash());
+  ASSERT_TRUE(routed_slice.fetch_ref()->get_hash() == importing_entry.root->get_hash());
+  // The strict existing factory must not gain the address exception.
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, routed_inbox, import_transactions, 3, 2, 4096).is_error());
+  ASSERT_TRUE(routed(inbox, import_transactions, a, b).move_as_ok().in_msg_descr->get_hash() == import_evidence.in_msg_descr->get_hash());
+  ASSERT_TRUE(routed(routed_inbox, import_transactions, a, a).is_error());
+  auto missing_entry = import_transactions;
+  missing_entry.erase(a);
+  ASSERT_TRUE(routed(routed_inbox, missing_entry, a, b).is_error());
+  auto wrong_entry = import_transactions;
+  wrong_entry[a] = importing_record.root;
+  ASSERT_TRUE(routed(routed_inbox, wrong_entry, a, b).is_error());
+  // No correctly addressed coordinator message may mask the routed identity check.
+  ASSERT_TRUE(routed(std::vector<td::Ref<vm::Cell>>{misdirected}, wrong_entry, a, b).is_error());
+  ASSERT_TRUE(routed(std::vector<td::Ref<vm::Cell>>{misdirected, misdirected}, import_transactions, a, b).is_error());
   std::vector<block::WorkchainAccountValueFlow> rows;
   auto actual_row = [&](const block::Account& before, const Transaction& built,
                         const block::CurrencyCollection& imported) {

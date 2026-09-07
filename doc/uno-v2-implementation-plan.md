@@ -1499,3 +1499,26 @@ ambient-VM isolation. All fail; restoration passes both related CTest targets
 substitutions, raw logs and final hashes:
 `measurements/uno-v2-candidate-identity-controls.json`. Manual controls remain
 distinct from recurring mutation CI; M1 production integration is still open.
+
+### Routed final-import records (M1, not live)
+
+The explicit routed constructor shares Native import encoding, checked
+CurrencyCollection arithmetic and dictionary augmentation with the unchanged
+strict constructor. Resolved custody arrivals retain their own transaction;
+other arrivals use the resolved coordinator. The original destination and
+envelope remain unchanged. The processing account's actual serialized identity
+must match the derived role, not merely a key in a supplied map.
+
+This is the common InMsg record shape needed by both disposal outcomes. It
+does not decide bounce versus unexpected credit, settle bucket data, construct
+OutMsg evidence, or enable a Native semantic-validation exception. The mixed
+fixture uses real transaction encodings but does not claim those transactions
+already settled its changed inbox. Full disposal settlement and exact replay
+integration remain required. Gross imported credits are not backing entries.
+No retirement behavior or configuration gate changes here.
+
+The unimplemented constructor first failed at the positive-result assertion.
+Subsequent manual controls and regression evidence are recorded in
+`measurements/uno-v2-routed-import-evidence.json`; scope and arithmetic are in
+`uno-v2-routed-final-imports.md`. These controls are not recurring mutation CI.
+This helper-only unit awaits M1 milestone review and is not milestone closure.

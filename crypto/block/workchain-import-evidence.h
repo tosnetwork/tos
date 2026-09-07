@@ -14,17 +14,21 @@ struct WorkchainFinalImportEvidence {
   CurrencyCollection value_imported{0}, fees_collected{0};
 };
 
+namespace final_import_detail {
+
 // Materialize final imports referencing already serialized Native transactions.
 // This does not authenticate queue membership/completeness, transaction roles,
 // or disposal policy. Those are host obligations, including own-queue dequeue
 // evidence and DispatchQueue handling. Only standard final imports are built.
 // All supplied closures require prior source-aware admission; entry bounds
 // alone do not bound cell or currency traversal. Exceptions keep their source.
-inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
+template <class ResolveAccount>
+td::Result<WorkchainFinalImportEvidence> build(
     tos::WorkchainId workchain, int global_version,
     const std::vector<td::Ref<vm::Cell>>& envelopes,
     const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
-    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells) {
+    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells,
+    const ResolveAccount& resolve_account) {
   if (workchain < 0 || global_version < transaction::Transaction::kStorageParticipantMinGlobalVersion ||
       envelopes.size() > max_inbound || transactions.size() > max_transactions || extra_validation_cells <= 0) {
     return td::Status::Error("invalid final import context or limits");
@@ -54,10 +58,11 @@ inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
     if (original_fee.is_null() || envelope.fwd_fee_remaining > original_fee) {
       return td::Status::Error("remaining import fee exceeds original forwarding fee");
     }
-    auto found = transactions.find(destination.address);
+    const td::Bits256 processing_account = resolve_account(destination.address);
+    auto found = transactions.find(processing_account);
     gen::Transaction::Record transaction;
     if (found == transactions.end() || !tlb::unpack_cell(found->second, transaction) ||
-        transaction.account_addr != destination.address || info.created_lt >= transaction.lt ||
+        transaction.account_addr != processing_account || info.created_lt >= transaction.lt ||
         (envelope.emitted_lt && envelope.emitted_lt.value() >= transaction.lt)) {
       return td::Status::Error("final import transaction or logical time mismatch");
     }
@@ -86,7 +91,7 @@ inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
         collected != CurrencyCollection(envelope.fwd_fee_remaining)) {
       return td::Status::Error("Native final import credit or fee mismatch");
     }
-    auto& credit = result.account_credits.try_emplace(destination.address, CurrencyCollection(0)).first->second;
+    auto& credit = result.account_credits.try_emplace(processing_account, CurrencyCollection(0)).first->second;
     if (!add(credit, credited) || !add(result.value_imported, imported) || !add(result.fees_collected, collected)) {
       return td::Status::Error("final import accumulation overflow");
     }
@@ -108,6 +113,40 @@ inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
   }
   result.in_msg_descr = imports.get_wrapped_dict_root();
   return result;
+}
+
+}  // namespace final_import_detail
+
+// The strict path preserves Native destination == transaction account.
+inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
+    tos::WorkchainId workchain, int global_version,
+    const std::vector<td::Ref<vm::Cell>>& envelopes,
+    const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
+    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells) {
+  return final_import_detail::build(workchain, global_version, envelopes, transactions, max_inbound,
+                                    max_transactions, extra_validation_cells,
+                                    [](const td::Bits256& destination) { return destination; });
+}
+
+// Explicit V2 record shape, not activation of a Native validation exception.
+// Authenticated role/profile resolution and full transaction reconstruction
+// belong to the enclosing host. The original message/envelope is never rewritten.
+// A foreign destination is processed by the coordinator; legitimate entry
+// addresses retain their own processing account. Credits are gross imported
+// value, not disposal outcomes or custody backing. Business admission, bucket
+// accounting and any matching bounce OutMsg remain separate host obligations.
+inline td::Result<WorkchainFinalImportEvidence> build_workchain_routed_final_imports(
+    tos::WorkchainId workchain, int global_version,
+    const std::vector<td::Ref<vm::Cell>>& envelopes,
+    const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
+    const td::Bits256& coordinator, const td::Bits256& custody,
+    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells) {
+  if (coordinator == custody) return td::Status::Error("final import roles must be distinct");
+  return final_import_detail::build(workchain, global_version, envelopes, transactions, max_inbound,
+                                    max_transactions, extra_validation_cells,
+                                    [&](const td::Bits256& destination) {
+                                      return destination == custody ? custody : coordinator;
+                                    });
 }
 
 }  // namespace block
