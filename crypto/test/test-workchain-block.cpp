@@ -5,6 +5,7 @@
 #include "block/workchain-block-execution.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-participant-record.h"
+#include "block/workchain-value-flow.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
@@ -25,6 +26,63 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, NativeAccountValueFlow) {
+  using C = block::CurrencyCollection;
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  // Coordinator funds a custody top-up. Both rows must balance separately.
+  std::vector<block::WorkchainAccountValueFlow> rows{
+      {a, C(20), C(0), C(12), C(0), C(3)},
+      {b, C(100), C(4), C(99), C(10), C(0)}};
+  std::vector<block::WorkchainInternalTransfer> edges{{a, b, C(5)}};
+  auto verify = [&](const auto& r, const auto& t) {
+    return block::verify_workchain_value_flow(r, t, 2, 1, 1024);
+  };
+  ASSERT_TRUE(verify(rows, edges).is_ok());
+  auto shifted = rows;
+  shifted[0].new_balance = C(11);
+  shifted[1].new_balance = C(100); // Same batch total, wrong per-account allocation.
+  ASSERT_TRUE(verify(shifted, edges).is_error());
+  ASSERT_TRUE(verify(rows, std::vector<block::WorkchainInternalTransfer>{}).is_error());
+  auto reversed = edges;
+  reversed[0].from = b;
+  reversed[0].to = a;
+  ASSERT_TRUE(verify(rows, reversed).is_error());
+  auto invalid = rows;
+  invalid[0].fees = C(-1);
+  ASSERT_TRUE(verify(invalid, edges).is_error());
+  invalid = rows;
+  invalid[1].account = a;
+  ASSERT_TRUE(verify(invalid, edges).is_error());
+  auto outside = edges;
+  outside[0].to.as_slice().back() = 2;
+  ASSERT_TRUE(verify(rows, outside).is_error());
+  ASSERT_TRUE(block::verify_workchain_value_flow(rows, edges, 1, 1, 1024).is_error());
+  ASSERT_TRUE(block::verify_workchain_value_flow(rows, edges, 2, 0, 1024).is_error());
+  ASSERT_EQ(td::cmp(rows[0].old_balance.tomis, td::make_refint(20)), 0);
+  auto extra = [&](long long n) {
+    vm::Dictionary dict(32);
+    vm::CellBuilder cb;
+    ASSERT_TRUE(block::tlb::t_VarUIntegerPos_32.store_integer_value(cb, *td::make_refint(n)));
+    ASSERT_TRUE(dict.set_builder(a.bits(), 32, cb));
+    return dict.get_root_cell();
+  };
+  std::vector<block::WorkchainAccountValueFlow> multi{
+      {a, C(0, extra(7)), C(0), C(0, extra(7)), C(0), C(0)}};
+  ASSERT_TRUE(verify(multi, std::vector<block::WorkchainInternalTransfer>{}).is_ok());
+  multi[0].new_balance = C(0, extra(6));
+  ASSERT_TRUE(verify(multi, std::vector<block::WorkchainInternalTransfer>{}).is_error());
+  auto huge = td::make_refint(0);
+  huge.unique_write().set_pow2(255);
+  std::vector<block::WorkchainAccountValueFlow> wide{
+      {a, C(huge), C(0), C(huge), C(0), C(0)}};
+  ASSERT_TRUE(verify(wide, std::vector<block::WorkchainInternalTransfer>{}).is_ok());
+  wide[0].imported = C(huge);
+  wide[0].exported = C(huge);
+  ASSERT_TRUE(verify(wide, std::vector<block::WorkchainInternalTransfer>{}).is_error());
+}
 
 TEST(WorkchainBlock, ParticipantRecordBinding) {
   auto a = td::Bits256::zero();
