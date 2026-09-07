@@ -94,6 +94,36 @@ TEST(WorkchainBlock, HostIdentityBinding) {
   ASSERT_TRUE(block::encode_workchain_host_identity(base).is_error());
 }
 
+TEST(WorkchainBlock, AdmittedIdentityAgreement) {
+  auto leaf = vm::CellBuilder().store_long(1, 1).finalize();
+  auto hash = td::Bits256(leaf->get_hash().bits());
+  block::InputPolicyIdentity policy_id{leaf->get_hash(), true, INT64_MIN, UINT64_MAX, 3, 1};
+  auto resolved = block::ResolvedInputPolicy::from_resolved_fields({1, 1, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(resolved));
+  block::CandidateAdmissionSession session(leaf, std::get<block::ResolvedInputPolicy>(resolved));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(result));
+  const auto& admitted = std::get<block::AdmittedInput>(result);
+  block::WorkchainHostIdentity host{-1, hash, hash, 2, UINT64_MAX, hash, true,
+      INT64_MIN, UINT64_MAX, 3, 1, hash, 1, 1, 1, leaf};
+  auto good = block::encode_admitted_workchain_host_identity(host, admitted);
+  ASSERT_TRUE(good.is_ok());
+  ASSERT_TRUE(good.ok()->get_hash() == block::encode_workchain_host_identity(host).move_as_ok()->get_hash());
+  for (int field = 0; field < 6; ++field) {
+    auto changed = host;
+    switch (field) {
+      case 0: changed.configuration_hash = td::Bits256::zero(); break;
+      case 1: changed.extended = false; break;
+      case 2: changed.engine_selector = 0; break;
+      case 3: changed.vm_mode = 0; break;
+      case 4: changed.descriptor_version = 4; break;
+      case 5: changed.admission_version = 2; break;
+    }
+    ASSERT_TRUE(block::encode_workchain_host_identity(changed).is_ok());
+    ASSERT_TRUE(block::encode_admitted_workchain_host_identity(changed, admitted).is_error());
+  }
+}
+
 TEST(WorkchainBlock, AccountDeclarationsCodec) {
   auto a = td::Bits256::zero();
   auto b = a;

@@ -48,7 +48,7 @@ td::Ref<vm::Cell> graph(std::uint64_t leaves) {
 }
 block::ResolvedInputPolicy policy(block::WorkchainInputLimits limits) {
   auto result = block::ResolvedInputPolicy::from_resolved_fields(
-      limits, block::InputPolicyIdentity{vm::CellHash{}, 1, 91, 1, 1});
+      limits, block::InputPolicyIdentity{vm::CellHash{}, true, 91, 0, 1, 1});
   require(std::holds_alternative<block::ResolvedInputPolicy>(result));
   return std::get<block::ResolvedInputPolicy>(result);
 }

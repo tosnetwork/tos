@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "common/bitstring.h"
+#include "block/workchain-input-admission.h"
 #include "td/utils/Status.h"
 #include "vm/cells.h"
 
@@ -47,6 +48,20 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_host_identity(const Workch
       .store_ref(value.finality).finalize();
   return vm::CellBuilder().store_long(0x7d71caf4, 32).store_ref(domain)
       .store_ref(policy).store_ref(context).finalize();
+}
+
+// Keep admission and commitment on the same resolved configuration cut.
+// Authenticating that cut remains the host's responsibility.
+inline td::Result<td::Ref<vm::Cell>> encode_admitted_workchain_host_identity(
+    const WorkchainHostIdentity& value, const AdmittedInput& admitted) {
+  const auto& policy = admitted.policy_identity();
+  if (value.configuration_hash != td::Bits256(policy.configuration_hash.bits()) ||
+      value.extended != policy.extended || value.engine_selector != policy.engine_selector ||
+      value.vm_mode != policy.vm_mode || value.descriptor_version != policy.descriptor_version ||
+      value.admission_version != policy.admission_version) {
+    return td::Status::Error("host identity differs from admitted input policy");
+  }
+  return encode_workchain_host_identity(value);
 }
 
 }  // namespace block

@@ -13,7 +13,7 @@ static_assert(!std::is_constructible_v<block::AdmittedInput, td::Ref<vm::Cell>,
 td::Ref<vm::Cell> leaf() { return vm::CellBuilder().store_long(1, 1).finalize(); }
 
 block::ResolvedInputPolicy policy(block::WorkchainInputLimits limits) {
-  block::InputPolicyIdentity identity{leaf()->get_hash(), 0, 0x434e5431, 1, 1};
+  block::InputPolicyIdentity identity{leaf()->get_hash(), true, 0x434e5431, UINT64_MAX, 1, 1};
   auto result = block::ResolvedInputPolicy::from_resolved_fields(limits, identity);
   ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(result));
   return std::get<block::ResolvedInputPolicy>(result);
@@ -60,6 +60,8 @@ TEST(WorkchainAdmission, OwnsEveryDescendantAndPreservesIdentity) {
   ASSERT_TRUE(accepted.candidate()->get_hash() == root->get_hash());
   ASSERT_TRUE(accepted.policy_identity().configuration_hash == leaf()->get_hash());
   ASSERT_EQ(accepted.policy_identity().engine_selector, 0x434e5431);
+  ASSERT_TRUE(accepted.policy_identity().extended);
+  ASSERT_EQ(accepted.policy_identity().vm_mode, UINT64_MAX);
   ASSERT_EQ(accepted.policy_identity().descriptor_version, 1u);
   ASSERT_EQ(accepted.policy_identity().admission_version, 1u);
   fail = true;
@@ -109,7 +111,7 @@ TEST(WorkchainAdmission, ProtocolRejectionPrecedesUnnecessaryLoads) {
 }
 
 TEST(WorkchainAdmission, ConfigurationFailureIsSeparate) {
-  block::InputPolicyIdentity identity{leaf()->get_hash(), 0, 1, 1, 1};
+  block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 1};
   for (auto limits : {block::WorkchainInputLimits{0, 1, 1}, {1, 0, 1}, {1, 1, 0}}) {
     auto result = block::ResolvedInputPolicy::from_resolved_fields(limits, identity);
     ASSERT_TRUE(std::holds_alternative<block::ConfigInvalid>(result));

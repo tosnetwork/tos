@@ -29,8 +29,9 @@ struct ConfigInvalid {
 // This prototype does not decode param 84 or authorize a configuration transition.
 struct InputPolicyIdentity {
   vm::CellHash configuration_hash;
-  std::uint8_t engine_format;
+  bool extended;
   std::int64_t engine_selector;
+  std::uint64_t vm_mode;
   std::uint32_t descriptor_version;
   std::uint16_t admission_version;
 };
