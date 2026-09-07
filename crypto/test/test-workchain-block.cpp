@@ -7,6 +7,7 @@
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
+#include "block/workchain-host-identity.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -22,6 +23,76 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, HostIdentityBinding) {
+  auto one = td::Bits256::zero();
+  one.as_slice().back() = 1;
+  auto two = one;
+  two.as_slice().back() = 2;
+  auto finality = vm::CellBuilder().store_long(1, 1).finalize();
+  block::WorkchainHostIdentity base{-239, one, two, 2, UINT64_MAX, one, true,
+      INT64_MIN, UINT64_MAX, UINT32_MAX, 1, two, UINT32_MAX, UINT32_MAX, UINT64_MAX, finality};
+  auto encoded = block::encode_workchain_host_identity(base);
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  ASSERT_TRUE(block::gen::t_UnoV2HostIdentity.validate_ref(4096, root));
+  auto top = vm::load_cell_slice(root);
+  ASSERT_EQ(top.size(), 32u);
+  ASSERT_EQ(top.size_refs(), 3u);
+  auto domain = vm::load_cell_slice(top.fetch_ref());
+  ASSERT_EQ(domain.size(), 672u);
+  ASSERT_EQ(domain.fetch_ulong(32), 0x5ab37c9au);
+  ASSERT_EQ(domain.fetch_long(32), -239);
+  td::Bits256 hash;
+  ASSERT_TRUE(domain.fetch_bits_to(hash) && hash == one);
+  ASSERT_TRUE(domain.fetch_bits_to(hash) && hash == two);
+  ASSERT_EQ(domain.fetch_long(32), 2);
+  ASSERT_EQ(domain.fetch_ulong(64), UINT64_MAX);
+  auto policy = vm::load_cell_slice(top.fetch_ref());
+  ASSERT_EQ(policy.size(), 481u);
+  ASSERT_EQ(policy.fetch_ulong(32), 0xf704b16cu);
+  ASSERT_TRUE(policy.fetch_bits_to(hash) && hash == one);
+  ASSERT_EQ(policy.fetch_ulong(1), 1u);
+  ASSERT_EQ(policy.fetch_long(64), INT64_MIN);
+  ASSERT_EQ(policy.fetch_ulong(64), UINT64_MAX);
+  ASSERT_EQ(policy.fetch_ulong(32), UINT32_MAX);
+  ASSERT_EQ(policy.fetch_ulong(32), 1u);
+  auto context = vm::load_cell_slice(top.fetch_ref());
+  ASSERT_EQ(context.size(), 416u);
+  ASSERT_EQ(context.fetch_ulong(32), 0x8a4ca5dcu);
+  ASSERT_TRUE(context.fetch_bits_to(hash) && hash == two);
+  ASSERT_EQ(context.fetch_ulong(32), UINT32_MAX);
+  ASSERT_EQ(context.fetch_ulong(32), UINT32_MAX);
+  ASSERT_EQ(context.fetch_ulong(64), UINT64_MAX);
+  ASSERT_TRUE(context.fetch_ref()->get_hash() == finality->get_hash());
+  for (int field = 0; field < 16; ++field) {
+    auto changed = base;
+    switch (field) {
+      case 0: changed.global_id = -238; break;
+      case 1: changed.genesis_hash = two; break;
+      case 2: changed.instance_id = one; break;
+      case 3: changed.workchain_id = 3; break;
+      case 4: changed.shard_id = 1; break;
+      case 5: changed.configuration_hash = two; break;
+      case 6: changed.extended = false; break;
+      case 7: changed.engine_selector = 0; break;
+      case 8: changed.vm_mode = 1; break;
+      case 9: changed.descriptor_version = 1; break;
+      case 10: changed.admission_version = 2; break;
+      case 11: changed.previous_shard_hash = one; break;
+      case 12: changed.height = 1; break;
+      case 13: changed.gen_utime = 1; break;
+      case 14: changed.host_after_lt = 1; break;
+      case 15: changed.finality = vm::CellBuilder().store_long(0, 1).finalize(); break;
+    }
+    auto other = block::encode_workchain_host_identity(changed);
+    ASSERT_TRUE(other.is_ok());
+    ASSERT_TRUE(block::gen::t_UnoV2HostIdentity.validate_ref(4096, other.ok()));
+    ASSERT_TRUE(other.ok()->get_hash() != root->get_hash());
+  }
+  base.finality.clear();
+  ASSERT_TRUE(block::encode_workchain_host_identity(base).is_error());
+}
 
 TEST(WorkchainBlock, AccountDeclarationsCodec) {
   auto a = td::Bits256::zero();
