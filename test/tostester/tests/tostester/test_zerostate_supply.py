@@ -116,6 +116,32 @@ def test_local_genesis_total_supply_is_exactly_five_billion_tos(tmp_path):
     )
 
 
+def test_ordinary_local_profile_can_explicitly_extend_bootstrap_validator_set(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    zerostate = create_zerostate(
+        install,
+        tmp_path,
+        NetworkConfig(bootstrap_validator_set_valid_for=86_400),
+        [Key()],
+    )
+
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 86_400
+
+
+@pytest.mark.parametrize("duration", [False, 0, -1, 0x1_0000_0000])
+def test_bootstrap_validator_set_lifetime_rejects_invalid_duration(tmp_path, duration):
+    install = Install(BUILD_DIR, REPO)
+    with pytest.raises(ValueError, match="bootstrap validator-set lifetime"):
+        create_zerostate(
+            install,
+            tmp_path,
+            NetworkConfig(bootstrap_validator_set_valid_for=duration),
+            [Key()],
+        )
+
+
 def test_validator_economics_profile_requires_exactly_four_keys(tmp_path):
     install = Install(BUILD_DIR, REPO)
     config = NetworkConfig(validator_economics_profile=True)
