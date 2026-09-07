@@ -8,6 +8,7 @@
 #include "block/workchain-value-flow.h"
 #include "block/workchain-native-allocation.h"
 #include "block/workchain-allocation-plan.h"
+#include "block/workchain-import-evidence.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -636,11 +637,12 @@ block::WorkchainBlockInput input() {
 
 td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
                                   td::optional<tos::LogicalTime> emitted = {},
-                                  const td::Bits256& destination = td::Bits256::zero()) {
+                                  const td::Bits256& destination = td::Bits256::zero(),
+                                  const block::CurrencyCollection& value = block::CurrencyCollection(100)) {
   vm::CellBuilder cb;
   cb.store_long(4, 4).store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
       .store_long(4, 3).store_long(2, 8).store_bits(destination.bits(), 256);
-  ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
+  ASSERT_TRUE(value.store(cb));
   cb.store_long(0, 4).store_long(1, 4).store_long(67, 8).store_long(lt, 64)
       .store_long(1, 32).store_zeroes(2).store_long(nonce, 64);
   auto message = cb.finalize();
@@ -1018,8 +1020,72 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
       block::CurrencyCollection(137), block::CurrencyCollection(10), cfg, 4096).is_ok());
   ASSERT_TRUE(paired_entry.serialize(cfg) && participant.serialize(cfg));
   ASSERT_TRUE(participant.balance == block::CurrencyCollection(1127));
+  std::map<td::Bits256, td::Ref<vm::Cell>> processing{{a, paired_entry.root}, {b, participant.root}};
+  auto imports = block::build_workchain_final_imports(2, 16, {inbox[0], inbox[1]}, processing,
+      2, 2, 4096).move_as_ok();
+  ASSERT_TRUE(imports.account_credits.at(a) == block::CurrencyCollection(200));
+  ASSERT_TRUE(imports.account_credits.find(b) == imports.account_credits.end());
+  ASSERT_TRUE(imports.value_imported == block::CurrencyCollection(334));
+  ASSERT_TRUE(imports.fees_collected == block::CurrencyCollection(134));
+  block::tlb::InMsgDescr native_imports(16);
+  ASSERT_TRUE(native_imports.validate_ref(4096, imports.in_msg_descr));
+  ASSERT_TRUE(block::gen::t_InMsgDescr.validate_ref(4096, imports.in_msg_descr));
+  vm::AugmentedDictionary imported_records(vm::load_cell_slice_ref(imports.in_msg_descr), 256, native_imports.aug);
+  for (const auto& envelope_root : {inbox[0], inbox[1]}) {
+    block::tlb::MsgEnvelope::Record_std envelope;
+    ASSERT_TRUE(tlb::unpack_cell(envelope_root, envelope));
+    auto record = imported_records.lookup(envelope.msg->get_hash().bits(), 256);
+    ASSERT_TRUE(record.not_null());
+    auto decoded_import = *record;
+    ASSERT_EQ(decoded_import.fetch_ulong(3), 4u);
+    ASSERT_TRUE(decoded_import.fetch_ref()->get_hash() == envelope_root->get_hash());
+    ASSERT_TRUE(decoded_import.fetch_ref()->get_hash() == paired_entry.root->get_hash());
+  }
+  auto no_imports = block::build_workchain_final_imports(2, 16, {}, processing, 0, 2, 4096).move_as_ok();
+  ASSERT_TRUE(no_imports.account_credits.empty() && no_imports.value_imported.is_zero() && no_imports.fees_collected.is_zero());
+  ASSERT_TRUE(native_imports.validate_ref(4096, no_imports.in_msg_descr));
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbox[0], inbox[0]}, processing, 2, 2, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbox[0], inbox[1]}, processing, 1, 2, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbox[0]}, processing, 2, 1, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 15, {inbox[0]}, processing, 2, 2, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbox[0]}, processing, 2, 2, 0).is_error());
+  auto wrong_processing = processing;
+  wrong_processing[a] = participant.root;
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbox[0]}, wrong_processing, 2, 2, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbound_envelope(21)}, processing, 2, 2, 4096).is_error());
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {inbound_envelope(5, 0, 21)}, processing, 2, 2, 4096).is_error());
+  block::tlb::MsgEnvelope::Record_std excessive_fee;
+  ASSERT_TRUE(tlb::unpack_cell(inbox[0], excessive_fee));
+  excessive_fee.fwd_fee_remaining = td::make_refint(68);
+  td::Ref<vm::Cell> excessive_envelope;
+  ASSERT_TRUE(tlb::pack_cell(excessive_envelope, excessive_fee));
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {excessive_envelope}, processing, 2, 2, 4096).is_error());
+  block::tlb::MsgEnvelope::Record_std zero_fee;
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(5, 77, {}, a, block::CurrencyCollection(0)), zero_fee));
+  zero_fee.fwd_fee_remaining = td::make_refint(0);
+  td::Ref<vm::Cell> zero_envelope;
+  ASSERT_TRUE(tlb::pack_cell(zero_envelope, zero_fee));
+  // Duplicate rejection must survive when all augmentation amounts are zero;
+  // otherwise the aggregate-total check could mask a missing uniqueness guard.
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {zero_envelope, zero_envelope}, processing,
+      2, 2, 4096).is_error());
+  vm::Dictionary imported_extra_values(32);
+  vm::CellBuilder imported_extra_value;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(imported_extra_value, *td::make_refint(5)));
+  ASSERT_TRUE(imported_extra_values.set_builder(td::BitArray<32>(7u), imported_extra_value));
+  block::CurrencyCollection extra_import_value(100, imported_extra_values.get_root_cell());
+  auto extra_import_envelope = inbound_envelope(5, 0, {}, a, extra_import_value);
+  // Primitive import accounting only: authorizing a new batch must also bind
+  // this changed envelope to its entry input and corresponding state update.
+  auto extra_imports = block::build_workchain_final_imports(2, 16, {extra_import_envelope}, processing,
+      2, 2, 4096).move_as_ok();
+  ASSERT_TRUE(extra_imports.account_credits.at(a) == extra_import_value);
+  ASSERT_TRUE(extra_imports.value_imported == block::CurrencyCollection(167, imported_extra_values.get_root_cell()));
+  ASSERT_TRUE(extra_imports.fees_collected == block::CurrencyCollection(67));
+  ASSERT_TRUE(block::build_workchain_final_imports(2, 16, {extra_import_envelope}, processing, 2, 2, 1).is_error());
   std::vector<block::WorkchainAccountValueFlow> rows;
-  auto actual_row = [&](const block::Account& before, const Transaction& built, unsigned imported) {
+  auto actual_row = [&](const block::Account& before, const Transaction& built,
+                        const block::CurrencyCollection& imported) {
     block::gen::Account::Record_account old_account, new_account;
     block::gen::AccountStorage::Record old_storage, new_storage;
     block::gen::Transaction::Record transaction;
@@ -1032,12 +1098,12 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
     ASSERT_TRUE(tlb::unpack_cell(built.root, transaction) && fees.unpack(transaction.total_fees));
     ASSERT_EQ(transaction.outmsg_cnt, 0);
     ASSERT_TRUE(fees.is_zero());
-    rows.push_back({before.addr, old_balance, block::CurrencyCollection(imported),
+    rows.push_back({before.addr, old_balance, imported,
         new_balance, block::CurrencyCollection(0), fees});
     return transaction.description;
   };
-  actual_row(coordinator, paired_entry, 200);  // Two actual fixture messages, each carrying 100.
-  auto participant_desc = actual_row(second, participant, 0);
+  actual_row(coordinator, paired_entry, imports.account_credits.at(a));
+  auto participant_desc = actual_row(second, participant, block::CurrencyCollection(0));
   auto participant_slice = vm::load_cell_slice(participant_desc);
   ASSERT_EQ(participant_slice.size(), 4u);
   ASSERT_EQ(participant_slice.size_refs(), 1u);
@@ -1128,7 +1194,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(extra_tx.prepare_workchain_allocation_participant(pair_bindings[1], number(321),
       extra_amount(td::make_refint(7)), extra_amount(td::make_refint(3)), cfg, 4096).is_ok());
   ASSERT_TRUE(extra_tx.balance == extra_amount(td::make_refint(9)) && extra_tx.serialize(cfg));
-  actual_row(extra_owner, extra_tx, 0);
+  actual_row(extra_owner, extra_tx, block::CurrencyCollection(0));
   ASSERT_TRUE(rows.back().new_balance == extra_amount(td::make_refint(9)));
   for (unsigned fault = 0; fault < 3; ++fault) {
     LOG(INFO) << "allocation extra-currency rejection case=" << fault;

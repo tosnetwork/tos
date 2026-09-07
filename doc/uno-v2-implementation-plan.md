@@ -878,3 +878,41 @@ not mutation CI. The first eleven precede the explicit commit-return check and
 the payout-only narrowing refinement; both subsequent changes have a restored
 green regression recorded separately. No exhaustive independent mutation of
 every redundant Native consistency check is claimed.
+
+### Native final-import evidence (M1 integration in progress)
+
+`workchain-import-evidence.h` constructs standard final InMsg records referencing
+serialized Native transactions. Records are keyed by the message hash, not the
+envelope hash. The helper checks destination/account agreement, creation and
+emission logical times, original versus remaining forwarding fees, explicit
+entry bounds and the currency-validation budget. Native import-fee evaluation
+and the actual augmented InMsg dictionary independently reconstruct totals.
+Account credit is imported value minus collected fees using checked currency
+subtraction; forwarding fees must not increase the recipient's principal.
+
+The paired-entry fixture now feeds its independently decoded value-flow rows
+from actual InMsg-derived credits rather than a literal imported amount. Tests
+also inspect both InMsg parsers and actual envelope/transaction references.
+Extra-currency examples test primitive accounting only: they do not claim that
+the changed inbox is authorized by the fixture's original batch commitment.
+A zero-value, zero-remaining-fee duplicate is important: aggregate totals cannot
+detect that duplicate, so it independently witnesses the dictionary Add rule.
+
+This is a post-admission construction primitive, not queue authentication or
+complete batch acceptance. Queue membership, inbox completeness, transaction
+roles, own-queue dequeue evidence, DispatchQueue provenance and unexpected
+destination disposal remain enclosing-host obligations. Entry-count bounds do
+not replace closure admission. Exceptions retain their source for the caller;
+this helper introduces no error-origin classification or production wiring.
+The runner still rejects nonempty inboxes before engine invocation. M1 review
+and production admission remain pending.
+
+Thirteen rebuilt manual controls independently remove credit/fee separation,
+message-key selection, transaction-address binding, creation/emission LT checks,
+the remaining-fee ceiling, each entry bound, the version gate, each currency
+budget guard, zero-value duplicate rejection and the processing-transaction
+reference. Each build succeeds and each test fails on a state/value or rejection
+assertion, not an error-string comparison. Restored five-target regression and
+standalone-header compilation pass. Substitutions, raw output and source/binary
+hashes are in `measurements/uno-v2-final-import-evidence.json`; these controls
+were run manually and are not mutation CI or exhaustive guard coverage.
