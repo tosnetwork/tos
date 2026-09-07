@@ -8,6 +8,7 @@
 #include "block/workchain-value-flow.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
+#include "block/workchain-payout-overlay.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
@@ -1714,6 +1715,72 @@ TEST(WorkchainBlock, NativePayoutPair) {
   ASSERT_TRUE(coordinator.total_state->get_hash() == old_coordinator);
   pair[0]->balance = block::CurrencyCollection(901);
   ASSERT_TRUE(!pair[0]->serialize(cfg));
+
+  block::gen::ShardStateUnsplit::Record larger;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 4, false, 0, 40, false, 1000), larger));
+  vm::AugmentedDictionary prior(vm::load_cell_slice_ref(larger.accounts), 256, block::tlb::aug_ShardAccounts);
+  td::Bits256 third(number(2)->get_hash().bits()), untouched(number(3)->get_hash().bits());
+  std::vector<block::WorkchainStorageWrite> writes;
+  for (auto key : {a, b, third}) {
+    block::tlb::ShardAccount::Record before;
+    ASSERT_TRUE(before.unpack(prior.lookup(key)));
+    writes.push_back({key, td::Bits256(before.account->get_hash().bits()), number(72)});
+  }
+  std::sort(writes.begin(), writes.end(), [](const auto& x, const auto& y) { return x.account < y.account; });
+  auto overlay = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
+      b, a, request, td::make_refint(500), 4, cfg, pricing);
+  ASSERT_TRUE(overlay.is_ok());
+  auto materialized = overlay.move_as_ok();
+  ASSERT_EQ(materialized.state.end_lt, 23u);
+  ASSERT_TRUE(materialized.message.not_null());
+  ASSERT_TRUE(materialized.fee_funding.from == a && materialized.fee_funding.to == b);
+  ASSERT_TRUE(materialized.fee_funding.value == block::CurrencyCollection(100));
+  block::gen::CommonMsgInfo::Record_int_msg_info actual_message;
+  ASSERT_TRUE(tlb::unpack_cell_inexact(materialized.message, actual_message));
+  ASSERT_EQ(actual_message.created_lt, 22u);
+  block::gen::MsgAddressInt::Record_addr_std actual_source;
+  ASSERT_TRUE(tlb::csr_unpack(actual_message.src, actual_source));
+  ASSERT_TRUE(actual_source.address == b);
+  vm::AugmentedDictionary next(vm::load_cell_slice_ref(materialized.state.accounts), 256, block::tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(materialized.state.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+  ASSERT_TRUE(next.lookup(untouched)->contents_equal(*prior.lookup(untouched)));
+  ASSERT_TRUE(blocks.lookup(untouched).is_null());
+  for (auto key : {a, b, third}) {
+    block::Account updated(2, key.bits());
+    ASSERT_TRUE(updated.unpack(next.lookup(key), 10, false));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == b ? 863 : key == a ? 900 : 1000));
+    ASSERT_EQ(updated.last_trans_lt_, 21u);
+    ASSERT_EQ(updated.last_trans_end_lt_, key == b ? 23u : 22u);
+    ASSERT_TRUE(updated.data->get_hash() == number(72)->get_hash());
+    auto block_root = vm::CellBuilder().append_cellslice(*blocks.lookup(key)).finalize();
+    ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, block_root));
+    ASSERT_TRUE(block::tlb::t_AccountBlock.validate_ref(4096, block_root));
+    block::gen::AccountBlock::Record account_block;
+    ASSERT_TRUE(tlb::unpack_cell(block_root, account_block));
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(), account_block.transactions, 64, block::tlb::aug_AccountTransactions);
+    auto tx_root = txs.lookup_ref(td::BitArray<64>(21u));
+    ASSERT_TRUE(tx_root.not_null());
+    ASSERT_TRUE(updated.last_trans_hash_ == tx_root->get_hash().bits());
+    if (key == b) {
+      block::gen::Transaction::Record recorded;
+      ASSERT_TRUE(tlb::unpack_cell(tx_root, recorded));
+      vm::Dictionary outputs(recorded.r1.out_msgs, 15);
+      ASSERT_TRUE(outputs.lookup_ref(td::BitArray<15>::zero())->get_hash() == materialized.message->get_hash());
+    }
+  }
+  auto repeat = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
+      b, a, request, td::make_refint(500), 4, cfg, pricing);
+  ASSERT_TRUE(repeat.is_ok());
+  ASSERT_TRUE(repeat.ok().state.accounts->get_hash() == materialized.state.accounts->get_hash());
+  ASSERT_TRUE(repeat.ok().state.account_blocks->get_hash() == materialized.state.account_blocks->get_hash());
+  auto wrong_read = writes;
+  wrong_read[0].old_account_hash = td::Bits256::zero();
+  ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, wrong_read,
+      b, a, request, td::make_refint(500), 4, cfg, pricing).is_error());
+  auto invalid_writes = writes;
+  for (auto& write : invalid_writes) if (write.account == third) write.data.clear();
+  ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, invalid_writes,
+      b, a, request, td::make_refint(500), 4, cfg, pricing).is_error());
 }
 
 TEST(WorkchainBlock, NativePayoutPricing) {

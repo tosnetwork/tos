@@ -345,3 +345,52 @@ assertion. Logs, patches and artifact hashes are retained in
 facility, nor removal coverage of every context guard. The original stub failed
 the positive construction case; ordinary tests run in the registered block
 target. Review comments and their scope do not replace M1 end-to-end acceptance.
+
+### Payout plus storage dictionary materialization
+
+`workchain-payout-overlay.h` materializes a single authorized-by-caller payout
+alongside the complete supplied storage write set. It authenticates each declared
+old hash against the supplied old account dictionary before unpacking that
+account, maps roles to canonical key positions, and runs the shared LT planner
+over all participants. Custody/coordinator transactions come from the reviewed
+pair constructor; other accounts receive storage-only wrappers. The old
+storage-only builder and all production entry points remain unchanged.
+
+All Account and Transaction objects are private to the call. No engine callback
+can intervene between serialization and a private commit. The final dictionary
+diff must exactly match the declared writes and participant set. Account roots,
+AccountBlock roots and the one outgoing message are returned only together,
+after all checks; the function neither writes CellDb nor publishes a message.
+
+Value-flow rows are re-read from serialized old/new Native Account storage,
+Transaction fees and the actual outbound dictionary. The transaction's account
+state-update hashes are compared against those Account roots. Exported value
+includes the actual message's remaining forwarding fee, not just its payment.
+The returned internal fee-funding edge is included in the per-account check.
+This removes reliance on allocation rows as proof of serialization consistency;
+it does **not** authenticate a withdrawal or replace independent validator
+replay of externally supplied block/state artifacts.
+
+The fixture changes three of four funded accounts and puts custody after the
+coordinator in key order. It unpacks all three new accounts and AccountBlocks,
+checks principal/fee separation, transaction links, data, the outgoing message
+hash and LT, and leaves the fourth account byte-for-byte unchanged. A repeated
+construction has the same roots. A false old hash is rejected before account
+preparation. Invalid storage data after an earlier private commit returns no
+result. The original unimplemented builder failed the positive case.
+
+This is post-execution materialization, still not a live multi-account host.
+Role/effects authorization, full source-aware admission and exception mapping,
+closure/read/serialization budgets, coordinator entry/inbox/storage charges,
+and final shard update/replay/queue publication remain required. Count bounds
+are not traversal budgets. The single outgoing-message bound is the current
+custody participant shape, not a new production throughput setting. No
+consensus call site or error category changed here; review is due with M1.
+
+Three rebuilt manual mutants omit the returned message, publish an incorrect
+last_trans LT, or omit the remaining forwarding fee from decoded export value.
+They fail nullness, numeric-link or successful-construction assertions
+respectively. The last control exercises the serialized value-flow check; it
+is not an externally supplied malicious-block test. Raw logs and hashes are in
+`measurements/uno-v2-payout-overlay-evidence.json`. These controls are not CI
+mutation automation; the ordinary fixture runs in the registered block test.
