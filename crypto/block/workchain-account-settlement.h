@@ -52,7 +52,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   td::Ref<vm::Cell> message;
   if (executed.effects.payout_request.is_null()) {
     TRY_RESULT(allocated, build_workchain_allocation_overlay(old_accounts, identity, executed.input,
-        effects_root, coordinator, max_reads, max_writes, max_transfers,
+        effects_root, coordinator, custody, max_reads, max_writes, max_transfers,
         extra_validation_cells, cfg));
     state = std::move(allocated);
   } else {

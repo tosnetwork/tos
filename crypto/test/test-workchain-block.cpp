@@ -1889,7 +1889,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   }
   auto replay = [&](const auto& claim) {
     return block::replay_workchain_allocation_overlay(state.accounts, identity, allocated.input,
-        allocated.effects, b, 2, 2, 2, 4096, cfg, claim);
+        allocated.effects, b, a, 2, 2, 2, 4096, cfg, claim);
   };
   auto repeated = replay(allocated.state).move_as_ok();
   ASSERT_TRUE(repeated.accounts->get_hash() == allocated.state.accounts->get_hash());
@@ -1905,35 +1905,49 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   auto wrong_identity = identity;
   wrong_identity.height = 2;
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, wrong_identity, allocated.input,
-      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+      allocated.effects, b, a, 2, 2, 2, 4096, cfg).is_error());
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, allocated.input,
-      allocated.effects, untouched, 2, 2, 2, 4096, cfg).is_error());
+      allocated.effects, untouched, a, 2, 2, 2, 4096, cfg).is_error());
   auto later = identity;
   later.host_after_lt = 10;
   auto with_inbox = block::encode_workchain_host_input(later, admitted, declarations,
       {inbound_envelope(5)}, 2, 2, 1).move_as_ok();
-  // The message is addressed to the non-entry account. Omitting the outer
-  // message gate must not silently skip it via the entry's destination filter.
+  // The message-free wrapper still rejects custody imports; the explicit
+  // inbound materializer below settles both authenticated receiving roles.
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, later, with_inbox,
-      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
-  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, later, with_inbox,
-      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
-  auto zero_foreign_input = block::encode_workchain_host_input(later, admitted, declarations,
-      {inbound_envelope(5, 0, {}, a, block::CurrencyCollection(0))}, 2, 2, 1).move_as_ok();
-  // Zero principal prevents the independent value-flow equation from masking
-  // removal of the explicit unsupported-destination guard.
+      allocated.effects, b, a, 2, 2, 2, 4096, cfg).is_error());
+  auto foreign_access = declarations;
+  block::tlb::ShardAccount::Record foreign_old;
+  ASSERT_TRUE(foreign_old.unpack(accounts.lookup(untouched)));
+  foreign_access.reads.push_back({untouched, td::Bits256(foreign_old.account->get_hash().bits())});
+  foreign_access.writes.push_back(untouched);
+  std::sort(foreign_access.reads.begin(), foreign_access.reads.end(),
+      [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+  std::sort(foreign_access.writes.begin(), foreign_access.writes.end());
+  block::WorkchainAccountEffects foreign_effects;
+  foreign_effects.updates = {{a, number(101)}, {b, number(102)}, {untouched, number(103)}};
+  std::sort(foreign_effects.updates.begin(), foreign_effects.updates.end(),
+      [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+  foreign_effects.native_transfers = {{a, b, block::CurrencyCollection(1)}};
+  auto foreign_root = block::encode_workchain_account_effects(foreign_effects, 3, 2, 4096).move_as_ok();
+  auto zero_foreign_input = block::encode_workchain_host_input(later, admitted, foreign_access,
+      {inbound_envelope(5, 0, {}, untouched, block::CurrencyCollection(0))}, 3, 3, 1).move_as_ok();
+  // The third account has a real participant and zero imported principal, so
+  // neither missing-transaction evidence nor value flow can mask this guard.
   ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, later, zero_foreign_input,
-      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+      foreign_root, b, a, 3, 3, 2, 1, 4096, cfg).is_error());
   // The first message's created LT and the second message's emitted LT each
   // independently raise the shared schedule above the host boundary.
   auto imported_input = block::encode_workchain_host_input(identity, admitted, declarations,
-      {inbound_envelope(30, 1, {}, b), inbound_envelope(5, 2, 40, b)}, 2, 2, 2).move_as_ok();
+      {inbound_envelope(30, 1, {}, b), inbound_envelope(5, 2, 40, b), inbound_envelope(6, 3, {}, a)},
+      2, 2, 3).move_as_ok();
   auto inbound = block::build_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
-      allocated.effects, b, 2, 2, 2, 2, 4096, cfg).move_as_ok();
+      allocated.effects, b, a, 2, 2, 2, 3, 4096, cfg).move_as_ok();
   ASSERT_EQ(inbound.state.end_lt, 42u);
+  ASSERT_TRUE(inbound.imports.account_credits.at(a) == block::CurrencyCollection(100));
   ASSERT_TRUE(inbound.imports.account_credits.at(b) == block::CurrencyCollection(200));
-  ASSERT_TRUE(inbound.imports.value_imported == block::CurrencyCollection(334));
-  ASSERT_TRUE(inbound.imports.fees_collected == block::CurrencyCollection(134));
+  ASSERT_TRUE(inbound.imports.value_imported == block::CurrencyCollection(501));
+  ASSERT_TRUE(inbound.imports.fees_collected == block::CurrencyCollection(201));
   vm::AugmentedDictionary inbound_accounts(vm::load_cell_slice_ref(inbound.state.accounts), 256,
                                            block::tlb::aug_ShardAccounts);
   vm::AugmentedDictionary inbound_blocks(vm::load_cell_slice_ref(inbound.state.account_blocks), 256,
@@ -1946,7 +1960,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   for (auto key : {a, b}) {
     block::Account updated(2, key.bits());
     ASSERT_TRUE(updated.unpack(inbound_accounts.lookup(key), identity.gen_utime, false));
-    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 999 : 1201));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 1099 : 1201));
     ASSERT_EQ(updated.last_trans_lt_, 41u);
     auto ab_root = vm::CellBuilder().append_cellslice(*inbound_blocks.lookup(key)).finalize();
     ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, ab_root));
@@ -1955,23 +1969,47 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
     auto tx_root = txs.lookup_ref(td::BitArray<64>(41u));
     ASSERT_TRUE(tx_root.not_null() && updated.last_trans_hash_ == tx_root->get_hash().bits());
+    block::gen::Transaction::Record inbound_tx;
+    ASSERT_TRUE(tlb::unpack_cell(tx_root, inbound_tx));
+    ASSERT_TRUE(inbound_tx.account_addr == key && inbound_tx.prev_trans_hash == td::Bits256::zero());
+    ASSERT_EQ(inbound_tx.prev_trans_lt, 1u);
+    auto inbound_description = vm::load_cell_slice(inbound_tx.description);
+    ASSERT_EQ(inbound_description.fetch_ulong(4), key == b ? 12u : 11u);
+    block::gen::UnoV2HostRecord::Record inbound_binding;
+    ASSERT_TRUE(tlb::unpack_cell(inbound_description.fetch_ref(), inbound_binding));
+    ASSERT_TRUE(inbound_binding.account_id == key && inbound_binding.input_hash == imported_input->get_hash().bits() &&
+                inbound_binding.effects_hash == allocated.effects->get_hash().bits());
     if (key == b) {
-      ASSERT_TRUE(import_records.check_for_each([&](td::Ref<vm::CellSlice> row, td::ConstBitPtr, int) {
-        return row->prefetch_ref(1)->get_hash() == tx_root->get_hash();
-      }));
+      ASSERT_TRUE(inbound_description.fetch_ref()->get_hash() == imported_input->get_hash());
+      ASSERT_TRUE(inbound_description.fetch_ref()->get_hash() == allocated.effects->get_hash());
     }
+    ASSERT_TRUE(inbound_description.empty_ext());
+    std::vector<td::Ref<vm::Cell>> matching_imports;
+    ASSERT_TRUE(import_records.check_for_each([&](td::Ref<vm::CellSlice> row, td::ConstBitPtr, int) {
+      block::tlb::MsgEnvelope::Record_std envelope;
+      block::gen::CommonMsgInfo::Record_int_msg_info info;
+      block::gen::MsgAddressInt::Record_addr_std destination;
+      if (!tlb::unpack_cell(row->prefetch_ref(0), envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
+          !block::gen::csr_unpack(info.dest, destination)) return false;
+      if (destination.address != key) return true;
+      matching_imports.push_back(envelope.msg);
+      return row->prefetch_ref(1)->get_hash() == tx_root->get_hash();
+    }));
+    ASSERT_EQ(matching_imports.size(), key == a ? 1u : 2u);
   }
   auto created_only_input = block::encode_workchain_host_input(identity, admitted, declarations,
       {inbound_envelope(30, 1, {}, b)}, 2, 2, 1).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, created_only_input,
+      allocated.effects, b, b, 2, 2, 2, 1, 4096, cfg).is_error());
   ASSERT_EQ(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, created_only_input,
-      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).move_as_ok().state.end_lt, 32u);
+      allocated.effects, b, a, 2, 2, 2, 1, 4096, cfg).move_as_ok().state.end_lt, 32u);
   ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
-      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+      allocated.effects, b, a, 2, 2, 2, 1, 4096, cfg).is_error());
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, imported_input,
-      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+      allocated.effects, b, a, 2, 2, 2, 4096, cfg).is_error());
   auto replay_inbound = [&](const auto& claim) {
     return block::replay_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
-        allocated.effects, b, 2, 2, 2, 2, 4096, cfg, claim);
+        allocated.effects, b, a, 2, 2, 2, 3, 4096, cfg, claim);
   };
   ASSERT_TRUE(replay_inbound(inbound).is_ok());
   for (unsigned field = 0; field < 4; ++field) {
@@ -1988,11 +2026,12 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   stale_cache.imports.fees_collected = block::CurrencyCollection(0);
   auto cache_rebuilt = replay_inbound(stale_cache).move_as_ok();
   ASSERT_TRUE(cache_rebuilt.imports.account_credits.at(b) == block::CurrencyCollection(200));
-  ASSERT_TRUE(cache_rebuilt.imports.fees_collected == block::CurrencyCollection(134));
+  ASSERT_TRUE(cache_rebuilt.imports.account_credits.at(a) == block::CurrencyCollection(100));
+  ASSERT_TRUE(cache_rebuilt.imports.fees_collected == block::CurrencyCollection(201));
   auto overflowing_lt = block::encode_workchain_host_input(identity, admitted, declarations,
       {inbound_envelope(UINT64_MAX, 0, {}, b)}, 2, 2, 1).move_as_ok();
   ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, overflowing_lt,
-      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+      allocated.effects, b, a, 2, 2, 2, 1, 4096, cfg).is_error());
   ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
   block::WorkchainAccountEffects mixed;
   mixed.updates = {{a, number(101)}, {b, number(102)}};
@@ -2000,7 +2039,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   mixed.payout_request = number(123);
   auto mixed_root = block::encode_workchain_account_effects(mixed, 2, 2, 4096).move_as_ok();
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, allocated.input,
-      mixed_root, b, 2, 2, 2, 4096, cfg).is_error());
+      mixed_root, b, a, 2, 2, 2, 4096, cfg).is_error());
   engine.reverse_transfer = true;
   engine.calls = 0;
   auto reversed = settle().move_as_ok();

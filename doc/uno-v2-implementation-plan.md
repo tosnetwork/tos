@@ -1143,3 +1143,38 @@ proof of queue provenance, Deposit admission or authenticated bounce matching.
 Repeated full-context validation must be included in admission costs. Retirement
 does not remove the descriptor, parameter 84 or custody; this work makes no new
 claim about message termination or a finite network delivery deadline.
+
+### Dual receiving-role allocation materialization (M1 integration)
+
+The non-payout materializer and replay now take both coordinator and custody
+explicitly, require distinct roles, and canonicalize the two-element receiving
+set before planning the complete inbox. Only these two accounts use full-context
+credit preparation. Other changed accounts use allocation-only records even if
+they appear in the write set; membership in that set is not permission to
+receive Native messages. The message-free wrapper still passes a zero inbox
+bound and the complete runner still refuses nonempty inboxes until mandatory
+disposal and payout integration are delivered.
+
+The test carries three actual envelopes: two for the coordinator, one for
+custody. It checks both credited balances, the complete Native augmentation,
+each InMsg's actual processing transaction, both participant bindings and the
+unique full entry, last-transaction links, replay roots, and an untouched
+account. An unsupported-recipient witness includes that third account in the
+real write set and imports zero principal. Thus missing transaction evidence
+and independent balance checks cannot mask removal of the receiving-role gate.
+Distinct-role rejection is tested with a coordinator-only inbox so foreign
+message rejection cannot mask it either.
+
+The pre-change materializer rejected the positive custody import. After
+implementation the positive fixture passes. Nine rebuilt removal controls fail:
+receiving set, custody preparation and independent credit, actual InMsg
+processing reference, distinct roles, an unsupported written recipient,
+replayed InMsg root, replayed custody role and canonical role order. The role
+alias control also removes the planner's redundant duplicate rejection by
+deduplicating its input. Restored five-target regression and standalone header
+compilation pass. Exact substitutions, logs and hashes are archived in
+`measurements/uno-v2-dual-inbound-allocation-evidence.json`; these are manual
+controls, not recurring mutation CI. This unit adds neither a new classification nor a
+change to a named live consensus-judgment file; independent review remains due
+at the M1 milestone. Shared decoder source attribution, aggregate traversal
+admission, authenticated bounce matching and full live publication remain open.

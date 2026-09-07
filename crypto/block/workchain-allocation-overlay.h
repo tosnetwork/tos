@@ -15,8 +15,10 @@ struct WorkchainInboundAllocationOverlay {
 
 // Existing-account, internal-transfer materialization. The single entry carries
 // the full committed input/effects; other records carry only their binding.
-// Only standard final imports addressed to the coordinator are supported here.
-// Custody imports, disposal, queue provenance and payout remain separate host
+// Standard final imports may address the coordinator or custody. At most these
+// two roles use full-context credit validation; all other participants use the
+// allocation plan. Both traversals must be accounted for by admission. Disposal,
+// queue provenance, return authorization and payout remain separate host
 // work; unsupported messages are rejected, never filtered out of the inbox.
 // Roles, input, effects, policy and old-state provenance require admission and
 // authentication before this call. Exceptions retain that source at the caller.
@@ -24,12 +26,14 @@ struct WorkchainInboundAllocationOverlay {
 inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_allocation_overlay(
     td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
     td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers, std::uint64_t max_inbound,
     int extra_validation_cells, const SerializeConfig& cfg) {
   gen::UnoV2HostInput::Record decoded;
   gen::UnoV2HostEffects::Record output;
   gen::UnoV2NativeEffects::Record native;
-  if (identity.workchain_id < 0 || !tlb::unpack_cell(input, decoded) || !tlb::unpack_cell(effects, output) ||
+  if (identity.workchain_id < 0 || coordinator == custody ||
+      !tlb::unpack_cell(input, decoded) || !tlb::unpack_cell(effects, output) ||
       !tlb::unpack_cell(output.native, native)) return td::Status::Error("invalid allocation overlay input");
   TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
   if (decoded.identity->get_hash() != expected_identity->get_hash()) {
@@ -42,7 +46,9 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
   if (decoded.inbox->prefetch_ulong(1) != 0) {
     inbox_root = decoded.inbox->prefetch_ref();
   }
-  TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, identity.workchain_id, {coordinator},
+  std::vector<td::Bits256> recipients{coordinator, custody};
+  std::sort(recipients.begin(), recipients.end());
+  TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, identity.workchain_id, recipients,
       identity.host_after_lt, max_inbound));
   TRY_RESULT(declarations, decode_workchain_account_declarations(decoded.access, max_reads, max_writes));
   TRY_RESULT(plan, plan_workchain_native_allocations(output, max_writes, max_transfers, extra_validation_cells));
@@ -82,6 +88,9 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     if (keys[i] == coordinator) {
       TRY_STATUS(tx.prepare_workchain_entry(bindings[i], input, effects, updates.lookup_ref(keys[i]),
                                            cfg, max_transfers, extra_validation_cells));
+    } else if (keys[i] == custody) {
+      TRY_STATUS(tx.prepare_workchain_import_participant(bindings[i], input, effects, updates.lookup_ref(keys[i]),
+                                                        cfg, max_transfers, extra_validation_cells));
     } else {
       const auto& totals = plan.accounts.at(keys[i]);
       TRY_STATUS(tx.prepare_workchain_allocation_participant(bindings[i], updates.lookup_ref(keys[i]),
@@ -147,26 +156,28 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
 }
 
 // Existing message-free API keeps its zero-inbox boundary until the enclosing
-// runner handles every authenticated queue item, including disposal and custody.
+// runner handles every authenticated queue item, including disposal and returns.
 inline td::Result<WorkchainStorageOverlay> build_workchain_allocation_overlay(
     td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
     td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,
     int extra_validation_cells, const SerializeConfig& cfg) {
   TRY_RESULT(built, build_workchain_inbound_allocation_overlay(old_accounts, identity, input, effects,
-      coordinator, max_reads, max_writes, max_transfers, 0, extra_validation_cells, cfg));
+      coordinator, custody, max_reads, max_writes, max_transfers, 0, extra_validation_cells, cfg));
   return std::move(built.state);
 }
 
 inline td::Result<WorkchainInboundAllocationOverlay> replay_workchain_inbound_allocation_overlay(
     td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
     td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers, std::uint64_t max_inbound,
     int extra_validation_cells, const SerializeConfig& cfg, const WorkchainInboundAllocationOverlay& claimed) {
   if (claimed.state.accounts.is_null() || claimed.state.account_blocks.is_null() ||
       claimed.imports.in_msg_descr.is_null()) return td::Status::Error("missing claimed inbound artifacts");
   TRY_RESULT(rebuilt, build_workchain_inbound_allocation_overlay(old_accounts, identity, input, effects,
-      coordinator, max_reads, max_writes, max_transfers, max_inbound, extra_validation_cells, cfg));
+      coordinator, custody, max_reads, max_writes, max_transfers, max_inbound, extra_validation_cells, cfg));
   if (rebuilt.state.accounts->get_hash() != claimed.state.accounts->get_hash() ||
       rebuilt.state.account_blocks->get_hash() != claimed.state.account_blocks->get_hash() ||
       rebuilt.state.end_lt != claimed.state.end_lt ||
@@ -183,13 +194,14 @@ inline td::Result<WorkchainInboundAllocationOverlay> replay_workchain_inbound_al
 inline td::Result<WorkchainStorageOverlay> replay_workchain_allocation_overlay(
     td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
     td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,
     int extra_validation_cells, const SerializeConfig& cfg, const WorkchainStorageOverlay& claimed) {
   if (claimed.accounts.is_null() || claimed.account_blocks.is_null()) {
     return td::Status::Error("missing claimed allocation artifacts");
   }
   TRY_RESULT(rebuilt, build_workchain_allocation_overlay(old_accounts, identity, input, effects, coordinator,
-      max_reads, max_writes, max_transfers, extra_validation_cells, cfg));
+      custody, max_reads, max_writes, max_transfers, extra_validation_cells, cfg));
   if (rebuilt.accounts->get_hash() != claimed.accounts->get_hash() ||
       rebuilt.account_blocks->get_hash() != claimed.account_blocks->get_hash() || rebuilt.end_lt != claimed.end_lt) {
     return td::Status::Error("claimed allocation artifacts differ from replay");
