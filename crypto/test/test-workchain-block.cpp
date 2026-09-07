@@ -7,6 +7,7 @@
 #include "block/workchain-participant-record.h"
 #include "block/workchain-value-flow.h"
 #include "block/workchain-native-allocation.h"
+#include "block/workchain-allocation-plan.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -786,6 +787,107 @@ TEST(WorkchainBlock, NativeAllocation) {
   auto extras = encode({{a, b, extra(5)}, {b, a, extra(7)}});
   ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(0), extras, 2, 4096).move_as_ok() == extra(2));
   ASSERT_TRUE(block::allocate_workchain_native_balance(b, C(0), extras, 2, 4096).is_error());
+}
+
+TEST(WorkchainBlock, BatchNativeAllocation) {
+  using C = block::CurrencyCollection;
+  auto a = td::Bits256::zero(), b = a, c = a, absent = a;
+  b.as_slice().back() = 1; c.as_slice().back() = 2; absent.as_slice().back() = 3;
+  block::WorkchainAccountEffects output;
+  output.updates = {{a, number(1)}, {b, number(2)}, {c, number(3)}};
+  auto root = block::encode_workchain_account_effects(output, 3, 0, 4096).move_as_ok();
+  block::gen::UnoV2HostEffects::Record base;
+  ASSERT_TRUE(tlb::unpack_cell(root, base));
+  // Deliberately bypass semantic encoding guards with generated TL-B records.
+  auto encode = [&](const std::vector<block::WorkchainInternalTransfer>& edges, bool hole = false) {
+    vm::Dictionary transfers(32);
+    std::uint32_t index = hole ? 1 : 0;
+    for (const auto& edge : edges) {
+      block::gen::UnoV2NativeTransfer::Record record;
+      record.source = edge.from; record.destination = edge.to;
+      ASSERT_TRUE(edge.value.pack_to(record.value));
+      td::Ref<vm::Cell> cell;
+      ASSERT_TRUE(tlb::pack_cell(cell, record));
+      ASSERT_TRUE(transfers.set_ref(td::BitArray<32>(index), cell, vm::Dictionary::SetMode::Add));
+      ASSERT_TRUE(index < UINT32_MAX);
+      ++index;
+    }
+    vm::CellBuilder native;
+    native.store_long(0x0bd47725, 32).store_zeroes(1);
+    ASSERT_TRUE(transfers.append_dict_to_bool(native));
+    auto result = base;
+    result.native = native.finalize();
+    return result;
+  };
+  auto decode = [&](const auto& effects, unsigned accounts = 3, unsigned transfers = 4, int budget = 4096) {
+    return block::plan_workchain_native_allocations(effects, accounts, transfers, budget);
+  };
+  auto edges = encode({{a, b, C(137)}, {a, c, C(5)}, {b, a, C(10)}, {c, b, C(2)}});
+  auto plan = decode(edges).move_as_ok();
+  ASSERT_EQ(plan.accounts.size(), 3u);
+  ASSERT_EQ(plan.transfers.size(), 4u);
+  ASSERT_TRUE(plan.accounts.at(a).incoming == C(10) && plan.accounts.at(a).outgoing == C(142));
+  ASSERT_TRUE(plan.accounts.at(b).incoming == C(139) && plan.accounts.at(b).outgoing == C(10));
+  ASSERT_TRUE(plan.accounts.at(c).incoming == C(5) && plan.accounts.at(c).outgoing == C(2));
+  ASSERT_TRUE(plan.transfers[0].from == a && plan.transfers[0].to == b && plan.transfers[0].value == C(137));
+  auto empty = decode(base, 3, 0).move_as_ok();
+  ASSERT_TRUE(empty.transfers.empty() && empty.accounts.at(c).incoming.is_zero() && empty.accounts.at(c).outgoing.is_zero());
+  ASSERT_TRUE(decode(edges, 2).is_error());
+  ASSERT_TRUE(decode(edges, 3, 3).is_error());
+  ASSERT_TRUE(decode(edges, 3, 4, 0).is_error());
+  unsigned invalid_case = 0;
+  for (const auto& invalid : {encode({{a, a, C(1)}}), encode({{a, b, C(0)}}),
+      encode({{b, a, C(1)}, {a, b, C(1)}}), encode({{a, b, C(1)}, {a, b, C(1)}}),
+      encode({{a, absent, C(1)}}), encode({{a, b, C(1)}}, true)}) {
+    LOG(INFO) << "batch allocation rejection case=" << invalid_case;
+    ASSERT_TRUE(decode(invalid).is_error());
+    ASSERT_TRUE(invalid_case < UINT_MAX);
+    ++invalid_case;
+  }
+  auto extra = [](td::RefInt256 amount) {
+    vm::Dictionary values(32);
+    vm::CellBuilder value;
+    ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(value, *amount));
+    ASSERT_TRUE(values.set_builder(td::BitArray<32>(7u), value, vm::Dictionary::SetMode::Add));
+    return C(0, values.get_root_cell());
+  };
+  auto extras = encode({{a, c, extra(td::make_refint(5))}, {b, c, extra(td::make_refint(7))}});
+  ASSERT_TRUE(decode(extras).move_as_ok().accounts.at(c).incoming == extra(td::make_refint(12)));
+  ASSERT_TRUE(decode(extras, 3, 4, 1).is_error());
+  C max;
+  ASSERT_TRUE(C::sub(C(td::make_refint(1) << 248), C(1), max));
+  auto overflow = encode({{a, c, extra(max.tomis)}, {b, c, extra(td::make_refint(1))}});
+  ASSERT_TRUE(decode(overflow).is_error());
+  auto malformed = base;
+  malformed.native = number(123);
+  ASSERT_TRUE(decode(malformed).is_error());
+  vm::Dictionary bad_updates(base.updates, 256);
+  vm::CellBuilder leaf;
+  leaf.store_ref(number(1)).store_zeroes(1);
+  ASSERT_TRUE(bad_updates.set_builder(a, leaf, vm::Dictionary::SetMode::Replace));
+  malformed = base;
+  vm::CellBuilder updates_cell;
+  ASSERT_TRUE(bad_updates.append_dict_to_bool(updates_cell));
+  malformed.updates = vm::load_cell_slice_ref(updates_cell.finalize());
+  ASSERT_TRUE(decode(malformed).is_error());
+  vm::Dictionary no_updates(256);
+  vm::CellBuilder empty_updates_cell;
+  ASSERT_TRUE(no_updates.append_dict_to_bool(empty_updates_cell));
+  malformed.updates = vm::load_cell_slice_ref(empty_updates_cell.finalize());
+  ASSERT_TRUE(decode(malformed).is_error());
+  block::gen::UnoV2NativeEffects::Record native;
+  ASSERT_TRUE(tlb::unpack_cell(edges.native, native));
+  vm::Dictionary bad_transfers(native.transfers, 32);
+  auto zero_key = td::BitArray<32>::zero();
+  vm::CellBuilder trailing;
+  trailing.store_ref(bad_transfers.lookup_ref(zero_key)).store_zeroes(1);
+  ASSERT_TRUE(bad_transfers.set_builder(zero_key, trailing, vm::Dictionary::SetMode::Replace));
+  vm::CellBuilder native_cell;
+  native_cell.store_long(0x0bd47725, 32).store_zeroes(1);
+  ASSERT_TRUE(bad_transfers.append_dict_to_bool(native_cell));
+  malformed = base;
+  malformed.native = native_cell.finalize();
+  ASSERT_TRUE(decode(malformed).is_error());
 }
 
 TEST(WorkchainBlock, NativeCoordinatorEntry) {

@@ -779,3 +779,40 @@ fee-settlement path. This generic allocation factory neither defines nor
 authorizes that path. Subsequent relation and settlement integration must follow
 the revised design rather than treat the previous zero-operation-fee model as
 complete; unresolved fee/congestion parameters are not supplied by this helper.
+
+### Batch-wide allocation planning (M1 integration in progress)
+
+`workchain-allocation-plan.h` decodes the admitted, replayed effects graph once
+and accumulates incoming/outgoing CurrencyCollection values in an ordered map.
+Every updated account has a row, including accounts with no internal transfer.
+Canonical sequential transfer indices, strict source/destination ordering,
+nonzero non-self transfers, endpoint membership, explicit entry bounds and
+per-currency checked addition are enforced. Its retained transfer vector is
+decoded from the wire, not the encoder's original in-memory object.
+
+This is the shared input for restricted participant materialization, avoiding
+one full transfer scan per account. It is not a new authorization boundary:
+the enclosing host must authenticate/replay effects and admit complete input
+closures before this call. The returned aggregates do not prove sufficient
+funds. Constructors must check each account's actual old/imported balance,
+and whole-batch validation must independently rebuild Native message and
+account evidence before checking conservation against this decoded graph.
+The current entry factory still has its one entry-local scan; integration may
+share the plan but must preserve its existing input/effects binding checks.
+
+The tests use three accounts and four directed edges with independently stated
+totals, zero-transfer accounts, generated valid TL-B that bypasses encoder
+semantic guards, malformed leaf layouts and real extra-currency dictionaries.
+This header and its tests do not enable any live execution scope, change a
+consensus caller, add an error category or select resource/configuration values.
+They await the M1 milestone review with the overlay integration; no separate
+boundary review is claimed for this unconnected helper.
+
+Twelve rebuilt mutations fail numeric or returned-status assertions, with raw
+logs, patch substitutions, source/binary hashes, standalone-header compilation
+and the restored five-test regression retained in
+`measurements/uno-v2-batch-allocation-evidence.json`. These are manual controls,
+not mutation CI or exhaustive independent branch coverage. Endpoint membership,
+invalid Native-container decoding, zero configuration budget and overflow have
+test cases but no individually isolated mutation in this artifact. M1 remains
+incomplete until the shared plan feeds actual Native records and full replay.
