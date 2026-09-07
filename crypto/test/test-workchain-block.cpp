@@ -1532,6 +1532,84 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   // message gate must not silently skip it via the entry's destination filter.
   ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, later, with_inbox,
       allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, later, with_inbox,
+      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+  auto zero_foreign_input = block::encode_workchain_host_input(later, admitted, declarations,
+      {inbound_envelope(5, 0, {}, a, block::CurrencyCollection(0))}, 2, 2, 1).move_as_ok();
+  // Zero principal prevents the independent value-flow equation from masking
+  // removal of the explicit unsupported-destination guard.
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, later, zero_foreign_input,
+      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+  // The first message's created LT and the second message's emitted LT each
+  // independently raise the shared schedule above the host boundary.
+  auto imported_input = block::encode_workchain_host_input(identity, admitted, declarations,
+      {inbound_envelope(30, 1, {}, b), inbound_envelope(5, 2, 40, b)}, 2, 2, 2).move_as_ok();
+  auto inbound = block::build_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
+      allocated.effects, b, 2, 2, 2, 2, 4096, cfg).move_as_ok();
+  ASSERT_EQ(inbound.state.end_lt, 42u);
+  ASSERT_TRUE(inbound.imports.account_credits.at(b) == block::CurrencyCollection(200));
+  ASSERT_TRUE(inbound.imports.value_imported == block::CurrencyCollection(334));
+  ASSERT_TRUE(inbound.imports.fees_collected == block::CurrencyCollection(134));
+  vm::AugmentedDictionary inbound_accounts(vm::load_cell_slice_ref(inbound.state.accounts), 256,
+                                           block::tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary inbound_blocks(vm::load_cell_slice_ref(inbound.state.account_blocks), 256,
+                                         block::tlb::aug_ShardAccountBlocks);
+  ASSERT_TRUE(accounts.lookup(untouched)->contents_equal(*inbound_accounts.lookup(untouched)));
+  block::tlb::InMsgDescr import_schema(16);
+  ASSERT_TRUE(import_schema.validate_ref(4096, inbound.imports.in_msg_descr));
+  vm::AugmentedDictionary import_records(vm::load_cell_slice_ref(inbound.imports.in_msg_descr), 256,
+                                         import_schema.aug);
+  for (auto key : {a, b}) {
+    block::Account updated(2, key.bits());
+    ASSERT_TRUE(updated.unpack(inbound_accounts.lookup(key), identity.gen_utime, false));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 999 : 1201));
+    ASSERT_EQ(updated.last_trans_lt_, 41u);
+    auto ab_root = vm::CellBuilder().append_cellslice(*inbound_blocks.lookup(key)).finalize();
+    ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, ab_root));
+    block::gen::AccountBlock::Record ab;
+    ASSERT_TRUE(tlb::unpack_cell(ab_root, ab));
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+    auto tx_root = txs.lookup_ref(td::BitArray<64>(41u));
+    ASSERT_TRUE(tx_root.not_null() && updated.last_trans_hash_ == tx_root->get_hash().bits());
+    if (key == b) {
+      ASSERT_TRUE(import_records.check_for_each([&](td::Ref<vm::CellSlice> row, td::ConstBitPtr, int) {
+        return row->prefetch_ref(1)->get_hash() == tx_root->get_hash();
+      }));
+    }
+  }
+  auto created_only_input = block::encode_workchain_host_input(identity, admitted, declarations,
+      {inbound_envelope(30, 1, {}, b)}, 2, 2, 1).move_as_ok();
+  ASSERT_EQ(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, created_only_input,
+      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).move_as_ok().state.end_lt, 32u);
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
+      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+  ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, imported_input,
+      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+  auto replay_inbound = [&](const auto& claim) {
+    return block::replay_workchain_inbound_allocation_overlay(state.accounts, identity, imported_input,
+        allocated.effects, b, 2, 2, 2, 2, 4096, cfg, claim);
+  };
+  ASSERT_TRUE(replay_inbound(inbound).is_ok());
+  for (unsigned field = 0; field < 4; ++field) {
+    LOG(INFO) << "inbound allocation replay mismatch field=" << field;
+    auto claim = inbound;
+    if (field == 0) claim.state.accounts = state.accounts;
+    if (field == 1) claim.state.account_blocks = number(2);
+    if (field == 2) claim.state.end_lt = 0;
+    if (field == 3) claim.imports.in_msg_descr = number(3);
+    ASSERT_TRUE(replay_inbound(claim).is_error());
+  }
+  auto stale_cache = inbound;
+  stale_cache.imports.account_credits.clear();
+  stale_cache.imports.fees_collected = block::CurrencyCollection(0);
+  auto cache_rebuilt = replay_inbound(stale_cache).move_as_ok();
+  ASSERT_TRUE(cache_rebuilt.imports.account_credits.at(b) == block::CurrencyCollection(200));
+  ASSERT_TRUE(cache_rebuilt.imports.fees_collected == block::CurrencyCollection(134));
+  auto overflowing_lt = block::encode_workchain_host_input(identity, admitted, declarations,
+      {inbound_envelope(UINT64_MAX, 0, {}, b)}, 2, 2, 1).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(state.accounts, identity, overflowing_lt,
+      allocated.effects, b, 2, 2, 2, 1, 4096, cfg).is_error());
+  ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
   block::WorkchainAccountEffects mixed;
   mixed.updates = {{a, number(101)}, {b, number(102)}};
   mixed.native_transfers = {{a, b, block::CurrencyCollection(1)}};

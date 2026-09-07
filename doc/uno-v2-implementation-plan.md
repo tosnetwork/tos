@@ -916,3 +916,43 @@ assertion, not an error-string comparison. Restored five-target regression and
 standalone-header compilation pass. Substitutions, raw output and source/binary
 hashes are in `measurements/uno-v2-final-import-evidence.json`; these controls
 were run manually and are not mutation CI or exhaustive guard coverage.
+
+### Joint final-import and allocation reconstruction (M1 in progress)
+
+The allocation materializer now has a shared implementation that can reconstruct
+coordinator-addressed final imports together with internal allocations. It
+returns accounts, AccountBlocks and InMsgDescr together, only after independently
+decoded Native balance rows balance against actual InMsg credits and the decoded
+allocation graph. Transaction references in InMsgDescr point to the transactions
+actually committed to those private AccountBlocks. Remaining forwarding fees
+are collected in Native import accounting, not credited to accounts.
+
+The common transaction schedule includes both message creation and emitted LTs;
+checked scheduling rejects overflow. Replay independently reconstructs all three
+roots and the end LT. Credits and fee totals are derived caches, so replay returns
+the reconstruction rather than adopting a claimant's copies of those caches.
+The existing message-free API delegates with a zero inbox bound. The settlement
+runner still rejects nonempty inboxes before engine invocation: custody imports,
+unexpected-destination disposal, own-queue/DispatchQueue provenance, payouts and
+full authenticated queue completeness are not made supported by this helper.
+The explicit new API rejects non-coordinator destinations, including zero-value
+messages that would otherwise leave the balance equation unchanged.
+
+Tests inspect two actual incoming message records, both modified Native accounts,
+the untouched account, AccountBlock transaction hashes, exact balances and fees,
+each independent LT source, four replay artifact mutations and stale derived
+caches. This is a post-admission, existing-account integration fixture, not a
+confidential Deposit authorization test, a production queue test or M1 closure.
+The existing input decoder's fixed semantic-validation allowance and the entry's
+timestamp policy still need their production admission/Native-ingress audit;
+this change does not silently choose new policy values or classify their errors.
+
+Ten successful rebuilds followed by failing tests witness destination exclusion,
+both LT sources, actual imported-row credit, each of the four replay artifacts,
+reconstruction rather than adoption of caches, and the combined inbox limit.
+The last control removes both count checks; it is not evidence that either
+individual check alone is indispensable. All five regression targets and the
+standalone header compile pass after restoration. Raw output, substitutions and
+hashes are archived in `measurements/uno-v2-inbound-allocation-evidence.json`.
+These are manual controls, not mutation CI. M1 milestone review remains pending;
+no named production consensus-judgement file or error classification changed.
