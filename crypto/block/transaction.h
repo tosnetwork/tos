@@ -505,10 +505,15 @@ struct Transaction {
   // carried by the transaction, never retained through account data. Only
   // messages addressed to this account are selected from the shared inbox;
   // other destinations remain obligations of the enclosing batch. Role selection,
-  // inbox authenticity/completeness and economic allocation belong to the host.
+  // inbox authenticity/completeness and allocation authorization belong to the
+  // host. The balance includes the effects' checked internal Native transfers;
+  // every other endpoint still needs its own restricted physical record.
   // Uses the same source-aware exception contract as storage participants.
+  // Explicit resolved limits are required; no account-size limit is silently
+  // reused as an allocation-work budget. These are not full closure admission.
   td::Status prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
-                                    Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg);
+                                    Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+                                    std::uint64_t max_transfers, int extra_validation_cells);
   // Reconstruct one mode-1 payout using Native pricing in private scratch state.
   // Locally derived, admitted inputs only; this is not payout authorization.
   // fee_budget is a maximum spend, not a quoted fee. No account is committed.

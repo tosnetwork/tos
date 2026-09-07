@@ -24,6 +24,7 @@
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
+#include "block/workchain-native-allocation.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4672,7 +4673,9 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
 
 td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                                Ref<vm::Cell> effects, Ref<vm::Cell> data,
-                                               const SerializeConfig& cfg) {
+                                               const SerializeConfig& cfg, std::uint64_t max_transfers,
+                                               int extra_validation_cells) {
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid entry allocation validation budget");
   gen::UnoV2HostRecord::Record record;
   gen::UnoV2HostInput::Record decoded;
   gen::UnoV2HostIdentity::Record identity;
@@ -4692,6 +4695,9 @@ td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::C
   if (context.gen_utime != now) return td::Status::Error("entry generation time mismatch");
   if (context.host_after_lt >= start_lt) return td::Status::Error("entry logical time precedes input boundary");
   if (!tlb::unpack_cell(effects, output)) return td::Status::Error("entry effects encoding invalid");
+  gen::UnoV2HostAccess::Record declared;
+  if (!tlb::unpack_cell(decoded.access, declared)) return td::Status::Error("entry access encoding invalid");
+  vm::Dictionary reads(declared.reads, 256), writes(declared.writes, 256);
   vm::Dictionary updates(output.updates, 256);
   auto update = updates.lookup_ref(account.addr);
   if (update.is_null() || update->get_hash() != data->get_hash()) {
@@ -4704,17 +4710,17 @@ td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::C
   bool matched_index = false;
   if (!updates.check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr key, int width) {
         if (width != 256 || value->size_ext() != 0x10000 || index > std::numeric_limits<std::uint32_t>::max()) return false;
+        auto declared_write = writes.lookup(key, 256);
+        if (declared_write.is_null() || !declared_write->empty_ext()) return false;
         if (td::Bits256(key) == account.addr) matched_index = index == record.effect_index;
         auto next = participant_lt_detail::checked_add(index, 1);
         if (next.is_error()) return false;
         index = next.move_as_ok();
         return true;
       }) || !matched_index) return td::Status::Error("entry effect index mismatch");
-  gen::UnoV2HostAccess::Record declared;
-  if (!tlb::unpack_cell(decoded.access, declared)) return td::Status::Error("entry access encoding invalid");
-  vm::Dictionary reads(declared.reads, 256), writes(declared.writes, 256);
-  auto write = writes.lookup(account.addr);
-  if (write.is_null() || !write->empty_ext()) return td::Status::Error("entry missing write declaration");
+  if (!writes.check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr key, int width) {
+        return width == 256 && value->empty_ext() && updates.lookup_ref(key, 256).not_null();
+      })) return td::Status::Error("entry declared write absent from effects");
   gen::UnoV2HostRead::Record read;
   if (account.total_state.is_null() || !tlb::unpack_cell(reads.lookup_ref(account.addr), read)) {
     return td::Status::Error("entry missing old account declaration");
@@ -4727,13 +4733,16 @@ td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::C
   WorkchainBlockInput credit;
   if (decoded.inbox->prefetch_ulong(1) != 0) credit.inbound_messages = decoded.inbox->prefetch_ref();
   TRY_RESULT(credited, stage_workchain_credit(credit, cfg, true));
+  TRY_RESULT(allocated, allocate_workchain_native_balance(account.addr, credited, output,
+      max_transfers, extra_validation_cells));
   auto description = vm::CellBuilder().store_long(tlb::TransactionDescr::trans_workchain_entry_v3, 4)
       .store_ref(binding).store_ref(input).store_ref(effects).finalize();
   TRY_STATUS(prepare_workchain_storage_participant(binding, std::move(data), cfg));
   batch_description = std::move(description);
-  // Only message value is credited. Remaining forwarding fees belong to the
-  // independently rebuilt Native InMsg value flow, not this account's balance.
-  balance = std::move(credited);
+  // Own imported message values plus incoming allocations minus outgoing
+  // allocations determine this balance. Remaining forwarding fees belong to
+  // independently rebuilt Native InMsg value flow, not this account's credit.
+  balance = std::move(allocated);
   batch_balance = balance;
   return td::Status::OK();
 }

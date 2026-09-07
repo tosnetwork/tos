@@ -629,3 +629,80 @@ existing settlement runner explicitly rejects nonempty Native transfers after
 encoding rather than silently producing a storage/payout result that ignores
 them. No new fee model or production limit is selected here; no consensus
 judgement file or error category changed. M1 review and activation remain pending.
+
+### Entry-side Native allocation (boundary reviewed)
+
+The inactive entry factory now derives its final balance from its own imported
+message values and the committed internal transfer effects. It independently
+decodes the transfer sequence, requires contiguous indices, strictly ordered
+source/destination edges, nonzero values, distinct endpoints and endpoint
+membership in the updates. All incoming and outgoing allocations are summed
+before checked per-currency subtraction. This is simultaneous batch accounting,
+not a sequence of payment attempts whose success depends on account order.
+The final CurrencyCollection must fit Native wire encoding before any entry
+preparation is committed to the temporary Transaction.
+
+`allocate_workchain_native_balance` is post-admission arithmetic, not spending
+authorization or a structural/work budget. Engine-derived purposes, roles,
+all other participant balances, complete Native import records and independent
+whole-batch value flow remain mandatory. In particular, a conserved transfer
+graph does not authorize taking custody principal. This public Native allocation
+must not be confused with the hidden SEND amount.
+
+Tests decode the actual serialized entry AccountStorage balance, assert that
+the original Account remains unchanged, and exercise exact depletion, a
+one-unit deficit, and an incoming allocation funding the final outgoing unit.
+The second-account entry case is an isolated alternative-role fixture, not two
+entry records admitted in one block. A separate decoder test bypasses the
+effects encoder's semantic guards using valid generated TL-B, and covers extra
+currencies as well as Native TOS. Ten individually rebuilt mutations fail
+numeric or status assertions; raw logs and source/binary hashes are in
+`measurements/uno-v2-entry-allocation-evidence.json`. They are manual controls,
+not automated mutation CI, and do not claim exhaustive independent coverage of
+redundant arithmetic-width checks. Expanded VM/cells/smart-contract/block/
+admission regression passed 5/5 after source restoration.
+
+The whole-batch runner still rejects nonempty imports and internal transfers.
+The next integration work is the matching restricted participant records and
+private overlay materialization with independently reconstructed value flow;
+only then can the runner consume these effects instead of rejecting them.
+Existing execution scopes still reject the new record profile. No configuration
+initial value, message-finality rule or activation policy was changed.
+
+The boundary review is retained verbatim at
+`~/memo/reviews/uno-v2-entry-allocation-review.txt`. It independently reran the
+two focused tests, checked source/binary hashes, and compiled the new header as
+the sole include with project flags. Its dispositions are:
+
+| Item | Disposition |
+|---|---|
+| A1: assignment comment described gross credit only | Fixed: the comment now describes imported values plus incoming minus outgoing allocations, with forwarding fees excluded from credit. |
+| B1: updates membership relied on engine validation | Fixed: entry reconstruction checks effects and declared writes in both directions. The former own-write check is subsumed, not retained as an unmeasured duplicate. This enforces existing I13, not a new policy. |
+| B2/B3: missing transfer bound and borrowed account-size budget | Fixed at the interface: allocation and entry require explicit transfer-count and extra-currency validation bounds, without defaults. Zero transfers permit an empty graph. No ConfigParam 84 fields or production values are selected here. |
+| B4: balance extra-currency count and closure remain unbounded by this helper | Deferred to complete authenticated account/effects resource admission. A message's currency-count limit is not automatically an account-state rule. This inactive helper does not claim full anti-DoS admission. |
+| B5: unpinned green baseline | Fixed: original green source/binary hashes independently confirmed by the reviewer are retained in its artifact; review-fix evidence includes new passing output and hashes. |
+| B6: canonical leaf guard unmeasured | Fixed: a structurally invalid dictionary leaf with a valid transfer reference plus a trailing bit reaches the decoder directly; removing the guard accepts it and turns the status assertion red. |
+| Additional coverage | Controls now reach Native-container parse-before-use and extra-currency accumulation/subtraction, not just Native-TOS projection. |
+
+The invalid-container mutation ignores a failed unpack and then throws VmError
+when constructing a dictionary from missing parsed fields. That control proves
+the checked parse-before-use boundary; it is not evidence that candidate/local
+fault classification is implemented. The other review-fix controls fail numeric
+or returned-status assertions. All are manual source/binary-pinned runs, not
+mutation CI. Raw results are retained in
+`measurements/uno-v2-entry-allocation-review-fixes.json`.
+
+The review's blanket characterization of all Status failures as candidate
+invalid is not adopted: invalid resolved limits are a configuration/caller
+failure, and provenance determines whether malformed cells came from a candidate
+or authenticated state. Its required source-aware exception boundary remains
+an integration obligation. Likewise, absence of a production caller is not the
+only current barrier: the runner rejects these effects and both execution
+scopes reject the record tag. All those independent barriers remain intact.
+
+Explicit entry/validation bounds do not replace complete closure accounting,
+aggregate work admission or the activation gate before execution. Those must be
+provided by the real host before its first production call. No message-count
+policy or account-currency policy is inferred from these API arguments. The
+per-entry scan is also not a plan to rescan the whole transfer graph for every
+participant; batch-wide materialization must share checked accounting work.

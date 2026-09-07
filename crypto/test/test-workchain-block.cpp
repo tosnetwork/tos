@@ -6,6 +6,7 @@
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-participant-record.h"
 #include "block/workchain-value-flow.h"
+#include "block/workchain-native-allocation.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -706,6 +707,87 @@ TEST(WorkchainBlock, NativeTransferEffects) {
   ASSERT_TRUE(encode(wrong).is_error());
 }
 
+TEST(WorkchainBlock, NativeAllocation) {
+  using C = block::CurrencyCollection;
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits()), absent(number(2)->get_hash().bits());
+  block::WorkchainAccountEffects output;
+  output.updates = {{a, number(1)}, {b, number(2)}};
+  auto base = block::encode_workchain_account_effects(output, 2, 2, 4096).move_as_ok();
+  block::gen::UnoV2HostEffects::Record effects;
+  ASSERT_TRUE(tlb::unpack_cell(base, effects));
+  // Bypass the encoder's semantic guards with valid generated TL-B, so each
+  // decoder guard is independently exercised rather than masked upstream.
+  auto encode = [&](const std::vector<block::WorkchainInternalTransfer>& edges, bool hole = false) {
+    vm::Dictionary transfers(32);
+    std::uint32_t index = hole ? 1 : 0;
+    for (const auto& edge : edges) {
+      block::gen::UnoV2NativeTransfer::Record record;
+      record.source = edge.from; record.destination = edge.to;
+      ASSERT_TRUE(edge.value.pack_to(record.value));
+      td::Ref<vm::Cell> root;
+      ASSERT_TRUE(tlb::pack_cell(root, record));
+      ASSERT_TRUE(transfers.set_ref(td::BitArray<32>(index), root, vm::Dictionary::SetMode::Add));
+      ASSERT_TRUE(index < UINT32_MAX);
+      ++index;
+    }
+    vm::CellBuilder native;
+    native.store_long(0x0bd47725, 32).store_zeroes(1);
+    ASSERT_TRUE(transfers.append_dict_to_bool(native));
+    auto changed = effects;
+    changed.native = native.finalize();
+    ASSERT_TRUE(block::gen::t_UnoV2NativeEffects.validate_ref(4096, changed.native));
+    return changed;
+  };
+  auto normal = encode({{a, b, C(137)}, {b, a, C(10)}});
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), normal, 2, 4096).move_as_ok() == C(1073));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(b, C(1100), normal, 2, 4096).move_as_ok() == C(1227));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), normal, 1, 4096).is_error());
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), effects, 0, 4096).move_as_ok() == C(1200));
+  // The public decoder is also tested below the generated structural validator:
+  // a leaf with a valid record reference plus trailing bits is noncanonical.
+  auto malformed = effects;
+  malformed.native = number(123);
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), malformed, 2, 4096).is_error());
+  block::gen::UnoV2NativeEffects::Record native;
+  ASSERT_TRUE(tlb::unpack_cell(normal.native, native));
+  vm::Dictionary trailing(native.transfers, 32);
+  auto key = td::BitArray<32>::zero();
+  vm::CellBuilder bad_leaf;
+  bad_leaf.store_ref(trailing.lookup_ref(key)).store_zeroes(1);
+  ASSERT_TRUE(trailing.set_builder(key, bad_leaf, vm::Dictionary::SetMode::Replace));
+  vm::CellBuilder bad_native;
+  bad_native.store_long(0x0bd47725, 32).store_zeroes(1);
+  ASSERT_TRUE(trailing.append_dict_to_bool(bad_native));
+  malformed.native = bad_native.finalize();
+  ASSERT_TRUE(!block::gen::t_UnoV2NativeEffects.validate_ref(4096, malformed.native));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), malformed, 2, 4096).is_error());
+  for (const auto& invalid : {encode({{a, a, C(1)}}), encode({{a, b, C(0)}}),
+      encode({{b, a, C(1)}, {a, b, C(1)}}), encode({{a, b, C(1)}, {a, b, C(1)}}),
+      encode({{a, absent, C(1)}}), encode({{a, b, C(1)}}, true)}) {
+    ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), invalid, 2, 4096).is_error());
+  }
+  ASSERT_TRUE(block::allocate_workchain_native_balance(absent, C(0), normal, 2, 4096).is_error());
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(-1), normal, 2, 4096).is_error());
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), normal, 2, 0).is_error());
+  auto incoming = encode({{b, a, C(1)}});
+  auto wide = td::make_refint(1) << 120;
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(wide), effects, 2, 4096).is_error());
+  C max;
+  ASSERT_TRUE(C::sub(C(td::make_refint(1) << 256), C(1), max));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, max, incoming, 2, 4096).is_error());
+  auto extra = [](unsigned amount) {
+    vm::Dictionary values(32);
+    vm::CellBuilder value;
+    ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(value, *td::make_refint(amount)));
+    ASSERT_TRUE(values.set_builder(td::BitArray<32>(7u), value, vm::Dictionary::SetMode::Add));
+    return C(0, values.get_root_cell());
+  };
+  auto extras = encode({{a, b, extra(5)}, {b, a, extra(7)}});
+  ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(0), extras, 2, 4096).move_as_ok() == extra(2));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(b, C(0), extras, 2, 4096).is_error());
+}
+
 TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
@@ -737,7 +819,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   cfg.disable_anycast = true;
   using Transaction = block::transaction::Transaction;
   Transaction tx(coordinator, Transaction::tr_workchain_batch, 21, 10);
-  ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, number(321), cfg).is_ok());
+  ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, number(321), cfg, 2, 4096).is_ok());
   ASSERT_TRUE(tx.balance == block::CurrencyCollection(1200));
   ASSERT_TRUE(tx.new_data->get_hash() == number(321)->get_hash());
   ASSERT_TRUE(tx.total_fees.is_zero());
@@ -773,7 +855,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
   auto reject = [&](td::Ref<vm::Cell> bad_binding, td::Ref<vm::Cell> data) {
     Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
-    return rejected.prepare_workchain_entry(bad_binding, input, effects_root, data, cfg).is_error();
+    return rejected.prepare_workchain_entry(bad_binding, input, effects_root, data, cfg, 2, 4096).is_error();
   };
   for (bool wrong_input : {false, true}) {
     auto bad_binding = block::build_workchain_participant_records(
@@ -797,17 +879,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
     auto changed_binding = block::build_workchain_participant_records(td::Bits256(changed_input->get_hash().bits()),
         td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
     Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
-    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg).is_error());
-  }
-  for (bool missing_write : {false, true}) {
-    auto wrong = access;
-    if (missing_write) wrong.writes.clear();
-    else wrong.reads[0].old_account_hash = hash;
-    auto changed_input = block::encode_workchain_host_input(identity, admitted, wrong, inbox, 1, 1, 3).move_as_ok();
-    auto changed_binding = block::build_workchain_participant_records(td::Bits256(changed_input->get_hash().bits()),
-        td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
-    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
-    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg).is_error());
+    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg, 2, 4096).is_error());
   }
   // The entry need not be the first account in canonical key order.
   td::Bits256 b(number(1)->get_hash().bits());
@@ -823,8 +895,74 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto two_binding = block::build_workchain_participant_records(td::Bits256(two_input->get_hash().bits()),
       td::Bits256(two_root->get_hash().bits()), {a, b}, 2).move_as_ok()[1];
   Transaction second_tx(second, Transaction::tr_workchain_batch, 21, 10);
-  ASSERT_TRUE(second_tx.prepare_workchain_entry(two_binding, two_input, two_root, number(321), cfg).is_ok());
+  ASSERT_TRUE(second_tx.prepare_workchain_entry(two_binding, two_input, two_root, number(321), cfg, 2, 4096).is_ok());
   ASSERT_TRUE(second_tx.balance == block::CurrencyCollection(1100));
+
+  // Either direction of effects/write-set disagreement must fail, even when
+  // this entry's own declaration, hash and data remain entirely correct.
+  for (bool extra_effect : {false, true}) {
+    auto mismatched_input = extra_effect ? input : two_input;
+    auto mismatched_effects = extra_effect ? two_root : effects_root;
+    auto records = block::build_workchain_participant_records(td::Bits256(mismatched_input->get_hash().bits()),
+        td::Bits256(mismatched_effects->get_hash().bits()), extra_effect ? std::vector<td::Bits256>{a, b} :
+        std::vector<td::Bits256>{a}, 2).move_as_ok();
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_entry(records[0], mismatched_input, mismatched_effects,
+        number(321), cfg, 2, 4096).is_error());
+    ASSERT_TRUE(rejected.balance == coordinator.balance);
+  }
+
+  for (bool missing_write : {false, true}) {
+    auto wrong = access;
+    if (missing_write) wrong.writes.clear();
+    else wrong.reads[0].old_account_hash = hash;
+    auto changed_input = block::encode_workchain_host_input(identity, admitted, wrong, inbox, 1, 1, 3).move_as_ok();
+    auto changed_binding = block::build_workchain_participant_records(td::Bits256(changed_input->get_hash().bits()),
+        td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg, 2, 4096).is_error());
+  }
+
+  // Internal allocations use the complete effects, not message forwarding
+  // fees. Each endpoint is tested in isolation here; this is not two entry
+  // records in one accepted block or complete multi-account settlement.
+  auto allocated_entry = [&](const std::vector<block::WorkchainInternalTransfer>& transfers,
+                             bool use_second, const block::CurrencyCollection& expected, bool valid) {
+    auto allocated_effects = two_effects;
+    allocated_effects.native_transfers = transfers;
+    auto root = block::encode_workchain_account_effects(allocated_effects, 2, 2, 4096).move_as_ok();
+    auto records = block::build_workchain_participant_records(td::Bits256(two_input->get_hash().bits()),
+        td::Bits256(root->get_hash().bits()), {a, b}, 2).move_as_ok();
+    auto& owner = use_second ? second : coordinator;
+    Transaction allocated(owner, Transaction::tr_workchain_batch, 21, 10);
+    auto status = allocated.prepare_workchain_entry(records[use_second ? 1 : 0], two_input, root, number(321), cfg, 2, 4096);
+    ASSERT_EQ(status.is_ok(), valid);
+    if (!valid) {
+      ASSERT_TRUE(allocated.balance == owner.balance);
+      ASSERT_TRUE(!allocated.serialize(cfg));
+      return;
+    }
+    ASSERT_TRUE(allocated.balance == expected);
+    ASSERT_TRUE(allocated.serialize(cfg));
+    block::gen::Account::Record_account result;
+    block::gen::AccountStorage::Record result_storage;
+    block::CurrencyCollection actual;
+    ASSERT_TRUE(tlb::unpack_cell(allocated.new_total_state, result));
+    ASSERT_TRUE(tlb::csr_unpack(result.storage, result_storage));
+    ASSERT_TRUE(actual.unpack(result_storage.balance));
+    ASSERT_TRUE(actual == expected);
+    ASSERT_TRUE(owner.balance == block::CurrencyCollection(1000));
+  };
+  allocated_entry({{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(10)}},
+      false, block::CurrencyCollection(1073), true);
+  allocated_entry({{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(10)}},
+      true, block::CurrencyCollection(1227), true);
+  allocated_entry({{a, b, block::CurrencyCollection(1200)}}, false, block::CurrencyCollection(0), true);
+  allocated_entry({{a, b, block::CurrencyCollection(1201)}}, false, block::CurrencyCollection(0), false);
+  // A batch has simultaneous edges: canonical source order must not reject
+  // an account whose incoming allocation funds the final unit of its debit.
+  allocated_entry({{a, b, block::CurrencyCollection(1201)}, {b, a, block::CurrencyCollection(1)}},
+      false, block::CurrencyCollection(0), true);
 
   // Tiny descriptor headers can still fail construction because of child
   // depth. This is an exception-boundary probe, not an admitted block profile.
@@ -840,7 +978,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   Transaction interrupted(coordinator, Transaction::tr_workchain_batch, 21, 10);
   bool threw = false;
   try {
-    auto result = interrupted.prepare_workchain_entry(deep_binding, deep_input, effects_root, number(321), cfg);
+    auto result = interrupted.prepare_workchain_entry(deep_binding, deep_input, effects_root, number(321), cfg, 2, 4096);
     ASSERT_TRUE(result.is_ok());
   } catch (const vm::CellBuilder::CellWriteError&) {
     threw = true;
