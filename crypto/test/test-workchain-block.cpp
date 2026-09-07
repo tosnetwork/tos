@@ -4,6 +4,7 @@
 
 #include "block/workchain-block-execution.h"
 #include "block/workchain-participant-lt.h"
+#include "block/workchain-account-access.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -19,6 +20,71 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, AccountAccessBinding) {
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  auto hash = a;
+  hash.as_slice().back() = 7;
+  auto make = [&] {
+    return block::WorkchainAccountAccess::create({{a, hash}, {b, std::nullopt}}, {b}, 2, 1);
+  };
+  auto result = make();
+  ASSERT_TRUE(result.is_ok());
+  auto access = result.move_as_ok();
+  ASSERT_TRUE(access.expected_read(a).move_as_ok() == std::optional<td::Bits256>(hash));
+  ASSERT_TRUE(!access.expected_read(b).move_as_ok().has_value());
+  ASSERT_TRUE(access.record_old_read(a, hash).is_ok());
+  ASSERT_TRUE(access.record_old_read(b, std::nullopt).is_ok());
+  ASSERT_TRUE(access.record_write(b).is_ok());
+  ASSERT_TRUE(access.record_write(b).is_ok()); // Multiple semantic updates, one physical record.
+  ASSERT_TRUE(access.finish({b}, {b}).is_ok());
+  ASSERT_TRUE(access.record_write(b).is_error());
+  ASSERT_TRUE(access.finish({b}, {b}).is_error());
+
+  auto mismatch = make().move_as_ok();
+  ASSERT_TRUE(mismatch.record_old_read(a, std::nullopt).is_error());
+  ASSERT_TRUE(mismatch.record_old_read(a, hash).is_error());
+  ASSERT_TRUE(mismatch.expected_read(b).is_error());
+  ASSERT_TRUE(mismatch.finish({b}, {b}).is_error());
+  auto false_absence = make().move_as_ok();
+  ASSERT_TRUE(false_absence.record_old_read(b, hash).is_error());
+  auto premature = make().move_as_ok();
+  ASSERT_TRUE(premature.record_write(b).is_error());
+  auto unauthorized = make().move_as_ok();
+  ASSERT_TRUE(unauthorized.expected_read(hash).is_error());
+  ASSERT_TRUE(unauthorized.record_old_read(a, hash).is_error());
+  auto read_only = make().move_as_ok();
+  ASSERT_TRUE(read_only.record_old_read(a, hash).is_ok());
+  ASSERT_TRUE(read_only.record_write(a).is_error());
+}
+
+TEST(WorkchainBlock, AccountAccessExactCoverage) {
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  auto make = [&] {
+    return block::WorkchainAccountAccess::create({{a, a}, {b, b}}, {b}, 2, 1).move_as_ok();
+  };
+  for (int mode = 0; mode < 6; ++mode) {
+    auto access = make();
+    if (mode != 0) ASSERT_TRUE(access.record_old_read(a, a).is_ok());
+    ASSERT_TRUE(access.record_old_read(b, b).is_ok());
+    if (mode != 1) ASSERT_TRUE(access.record_write(b).is_ok());
+    std::vector<td::Bits256> changed = mode == 2 ? std::vector<td::Bits256>{a, b} : std::vector<td::Bits256>{b};
+    std::vector<td::Bits256> participants = mode == 3 ? std::vector<td::Bits256>{} : std::vector<td::Bits256>{b};
+    if (mode == 4) participants.push_back(b);
+    if (mode == 5) changed.clear();
+    ASSERT_TRUE(access.finish(changed, participants).is_error());
+  }
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{a, a}, {a, a}}, {}, 2, 0).is_error());
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{b, b}, {a, a}}, {}, 2, 0).is_error());
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{a, a}}, {a, a}, 1, 2).is_error());
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{a, a}}, {b}, 1, 1).is_error());
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{a, a}}, {}, 0, 0).is_error());
+  ASSERT_TRUE(block::WorkchainAccountAccess::create({{a, a}}, {a}, 1, 0).is_error());
+}
 
 TEST(WorkchainBlock, ParticipantLtPlan) {
   auto a = td::Bits256::zero();
