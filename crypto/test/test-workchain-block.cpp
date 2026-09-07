@@ -14,6 +14,7 @@
 #include "block/workchain-account-access-codec.h"
 #include "block/workchain-host-identity.h"
 #include "block/workchain-host-input.h"
+#include "block/workchain-account-engine.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -644,6 +645,76 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, AccountEngineExecution) {
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto resolved = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(resolved));
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(resolved));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(admission.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 1, 1, number(1)};
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  block::WorkchainAccountDeclarations declarations;
+  for (auto key : {a, b}) {
+    block::tlb::ShardAccount::Record record;
+    ASSERT_TRUE(record.unpack(accounts.lookup(key)));
+    declarations.reads.push_back({key, td::Bits256(record.account->get_hash().bits())});
+    declarations.writes.push_back(key);
+  }
+  struct Engine final : block::WorkchainAccountEngine {
+    mutable unsigned calls{0};
+    td::Bits256 a, b;
+    bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false};
+    td::Result<block::WorkchainAccountEffects> execute_accounts(
+        const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
+      ++calls;
+      if (bad_read) {
+        auto ignored = view.read(td::Bits256(number(999)->get_hash().bits()));
+        // Deliberately ignore the error and return otherwise valid effects.
+      } else {
+        TRY_RESULT(first, view.read(a));
+        TRY_RESULT(second, view.read(b));
+        if (first.is_null() || second.is_null() || input.is_null()) return td::Status::Error("missing engine input");
+      }
+      block::WorkchainAccountEffects result;
+      result.updates.push_back({a, number(101)});
+      if (!omit_write) result.updates.push_back({b, number(102)});
+      if (wrong_key) result.updates[0].account = b;
+      if (null_data) result.updates[0].data.clear();
+      return result;
+    }
+  } engine;
+  engine.a = a; engine.b = b;
+  auto execute = [&](const auto& access) {
+    return block::execute_workchain_account_engine(engine, state.accounts, identity, admitted, access, {}, 2, 2, 0);
+  };
+  auto result = execute(declarations);
+  ASSERT_TRUE(result.is_ok());
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(result.ok().updates.size(), 2u);
+  ASSERT_TRUE(result.ok().updates[1].data->get_hash() == number(102)->get_hash());
+  auto wrong = declarations;
+  wrong.reads[0].old_account_hash = hash;
+  engine.calls = 0;
+  ASSERT_TRUE(execute(wrong).is_error());
+  ASSERT_EQ(engine.calls, 0u);
+  engine.bad_read = true;
+  ASSERT_TRUE(execute(declarations).is_error());
+  engine.bad_read = false; engine.omit_write = true;
+  ASSERT_TRUE(execute(declarations).is_error());
+  engine.omit_write = false; engine.wrong_key = true;
+  ASSERT_TRUE(execute(declarations).is_error());
+  engine.wrong_key = false; engine.null_data = true;
+  ASSERT_TRUE(execute(declarations).is_error());
 }
 
 TEST(WorkchainBlock, HostInputCommitment) {

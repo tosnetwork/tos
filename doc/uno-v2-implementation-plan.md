@@ -425,3 +425,32 @@ CI mutation automation; normal coverage is in the registered block target.
 No consensus entry point or error category changed; milestone review remains
 due. The next integration gap is the engine's still-single-state result and
 source-aware context, not additional root-comparison helpers.
+
+### Declared account engine interface
+
+`WorkchainAccountEngine` accepts the committed input envelope and a read view
+restricted to declared accounts. The post-admission runner checks old account
+hashes or absence before invoking the engine once. It does not expose the shard
+dictionary or mutable Native Account/Transaction handles. Undeclared reads stick:
+even an engine that ignores the read error and returns valid-looking effects
+cannot succeed. Returned account data updates must exactly match the declared
+ordered write keys, with no missing entries or null data.
+
+This is not yet an authenticated execution boundary. The enclosing host must
+authenticate the old shard, bound state closures and inbox construction, accept
+resources, resolve policy and authorize effects. Native source exceptions still
+propagate to that source-aware boundary. The optional payout request is not a
+finalized message or a payment authorization. Actual Native dictionary changes,
+participant coverage and value flow remain the settlement overlay's independent
+responsibility; matching engine claims alone cannot establish I13c/I13d.
+
+The reference engine fixture checks successful two-account execution, wrong old
+hash rejection before any engine call, ignored unauthorized reads, omitted
+updates, duplicate/wrong keys and null data. Removing each of the five runner
+checks separately makes its corresponding test fail. Raw mutation logs and
+artifact hashes are in `measurements/uno-v2-account-engine-evidence.json`.
+Normal coverage runs in the registered block target; the mutation runs were
+manual, not CI automation. No production call site or error category changed;
+M1 review and live integration remain pending. Next is connecting this interface
+to independently derived effects and the private Native settlement overlay,
+then the source-aware collator/validator boundary and versioned activation.
