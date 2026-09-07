@@ -6,6 +6,7 @@
 #include "td/utils/tests.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/boc.h"
+#include "vm/vmstate.h"
 
 namespace {
 
@@ -278,6 +279,108 @@ TEST(WorkchainAdmission, NativeClosureChecksLoadedAndCachedIdentity) {
   auto missing = block::NativeCellMaterializer::run(roots, {1, 288, 1});
   ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(missing));
   ASSERT_EQ(std::get<block::LocalUnavailable>(missing).code, block::LocalUnavailableCode::CellIdentity);
+}
+
+TEST(WorkchainAdmission, CandidateFreshMetadataIdentity) {
+  bool fail = false;
+  unsigned loads = 0;
+  td::Ref<FallibleCell> alias{true, leaf(), &fail, &loads};
+  alias->wrong_depth = true;
+  block::CandidateAdmissionSession session(alias, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::CellIdentity);
+  ASSERT_EQ(loads, 1u);
+}
+
+TEST(WorkchainAdmission, CandidateCachedMetadataIdentity) {
+  bool fail = false;
+  unsigned loads = 0;
+  auto shared = leaf();
+  td::Ref<FallibleCell> alias{true, shared, &fail, &loads};
+  auto root = vm::CellBuilder().store_ref(shared).store_ref(alias).finalize();
+  // Local loader metadata corruption after the parent captured its identity;
+  // this is not a serialized alternative encoding with a different root hash.
+  alias->wrong_depth = true;
+  block::CandidateAdmissionSession session(root, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::CellIdentity);
+  ASSERT_EQ(loads, 0u); // Cache-hit metadata can be checked without loading it.
+}
+
+TEST(WorkchainAdmission, CandidateEffectiveLevelIdentity) {
+  bool fail = false;
+  unsigned loads = 0;
+  auto pruned = vm::CellBuilder::do_create_pruned_branch(leaf(), 1, 0);
+  td::Ref<FallibleCell> lower{true, pruned, &fail, &loads};
+  lower->effective_level = 0;
+  block::CandidateAdmissionSession session(lower, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::CellIdentity);
+}
+
+TEST(WorkchainAdmission, CandidateLoadedViewPrecedesDescendants) {
+  bool fail = false;
+  unsigned loads = 0;
+  auto pruned = vm::CellBuilder::do_create_pruned_branch(leaf(), 1, 0);
+  td::Ref<FallibleCell> child{true, pruned->virtualize(0), &fail, &loads};
+  child->forward_virtualization = true;
+  auto source = vm::CellBuilder().store_ref(child).finalize();
+  ASSERT_TRUE(source->is_virtualized());
+  // Synthetic loader-contract violation: a normal in-memory parent reports
+  // the view and is caught earlier; this handle deliberately masks that fact.
+  td::Ref<FallibleCell> hidden{true, source, &fail, &loads};
+  child->virtualization_queries = 0;
+  block::CandidateAdmissionSession session(hidden, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::CellIdentity);
+  ASSERT_EQ(loads, 1u);
+  // The category also holds after a later rejection; this counter alone
+  // distinguishes rejecting the loaded view before descending into its refs.
+  ASSERT_EQ(child->virtualization_queries, 0u);
+}
+
+TEST(WorkchainAdmission, CandidateRebuildIgnoresAmbientVm) {
+  class CountingVm final : public vm::VmStateInterface {
+   public:
+    unsigned creates{0}, registrations{0};
+    void register_cell_create() override { ++creates; }
+    void register_new_cell(td::Ref<vm::DataCell>&) override { ++registrations; }
+  } vm;
+  auto root = vm::CellBuilder().store_ref(leaf()).finalize();
+  auto bounds = policy({10, 1000, 1});
+  vm::VmStateInterface::Guard context(&vm);
+  block::CandidateAdmissionSession session(root, bounds);
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(result));
+  ASSERT_TRUE(std::get<block::AdmittedInput>(result).candidate()->get_hash() == root->get_hash());
+  ASSERT_EQ(vm.creates, 0u);
+  ASSERT_EQ(vm.registrations, 0u);
+}
+
+TEST(WorkchainAdmission, CandidateLoaderFatalIsLocal) {
+  bool fail = false;
+  unsigned loads = 0;
+  td::Ref<FallibleCell> child{true, leaf(), &fail, &loads};
+  child->loader_exception = 3;
+  block::CandidateAdmissionSession session(child, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::ExecutionFault);
+}
+
+TEST(WorkchainAdmission, CandidateLoaderLengthIsLocal) {
+  bool fail = false;
+  unsigned loads = 0;
+  td::Ref<FallibleCell> child{true, leaf(), &fail, &loads};
+  child->loader_exception = 8;
+  block::CandidateAdmissionSession session(child, policy({10, 1000, 1}));
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(result).code, block::LocalUnavailableCode::Allocation);
 }
 
 TEST(WorkchainAdmission, NativeClosureExceptionBoundary) {

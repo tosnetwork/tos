@@ -4,6 +4,7 @@
 #include <optional>
 #include <variant>
 #include <new>
+#include <stdexcept>
 
 #include "block/workchain-input-preflight.h"
 #include "vm/cells.h"
@@ -88,6 +89,8 @@ class CandidateAdmissionSession {
         result_.emplace(materialize());
       } catch (const std::bad_alloc&) {
         result_.emplace(LocalUnavailable{LocalUnavailableCode::Allocation});
+      } catch (const std::length_error&) {
+        result_.emplace(LocalUnavailable{LocalUnavailableCode::Allocation});
       } catch (const vm::CellBuilder::CellCreateError&) {
         result_.emplace(LocalUnavailable{LocalUnavailableCode::Construction});
       } catch (const vm::CellBuilder::CellWriteError&) {
@@ -97,6 +100,8 @@ class CandidateAdmissionSession {
       } catch (const vm::VmVirtError&) {
         result_.emplace(LocalUnavailable{LocalUnavailableCode::CellUnavailable});
       } catch (const vm::VmNoGas&) {
+        result_.emplace(LocalUnavailable{LocalUnavailableCode::ExecutionFault});
+      } catch (const vm::VmFatal&) {
         result_.emplace(LocalUnavailable{LocalUnavailableCode::ExecutionFault});
       }
     }
@@ -144,20 +149,35 @@ class CandidateAdmissionSession {
           }
           builder.store_ref(child->second.detached);
         }
-        auto detached = builder.finalize();
+        // Verification must not consult ambient VM gas/registration hooks.
+        auto detached = builder.finalize_novm();
+        // All accepted children are ordinary level-zero cells by induction;
+        // their depths and hashes are in this ordinary parent's preimage.
+        // Under the Cell hash assumption, top-hash equality suffices here.
+        // A future profile admitting special cells must compare all levels.
         if (detached->get_hash() != hash) return LocalUnavailable{LocalUnavailableCode::CellIdentity};
         found->second.detached = std::move(detached);
         continue;
       }
       if (found != nodes.end()) {
-        if (found->second.detached.is_null()) return LocalUnavailable{LocalUnavailableCode::CellIdentity};
+        if (found->second.detached.is_null() ||
+            frame.cell->check_equals_unloaded(found->second.detached).is_error()) {
+          return LocalUnavailable{LocalUnavailableCode::CellIdentity};
+        }
         continue;
       }
       if (!consume(usage.cells, 1, limits.cells)) return CandidateInvalid{CandidateInvalidCode::CellLimit};
       auto loaded = frame.cell->load_cell();
       if (loaded.is_error()) return LocalUnavailable{LocalUnavailableCode::CellUnavailable};
-      auto source = loaded.move_as_ok().data_cell;
-      if (source.is_null() || source->get_hash() != hash) return LocalUnavailable{LocalUnavailableCode::CellIdentity};
+      auto data = loaded.move_as_ok();
+      auto source = std::move(data.data_cell);
+      // Validate acquisition identity before attributing the loaded profile to
+      // candidate bytes. Top-hash equality alone does not bind cached depths,
+      // all significant levels, or a loader's effective virtualization level.
+      if (source.is_null() || source->is_virtualized() || data.effective_level != source->get_level() ||
+          frame.cell->check_equals_unloaded(source).is_error()) {
+        return LocalUnavailable{LocalUnavailableCode::CellIdentity};
+      }
       if (source->is_special()) return CandidateInvalid{CandidateInvalidCode::ForbiddenSpecial};
       if (!consume(usage.bits, source->get_bits(), limits.bits)) return CandidateInvalid{CandidateInvalidCode::BitLimit};
       nodes.emplace(hash, Node{source, {}});

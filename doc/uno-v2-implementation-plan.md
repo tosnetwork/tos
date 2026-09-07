@@ -1466,3 +1466,36 @@ outcome cache. All fail; restoration passes both related CTest targets (2.76 s).
 Exact source, substitutions, raw logs and final hashes:
 `measurements/uno-v2-candidate-provenance-controls.json`. These are manual
 controls, not recurring mutation CI or completed production admission evidence.
+
+### Candidate loaded identity (boundary reviewed)
+
+Candidate acquisition now checks full significant-level hash/depth identity on
+fresh loads and cache hits, and checks loaded virtualization/effective level
+before interpreting the candidate's encoded profile. A local metadata mismatch
+cannot be converted into either proof of absence or a forbidden-special verdict.
+`VmFatal` and `std::length_error` from acquisition are contained as existing local
+execution/allocation categories. No new wire error codes or production callers
+are introduced. This does not authenticate old shard state or finish aggregate
+candidate/inbox/witness admission.
+
+Six separate tests failed on the unchanged implementation: fresh and cached
+depth corruption, effective-level mismatch, loaded-view traversal ordering, and
+the two exception types. After implementation all sixteen admission tests pass.
+The ordering witness observes descendant work, not rejection text. Faulty loader
+fixtures are local acquisition models, not alleged serializable peer inputs.
+Evidence: `measurements/uno-v2-candidate-identity-evidence.json`. Immediate
+error-boundary review confirmed the changes
+(`~/memo/reviews/uno-v2-candidate-identity-review.txt`). Test comments now
+identify the synthetic masked-loader shape and the query counter that isolates
+traversal ordering. The finish-path hash comparison retains its documented
+ordinary-only, level-zero induction. As a review follow-up, rebuilding now uses
+`finalize_novm`: the ambient-VM test first observed two create callbacks on the
+old path, rather than assuming verification was isolated. Existing exception
+clauses not exercised by these new candidate tests are not claimed as newly
+mutation-covered. Seven rebuilt controls independently remove fresh/cache
+identity, effective-level, loaded-view, the two new exception clauses, and
+ambient-VM isolation. All fail; restoration passes both related CTest targets
+(2.86 s). The admission binary now has seventeen tests. Exact source,
+substitutions, raw logs and final hashes:
+`measurements/uno-v2-candidate-identity-controls.json`. Manual controls remain
+distinct from recurring mutation CI; M1 production integration is still open.
