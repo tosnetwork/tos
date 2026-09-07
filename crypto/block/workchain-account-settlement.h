@@ -18,8 +18,7 @@ struct WorkchainAccountSettlement {
 // old state or withdrawal authorization. The resolved engine must derive its
 // payout request from verified obligations, not forward an unverified request.
 // Registration and inbound settlement need additional Native record shapes.
-// This path also materializes message-free internal allocations. Combining
-// allocations with payout settlement still requires the integrated fee path.
+// Message-free internal allocations may share a batch with a priced payout.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
@@ -37,9 +36,6 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
       authenticated_inbox, max_reads, max_writes, max_inbound));
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
       extra_validation_cells));
-  if (!executed.effects.native_transfers.empty() && executed.effects.payout_request.not_null()) {
-    return td::Status::Error("combined Native allocation and payout settlement is not integrated");
-  }
   std::vector<WorkchainStorageWrite> writes;
   writes.reserve(executed.effects.updates.size());
   for (const auto& update : executed.effects.updates) {
@@ -62,7 +58,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   } else {
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
-        executed.effects.payout_request, fee_budget, max_reads, max_writes, extra_validation_cells, cfg, message_cfg,
+        executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
         executed.input, effects_root));
     state = std::move(payout.state);
     message = std::move(payout.message);

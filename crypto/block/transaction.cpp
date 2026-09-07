@@ -4626,7 +4626,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
     Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
     Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
-    td::RefInt256 fee_budget, int extra_validation_cells,
+    td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
@@ -4643,6 +4643,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   if (entry_input.is_null() != entry_effects.is_null()) {
     return td::Status::Error("payout entry requires both input and effects");
   }
+  CurrencyCollection custody_available = custody.balance, operator_available = coordinator.balance;
   if (entry_input.not_null()) {
     gen::UnoV2HostInput::Record input;
     gen::UnoV2HostEffects::Record effects;
@@ -4650,7 +4651,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     if (first.input_hash != entry_input->get_hash().bits() || first.effects_hash != entry_effects->get_hash().bits() ||
         !tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects) ||
         !tlb::unpack_cell(effects.native, native) || input.inbox->prefetch_ulong(1) != 0 ||
-        native.transfers->prefetch_ulong(1) != 0 || native.payout->prefetch_ulong(1) != 1 ||
+        native.payout->prefetch_ulong(1) != 1 ||
         request.is_null() || native.payout->prefetch_ref()->get_hash() != request->get_hash()) {
       return td::Status::Error("payout entry context or request mismatch");
     }
@@ -4659,10 +4660,18 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     if (expected.is_null() || custody_data.is_null() || expected->get_hash() != custody_data->get_hash()) {
       return td::Status::Error("payout custody data differs from effects");
     }
+    TRY_RESULT(custody_allocated, allocate_workchain_native_balance(custody.addr, custody.balance,
+        effects, max_transfers, extra_validation_cells));
+    TRY_RESULT(operator_allocated, allocate_workchain_native_balance(coordinator.addr, coordinator.balance,
+        effects, max_transfers, extra_validation_cells));
+    custody_available = std::move(custody_allocated);
+    operator_available = std::move(operator_allocated);
   }
+  // Pricing still checks the old custody principal independently. Incoming
+  // allocations cannot increase the prior payout authorization envelope.
   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
-  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody.balance,
-      coordinator.balance, priced.payment, priced.total_fee, priced.collected_fee,
+  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody_available,
+      operator_available, priced.payment, priced.total_fee, priced.collected_fee,
       extra_validation_cells));
   // Pricing checked both LT additions. Both old end LTs are <= start_lt,
   // so neither constructor's max(requested_start, old_end) can raise that bound.
@@ -4671,12 +4680,9 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   pair.push_back(std::make_unique<Transaction>(coordinator, tr_workchain_batch, start_lt, now));
   TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
   if (entry_input.not_null()) {
-    // Zero extra transfers is the restricted profile above, not a default
-    // production resource policy. Preparation binds the full entry metadata.
+    // Entry preparation binds the same allocation graph and full metadata.
     TRY_STATUS(pair[1]->prepare_workchain_entry(coordinator_binding, entry_input, entry_effects,
-        coordinator_data, cfg, 0, extra_validation_cells));
-    // The profile excludes both credit sources: inbox and extra transfers.
-    // Entry preparation therefore preserves opening funds before fee funding.
+        coordinator_data, cfg, max_transfers, extra_validation_cells));
   } else {
     TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
   }

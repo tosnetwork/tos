@@ -539,12 +539,17 @@ struct Transaction {
   // Currency traversal uses an explicit resolved budget, not a storage limit.
   // Supplying both input/effects makes the coordinator the full batch entry.
   // Explicitly passing two null roots selects the low-level participant primitive.
-  // The entry profile currently excludes inbox and additional allocations.
+  // The entry profile excludes inbox; additional allocations precede payout
+  // and fee debits, with principal authorization still bounded by old custody.
+  // Incoming allocations do not enlarge that prior authorization; outgoing
+  // allocations may reduce the funds remaining to honor it. With entry roots,
+  // this pair is only a partial materialization: callers must materialize every
+  // effects update and independently check Native value flow over the full set.
   static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
       const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
       Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
       Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
-      td::RefInt256 fee_budget, int extra_validation_cells,
+      td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
       const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
       Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects);
   bool serialize(const SerializeConfig& cfg);

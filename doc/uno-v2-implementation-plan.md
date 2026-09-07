@@ -10,7 +10,7 @@ Specification baseline: memo `274258e5`. Late returns fund the slot fee from the
 
 `created_lt` must be determined before committing effects. Allocate one transaction per affected account, with a common start strictly beyond authenticated host/inbox timing and every affected account's previous transaction end. Within each account, assign outgoing message times in canonical order. The native wrapper must reproduce those values, never fill an uncommitted identity into state afterward.
 
-The custody exception remains the specification's single outgoing payout per batch until that permission is explicitly revised; an amount exposure limit alone is not permission to emit additional messages. Existing obligations retain the settlement period and fee reservation committed when admitted; configuration changes govern new obligations, not retrospective reduction of existing reservations. These are implementation decisions to include in the next design review, not claims of completed host enforcement.
+The specification separately authorizes a payout and one aggregate operation-fee settlement per batch (D24). The current payout materializer implements only the first output; an amount exposure limit alone is not permission to emit additional messages. Existing obligations retain the settlement period and fee reservation committed when admitted; configuration changes govern new obligations, not retrospective reduction of existing reservations. These are implementation decisions to include in the next design review, not claims of completed host enforcement.
 
 ## Milestones and evidence
 
@@ -998,10 +998,12 @@ test repairs; the full M1 milestone review and production integration remain ope
 The settlement runner now passes the complete committed input and effects
 through payout materialization and replay. The coordinator is a tag-12 entry
 with the full roots; custody remains the restricted tag-11 payout record and
-other storage participants remain tag 10. The pair checks both context roots,
+other storage participants at that stage remained tag 10 (the mixed unit below
+changes full-entry participants to tag 11). The pair checks both context roots,
 their binding hashes, the payout request and custody data. Entry preparation
-binds coordinator data/access/context. The supported profile still excludes
-Native inbox and extra allocations before any credit can be overwritten.
+binds coordinator data/access/context. The profile at that stage excluded
+Native inbox and extra allocations before any credit could be overwritten;
+the mixed unit below adds allocations.
 
 There are no default context arguments. Low-level tests explicitly select two
 null roots for the participant-only primitive; this is not a live batch mode.
@@ -1016,8 +1018,9 @@ incorrect third-account data, a conflicting supplied old hash, a conflicting
 host LT boundary, missing writes and an invalid read-only hash. They also check
 the actual coordinator description and full-root replay. Boundary review and
 its corrections are recorded in `uno-v2-payout-entry-review-disposition.md`.
-Combined allocations/payouts, custody imports, disposal, aggregate operation-fee
-settlement and production admission/publication remain unfinished M1 work.
+Custody imports, disposal, aggregate operation-fee settlement and production
+admission/publication remain unfinished M1 work. The next unit removes the
+combined allocation/payout limitation of this intermediate stage.
 
 Thirteen rebuilt failing controls cover runner/replay profile propagation,
 partial context, inbox exclusion, request/custody/third-account data bindings,
@@ -1026,3 +1029,44 @@ authentication and the two composite hash contracts. Restored five-target
 regression and standalone-header compilation pass. Logs, substitutions and
 source/binary hashes are in `measurements/uno-v2-payout-entry-evidence.json`.
 These are manual controls, not mutation CI or exhaustive guard coverage.
+
+### Mixed internal allocations and priced payout (M1 integration)
+
+Full-entry payout batches now apply the committed allocation graph before
+debiting custody principal and coordinator forwarding fees. All other changed
+accounts receive restricted allocation participants. Every full-entry non-entry
+record uses tag 11, including zero-allocation participants; explicitly null-root
+primitive tests retain their old storage-only third-record shape. Production
+scope acceptance is unchanged.
+
+The full overlay independently reconstructs Native rows from serialized
+accounts, transactions and messages, then checks the effects graph plus exactly
+one priced fee-funding edge. Shared endpoints do not deduplicate away either
+value. A checked extra verification slot accommodates this host edge without
+expanding the engine's transfer allowance. Overflow rejects before state reads.
+Pricing still checks old custody funds independently of allocated funds; an
+incoming edge cannot enlarge the prior payout authorization envelope.
+
+Tests now cover both role balances at exact funding boundaries and one unit
+beyond, third-account incoming and outgoing allocations, mixed replay at the
+exact edge limit, four altered replay artifacts, the full-entry third-account
+tag, direct pair balances and the previously untested old-custody envelope.
+The pair remains a partial primitive: any graph touching another account
+requires that account's participant and the complete independent value-flow
+check. Conservation is not withdrawal or fee authorization.
+
+The boundary review and dispositions are recorded in
+`uno-v2-mixed-payout-review-disposition.md`. Fifteen manual controls were rebuilt
+successfully and then failed on value, tag, load-count, required-success or
+rejection assertions. The zero-allocation tag control intentionally changes
+both construction and its independent tag expectation, isolating the explicit
+serialized-tag assertion. Raw results, substitutions and artifact hashes are in
+`measurements/uno-v2-mixed-payout-evidence.json`. They are not mutation CI or
+exhaustive coverage of every redundant guard.
+
+This removes the allocation/payout combination limitation, not the remaining
+M1 gates: nonempty custody/coordinator inbox integration, unexpected-destination
+disposal, aggregate operation-fee output, registration, source-aware production
+admission, actual collate/validate publication and synchronization remain open.
+No production policy value, additional payout authority or retirement rule is
+silently selected. Full M1 milestone review remains due.
