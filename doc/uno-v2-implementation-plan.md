@@ -1328,3 +1328,45 @@ See `uno-v2-native-destination-review-disposition.md` and
 `measurements/uno-v2-native-destination-evidence.json` (manual controls, not CI).
 The two-address V2 ingress policy and full disposal are not
 implemented merely by exposing this existing single-address policy function.
+
+### Composed Native disposal planning (M1, reviewed component)
+
+A post-admission planner now composes routing, body construction, closure
+measurement, Native bigint pricing, checked value-flow accounting and
+outgoing message encoding. Already-bounced, bounce-disabled, protocol-unreachable
+and insufficient-imported-value paths credit the unexpected balance. Errors and
+exceptions do not select credit. The resolved workchain table is supplied by
+reference and rebound locally; no nullable cfg pointer is used for routing.
+
+The message's effective final destination is checked against the supplied
+workchain/address. The processing account intentionally differs; its authorized
+role must be authenticated by the enclosing batch. The result names the branch
+explicitly and retains the original message for attribution. Source address,
+diagnostics and anycast policy have explicit, non-default profile inputs; the
+ordinary-comparison fixture does not select a production profile. A constructor
+requires all three profile arguments; empty aggregate construction is disallowed.
+
+This is still not live disposal: legitimate-entry classification,
+complete closure materialization/admission,
+typed failure provenance, bucket counters and InMsg/OutMsg publication remain
+outer obligations, including versioned InMsg/OutMsg address exceptions. The
+planner checks its constructed accounting row; this is not independent replay
+of Native records. The comparison fixture independently executes an ordinary
+Native transaction and compares the complete bounce hash, balance and fees.
+The new bigint serializer retains the full 120-bit Tomis wire fee; the existing
+ordinary uint64 call remains unchanged. Large measured prices are not truncated
+or turned into local faults merely for exceeding uint64. An unaffordable but
+representable price selects credit using the actual imported value.
+
+Tests exercise bounce amounts and all four economic credit reasons, invalid
+configuration not becoming credit, and compare the returned message hash,
+balance and fees with an actual ordinary Native bounce. This measures
+composition, not independent implementations of the shared encoding helpers.
+Follow-up review fixes include direct diagnostic/anycast/reference-body witnesses
+and a stale-but-valid configuration witness that fails without null-pointer UB.
+Thirteen rebuilt runtime mutations fail in the named test; a separate removed-
+constructor control fails at the intended compile-time assertion. Restored
+five-target CTest and standalone-header compilation pass. These are manually
+run controls, not recurring mutation CI or exhaustive branch coverage. Evidence:
+`measurements/uno-v2-native-disposal-evidence.json`; disposition:
+`uno-v2-native-disposal-review-disposition.md`. M1 acceptance remains open.

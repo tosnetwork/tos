@@ -1,5 +1,6 @@
 #include <limits>
 #include <random>
+#include <type_traits>
 #include "workchain-counter-engine.h"
 
 #include "block/workchain-block-execution.h"
@@ -15,6 +16,7 @@
 #include "block/native-bounce-message.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-bounce-accounting.h"
+#include "block/workchain-native-disposal.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
 #include "block/workchain-account-access.h"
@@ -689,6 +691,171 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, NativeDisposalPlan) {
+  block::ActionPhaseConfig cfg;
+  cfg.global_version = 16;
+  cfg.bounce_msg_body = 256;
+  cfg.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
+  cfg.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  block::WorkchainSet workchains;
+  auto key = td::Bits256::zero();
+  auto processor = key;
+  processor.as_slice().back() = 1;
+  processor.as_slice()[0] = static_cast<char>(0x80);
+  static_assert(!std::is_default_constructible_v<block::NativeDisposalProfile>);
+  block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
+      {0, -block::ComputePhase::sk_no_state, {}}, true};
+  auto make_message = [](bool bounce, bool bounced, int source_wc, int value, td::RefInt256 large = {}) {
+    vm::CellBuilder cb;
+    cb.store_long(0, 1).store_long(1, 1).store_long(bounce, 1).store_long(bounced, 1)
+        .store_long(4, 3).store_long(source_wc, 8).store_zeroes(256)
+        .store_long(4, 3).store_long(2, 8).store_zeroes(256);
+    CHECK(block::CurrencyCollection(large.not_null() ? large : td::make_refint(value)).store(cb));
+    CHECK(block::tlb::t_Tomis.store_integer_ref(cb, td::make_refint(3)));
+    cb.store_zeroes(4).store_long(77, 64).store_long(99, 32).store_zeroes(2).store_long(42, 64);
+    auto result = cb.finalize();
+    CHECK(block::gen::t_Message_Any.validate_ref(1000, result));
+    return result;
+  };
+  auto plan = [&](td::Ref<vm::Cell> message) {
+    return block::plan_workchain_native_disposal(message, 2, key, processor,
+        block::CurrencyCollection(1000), 88, 100, cfg, workchains, 100, profile);
+  };
+  auto accepted = plan(make_message(true, false, -1, 123)).move_as_ok();
+  ASSERT_TRUE(accepted.bounce.not_null());
+  ASSERT_TRUE(accepted.branch == block::NativeDisposalBranch::Bounce && accepted.row.account == processor);
+  ASSERT_TRUE(accepted.original->get_hash() == make_message(true, false, -1, 123)->get_hash());
+  ASSERT_TRUE(accepted.row.new_balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(accepted.row.exported == block::CurrencyCollection(98));
+  ASSERT_TRUE(accepted.row.fees == block::CurrencyCollection(25));
+  block::gen::CommonMsgInfo::Record_int_msg_info out;
+  ASSERT_TRUE(tlb::unpack_cell_inexact(accepted.bounce, out));
+  block::CurrencyCollection returned;
+  ASSERT_TRUE(returned.unpack(out.value));
+  ASSERT_TRUE(returned == block::CurrencyCollection(23));
+  ASSERT_EQ(block::tlb::t_Tomis.as_integer(out.fwd_fee)->to_long(), 75);
+  ASSERT_EQ(out.created_lt, 88u);
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, key.bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(key), 100, false));
+  using Tx = block::transaction::Transaction;
+  // Native allocates the output after the transaction's starting LT (87 -> 88).
+  Tx ordinary(account, Tx::tr_ord, 87, 100);
+  ordinary.in_msg = make_message(true, false, -1, 123);
+  cfg.workchains = &workchains;
+  ASSERT_TRUE(ordinary.unpack_input_msg(false, &cfg));
+  ASSERT_TRUE(ordinary.prepare_credit_phase());
+  ordinary.compute_phase = std::make_unique<block::ComputePhase>();
+  ordinary.compute_phase->skip_reason = block::ComputePhase::sk_no_state;
+  ASSERT_TRUE(ordinary.prepare_bounce_phase(cfg));
+  ASSERT_EQ(ordinary.out_msgs.size(), 1u);
+  ASSERT_TRUE(ordinary.out_msgs[0]->get_hash() == accepted.bounce->get_hash());
+  ASSERT_TRUE(ordinary.balance == accepted.row.new_balance);
+  ASSERT_TRUE(ordinary.total_fees == block::CurrencyCollection(25));
+  ASSERT_TRUE(accepted.row.fees == ordinary.total_fees);
+  block::WorkchainSet stale_workchains;
+  cfg.workchains = &stale_workchains; // Valid but stale: a missed rebind must fail an assertion, not crash.
+  struct CreditCase { bool bounce, bounced; int wc, value, expected; };
+  for (auto c : {CreditCase{false, false, -1, 123, 1123}, CreditCase{true, true, -1, 123, 1123},
+                 CreditCase{true, false, 3, 123, 1123}, CreditCase{true, false, -1, 99, 1099}}) {
+    LOG(INFO) << "disposal credit case " << c.bounce << '/' << c.bounced << '/' << c.wc << '/' << c.value;
+    auto message = make_message(c.bounce, c.bounced, c.wc, c.value);
+    auto credit = plan(message).move_as_ok();
+    ASSERT_TRUE(credit.branch == block::NativeDisposalBranch::UnexpectedCredit && credit.bounce.is_null());
+    ASSERT_TRUE(credit.original->get_hash() == message->get_hash());
+    ASSERT_TRUE(credit.row.new_balance == block::CurrencyCollection(c.expected));
+    ASSERT_TRUE(credit.row.exported.is_zero() && credit.row.fees.is_zero());
+  }
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  basechain.write().addr_len_step = 0;
+  workchains.emplace(0, basechain);
+  auto standard = plan(make_message(true, false, 0, 223)).move_as_ok();
+  ASSERT_TRUE(standard.branch == block::NativeDisposalBranch::Bounce);
+  ASSERT_TRUE(standard.row.exported == block::CurrencyCollection(173));
+  ASSERT_TRUE(standard.row.fees == block::CurrencyCollection(50));
+  ASSERT_TRUE(tlb::unpack_cell_inexact(standard.bounce, out));
+  ASSERT_TRUE(returned.unpack(out.value));
+  ASSERT_TRUE(returned == block::CurrencyCollection(23));
+  ASSERT_EQ(block::tlb::t_Tomis.as_integer(out.fwd_fee)->to_long(), 150);
+  cfg.workchains = nullptr;
+  ASSERT_TRUE(plan(make_message(true, false, 0, 223)).move_as_ok().branch == block::NativeDisposalBranch::Bounce);
+  auto baseline = make_message(true, false, -1, 123);
+  block::gen::Message::Record ref_input;
+  ASSERT_TRUE(tlb::type_unpack_cell(baseline, block::gen::t_Message_Any, ref_input));
+  ref_input.body = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(number(42)).finalize());
+  td::Ref<vm::Cell> referenced;
+  ASSERT_TRUE(tlb::type_pack_cell(referenced, block::gen::t_Message_Any, ref_input));
+  ASSERT_TRUE(plan(referenced).move_as_ok().bounce->get_hash() == accepted.bounce->get_hash());
+  profile.diagnostics = {2, 37, block::NativeBounceComputeInfo{123, 456}};
+  auto diagnostic = plan(baseline).move_as_ok();
+  block::gen::Message::Record diagnostic_message;
+  ASSERT_TRUE(tlb::type_unpack_cell(diagnostic.bounce, block::gen::t_Message_Any, diagnostic_message));
+  auto diagnostic_body = *diagnostic_message.body;
+  if (diagnostic_body.fetch_ulong(1)) diagnostic_body = vm::load_cell_slice(diagnostic_body.fetch_ref());
+  ASSERT_EQ(diagnostic_body.fetch_ulong(32), 0xfffffffeu);
+  ASSERT_TRUE(diagnostic_body.fetch_ref().not_null() && diagnostic_body.fetch_ref().not_null());
+  ASSERT_EQ(diagnostic_body.fetch_ulong(8), 2u);
+  ASSERT_EQ(diagnostic_body.fetch_long(32), 37);
+  ASSERT_EQ(diagnostic_body.fetch_ulong(1), 1u);
+  ASSERT_EQ(diagnostic_body.fetch_ulong(32), 123u);
+  ASSERT_EQ(diagnostic_body.fetch_ulong(32), 456u);
+  profile.diagnostics = {0, -block::ComputePhase::sk_no_state, {}};
+  cfg.global_version = 11;
+  ASSERT_TRUE(plan(make_message(false, false, -1, 123)).is_error());
+  cfg.global_version = 16;
+  cfg.fwd_mc.first_frac = 65536;
+  ASSERT_TRUE(plan(make_message(true, false, -1, 123)).is_error());
+  cfg.fwd_mc.first_frac = 16384;
+  ASSERT_TRUE(block::plan_workchain_native_disposal(make_message(true, false, -1, 123), 3, key, processor,
+      block::CurrencyCollection(1000), 88, 100, cfg, workchains, 100, profile).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_disposal(make_message(true, false, -1, 123), 2, processor, processor,
+      block::CurrencyCollection(1000), 88, 100, cfg, workchains, 100, profile).is_error());
+  profile.source = block::NativeDisposalSource::ProcessingAccount;
+  auto alternate = plan(make_message(true, false, -1, 123)).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell_inexact(alternate.bounce, out));
+  tos::WorkchainId source_wc;
+  td::Bits256 source_key;
+  ASSERT_TRUE(block::tlb::t_MsgAddressInt.extract_std_address(out.src, source_wc, source_key));
+  ASSERT_TRUE(source_wc == 2 && source_key == processor);
+  block::gen::Message::Record anycast_input;
+  ASSERT_TRUE(tlb::type_unpack_cell(make_message(true, false, 0, 223), block::gen::t_Message_Any, anycast_input));
+  block::gen::CommonMsgInfo::Record_int_msg_info anycast_info;
+  ASSERT_TRUE(tlb::csr_unpack(anycast_input.info, anycast_info));
+  anycast_info.src = vm::load_cell_slice_ref(vm::CellBuilder().store_long(2, 2).store_long(33, 6)
+      .store_long(0, 1).store_long(0, 8).store_zeroes(256).finalize());
+  ASSERT_TRUE(tlb::csr_pack(anycast_input.info, anycast_info));
+  td::Ref<vm::Cell> anycast;
+  ASSERT_TRUE(tlb::type_pack_cell(anycast, block::gen::t_Message_Any, anycast_input));
+  auto routed = plan(anycast).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell_inexact(routed.bounce, out));
+  ASSERT_TRUE(block::tlb::t_MsgAddressInt.extract_std_address(out.dest, source_wc, source_key));
+  ASSERT_TRUE(source_wc == 0 && source_key.cbits().get_uint(1) == 1);
+  profile.source = block::NativeDisposalSource::OriginalDestination;
+  routed = plan(anycast).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell_inexact(routed.bounce, out));
+  ASSERT_TRUE(block::tlb::t_MsgAddressInt.extract_std_address(out.dest, source_wc, source_key));
+  ASSERT_TRUE(source_wc == 0 && source_key == key);
+  profile.allow_anycast = false;
+  ASSERT_TRUE(plan(anycast).move_as_ok().branch == block::NativeDisposalBranch::UnexpectedCredit);
+  profile.source = static_cast<block::NativeDisposalSource>(2);
+  ASSERT_TRUE(plan(baseline).is_error());
+  profile.source = block::NativeDisposalSource::OriginalDestination;
+  // The Native bigint formula can exceed uint64 while still fitting Tomis.
+  cfg.fwd_mc.lump_price = cfg.fwd_mc.cell_price = std::numeric_limits<td::uint64>::max();
+  cfg.fwd_mc.first_frac = 0; // Keep the entire >64-bit price in the wire fee.
+  auto large = plan(make_message(true, false, -1, 0, td::make_refint(1) << 80)).move_as_ok();
+  ASSERT_TRUE(large.branch == block::NativeDisposalBranch::Bounce);
+  ASSERT_TRUE(tlb::unpack_cell_inexact(large.bounce, out));
+  ASSERT_TRUE(!block::tlb::t_Tomis.as_integer(out.fwd_fee)->unsigned_fits_bits(64));
+  auto unaffordable = plan(make_message(true, false, -1, 123)).move_as_ok();
+  ASSERT_TRUE(unaffordable.branch == block::NativeDisposalBranch::UnexpectedCredit);
 }
 
 TEST(WorkchainBlock, NativeBounceMessage) {
