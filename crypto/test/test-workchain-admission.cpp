@@ -5,6 +5,7 @@
 #include "block/native-bounce-storage.h"
 #include "td/utils/tests.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/boc.h"
 
 namespace {
 
@@ -144,6 +145,41 @@ TEST(WorkchainAdmission, ConfigurationFailureIsSeparate) {
   ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(unsupported));
   ASSERT_EQ(std::get<block::LocalUnavailable>(unsupported).code,
             block::LocalUnavailableCode::UnsupportedAdmissionVersion);
+}
+
+TEST(WorkchainAdmission, WireSpecialAndLocalViewHaveDifferentProvenance) {
+  auto pruned = vm::CellBuilder::do_create_pruned_branch(leaf(), 1, 0);
+  auto bytes = vm::std_boc_serialize(pruned).move_as_ok();
+  // Permit the encoded level here to test this boundary, not an earlier BoC
+  // profile gate. Deserialization still does not manufacture a VirtualCell.
+  auto received = vm::std_boc_deserialize(bytes.as_slice(), false, true).move_as_ok();
+  ASSERT_TRUE(!received->is_virtualized());
+  block::CandidateAdmissionSession wire(received, policy({10, 1000, 1}));
+  ASSERT_TRUE(std::holds_alternative<block::CandidateInvalid>(wire.evaluate()));
+  ASSERT_EQ(std::get<block::CandidateInvalid>(wire.evaluate()).code,
+            block::CandidateInvalidCode::ForbiddenSpecial);
+
+  for (bool descendant : {false, true}) {
+    bool fail = false;
+    unsigned loads = 0;
+    td::Ref<FallibleCell> wrapped{true, received->virtualize(0), &fail, &loads};
+    // Synthetic local-loader inconsistency: build before exposing the view,
+    // defeating the normal parent's cached virtualization propagation. This
+    // probes the loop defensively, not a reachable serialized peer input.
+    td::Ref<vm::Cell> root = wrapped;
+    if (descendant) root = vm::CellBuilder().store_ref(wrapped).finalize();
+    wrapped->forward_virtualization = true;
+    block::CandidateAdmissionSession local(root, policy({10, 1000, 1}));
+    const auto& outcome = local.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(outcome));
+    ASSERT_EQ(std::get<block::LocalUnavailable>(outcome).code, block::LocalUnavailableCode::CellIdentity);
+    ASSERT_EQ(loads, 0u);
+    wrapped->forward_virtualization = false;
+    local.evaluate();
+    // Re-evaluation could return the same category at the same storage address;
+    // only the load counter independently detects another acquisition attempt.
+    ASSERT_EQ(loads, 0u);
+  }
 }
 
 TEST(WorkchainAdmission, NativeClosureOwnsSpecialRepresentation) {

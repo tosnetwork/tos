@@ -1,0 +1,17 @@
+{
+  "command": "ctest --test-dir build --output-on-failure -R '^(test-workchain-admission|test-workchain-block)$'",
+  "initial": {
+    "chunk_id": "7b3c57",
+    "wall_time_seconds": 1.001796942,
+    "session_id": 34612,
+    "original_token_count": 33,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 37: test-workchain-block\n"
+  },
+  "terminal": {
+    "chunk_id": "e9970b",
+    "wall_time_seconds": 0.000009654,
+    "exit_code": 0,
+    "original_token_count": 65,
+    "output": "1/2 Test #37: test-workchain-block .............   Passed    3.25 sec\n    Start 38: test-workchain-admission\n2/2 Test #38: test-workchain-admission .........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 2\n\nTotal Test time (real) =   3.26 sec\n"
+  }
+}

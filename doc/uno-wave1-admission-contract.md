@@ -6,12 +6,14 @@ belongs to a separate policy construction result. None of this API is installed
 at a consensus entry point; no param 84 parser or schema is added.
 
 `AdmittedInput` has a private constructor. A single-candidate session visits
-every reachable Cell, rejects forbidden special/virtualized candidate payloads,
+every reachable Cell, rejects encoded profile-forbidden special payloads,
 and builds a detached ordinary DAG bottom-up. Each copied Cell must have the
 original hash. It neither trusts `is_loaded()` nor retains lazy references to
 source children. The returned root owns its complete materialized closure.
 This is not an authentication proof: acquisition of an authenticated witness
 and policy identity remains a caller responsibility.
+Local virtualized views are acquisition/adapter faults (`LocalUnavailable`),
+not serialized candidate constructors. They cannot be attributed to peer bytes.
 
 Cell/bit/root increments use a checked remaining-budget operation. The Cell
 limit precedes load; bits follow load. Source and detached-node maps are bounded
@@ -35,7 +37,7 @@ canonical inbox scaffold, logical-root identity/retry rules across adapters,
 Native special-body semantics and proof-cost admission remain open. Do not use
 this candidate-only ordinary-Cell policy on authenticated Native queues.
 
-Four tests cover ownership of every descendant under post-admission source
+The initial four tests covered ownership of every descendant under post-admission source
 failure, original typed failure retention, protocol rejection before further
 loads, and independent config errors. Each was observed red after its specific
 property was removed: return the source DAG, repeat failed acquisition, map
@@ -44,6 +46,9 @@ check successful descendant loads, invocation counts and variant alternatives,
 not error wording. Private construction is additionally compile-time checked.
 
 Logs: `build/wave1-admission-{detach,sticky,special,config}-mutation.log`.
+Those are historical manual local logs, not current-HEAD reproducible mutation
+CI. Later Native closure and provenance controls have versioned evidence under
+`doc/measurements/`; see `uno-v2-implementation-plan.md` for their narrower scopes.
 These tests are not collator/validator admission evidence. Full preflight
 remains activation-blocking until the unimplemented adapters and measured
 limits are delivered and frozen.

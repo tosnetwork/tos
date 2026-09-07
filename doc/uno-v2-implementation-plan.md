@@ -1435,3 +1435,34 @@ the preceding materialization boundary review does not cover this later file.
 Final checkpoint regression passes all five related CTest targets and standalone
 compilation of both new headers. Commands and final source/binary identities:
 `measurements/uno-v2-account-replay-regression.json`.
+
+### Candidate acquisition provenance (F11, boundary reviewed)
+
+The candidate factory now classifies a local virtualized view as
+`LocalUnavailable::CellIdentity`, matching Native acquisition. An encoded,
+profile-forbidden special constructor remains `CandidateInvalid::ForbiddenSpecial`.
+These are different representations and different provenance, not two verdicts
+on the same wire constructor. The unused prototype `VirtualizedInput` rejection
+enumerator is removed; no serialized policy, transaction or ABI changes.
+
+The test explicitly deserializes a nonzero-level pruned BoC to isolate this
+boundary from an earlier decoder profile gate. It then creates local views at
+the root and below an ordinary root, checking local classification, zero loader
+calls and the retained first outcome after the loader changes. On the original
+implementation it fails at the local-variant assertion; after the change all ten
+admission tests pass. Manual evidence:
+`measurements/uno-v2-candidate-provenance-evidence.json`. No claim is made that
+this narrow change closes every loaded-metadata, exception or production
+admission integration obligation. Immediate classification review confirmed the
+decision (`~/memo/reviews/uno-v2-candidate-provenance-review.txt`). Review fixes
+clarify the synthetic descendant fixture, remove nondiscriminating retention
+assertions and correct the older admission contract. The load counter remains
+the independent retention witness. The legacy preflight counter still has plain
+Status errors and is explicitly prohibited as a production verdict adapter.
+Loaded-metadata validation beyond this view check remains a separate obligation.
+After review corrections, three rebuilt controls separately change local views
+to candidate rejection, encoded special cells to local failure, and remove the
+outcome cache. All fail; restoration passes both related CTest targets (2.76 s).
+Exact source, substitutions, raw logs and final hashes:
+`measurements/uno-v2-candidate-provenance-controls.json`. These are manual
+controls, not recurring mutation CI or completed production admission evidence.

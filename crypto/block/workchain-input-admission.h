@@ -11,7 +11,7 @@
 
 namespace block {
 
-enum class CandidateInvalidCode { MissingRoot, CellLimit, BitLimit, RootLimit, ForbiddenSpecial, VirtualizedInput };
+enum class CandidateInvalidCode { MissingRoot, CellLimit, BitLimit, RootLimit, ForbiddenSpecial };
 struct CandidateInvalid {
   CandidateInvalidCode code;
 };
@@ -126,7 +126,10 @@ class CandidateAdmissionSession {
       auto frame = std::move(stack.back());
       stack.pop_back();
       if (frame.cell.is_null()) return LocalUnavailable{LocalUnavailableCode::CellIdentity};
-      if (frame.cell->is_virtualized()) return CandidateInvalid{CandidateInvalidCode::VirtualizedInput};
+      // A VirtualCell is a local proof/acquisition view, not an encoded wire
+      // constructor. Its presence here is a local adapter failure. Serialized
+      // special cells remain candidate-invalid under the ordinary profile below.
+      if (frame.cell->is_virtualized()) return LocalUnavailable{LocalUnavailableCode::CellIdentity};
       const auto hash = frame.cell->get_hash();
       auto found = nodes.find(hash);
       if (frame.finish) {

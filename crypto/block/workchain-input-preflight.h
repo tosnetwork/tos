@@ -27,6 +27,9 @@ struct WorkchainInputUsage {
 // input cells are admitted; proof/state acquisition has a separate contract.
 // Failure is sticky: partially visited input must not become an accepted cache.
 // This neither decodes an inbox nor constructs a batch commitment.
+// Legacy measurement primitive: Status errors conflate unavailable/local views
+// with encoded profile violations. Never map this Status or its text directly
+// to a production consensus verdict; use source-aware typed admission instead.
 class WorkchainInputPreflight {
  public:
   explicit WorkchainInputPreflight(WorkchainInputLimits limits) : limits_(limits) {
