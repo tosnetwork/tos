@@ -59,12 +59,17 @@ class WorkchainAccountEngine {
       const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts) const = 0;
 };
 
+struct ExecutedWorkchainAccountBatch {
+  td::Ref<vm::Cell> input;
+  WorkchainAccountEffects effects;
+};
+
 // Post-admission execution, not an authentication certificate. The enclosing
 // host must bind old_accounts to the authenticated previous shard and bound its
 // read closures before calling. Native source exceptions propagate unchanged;
 // this helper never reclassifies missing local data as a candidate mismatch.
 // Count bounds alone are not state traversal or execution-work limits.
-inline td::Result<WorkchainAccountEffects> execute_workchain_account_engine(
+inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
     const WorkchainAccountDeclarations& declarations,
@@ -110,7 +115,7 @@ inline td::Result<WorkchainAccountEffects> execute_workchain_account_engine(
   }
   // This checks engine claims only. The settlement overlay must independently
   // check actual Native account differences and physical participant coverage.
-  return effects;
+  return ExecutedWorkchainAccountBatch{std::move(input), std::move(effects)};
 }
 
 }  // namespace block

@@ -15,6 +15,7 @@
 #include "block/workchain-host-identity.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
+#include "block/workchain-account-settlement.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -659,7 +660,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
       17, 9, 2, 1, hash, 1, 1, 1, number(1)};
   block::gen::ShardStateUnsplit::Record state;
-  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2), state));
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
   auto a = td::Bits256::zero();
   td::Bits256 b(number(1)->get_hash().bits());
@@ -674,6 +675,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     mutable unsigned calls{0};
     td::Bits256 a, b;
     bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false};
+    td::Ref<vm::Cell> payout;
     td::Result<block::WorkchainAccountEffects> execute_accounts(
         const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
       ++calls;
@@ -690,6 +692,10 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       if (!omit_write) result.updates.push_back({b, number(102)});
       if (wrong_key) result.updates[0].account = b;
       if (null_data) result.updates[0].data.clear();
+      result.payout_request = payout;
+      result.receipts = number(103);
+      result.events = number(104);
+      result.usage = {7, 8, 9};
       return result;
     }
   } engine;
@@ -700,8 +706,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   auto result = execute(declarations);
   ASSERT_TRUE(result.is_ok());
   ASSERT_EQ(engine.calls, 1u);
-  ASSERT_EQ(result.ok().updates.size(), 2u);
-  ASSERT_TRUE(result.ok().updates[1].data->get_hash() == number(102)->get_hash());
+  ASSERT_EQ(result.ok().effects.updates.size(), 2u);
+  ASSERT_TRUE(result.ok().effects.updates[1].data->get_hash() == number(102)->get_hash());
   auto wrong = declarations;
   wrong.reads[0].old_account_hash = hash;
   engine.calls = 0;
@@ -715,6 +721,78 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   ASSERT_TRUE(execute(declarations).is_error());
   engine.wrong_key = false; engine.null_data = true;
   ASSERT_TRUE(execute(declarations).is_error());
+  engine.null_data = false;
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = cfg.extra_currency_v2 = true;
+  block::ActionPhaseConfig pricing;
+  pricing.global_version = 16;
+  pricing.disable_custom_fess = pricing.disable_anycast = pricing.extra_currency_v2 = true;
+  pricing.action_fine_enabled = pricing.bounce_on_fail_enabled = pricing.message_skip_enabled = true;
+  block::WorkchainSet workchains;
+  pricing.workchains = &workchains;
+  pricing.fwd_mc.lump_price = 100;
+  pricing.fwd_mc.first_frac = 16384;
+  auto settle = [&]() {
+    return block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+        declarations, {}, 2, 2, 0, a, b, td::make_refint(500), cfg, pricing);
+  };
+  for (bool with_payout : {false, true}) {
+    if (with_payout) {
+      vm::CellBuilder cb;
+      cb.store_long(6, 4).store_zeroes(2).store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+      ASSERT_TRUE(block::CurrencyCollection(137).store(cb));
+      ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(cb, td::make_refint(3)));
+      engine.payout = cb.store_zeroes(4).store_zeroes(96).store_zeroes(2).store_bits(b.bits(), 256).finalize();
+    }
+    engine.calls = 0;
+    auto settled = settle();
+    ASSERT_TRUE(settled.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    const auto& value = settled.ok();
+    auto expected_input = block::encode_workchain_host_input(identity, admitted, declarations, {}, 2, 2, 0).move_as_ok();
+    ASSERT_TRUE(value.input->get_hash() == expected_input->get_hash());
+    ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, value.effects));
+    block::gen::UnoV2HostEffects::Record decoded;
+    ASSERT_TRUE(tlb::unpack_cell(value.effects, decoded));
+    ASSERT_EQ(decoded.wire_bytes, 7u);
+    ASSERT_EQ(decoded.verification_units, 8u);
+    ASSERT_EQ(decoded.written_cells, 9u);
+    ASSERT_EQ(decoded.receipts->prefetch_ulong(1), 1u);
+    ASSERT_EQ(decoded.events->prefetch_ulong(1), 1u);
+    ASSERT_TRUE(decoded.receipts->prefetch_ref()->get_hash() == number(103)->get_hash());
+    ASSERT_TRUE(decoded.events->prefetch_ref()->get_hash() == number(104)->get_hash());
+    ASSERT_EQ(decoded.payout->prefetch_ulong(1), with_payout ? 1u : 0u);
+    if (with_payout) ASSERT_TRUE(decoded.payout->prefetch_ref()->get_hash() == engine.payout->get_hash());
+    vm::Dictionary updates(decoded.updates, 256);
+    vm::AugmentedDictionary next(vm::load_cell_slice_ref(value.state.accounts), 256, block::tlb::aug_ShardAccounts);
+    vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(value.state.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+    for (auto key : {a, b}) {
+      block::Account account(2, key.bits());
+      ASSERT_TRUE(account.unpack(next.lookup(key), identity.gen_utime, false));
+      ASSERT_TRUE(account.data->get_hash() == number(key == a ? 101 : 102)->get_hash());
+      ASSERT_TRUE(updates.lookup_ref(key)->get_hash() == account.data->get_hash());
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(with_payout ? (key == a ? 863 : 900) : 1000));
+      auto block_root = vm::CellBuilder().append_cellslice(*blocks.lookup(key)).finalize();
+      block::gen::AccountBlock::Record ab;
+      ASSERT_TRUE(tlb::unpack_cell(block_root, ab));
+      vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+      block::gen::Transaction::Record tx;
+      ASSERT_TRUE(tlb::unpack_cell(txs.lookup_ref(td::BitArray<64>(account.last_trans_lt_)), tx));
+      block::gen::UnoV2HostRecord::Record binding;
+      ASSERT_TRUE(tlb::unpack_cell(vm::load_cell_slice(tx.description).prefetch_ref(), binding));
+      ASSERT_TRUE(binding.input_hash == value.input->get_hash().bits());
+      ASSERT_TRUE(binding.effects_hash == value.effects->get_hash().bits());
+      ASSERT_TRUE(binding.account_id == key);
+      ASSERT_EQ(binding.effect_index, key == a ? 0u : 1u);
+    }
+    ASSERT_EQ(value.message.not_null(), with_payout);
+  }
+  engine.calls = 0;
+  auto unhandled_inbox = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+      declarations, {inbound_envelope(5)}, 2, 2, 1, a, b, td::make_refint(500), cfg, pricing);
+  ASSERT_TRUE(unhandled_inbox.is_error());
+  ASSERT_EQ(engine.calls, 0u);
 }
 
 TEST(WorkchainBlock, HostInputCommitment) {

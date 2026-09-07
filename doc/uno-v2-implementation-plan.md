@@ -454,3 +454,50 @@ manual, not CI automation. No production call site or error category changed;
 M1 review and live integration remain pending. Next is connecting this interface
 to independently derived effects and the private Native settlement overlay,
 then the source-aware collator/validator boundary and versioned activation.
+
+### Engine effects to Native settlement
+
+`execute_and_settle_workchain_accounts` now connects one declared-account engine
+invocation to private Native materialization. The runner returns the exact input
+envelope supplied to the engine. The settlement derives both participant hashes
+itself, encodes the returned effects, and obtains every storage update and the
+optional custody payout from that same result. Callers cannot supply alternate
+input/effects hashes or substitute a second update vector. Old account hashes
+come from the declarations already checked before execution.
+
+`UnoV2HostEffects` is an independent TL-B type, not an activation or an extension
+of accepted TransactionDescr scope. Its implicit tag is `0e15071a`, derived by
+the repository compiler and independently recomputed with CRC32 from:
+
+```
+uno_v2_host_effects updates:HashmapE 256 ^Cell payout:Maybe ^Cell receipts:Maybe ^Cell events:Maybe ^Cell wire_bytes:uint64 verification_units:uint64 written_cells:uint64 = UnoV2HostEffects
+```
+
+The root has 228 bits and at most four references. That is a local encoding size,
+not a closure/depth bound. Sorted account keys commit each new data root; optional
+payout, receipts and events and all three usage fields are committed. No final
+Native transaction, AccountBlock, last-trans hash or shard root is included, so
+participant bindings introduce no self-reference. The type has one constructor;
+the generated table has no other occurrence of this tag.
+
+The fixture executes storage-only and custody-payout cases. It decodes actual
+Native balances, updated data, AccountBlocks and participant binding records;
+both hashes must match the committed roots. Test-only initial balances of 1000
+and principal 137 produce custody 863 and coordinator 900 under test forwarding
+cost 100. They are not production policy values. Both paths call the engine once.
+Eight independent mutations replace the input/effects binding, replace the data
+source, skip payout dispatch, accept an unsupported inbox, omit receipts/events
+or exchange usage fields. Each fails a state, count or numeric assertion. Raw
+logs and hashes are in `measurements/uno-v2-account-settlement-evidence.json`;
+manual mutation runs are not CI automation.
+
+This is not the complete V2 settlement engine. Roles, configuration, resource
+admission and withdrawal authority still need the resolved production boundary;
+fees are independently priced in the Native overlay, not yet represented by the
+complete protocol's explicit fee effects. Nonempty Native inboxes are rejected
+before engine invocation rather than silently omitted from value settlement.
+Account creation similarly requires a registration participant. Neither path
+is an accepted substitute for coordinator batch-entry/import records. Full
+shard-update replay, registry selection, proof/state transitions and live
+collator/validator wiring remain M1 work. No consensus judgement file or error
+category changed in this unit; milestone review remains pending.
