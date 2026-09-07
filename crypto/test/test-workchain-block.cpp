@@ -6,6 +6,7 @@
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
+#include "block/workchain-account-access-codec.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -21,6 +22,87 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, AccountDeclarationsCodec) {
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  block::WorkchainAccountDeclarations declarations{{{a, b}, {b, std::nullopt}}, {b}};
+  auto encoded = block::encode_workchain_account_declarations(declarations, 2, 1);
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  ASSERT_TRUE(block::gen::t_UnoV2HostAccess.validate_ref(4096, root));
+  auto decoded = block::decode_workchain_account_declarations(root, 2, 1);
+  ASSERT_TRUE(decoded.is_ok());
+  auto value = decoded.move_as_ok();
+  ASSERT_EQ(value.reads.size(), 2u);
+  ASSERT_EQ(value.writes.size(), 1u);
+  ASSERT_TRUE(value.reads[0].account == a);
+  ASSERT_TRUE(value.reads[0].old_account_hash == std::optional<td::Bits256>(b));
+  ASSERT_TRUE(value.reads[1].account == b);
+  ASSERT_TRUE(!value.reads[1].old_account_hash.has_value());
+  ASSERT_TRUE(value.writes[0] == b);
+  ASSERT_TRUE(block::decode_workchain_account_declarations(root, 1, 1).is_error());
+  ASSERT_TRUE(block::decode_workchain_account_declarations(root, 2, 0).is_error());
+  ASSERT_TRUE(block::encode_workchain_account_declarations(declarations, 1, 1).is_error());
+  auto duplicate = declarations;
+  duplicate.reads[1].account = a;
+  ASSERT_TRUE(block::encode_workchain_account_declarations(duplicate, 2, 1).is_error());
+  auto reversed = declarations;
+  std::swap(reversed.reads[0], reversed.reads[1]);
+  ASSERT_TRUE(block::encode_workchain_account_declarations(reversed, 2, 1).is_error());
+  auto empty = block::encode_workchain_account_declarations({}, 0, 0);
+  ASSERT_TRUE(empty.is_ok());
+  auto empty_root = empty.move_as_ok();
+  ASSERT_TRUE(block::gen::t_UnoV2HostAccess.validate_ref(4096, empty_root));
+  ASSERT_EQ(vm::load_cell_slice(empty_root).size(), 34u);
+  auto empty_value = block::decode_workchain_account_declarations(empty_root, 0, 0);
+  ASSERT_TRUE(empty_value.is_ok());
+  ASSERT_TRUE(empty_value.ok().reads.empty() && empty_value.ok().writes.empty());
+}
+
+TEST(WorkchainBlock, AccountDeclarationsMalformed) {
+  // Independent TL-B builder, not the encoder under test.
+  auto absent = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::gen::t_UnoV2HostRead.validate_ref(4096, absent));
+  auto key = td::Bits256::zero();
+  auto make = [&](td::Ref<vm::Cell> read, bool trailing) {
+    vm::Dictionary reads(256);
+    ASSERT_TRUE(reads.set_ref(key, read));
+    vm::CellBuilder cb;
+    cb.store_long(0x7bc07a6d, 32);
+    ASSERT_TRUE(reads.append_dict_to_bool(cb));
+    cb.store_long(0, 1);
+    if (trailing) cb.store_long(0, 1);
+    return cb.finalize();
+  };
+  auto valid = make(absent, false);
+  ASSERT_TRUE(block::decode_workchain_account_declarations(valid, 1, 0).is_ok());
+  auto tail = make(absent, true);
+  ASSERT_TRUE(!block::gen::t_UnoV2HostAccess.validate_ref(4096, tail));
+  ASSERT_TRUE(block::decode_workchain_account_declarations(tail, 1, 0).is_error());
+  auto bad_read = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 2).finalize();
+  ASSERT_TRUE(!block::gen::t_UnoV2HostRead.validate_ref(4096, bad_read));
+  ASSERT_TRUE(block::decode_workchain_account_declarations(make(bad_read, false), 1, 0).is_error());
+  auto bad_tag = vm::CellBuilder().store_long(0x439e6965, 32).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::decode_workchain_account_declarations(make(bad_tag, false), 1, 0).is_error());
+  ASSERT_TRUE(block::decode_workchain_account_declarations({}, 1, 0).is_error());
+  auto long_label = vm::CellBuilder().store_long(2, 2).store_long(256, 9)
+                        .store_bits(key.bits(), 256).store_ref(absent).finalize();
+  auto noncanonical = vm::CellBuilder().store_long(0x7bc07a6d, 32).store_long(1, 1)
+                          .store_ref(long_label).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::gen::t_UnoV2HostAccess.validate_ref(4096, noncanonical));
+  ASSERT_TRUE(block::decode_workchain_account_declarations(noncanonical, 1, 0).is_error());
+  vm::Dictionary writes(256);
+  vm::CellBuilder empty;
+  ASSERT_TRUE(writes.set_builder(key, empty));
+  vm::CellBuilder only_write;
+  only_write.store_long(0x7bc07a6d, 32).store_long(0, 1);
+  ASSERT_TRUE(writes.append_dict_to_bool(only_write));
+  auto undeclared = only_write.finalize();
+  ASSERT_TRUE(block::gen::t_UnoV2HostAccess.validate_ref(4096, undeclared));
+  ASSERT_TRUE(block::decode_workchain_account_declarations(undeclared, 0, 1).is_error());
+}
 
 TEST(WorkchainBlock, AccountAccessBinding) {
   auto a = td::Bits256::zero();
