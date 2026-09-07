@@ -4,6 +4,7 @@
 
 #include "block/workchain-block-execution.h"
 #include "block/workchain-participant-lt.h"
+#include "block/workchain-participant-record.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
@@ -24,6 +25,44 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, ParticipantRecordBinding) {
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  auto c = b;
+  c.as_slice().back() = 2;
+  auto encoded = block::build_workchain_participant_records(b, c, {a, b}, 2);
+  ASSERT_TRUE(encoded.is_ok());
+  auto records = encoded.move_as_ok();
+  ASSERT_EQ(records.size(), 2u);
+  for (unsigned i = 0; i < 2; ++i) {
+    ASSERT_TRUE(block::gen::t_UnoV2HostRecord.validate_ref(4096, records[i]));
+    auto cs = vm::load_cell_slice(records[i]);
+    ASSERT_EQ(cs.size(), 832u);
+    ASSERT_EQ(cs.size_refs(), 0u);
+    ASSERT_EQ(cs.fetch_ulong(32), 0x35739af6u);
+    td::Bits256 hash;
+    ASSERT_TRUE(cs.fetch_bits_to(hash) && hash == b);
+    ASSERT_TRUE(cs.fetch_bits_to(hash) && hash == c);
+    ASSERT_TRUE(cs.fetch_bits_to(hash) && hash == (i == 0 ? a : b));
+    ASSERT_EQ(cs.fetch_ulong(32), i);
+    ASSERT_TRUE(cs.empty_ext());
+  }
+  auto input_changed = block::build_workchain_participant_records(c, c, {a, b}, 2).move_as_ok();
+  auto effects_changed = block::build_workchain_participant_records(b, b, {a, b}, 2).move_as_ok();
+  auto account_changed = block::build_workchain_participant_records(b, c, {a, c}, 2).move_as_ok();
+  for (unsigned i = 0; i < 2; ++i) {
+    ASSERT_TRUE(input_changed[i]->get_hash() != records[i]->get_hash());
+    ASSERT_TRUE(effects_changed[i]->get_hash() != records[i]->get_hash());
+  }
+  ASSERT_TRUE(account_changed[0]->get_hash() == records[0]->get_hash());
+  ASSERT_TRUE(account_changed[1]->get_hash() != records[1]->get_hash());
+  ASSERT_TRUE(block::build_workchain_participant_records(b, c, {a, b}, 1).is_error());
+  ASSERT_TRUE(block::build_workchain_participant_records(b, c, {a, a}, 2).is_error());
+  ASSERT_TRUE(block::build_workchain_participant_records(b, c, {b, a}, 2).is_error());
+  ASSERT_TRUE(block::build_workchain_participant_records(b, c, {}, 2).is_error());
+}
 
 TEST(WorkchainBlock, HostIdentityBinding) {
   auto one = td::Bits256::zero();
