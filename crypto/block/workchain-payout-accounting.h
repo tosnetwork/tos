@@ -8,6 +8,9 @@ struct WorkchainPayoutAccounting {
   CurrencyCollection custody_after, operator_after;
   CurrencyCollection exported;  // Payment plus forwarding value still in flight.
   WorkchainInternalTransfer fee_funding;
+  // Incremental payout-stage rows: input balances are already post-import,
+  // post-allocation and (if enabled) post-disposal. These are not complete
+  // transaction rows. Publishers must decode Native artifacts independently.
   std::vector<WorkchainAccountValueFlow> rows;
 };
 

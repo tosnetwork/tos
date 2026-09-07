@@ -56,6 +56,9 @@ struct WorkchainDisposalEntryContext {
   const ActionPhaseConfig& messages;
   const WorkchainSet& workchains;
   const NativeDisposalProfile& profile;
+  // Batch-total output bound, not an independent allowance per participant.
+  // Standalone disposal has one emitter; joint settlement additionally charges
+  // the custody payout. The inner disposal guard is a necessary partial bound.
   std::uint64_t max_inbound, max_outbound;
 };
 
@@ -592,13 +595,17 @@ struct Transaction {
   // allocations may reduce the funds remaining to honor it. With entry roots,
   // this pair is only a partial materialization: callers must materialize every
   // effects update and independently check Native value flow over the full set.
+  // An explicit disposal context prepares the coordinator's bounces in this
+  // same pair. Its output bound includes the custody payout, and its pricing
+  // reference must be the very same resolved source as message_cfg.
   static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
       const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
       Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
       Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
       td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
       const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
-      Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects);
+      Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects,
+      const WorkchainDisposalEntryContext* disposal = nullptr);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

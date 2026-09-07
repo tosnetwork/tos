@@ -4603,7 +4603,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
     td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
-    Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects) {
+    Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects,
+    const WorkchainDisposalEntryContext* disposal) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
   if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
   if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
@@ -4617,6 +4618,10 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   }
   if (entry_input.is_null() != entry_effects.is_null()) {
     return td::Status::Error("payout entry requires both input and effects");
+  }
+  if (disposal && (entry_input.is_null() || disposal->custody != custody.addr ||
+                   &disposal->messages != &message_cfg || message_cfg.workchains != &disposal->workchains)) {
+    return td::Status::Error("payout disposal requires the same roles, context and pricing source");
   }
   if (entry_input.not_null()) {
     gen::UnoV2HostInput::Record input;
@@ -4648,8 +4653,15 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     // payout principal or fees. No imported value or allocation is overwritten.
     TRY_STATUS(pair[0]->prepare_workchain_import_participant(custody_binding, entry_input, entry_effects,
         custody_data, cfg, max_transfers, extra_validation_cells));
-    TRY_STATUS(pair[1]->prepare_workchain_entry(coordinator_binding, entry_input, entry_effects,
-        coordinator_data, cfg, max_transfers, extra_validation_cells));
+    if (disposal) {
+      TRY_STATUS(pair[1]->prepare_workchain_disposal_entry(coordinator_binding, entry_input, entry_effects,
+          coordinator_data, cfg, max_transfers, extra_validation_cells, *disposal));
+      TRY_RESULT(outputs, participant_lt_detail::checked_add(pair[1]->out_msgs.size(), 1));
+      if (outputs > disposal->max_outbound) return td::Status::Error("joint payout outputs exceed admitted count");
+    } else {
+      TRY_STATUS(pair[1]->prepare_workchain_entry(coordinator_binding, entry_input, entry_effects,
+          coordinator_data, cfg, max_transfers, extra_validation_cells));
+    }
   } else {
     TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
     TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
@@ -4658,6 +4670,9 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
       pair[1]->balance, priced.payment, priced.total_fee, priced.collected_fee, extra_validation_cells));
   pair[0]->balance = allocation.custody_after;
   pair[1]->balance = allocation.operator_after;
+  // The custody import participant has no transaction fee-producing phase:
+  // inbound forwarding fees live in InMsgDescr, and disposal runs only on the
+  // coordinator. This assigns the complete custody transaction fee, not a sum.
   pair[0]->total_fees = CurrencyCollection(priced.collected_fee);
   pair[0]->out_msgs.push_back(priced.message);
   pair[0]->end_lt = priced.end_lt;

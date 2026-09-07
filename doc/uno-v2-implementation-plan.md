@@ -1586,3 +1586,21 @@ step, before live queue/validator activation. No input filtering is introduced.
 Restored five-test CTest regression and standalone header compilation passed.
 See `uno-v2-disposal-runner.md` and
 `measurements/uno-v2-disposal-runner-evidence.json`. M1 remains incomplete.
+
+### Joint payout/disposal pair (M1, boundary reviewed)
+
+The private payout pair can now prepare coordinator disposal and custody payout
+together, retaining disposal fees/messages while charging payout principal and
+forwarding against their separate accounts. The resolved output count is
+batch-total and includes custody's message. Pricing and routing tables must come
+from the same resolved references. This is not authentication by pointer identity.
+
+Boundary review findings and disagreements are recorded in
+`uno-v2-joint-pair-review-disposition.md`. Follow-up added table/context witnesses
+and a complete value-flow check decoded from serialized Native artifacts.
+Eight rebuilt controls turned red; restored production validator compilation,
+five-test CTest regression and standalone header compilation passed.
+The next step is integrating the pair into the full write-set overlay with
+multi-emitter scheduling and Native queue reconstruction. The old payout overlay
+still accepts only its existing single-emitter shape; no mixed-batch publication
+or M1 completion is claimed.

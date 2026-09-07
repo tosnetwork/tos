@@ -1711,6 +1711,99 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_EQ(engine.calls, 0u);
   ASSERT_EQ(old.accounts->get_hash(), original_hash);
   auto mismatched_prices = messages;
+  // Joint preparation must retain both the payout principal isolation and the
+  // coordinator's disposal outputs/fees. Neither account is committed here.
+  auto joint_prices = messages;
+  joint_prices.workchains = &workchains;
+  joint_prices.disable_custom_fess = joint_prices.disable_anycast = joint_prices.extra_currency_v2 = true;
+  joint_prices.action_fine_enabled = joint_prices.bounce_on_fail_enabled = joint_prices.message_skip_enabled = true;
+  joint_prices.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  vm::CellBuilder payout_body;
+  payout_body.store_long(6, 4).store_zeroes(2).store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+  ASSERT_TRUE(block::CurrencyCollection(137).store(payout_body));
+  ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(payout_body, td::make_refint(3)));
+  auto request = payout_body.store_zeroes(4).store_zeroes(96).store_zeroes(2).store_bits(a.bits(), 256).finalize();
+  auto joint_effects = effects;
+  joint_effects.payout_request = request;
+  auto joint_root = block::encode_workchain_account_effects(joint_effects, 2, 2, 4096).move_as_ok();
+  auto joint_bindings = block::build_workchain_participant_records(td::Bits256(overlay_input->get_hash().bits()),
+      td::Bits256(joint_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  block::WorkchainDisposalEntryContext joint_context{b, joint_prices, workchains, profile, 5, 3};
+  auto joint = [&](const block::WorkchainDisposalEntryContext& resolved, std::uint64_t fee_budget) {
+    return Transaction::build_workchain_payout_pair(custody, coordinator, joint_bindings[1], joint_bindings[0],
+        number(322), number(321), request, 21, 10, td::make_refint(fee_budget), 2, 4096,
+        cfg, joint_prices, overlay_input, joint_root, &resolved);
+  };
+  auto joint_result = joint(joint_context, 100);
+  if (joint_result.is_error()) LOG(ERROR) << "joint payout preparation failed: " << joint_result.error();
+  ASSERT_TRUE(joint_result.is_ok());
+  const auto& pair = joint_result.ok().transactions;
+  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(1090));
+  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(973));
+  ASSERT_TRUE(pair[0]->total_fees == block::CurrencyCollection(25));
+  ASSERT_TRUE(pair[1]->total_fees == block::CurrencyCollection(100));
+  ASSERT_EQ(pair[0]->out_msgs.size(), 1u);
+  ASSERT_EQ(pair[1]->out_msgs.size(), 2u);
+  ASSERT_EQ(pair[0]->end_lt, 23u);
+  ASSERT_EQ(pair[1]->end_lt, 24u);
+  ASSERT_TRUE(joint_result.ok().accounting.fee_funding.value == block::CurrencyCollection(100));
+  for (unsigned i = 0; i < 2; ++i) {
+    ASSERT_EQ(pair[1]->out_msgs[i]->get_hash(), entry.out_msgs[i]->get_hash());
+  }
+  auto insufficient_outputs = joint_context;
+  insufficient_outputs.max_outbound = 2;
+  ASSERT_TRUE(joint(insufficient_outputs, 100).is_error());
+  ASSERT_TRUE(joint(joint_context, 99).is_error());
+  auto wrong_custody = joint_context;
+  wrong_custody.custody = foreign;
+  ASSERT_TRUE(joint(wrong_custody, 100).is_error());
+  auto other_prices = joint_prices;
+  block::WorkchainDisposalEntryContext unshared_prices{b, other_prices, workchains, profile, 5, 3};
+  ASSERT_TRUE(joint(unshared_prices, 100).is_error());
+  block::WorkchainSet divergent_table; // Missing the bounce destination workchain.
+  block::WorkchainDisposalEntryContext unshared_table{b, joint_prices, divergent_table, profile, 5, 3};
+  ASSERT_TRUE(joint(unshared_table, 100).is_error());
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, joint_bindings[1], joint_bindings[0],
+      number(322), number(321), request, 21, 10, td::make_refint(100), 2, 4096,
+      cfg, joint_prices, {}, {}, &joint_context).is_error());
+  auto absent_table = joint_prices;
+  absent_table.workchains = nullptr;
+  ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, joint_bindings[1], joint_bindings[0],
+      number(322), number(321), request, 21, 10, td::make_refint(100), 2, 4096,
+      cfg, absent_table, {}, {}).is_error());
+  auto joint_imports = block::build_workchain_routed_final_imports(2, 16, inbox,
+      {{a, pair[1]->root}, {b, pair[0]->root}}, a, b, 5, 2, 4096).move_as_ok();
+  std::vector<block::WorkchainAccountValueFlow> joint_rows;
+  for (const auto& tx : pair) {
+    block::gen::Transaction::Record record;
+    block::gen::Account::Record_account account_record;
+    block::gen::AccountStorage::Record storage;
+    block::CurrencyCollection after, fees, exported(0);
+    ASSERT_TRUE(tlb::unpack_cell(tx->root, record));
+    ASSERT_TRUE(tlb::unpack_cell(tx->new_total_state, account_record) && tlb::csr_unpack(account_record.storage, storage));
+    ASSERT_TRUE(after.unpack(storage.balance) && fees.unpack(record.total_fees));
+    vm::Dictionary messages(record.r1.out_msgs, 15);
+    ASSERT_TRUE(messages.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr, int width) {
+      block::gen::CommonMsgInfo::Record_int_msg_info info;
+      block::CurrencyCollection payment, with_fee, next;
+      if (width != 15 || value->size_ext() != 0x10000 ||
+          !tlb::unpack_cell_inexact(value->prefetch_ref(), info) || !payment.unpack(info.value)) return false;
+      auto forwarding = block::tlb::t_Tomis.as_integer(info.fwd_fee);
+      if (forwarding.is_null() ||
+          !block::CurrencyCollection::add(payment, block::CurrencyCollection(forwarding), with_fee) ||
+          !block::CurrencyCollection::add(exported, with_fee, next)) return false;
+      exported = std::move(next);
+      return true;
+    }));
+    joint_rows.push_back({record.account_addr, block::CurrencyCollection(1000),
+        joint_imports.account_credits.at(record.account_addr), after, exported, fees});
+  }
+  auto joint_transfers = effects.native_transfers;
+  std::sort(joint_rows.begin(), joint_rows.end(), [](const auto& x, const auto& y) { return x.account < y.account; });
+  joint_transfers.push_back(joint_result.ok().accounting.fee_funding);
+  ASSERT_TRUE(block::verify_workchain_value_flow(joint_rows, joint_transfers, 2, 3, 4096).is_ok());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
   mismatched_prices.global_version = 15;
   block::WorkchainDisposalEntryContext mismatch{b, mismatched_prices, workchains, profile, 5, 2};
   Transaction wrong_version(coordinator, Transaction::tr_workchain_batch, 21, 10);
