@@ -466,14 +466,15 @@ input/effects hashes or substitute a second update vector. Old account hashes
 come from the declarations already checked before execution.
 
 `UnoV2HostEffects` is an independent TL-B type, not an activation or an extension
-of accepted TransactionDescr scope. Its implicit tag is `0e15071a`, derived by
+of accepted TransactionDescr scope. Its initial implicit tag was `0e15071a`, derived by
 the repository compiler and independently recomputed with CRC32 from:
 
 ```
 uno_v2_host_effects updates:HashmapE 256 ^Cell payout:Maybe ^Cell receipts:Maybe ^Cell events:Maybe ^Cell wire_bytes:uint64 verification_units:uint64 written_cells:uint64 = UnoV2HostEffects
 ```
 
-The root has 228 bits and at most four references. That is a local encoding size,
+That initial root had 228 bits and at most four references. The Native-transfer
+extension below supersedes that inactive encoding. This is a local encoding size,
 not a closure/depth bound. Sorted account keys commit each new data root; optional
 payout, receipts and events and all three usage fields are committed. No final
 Native transaction, AccountBlock, last-trans hash or shard root is included, so
@@ -576,3 +577,55 @@ The source-aware replay boundary must still handle actual builder/allocation
 exceptions and distinguish authenticated-source faults from candidate defects;
 the review's broad classification of all Status failures is not an admission
 certificate for future callers.
+
+### Committed internal Native transfers
+
+Engine effects now include canonical directed Native transfers. These are
+public physical-account allocations, not the hidden amount in a confidential
+SEND. A transfer is not authorization: the engine must derive allocations from
+authenticated operations, and the host must independently reconstruct balances
+and per-currency value flow. Native endpoints must both be in the account update
+set. Self transfers, zero amounts, duplicate edges and noncanonical order are
+rejected. Edges are ordered by source then destination; repeated contributions
+to one directed edge must be aggregated with checked arithmetic by the engine,
+not represented as order-dependent payment attempts.
+
+`UnoV2NativeTransfer` contains source, destination and CurrencyCollection.
+`UnoV2NativeEffects` contains the optional payout and a contiguous uint32-indexed
+dictionary of those transfers. `UnoV2HostEffects` now references that Native
+container in place of the old optional payout field, preserving a maximum of
+four root references. The root is now 227 bits plus its referenced closure;
+that local size is not a deployment capacity bound. The previous unactivated
+encoding is superseded, not accepted as an alternate active format. No currently
+accepted transaction profile uses this type.
+
+Implicit CRC32 tags, independently checked against the repository compiler:
+
+| Constructor | Tag |
+|---|---|
+| uno_v2_native_transfer | 6b953015 |
+| uno_v2_native_effects | 0bd47725 |
+| uno_v2_host_effects (with Native container) | 4155a803 |
+
+Transfer count has its own explicit caller-supplied bound, separate from account
+count. Extra-currency validation also has an explicit budget. These function
+arguments do not freeze ConfigParam 84 fields or production values; production
+resolution must supply the same authenticated limits to every validator. Wire
+indices are narrowed only after the count fits uint32; iterator distances are
+nonnegative and within that checked vector. Native amounts must be valid and
+nonnegative, extra currencies must validate, and full CurrencyCollection storage
+must succeed within Native wire limits. Allocation/source exceptions still
+propagate to the enclosing provenance-aware boundary.
+
+The fixture independently decodes both directed edges and amounts through the
+generated parser. Eight mutations expose count, self-transfer, reverse order,
+duplicate edge, endpoint coverage, zero-value, wire-size and ignored-transfer
+failures. Negative/oversize amounts are also exercised. Evidence is retained in
+`measurements/uno-v2-native-transfer-effects-evidence.json`; these are manual
+source/binary-pinned controls, not CI mutation automation.
+
+Actual balance allocation is the next integration step. Until it is wired, the
+existing settlement runner explicitly rejects nonempty Native transfers after
+encoding rather than silently producing a storage/payout result that ignores
+them. No new fee model or production limit is selected here; no consensus
+judgement file or error category changed. M1 review and activation remain pending.

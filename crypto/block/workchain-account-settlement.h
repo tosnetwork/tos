@@ -23,7 +23,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
     const WorkchainAccountDeclarations& declarations,
     const std::vector<td::Ref<vm::Cell>>& authenticated_inbox,
-    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
   if (!authenticated_inbox.empty()) {
@@ -31,7 +31,14 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   }
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
       authenticated_inbox, max_reads, max_writes, max_inbound));
-  TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes));
+  if (cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
+    return td::Status::Error("effects currency validation limit cannot be represented");
+  }
+  TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
+      static_cast<int>(cfg.size_limits.max_acc_state_cells)));
+  if (!executed.effects.native_transfers.empty()) {
+    return td::Status::Error("Native transfers require internal allocation settlement");
+  }
   std::vector<WorkchainStorageWrite> writes;
   writes.reserve(executed.effects.updates.size());
   for (const auto& update : executed.effects.updates) {

@@ -15,7 +15,9 @@ uno_v2_host_input identity:^UnoV2HostIdentity access:^UnoV2HostAccess
   candidate:^Cell inbox:(Maybe ^WorkchainBatchInbound) = UnoV2HostInput;
 uno_v2_host_record input_hash:bits256 effects_hash:bits256 account_id:bits256
   effect_index:uint32 = UnoV2HostRecord;
-uno_v2_host_effects updates:(HashmapE 256 ^Cell) payout:(Maybe ^Cell)
+uno_v2_native_transfer source:bits256 destination:bits256 value:CurrencyCollection = UnoV2NativeTransfer;
+uno_v2_native_effects payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer) = UnoV2NativeEffects;
+uno_v2_host_effects updates:(HashmapE 256 ^Cell) native:^UnoV2NativeEffects
   receipts:(Maybe ^Cell) events:(Maybe ^Cell) wire_bytes:uint64
   verification_units:uint64 written_cells:uint64 = UnoV2HostEffects;
 workchain_native_ingress_table_v1#57495431 policies:(HashmapE 32 ^WorkchainNativeIngressPolicy)

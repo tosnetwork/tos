@@ -2,6 +2,7 @@
 
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-host-input.h"
+#include "block/workchain-value-flow.h"
 
 namespace block {
 
@@ -42,6 +43,9 @@ struct WorkchainAccountUpdate {
 
 struct WorkchainAccountEffects {
   std::vector<WorkchainAccountUpdate> updates;
+  // Canonical directed Native movements; not confidential SEND amounts.
+  // Authorization and principal/budget classification remain engine obligations.
+  std::vector<WorkchainInternalTransfer> native_transfers;
   // Optional single custody payout request, not a finalized Native message.
   // The settlement host must authenticate its role, amount and authorization.
   td::Ref<vm::Cell> payout_request;

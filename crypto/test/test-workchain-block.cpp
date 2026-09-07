@@ -649,6 +649,63 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   return envelope;
 }
 
+TEST(WorkchainBlock, NativeTransferEffects) {
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  block::WorkchainAccountEffects effects;
+  effects.updates = {{a, number(21)}, {b, number(22)}};
+  effects.native_transfers = {{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(5)}};
+  auto encode = [&](const auto& value, std::uint64_t limit = 2) {
+    return block::encode_workchain_account_effects(value, 2, limit, 4096);
+  };
+  auto result = encode(effects);
+  ASSERT_TRUE(result.is_ok());
+  ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, result.ok()));
+  block::gen::UnoV2HostEffects::Record decoded;
+  ASSERT_TRUE(tlb::unpack_cell(result.ok(), decoded));
+  block::gen::UnoV2NativeEffects::Record native;
+  ASSERT_TRUE(tlb::unpack_cell(decoded.native, native));
+  vm::Dictionary transfers(native.transfers, 32);
+  unsigned count = 0;
+  ASSERT_TRUE(transfers.check_for_each([&](td::Ref<vm::CellSlice> cell, td::ConstBitPtr key, int width) {
+    ASSERT_EQ(width, 32);
+    ASSERT_EQ(key.get_uint(32), count);
+    block::gen::UnoV2NativeTransfer::Record record;
+    ASSERT_TRUE(tlb::unpack_cell(cell->prefetch_ref(), record));
+    ASSERT_TRUE(record.source == (count == 0 ? a : b));
+    ASSERT_TRUE(record.destination == (count == 0 ? b : a));
+    block::CurrencyCollection value;
+    ASSERT_TRUE(value.unpack(record.value));
+    ASSERT_TRUE(value == block::CurrencyCollection(count == 0 ? 137 : 5));
+    ASSERT_TRUE(count < 2);
+    ++count;
+    return true;
+  }));
+  ASSERT_EQ(count, 2u);
+  ASSERT_TRUE(encode(effects, 1).is_error());
+  auto wrong = effects;
+  wrong.native_transfers[0].to = a;
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  std::swap(wrong.native_transfers[0], wrong.native_transfers[1]);
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  wrong.native_transfers[1] = wrong.native_transfers[0];
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  wrong.native_transfers[0].value = block::CurrencyCollection(0);
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  wrong.native_transfers[0].value = block::CurrencyCollection(-1);
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  wrong.updates.pop_back();
+  ASSERT_TRUE(encode(wrong).is_error());
+  wrong = effects;
+  wrong.native_transfers[0].value = block::CurrencyCollection(td::make_refint(1) << 120);
+  ASSERT_TRUE(encode(wrong).is_error());
+}
+
 TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
@@ -672,7 +729,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto input = block::encode_workchain_host_input(identity, admitted, access, inbox, 1, 1, 3).move_as_ok();
   block::WorkchainAccountEffects effects;
   effects.updates.push_back({a, number(321)});
-  auto effects_root = block::encode_workchain_account_effects(effects, 1).move_as_ok();
+  auto effects_root = block::encode_workchain_account_effects(effects, 1, 0, 4096).move_as_ok();
   auto binding = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
       td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
   block::SerializeConfig cfg;
@@ -762,7 +819,7 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto two_input = block::encode_workchain_host_input(identity, admitted, two, inbox, 2, 2, 3).move_as_ok();
   auto two_effects = effects;
   two_effects.updates.push_back({b, number(321)});
-  auto two_root = block::encode_workchain_account_effects(two_effects, 2).move_as_ok();
+  auto two_root = block::encode_workchain_account_effects(two_effects, 2, 0, 4096).move_as_ok();
   auto two_binding = block::build_workchain_participant_records(td::Bits256(two_input->get_hash().bits()),
       td::Bits256(two_root->get_hash().bits()), {a, b}, 2).move_as_ok()[1];
   Transaction second_tx(second, Transaction::tr_workchain_batch, 21, 10);
@@ -819,7 +876,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   struct Engine final : block::WorkchainAccountEngine {
     mutable unsigned calls{0};
     td::Bits256 a, b;
-    bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false};
+    bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false}, with_transfer{false};
     td::Ref<vm::Cell> payout;
     td::Result<block::WorkchainAccountEffects> execute_accounts(
         const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
@@ -838,6 +895,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       if (wrong_key) result.updates[0].account = b;
       if (null_data) result.updates[0].data.clear();
       result.payout_request = payout;
+      if (with_transfer) result.native_transfers.push_back({a, b, block::CurrencyCollection(1)});
       result.receipts = number(103);
       result.events = number(104);
       result.usage = {7, 8, 9};
@@ -880,7 +938,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   pricing.fwd_mc.first_frac = 16384;
   auto settle = [&]() {
     return block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-        declarations, {}, 2, 2, 0, a, b, td::make_refint(500), cfg, pricing);
+        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), cfg, pricing);
   };
   for (bool with_payout : {false, true}) {
     if (with_payout) {
@@ -907,8 +965,10 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(decoded.events->prefetch_ulong(1), 1u);
     ASSERT_TRUE(decoded.receipts->prefetch_ref()->get_hash() == number(103)->get_hash());
     ASSERT_TRUE(decoded.events->prefetch_ref()->get_hash() == number(104)->get_hash());
-    ASSERT_EQ(decoded.payout->prefetch_ulong(1), with_payout ? 1u : 0u);
-    if (with_payout) ASSERT_TRUE(decoded.payout->prefetch_ref()->get_hash() == engine.payout->get_hash());
+    block::gen::UnoV2NativeEffects::Record native;
+    ASSERT_TRUE(tlb::unpack_cell(decoded.native, native));
+    ASSERT_EQ(native.payout->prefetch_ulong(1), with_payout ? 1u : 0u);
+    if (with_payout) ASSERT_TRUE(native.payout->prefetch_ref()->get_hash() == engine.payout->get_hash());
     vm::Dictionary updates(decoded.updates, 256);
     vm::AugmentedDictionary next(vm::load_cell_slice_ref(value.state.accounts), 256, block::tlb::aug_ShardAccounts);
     vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(value.state.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
@@ -933,9 +993,12 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     }
     ASSERT_EQ(value.message.not_null(), with_payout);
   }
+  engine.with_transfer = true;
+  ASSERT_TRUE(settle().is_error());
+  engine.with_transfer = false;
   engine.calls = 0;
   auto unhandled_inbox = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-      declarations, {inbound_envelope(5)}, 2, 2, 1, a, b, td::make_refint(500), cfg, pricing);
+      declarations, {inbound_envelope(5)}, 2, 2, 1, 2, a, b, td::make_refint(500), cfg, pricing);
   ASSERT_TRUE(unhandled_inbox.is_error());
   ASSERT_EQ(engine.calls, 0u);
 }
