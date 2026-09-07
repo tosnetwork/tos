@@ -10,6 +10,13 @@ struct WorkchainPayoutOverlay {
   WorkchainInternalTransfer fee_funding;
 };
 
+// Claimed Native artifacts only. Fee-funding rows are derived by replay, never
+// accepted as claimant-supplied accounting evidence.
+struct ClaimedWorkchainPayoutOverlay {
+  td::Ref<vm::Cell> accounts, account_blocks, message;
+  std::uint64_t end_lt;
+};
+
 // Post-execution materialization of one payout and the complete storage write
 // set. Roles, effects, configuration and input closures must be authenticated
 // and admitted by the enclosing host. This does not authorize a withdrawal.
@@ -131,6 +138,36 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
   TRY_STATUS(access.finish(changed, participants));
   return WorkchainPayoutOverlay{{next_root, blocks.get_wrapped_dict_root(), schedule.end_lt}, payout,
                                 pair.accounting.fee_funding};
+}
+
+// Both old state and claimed cells require prior source-aware admission. This
+// reconstructs Native artifacts, not engine execution or withdrawal authority.
+// Return the reconstructed result on success, never the claimant's containers.
+inline td::Result<WorkchainPayoutOverlay> replay_workchain_payout_overlay(
+    td::Ref<vm::Cell> old_accounts, tos::WorkchainId workchain, tos::UnixTime now,
+    std::uint64_t after_lt, const td::Bits256& input_hash, const td::Bits256& effects_hash,
+    const std::vector<WorkchainStorageWrite>& writes, const td::Bits256& custody,
+    const td::Bits256& coordinator, td::Ref<vm::Cell> request, td::RefInt256 fee_budget,
+    std::uint64_t max_participants, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    const ClaimedWorkchainPayoutOverlay& claimed) {
+  if (claimed.accounts.is_null() || claimed.account_blocks.is_null() || claimed.message.is_null()) {
+    return td::Status::Error("missing claimed payout overlay artifact");
+  }
+  TRY_RESULT(rebuilt, build_workchain_payout_overlay(old_accounts, workchain, now, after_lt, input_hash, effects_hash,
+      writes, custody, coordinator, request, fee_budget, max_participants, cfg, message_cfg));
+  if (claimed.accounts->get_hash() != rebuilt.state.accounts->get_hash()) {
+    return td::Status::Error("claimed payout accounts differ from replay");
+  }
+  if (claimed.account_blocks->get_hash() != rebuilt.state.account_blocks->get_hash()) {
+    return td::Status::Error("claimed payout AccountBlocks differ from replay");
+  }
+  if (claimed.message->get_hash() != rebuilt.message->get_hash()) {
+    return td::Status::Error("claimed payout message differs from replay");
+  }
+  if (claimed.end_lt != rebuilt.state.end_lt) {
+    return td::Status::Error("claimed payout end LT differs from replay");
+  }
+  return rebuilt;
 }
 
 }  // namespace block

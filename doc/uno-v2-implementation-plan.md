@@ -394,3 +394,34 @@ respectively. The last control exercises the serialized value-flow check; it
 is not an externally supplied malicious-block test. Raw logs and hashes are in
 `measurements/uno-v2-payout-overlay-evidence.json`. These controls are not CI
 mutation automation; the ordinary fixture runs in the registered block test.
+
+### Claimed payout overlay replay
+
+`replay_workchain_payout_overlay` reconstructs all Native artifacts from the
+supplied old state and post-execution inputs, then compares the complete account
+dictionary root, AccountBlock dictionary root, outgoing message and end LT.
+It returns the reconstructed result, including locally derived fee funding;
+the claim type has no field for untrusted accounting rows or fee-funding claims.
+
+The fixture accepts the correct complete result. Negative cases re-encode a
+ShardAccount last-trans hash, an AccountBlock hash update and an outgoing
+message timestamp as structurally valid Native cells; a fourth changes end LT
+with checked arithmetic. Each must be rejected by replay rather than merely
+by a syntax decoder. These checks include untouched accounts through the full
+dictionary-root comparison, not only listed changed keys.
+
+This is artifact replay, not independent engine execution. Inputs still require
+the enclosing source-aware admission boundary, authenticated role/effects
+derivation and resource acceptance. Hash comparison does not establish data
+availability for unmaterialized claims. No validator/collator call site is
+connected, no execution scope is enabled, and neither full shard Merkle-update
+replay nor network reception is covered. M1 acceptance remains pending.
+
+The unimplemented replay failed its positive case. Independently removing each
+of the four comparisons admits its corresponding negative fixture and fails
+the test. Patches, raw logs and artifact hashes are retained in
+`measurements/uno-v2-payout-replay-evidence.json`. These manual controls are not
+CI mutation automation; normal coverage is in the registered block target.
+No consensus entry point or error category changed; milestone review remains
+due. The next integration gap is the engine's still-single-state result and
+source-aware context, not additional root-comparison helpers.

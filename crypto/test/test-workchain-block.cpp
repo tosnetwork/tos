@@ -1773,6 +1773,52 @@ TEST(WorkchainBlock, NativePayoutPair) {
   ASSERT_TRUE(repeat.is_ok());
   ASSERT_TRUE(repeat.ok().state.accounts->get_hash() == materialized.state.accounts->get_hash());
   ASSERT_TRUE(repeat.ok().state.account_blocks->get_hash() == materialized.state.account_blocks->get_hash());
+  block::ClaimedWorkchainPayoutOverlay claim{materialized.state.accounts, materialized.state.account_blocks,
+                                           materialized.message, materialized.state.end_lt};
+  auto replay = [&](const block::ClaimedWorkchainPayoutOverlay& claimed) {
+    return block::replay_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
+        b, a, request, td::make_refint(500), 4, cfg, pricing, claimed);
+  };
+  auto replayed = replay(claim);
+  ASSERT_TRUE(replayed.is_ok());
+  ASSERT_TRUE(replayed.ok().state.accounts->get_hash() == claim.accounts->get_hash());
+  ASSERT_TRUE(replayed.ok().fee_funding.value == block::CurrencyCollection(100));
+  auto changed = claim;
+  changed.end_lt = block::participant_lt_detail::checked_add(claim.end_lt, 1).move_as_ok();
+  ASSERT_TRUE(replay(changed).is_error());
+  vm::AugmentedDictionary altered_accounts(vm::load_cell_slice_ref(claim.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::tlb::ShardAccount::Record changed_entry;
+  ASSERT_TRUE(changed_entry.unpack(altered_accounts.lookup(a)));
+  vm::CellBuilder wrong_link;
+  wrong_link.store_ref(changed_entry.account).store_zeroes(256).store_long(21, 64);
+  ASSERT_TRUE(altered_accounts.set_builder(a, wrong_link, vm::Dictionary::SetMode::Replace));
+  changed = claim;
+  changed.accounts = altered_accounts.get_wrapped_dict_root();
+  ASSERT_TRUE(block::gen::t_ShardAccounts.validate_ref(10000, changed.accounts));
+  ASSERT_TRUE(replay(changed).is_error());
+  vm::AugmentedDictionary altered_blocks(vm::load_cell_slice_ref(claim.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+  block::gen::AccountBlock::Record altered_block;
+  ASSERT_TRUE(tlb::unpack_cell(vm::CellBuilder().append_cellslice(*altered_blocks.lookup(a)).finalize(), altered_block));
+  altered_block.state_update = vm::CellBuilder().store_long(0x72, 8).store_zeroes(512).finalize();
+  td::Ref<vm::Cell> altered_block_root;
+  ASSERT_TRUE(tlb::pack_cell(altered_block_root, altered_block));
+  ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(10000, altered_block_root));
+  vm::CellBuilder altered_block_value;
+  altered_block_value.append_cellslice(vm::load_cell_slice(altered_block_root));
+  ASSERT_TRUE(altered_blocks.set_builder(a, altered_block_value, vm::Dictionary::SetMode::Replace));
+  changed = claim;
+  changed.account_blocks = altered_blocks.get_wrapped_dict_root();
+  ASSERT_TRUE(replay(changed).is_error());
+  block::gen::Message::Record altered_message;
+  ASSERT_TRUE(tlb::type_unpack_cell(claim.message, block::gen::t_Message_Any, altered_message));
+  block::gen::CommonMsgInfo::Record_int_msg_info altered_info;
+  ASSERT_TRUE(tlb::csr_unpack(altered_message.info, altered_info));
+  altered_info.created_at = 1;
+  ASSERT_TRUE(tlb::csr_pack(altered_message.info, altered_info));
+  changed = claim;
+  ASSERT_TRUE(tlb::type_pack_cell(changed.message, block::gen::t_Message_Any, altered_message));
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(10000, changed.message));
+  ASSERT_TRUE(replay(changed).is_error());
   auto wrong_read = writes;
   wrong_read[0].old_account_hash = td::Bits256::zero();
   ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, wrong_read,
