@@ -12,6 +12,7 @@
 #include "block/workchain-native-inbox.h"
 #include "block/native-bounce-body.h"
 #include "block/native-bounce-storage.h"
+#include "block/native-bounce-message.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-bounce-accounting.h"
 #include "block/workchain-storage-overlay.h"
@@ -688,6 +689,54 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, NativeBounceMessage) {
+  auto address = [](int wc, bool last) {
+    return vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(wc, 8)
+        .store_zeroes(255).store_long(last, 1).finalize());
+  };
+  auto src = address(2, false), dest = address(-1, true);
+  vm::Dictionary extra(32);
+  vm::CellBuilder extra_amount;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(extra_amount, *td::make_refint(5)));
+  ASSERT_TRUE(extra.set_builder(td::BitArray<32>::zero(), extra_amount));
+  struct Case { unsigned bits; unsigned refs; bool extra; bool by_ref; };
+  // These fixed fields occupy 672 bits before the Either selector. Pin both
+  // adjacent boundaries independently of the serializer's capacity decision.
+  for (auto c : {Case{0, 1, false, false}, Case{32, 1, false, false},
+                 Case{350, 1, false, false}, Case{351, 1, false, true},
+                 Case{800, 1, false, true}, Case{8, 4, false, false},
+                 Case{8, 3, true, false}, Case{8, 4, true, true}}) {
+    vm::CellBuilder body;
+    body.store_zeroes(c.bits);
+    for (unsigned i = 0; i < c.refs; ++i) body.store_ref(number(i));
+    auto expected = vm::CellBuilder().append_builder(body).finalize();
+    block::CurrencyCollection amount(td::make_refint(23), c.extra ? extra.get_root_cell() : td::Ref<vm::Cell>{});
+    td::Ref<vm::Cell> output;
+    ASSERT_TRUE(block::build_native_bounce_message(src, dest, amount,
+        td::make_refint(3), 75, 12345, 6789, body, output));
+    ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(1000, output));
+    auto cs = vm::load_cell_slice(output);
+    block::gen::CommonMsgInfo::Record_int_msg_info info;
+    ASSERT_TRUE(tlb::unpack(cs, info));
+    ASSERT_TRUE(info.ihr_disabled && !info.bounce && info.bounced);
+    ASSERT_TRUE(info.src->contents_equal(*src) && info.dest->contents_equal(*dest));
+    block::CurrencyCollection value;
+    ASSERT_TRUE(value.unpack(info.value));
+    ASSERT_TRUE(value == amount);
+    ASSERT_EQ(info.extra_flags->prefetch_ulong(4), 1u);
+    ASSERT_EQ(info.extra_flags->prefetch_ulong(12), 259u);
+    ASSERT_EQ(info.fwd_fee->prefetch_ulong(4), 1u);
+    ASSERT_EQ(info.fwd_fee->prefetch_ulong(12), 331u);
+    ASSERT_EQ(info.created_lt, 12345u);
+    ASSERT_EQ(info.created_at, 6789u);
+    ASSERT_EQ(cs.fetch_ulong(1), 0u); // No StateInit.
+    bool ref = cs.fetch_ulong(1);
+    ASSERT_EQ(ref, c.by_ref);
+    auto actual = ref ? cs.fetch_ref() : vm::CellBuilder().append_cellslice(cs).finalize();
+    ASSERT_TRUE(actual->get_hash() == expected->get_hash());
+  }
 }
 
 TEST(WorkchainBlock, NativeBounceStorage) {

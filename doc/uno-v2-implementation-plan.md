@@ -1289,3 +1289,21 @@ cases are included. Three rebuilt mutations (return debit, remaining forwarding
 fee, old-balance preservation) fail. Restored workchain-block CTest passes.
 Raw evidence: `measurements/uno-v2-bounce-accounting-evidence.json`; these manual
 controls do not claim isolated coverage of every guard or recurring mutation CI.
+
+### Shared Native bounce message encoding (M1, shared component)
+
+The ordinary caller delegates final message serialization to the shared builder.
+It retains source/destination rewriting, masking of extra_flags, fee debits and
+LT allocation. The builder fixes bounced=true/bounce=false/IHR-disabled, encodes
+the admitted CurrencyCollection and remaining forwarding fee, and chooses the
+same inline/reference body form. Construction failure is never nofunds.
+
+This is not the assembled multi-account disposal path: address exceptions,
+admission, fee affordability and queue publication remain caller obligations.
+The direct decoder test covers both body forms and all header fields. Boundary
+review exposed two surviving mutations in the original coarse sizes. Eight
+revised vectors include adjacent 350/351-bit bodies and extra-currency reference
+pressure. The pre-existing ordinary collator exception gap is recorded, not
+claimed repaired by this extraction. Review disposition:
+`uno-v2-native-bounce-message-review-disposition.md`. This is still not complete
+multi-account disposal or production activation.

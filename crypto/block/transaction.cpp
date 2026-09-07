@@ -23,6 +23,7 @@
 #include "block/transaction.h"
 #include "block/native-bounce-body.h"
 #include "block/native-bounce-storage.h"
+#include "block/native-bounce-message.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
@@ -4095,25 +4096,9 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
   info.created_lt = start_lt + 1 + out_msgs.size();
   end_lt++;
   info.created_at = now;
-  vm::CellBuilder cb;
-  FAIL_UNLESS(cb.store_long_bool(5, 4)                // int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
-              && cb.append_cellslice_bool(info.src)   // src:MsgAddressInt
-              && cb.append_cellslice_bool(info.dest)  // dest:MsgAddressInt
-              && msg_balance.store(cb)                // value:CurrencyCollection
-              && block::tlb::t_Tomis.store_integer_ref(
-                     cb, in_msg_extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK))  // extra_flags:(VarUInteger 16)
-              && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees)   // fwd_fee:Tomis
-              && cb.store_long_bool(info.created_lt, 64)           // created_lt:uint64
-              && cb.store_long_bool(info.created_at, 32)           // created_at:uint32
-              && cb.store_bool_bool(false));                       // init:(Maybe ...)
-  if (cb.can_extend_by(1 + body.size(), body.size_refs())) {
-    // body:(Either X ^X) -> left X
-    FAIL_UNLESS(cb.store_bool_bool(false) && cb.append_builder_bool(body));
-  } else {
-    // body:(Either X ^X) -> right ^X
-    FAIL_UNLESS(cb.store_bool_bool(true) && cb.store_builder_ref_bool(std::move(body)));
-  }
-  FAIL_UNLESS(cb.finalize_to(bp.out_msg));
+  FAIL_UNLESS(build_native_bounce_message(info.src, info.dest, msg_balance,
+      in_msg_extra_flags & td::make_refint(tol::EXTRA_FLAGS_VALID_MASK),
+      bp.fwd_fees, info.created_lt, info.created_at, body, bp.out_msg));
   if (verbosity > 2) {
     FLOG(INFO) {
       sb << "generated bounced message: ";
