@@ -633,10 +633,11 @@ block::WorkchainBlockInput input() {
 }
 
 td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
-                                  td::optional<tos::LogicalTime> emitted = {}) {
+                                  td::optional<tos::LogicalTime> emitted = {},
+                                  const td::Bits256& destination = td::Bits256::zero()) {
   vm::CellBuilder cb;
   cb.store_long(4, 4).store_long(4, 3).store_long(0, 8).store_zeroes(255).store_long(1, 1)
-      .store_long(4, 3).store_long(2, 8).store_zeroes(256);
+      .store_long(4, 3).store_long(2, 8).store_bits(destination.bits(), 256);
   ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
   cb.store_long(0, 4).store_long(1, 4).store_long(67, 8).store_long(lt, 64)
       .store_long(1, 32).store_zeroes(2).store_long(nonce, 64);
@@ -646,6 +647,150 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, NativeCoordinatorEntry) {
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  auto a = td::Bits256::zero();
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(policy));
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(admission.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 10, 20, number(1)};
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account coordinator(2, a.bits());
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(a), 10, false));
+  block::WorkchainAccountDeclarations access{{{a, td::Bits256(coordinator.total_state->get_hash().bits())}}, {a}};
+  std::vector<td::Ref<vm::Cell>> inbox{inbound_envelope(4), inbound_envelope(5),
+      inbound_envelope(6, 0, {}, td::Bits256(number(1)->get_hash().bits()))};
+  auto input = block::encode_workchain_host_input(identity, admitted, access, inbox, 1, 1, 3).move_as_ok();
+  block::WorkchainAccountEffects effects;
+  effects.updates.push_back({a, number(321)});
+  auto effects_root = block::encode_workchain_account_effects(effects, 1).move_as_ok();
+  auto binding = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = true;
+  using Transaction = block::transaction::Transaction;
+  Transaction tx(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, number(321), cfg).is_ok());
+  ASSERT_TRUE(tx.balance == block::CurrencyCollection(1200));
+  ASSERT_TRUE(tx.new_data->get_hash() == number(321)->get_hash());
+  ASSERT_TRUE(tx.total_fees.is_zero());
+  ASSERT_TRUE(tx.out_msgs.empty());
+  ASSERT_TRUE(tx.serialize(cfg));
+  block::gen::Transaction::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(tx.root, record));
+  auto description = vm::load_cell_slice(record.description);
+  ASSERT_EQ(description.size(), 4u);
+  ASSERT_EQ(description.size_refs(), 3u);
+  ASSERT_EQ(description.fetch_ulong(4), 12u);
+  ASSERT_TRUE(description.fetch_ref()->get_hash() == binding->get_hash());
+  ASSERT_TRUE(description.fetch_ref()->get_hash() == input->get_hash());
+  ASSERT_TRUE(description.fetch_ref()->get_hash() == effects_root->get_hash());
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(4096, record.description));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(4096, record.description));
+  auto skipped = vm::load_cell_slice(record.description);
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.skip(skipped) && skipped.empty_ext());
+  auto storage = vm::load_cell_slice(record.description);
+  bool found = true;
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.skip_to_storage_phase(storage, found));
+  ASSERT_TRUE(!found && storage.empty_ext());
+  for (auto scope : {block::WorkchainExecutionScope::AccountCompute, block::WorkchainExecutionScope::BlockTransition}) {
+    ASSERT_TRUE(block::validate_transaction_execution_scope(record.description, scope).is_error());
+  }
+  block::gen::Account::Record_account account;
+  block::gen::AccountStorage::Record account_storage;
+  block::CurrencyCollection balance;
+  ASSERT_TRUE(tlb::unpack_cell(tx.new_total_state, account));
+  ASSERT_TRUE(tlb::csr_unpack(account.storage, account_storage));
+  ASSERT_TRUE(balance.unpack(account_storage.balance));
+  ASSERT_TRUE(balance == block::CurrencyCollection(1200));
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  auto reject = [&](td::Ref<vm::Cell> bad_binding, td::Ref<vm::Cell> data) {
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    return rejected.prepare_workchain_entry(bad_binding, input, effects_root, data, cfg).is_error();
+  };
+  for (bool wrong_input : {false, true}) {
+    auto bad_binding = block::build_workchain_participant_records(
+        wrong_input ? hash : td::Bits256(input->get_hash().bits()),
+        wrong_input ? td::Bits256(effects_root->get_hash().bits()) : hash, {a}, 1).move_as_ok()[0];
+    ASSERT_TRUE(reject(bad_binding, number(321)));
+  }
+  ASSERT_TRUE(reject(binding, number(322)));
+  block::gen::UnoV2HostRecord::Record indexed;
+  ASSERT_TRUE(tlb::unpack_cell(binding, indexed));
+  indexed.effect_index = 1;
+  td::Ref<vm::Cell> wrong_index;
+  ASSERT_TRUE(tlb::pack_cell(wrong_index, indexed));
+  ASSERT_TRUE(reject(wrong_index, number(321)));
+  for (unsigned field = 0; field < 3; ++field) {
+    auto wrong = identity;
+    if (field == 0) wrong.workchain_id = 0;
+    if (field == 1) wrong.gen_utime = 11;
+    if (field == 2) wrong.host_after_lt = 21;
+    auto changed_input = block::encode_workchain_host_input(wrong, admitted, access, inbox, 1, 1, 3).move_as_ok();
+    auto changed_binding = block::build_workchain_participant_records(td::Bits256(changed_input->get_hash().bits()),
+        td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg).is_error());
+  }
+  for (bool missing_write : {false, true}) {
+    auto wrong = access;
+    if (missing_write) wrong.writes.clear();
+    else wrong.reads[0].old_account_hash = hash;
+    auto changed_input = block::encode_workchain_host_input(identity, admitted, wrong, inbox, 1, 1, 3).move_as_ok();
+    auto changed_binding = block::build_workchain_participant_records(td::Bits256(changed_input->get_hash().bits()),
+        td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_entry(changed_binding, changed_input, effects_root, number(321), cfg).is_error());
+  }
+  // The entry need not be the first account in canonical key order.
+  td::Bits256 b(number(1)->get_hash().bits());
+  block::Account second(2, b.bits());
+  ASSERT_TRUE(second.unpack(accounts.lookup(b), 10, false));
+  auto two = access;
+  two.reads.push_back({b, td::Bits256(second.total_state->get_hash().bits())});
+  two.writes.push_back(b);
+  auto two_input = block::encode_workchain_host_input(identity, admitted, two, inbox, 2, 2, 3).move_as_ok();
+  auto two_effects = effects;
+  two_effects.updates.push_back({b, number(321)});
+  auto two_root = block::encode_workchain_account_effects(two_effects, 2).move_as_ok();
+  auto two_binding = block::build_workchain_participant_records(td::Bits256(two_input->get_hash().bits()),
+      td::Bits256(two_root->get_hash().bits()), {a, b}, 2).move_as_ok()[1];
+  Transaction second_tx(second, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(second_tx.prepare_workchain_entry(two_binding, two_input, two_root, number(321), cfg).is_ok());
+  ASSERT_TRUE(second_tx.balance == block::CurrencyCollection(1100));
+
+  // Tiny descriptor headers can still fail construction because of child
+  // depth. This is an exception-boundary probe, not an admitted block profile.
+  auto deep = number(1);
+  for (unsigned depth = 0; depth < 1023; ++depth) deep = vm::CellBuilder().store_ref(deep).finalize();
+  block::gen::UnoV2HostInput::Record deep_record;
+  ASSERT_TRUE(tlb::unpack_cell(input, deep_record));
+  deep_record.candidate = deep;
+  td::Ref<vm::Cell> deep_input;
+  ASSERT_TRUE(tlb::pack_cell(deep_input, deep_record));
+  auto deep_binding = block::build_workchain_participant_records(td::Bits256(deep_input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {a}, 1).move_as_ok()[0];
+  Transaction interrupted(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  bool threw = false;
+  try {
+    auto result = interrupted.prepare_workchain_entry(deep_binding, deep_input, effects_root, number(321), cfg);
+    ASSERT_TRUE(result.is_ok());
+  } catch (const vm::CellBuilder::CellWriteError&) {
+    threw = true;
+  }
+  ASSERT_TRUE(threw);
+  ASSERT_TRUE(!interrupted.serialize(cfg));
+  ASSERT_TRUE(interrupted.balance == coordinator.balance);
 }
 
 TEST(WorkchainBlock, AccountEngineExecution) {

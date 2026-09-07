@@ -443,7 +443,8 @@ struct Transaction {
                                                   const CurrencyCollection& initial_balance,
                                                   bool preserve_vm_exceptions = false);
   td::Result<CurrencyCollection> stage_workchain_credit(const WorkchainBlockInput& input,
-                                                       const SerializeConfig& cfg) const;
+                                                       const SerializeConfig& cfg,
+                                                       bool select_destination = false) const;
  public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;
@@ -500,6 +501,14 @@ struct Transaction {
   static constexpr int kStorageParticipantMinGlobalVersion = 16;
   td::Status prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                   const SerializeConfig& cfg);
+  // Inactive coordinator-entry profile. Complete admitted input/effects are
+  // carried by the transaction, never retained through account data. Only
+  // messages addressed to this account are selected from the shared inbox;
+  // other destinations remain obligations of the enclosing batch. Role selection,
+  // inbox authenticity/completeness and economic allocation belong to the host.
+  // Uses the same source-aware exception contract as storage participants.
+  td::Status prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+                                    Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg);
   // Reconstruct one mode-1 payout using Native pricing in private scratch state.
   // Locally derived, admitted inputs only; this is not payout authorization.
   // fee_budget is a maximum spend, not a quoted fee. No account is committed.

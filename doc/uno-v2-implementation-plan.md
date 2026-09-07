@@ -501,3 +501,78 @@ is an accepted substitute for coordinator batch-entry/import records. Full
 shard-update replay, registry selection, proof/state transitions and live
 collator/validator wiring remain M1 work. No consensus judgement file or error
 category changed in this unit; milestone review remains pending.
+
+### Coordinator entry record (boundary reviewed)
+
+The inactive `trans_workchain_entry_v3$1100` descriptor carries three references:
+the participant binding, complete host input and complete engine effects. Its
+four-bit explicit prefix follows TransactionDescr allocation, not CRC tagging
+of the separate payload types. Both current execution scopes continue to reject
+it. The handwritten skip, validate, classification and storage-phase paths are
+updated alongside the generated parser; no activation gate is removed.
+
+`Transaction::prepare_workchain_entry` checks the input/effects hashes, workchain,
+time/LT context and this account's data in the effects dictionary. It reuses the
+Native inbound-credit validation for messages addressed to this account, then
+seals a restricted entry without storage/compute/action/credit/bounce phases or
+outbound messages. Only message value changes the balance; remaining forwarding
+fees belong to Native InMsg accounting. The legacy credit sum now uses the
+explicit checked CurrencyCollection addition API with the same wire-encoding
+overflow check. Native source exceptions still propagate to the caller's
+source-aware boundary; generic Status does not classify provenance.
+
+The fixture starts at 1000, imports two messages with value 100 and forwarding
+fee 67 each, and independently decodes 1200 from the resulting Native account.
+After review the shared input also includes a third, foreign-destination message
+with value 100; it is retained in the input and does not become coordinator credit.
+It checks zero transaction fees, no outputs, unchanged original Account, exact
+descriptor references and rejection by both execution scopes. Independently
+removing credit application, the two hash guards, data consistency or any of
+the three context guards makes its corresponding assertion fail. Evidence is
+in `measurements/uno-v2-coordinator-entry-evidence.json`; manual mutation runs
+are not CI. The positive case also failed against the unimplemented entry.
+
+This is gross import into a private coordinator transaction, not Deposit
+completion. The same logical batch must still allocate principal to custody,
+allocate the paid slot fee to the coordinator, update the target pending state,
+reconstruct per-account value flow and produce Native InMsg evidence. Custody
+imports and wrong-destination handling remain separate unfinished paths. Roles,
+inbox completeness, policy resolution and structural/work budgets are not
+authenticated by this factory. Entry references provide actual cells in the
+transaction; they do not establish archive retention or network availability.
+The existing settlement runner still rejects nonempty inboxes until those
+paths are connected. No production candidate is enabled by this unit.
+
+The boundary review is retained verbatim at
+`~/memo/reviews/uno-v2-coordinator-entry-review.txt`. Its dispositions are:
+
+| Review item | Disposition |
+|---|---|
+| Shared inbox rejected on a foreign destination | Fixed: the entry selects its own destinations; the complete inbox remains committed, and other records must settle the rest. The legacy single-account call retains strict destination rejection. |
+| Unchecked effect index | Fixed: the sole entry scans canonical effects ordering with a checked ordinal, checks the binding index, and tests a coordinator at index 1 as well as a wrong index. |
+| Ambiguous diagnostic | Fixed: argument/encoding, input hash, effects hash, workchain, time/LT and data errors now have separate diagnostics. Error text is not a provenance classifier. |
+| Descriptor failure after partial preparation | Fixed: construct the descriptor before preparing the storage participant. A child-depth probe raises CellWriteError and leaves the Transaction unserializable. Restoring the old order turns that assertion red. |
+| Missing account access checks | Hardened: require this account's write membership and declared old hash before mutation. Both negative controls bind their changed declarations into otherwise correct inputs. |
+| Entry necessarily differs from executor because of special status | Disputed: kWorkchainExecutorIsSpecial is false, the same value required by participants. The existing collator address filter is nevertheless a real integration prerequisite. |
+| Complete-suite evidence | Expanded to VM, cells and smart-contract tests in addition to block/admission; still not a whole-repository or network acceptance claim. |
+
+The review called descriptor construction failure unreachable because its local
+shape is four bits and three references. That overlooks child depth: a valid
+input root at depth 1024 cannot be wrapped in another ordinary cell. The test
+deliberately supplies this boundary outside an admitted deployment profile; it
+proves exception safety, not a live network exploit. The first probe caught only
+CellCreateError and correctly failed because finalize_novm actually throws
+CellWriteError. The final test catches that actual type and asserts that no
+fallback storage transaction can be serialized. No production catch-all was
+introduced.
+
+Six additional review-fix mutations cover shared-inbox projection, index
+matching, nonzero ordinal calculation, write membership, old hash and preparation
+ordering. They all fail state/numeric/structural assertions. Updated evidence is
+in `measurements/uno-v2-coordinator-entry-review-fixes.json`. Mutation evidence
+remains manual and source/binary pinned. These are engineering corrections under
+the already-required complete-inbox and I13 semantics, not new economic policy.
+The source-aware replay boundary must still handle actual builder/allocation
+exceptions and distinguish authenticated-source faults from candidate defects;
+the review's broad classification of all Status failures is not an admission
+certificate for future callers.

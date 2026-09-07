@@ -4431,7 +4431,8 @@ td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell
 }
 
 td::Result<CurrencyCollection> Transaction::stage_workchain_credit(const WorkchainBlockInput& input,
-                                                                 const SerializeConfig& cfg) const {
+                                                                 const SerializeConfig& cfg,
+                                                                 bool select_destination) const {
   auto credited = balance;
   if (input.inbound_messages.is_null()) {
     return credited;
@@ -4446,7 +4447,15 @@ td::Result<CurrencyCollection> Transaction::stage_workchain_credit(const Workcha
     gen::MsgAddressInt::Record_addr_std destination;
     CurrencyCollection value;
     if (!tlb::unpack_cell(root, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
-        !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
+        !gen::csr_unpack(info.dest, destination)) {
+      return td::Status::Error("invalid batch incoming envelope or destination");
+    }
+    // The entry sees the complete inbox. Foreign destinations are not consumed
+    // by this record; the enclosing batch must settle them in their own records.
+    // The legacy single-account path keeps rejecting every foreign destination.
+    if (select_destination &&
+        (destination.workchain_id != account.workchain || destination.address != account.addr)) continue;
+    if (destination.anycast->size() != 1 ||
         destination.workchain_id != account.workchain || destination.address != account.addr ||
         !info.ihr_disabled || !extra_flags_within_valid_mask(tlb::t_Tomis.as_integer(info.extra_flags)) ||
         info.created_lt >= start_lt || info.created_at > now ||
@@ -4457,9 +4466,9 @@ td::Result<CurrencyCollection> Transaction::stage_workchain_credit(const Workcha
     // Forwarding fees belong to native InMsg accounting, never executor credit.
     auto checked_credit = [](const CurrencyCollection& prior,
                              const CurrencyCollection& incoming) -> td::Result<CurrencyCollection> {
-      auto result = prior + incoming;
+      CurrencyCollection result;
       vm::CellBuilder encoded;
-      if (!result.is_valid() || !result.store(encoded)) {
+      if (!CurrencyCollection::add(prior, incoming, result) || !result.store(encoded)) {
         return td::Status::Error("batch incoming balance exceeds native encoding");
       }
       return result;
@@ -4659,6 +4668,74 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     if (!tx.serialize(cfg)) return td::Status::Error("cannot serialize payout pair participant");
   }
   return PreparedWorkchainPayoutPair{std::move(pair), std::move(allocation)};
+}
+
+td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+                                               Ref<vm::Cell> effects, Ref<vm::Cell> data,
+                                               const SerializeConfig& cfg) {
+  gen::UnoV2HostRecord::Record record;
+  gen::UnoV2HostInput::Record decoded;
+  gen::UnoV2HostIdentity::Record identity;
+  gen::UnoV2HostDomain::Record domain;
+  gen::UnoV2HostContext::Record context;
+  gen::UnoV2HostEffects::Record output;
+  if (input.is_null() || effects.is_null() || data.is_null() || !tlb::unpack_cell(binding, record)) {
+    return td::Status::Error("entry missing input, effects, data or binding");
+  }
+  if (record.input_hash != input->get_hash().bits()) return td::Status::Error("entry input hash mismatch");
+  if (record.effects_hash != effects->get_hash().bits()) return td::Status::Error("entry effects hash mismatch");
+  if (!tlb::unpack_cell(input, decoded) || !tlb::unpack_cell(decoded.identity, identity) ||
+      !tlb::unpack_cell(identity.domain, domain) || !tlb::unpack_cell(identity.context, context)) {
+    return td::Status::Error("entry input identity encoding invalid");
+  }
+  if (domain.workchain_id != account.workchain) return td::Status::Error("entry workchain mismatch");
+  if (context.gen_utime != now) return td::Status::Error("entry generation time mismatch");
+  if (context.host_after_lt >= start_lt) return td::Status::Error("entry logical time precedes input boundary");
+  if (!tlb::unpack_cell(effects, output)) return td::Status::Error("entry effects encoding invalid");
+  vm::Dictionary updates(output.updates, 256);
+  auto update = updates.lookup_ref(account.addr);
+  if (update.is_null() || update->get_hash() != data->get_hash()) {
+    return td::Status::Error("entry data differs from account effects");
+  }
+  // There is one entry per batch. This ordered scan binds the physical entry
+  // index; it is not repeated for each storage participant. Effects closures
+  // and traversal work require admission before calling this factory.
+  std::uint64_t index = 0;
+  bool matched_index = false;
+  if (!updates.check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr key, int width) {
+        if (width != 256 || value->size_ext() != 0x10000 || index > std::numeric_limits<std::uint32_t>::max()) return false;
+        if (td::Bits256(key) == account.addr) matched_index = index == record.effect_index;
+        auto next = participant_lt_detail::checked_add(index, 1);
+        if (next.is_error()) return false;
+        index = next.move_as_ok();
+        return true;
+      }) || !matched_index) return td::Status::Error("entry effect index mismatch");
+  gen::UnoV2HostAccess::Record declared;
+  if (!tlb::unpack_cell(decoded.access, declared)) return td::Status::Error("entry access encoding invalid");
+  vm::Dictionary reads(declared.reads, 256), writes(declared.writes, 256);
+  auto write = writes.lookup(account.addr);
+  if (write.is_null() || !write->empty_ext()) return td::Status::Error("entry missing write declaration");
+  gen::UnoV2HostRead::Record read;
+  if (account.total_state.is_null() || !tlb::unpack_cell(reads.lookup_ref(account.addr), read)) {
+    return td::Status::Error("entry missing old account declaration");
+  }
+  auto old = *read.old_account_hash;
+  td::Bits256 old_hash;
+  if (old.fetch_ulong(1) != 1 || !old.fetch_bits_to(old_hash) || old_hash != account.total_state->get_hash().bits()) {
+    return td::Status::Error("entry old account hash mismatch");
+  }
+  WorkchainBlockInput credit;
+  if (decoded.inbox->prefetch_ulong(1) != 0) credit.inbound_messages = decoded.inbox->prefetch_ref();
+  TRY_RESULT(credited, stage_workchain_credit(credit, cfg, true));
+  auto description = vm::CellBuilder().store_long(tlb::TransactionDescr::trans_workchain_entry_v3, 4)
+      .store_ref(binding).store_ref(input).store_ref(effects).finalize();
+  TRY_STATUS(prepare_workchain_storage_participant(binding, std::move(data), cfg));
+  batch_description = std::move(description);
+  // Only message value is credited. Remaining forwarding fees belong to the
+  // independently rebuilt Native InMsg value flow, not this account's balance.
+  balance = std::move(credited);
+  batch_balance = balance;
+  return td::Status::OK();
 }
 
 td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
