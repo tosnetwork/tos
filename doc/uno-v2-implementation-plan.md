@@ -1265,3 +1265,27 @@ These are manual controls, not recurring mutation CI. Review disposition is in
 `measurements/uno-v2-native-bounce-storage-evidence.json`. The defensive phase
 reset has no independently demonstrated canonical Native wire trigger.
 This is not completed disposal, live admission or M1 acceptance.
+
+### Bounce value isolation (M1, post-selection accounting)
+
+The read-only bounce accounting primitive derives returned value, in-flight
+forwarding value and collected fees from an already selected affordable bounce.
+Only the imported message funds the return; the processing account's old
+balance is unchanged. Extra currencies remain in the returned value. Checked
+CurrencyCollection operations and the independent per-account value-flow
+equation close the arithmetic before any state write.
+
+This is not a second price algorithm: callers must obtain fees from the shared
+Native price rules. It neither chooses the three-way disposal branch nor
+authenticates an input or authorizes an address exception. Its Result cannot
+be converted into permission to credit the unexpected bucket. No production
+caller or new error category is installed. It is queued for the M1 milestone
+review; any later consensus-boundary wiring requires immediate review.
+
+The actual test preserves an extra-currency amount of five, returns 23 from
+an imported 123 with a total fee of 100, and independently exports 98 including
+the remaining forwarding fee. Exact-funds, zero-fee and insufficient-funds
+cases are included. Three rebuilt mutations (return debit, remaining forwarding
+fee, old-balance preservation) fail. Restored workchain-block CTest passes.
+Raw evidence: `measurements/uno-v2-bounce-accounting-evidence.json`; these manual
+controls do not claim isolated coverage of every guard or recurring mutation CI.

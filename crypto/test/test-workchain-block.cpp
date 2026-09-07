@@ -13,6 +13,7 @@
 #include "block/native-bounce-body.h"
 #include "block/native-bounce-storage.h"
 #include "block/workchain-payout-accounting.h"
+#include "block/workchain-bounce-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
 #include "block/workchain-account-access.h"
@@ -37,6 +38,39 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, BounceValueIsolation) {
+  using C = block::CurrencyCollection;
+  auto key = td::Bits256::zero();
+  vm::Dictionary extra(32);
+  vm::CellBuilder amount;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(amount, *td::make_refint(5)));
+  ASSERT_TRUE(extra.set_builder(td::BitArray<32>::zero(), amount, vm::Dictionary::SetMode::Add));
+  C imported(td::make_refint(123), extra.get_root_cell());
+  auto result = block::account_workchain_bounce(key, C(1000), imported,
+      td::make_refint(100), td::make_refint(25), 100);
+  ASSERT_TRUE(result.is_ok());
+  auto plan = result.move_as_ok();
+  ASSERT_TRUE(plan.returned == C(td::make_refint(23), extra.get_root_cell()));
+  ASSERT_TRUE(plan.row.exported == C(td::make_refint(98), extra.get_root_cell()));
+  ASSERT_TRUE(plan.row.old_balance == C(1000) && plan.row.new_balance == C(1000));
+  ASSERT_TRUE(plan.row.imported == imported && plan.row.fees == C(25));
+  ASSERT_TRUE(block::verify_workchain_value_flow({plan.row}, {}, 1, 0, 100).is_ok());
+  auto exact = block::account_workchain_bounce(key, C(0), imported,
+      td::make_refint(123), td::make_refint(123), 100).move_as_ok();
+  ASSERT_TRUE(exact.returned == C(td::make_refint(0), extra.get_root_cell()));
+  ASSERT_TRUE(exact.row.exported == exact.returned && exact.row.new_balance.is_zero());
+  auto free = block::account_workchain_bounce(key, C(0), imported,
+      td::make_refint(0), td::make_refint(0), 100).move_as_ok();
+  ASSERT_TRUE(free.returned == imported && free.row.exported == imported && free.row.fees.is_zero());
+  // Even abundant old principal cannot subsidize this message's return.
+  ASSERT_TRUE(block::account_workchain_bounce(key, C(1000000), imported,
+      td::make_refint(124), td::make_refint(25), 100).is_error());
+  ASSERT_TRUE(block::account_workchain_bounce(key, C(0), imported,
+      td::make_refint(100), td::make_refint(101), 100).is_error());
+  ASSERT_TRUE(block::account_workchain_bounce(key, C(0), imported,
+      td::make_refint(-1), td::make_refint(0), 100).is_error());
+}
 
 TEST(WorkchainBlock, PayoutPrincipalAndFees) {
   using C = block::CurrencyCollection;

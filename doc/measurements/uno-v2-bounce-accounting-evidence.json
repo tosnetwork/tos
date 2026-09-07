@@ -1,0 +1,126 @@
+{
+  "base": "724be0edec94c4e1fbb3769b2574dca6f02361b5",
+  "scope": "Post-selection read-only bounce value isolation, no live caller, no pricing algorithm or error classification. M1 milestone review pending.",
+  "positive": {
+    "chunk_id": "714b21",
+    "wall_time_seconds": 0.000009926,
+    "exit_code": 0,
+    "original_token_count": 23,
+    "output": "Running test Test_WorkchainBlock_BounceValueIsolation...\nPASS in 346.4us\n1 test(s) passed\n"
+  },
+  "controls": [
+    {
+      "name": "return-debit",
+      "before": "CurrencyCollection::sub(imported, total_fee, returned)",
+      "after": "CurrencyCollection::sub(imported, collected_fee, returned)",
+      "build": {
+        "chunk_id": "4ee769",
+        "wall_time_seconds": 4.678369093,
+        "exit_code": 0,
+        "original_token_count": 38,
+        "output": "[1/57] Checking the git repository for changes...\n[2/3] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o\n[3/3] Linking CXX executable test-workchain-block\n"
+      },
+      "hashes": {
+        "chunk_id": "7313a4",
+        "wall_time_seconds": 0.000010024,
+        "exit_code": 0,
+        "original_token_count": 77,
+        "output": "d32594f9c33e277c32853378d0cd52345dfdf47539d548951713112399af93ed  crypto/block/workchain-bounce-accounting.h\n6e81152b5d4199f8577030a5b348a57fde748846eba57375fcef2b0f7e48bc2d  crypto/test/test-workchain-block.cpp\n2e2d6fdfa7fa2d70c9a5936ec09f6c88251f8c384ace91e3ac7c2b39261681fe  build/test-workchain-block\n"
+      },
+      "test": {
+        "chunk_id": "7ab7e4",
+        "wall_time_seconds": 0.303973165,
+        "exit_code": 1,
+        "original_token_count": 1509,
+        "output": "Running test Test_WorkchainBlock_BounceValueIsolation...\n\u001b[1;31m[ 0][t 0][2026-09-07 16:35:40.524010403][test-workchain-block.cpp:52]\tExpectation failed: result.is_ok()!\u001b[0m\n[pid 851169] [time 1788798940] Signal: 6\n------- Stack Backtrace -------\nbuild/test-workchain-block(+0x4d87c7)[0x5bf8592e17c7]\nbuild/test-workchain-block(+0xc939d)[0x5bf858ed239d]\n/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x733687442520]\n/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7336874969bc]\n/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x733687442476]\n/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7336874287f3]\nbuild/test-workchain-block(+0x4dbbc7)[0x5bf8592e4bc7]\nbuild/test-workchain-block(+0x4dbcc7)[0x5bf8592e4cc7]\nbuild/test-workchain-block(+0x4db877)[0x5bf8592e4877]\nbuild/test-workchain-block(+0x18af00)[0x5bf858f93f00]\nbuild/test-workchain-block(+0x17589a)[0x5bf858f7e89a]\nbuild/test-workchain-block(+0x4e599c)[0x5bf8592ee99c]\nbuild/test-workchain-block(+0x4e54c8)[0x5bf8592ee4c8]\nbuild/test-workchain-block(+0xcd58f)[0x5bf858ed658f]\n/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x733687429d90]\n/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x733687429e40]\nbuild/test-workchain-block(+0xcd435)[0x5bf858ed6435]\n-------------------------------\n--- Enhanced Backtrace (libbacktrace) ---\n    #0  ?? (test-workchain-block+0xc939c) [0x5bf858ed239c]\n    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x73368744251f]\n    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7336874969bc]\n    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7336874969bc]\n    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7336874969bc]\n    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x733687442475]\n    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7336874287f2]\n    #7  ?? (test-workchain-block+0x4dbbc6) [0x5bf8592e4bc6]\n    #8  ?? (test-workchain-block+0x4dbcc6) [0x5bf8592e4cc6]\n    #9  ?? (test-workchain-block+0x4db876) [0x5bf8592e4876]\n    #10  ?? (test-workchain-block+0x18aeff) [0x5bf858f93eff]\n    #11  ?? (test-workchain-block+0x175899) [0x5bf858f7e899]\n    #12  ?? (test-workchain-block+0x4e599b) [0x5bf8592ee99b]\n    #13  ?? (test-workchain-block+0x4e54c7) [0x5bf8592ee4c7]\n    #14  ?? (test-workchain-block+0xcd58e) [0x5bf858ed658e]\n    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x733687429d8f]\n    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x733687429e3f]\n    #17  ?? (test-workchain-block+0xcd434) [0x5bf858ed6434]\n    #18  ���=� (unknown+0xffffffffffffffff) [0xffffffffffffffff]\n------------------------------------------\n[Thread debugging using libthread_db enabled]\nUsing host libthread_db library \"/lib/x86_64-linux-gnu/libthread_db.so.1\".\n0x00007336874ea3aa in __GI___wait4 (pid=851173, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n30\t../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.\n[Current thread is 1 (Thread 0x733687adb800 (LWP 851169))]\n\nThread 1 (Thread 0x733687adb800 (LWP 851169) \"test-workchain-\"):\n#0  0x00007336874ea3aa in __GI___wait4 (pid=851173, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n        sc_ret = -512\n        sc_ret = <optimized out>\n#1  0x00005bf8592e1a42 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()\nNo symbol table info available.\n#2  0x00005bf858ed239d in td::default_failure_signal_handler(int) ()\nNo symbol table info available.\n#3  <signal handler called>\nNo locals.\n#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=126678041737216) at ./nptl/pthread_kill.c:44\n        tid = <optimized out>\n        ret = 0\n        pd = 0x733687adb800\n        old_mask = {__val = {0 <repeats 16 times>}}\n        ret = <optimized out>\n        pd = <optimized out>\n        old_mask = <optimized out>\n        ret = <optimized out>\n        tid = <optimized out>\n        ret = <optimized out>\n        resultvar = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        __private = <optimized out>\n        __oldval = <optimized out>\n        result = <optimized out>\n#5  __pthread_kill_internal (signo=6, threadid=126678041737216) at ./nptl/pthread_kill.c:78\nNo locals.\n#6  __GI___pthread_kill (threadid=126678041737216, signo=signo@entry=6) at ./nptl/pthread_kill.c:89\nNo locals.\n#7  0x0000733687442476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26\n        ret = <optimized out>\n#8  0x00007336874287f3 in __GI_abort () at ./stdlib/abort.c:79\n        save_stage = 1\n        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}\n        sigs = {__val = {32, 0 <repeats 15 times>}}\n#9  0x00005bf8592e4bc7 in td::process_fatal_error(td::CSlice) ()\nNo symbol table info available.\n#10 0x00005bf8592e4cc7 in td::DefaultLog::append(td::CSlice, int) ()\nNo symbol table info available.\n#11 0x00005bf8592e4877 in td::Logger::~Logger() ()\nNo symbol table info available.\n#12 0x00005bf858f93f00 in (anonymous namespace)::Test_WorkchainBlock_BounceValueIsolation::run() ()\nNo symbol table info available.\n#13 0x00005bf858f7e89a in td::Test::step() ()\nNo symbol table info available.\n#14 0x00005bf8592ee99c in td::TestsRunner::run_all_step() ()\nNo symbol table info available.\n#15 0x00005bf8592ee4c8 in td::TestsRunner::run_all() ()\nNo symbol table info available.\n#16 0x00005bf858ed658f in main ()\nNo symbol table info available.\n[Inferior 1 (process 851169) detached]\n"
+      }
+    },
+    {
+      "name": "forwarding-remainder",
+      "before": "CurrencyCollection::add(returned, remaining_fee, exported)",
+      "after": "CurrencyCollection::add(returned, CurrencyCollection(0), exported)",
+      "build": {
+        "chunk_id": "23cb4c",
+        "wall_time_seconds": 4.84274696,
+        "exit_code": 0,
+        "original_token_count": 38,
+        "output": "[1/57] Checking the git repository for changes...\n[2/3] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o\n[3/3] Linking CXX executable test-workchain-block\n"
+      },
+      "hashes": {
+        "chunk_id": "8700b2",
+        "wall_time_seconds": 0.00000625,
+        "exit_code": 0,
+        "original_token_count": 77,
+        "output": "2b4f74348e1eed003b910eb123477062eba5b24b22396b3778033d675d6c59d0  crypto/block/workchain-bounce-accounting.h\n6e81152b5d4199f8577030a5b348a57fde748846eba57375fcef2b0f7e48bc2d  crypto/test/test-workchain-block.cpp\nf37c8de7d4102928ce87e704e7008bd13250fe4429982d86c7b98b19fb22dedb  build/test-workchain-block\n"
+      },
+      "test": {
+        "chunk_id": "a13223",
+        "wall_time_seconds": 0.453715866,
+        "exit_code": 1,
+        "original_token_count": 1509,
+        "output": "Running test Test_WorkchainBlock_BounceValueIsolation...\n\u001b[1;31m[ 0][t 0][2026-09-07 16:36:07.282518975][test-workchain-block.cpp:52]\tExpectation failed: result.is_ok()!\u001b[0m\n[pid 851470] [time 1788798967] Signal: 6\n------- Stack Backtrace -------\nbuild/test-workchain-block(+0x4d8887)[0x641c89433887]\nbuild/test-workchain-block(+0xc939d)[0x641c8902439d]\n/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x773f0d042520]\n/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x773f0d0969bc]\n/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x773f0d042476]\n/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x773f0d0287f3]\nbuild/test-workchain-block(+0x4dbc87)[0x641c89436c87]\nbuild/test-workchain-block(+0x4dbd87)[0x641c89436d87]\nbuild/test-workchain-block(+0x4db937)[0x641c89436937]\nbuild/test-workchain-block(+0x18af00)[0x641c890e5f00]\nbuild/test-workchain-block(+0x17589a)[0x641c890d089a]\nbuild/test-workchain-block(+0x4e5a5c)[0x641c89440a5c]\nbuild/test-workchain-block(+0x4e5588)[0x641c89440588]\nbuild/test-workchain-block(+0xcd58f)[0x641c8902858f]\n/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x773f0d029d90]\n/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x773f0d029e40]\nbuild/test-workchain-block(+0xcd435)[0x641c89028435]\n-------------------------------\n--- Enhanced Backtrace (libbacktrace) ---\n    #0  ?? (test-workchain-block+0xc939c) [0x641c8902439c]\n    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x773f0d04251f]\n    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x773f0d0969bc]\n    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x773f0d0969bc]\n    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x773f0d0969bc]\n    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x773f0d042475]\n    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x773f0d0287f2]\n    #7  ?? (test-workchain-block+0x4dbc86) [0x641c89436c86]\n    #8  ?? (test-workchain-block+0x4dbd86) [0x641c89436d86]\n    #9  ?? (test-workchain-block+0x4db936) [0x641c89436936]\n    #10  ?? (test-workchain-block+0x18aeff) [0x641c890e5eff]\n    #11  ?? (test-workchain-block+0x175899) [0x641c890d0899]\n    #12  ?? (test-workchain-block+0x4e5a5b) [0x641c89440a5b]\n    #13  ?? (test-workchain-block+0x4e5587) [0x641c89440587]\n    #14  ?? (test-workchain-block+0xcd58e) [0x641c8902858e]\n    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x773f0d029d8f]\n    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x773f0d029e3f]\n    #17  ?? (test-workchain-block+0xcd434) [0x641c89028434]\n    #18  �0\u001a�� (unknown+0xffffffffffffffff) [0xffffffffffffffff]\n------------------------------------------\n[Thread debugging using libthread_db enabled]\nUsing host libthread_db library \"/lib/x86_64-linux-gnu/libthread_db.so.1\".\n0x0000773f0d0ea3aa in __GI___wait4 (pid=851477, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n30\t../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.\n[Current thread is 1 (Thread 0x773f0d6ac800 (LWP 851470))]\n\nThread 1 (Thread 0x773f0d6ac800 (LWP 851470) \"test-workchain-\"):\n#0  0x0000773f0d0ea3aa in __GI___wait4 (pid=851477, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n        sc_ret = -512\n        sc_ret = <optimized out>\n#1  0x0000641c89433b02 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()\nNo symbol table info available.\n#2  0x0000641c8902439d in td::default_failure_signal_handler(int) ()\nNo symbol table info available.\n#3  <signal handler called>\nNo locals.\n#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=131112691746816) at ./nptl/pthread_kill.c:44\n        tid = <optimized out>\n        ret = 0\n        pd = 0x773f0d6ac800\n        old_mask = {__val = {0 <repeats 16 times>}}\n        ret = <optimized out>\n        pd = <optimized out>\n        old_mask = <optimized out>\n        ret = <optimized out>\n        tid = <optimized out>\n        ret = <optimized out>\n        resultvar = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        __private = <optimized out>\n        __oldval = <optimized out>\n        result = <optimized out>\n#5  __pthread_kill_internal (signo=6, threadid=131112691746816) at ./nptl/pthread_kill.c:78\nNo locals.\n#6  __GI___pthread_kill (threadid=131112691746816, signo=signo@entry=6) at ./nptl/pthread_kill.c:89\nNo locals.\n#7  0x0000773f0d042476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26\n        ret = <optimized out>\n#8  0x0000773f0d0287f3 in __GI_abort () at ./stdlib/abort.c:79\n        save_stage = 1\n        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}\n        sigs = {__val = {32, 0 <repeats 15 times>}}\n#9  0x0000641c89436c87 in td::process_fatal_error(td::CSlice) ()\nNo symbol table info available.\n#10 0x0000641c89436d87 in td::DefaultLog::append(td::CSlice, int) ()\nNo symbol table info available.\n#11 0x0000641c89436937 in td::Logger::~Logger() ()\nNo symbol table info available.\n#12 0x0000641c890e5f00 in (anonymous namespace)::Test_WorkchainBlock_BounceValueIsolation::run() ()\nNo symbol table info available.\n#13 0x0000641c890d089a in td::Test::step() ()\nNo symbol table info available.\n#14 0x0000641c89440a5c in td::TestsRunner::run_all_step() ()\nNo symbol table info available.\n#15 0x0000641c89440588 in td::TestsRunner::run_all() ()\nNo symbol table info available.\n#16 0x0000641c8902858f in main ()\nNo symbol table info available.\n[Inferior 1 (process 851470) detached]\n"
+      }
+    },
+    {
+      "name": "principal-preservation",
+      "before": "processing_account, old_balance, imported, old_balance, exported, collected_fee",
+      "after": "processing_account, old_balance, imported, CurrencyCollection(0), exported, collected_fee",
+      "build": {
+        "chunk_id": "a98005",
+        "wall_time_seconds": 4.897710082,
+        "exit_code": 0,
+        "original_token_count": 38,
+        "output": "[1/57] Checking the git repository for changes...\n[2/3] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o\n[3/3] Linking CXX executable test-workchain-block\n"
+      },
+      "hashes": {
+        "chunk_id": "7b59ea",
+        "wall_time_seconds": 0.000009611,
+        "exit_code": 0,
+        "original_token_count": 77,
+        "output": "2efbe3031bddcaba5d22e9ff017a557f4f65f68977b64ac1937dd4eb38f43ecb  crypto/block/workchain-bounce-accounting.h\n6e81152b5d4199f8577030a5b348a57fde748846eba57375fcef2b0f7e48bc2d  crypto/test/test-workchain-block.cpp\n610b1f7efd57becf9c8e2ffee76426d25d6eb4d678cc838b132302c716fce32a  build/test-workchain-block\n"
+      },
+      "test": {
+        "chunk_id": "4a5537",
+        "wall_time_seconds": 0.494504935,
+        "exit_code": 1,
+        "original_token_count": 1509,
+        "output": "Running test Test_WorkchainBlock_BounceValueIsolation...\n\u001b[1;31m[ 0][t 0][2026-09-07 16:36:34.221508837][test-workchain-block.cpp:52]\tExpectation failed: result.is_ok()!\u001b[0m\n[pid 851781] [time 1788798994] Signal: 6\n------- Stack Backtrace -------\nbuild/test-workchain-block(+0x4d8847)[0x55ebb90bf847]\nbuild/test-workchain-block(+0xc939d)[0x55ebb8cb039d]\n/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7a1a00442520]\n/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7a1a004969bc]\n/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7a1a00442476]\n/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7a1a004287f3]\nbuild/test-workchain-block(+0x4dbc47)[0x55ebb90c2c47]\nbuild/test-workchain-block(+0x4dbd47)[0x55ebb90c2d47]\nbuild/test-workchain-block(+0x4db8f7)[0x55ebb90c28f7]\nbuild/test-workchain-block(+0x18af00)[0x55ebb8d71f00]\nbuild/test-workchain-block(+0x17589a)[0x55ebb8d5c89a]\nbuild/test-workchain-block(+0x4e5a1c)[0x55ebb90cca1c]\nbuild/test-workchain-block(+0x4e5548)[0x55ebb90cc548]\nbuild/test-workchain-block(+0xcd58f)[0x55ebb8cb458f]\n/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7a1a00429d90]\n/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7a1a00429e40]\nbuild/test-workchain-block(+0xcd435)[0x55ebb8cb4435]\n-------------------------------\n--- Enhanced Backtrace (libbacktrace) ---\n    #0  ?? (test-workchain-block+0xc939c) [0x55ebb8cb039c]\n    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7a1a0044251f]\n    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7a1a004969bc]\n    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7a1a004969bc]\n    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7a1a004969bc]\n    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7a1a00442475]\n    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7a1a004287f2]\n    #7  ?? (test-workchain-block+0x4dbc46) [0x55ebb90c2c46]\n    #8  ?? (test-workchain-block+0x4dbd46) [0x55ebb90c2d46]\n    #9  ?? (test-workchain-block+0x4db8f6) [0x55ebb90c28f6]\n    #10  ?? (test-workchain-block+0x18aeff) [0x55ebb8d71eff]\n    #11  ?? (test-workchain-block+0x175899) [0x55ebb8d5c899]\n    #12  ?? (test-workchain-block+0x4e5a1b) [0x55ebb90cca1b]\n    #13  ?? (test-workchain-block+0x4e5547) [0x55ebb90cc547]\n    #14  ?? (test-workchain-block+0xcd58e) [0x55ebb8cb458e]\n    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7a1a00429d8f]\n    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7a1a00429e3f]\n    #17  ?? (test-workchain-block+0xcd434) [0x55ebb8cb4434]\n    #18  �;��� (unknown+0xffffffffffffffff) [0xffffffffffffffff]\n------------------------------------------\n[Thread debugging using libthread_db enabled]\nUsing host libthread_db library \"/lib/x86_64-linux-gnu/libthread_db.so.1\".\n0x00007a1a004ea3aa in __GI___wait4 (pid=851786, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n30\t../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.\n[Current thread is 1 (Thread 0x7a1a00ad6800 (LWP 851781))]\n\nThread 1 (Thread 0x7a1a00ad6800 (LWP 851781) \"test-workchain-\"):\n#0  0x00007a1a004ea3aa in __GI___wait4 (pid=851786, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30\n        sc_ret = -512\n        sc_ret = <optimized out>\n#1  0x000055ebb90bfac2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()\nNo symbol table info available.\n#2  0x000055ebb8cb039d in td::default_failure_signal_handler(int) ()\nNo symbol table info available.\n#3  <signal handler called>\nNo locals.\n#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=134252099102720) at ./nptl/pthread_kill.c:44\n        tid = <optimized out>\n        ret = 0\n        pd = 0x7a1a00ad6800\n        old_mask = {__val = {0 <repeats 16 times>}}\n        ret = <optimized out>\n        pd = <optimized out>\n        old_mask = <optimized out>\n        ret = <optimized out>\n        tid = <optimized out>\n        ret = <optimized out>\n        resultvar = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        resultvar = <optimized out>\n        __arg3 = <optimized out>\n        __arg2 = <optimized out>\n        __arg1 = <optimized out>\n        _a3 = <optimized out>\n        _a2 = <optimized out>\n        _a1 = <optimized out>\n        __futex = <optimized out>\n        __private = <optimized out>\n        __oldval = <optimized out>\n        result = <optimized out>\n#5  __pthread_kill_internal (signo=6, threadid=134252099102720) at ./nptl/pthread_kill.c:78\nNo locals.\n#6  __GI___pthread_kill (threadid=134252099102720, signo=signo@entry=6) at ./nptl/pthread_kill.c:89\nNo locals.\n#7  0x00007a1a00442476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26\n        ret = <optimized out>\n#8  0x00007a1a004287f3 in __GI_abort () at ./stdlib/abort.c:79\n        save_stage = 1\n        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}\n        sigs = {__val = {32, 0 <repeats 15 times>}}\n#9  0x000055ebb90c2c47 in td::process_fatal_error(td::CSlice) ()\nNo symbol table info available.\n#10 0x000055ebb90c2d47 in td::DefaultLog::append(td::CSlice, int) ()\nNo symbol table info available.\n#11 0x000055ebb90c28f7 in td::Logger::~Logger() ()\nNo symbol table info available.\n#12 0x000055ebb8d71f00 in (anonymous namespace)::Test_WorkchainBlock_BounceValueIsolation::run() ()\nNo symbol table info available.\n#13 0x000055ebb8d5c89a in td::Test::step() ()\nNo symbol table info available.\n#14 0x000055ebb90cca1c in td::TestsRunner::run_all_step() ()\nNo symbol table info available.\n#15 0x000055ebb90cc548 in td::TestsRunner::run_all() ()\nNo symbol table info available.\n#16 0x000055ebb8cb458f in main ()\nNo symbol table info available.\n[Inferior 1 (process 851781) detached]\n"
+      }
+    }
+  ],
+  "restored_build": {
+    "chunk_id": "8c4acb",
+    "wall_time_seconds": 0.857301939,
+    "exit_code": 0,
+    "original_token_count": 51,
+    "output": "[1/57] Checking the git repository for changes...\n[2/3] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o\n[3/3] Linking CXX executable test-workchain-block\n"
+  },
+  "restored_regression": {
+    "start": {
+      "chunk_id": "1388be",
+      "wall_time_seconds": 1.001351728,
+      "session_id": 39713,
+      "original_token_count": 33,
+      "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 37: test-workchain-block\n"
+    },
+    "final": {
+      "chunk_id": "66dfdf",
+      "wall_time_seconds": 0.000008671,
+      "exit_code": 0,
+      "original_token_count": 38,
+      "output": "1/1 Test #37: test-workchain-block .............   Passed    2.82 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   2.83 sec\n"
+    }
+  },
+  "restored_hashes": {
+    "chunk_id": "3dff9b",
+    "wall_time_seconds": 0.000008039,
+    "exit_code": 0,
+    "original_token_count": 77,
+    "output": "e76f312361793abb4ad5ae4cce710cb9dedfd85663526f463eb7bd24daaf2683  crypto/block/workchain-bounce-accounting.h\n6e81152b5d4199f8577030a5b348a57fde748846eba57375fcef2b0f7e48bc2d  crypto/test/test-workchain-block.cpp\n01d8fbd61a8de48088f5bf2fb6b6b1fe4e5187cf4700960884eeb43186396c4b  build/test-workchain-block\n"
+  },
+  "limitations": [
+    "Manual controls, not recurring mutation CI.",
+    "Mutations demonstrate monetary consequences plus independent conservation, not isolation of every individual guard.",
+    "Initial fixture compile failed because store_integer_value expects BigInt256 rather than RefInt256; corrected explicit dereference. A pre-rebuild filter returned zero tests and was discarded."
+  ]
+}
