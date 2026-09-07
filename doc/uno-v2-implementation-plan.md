@@ -179,3 +179,31 @@ budgets. Source-aware exception handling remains at the enclosing admission
 boundary. Complete validator replay and I13 acceptance are pending; existing
 single-account acceptance stays unchanged. No consensus call site or error
 category changed in this step; review is due with M1.
+
+### Payout principal and Native fee allocation
+
+The Native mode-1 sender reports both total forwarding fees and the fraction
+collected by the current transaction. `workchain-payout-accounting.h` separates
+these: for payment X, total fee F and locally collected C, custody decreases by
+X, coordinator decreases by F, and the exported value is X plus F minus C. An
+explicit internal funding edge carries F from coordinator to custody; custody's
+transaction fee is C. Both per-account conservation equations are checked, not
+just the batch total. Native checked CurrencyCollection operations reject
+underfunded principal, underfunded operator fees, C greater than F, invalid or
+overflowing amounts. Distinct source accounts are mandatory.
+
+This is an allocation helper, not a Native pricing oracle or payout authority.
+The next integration must obtain X/F/C from the actual reconstructed send,
+match its destination/amount and message LT to effects, and use the resulting
+balances in private participant wrappers. Passing self-consistent engine fee
+claims here does not authenticate them. No host entry point is changed yet.
+
+The test fails against the unimplemented helper, then checks nonzero payment,
+both remaining balances, exported value including residual forwarding fees,
+each shortage independently, reversed address order and zero-fee exhaustion.
+Independent mutations publish the old operator balance or omit the forwarding
+value from the returned export; each fails a numeric amount assertion. These
+are publication-consistency controls, not independent removal coverage of
+every arithmetic guard. Raw manual evidence is in
+`measurements/uno-v2-payout-accounting-evidence.json`; ordinary tests are in
+CTest, mutation jobs are not. M1 review and full Native settlement remain due.

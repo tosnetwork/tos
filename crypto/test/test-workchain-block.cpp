@@ -6,6 +6,7 @@
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-participant-record.h"
 #include "block/workchain-value-flow.h"
+#include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
@@ -27,6 +28,39 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, PayoutPrincipalAndFees) {
+  using C = block::CurrencyCollection;
+  auto custody = td::Bits256::zero();
+  auto coordinator = custody;
+  coordinator.as_slice().back() = 1;
+  auto plan = block::account_workchain_payout(custody, coordinator, C(1000), C(100), C(700),
+                                             td::make_refint(30), td::make_refint(10), 100);
+  ASSERT_TRUE(plan.is_ok());
+  auto result = plan.move_as_ok();
+  ASSERT_TRUE(result.custody_after == C(300));
+  ASSERT_TRUE(result.operator_after == C(70));
+  ASSERT_TRUE(result.exported == C(720));
+  ASSERT_TRUE(result.fee_funding.value == C(30));
+  ASSERT_TRUE(result.rows[0].fees == C(10));
+  ASSERT_TRUE(block::verify_workchain_value_flow(result.rows, {result.fee_funding}, 2, 1, 100).is_ok());
+  ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(1000), C(29), C(700),
+      td::make_refint(30), td::make_refint(10), 100).is_error());
+  ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(699), C(1000), C(700),
+      td::make_refint(30), td::make_refint(10), 100).is_error());
+  ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(1000), C(100), C(700),
+      td::make_refint(30), td::make_refint(31), 100).is_error());
+  ASSERT_TRUE(block::account_workchain_payout(custody, custody, C(1000), C(100), C(700),
+      td::make_refint(30), td::make_refint(10), 100).is_error());
+  auto reverse = block::account_workchain_payout(coordinator, custody, C(1000), C(100), C(700),
+      td::make_refint(30), td::make_refint(10), 100).move_as_ok();
+  ASSERT_TRUE(reverse.rows[0].account == custody && reverse.rows[0].new_balance == C(70));
+  ASSERT_TRUE(reverse.rows[1].account == coordinator && reverse.rows[1].new_balance == C(300));
+  auto free = block::account_workchain_payout(custody, coordinator, C(700), C(0), C(700),
+      td::make_refint(0), td::make_refint(0), 100).move_as_ok();
+  ASSERT_TRUE(free.custody_after.is_zero() && free.operator_after.is_zero());
+  ASSERT_TRUE(free.exported == C(700));
+}
 
 TEST(WorkchainBlock, NativeAccountValueFlow) {
   using C = block::CurrencyCollection;
