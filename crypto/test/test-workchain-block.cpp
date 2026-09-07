@@ -1679,22 +1679,105 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       auto incoming_root = block::encode_workchain_account_effects(incoming, 2, 1, 4096).move_as_ok();
       // Allocated custody can pay 1001, but its old balance authorizes only 1000.
       ASSERT_TRUE(direct_pair(value.input, incoming_root, over_message, number(101)).is_error());
-      // An inbox to the non-entry role would be skipped by entry-local credit
-      // selection. The enclosing payout profile must reject it, not lose it.
-      auto unsupported_input = block::encode_workchain_host_input(identity, admitted, declarations,
-          {inbound_envelope(0, 0, {}, a)}, 2, 2, 1).move_as_ok();
-      ASSERT_TRUE(direct_pair(unsupported_input, value.effects, engine.payout, number(101)).is_error());
+      // Both roles import before applying the graph and priced payout. Pricing
+      // must still enforce the independent old-custody principal envelope.
+      auto imported_payout_input = block::encode_workchain_host_input(identity, admitted, declarations,
+          {inbound_envelope(0, 0, {}, a), inbound_envelope(1, 1, {}, b)}, 2, 2, 2).move_as_ok();
+      auto imported_pair = direct_pair(imported_payout_input, with_transfer, engine.payout, number(101)).move_as_ok();
+      ASSERT_TRUE(imported_pair.transactions[0]->balance == block::CurrencyCollection(962));
+      ASSERT_TRUE(imported_pair.transactions[1]->balance == block::CurrencyCollection(1001));
+      ASSERT_TRUE(direct_pair(imported_payout_input, incoming_root, over_message, number(101)).is_error());
+      // Old principal permits the payout, but the committed outgoing graph
+      // must leave enough credited custody balance to fund it as well.
+      auto depleted = unsupported_effects;
+      depleted.native_transfers = {{a, b, block::CurrencyCollection(963)}};
+      auto exact_funding = block::encode_workchain_account_effects(depleted, 2, 1, 4096).move_as_ok();
+      auto exact_pair = direct_pair(imported_payout_input, exact_funding, engine.payout, number(101)).move_as_ok();
+      ASSERT_TRUE(exact_pair.transactions[0]->balance == block::CurrencyCollection(0));
+      ASSERT_TRUE(exact_pair.transactions[1]->balance == block::CurrencyCollection(1963));
+      depleted.native_transfers = {{a, b, block::CurrencyCollection(964)}};
+      auto insufficient_funding = block::encode_workchain_account_effects(depleted, 2, 1, 4096).move_as_ok();
+      ASSERT_TRUE(direct_pair(imported_payout_input, insufficient_funding, engine.payout, number(101)).is_error());
       std::vector<block::WorkchainStorageWrite> payout_writes;
       for (std::size_t i = 0; i < declarations.writes.size(); ++i) {
         payout_writes.push_back({declarations.writes[i], *declarations.reads[i].old_account_hash,
                                 number(i == 0 ? 101 : 102)});
       }
+      auto late_input = block::encode_workchain_host_input(identity, admitted, declarations,
+          {inbound_envelope(30, 1, {}, a), inbound_envelope(1, 2, 40, b)}, 2, 2, 2).move_as_ok();
+      auto build_imported_payout = [&](std::uint64_t bound) {
+        return block::build_workchain_payout_overlay(state.accounts, 2, identity.gen_utime,
+            identity.host_after_lt, td::Bits256(late_input->get_hash().bits()),
+            td::Bits256(with_transfer->get_hash().bits()), payout_writes, a, b, engine.payout,
+            td::make_refint(500), 2, 2, 2, 4096, cfg, pricing, late_input, with_transfer, bound);
+      };
+      auto imported_overlay = build_imported_payout(2).move_as_ok();
+      ASSERT_TRUE(build_imported_payout(1).is_error());
+      ASSERT_EQ(imported_overlay.state.end_lt, 43u);
+      ASSERT_TRUE(imported_overlay.imports.value_imported == block::CurrencyCollection(334));
+      ASSERT_TRUE(imported_overlay.imports.fees_collected == block::CurrencyCollection(134));
+      block::gen::CommonMsgInfo::Record_int_msg_info priced_imported_message;
+      ASSERT_TRUE(tlb::unpack_cell_inexact(imported_overlay.message, priced_imported_message));
+      ASSERT_EQ(priced_imported_message.created_lt, 42u);
+      vm::AugmentedDictionary imported_accounts(vm::load_cell_slice_ref(imported_overlay.state.accounts), 256,
+                                                 block::tlb::aug_ShardAccounts);
+      vm::AugmentedDictionary imported_blocks(vm::load_cell_slice_ref(imported_overlay.state.account_blocks), 256,
+                                               block::tlb::aug_ShardAccountBlocks);
+      block::tlb::InMsgDescr imported_schema(16);
+      ASSERT_TRUE(imported_schema.validate_ref(4096, imported_overlay.imports.in_msg_descr));
+      vm::AugmentedDictionary imported_messages(vm::load_cell_slice_ref(imported_overlay.imports.in_msg_descr),
+                                                 256, imported_schema.aug);
+      std::map<td::Bits256, td::Ref<vm::Cell>> imported_transactions;
+      for (auto key : {a, b}) {
+        block::Account updated(2, key.bits());
+        ASSERT_TRUE(updated.unpack(imported_accounts.lookup(key), identity.gen_utime, false));
+        ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 962 : 1001));
+        ASSERT_TRUE(imported_overlay.imports.account_credits.at(key) == block::CurrencyCollection(100));
+        ASSERT_EQ(updated.last_trans_lt_, 41u);
+        ASSERT_EQ(updated.last_trans_end_lt_, key == a ? 43u : 42u);
+        block::gen::AccountBlock::Record ab;
+        ASSERT_TRUE(tlb::unpack_cell(vm::CellBuilder().append_cellslice(*imported_blocks.lookup(key)).finalize(), ab));
+        vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+        auto tx_root = txs.lookup_ref(td::BitArray<64>(41u));
+        ASSERT_TRUE(tx_root.not_null() && updated.last_trans_hash_ == tx_root->get_hash().bits());
+        imported_transactions.emplace(key, tx_root);
+      }
+      ASSERT_TRUE(imported_messages.check_for_each([&](td::Ref<vm::CellSlice> row, td::ConstBitPtr, int) {
+        block::tlb::MsgEnvelope::Record_std envelope;
+        block::gen::CommonMsgInfo::Record_int_msg_info info;
+        block::gen::MsgAddressInt::Record_addr_std destination;
+        if (!tlb::unpack_cell(row->prefetch_ref(0), envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
+            !block::gen::csr_unpack(info.dest, destination)) return false;
+        auto found = imported_transactions.find(destination.address);
+        return found != imported_transactions.end() && row->prefetch_ref(1)->get_hash() == found->second->get_hash();
+      }));
+      block::ClaimedWorkchainPayoutOverlay imported_claim{imported_overlay.state.accounts,
+          imported_overlay.state.account_blocks, imported_overlay.message, imported_overlay.state.end_lt,
+          imported_overlay.imports.in_msg_descr};
+      auto replay_imported = [&](const auto& claim, std::uint64_t bound) {
+        return block::replay_workchain_payout_overlay(state.accounts, 2, identity.gen_utime,
+            identity.host_after_lt, td::Bits256(late_input->get_hash().bits()),
+            td::Bits256(with_transfer->get_hash().bits()), payout_writes, a, b, engine.payout,
+            td::make_refint(500), 2, 2, 2, 4096, cfg, pricing, claim, late_input, with_transfer, bound);
+      };
+      ASSERT_TRUE(replay_imported(imported_claim, 2).is_ok());
+      ASSERT_TRUE(replay_imported(imported_claim, 1).is_error());
+      for (unsigned field = 0; field < 5; ++field) {
+        LOG(INFO) << "inbound payout replay mismatch field=" << field;
+        auto changed = imported_claim;
+        if (field == 0) changed.accounts = value.state.accounts;
+        if (field == 1) changed.account_blocks = value.state.account_blocks;
+        if (field == 2) changed.message = value.message;
+        if (field == 3) changed.end_lt = value.state.end_lt;
+        if (field == 4) changed.in_msg_descr = value.imports.in_msg_descr;
+        ASSERT_TRUE(replay_imported(changed, 2).is_error());
+      }
       block::ClaimedWorkchainPayoutOverlay claim{value.state.accounts, value.state.account_blocks,
-                                                value.message, value.state.end_lt};
+                                                value.message, value.state.end_lt, value.imports.in_msg_descr};
       auto rebuilt = block::replay_workchain_payout_overlay(state.accounts, 2, identity.gen_utime,
           identity.host_after_lt, td::Bits256(value.input->get_hash().bits()),
           td::Bits256(value.effects->get_hash().bits()), payout_writes, a, b, engine.payout,
-          td::make_refint(500), 2, 2, 2, 4096, cfg, pricing, claim, value.input, value.effects).move_as_ok();
+          td::make_refint(500), 2, 2, 2, 4096, cfg, pricing, claim, value.input, value.effects, 0).move_as_ok();
       ASSERT_TRUE(rebuilt.state.account_blocks->get_hash() == value.state.account_blocks->get_hash());
       ASSERT_TRUE(rebuilt.state.accounts->get_hash() == value.state.accounts->get_hash());
       auto third = td::Bits256(number(2)->get_hash().bits());
@@ -1715,11 +1798,24 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       three_effects.payout_request = engine.payout;
       auto three_input = block::encode_workchain_host_input(identity, admitted, three, {}, 3, 3, 0).move_as_ok();
       auto three_output = block::encode_workchain_account_effects(three_effects, 3, 0, 4096).move_as_ok();
+      // The unsupported destination is deliberately in the actual write set.
+      // Zero principal prevents an independent missing-credit rejection from
+      // hiding removal of the receiving-role restriction.
+      auto receiving_role = [&](const td::Bits256& destination) {
+        auto input = block::encode_workchain_host_input(identity, admitted, three,
+            {inbound_envelope(30, 1, {}, destination, block::CurrencyCollection(0))}, 3, 3, 1).move_as_ok();
+        return block::build_workchain_payout_overlay(state.accounts, 2, identity.gen_utime,
+            identity.host_after_lt, td::Bits256(input->get_hash().bits()),
+            td::Bits256(three_output->get_hash().bits()), three_writes, a, b,
+            engine.payout, td::make_refint(500), 3, 3, 2, 4096, cfg, pricing, input, three_output, 1);
+      };
+      ASSERT_TRUE(receiving_role(b).is_ok());
+      ASSERT_TRUE(receiving_role(third).is_error());
       auto construct_three = [&](const auto& writes, td::Ref<vm::Cell> input, td::Ref<vm::Cell> output,
                                   std::uint64_t after, std::uint64_t transfer_limit = 2) {
         return block::build_workchain_payout_overlay(state.accounts, 2, identity.gen_utime, after,
             td::Bits256(input->get_hash().bits()), td::Bits256(output->get_hash().bits()), writes, a, b,
-            engine.payout, td::make_refint(500), 3, 3, transfer_limit, 4096, cfg, pricing, input, output);
+            engine.payout, td::make_refint(500), 3, 3, transfer_limit, 4096, cfg, pricing, input, output, 0);
       };
       auto three_overlay = construct_three(three_writes, three_input, three_output, identity.host_after_lt).move_as_ok();
       vm::AugmentedDictionary three_accounts(vm::load_cell_slice_ref(three_overlay.state.accounts), 256,
@@ -1750,12 +1846,12 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       }
       third_tag(mixed_three);
       block::ClaimedWorkchainPayoutOverlay mixed_claim{mixed_three.state.accounts,
-          mixed_three.state.account_blocks, mixed_three.message, mixed_three.state.end_lt};
+          mixed_three.state.account_blocks, mixed_three.message, mixed_three.state.end_lt, mixed_three.imports.in_msg_descr};
       auto replay_mixed = [&](const auto& claim) {
         return block::replay_workchain_payout_overlay(state.accounts, 2, identity.gen_utime,
             identity.host_after_lt, td::Bits256(three_input->get_hash().bits()),
             td::Bits256(mixed_output->get_hash().bits()), three_writes, a, b, engine.payout,
-            td::make_refint(500), 3, 3, 1, 4096, cfg, pricing, claim, three_input, mixed_output);
+            td::make_refint(500), 3, 3, 1, 4096, cfg, pricing, claim, three_input, mixed_output, 0);
       };
       auto mixed_replay = replay_mixed(mixed_claim).move_as_ok();
       ASSERT_TRUE(mixed_replay.state.accounts->get_hash() == mixed_claim.accounts->get_hash());
@@ -3201,11 +3297,11 @@ TEST(WorkchainBlock, NativePayoutPair) {
   unsigned state_loads = 0;
   auto observed_state = td::make_ref<PreflightObservedCell>(larger.accounts, &state_loads);
   ASSERT_TRUE(block::build_workchain_payout_overlay(observed_state, 2, 10, 20, a, b, writes,
-      a, b, request, td::make_refint(500), 4, 4, 2, 0, cfg, pricing, {}, {}).is_error());
+      a, b, request, td::make_refint(500), 4, 4, 2, 0, cfg, pricing, {}, {}, 0).is_error());
   ASSERT_EQ(state_loads, 0u);
   ASSERT_TRUE(block::build_workchain_payout_overlay(observed_state, 2, 10, 20, a, b, writes,
       a, b, request, td::make_refint(500), 4, 4, std::numeric_limits<std::uint64_t>::max(),
-      4096, cfg, pricing, {}, {}).is_error());
+      4096, cfg, pricing, {}, {}, 0).is_error());
   ASSERT_EQ(state_loads, 0u);
   vm::AugmentedDictionary extra_accounts(vm::load_cell_slice_ref(larger.accounts), 256,
                                         block::tlb::aug_ShardAccounts);
@@ -3217,7 +3313,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
   auto extra_state = extra_accounts.get_wrapped_dict_root();
   auto extra_overlay = [&](int budget, const block::SerializeConfig& config) {
     return block::build_workchain_payout_overlay(extra_state, 2, 10, 20, a, b, extra_writes,
-        a, b, request, td::make_refint(500), 4, 4, 2, budget, config, pricing, {}, {});
+        a, b, request, td::make_refint(500), 4, 4, 2, budget, config, pricing, {}, {}, 0);
   };
   auto ample_overlay = extra_overlay(4096, cfg).move_as_ok();
   ASSERT_TRUE(extra_overlay(1, cfg).is_error());
@@ -3227,11 +3323,11 @@ TEST(WorkchainBlock, NativePayoutPair) {
   ASSERT_TRUE(ample_overlay.state.accounts->get_hash() == independent_overlay.state.accounts->get_hash());
   ASSERT_TRUE(ample_overlay.state.account_blocks->get_hash() == independent_overlay.state.account_blocks->get_hash());
   block::ClaimedWorkchainPayoutOverlay extra_claim{ample_overlay.state.accounts, ample_overlay.state.account_blocks,
-      ample_overlay.message, ample_overlay.state.end_lt};
+      ample_overlay.message, ample_overlay.state.end_lt, ample_overlay.imports.in_msg_descr};
   ASSERT_TRUE(block::replay_workchain_payout_overlay(extra_state, 2, 10, 20, a, b, extra_writes,
-      a, b, request, td::make_refint(500), 4, 4, 2, 1, cfg, pricing, extra_claim, {}, {}).is_error());
+      a, b, request, td::make_refint(500), 4, 4, 2, 1, cfg, pricing, extra_claim, {}, {}, 0).is_error());
   auto overlay = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {});
+      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}, 0);
   ASSERT_TRUE(overlay.is_ok());
   auto materialized = overlay.move_as_ok();
   ASSERT_EQ(materialized.state.end_lt, 23u);
@@ -3272,15 +3368,15 @@ TEST(WorkchainBlock, NativePayoutPair) {
     }
   }
   auto repeat = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {});
+      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}, 0);
   ASSERT_TRUE(repeat.is_ok());
   ASSERT_TRUE(repeat.ok().state.accounts->get_hash() == materialized.state.accounts->get_hash());
   ASSERT_TRUE(repeat.ok().state.account_blocks->get_hash() == materialized.state.account_blocks->get_hash());
   block::ClaimedWorkchainPayoutOverlay claim{materialized.state.accounts, materialized.state.account_blocks,
-                                           materialized.message, materialized.state.end_lt};
+                                           materialized.message, materialized.state.end_lt, materialized.imports.in_msg_descr};
   auto replay = [&](const block::ClaimedWorkchainPayoutOverlay& claimed) {
     return block::replay_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
-        b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, claimed, {}, {});
+        b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, claimed, {}, {}, 0);
   };
   auto replayed = replay(claim);
   ASSERT_TRUE(replayed.is_ok());
@@ -3325,11 +3421,11 @@ TEST(WorkchainBlock, NativePayoutPair) {
   auto wrong_read = writes;
   wrong_read[0].old_account_hash = td::Bits256::zero();
   ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, wrong_read,
-      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}).is_error());
+      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}, 0).is_error());
   auto invalid_writes = writes;
   for (auto& write : invalid_writes) if (write.account == third) write.data.clear();
   ASSERT_TRUE(block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, invalid_writes,
-      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}).is_error());
+      b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}, 0).is_error());
 }
 
 TEST(WorkchainBlock, NativePayoutPricing) {

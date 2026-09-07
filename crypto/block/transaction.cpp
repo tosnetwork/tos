@@ -4643,14 +4643,13 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   if (entry_input.is_null() != entry_effects.is_null()) {
     return td::Status::Error("payout entry requires both input and effects");
   }
-  CurrencyCollection custody_available = custody.balance, operator_available = coordinator.balance;
   if (entry_input.not_null()) {
     gen::UnoV2HostInput::Record input;
     gen::UnoV2HostEffects::Record effects;
     gen::UnoV2NativeEffects::Record native;
     if (first.input_hash != entry_input->get_hash().bits() || first.effects_hash != entry_effects->get_hash().bits() ||
         !tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects) ||
-        !tlb::unpack_cell(effects.native, native) || input.inbox->prefetch_ulong(1) != 0 ||
+        !tlb::unpack_cell(effects.native, native) ||
         native.payout->prefetch_ulong(1) != 1 ||
         request.is_null() || native.payout->prefetch_ref()->get_hash() != request->get_hash()) {
       return td::Status::Error("payout entry context or request mismatch");
@@ -4660,32 +4659,28 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     if (expected.is_null() || custody_data.is_null() || expected->get_hash() != custody_data->get_hash()) {
       return td::Status::Error("payout custody data differs from effects");
     }
-    TRY_RESULT(custody_allocated, allocate_workchain_native_balance(custody.addr, custody.balance,
-        effects, max_transfers, extra_validation_cells));
-    TRY_RESULT(operator_allocated, allocate_workchain_native_balance(coordinator.addr, coordinator.balance,
-        effects, max_transfers, extra_validation_cells));
-    custody_available = std::move(custody_allocated);
-    operator_available = std::move(operator_allocated);
   }
   // Pricing still checks the old custody principal independently. Incoming
-  // allocations cannot increase the prior payout authorization envelope.
+  // imports or allocations cannot increase the prior authorization envelope.
   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
-  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody_available,
-      operator_available, priced.payment, priced.total_fee, priced.collected_fee,
-      extra_validation_cells));
   // Pricing checked both LT additions. Both old end LTs are <= start_lt,
   // so neither constructor's max(requested_start, old_end) can raise that bound.
   std::vector<std::unique_ptr<Transaction>> pair;
   pair.push_back(std::make_unique<Transaction>(custody, tr_workchain_batch, start_lt, now));
   pair.push_back(std::make_unique<Transaction>(coordinator, tr_workchain_batch, start_lt, now));
-  TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
   if (entry_input.not_null()) {
-    // Entry preparation binds the same allocation graph and full metadata.
+    // Import both roles and apply their committed allocations before debiting
+    // payout principal or fees. No imported value or allocation is overwritten.
+    TRY_STATUS(pair[0]->prepare_workchain_import_participant(custody_binding, entry_input, entry_effects,
+        custody_data, cfg, max_transfers, extra_validation_cells));
     TRY_STATUS(pair[1]->prepare_workchain_entry(coordinator_binding, entry_input, entry_effects,
         coordinator_data, cfg, max_transfers, extra_validation_cells));
   } else {
+    TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
     TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
   }
+  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, pair[0]->balance,
+      pair[1]->balance, priced.payment, priced.total_fee, priced.collected_fee, extra_validation_cells));
   pair[0]->balance = allocation.custody_after;
   pair[1]->balance = allocation.operator_after;
   pair[0]->total_fees = CurrencyCollection(priced.collected_fee);

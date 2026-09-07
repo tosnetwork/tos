@@ -1178,3 +1178,42 @@ controls, not recurring mutation CI. This unit adds neither a new classification
 change to a named live consensus-judgment file; independent review remains due
 at the M1 milestone. Shared decoder source attribution, aggregate traversal
 admission, authenticated bounce matching and full live publication remain open.
+
+### Inbound allocations combined with payout (M1, internal materializer)
+
+The pair prices against old custody and checks its LT additions before creating
+private transactions. With full input/effects it then prepares both receiving
+roles, including own imports and committed internal allocations, before
+debiting payout principal and forwarding fees. Imported or allocated value
+cannot enlarge the separately checked old-custody payout envelope. Null-context
+primitive callers retain explicit zero-inbox materialization.
+
+The enclosing payout materializer now accepts an explicit inbox count bound,
+plans only coordinator/custody recipients before old-state reads, and includes
+message creation/emission LTs in the common schedule. Actual serialized
+transactions supply final InMsg references. Their Native augmentation supplies
+independent account credits before value-flow verification. Replay compares
+the rebuilt InMsg root in addition to accounts, AccountBlocks, payout and end
+LT. Import totals are returned as derived artifacts, not trusted claimed caches.
+The private account commit result is also checked rather than ignored.
+
+The old pair rejected the new importing positive fixture. The implemented
+pair/overlay tests pass, including two imported balances, the independent old
+principal boundary, a later inbound LT schedule, actual processing references,
+explicit count limits and five changed replay artifacts. Boundary review has
+completed; disposition is in `uno-v2-inbound-payout-review-disposition.md`.
+An added outgoing-allocation pair tests exactly sufficient custody funding
+and a one-unit shortfall after imports. One rebuilt control independently
+zeros the Native-derived import credit while preserving credited account
+state: the legitimate overlay then fails its value-flow check (exit 1).
+The unsupported-recipient fixture includes an actual written account and zero
+principal so other invariants do not mask the role check. Ten rebuilt controls
+turn red: independent import credit, unsupported written recipient, inbound LT
+schedule, the composite count limit, all five replay artifacts, and unfunded
+principal with the helper's repeated conservation check also removed. The
+early-count-only control survives the downstream repeated bound; no independent
+zero-state-load overlay witness is claimed. Raw logs, exact substitutions and
+hashes are in `measurements/uno-v2-inbound-payout-evidence.json`; these are manual
+controls, not recurring CI. This is not M1 acceptance. The complete runner still rejects nonempty inboxes;
+disposal, authenticated return/withdrawal authorization, aggregate operation-fee
+output, production classification/publication and synchronization remain open.

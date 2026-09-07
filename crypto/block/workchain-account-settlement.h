@@ -10,6 +10,7 @@ struct WorkchainAccountSettlement {
   td::Ref<vm::Cell> input, effects;
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
+  WorkchainFinalImportEvidence imports;
 };
 
 // One engine invocation followed by private Native materialization. No caller
@@ -50,21 +51,24 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   const td::Bits256 effects_hash(effects_root->get_hash().bits());
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
+  WorkchainFinalImportEvidence imports;
   if (executed.effects.payout_request.is_null()) {
-    TRY_RESULT(allocated, build_workchain_allocation_overlay(old_accounts, identity, executed.input,
-        effects_root, coordinator, custody, max_reads, max_writes, max_transfers,
+    TRY_RESULT(allocated, build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
+        effects_root, coordinator, custody, max_reads, max_writes, max_transfers, 0,
         extra_validation_cells, cfg));
-    state = std::move(allocated);
+    state = std::move(allocated.state);
+    imports = std::move(allocated.imports);
   } else {
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
         executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
-        executed.input, effects_root));
+        executed.input, effects_root, 0));
     state = std::move(payout.state);
     message = std::move(payout.message);
+    imports = std::move(payout.imports);
   }
   return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
-                                    std::move(state), std::move(message)};
+                                    std::move(state), std::move(message), std::move(imports)};
 }
 
 }  // namespace block
