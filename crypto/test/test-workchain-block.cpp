@@ -6,6 +6,7 @@
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-participant-record.h"
 #include "block/workchain-value-flow.h"
+#include "block/workchain-storage-overlay.h"
 #include "block/workchain-account-access.h"
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-account-access-codec.h"
@@ -873,6 +874,78 @@ TEST(WorkchainBlock, StorageParticipantNativeWrapper) {
   cfg.global_version = 16;
   tx.new_code = number(123);
   ASSERT_TRUE(!tx.serialize(cfg));
+}
+
+TEST(WorkchainBlock, StorageOverlayNativeCommit) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3), state));
+  const auto original = state.accounts->get_hash();
+  vm::AugmentedDictionary old(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  td::Bits256 untouched(number(2)->get_hash().bits());
+  std::vector<block::WorkchainStorageWrite> writes;
+  for (auto key : {a, b}) {
+    block::tlb::ShardAccount::Record entry;
+    ASSERT_TRUE(entry.unpack(old.lookup(key)));
+    writes.push_back({key, td::Bits256(entry.account->get_hash().bits()), number(77)});
+  }
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = true;
+  auto built = block::build_workchain_storage_overlay(state.accounts, 2, 10, 20, a, b, writes, 2, cfg);
+  ASSERT_TRUE(built.is_ok());
+  auto result = built.move_as_ok();
+  ASSERT_EQ(result.end_lt, 22u);
+  ASSERT_TRUE(state.accounts->get_hash() == original);
+  vm::AugmentedDictionary next(vm::load_cell_slice_ref(result.accounts), 256, block::tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(result.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+  ASSERT_TRUE(old.lookup(untouched)->contents_equal(*next.lookup(untouched)));
+  ASSERT_TRUE(blocks.lookup(untouched).is_null());
+  for (auto key : {a, b}) {
+    block::Account updated(2, key.bits());
+    ASSERT_TRUE(updated.unpack(next.lookup(key), 10, false));
+    ASSERT_EQ(updated.last_trans_lt_, 21u);
+    ASSERT_EQ(updated.last_trans_end_lt_, 22u);
+    ASSERT_TRUE(updated.data->get_hash() == number(77)->get_hash());
+    auto block_cell = vm::CellBuilder().append_cellslice(*blocks.lookup(key)).finalize();
+    ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, block_cell));
+    ASSERT_TRUE(block::tlb::t_AccountBlock.validate_ref(4096, block_cell));
+    block::gen::AccountBlock::Record ab;
+    ASSERT_TRUE(tlb::unpack_cell(block_cell, ab));
+    ASSERT_TRUE(ab.account_addr == key);
+    vm::AugmentedDictionary transactions(vm::DictNonEmpty(), ab.transactions, 64,
+                                         block::tlb::aug_AccountTransactions);
+    auto transaction_root = transactions.lookup_ref(td::BitArray<64>(21u));
+    block::gen::Transaction::Record transaction;
+    ASSERT_TRUE(tlb::unpack_cell(transaction_root, transaction));
+    ASSERT_TRUE(transaction.account_addr == key);
+    ASSERT_EQ(transaction.lt, 21u);
+    ASSERT_EQ(transaction.prev_trans_lt, 1u);
+    ASSERT_TRUE(transaction.prev_trans_hash == td::Bits256::zero());
+    ASSERT_TRUE(updated.last_trans_hash_ == transaction_root->get_hash().bits());
+    auto hashes = vm::load_cell_slice(ab.state_update);
+    ASSERT_EQ(hashes.fetch_ulong(8), 0x72u);
+    td::Bits256 before, after;
+    ASSERT_TRUE(hashes.fetch_bits_to(before) && hashes.fetch_bits_to(after));
+    block::tlb::ShardAccount::Record prior;
+    ASSERT_TRUE(prior.unpack(old.lookup(key)));
+    ASSERT_TRUE(before == prior.account->get_hash().bits());
+    ASSERT_TRUE(after == updated.total_state->get_hash().bits());
+  }
+  auto repeat = block::build_workchain_storage_overlay(state.accounts, 2, 10, 20, a, b, writes, 2, cfg).move_as_ok();
+  ASSERT_TRUE(repeat.accounts->get_hash() == result.accounts->get_hash());
+  ASSERT_TRUE(repeat.account_blocks->get_hash() == result.account_blocks->get_hash());
+  auto invalid_data = writes;
+  invalid_data[1].data.clear();
+  // Failure after committing the first PRIVATE account must publish no roots.
+  ASSERT_TRUE(block::build_workchain_storage_overlay(state.accounts, 2, 10, 20, a, b, invalid_data, 2, cfg).is_error());
+  ASSERT_TRUE(state.accounts->get_hash() == original);
+  // A false old-state declaration is rejected before preparing transactions.
+  writes[1].old_account_hash = a;
+  ASSERT_TRUE(block::build_workchain_storage_overlay(state.accounts, 2, 10, 20, a, b, writes, 2, cfg).is_error());
+  ASSERT_TRUE(state.accounts->get_hash() == original);
+  ASSERT_TRUE(old.lookup(untouched)->contents_equal(*next.lookup(untouched)));
 }
 
 TEST(WorkchainBlock, ReplayStorageCachePreservesValidation) {

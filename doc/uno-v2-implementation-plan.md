@@ -145,3 +145,37 @@ mutation followed directly by commit. The multi-account overlay must own these
 objects without engine access, reconstruct/finalize their native state, and
 publish once only after all wrappers and the actual dictionary diff pass. No
 Account is committed by this test, and I13c/I13d/I13e are not accepted yet.
+
+### Storage-only Native dictionary overlay
+
+`workchain-storage-overlay.h` now composes the access ledger, authenticated-old
+dictionary adapter, checked LT planner and storage wrapper into real Native
+Account commits and AccountBlocks. Each Account and Transaction is private to
+the function; no engine callback or mutable alias can intervene between
+serialization and commit. Commits affect temporary Accounts only. Persistent
+ShardAccounts and ShardAccountBlocks roots are returned together after the
+actual dictionary diff matches the declared writes and participant keys. Failure
+returns neither root and never writes CellDb or modifies the old root.
+
+The fixture changes two of three accounts, parses both new accounts and both
+AccountBlocks with Native parsers, checks each transaction's previous link and
+its published last_trans hash/LT, and independently compares AccountBlock
+old/new hashes against old/new Account roots. The untouched third entry is
+byte-for-byte unchanged. Rebuilding from the same input produces the same two
+roots. A second-account invalid data cell fails after the first private Account
+commit, with no published result; a false old hash fails earlier during reads.
+
+The test failed against an unimplemented builder. Independent mutations replace
+the published last_trans LT with 1, and the last_trans hash with zero, each
+failing a numeric/hash assertion. Raw logs and identities are in
+`measurements/uno-v2-storage-overlay-evidence.json`. These are manual mutations,
+not a CI mutation runner. The ordinary test is in the registered block target.
+
+This is still only storage-only materialization. It does not authorize account
+roles/effects, authenticate supplied configuration, implement registration,
+custody payout or coordinator funding, integrate a full shard Merkle update,
+or publish live manager state. Count limits do not replace closure/state-read
+budgets. Source-aware exception handling remains at the enclosing admission
+boundary. Complete validator replay and I13 acceptance are pending; existing
+single-account acceptance stays unchanged. No consensus call site or error
+category changed in this step; review is due with M1.
