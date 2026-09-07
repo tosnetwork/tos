@@ -1248,7 +1248,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
       17, 9, 2, 1, hash, 1, 1, 1, number(1)};
   block::gen::ShardStateUnsplit::Record state;
-  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3, false, 0, 40, false, 1000), state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
   auto a = td::Bits256::zero();
   td::Bits256 b(number(1)->get_hash().bits());
@@ -1263,6 +1263,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     mutable unsigned calls{0};
     td::Bits256 a, b;
     bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false}, with_transfer{false};
+    bool reverse_transfer{false};
+    unsigned transfer_value{1};
     td::Ref<vm::Cell> payout;
     td::Result<block::WorkchainAccountEffects> execute_accounts(
         const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
@@ -1281,7 +1283,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       if (wrong_key) result.updates[0].account = b;
       if (null_data) result.updates[0].data.clear();
       result.payout_request = payout;
-      if (with_transfer) result.native_transfers.push_back({a, b, block::CurrencyCollection(1)});
+      if (with_transfer) result.native_transfers.push_back({reverse_transfer ? b : a,
+          reverse_transfer ? a : b, block::CurrencyCollection(transfer_value)});
       result.receipts = number(103);
       result.events = number(104);
       result.usage = {7, 8, 9};
@@ -1324,7 +1327,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   pricing.fwd_mc.first_frac = 16384;
   auto settle = [&]() {
     return block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), cfg, pricing);
+        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
   };
   for (bool with_payout : {false, true}) {
     if (with_payout) {
@@ -1376,15 +1379,134 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       ASSERT_TRUE(binding.effects_hash == value.effects->get_hash().bits());
       ASSERT_TRUE(binding.account_id == key);
       ASSERT_EQ(binding.effect_index, key == a ? 0u : 1u);
+      if (!with_payout) {
+        ASSERT_EQ(vm::load_cell_slice(tx.description).prefetch_ulong(4), key == b ? 12u : 11u);
+      }
     }
     ASSERT_EQ(value.message.not_null(), with_payout);
   }
   engine.with_transfer = true;
+  // Mixed payout/allocation remains explicitly closed, not silently ignored.
   ASSERT_TRUE(settle().is_error());
+  engine.payout.clear();
+  engine.calls = 0;
+  const auto old_accounts_hash = state.accounts->get_hash();
+  auto allocated = settle().move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_TRUE(allocated.message.is_null());
+  vm::AugmentedDictionary allocated_accounts(vm::load_cell_slice_ref(allocated.state.accounts), 256,
+                                             block::tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary allocated_blocks(vm::load_cell_slice_ref(allocated.state.account_blocks), 256,
+                                           block::tlb::aug_ShardAccountBlocks);
+  td::Bits256 untouched(number(2)->get_hash().bits());
+  ASSERT_TRUE(accounts.lookup(untouched)->contents_equal(*allocated_accounts.lookup(untouched)));
+  ASSERT_TRUE(allocated_blocks.lookup(untouched).is_null());
+  for (auto key : {a, b}) {
+    block::Account updated(2, key.bits());
+    ASSERT_TRUE(updated.unpack(allocated_accounts.lookup(key), identity.gen_utime, false));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 999 : 1001));
+    auto ab_root = vm::CellBuilder().append_cellslice(*allocated_blocks.lookup(key)).finalize();
+    ASSERT_TRUE(block::gen::t_AccountBlock.validate_ref(4096, ab_root));
+    ASSERT_TRUE(block::tlb::t_AccountBlock.validate_ref(4096, ab_root));
+    block::gen::AccountBlock::Record ab;
+    ASSERT_TRUE(tlb::unpack_cell(ab_root, ab));
+    ASSERT_TRUE(ab.account_addr == key);
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+    auto tx_root = txs.lookup_ref(td::BitArray<64>(updated.last_trans_lt_));
+    block::gen::Transaction::Record tx;
+    ASSERT_TRUE(tlb::unpack_cell(tx_root, tx));
+    ASSERT_EQ(tx.prev_trans_lt, 1u);
+    ASSERT_TRUE(tx.prev_trans_hash == td::Bits256::zero());
+    ASSERT_TRUE(updated.last_trans_hash_ == tx_root->get_hash().bits());
+    auto desc = vm::load_cell_slice(tx.description);
+    ASSERT_EQ(desc.fetch_ulong(4), key == b ? 12u : 11u);
+    block::gen::UnoV2HostRecord::Record binding;
+    ASSERT_TRUE(tlb::unpack_cell(desc.fetch_ref(), binding));
+    ASSERT_TRUE(binding.account_id == key && binding.input_hash == allocated.input->get_hash().bits() &&
+                binding.effects_hash == allocated.effects->get_hash().bits());
+    if (key == b) {
+      ASSERT_TRUE(desc.fetch_ref()->get_hash() == allocated.input->get_hash());
+      ASSERT_TRUE(desc.fetch_ref()->get_hash() == allocated.effects->get_hash());
+    }
+    ASSERT_TRUE(desc.empty_ext());
+    auto hashes = vm::load_cell_slice(ab.state_update);
+    td::Bits256 before, after;
+    ASSERT_EQ(hashes.fetch_ulong(8), 0x72u);
+    ASSERT_TRUE(hashes.fetch_bits_to(before) && hashes.fetch_bits_to(after) && hashes.empty_ext());
+    block::tlb::ShardAccount::Record prior;
+    ASSERT_TRUE(prior.unpack(accounts.lookup(key)));
+    ASSERT_TRUE(before == prior.account->get_hash().bits() && after == updated.total_state->get_hash().bits());
+  }
+  auto replay = [&](const auto& claim) {
+    return block::replay_workchain_allocation_overlay(state.accounts, identity, allocated.input,
+        allocated.effects, b, 2, 2, 2, 4096, cfg, claim);
+  };
+  auto repeated = replay(allocated.state).move_as_ok();
+  ASSERT_TRUE(repeated.accounts->get_hash() == allocated.state.accounts->get_hash());
+  ASSERT_TRUE(repeated.account_blocks->get_hash() == allocated.state.account_blocks->get_hash());
+  for (unsigned field = 0; field < 3; ++field) {
+    LOG(INFO) << "allocation replay mismatch field=" << field;
+    auto claimed = allocated.state;
+    if (field == 0) claimed.accounts = state.accounts;
+    if (field == 1) claimed.account_blocks = number(2);
+    if (field == 2) claimed.end_lt = 0;
+    ASSERT_TRUE(replay(claimed).is_error());
+  }
+  auto wrong_identity = identity;
+  wrong_identity.height = 2;
+  ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, wrong_identity, allocated.input,
+      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+  ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, allocated.input,
+      allocated.effects, untouched, 2, 2, 2, 4096, cfg).is_error());
+  auto later = identity;
+  later.host_after_lt = 10;
+  auto with_inbox = block::encode_workchain_host_input(later, admitted, declarations,
+      {inbound_envelope(5)}, 2, 2, 1).move_as_ok();
+  // The message is addressed to the non-entry account. Omitting the outer
+  // message gate must not silently skip it via the entry's destination filter.
+  ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, later, with_inbox,
+      allocated.effects, b, 2, 2, 2, 4096, cfg).is_error());
+  block::WorkchainAccountEffects mixed;
+  mixed.updates = {{a, number(101)}, {b, number(102)}};
+  mixed.native_transfers = {{a, b, block::CurrencyCollection(1)}};
+  mixed.payout_request = number(123);
+  auto mixed_root = block::encode_workchain_account_effects(mixed, 2, 2, 4096).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_allocation_overlay(state.accounts, identity, allocated.input,
+      mixed_root, b, 2, 2, 2, 4096, cfg).is_error());
+  engine.reverse_transfer = true;
+  engine.calls = 0;
+  auto reversed = settle().move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  vm::AugmentedDictionary reverse_accounts(vm::load_cell_slice_ref(reversed.state.accounts), 256,
+                                           block::tlb::aug_ShardAccounts);
+  for (auto key : {a, b}) {
+    block::Account updated(2, key.bits());
+    ASSERT_TRUE(updated.unpack(reverse_accounts.lookup(key), identity.gen_utime, false));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 1001 : 999));
+  }
+  engine.transfer_value = 1001;
+  // The first private account can receive the allocation, but the second
+  // cannot fund it. No partially materialized dictionary is returned.
+  engine.calls = 0;
+  ASSERT_TRUE(settle().is_error());
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
+  ASSERT_TRUE(accounts.lookup(untouched)->contents_equal(*allocated_accounts.lookup(untouched)));
+  engine.reverse_transfer = false;
+  engine.transfer_value = 1;
+  auto wide_storage_cfg = cfg;
+  wide_storage_cfg.size_limits.max_acc_state_cells = std::numeric_limits<unsigned>::max();
+  // The allocation currency traversal budget is independent of this storage
+  // field. This is an API-width test, not a proposed production storage limit.
+  ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+      declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, wide_storage_cfg, pricing).is_ok());
   engine.with_transfer = false;
   engine.calls = 0;
+  ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+      declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 0, cfg, pricing).is_error());
+  ASSERT_EQ(engine.calls, 0u);
   auto unhandled_inbox = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-      declarations, {inbound_envelope(5)}, 2, 2, 1, 2, a, b, td::make_refint(500), cfg, pricing);
+      declarations, {inbound_envelope(5)}, 2, 2, 1, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
   ASSERT_TRUE(unhandled_inbox.is_error());
   ASSERT_EQ(engine.calls, 0u);
 }

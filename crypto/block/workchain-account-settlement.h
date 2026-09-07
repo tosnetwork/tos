@@ -2,6 +2,7 @@
 
 #include "block/workchain-account-effects.h"
 #include "block/workchain-payout-overlay.h"
+#include "block/workchain-allocation-overlay.h"
 
 namespace block {
 
@@ -16,8 +17,9 @@ struct WorkchainAccountSettlement {
 // This post-admission operation does not authenticate roles, resource policy,
 // old state or withdrawal authorization. The resolved engine must derive its
 // payout request from verified obligations, not forward an unverified request.
-// Registration and inbound settlement need additional Native record shapes;
-// this path materializes existing-account storage and one optional payout only.
+// Registration and inbound settlement need additional Native record shapes.
+// This path also materializes message-free internal allocations. Combining
+// allocations with payout settlement still requires the integrated fee path.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
@@ -25,19 +27,24 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     const std::vector<td::Ref<vm::Cell>>& authenticated_inbox,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
+    int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
   if (!authenticated_inbox.empty()) {
     return td::Status::Error("inbound Native settlement requires the coordinator entry path");
   }
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
       authenticated_inbox, max_reads, max_writes, max_inbound));
-  if (cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
-    return td::Status::Error("effects currency validation limit cannot be represented");
+  // The older payout helper still narrows this storage field for currency
+  // validation. The allocation path uses the explicit independent argument.
+  if (executed.effects.payout_request.not_null() &&
+      cfg.size_limits.max_acc_state_cells > static_cast<unsigned>(std::numeric_limits<int>::max())) {
+    return td::Status::Error("payout currency validation limit cannot be represented");
   }
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
-      static_cast<int>(cfg.size_limits.max_acc_state_cells)));
-  if (!executed.effects.native_transfers.empty()) {
-    return td::Status::Error("Native transfers require internal allocation settlement");
+      extra_validation_cells));
+  if (!executed.effects.native_transfers.empty() && executed.effects.payout_request.not_null()) {
+    return td::Status::Error("combined Native allocation and payout settlement is not integrated");
   }
   std::vector<WorkchainStorageWrite> writes;
   writes.reserve(executed.effects.updates.size());
@@ -53,16 +60,17 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   const td::Bits256 effects_hash(effects_root->get_hash().bits());
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
-  if (executed.effects.payout_request.not_null()) {
+  if (executed.effects.payout_request.is_null()) {
+    TRY_RESULT(allocated, build_workchain_allocation_overlay(old_accounts, identity, executed.input,
+        effects_root, coordinator, max_reads, max_writes, max_transfers,
+        extra_validation_cells, cfg));
+    state = std::move(allocated);
+  } else {
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
         executed.effects.payout_request, fee_budget, max_writes, cfg, message_cfg));
     state = std::move(payout.state);
     message = std::move(payout.message);
-  } else {
-    TRY_RESULT(storage, build_workchain_storage_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
-        identity.host_after_lt, input_hash, effects_hash, writes, max_writes, cfg));
-    state = std::move(storage);
   }
   return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
                                     std::move(state), std::move(message)};

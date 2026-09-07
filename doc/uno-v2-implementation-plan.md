@@ -624,10 +624,10 @@ failures. Negative/oversize amounts are also exercised. Evidence is retained in
 `measurements/uno-v2-native-transfer-effects-evidence.json`; these are manual
 source/binary-pinned controls, not CI mutation automation.
 
-Actual balance allocation is the next integration step. Until it is wired, the
-existing settlement runner explicitly rejects nonempty Native transfers after
-encoding rather than silently producing a storage/payout result that ignores
-them. No new fee model or production limit is selected here; no consensus
+At this stage the settlement runner rejected nonempty Native transfers after
+encoding rather than silently ignoring them. The message-free allocation
+integration below supersedes that restriction, not the inbox or combined-payout
+restrictions. No new fee model or production limit is selected here; no consensus
 judgement file or error category changed. M1 review and activation remain pending.
 
 ### Entry-side Native allocation (boundary reviewed)
@@ -662,10 +662,10 @@ not automated mutation CI, and do not claim exhaustive independent coverage of
 redundant arithmetic-width checks. Expanded VM/cells/smart-contract/block/
 admission regression passed 5/5 after source restoration.
 
-The whole-batch runner still rejects nonempty imports and internal transfers.
-The next integration work is the matching restricted participant records and
-private overlay materialization with independently reconstructed value flow;
-only then can the runner consume these effects instead of rejecting them.
+At this stage the whole-batch runner rejected nonempty imports and internal
+transfers. The later allocation overlay integrates message-free transfers and
+their restricted records with independently reconstructed value flow; imports
+remain closed pending Native message evidence reconstruction.
 Existing execution scopes still reject the new record profile. No configuration
 initial value, message-finality rule or activation policy was changed.
 
@@ -697,8 +697,9 @@ invalid is not adopted: invalid resolved limits are a configuration/caller
 failure, and provenance determines whether malformed cells came from a candidate
 or authenticated state. Its required source-aware exception boundary remains
 an integration obligation. Likewise, absence of a production caller is not the
-only current barrier: the runner rejects these effects and both execution
-scopes reject the record tag. All those independent barriers remain intact.
+only current barrier: both execution scopes still reject the record tag. The
+runner's former blanket transfer rejection is superseded by the message-free
+allocation integration below, not by a production activation gate.
 
 Explicit entry/validation bounds do not replace complete closure accounting,
 aggregate work admission or the activation gate before execution. Those must be
@@ -722,8 +723,8 @@ the full input/effects cells remain on the single entry.
 This is a construction API, not authorization: an arbitrary aggregate supplied
 by a caller is not proof that a transfer exists. Complete overlay settlement
 must derive the aggregates from the replayed graph and independently verify
-the actual serialized Native rows against that graph. The whole-batch runner
-remains closed to nonempty imports/transfers until that work is integrated.
+the actual serialized Native rows against that graph. That integration for
+message-free transfers is recorded below; nonempty imports remain closed.
 Custody inbound bounce handling and its separate payout exception are not
 implemented by this no-message constructor.
 
@@ -816,3 +817,64 @@ not mutation CI or exhaustive independent branch coverage. Endpoint membership,
 invalid Native-container decoding, zero configuration budget and overflow have
 test cases but no individually isolated mutation in this artifact. M1 remains
 incomplete until the shared plan feeds actual Native records and full replay.
+
+### Message-free allocation overlay (M1 integration in progress)
+
+`workchain-allocation-overlay.h` now connects the graph plan to private Native
+accounts, a single coordinator entry and restricted allocation participants.
+The settlement runner invokes the engine once and passes its encoded input and
+effects to this path. Even a zero-transfer, no-payout batch now has the entry
+carrying the full input/effects; it no longer falls back to only storage records.
+Current execution scopes still reject these tags in real blocks.
+
+The overlay binds the complete identity to the caller's resolved context,
+decodes declarations, verifies every old read (including read-only accounts),
+requires the update keys to equal the declared write set and requires an entry
+role. It derives every participant's data from effects and every allocation
+from the decoded graph. One entry-local scan remains, but other accounts use
+the shared plan rather than rescanning the graph. Currency validation is an
+explicit runner argument with no default, checked before engine invocation;
+it is not borrowed from an account-storage limit for this path.
+
+For each constructed transaction, Native AccountStorage balances and transaction
+fees are decoded independently. The input inbox, effects payout, transaction
+in-message and out-message dictionary must all be absent; this is the evidence
+for zero imports and exports, not an assumption about nonempty messages. Actual
+rows are compared with the wire-decoded transfer graph. The transaction's prior
+hash/LT, state hashes, account address and planned LTs are checked before private
+commit. Each account gets its own AccountBlock and last_trans chain. The final
+dictionary diff and access ledger require exact write/participant/change sets.
+Only complete account and AccountBlock roots are returned; no CellDb write or
+live account mutation occurs. Replay rebuilds both roots and the end LT and
+compares each artifact, returning reconstructed roots rather than claimed ones.
+
+The engine test now has an untouched third account, bidirectional transfer
+checks, actual Native balances and descriptor contents, both AccountBlock
+parsers, last_trans and state hashes, and replay mutations of each final artifact.
+A failure in the second account follows construction of the first private
+record but returns no overlay and leaves the old root unchanged. Foreign
+destination inbox and payout-presence tests directly exercise this materializer,
+not only the earlier runner guard. An invalid currency budget asserts zero
+engine calls, independently of rejection wording.
+
+This is not M1 completion or a production conservation gate. Nonempty Native
+inbox settlement, allocations combined with payouts, the revised aggregate
+custody fee-settlement path, registration, production admission/classification,
+and live collate/validate publication remain open. The older payout-only helper
+still needs integration with the single full entry. No message is dropped to
+make any of those cases fit this message-free path. Milestone review remains
+pending; this unit changes no named production consensus-judgement file and
+adds no error-origin classification.
+
+The implementation also checks the actual nullable return of Native
+`Transaction::commit`; failure is not interpreted as a successful downgrade.
+Eleven rebuilt controls cover identity, required entry role, inbox/payout
+exclusion, each allocation direction, the entry profile, three separate replay
+artifacts and budget-before-engine ordering. A twelfth control restores the old
+storage-field narrowing on the allocation path and fails the API-width test.
+Logs, patch substitutions and source/binary hashes are retained in
+`measurements/uno-v2-allocation-overlay-evidence.json`. All controls are manual,
+not mutation CI. The first eleven precede the explicit commit-return check and
+the payout-only narrowing refinement; both subsequent changes have a restored
+green regression recorded separately. No exhaustive independent mutation of
+every redundant Native consistency check is claimed.
