@@ -376,6 +376,13 @@ struct Account {
 };
 
 namespace transaction {
+// Shared Native routing validation for admitted address/configuration closures.
+// The caller supplies the actual sending account prefix used for anycast
+// rewriting. workchains must be resolved, not a null local placeholder.
+// False is the existing protocol-invalid destination result; allocation and
+// cell exceptions propagate and must never select an alternative disposal.
+bool rewrite_native_destination(Ref<vm::CellSlice>& destination, const ActionPhaseConfig& cfg,
+                                const td::Bits256& sender, bool* is_mc = nullptr, bool allow_anycast = true);
 int check_change_library_action(unsigned mode, bool is_special, int global_version);
 bool exceeds_total_message_size(td::uint64 total_bits, td::uint64 total_cells, td::uint64 message_bits,
                                 td::uint64 message_cells, const SizeLimitsConfig& limits, int global_version);

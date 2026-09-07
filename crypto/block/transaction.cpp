@@ -3183,6 +3183,11 @@ bool Transaction::check_replace_src_addr(Ref<vm::CellSlice>& src_addr) const {
  */
 bool Transaction::check_rewrite_dest_addr(Ref<vm::CellSlice>& dest_addr, const ActionPhaseConfig& cfg, bool* is_mc,
                                           bool allow_anycast) const {
+  return rewrite_native_destination(dest_addr, cfg, account.addr, is_mc, allow_anycast);
+}
+
+bool rewrite_native_destination(Ref<vm::CellSlice>& dest_addr, const ActionPhaseConfig& cfg,
+                                const td::Bits256& sender, bool* is_mc, bool allow_anycast) {
   if (!dest_addr->prefetch_ulong(1)) {
     // all external addresses allowed
     if (is_mc) {
@@ -3259,7 +3264,7 @@ bool Transaction::check_rewrite_dest_addr(Ref<vm::CellSlice>& dest_addr, const A
       return false;
     }
     unsigned pfx = (unsigned)cs.fetch_ulong(d);
-    unsigned my_pfx = (unsigned)account.addr.cbits().get_uint(d);
+    unsigned my_pfx = (unsigned)sender.cbits().get_uint(d);
     if (pfx != my_pfx) {
       // rewrite destination address
       vm::CellBuilder cb;

@@ -4921,6 +4921,53 @@ TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
   ASSERT_TRUE(block::decode_workchain_native_ingress_table(number(0)).is_error());
 }
 
+TEST(WorkchainBlock, NativeDestinationRouting) {
+  td::Ref<block::WorkchainInfo> info{true};
+  info.write().workchain = 2;
+  info.write().basic = info.write().active = info.write().accept_msgs = true;
+  info.write().min_addr_len = info.write().max_addr_len = 256;
+  info.write().addr_len_step = 0;
+  block::WorkchainSet workchains{{2, info}};
+  info.clear();
+  block::ActionPhaseConfig cfg;
+  cfg.workchains = &workchains;
+  auto sender = td::Bits256::zero();
+  sender.as_slice()[0] = static_cast<char>(0x80);
+  auto make_address = [](int wc, bool var, bool anycast) {
+    vm::CellBuilder cb;
+    cb.store_long(var ? 3 : 2, 2).store_long(anycast, 1);
+    if (anycast) cb.store_long(1, 5).store_long(0, 1);
+    if (var) cb.store_long(256, 9);
+    cb.store_long(wc, var ? 32 : 8).store_zeroes(256);
+    return vm::load_cell_slice_ref(cb.finalize());
+  };
+  auto canonical = make_address(2, false, false);
+  auto variable = make_address(2, true, false);
+  bool mc = true;
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(variable, cfg, sender, &mc));
+  ASSERT_TRUE(!mc && variable->contents_equal(*canonical));
+  auto master = make_address(-1, false, false);
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(master, cfg, sender, &mc) && mc);
+  auto unknown = make_address(3, false, false);
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(unknown, cfg, sender));
+  workchains.at(2).write().accept_msgs = false;
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(canonical, cfg, sender));
+  workchains.at(2).write().accept_msgs = true;
+  auto anycast = make_address(2, false, true);
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender, nullptr, false));
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(anycast, cfg, sender));
+  auto decoded = *anycast;
+  ASSERT_EQ(decoded.fetch_ulong(3), 5u);
+  ASSERT_EQ(decoded.fetch_ulong(5), 1u);
+  ASSERT_EQ(decoded.fetch_ulong(1), 1u); // Actual sender prefix, not the old zero.
+  cfg.native_ingress_destinations.emplace(2, sender);
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(canonical, cfg, sender));
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender));
+  cfg.native_ingress_destinations.at(2) = td::Bits256::zero();
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(canonical, cfg, sender));
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender));
+}
+
 TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   td::Ref<block::WorkchainInfo> info{true};
   info.write().workchain = 2;
@@ -4940,6 +4987,7 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   block::ActionPhaseConfig cfg;
   cfg.workchains = &workchains;
   cfg.native_ingress_destinations.emplace(2, td::Bits256::zero());
+  cfg.fwd_std = cfg.fwd_mc = block::MsgPrices(0, 0, 0, 0, 0, 0);
   auto address = [](bool wrong) {
     return vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
         .store_zeroes(255).store_long(wrong, 1).finalize());

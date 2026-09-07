@@ -1307,3 +1307,24 @@ pressure. The pre-existing ordinary collator exception gap is recorded, not
 claimed repaired by this extraction. Review disposition:
 `uno-v2-native-bounce-message-review-disposition.md`. This is still not complete
 multi-account disposal or production activation.
+
+### Shared Native destination rewrite (M1, shared routing component)
+
+The ordinary Transaction wrapper delegates to the same routing algorithm with
+its account address as the explicit anycast prefix source. Batch reconstruction
+can reuse it without constructing a mutable ordinary Transaction or copying
+the unknown-workchain, accept_msgs, address-length, ingress and normalization
+rules. The resolved workchain table and complete admitted address closures are
+preconditions; this bool API is not a local-data/configuration error classifier.
+
+Direct tests cover addr_var normalization, masterchain classification, unknown
+workchains, disabled receiving, anycast prefix replacement and ingress checks.
+The existing actual send test now explicitly initializes both price records;
+no default production price is installed. Review found a masked anycast test;
+the matching-address negative now isolates that guard. Rebuilt controls for
+that guard, allow_anycast and sender prefix all fail. Typed resolved configuration
+remains a prerequisite for any new batch caller, not enforced by this bool API.
+See `uno-v2-native-destination-review-disposition.md` and
+`measurements/uno-v2-native-destination-evidence.json` (manual controls, not CI).
+The two-address V2 ingress policy and full disposal are not
+implemented merely by exposing this existing single-address policy function.
