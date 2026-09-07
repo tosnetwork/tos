@@ -3,6 +3,7 @@
 #include "workchain-counter-engine.h"
 
 #include "block/workchain-block-execution.h"
+#include "block/workchain-participant-lt.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -18,6 +19,46 @@
 #include "uno/core/used-nullifiers.h"
 
 namespace {
+
+TEST(WorkchainBlock, ParticipantLtPlan) {
+  auto a = td::Bits256::zero();
+  auto b = a;
+  b.as_slice().back() = 1;
+  std::vector<block::WorkchainParticipantTiming> input{{a, 90, 2}, {b, 120, 0}};
+  auto result = block::plan_workchain_participant_lts(100, input, 2, 2);
+  ASSERT_TRUE(result.is_ok());
+  auto plan = result.move_as_ok();
+  ASSERT_EQ(plan.start_lt, 121u);
+  ASSERT_EQ(plan.end_lt, 124u);
+  ASSERT_EQ(plan.participants.size(), 2u);
+  ASSERT_EQ(plan.participants[0].message_lt(0).move_as_ok(), 122u);
+  ASSERT_EQ(plan.participants[0].message_lt(1).move_as_ok(), 123u);
+  ASSERT_TRUE(plan.participants[0].message_lt(2).is_error());
+  ASSERT_EQ(plan.participants[1].end_lt, 122u);
+  ASSERT_TRUE(plan.participants[1].message_lt(0).is_error());
+  ASSERT_TRUE(block::plan_workchain_participant_lts(100, input, 1, 2).is_error());
+  ASSERT_TRUE(block::plan_workchain_participant_lts(100, input, 2, 1).is_error());
+  input[1].account = a;
+  ASSERT_TRUE(block::plan_workchain_participant_lts(100, input, 2, 2).is_error());
+  input[0].account = b;
+  ASSERT_TRUE(block::plan_workchain_participant_lts(100, input, 2, 2).is_error());
+}
+
+TEST(WorkchainBlock, ParticipantLtExhaustion) {
+  const auto max = std::numeric_limits<std::uint64_t>::max();
+  auto a = td::Bits256::zero();
+  std::vector<block::WorkchainParticipantTiming> input{{a, 0, 0}};
+  auto boundary = block::plan_workchain_participant_lts(max - 2, input, 1, 0);
+  ASSERT_TRUE(boundary.is_ok());
+  ASSERT_EQ(boundary.ok().start_lt, max - 1);
+  ASSERT_EQ(boundary.ok().end_lt, max);
+  ASSERT_TRUE(block::plan_workchain_participant_lts(max - 1, input, 1, 0).is_error());
+  input[0].outbound_count = 1;
+  ASSERT_TRUE(block::plan_workchain_participant_lts(max - 2, input, 1, 1).is_error());
+  input[0].outbound_count = max;
+  ASSERT_TRUE(block::plan_workchain_participant_lts(0, input, 1, max).is_error());
+  ASSERT_TRUE(block::plan_workchain_participant_lts(0, {}, 1, 0).is_error());
+}
 
 class PreflightObservedCell final : public vm::Cell {
  public:
