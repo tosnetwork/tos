@@ -5,6 +5,7 @@
 #include "block/workchain-block-execution.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-account-access.h"
+#include "block/workchain-account-dictionary.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -223,6 +224,82 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
       .store_ref(aux).store_long(0, 1).finalize();
   ASSERT_TRUE(block::gen::t_ShardStateUnsplit.validate_ref(10000, root));
   return root;
+}
+
+TEST(WorkchainBlock, AccountDictionaryChanges) {
+  auto extract = [](td::Ref<vm::Cell> root) {
+    block::gen::ShardStateUnsplit::Record state;
+    CHECK(tlb::unpack_cell(root, state));
+    return state.accounts;
+  };
+  auto root = extract(shard_fixture(2, 2, true, 2));
+  vm::AugmentedDictionary updated(vm::load_cell_slice_ref(root), 256, block::tlb::aug_ShardAccounts);
+  auto replacement = extract(shard_fixture(2, 2, true, 1, false, 0, 41));
+  vm::AugmentedDictionary one(vm::load_cell_slice_ref(replacement), 256, block::tlb::aug_ShardAccounts);
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  ASSERT_TRUE(updated.set(a, one.lookup(a)));
+  block::WorkchainAccountDictionary old_state(root);
+  block::WorkchainAccountDictionary new_state(updated.get_wrapped_dict_root());
+  auto delta = old_state.changed_accounts(new_state, 1);
+  ASSERT_TRUE(delta.is_ok());
+  ASSERT_EQ(delta.ok().size(), 1u);
+  ASSERT_TRUE(delta.ok()[0] == a);
+  vm::AugmentedDictionary old_raw(vm::load_cell_slice_ref(root), 256, block::tlb::aug_ShardAccounts);
+  block::tlb::ShardAccount::Record old_entry;
+  ASSERT_TRUE(old_entry.unpack(old_raw.lookup(a)));
+  auto make_access = [&] {
+    return block::WorkchainAccountAccess::create(
+        {{a, td::Bits256(old_entry.account->get_hash().bits())}}, {a}, 1, 1).move_as_ok();
+  };
+  auto access = make_access();
+  ASSERT_TRUE(old_state.verify_old_read(access, a).is_ok());
+  ASSERT_TRUE(access.record_write(a).is_ok());
+  ASSERT_TRUE(access.finish(delta.ok(), {a}).is_ok());
+  ASSERT_TRUE(old_state.changed_accounts(new_state, 0).is_error());
+  block::WorkchainAccountDictionary identical(root);
+  ASSERT_TRUE(old_state.changed_accounts(identical, 0).move_as_ok().empty());
+  ASSERT_TRUE(updated.lookup_delete(b).not_null());
+  block::WorkchainAccountDictionary deleted(updated.get_wrapped_dict_root());
+  auto both = old_state.changed_accounts(deleted, 2).move_as_ok();
+  ASSERT_EQ(both.size(), 2u);
+  ASSERT_TRUE(both[0] == a && both[1] == b);
+  auto underdeclared = make_access();
+  ASSERT_TRUE(old_state.verify_old_read(underdeclared, a).is_ok());
+  ASSERT_TRUE(underdeclared.record_write(a).is_ok());
+  ASSERT_TRUE(underdeclared.finish(both, {a}).is_error());
+  ASSERT_TRUE(old_state.changed_accounts(deleted, 1).is_error());
+  block::WorkchainAccountDictionary inserted(extract(shard_fixture(2, 2, true, 3)));
+  auto added = old_state.changed_accounts(inserted, 1).move_as_ok();
+  ASSERT_EQ(added.size(), 1u);
+  ASSERT_TRUE(added[0] == td::Bits256(number(2)->get_hash().bits()));
+  vm::CellBuilder link;
+  link.store_ref(old_entry.account).store_ones(256).store_long(2, 64);
+  ASSERT_TRUE(old_raw.set_builder(a, link));
+  block::WorkchainAccountDictionary link_only(old_raw.get_wrapped_dict_root());
+  auto links = old_state.changed_accounts(link_only, 1).move_as_ok();
+  ASSERT_EQ(links.size(), 1u);
+  ASSERT_TRUE(links[0] == a); // Account hash unchanged; ShardAccount transaction link changed.
+}
+
+TEST(WorkchainBlock, AccountDictionaryBinding) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(), state));
+  auto a = td::Bits256::zero();
+  td::Bits256 absent(number(99)->get_hash().bits());
+  vm::AugmentedDictionary raw(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::tlb::ShardAccount::Record entry;
+  ASSERT_TRUE(entry.unpack(raw.lookup(a)));
+  td::Bits256 hash(entry.account->get_hash().bits());
+  auto access = block::WorkchainAccountAccess::create({{a, hash}, {absent, std::nullopt}}, {}, 2, 0).move_as_ok();
+  block::WorkchainAccountDictionary view(state.accounts);
+  ASSERT_TRUE(view.verify_old_read(access, a).is_ok());
+  ASSERT_TRUE(view.verify_old_read(access, absent).is_ok());
+  ASSERT_TRUE(access.finish({}, {}).is_ok());
+  auto false_absence = block::WorkchainAccountAccess::create({{a, std::nullopt}}, {}, 1, 0).move_as_ok();
+  ASSERT_TRUE(view.verify_old_read(false_absence, a).is_error());
+  auto wrong_hash = block::WorkchainAccountAccess::create({{a, absent}}, {}, 1, 0).move_as_ok();
+  ASSERT_TRUE(view.verify_old_read(wrong_hash, a).is_error());
 }
 
 block::WorkchainBlockInput input() {
