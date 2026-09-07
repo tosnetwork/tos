@@ -1,0 +1,58 @@
+#pragma once
+
+#include <algorithm>
+#include <vector>
+
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/workchain-block-execution.h"
+
+namespace block {
+
+struct WorkchainNativeInboxPlan {
+  std::vector<td::Ref<vm::Cell>> envelopes;
+  std::uint64_t after_lt;
+};
+
+// Post-admission final-import planning, not queue authentication or disposal.
+// Every message must address an explicitly allowed role; nothing is filtered.
+// Native bodies do not inherit the ordinary-only user-candidate profile.
+// The existing inbox decoder retains legacy VM-to-Status conversion; this
+// utility is not a source-aware production error-classification boundary.
+inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_inbox(
+    td::Ref<vm::Cell> root, tos::WorkchainId workchain,
+    const std::vector<td::Bits256>& recipients, std::uint64_t after_lt,
+    std::uint64_t max_inbound) {
+  if (workchain < 0 || recipients.empty() || !std::is_sorted(recipients.begin(), recipients.end()) ||
+      std::adjacent_find(recipients.begin(), recipients.end()) != recipients.end()) {
+    return td::Status::Error("invalid native inbox role set");
+  }
+  WorkchainNativeInboxPlan plan{{}, after_lt};
+  if (root.is_null()) return plan;
+  // This is a count precheck only; prior admission must bound the full closure
+  // and derived wrappers before semantic decoding traverses the dictionary.
+  bool special = false;
+  auto header = vm::load_cell_slice_special(root, special);
+  if (special || header.size() != 48 || header.size_refs() != 1 ||
+      header.fetch_ulong(32) != 0x57494e31 || header.fetch_ulong(15) > max_inbound) {
+    return td::Status::Error("native inbox exceeds admitted count or profile");
+  }
+  TRY_RESULT(envelopes, decode_workchain_batch_inbound(root));
+  for (const auto& cell : envelopes) {
+    tlb::MsgEnvelope::Record_std envelope;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    gen::MsgAddressInt::Record_addr_std destination;
+    if (!tlb::unpack_cell(cell, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
+        !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
+        destination.workchain_id != workchain ||
+        !std::binary_search(recipients.begin(), recipients.end(), destination.address)) {
+      return td::Status::Error("native inbox destination is not an allowed final-import role");
+    }
+    plan.after_lt = std::max<std::uint64_t>(plan.after_lt, info.created_lt);
+    if (envelope.emitted_lt) plan.after_lt = std::max(plan.after_lt, envelope.emitted_lt.value());
+  }
+  plan.envelopes = std::move(envelopes);
+  return plan;
+}
+
+}  // namespace block

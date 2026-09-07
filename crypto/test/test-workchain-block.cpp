@@ -9,6 +9,7 @@
 #include "block/workchain-native-allocation.h"
 #include "block/workchain-allocation-plan.h"
 #include "block/workchain-import-evidence.h"
+#include "block/workchain-native-inbox.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -651,6 +652,73 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, NativeInboxPlan) {
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  auto empty = block::plan_workchain_native_inbox({}, 2, {a, b}, 17, 0).move_as_ok();
+  ASSERT_TRUE(empty.envelopes.empty());
+  ASSERT_EQ(empty.after_lt, 17u);
+  auto first = inbound_envelope(30, 1, {}, a);
+  auto second = inbound_envelope(5, 2, 40, b);
+  auto encoded = block::encode_workchain_batch_inbound({second, first}).move_as_ok();
+  auto plan = block::plan_workchain_native_inbox(encoded, 2, {a, b}, 3, 2).move_as_ok();
+  ASSERT_EQ(plan.envelopes.size(), 2u);
+  ASSERT_TRUE(plan.envelopes[0]->get_hash() == first->get_hash());
+  ASSERT_TRUE(plan.envelopes[1]->get_hash() == second->get_hash());
+  ASSERT_EQ(plan.after_lt, 40u);
+  block::tlb::MsgEnvelope::Record_std special_envelope;
+  block::gen::Message::Record special_message;
+  ASSERT_TRUE(tlb::unpack_cell(first, special_envelope));
+  ASSERT_TRUE(tlb::type_unpack_cell(special_envelope.msg, block::gen::t_Message_Any, special_message));
+  auto library = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  // A referenced Any body itself must be ordinary under Native TL-B checks;
+  // its opaque children need not satisfy the ordinary-only candidate profile.
+  auto opaque_body = vm::CellBuilder().store_ref(library).finalize();
+  special_message.body = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(opaque_body).finalize());
+  ASSERT_TRUE(tlb::type_pack_cell(special_envelope.msg, block::gen::t_Message_Any, special_message));
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(4096, special_envelope.msg));
+  td::Ref<vm::Cell> special_root;
+  ASSERT_TRUE(tlb::pack_cell(special_root, special_envelope));
+  auto special_inbox = block::encode_workchain_batch_inbound({special_root}).move_as_ok();
+  auto native_body = block::plan_workchain_native_inbox(special_inbox, 2, {a}, 3, 1).move_as_ok();
+  ASSERT_TRUE(native_body.envelopes[0]->get_hash() == special_root->get_hash());
+  auto created = block::encode_workchain_batch_inbound({first}).move_as_ok();
+  ASSERT_EQ(block::plan_workchain_native_inbox(created, 2, {a}, 3, 1).move_as_ok().after_lt, 30u);
+  ASSERT_EQ(block::plan_workchain_native_inbox(encoded, 2, {a, b}, 41, 2).move_as_ok().after_lt, 41u);
+  ASSERT_TRUE(block::plan_workchain_native_inbox(encoded, 2, {a}, 3, 2).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_inbox(encoded, 0, {a, b}, 3, 2).is_error());
+  block::tlb::MsgEnvelope::Record_std anycast_envelope;
+  block::gen::Message::Record anycast_message;
+  block::gen::CommonMsgInfo::Record_int_msg_info anycast_info;
+  block::gen::MsgAddressInt::Record_addr_std anycast_destination;
+  ASSERT_TRUE(tlb::unpack_cell(first, anycast_envelope));
+  ASSERT_TRUE(tlb::type_unpack_cell(anycast_envelope.msg, block::gen::t_Message_Any, anycast_message));
+  ASSERT_TRUE(tlb::csr_unpack(anycast_message.info, anycast_info));
+  ASSERT_TRUE(tlb::csr_unpack(anycast_info.dest, anycast_destination));
+  anycast_destination.anycast = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1)
+      .store_long(1, 5).store_long(0, 1).finalize());
+  ASSERT_TRUE(tlb::csr_pack(anycast_info.dest, anycast_destination));
+  ASSERT_TRUE(tlb::csr_pack(anycast_message.info, anycast_info));
+  ASSERT_TRUE(tlb::type_pack_cell(anycast_envelope.msg, block::gen::t_Message_Any, anycast_message));
+  td::Ref<vm::Cell> anycast_root;
+  ASSERT_TRUE(tlb::pack_cell(anycast_root, anycast_envelope));
+  auto anycast_inbox = block::encode_workchain_batch_inbound({anycast_root}).move_as_ok();
+  ASSERT_TRUE(block::plan_workchain_native_inbox(anycast_inbox, 2, {a}, 3, 1).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_inbox({}, 2, {b, a}, 3, 0).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_inbox({}, 2, {a, a}, 3, 0).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_inbox({}, 2, {}, 3, 0).is_error());
+  ASSERT_TRUE(block::plan_workchain_native_inbox({}, -1, {a}, 3, 0).is_error());
+  // The count is rejected before the dictionary child is loaded.
+  unsigned loads = 0;
+  auto header = vm::load_cell_slice(encoded);
+  auto observed = td::make_ref<PreflightObservedCell>(header.prefetch_ref(), &loads);
+  auto bounded = vm::CellBuilder().store_long(0x57494e31, 32).store_long(2, 15)
+      .store_long(1, 1).store_ref(observed).finalize();
+  loads = 0;
+  ASSERT_TRUE(block::plan_workchain_native_inbox(bounded, 2, {a, b}, 3, 1).is_error());
+  ASSERT_EQ(loads, 0u);
 }
 
 TEST(WorkchainBlock, NativeTransferEffects) {

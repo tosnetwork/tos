@@ -4,6 +4,7 @@
 #include "block/workchain-host-input.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-import-evidence.h"
+#include "block/workchain-native-inbox.h"
 
 namespace block {
 
@@ -37,30 +38,12 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
   if (native.payout->prefetch_ulong(1) != 0) {
     return td::Status::Error("allocation overlay payout settlement is not integrated");
   }
-  std::vector<td::Ref<vm::Cell>> envelopes;
-  auto after_lt = identity.host_after_lt;
+  td::Ref<vm::Cell> inbox_root;
   if (decoded.inbox->prefetch_ulong(1) != 0) {
-    // Prior admission bounds the full closure, not merely this encoded count.
-    auto root = decoded.inbox->prefetch_ref();
-    auto count = vm::load_cell_slice(root);
-    if (count.fetch_ulong(32) != 0x57494e31 || count.fetch_ulong(15) > max_inbound) {
-      return td::Status::Error("allocation inbox exceeds admitted count or profile");
-    }
-    TRY_RESULT(inbound, decode_workchain_batch_inbound(root));
-    envelopes = std::move(inbound);
+    inbox_root = decoded.inbox->prefetch_ref();
   }
-  for (const auto& root : envelopes) {
-    tlb::MsgEnvelope::Record_std envelope;
-    gen::CommonMsgInfo::Record_int_msg_info info;
-    gen::MsgAddressInt::Record_addr_std destination;
-    if (!tlb::unpack_cell(root, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
-        !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
-        destination.workchain_id != identity.workchain_id || destination.address != coordinator) {
-      return td::Status::Error("allocation inbox requires coordinator final imports");
-    }
-    after_lt = std::max<std::uint64_t>(after_lt, info.created_lt);
-    if (envelope.emitted_lt) after_lt = std::max(after_lt, envelope.emitted_lt.value());
-  }
+  TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, identity.workchain_id, {coordinator},
+      identity.host_after_lt, max_inbound));
   TRY_RESULT(declarations, decode_workchain_account_declarations(decoded.access, max_reads, max_writes));
   TRY_RESULT(plan, plan_workchain_native_allocations(output, max_writes, max_transfers, extra_validation_cells));
   std::vector<td::Bits256> keys;
@@ -88,7 +71,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     timing.push_back({key, account->last_trans_end_lt_, 0});
     accounts.push_back(std::move(account));
   }
-  TRY_RESULT(schedule, plan_workchain_participant_lts(after_lt, timing, max_writes, 0));
+  TRY_RESULT(schedule, plan_workchain_participant_lts(inbox.after_lt, timing, max_writes, 0));
   std::vector<WorkchainAccountValueFlow> rows;
   std::vector<td::Bits256> participants;
   std::map<td::Bits256, td::Ref<vm::Cell>> transactions;
@@ -149,7 +132,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     participants.push_back(account.addr);
   }
   TRY_RESULT(imports, build_workchain_final_imports(identity.workchain_id, cfg.global_version,
-      envelopes, transactions, max_inbound, max_writes, extra_validation_cells));
+      inbox.envelopes, transactions, max_inbound, max_writes, extra_validation_cells));
   for (auto& row : rows) {
     auto credit = imports.account_credits.find(row.account);
     if (credit != imports.account_credits.end()) row.imported = credit->second;

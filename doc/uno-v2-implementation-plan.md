@@ -1070,3 +1070,42 @@ disposal, aggregate operation-fee output, registration, source-aware production
 admission, actual collate/validate publication and synchronization remain open.
 No production policy value, additional payout authority or retirement rule is
 silently selected. Full M1 milestone review remains due.
+
+### Shared Native inbox planning (M1 integration)
+
+`workchain-native-inbox.h` now supplies a common post-admission plan for final
+imports: a bounded canonical envelope list, an explicit strictly ordered set of
+allowed recipient roles, and a lower LT bound covering the host, message
+creation and message emission. It rejects the whole unsupported message set;
+it never filters a foreign recipient out. This is not Deposit, return or fee
+authorization. The allocation materializer now consumes the same plan for its
+schedule and actual final InMsg reconstruction. Its allowed role remains the
+coordinator until custody settlement is integrated; the planner itself supports
+an explicitly supplied multi-role set.
+
+The count check precedes dictionary traversal. It does not replace full closure
+admission or bound the caller's recipient vector. Native message bodies retain
+Native TL-B semantics, not the ordinary-only candidate closure restriction.
+The executable positive control uses an ordinary referenced body with an opaque
+library-cell child. A first attempted fixture used a library cell as the direct
+`^Any` root, which Native TL-B correctly rejects; that setup failure is not
+counted as a planner defect or a successful red control.
+
+The existing inbox decoder still converts some VM exceptions into legacy Status
+errors. This extraction does not solve source-aware production classification,
+authenticate queues, choose disposal semantics, or establish a network delivery
+deadline. The timestamp policy audit and enclosing production admission remain
+open. No named consensus-judgment file or new error category changed in this
+unit; review remains due at the M1 milestone under the current review rule.
+
+The initial positive test failed against an unimplemented stub. Fifteen later
+controls were each rebuilt successfully and failed independently: host/creation/
+emission LT sources, recipient and workchain matching, anycast exclusion, role
+set order/uniqueness/nonemptiness/domain, complete message retention, count-check
+placement before dictionary loads, Native opaque body compatibility, and both
+allocation schedule/import call-site uses. Moving the count check after decode
+changed observed child loads from zero to one while still returning an error.
+After exact source restoration, all five regression targets and standalone
+header compilation pass. Logs, substitutions and source/binary identities are
+in `measurements/uno-v2-native-inbox-evidence.json`. These are manual controls,
+not a recurring mutation CI gate or completed Native inbox/payout integration.
