@@ -927,8 +927,24 @@ class Lifecycle:
         return wait_until(converged, "three-node PredictionMarket state convergence", 90)
 
     def wait_status(self, status: str) -> dict[str, Any]:
-        return wait_until(lambda: (view := self.show_quorum()).get("status") == status and view,
-                          f"market status {status}")
+        last_view: dict[str, Any] | None = None
+
+        def status_matches() -> dict[str, Any] | None:
+            nonlocal last_view
+            last_view = self.show_quorum()
+            if last_view.get("status") == status:
+                return last_view
+            return None
+
+        try:
+            return wait_until(status_matches, f"market status {status}")
+        except RuntimeError as error:
+            # A live three-node timeout must expose the final consensus view;
+            # otherwise a failed lifecycle cannot distinguish an omitted
+            # transition from a rejection/bounce or a wrong phase transition.
+            raise RuntimeError(
+                f"{error}; last converged market view={json.dumps(last_view, sort_keys=True)}"
+            ) from error
 
     def run_normal_lifecycle(self, outcome: int) -> None:
         outcome_names = {0: "yes", 1: "no", 2: "invalid"}
