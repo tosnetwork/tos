@@ -4671,6 +4671,36 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   return PreparedWorkchainPayoutPair{std::move(pair), std::move(allocation)};
 }
 
+td::Status Transaction::prepare_workchain_allocation_participant(
+    Ref<vm::Cell> binding, Ref<vm::Cell> data, const CurrencyCollection& incoming,
+    const CurrencyCollection& outgoing, const SerializeConfig& cfg, int extra_validation_cells) {
+  if (binding.is_null()) return td::Status::Error("missing allocation participant binding");
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid allocation participant validation budget");
+  for (const auto* value : {&account.balance, &incoming, &outgoing}) {
+    if (value->tomis.is_null() || !value->tomis->is_valid() || !value->tomis->unsigned_fits_bits(256) ||
+        !value->validate_extra(extra_validation_cells)) {
+      return td::Status::Error("invalid allocation participant amount");
+    }
+  }
+  CurrencyCollection available, allocated;
+  // Incoming funds are included before subtraction, independent of account
+  // ordering. The loop above proves nonnegative operands; sub then proves
+  // nonnegative remaining funding separately for every currency.
+  if (!CurrencyCollection::add(account.balance, incoming, available) || !available.tomis->unsigned_fits_bits(256) ||
+      !CurrencyCollection::sub(available, outgoing, allocated)) {
+    return td::Status::Error("allocation participant overflow or insufficient funds");
+  }
+  vm::CellBuilder amount;
+  if (!allocated.store(amount)) return td::Status::Error("allocation participant balance exceeds native wire");
+  auto description = vm::CellBuilder().store_long(tlb::TransactionDescr::trans_workchain_settlement_participant_v3, 4)
+      .store_ref(binding).finalize();
+  TRY_STATUS(prepare_workchain_storage_participant(binding, std::move(data), cfg));
+  batch_description = std::move(description);
+  balance = std::move(allocated);
+  batch_balance = balance;
+  return td::Status::OK();
+}
+
 td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                                Ref<vm::Cell> effects, Ref<vm::Cell> data,
                                                const SerializeConfig& cfg, std::uint64_t max_transfers,

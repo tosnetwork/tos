@@ -501,6 +501,14 @@ struct Transaction {
   static constexpr int kStorageParticipantMinGlobalVersion = 16;
   td::Status prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                   const SerializeConfig& cfg);
+  // Internal settlement construction, not transfer authorization. The enclosing
+  // batch must derive these per-account totals once from committed effects and
+  // independently verify actual Native value flow against those effects. No
+  // inbox, output message, ordinary phase or live account mutation is allowed.
+  // Same admitted-source exception contract as storage participants applies.
+  td::Status prepare_workchain_allocation_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+      const CurrencyCollection& incoming, const CurrencyCollection& outgoing,
+      const SerializeConfig& cfg, int extra_validation_cells);
   // Inactive coordinator-entry profile. Complete admitted input/effects are
   // carried by the transaction, never retained through account data. Only
   // messages addressed to this account are selected from the shared inbox;

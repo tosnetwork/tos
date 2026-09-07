@@ -706,3 +706,76 @@ provided by the real host before its first production call. No message-count
 policy or account-currency policy is inferred from these API arguments. The
 per-entry scan is also not a plan to rescan the whole transfer graph for every
 participant; batch-wide materialization must share checked accounting work.
+
+### Restricted allocation participant (boundary reviewed)
+
+The Native constructor can now materialize the other endpoint of an internal
+allocation using the existing inactive settlement-participant descriptor. The
+caller supplies per-account incoming/outgoing CurrencyCollection aggregates,
+derived once by the enclosing batch from reconstructed effects. This factory
+checks the opening balance and both aggregates, sums before checked subtraction,
+requires final Native wire encoding, and prepares a sealed restricted record.
+It does not receive user messages, emit messages, run ordinary phases, charge
+fees or commit a live account. Only the binding is stored in its descriptor;
+the full input/effects cells remain on the single entry.
+
+This is a construction API, not authorization: an arbitrary aggregate supplied
+by a caller is not proof that a transfer exists. Complete overlay settlement
+must derive the aggregates from the replayed graph and independently verify
+the actual serialized Native rows against that graph. The whole-batch runner
+remains closed to nonempty imports/transfers until that work is integrated.
+Custody inbound bounce handling and its separate payout exception are not
+implemented by this no-message constructor.
+
+The paired fixture now constructs an entry at 1073 and a participant at 1127,
+from two opening balances of 1000 and two imported messages of 100 each. It
+decodes Native AccountStorage balances and transaction fees, then checks the
+per-account equations against the transfer graph. Changing one transfer by a
+unit fails the check. The imported 200 is the independently known fixture value,
+not production InMsg reconstruction. No AccountBlock/shard publication is
+claimed by these two private transaction objects.
+
+Nine independently rebuilt controls cover incoming funding, outgoing debit,
+the record tag, Native wire width, validation budget, negative values, balance
+sealing and the existing no-inbox/no-output guards as reached by this new API.
+Raw output and source/binary hashes are retained in
+`measurements/uno-v2-allocation-participant-evidence.json`; these are manual
+mutation controls, not mutation CI. No new TL-B constructor, production limit,
+activation policy or error-origin category is introduced.
+
+The boundary review is retained at
+`~/memo/reviews/uno-v2-allocation-participant-review.txt`. The reviewer reran the
+green test and independently confirmed the archived source/binary hashes.
+
+| Finding | Disposition |
+|---|---|
+| 1: null binding throws before validation | Fixed with an explicit argument check returning Status before descriptor construction. This is not a candidate/local provenance classification. The descriptor remains local and is built before preparation; moving it after preparation would weaken failure atomicity. |
+| 2: missing builder exception probe | Fixed: null returns an error without a serializable record; a deliberately non-admitted deep binding exercises CellWriteError with unchanged balance and no serializable record. A valid binding has no references, so the deep fixture is an exception-class instrument, not evidence of a reachable valid-wire attack. |
+| 3: extra-currency shortcuts hid coverage | Fixed: an independently encoded Native opening balance of currency 7 grows from 5 by incoming 7 and outgoing 3 to 9 in the serialized account. Tests also reject insufficient extra funds, a 248-bit addition overflow, and a positive but insufficient traversal budget. |
+| 4: fault-loop output did not identify the arm | Fixed diagnostics now name each case. Separate controls reach negative outgoing and wrong-account binding. The original nine controls are not claimed to independently prove every fault arm; the insufficient-funding arm is not an independently isolated mutation. |
+| 5: tag 11 allegedly requires a new owner decision | Disputed: build_workchain_payout_pair already assigns tag 11 to both records, but only custody has an output and fees. The coordinator already has neither. Tag 11 is not payout authority: the existing effects-based reconstruction requirement determines each physical record, including the custody exception. This helper adds no tag or authorization rule. |
+| 6: parser parity | Fixed: generated/handwritten validation, exact skip, absent storage phase, zero storage fees and rejection in both current execution scopes are checked. |
+
+Six additional rebuilt controls are archived with raw output and hashes in
+`measurements/uno-v2-allocation-participant-review-fixes.json`. Four fail on
+returned-status or numeric assertions; removing the null guard exposes
+CellCreateError and changing the artificial probe's catch class exposes
+CellWriteError. The latter mutates the test instrument, not production logic.
+These are manual controls, not mutation CI. An intermediate compile failed due
+to a duplicate local variable name; the following stale-binary pass is excluded
+from evidence. A corrected-source rebuild and final regression are recorded.
+
+Per-record nonnegative funding and whole-batch conservation are both necessary:
+the first alone permits fabricated mutual credits, and the second alone permits
+negative balances. The enclosing overlay must independently derive actual
+Native message rows and re-decode the effects graph; this fixture still uses
+known fixture imports and the pre-encoding transfer vector. Source-aware error
+handling, bounded admission, shared graph aggregation, complete AccountBlock /
+shard reconstruction and atomic publication remain integration work.
+
+The concurrent design update at memo@74a4d424 changes operation fees to a public
+deduction from the initiating confidential balance and adds an aggregate custody
+fee-settlement path. This generic allocation factory neither defines nor
+authorizes that path. Subsequent relation and settlement integration must follow
+the revised design rather than treat the previous zero-operation-fee model as
+complete; unresolved fee/congestion parameters are not supplied by this helper.

@@ -898,6 +898,152 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(second_tx.prepare_workchain_entry(two_binding, two_input, two_root, number(321), cfg, 2, 4096).is_ok());
   ASSERT_TRUE(second_tx.balance == block::CurrencyCollection(1100));
 
+  // One entry plus one restricted allocation record, sharing a batch binding.
+  // Unlike the isolated entry-role fixtures, the second record imports no
+  // message and stores only its binding, never the full input/effects closure.
+  auto pair_input = block::encode_workchain_host_input(identity, admitted, two,
+      {inbox[0], inbox[1]}, 2, 2, 3).move_as_ok();
+  auto pair_effects = two_effects;
+  pair_effects.native_transfers = {{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(10)}};
+  auto pair_root = block::encode_workchain_account_effects(pair_effects, 2, 2, 4096).move_as_ok();
+  auto pair_bindings = block::build_workchain_participant_records(td::Bits256(pair_input->get_hash().bits()),
+      td::Bits256(pair_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  Transaction paired_entry(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  Transaction participant(second, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(paired_entry.prepare_workchain_entry(pair_bindings[0], pair_input, pair_root,
+      number(321), cfg, 2, 4096).is_ok());
+  ASSERT_TRUE(participant.prepare_workchain_allocation_participant(pair_bindings[1], number(321),
+      block::CurrencyCollection(137), block::CurrencyCollection(10), cfg, 4096).is_ok());
+  ASSERT_TRUE(paired_entry.serialize(cfg) && participant.serialize(cfg));
+  ASSERT_TRUE(participant.balance == block::CurrencyCollection(1127));
+  std::vector<block::WorkchainAccountValueFlow> rows;
+  auto actual_row = [&](const block::Account& before, const Transaction& built, unsigned imported) {
+    block::gen::Account::Record_account old_account, new_account;
+    block::gen::AccountStorage::Record old_storage, new_storage;
+    block::gen::Transaction::Record transaction;
+    block::CurrencyCollection old_balance, new_balance, fees;
+    ASSERT_TRUE(tlb::unpack_cell(before.total_state, old_account));
+    ASSERT_TRUE(tlb::unpack_cell(built.new_total_state, new_account));
+    ASSERT_TRUE(tlb::csr_unpack(old_account.storage, old_storage));
+    ASSERT_TRUE(tlb::csr_unpack(new_account.storage, new_storage));
+    ASSERT_TRUE(old_balance.unpack(old_storage.balance) && new_balance.unpack(new_storage.balance));
+    ASSERT_TRUE(tlb::unpack_cell(built.root, transaction) && fees.unpack(transaction.total_fees));
+    ASSERT_EQ(transaction.outmsg_cnt, 0);
+    ASSERT_TRUE(fees.is_zero());
+    rows.push_back({before.addr, old_balance, block::CurrencyCollection(imported),
+        new_balance, block::CurrencyCollection(0), fees});
+    return transaction.description;
+  };
+  actual_row(coordinator, paired_entry, 200);  // Two actual fixture messages, each carrying 100.
+  auto participant_desc = actual_row(second, participant, 0);
+  auto participant_slice = vm::load_cell_slice(participant_desc);
+  ASSERT_EQ(participant_slice.size(), 4u);
+  ASSERT_EQ(participant_slice.size_refs(), 1u);
+  ASSERT_EQ(participant_slice.fetch_ulong(4), 11u);
+  ASSERT_TRUE(participant_slice.fetch_ref()->get_hash() == pair_bindings[1]->get_hash());
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(4096, participant_desc));
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.validate_ref(4096, participant_desc));
+  auto allocation_skipped = vm::load_cell_slice(participant_desc);
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.skip(allocation_skipped) && allocation_skipped.empty_ext());
+  auto allocation_storage = vm::load_cell_slice(participant_desc);
+  bool allocation_has_storage = true;
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.skip_to_storage_phase(allocation_storage, allocation_has_storage));
+  ASSERT_TRUE(!allocation_has_storage && allocation_storage.empty_ext());
+  td::RefInt256 allocation_storage_fees;
+  ASSERT_TRUE(block::tlb::t_TransactionDescr.get_storage_fees(participant_desc, allocation_storage_fees));
+  ASSERT_TRUE(td::sgn(allocation_storage_fees) == 0);
+  for (auto scope : {block::WorkchainExecutionScope::AccountCompute, block::WorkchainExecutionScope::BlockTransition}) {
+    ASSERT_TRUE(block::validate_transaction_execution_scope(participant_desc, scope).is_error());
+  }
+  ASSERT_TRUE(block::verify_workchain_value_flow(rows, pair_effects.native_transfers, 2, 2, 4096).is_ok());
+  auto wrong_transfers = pair_effects.native_transfers;
+  wrong_transfers[0].value = block::CurrencyCollection(138);
+  ASSERT_TRUE(block::verify_workchain_value_flow(rows, wrong_transfers, 2, 2, 4096).is_error());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000) && second.balance == block::CurrencyCollection(1000));
+  for (unsigned fault = 0; fault < 8; ++fault) {
+    LOG(INFO) << "allocation participant rejection case=" << fault;
+    Transaction rejected(second, Transaction::tr_workchain_batch, 21, 10);
+    if (fault == 0) rejected.in_msg = number(1);
+    if (fault == 1) rejected.out_msgs.push_back(number(1));
+    auto incoming = block::CurrencyCollection(fault == 2 ? -1 : 0);
+    auto outgoing = block::CurrencyCollection(fault == 3 ? 1001 : 0);
+    if (fault == 5) outgoing = block::CurrencyCollection(-1);
+    if (fault == 7) incoming = block::CurrencyCollection(td::make_refint(1) << 120);
+    auto bad_binding = fault == 4 ? pair_bindings[0] : pair_bindings[1];
+    ASSERT_TRUE(rejected.prepare_workchain_allocation_participant(bad_binding, number(321),
+        incoming, outgoing, cfg, fault == 6 ? 0 : 4096).is_error());
+    ASSERT_TRUE(rejected.balance == second.balance);
+    ASSERT_TRUE(!rejected.serialize(cfg));
+  }
+  Transaction exhausted(second, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(exhausted.prepare_workchain_allocation_participant(pair_bindings[1], number(321),
+      block::CurrencyCollection(1), block::CurrencyCollection(1001), cfg, 4096).is_ok());
+  ASSERT_TRUE(exhausted.balance.is_zero() && exhausted.serialize(cfg));
+  Transaction missing_binding(second, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(missing_binding.prepare_workchain_allocation_participant({}, number(321),
+      block::CurrencyCollection(1), block::CurrencyCollection(0), cfg, 4096).is_error());
+  ASSERT_TRUE(missing_binding.balance == second.balance && !missing_binding.serialize(cfg));
+  // Artificial, non-admitted binding: a valid binding has no child references.
+  // Probe the actual builder exception class, not a reachable valid-wire case.
+  auto artificial_binding = number(1);
+  for (unsigned depth = 0; depth < 1024; ++depth) artificial_binding = vm::CellBuilder().store_ref(artificial_binding).finalize();
+  Transaction failed_builder(second, Transaction::tr_workchain_batch, 21, 10);
+  bool binding_threw = false;
+  try {
+    auto status = failed_builder.prepare_workchain_allocation_participant(artificial_binding, number(321),
+        block::CurrencyCollection(1), block::CurrencyCollection(0), cfg, 4096);
+    ASSERT_TRUE(status.is_error());
+  } catch (const vm::CellBuilder::CellWriteError&) {
+    binding_threw = true;
+  }
+  ASSERT_TRUE(binding_threw);
+  ASSERT_TRUE(failed_builder.balance == second.balance && !failed_builder.serialize(cfg));
+
+  auto extra_amount = [](td::RefInt256 amount) {
+    vm::Dictionary values(32);
+    vm::CellBuilder value;
+    ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(value, *amount));
+    ASSERT_TRUE(values.set_builder(td::BitArray<32>(7u), value, vm::Dictionary::SetMode::Add));
+    return block::CurrencyCollection(0, values.get_root_cell());
+  };
+  // Construct a Native-encoded opening state independently of this factory,
+  // with a real encoded opening extra-currency balance (not only a cache edit).
+  block::gen::Account::Record_account extra_root;
+  block::gen::AccountStorage::Record extra_storage;
+  ASSERT_TRUE(tlb::unpack_cell(second.total_state, extra_root));
+  ASSERT_TRUE(tlb::csr_unpack(extra_root.storage, extra_storage));
+  auto opening_extra = extra_amount(td::make_refint(5));
+  ASSERT_TRUE(opening_extra.pack_to(extra_storage.balance));
+  ASSERT_TRUE(tlb::csr_pack(extra_root.storage, extra_storage));
+  td::Ref<vm::Cell> extra_cell;
+  ASSERT_TRUE(tlb::pack_cell(extra_cell, extra_root));
+  auto extra_shard_account = vm::CellBuilder().store_ref(extra_cell)
+      .store_bits(second.last_trans_hash_.bits(), 256).store_long(second.last_trans_lt_, 64).finalize();
+  block::Account extra_owner(2, b.bits());
+  ASSERT_TRUE(extra_owner.unpack(vm::load_cell_slice_ref(extra_shard_account), 10, false));
+  ASSERT_TRUE(extra_owner.balance == opening_extra);
+  Transaction extra_tx(extra_owner, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(extra_tx.prepare_workchain_allocation_participant(pair_bindings[1], number(321),
+      extra_amount(td::make_refint(7)), extra_amount(td::make_refint(3)), cfg, 4096).is_ok());
+  ASSERT_TRUE(extra_tx.balance == extra_amount(td::make_refint(9)) && extra_tx.serialize(cfg));
+  actual_row(extra_owner, extra_tx, 0);
+  ASSERT_TRUE(rows.back().new_balance == extra_amount(td::make_refint(9)));
+  for (unsigned fault = 0; fault < 3; ++fault) {
+    LOG(INFO) << "allocation extra-currency rejection case=" << fault;
+    Transaction rejected(extra_owner, Transaction::tr_workchain_batch, 21, 10);
+    auto incoming = extra_amount(td::make_refint(7));
+    auto outgoing = extra_amount(td::make_refint(fault == 0 ? 13 : 3));
+    if (fault == 1) {
+      block::CurrencyCollection max;
+      ASSERT_TRUE(block::CurrencyCollection::sub(block::CurrencyCollection(td::make_refint(1) << 248),
+          block::CurrencyCollection(1), max));
+      incoming = extra_amount(max.tomis);
+    }
+    ASSERT_TRUE(rejected.prepare_workchain_allocation_participant(pair_bindings[1], number(321),
+        incoming, outgoing, cfg, fault == 2 ? 1 : 4096).is_error());
+    ASSERT_TRUE(rejected.balance == extra_owner.balance && !rejected.serialize(cfg));
+  }
+
   // Either direction of effects/write-set disagreement must fail, even when
   // this entry's own declaration, hash and data remain entirely correct.
   for (bool extra_effect : {false, true}) {
