@@ -1,18 +1,18 @@
 #include "uno_crypto.h"
-#include <limits>
+#include <cstdio>
+#include <memory>
 
-// Deliberately invalid, opt-in instrument check. Never register as a passing
-// test: both modes must fail under their respective sanitizer.
-int main(int argc, char**) {
-  if (argc > 1) {
-    volatile int top = std::numeric_limits<int>::max();
-    return top + 1;  // Non-monetary, intentional undefined arithmetic.
-  }
-  auto* short_allocation = new uint64_t[1]{};
-  UnoTreeRequest request{};
-  request.profile = UNO_CRYPTO_FIXED_PROFILE;
-  request.frontier = reinterpret_cast<UnoTreeFrontier*>(short_allocation);
-  UnoTreeResult result{};
-  // Deliberately violate the allocation contract; the Rust read must trip ASan.
-  return uno_crypto_tree_append_v0(&request, &result);
+// Deliberately violate the caller allocation contract. This is an instrument
+// canary, not an assertion that arbitrary invalid pointers are recoverable.
+int main() {
+  auto point = std::make_unique<uint8_t[]>(32);
+  uint8_t commitments[8][32]{}, responses[6][32]{}, proof[864]{}, context[1]{1};
+  UnoCryptoVerifyRequest request{
+    UNO_CRYPTO_ABI_VERSION, UNO_RELATION_SEND, {1, 1, 8, 1, sizeof(proof)},
+    context, 1, reinterpret_cast<const uint8_t(*)[32]>(point.get()), 10,
+    nullptr, 0, commitments, 8, responses, 6, proof, sizeof(proof)
+  };
+  const auto status = uno_crypto_verify_v1(&request);
+  std::fprintf(stderr, "CANARY_NOT_DETECTED: invalid allocation reached status %u\n", status);
+  return 2;
 }

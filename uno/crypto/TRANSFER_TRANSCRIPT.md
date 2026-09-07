@@ -1,70 +1,40 @@
-# Private-transfer transcript candidate v0
+# Experimental balance-kernel transcript
 
-Unactivated Rust prototype, not the frozen TL-B wire or a production scheme.
-The C++ verifier still accepts a supplied digest; this module is not yet exposed
-through the generated ABI or connected to host admission. The expected domain
-and resource limits must come from authenticated, supported configuration.
+This transcript implements the authorized mathematical kernel, not the
+unfrozen full transaction codec. Amounts are confidential; account and transfer
+relationships remain public. No legacy transcript or Note format is accepted.
 
-Hash: BLAKE3-256. `B(x)` means `u64be(len(x)) || x`. Fixed-width integers are
-big-endian, including two's-complement signed values. Each digest begins with
-`B("tos-uno-privacy-v1/experimental-transfer-v0") || B(label)`.
-This experimental domain is deliberately distinct from an activation transcript.
+The initial Merlin domain is
+`TOS-UNO-BALANCE-KERNEL-EXPERIMENTAL-v1`. Append, in order:
 
-For label `txid`, append in this exact order:
+1. u64 `relation` (SEND=1, COLLECT=2).
+2. u64 `max-balance`, then `max-value`.
+3. `authenticated-context`: the complete caller-supplied context byte string.
+4. u64 `point-count`, followed by each `public-point` in ABI order.
+5. u64 `receipt-count`, followed by each `receipt-id` in ABI order.
 
-| Fields | Encoding |
-|---|---|
-| wire version, scheme, engine selector, engine version, encryption profile | five u32 |
-| network ID | B(bytes32) |
-| global ID, workchain ID | two i32 |
-| chain ID | B(bytes32) |
-| private-transfer kind | one zero byte |
-| expiry height, nonce | u64, B(bytes32) |
-| fee, public input, public output | three u128; input/output fixed zero |
-| external reference, destination, refund plan | three zero absence bytes |
-| fixed bundle-profile marker, flags | zero byte, one flags byte |
-| value balance, anchor, Action count | i64, B(bytes32), u64 |
-| each Action in order | B(cv_net), B(nf), B(rk), B(cmx), B(epk), B(enc_ciphertext), B(out_ciphertext), B(KEM ciphertext) |
+Merlin supplies message framing. Scalars/points in proof arrays are canonical.
+The context is authenticated by the future host, not by this library. No
+default context, fees, expiry, policy identity or deployment network is supplied.
 
-Other action kinds require separate definitions, not changing the marker in
-this transfer-only type. Bundle profile must equal the locked orchard_v2 profile.
-For label `sighash`, append `B(txid)`. For label `authorization`, append `B(txid)`,
-`B(proof)`, each `B(spend_signature)` in Action order, then `B(binding_signature)`.
-Proofs/signatures never enter their own signing preimage. Blocks must separately
-retain and commit authorization bytes; this is not the block data archive.
+Clone this state into separate subprotocols:
 
-`transfer_digests` streams bounded fields and may run before authorization is
-populated. `verify_transfer` compares the expected domain, derives the digest
-from the same encoded object used by primitive decoding, and verifies the full
-bundle in Transfer context. It takes no externally supplied sighash. Shape,
-decode and verification errors remain distinguishable. Expiry, fee-policy,
-state and canonical Cell checks remain the enclosing host's responsibility.
+- AND: append `subprotocol=shared-witness-AND-v1`, then all `T` in equation
+  order. Derive 64 bytes labelled `e` and reduce with from_bytes_mod_order_wide.
+  Each witness has exactly one response z_l, used in every applicable row.
+  Verify each row independently. Final responses cannot precede their own
+  generating challenge; there is no later random aggregation.
+- Range: append `subprotocol=range-v1`, then replay the pinned range transcript,
+  including verifier-derived V commitments, A/S, y/z, T1/T2, x, scalar responses,
+  w, inner-product L/R/u, final a/b and c. Preserve c derivation but do not use
+  it to merge the inner-product and polynomial residuals.
 
-KEM fields must match the caller-profile's nonzero exact size, one per Action.
-Tests use **four-byte opaque fixtures**, not ML-KEM ciphertexts. Their hashing
-tests binding only, not encryption, outgoing recovery or backup correctness.
+The two subprotocols bind the same public J/C and context. Range complements
+are group-derived commitments, not unguarded subtraction of secret integers.
+Prover randomness remains mandatory. All new context and proof-message binding
+requires independent security review even though Merlin itself is reused.
 
-## Dependency and evidence
-
-Pinned `blake3 = 1.8.7`, checksum
-`6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae`;
-crate VCS metadata identifies `f3149ec5bb5449af877ba20377a11008ff499fa2`.
-See the [upstream release](https://github.com/BLAKE3-team/BLAKE3/releases/tag/1.8.7).
-License: CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception.
-New transitive packages cc 1.4.5, cpufeatures 0.3.1, find-msvc-tools 0.1.12 and
-shlex 2.0.1 are each MIT OR Apache-2.0; checksums are locked. Existing dependency
-versions were not bumped. This is not an activation-time dependency audit.
-
-Primitive empty/three-byte known answers use the first 32 bytes of the
-[tagged upstream vectors](https://github.com/BLAKE3-team/BLAKE3/blob/1.8.7/test_vectors/test_vectors.json).
-Local transcript snapshots freeze a synthetic candidate fixture, not an
-independently specified production wire. Tests vary every semantic field,
-Action/KEM order, proof and signatures, and distinguish length-prefixed
-`("ab", "c")` from `("a", "bc")`.
-
-The real proof test authorizes the same proven spend using the derived digest.
-It checks acceptance, nonce/KEM mutation rejection at spend-signature validation,
-and domain mismatch rejection. Deliberately omitting nonce breaks that real
-verification test; omitting byte-string lengths breaks field separation. Both
-mutations were restored. The primitive, transcript and fixed-VK tests pass with
-the new lockfile; neither that result nor the KEM fixture freezes a scheme.
+Frozen tests include complete SEND and COLLECT k=1..8 proofs, statement and
+proof perturbations, every independent row's negative witness, and an
+independent C transcript known-answer vector. Changing transcript events must
+fail those tests, not silently regenerate expected output.

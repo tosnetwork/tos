@@ -8,12 +8,12 @@ publish = false
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-blake3 = "=1.8.7"
-incrementalmerkletree = "=0.8.2"
-nonempty = "=0.11.0"
-orchard = { git = "https://github.com/zcash/orchard.git", rev = "29d1d55db62153dcaeef8ef631c8991c53ed1248", default-features = false, features = ["circuit", "multicore", "std"] }
+bulletproofs = { path = "vendor/bulletproofs", default-features = false }
+curve25519-dalek = { git = "https://github.com/xelis-project/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a", default-features = false, features = ["alloc", "std", "precomputed-tables"] }
+merlin = { git = "https://github.com/xelis-project/merlin", rev = "ee857c79347e0e2201e5192523faea13ac9bf451", default-features = false }
 
 [workspace]
+exclude = ["vendor/bulletproofs"]
 
 # ABI entry points contain recoverable panics rather than terminating the node.
 [profile.dev]
@@ -26,5 +26,5 @@ panic = "unwind"
 cbindgen = { version = "=0.29.0", default-features = false }
 
 [dev-dependencies]
-blake2b_simd = "=1.0.5"
-rand = "=0.8.8"
+rand = "=0.10.1"
+bulletproofs = { path = "vendor/bulletproofs", default-features = false, features = ["kernel-test"] }

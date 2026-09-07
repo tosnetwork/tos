@@ -14,6 +14,7 @@ file(MAKE_DIRECTORY "${fixture}")
 message(STATUS "Header guard fixture (retained on failure): ${fixture}")
 file(COPY "${UNO_CRYPTO_SOURCE}/src" "${UNO_CRYPTO_SOURCE}/include"
           "${UNO_CRYPTO_SOURCE}/fixtures"
+          "${UNO_CRYPTO_SOURCE}/vendor"
      DESTINATION "${fixture}")
 foreach(name Cargo.toml Cargo.lock build.rs cbindgen.toml rust-toolchain.toml)
   file(COPY "${UNO_CRYPTO_SOURCE}/${name}" DESTINATION "${fixture}")

@@ -13,9 +13,6 @@ include = ["AbiStatus"]
 item_types = ["constants", "enums", "structs", "functions"]
 
 [export.rename]
-EncodedAction = "UnoCryptoAction"
 VerifyRequest = "UnoCryptoVerifyRequest"
 AbiStatus = "UnoCryptoStatus"
-TreeFrontier = "UnoTreeFrontier"
-TreeRequest = "UnoTreeRequest"
-TreeResult = "UnoTreeResult"
+KernelLimits = "UnoCryptoLimits"

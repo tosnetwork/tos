@@ -1,37 +1,20 @@
-# Fixed VK diagnostic freeze
+# Experimental balance-kernel vectors
 
-`fixed-vk-debug.blake2b512` freezes the actual constructed `FixedVerifier` key
-under the committed Rust toolchain, dependency revisions, features and lockfile.
-The preimage is the UTF-8 bytes of `format!("{:?}", verifier.key)`, with **no
-trailing newline**. Hash: unkeyed BLAKE2b-512, no personalization, hexadecimal
-lowercase output. The initial preimage is 907512 bytes on the recorded Linux
-x86_64 build. It includes the actual commitment parameters, fixed commitments,
-permutation key and constraint-system data exposed by the derived Debug chain,
-not merely the circuit selector.
+`balance-kernel-v1.txt` freezes one SEND and COLLECT with k=1 through 8.
+Each line contains the relation kind, explicit numerical policy, authenticated
+context bytes, public points, receipt IDs, Sigma commitments, shared-witness
+responses and aggregated range proof. The Rust generator uses public test seeds;
+never use these keys or randomness for funds.
 
-This is a test-only diagnostic representation, **not canonical VK serialization**,
-a TOS scheme identifier, or a production activation manifest. Formatting and
-derived/cache fields can change the digest without changing cryptographic
-semantics. Such changes intentionally fail the regression test and require
-review, not silent acceptance. The fixed dependency does not expose the internal
-VK through a serialization accessor; its `verifier-fingerprint` feature captures
-a verification run's MSM and does not solve key serialization.
+Rust regenerates and compares every byte; the C++ test independently reads the
+same file and calls the real C ABI. These are kernel regression vectors, not a
+production transaction format or evidence of host authentication of the context.
+An intentional transcript or layout change requires reviewing and versioning the
+affected vectors, not silently regenerating them to make a test pass.
 
-Reproduce with `cargo test --locked --offline --release -j48 vk_snapshot`.
-For independent inspection, create a dedicated temporary directory and run:
+The three `.tag` files contain annotated Git tag objects. Their object hashes and
+target revisions are checked by `tests/kernel-gates.py`; they do not assert signed
+release provenance. See `../SUPPLY_CHAIN.md` for the source verification policy.
 
-```sh
-UNO_VK_DEBUG_OUT=/absolute/temporary/path/fixed-vk.debug cargo test --locked --offline --release -j48 export_constructed_vk_debug_snapshot -- --ignored
-```
-
-The ignored export test checks the frozen digest before writing and never updates
-the constant. An independent Node/OpenSSL-backed BLAKE2b-512 hash of the exported
-bytes matched the committed constant when first recorded.
-
-Do not regenerate this constant to make a dependency-update test pass. Treat it
-as frozen from this commit onward. Any change must document the old/new dependency
-graph, exact changed key/representation fields and circuit security rationale,
-then revalidate affected vectors. Once vectors bind this artifact, a key change
-invalidates that binding and requires a new versioned vector/manifest review.
-Production still needs an explicit, reviewed canonical export covering verifier
-parameters and actual VK commitments; do not promote this Debug digest to that role.
+The previous circuit/VK diagnostic belongs to the retired V0 implementation and
+is no longer an active verifier gate. Its historical evidence remains in Git.

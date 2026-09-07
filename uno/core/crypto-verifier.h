@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "uno/core/bundle-context.h"
-#include "uno/crypto/include/uno_crypto.h"
+#include "uno/crypto/include/uno_crypto_v0_retired.h"
 
 namespace uno_workchain {
 

@@ -39,13 +39,13 @@ class UnoBuildWiring(unittest.TestCase):
                                     capture_output=True, text=True, check=True)
             tests = {test["name"]: test for test in json.loads(result.stdout)["tests"]}
             for name in ("test-uno-crypto-rust", "test-uno-crypto-abi-real", "test-uno-crypto-header-guard",
-                         "test-uno-crypto-cost-self",
+                         "test-uno-crypto-kernel-gates",
                          "test-counter-python-harness", "test-counter-real-manager-sync",
                          "test-uno-state-snapshot-large"):
                 self.assertIn(name, tests)
             graph = subprocess.run(["ninja", "-C", directory, "-t", "query", "all-tests"],
                                    capture_output=True, text=True, check=True)
-            self.assertIn("uno/crypto/test-uno-crypto-cost", {line.strip() for line in graph.stdout.splitlines()})
+            self.assertIn("uno/crypto/test-uno-crypto-abi-real", {line.strip() for line in graph.stdout.splitlines()})
             # The default snapshot registration must never silently include a
             # resource-heavy experiment that turns into a passing early return.
             result = subprocess.run(configure + ["-DTOS_UNO_LARGE_SNAPSHOT_TEST=OFF"],

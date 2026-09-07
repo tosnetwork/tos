@@ -1,5 +1,19 @@
 # Privacy workchain implementation progress
 
+## V2 kernel transition (2026-09-07)
+
+The active `uno/crypto` crate is being replaced by the experimental confidential
+balance SEND/COLLECT kernel described in `~/memo/TOS_UNO_PRIVACY_WORKCHAIN_V2.md`.
+It hides amounts, not participants or the transfer graph. The V1 milestone and
+Orchard/Note-tree evidence below is historical: neither its completion marks nor
+its frozen configuration decisions automatically apply to V2. The new kernel
+does not implement custody, rent, deposits, withdrawals or multi-account host
+submission. Kernel tests do not constitute full transaction admission evidence.
+The kernel milestone received independent review and the accepted fixes were
+retested. See [the disposition](uno-v2-kernel-review-disposition.md) and
+[validation evidence](uno-v2-kernel-validation.md). This does not transfer V1
+milestone completion to V2 or close the remaining host/activation gates.
+
 Branch: `feature/uno-privacy-workchain-v1`.
 
 Initial design baseline: `memo@0c3fc8d0:TOS_UNO_PRIVACY_WORKCHAIN_V1.md`.

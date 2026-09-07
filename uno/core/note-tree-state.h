@@ -6,7 +6,7 @@
 #include <vector>
 #include "td/utils/Status.h"
 #include "uno/core/tree-error.h"
-#include "uno/crypto/include/uno_crypto.h"
+#include "uno/crypto/include/uno_crypto_v0_retired.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 #include "vm/excno.hpp"

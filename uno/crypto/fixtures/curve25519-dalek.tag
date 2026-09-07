@@ -1,0 +1,13 @@
+object 10042b03cfc92e505e9d33d2827d5c0f0d36989a
+type commit
+tag v5.0.2
+tagger Slixe <slixeprivate@gmail.com> 1783277771 +0200
+
+v5.0.2
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYKAB0WIQRlxOLZEWNlrvRy49B26XkOoodAywUCakqozgAKCRB26XkOoodA
+yz1kAP9UygTYrCBXr6fLou63IMQ0QUwWy2OfoqHrRJVc5A6bLwD/aDgL0DU1Bt7Z
+6VBd4EOCcDEcmrj3KBt7NjHRBBkI2AM=
+=ZeUA
+-----END PGP SIGNATURE-----

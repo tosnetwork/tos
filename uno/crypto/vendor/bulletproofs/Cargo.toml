@@ -1,0 +1,50 @@
+[package]
+name = "bulletproofs"
+# Before doing a release:
+# - update version field
+# - update html_root_url
+# - update CHANGELOG
+version = "5.3.0"
+authors = ["Cathie Yun <cathieyun@gmail.com>",
+           "Henry de Valence <hdevalence@hdevalence.ca>",
+           "Oleg Andreev <oleganza@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/xelis-project/bulletproofs"
+categories = ["cryptography"]
+keywords = ["cryptography", "crypto", "ristretto", "zero-knowledge", "bulletproofs"]
+description = "A pure-Rust implementation of Bulletproofs using Ristretto"
+edition = "2018"
+
+[dependencies]
+curve25519-dalek = { features = ["digest", "group", "rand_core", "serde", "zeroize", "alloc", "std", "precomputed-tables"], default-features = false, git = "https://github.com/xelis-project/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a" }
+merlin = { git = "https://github.com/xelis-project/merlin", default-features = false, rev = "ee857c79347e0e2201e5192523faea13ac9bf451" }
+group = { version = "0.14", default-features = false, optional = true }
+subtle = { version = "2.6", default-features = false }
+sha3 = { version = "0.11", default-features = false }
+digest = { version = "0.11", default-features = false }
+rand_core = { version = "0.10", default-features = false }
+rand = { version = "0.10", optional = true }
+byteorder = { version = "1", default-features = false }
+serde = { version = "1", default-features = false, features = ["alloc"] }
+serde_derive = { version = "1", default-features = false }
+thiserror = { version = "2", optional = true }
+zeroize = "1.8.1"
+
+[dev-dependencies]
+hex = "0.4"
+criterion = "0.7"
+bincode = "1"
+rand_chacha = "0.10"
+curve25519-dalek = { features = ["digest", "group", "legacy_compatibility", "rand_core", "serde", "zeroize", "std", "alloc", "precomputed-tables"], default-features = false, git = "https://github.com/xelis-project/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a" }
+serde_json = "1"
+rand_core = { version = "0.10", default-features = false }
+rand = "0.10"
+
+[features]
+kernel-test = []
+default = ["std"]
+yoloproofs = []
+std = ["rand", "rand/std", "rand/std_rng", "thiserror"]
+nightly = ["subtle/nightly"]
+docs = ["nightly"]
