@@ -4536,9 +4536,50 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
   return td::Status::OK();
 }
 
+td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+                                                             const SerializeConfig& cfg) {
+  if (cfg.global_version < kStorageParticipantMinGlobalVersion || trans_type != tr_workchain_batch || account.status != Account::acc_active ||
+      account.workchain < 0 || account.is_special || account.now_ != now || start_lt >= end_lt ||
+      root.not_null() || new_total_state.not_null() || batch_description.not_null() || data.is_null()) {
+    return td::Status::Error("invalid storage participant preparation context");
+  }
+  gen::UnoV2HostRecord::Record record;
+  if (!tlb::unpack_cell(binding, record) || record.account_id != account.addr) {
+    return td::Status::Error("storage participant binding has wrong account");
+  }
+  if (in_msg.not_null() || !out_msgs.empty() || compute_phase || action_phase || storage_phase || credit_phase ||
+      bounce_phase || balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero()) {
+    return td::Status::Error("storage participant cannot run phases or move native value");
+  }
+  new_data = std::move(data);
+  auto limits = check_state_limits(cfg.size_limits, cfg.global_version);
+  if (limits.is_error()) {
+    new_data = account.data;
+    return limits;
+  }
+  batch_account_data = new_data;
+  batch_description = vm::CellBuilder()
+                          .store_long(block::tlb::TransactionDescr::trans_workchain_storage_participant_v3, 4)
+                          .store_ref(binding).finalize();
+  batch_balance = balance;
+  batch_fees = total_fees;
+  batch_out_msgs = out_msgs;
+  batch_end_lt = end_lt;
+  batch_storage_only = true;
+  return td::Status::OK();
+}
+
 bool Transaction::serialize(const SerializeConfig& cfg) {
-  if (root.not_null()) {
+  if (root.not_null() && !batch_storage_only) {
     return true;
+  }
+  if (batch_storage_only &&
+      (cfg.global_version < kStorageParticipantMinGlobalVersion || new_code.get() != account.code.get() || new_library.get() != account.library.get() ||
+       my_addr.is_null() || account.my_addr.is_null() || !my_addr->contents_equal(*account.my_addr) ||
+       new_tick != account.tick || new_tock != account.tock || new_fixed_prefix_length != account.fixed_prefix_length ||
+       new_addr_rewrite_length != -1 || force_remove_anycast_address || last_paid != account.last_paid ||
+       due_payment.get() != account.due_payment.get())) {
+    return false;
   }
   if (trans_type == tr_workchain_batch &&
       (batch_description.is_null() || batch_account_data.is_null() || new_data.is_null() ||
@@ -4555,6 +4596,9 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
         return false;
       }
     }
+  }
+  if (batch_storage_only && root.not_null()) {
+    return true;
   }
   if (!compute_state(cfg)) {
     return false;

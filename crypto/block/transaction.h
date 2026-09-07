@@ -423,6 +423,7 @@ struct Transaction {
   CurrencyCollection batch_balance{0}, batch_fees{0};
   std::vector<Ref<vm::Cell>> batch_out_msgs;
   tos::LogicalTime batch_end_lt{0};
+  bool batch_storage_only{false};
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                   const ActionPhaseConfig& cfg,
                                                   const CurrencyCollection& initial_balance);
@@ -474,6 +475,16 @@ struct Transaction {
   // Nonempty messages require authenticated native pricing; the host still owns queue insertion.
   td::Status prepare_workchain_batch(const WorkchainBlockInput& input, const WorkchainBlockResult& effects,
                                     const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
+  // Internal wrapper construction only, not authorization. The multi-account
+  // host must authenticate old state and independently reconstruct this binding
+  // and data from effects. Existing scope dispatch does not admit this profile.
+  // Inputs must be locally derived after source-aware admission. VmError,
+  // VmVirtError, CellCreateError and CellWriteError may propagate; the caller
+  // must classify them using input provenance, not this Status return type.
+  // This construction floor is not the multi-account activation policy.
+  static constexpr int kStorageParticipantMinGlobalVersion = 16;
+  td::Status prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+                                                  const SerializeConfig& cfg);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

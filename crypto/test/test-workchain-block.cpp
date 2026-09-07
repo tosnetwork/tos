@@ -799,6 +799,82 @@ TEST(WorkchainBlock, CounterPayloadSurvivesBatchReplay) {
   LOG(INFO) << "Counter payload batch: wrapper cells=" << stat.cells << " boc bytes=" << wire.size();
 }
 
+TEST(WorkchainBlock, StorageParticipantNativeWrapper) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto key = td::Bits256::zero();
+  block::Account account(2, key.bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(key), 10, false));
+  auto old = account.total_state->get_hash();
+  auto records = block::build_workchain_participant_records(key, key, {key}, 1).move_as_ok();
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  block::transaction::Transaction tx(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(tx.prepare_workchain_storage_participant(records[0], number(77), cfg).is_ok());
+  ASSERT_TRUE(tx.serialize(cfg));
+  ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, tx.root));
+  ASSERT_TRUE(block::tlb::t_Transaction.validate_ref(4096, tx.root));
+  ASSERT_TRUE(!tx.storage_phase && !tx.compute_phase && !tx.action_phase && !tx.credit_phase && !tx.bounce_phase);
+  ASSERT_TRUE(tx.balance == account.balance);
+  ASSERT_TRUE(tx.balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(tx.total_fees.is_zero() && tx.out_msgs.empty());
+  ASSERT_TRUE(tx.new_data->get_hash() == number(77)->get_hash());
+  ASSERT_TRUE(account.total_state->get_hash() == old); // No account commit during preparation.
+  block::gen::Transaction::Record tr;
+  ASSERT_TRUE(tlb::unpack_cell(tx.root, tr));
+  ASSERT_TRUE(block::validate_transaction_execution_scope(tr.description, block::WorkchainExecutionScope::BlockTransition).is_error());
+  ASSERT_TRUE(block::validate_transaction_execution_scope(tr.description, block::WorkchainExecutionScope::AccountCompute).is_error());
+  auto parsed = vm::load_cell_slice(tr.description);
+  ASSERT_EQ(parsed.fetch_ulong(4), 10u);
+  ASSERT_TRUE(parsed.fetch_ref()->get_hash() == records[0]->get_hash());
+  auto other_key = key;
+  other_key.as_slice().back() = 1;
+  auto wrong_records = block::build_workchain_participant_records(key, key, {other_key}, 1).move_as_ok();
+  block::transaction::Transaction wrong_account(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(wrong_account.prepare_workchain_storage_participant(wrong_records[0], number(77), cfg).is_error());
+  block::transaction::Transaction tampered(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  ASSERT_TRUE(tampered.prepare_workchain_storage_participant(records[0], number(77), cfg).is_ok());
+  tampered.new_code = number(123);
+  ASSERT_TRUE(!tampered.serialize(cfg));
+  block::transaction::Transaction moved(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  moved.balance = block::CurrencyCollection(1);
+  ASSERT_TRUE(moved.prepare_workchain_storage_participant(records[0], number(77), cfg).is_error());
+  block::transaction::Transaction old_version(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+  cfg.global_version = 15;
+  ASSERT_TRUE(old_version.prepare_workchain_storage_participant(records[0], number(77), cfg).is_error());
+  ASSERT_TRUE(!old_version.serialize(cfg));
+  // Unlike the rejected preparation above, every case reaches the prepared
+  // storage-only guard with an otherwise serializable nonzero account.
+  for (unsigned field = 0; field < 11; ++field) {
+    block::SerializeConfig current;
+    current.global_version = 16;
+    block::transaction::Transaction changed(account, block::transaction::Transaction::tr_workchain_batch, 10, 10);
+    ASSERT_TRUE(changed.prepare_workchain_storage_participant(records[0], number(77), current).is_ok());
+    switch (field) {
+      case 0: current.global_version = 15; break;
+      case 1: changed.new_library = number(123); break;
+      case 2: changed.new_tick = !account.tick; break;
+      case 3: changed.new_tock = !account.tock; break;
+      case 4: changed.new_fixed_prefix_length = 1; break;
+      case 5: changed.new_addr_rewrite_length = 0; break;
+      case 6: changed.force_remove_anycast_address = true; break;
+      case 7: changed.last_paid = 123; break;
+      case 8: changed.due_payment = td::make_refint(1); break;
+      case 9:
+        changed.my_addr = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3)
+            .store_long(2, 8).store_bits(other_key.bits(), 256).finalize());
+        break;
+      case 10: changed.my_addr.clear(); break;
+    }
+    ASSERT_TRUE(!changed.serialize(current));
+  }
+  // Cached serialization must not bypass the storage-only checks either.
+  cfg.global_version = 16;
+  tx.new_code = number(123);
+  ASSERT_TRUE(!tx.serialize(cfg));
+}
+
 TEST(WorkchainBlock, ReplayStorageCachePreservesValidation) {
   std::vector<td::Ref<vm::Cell>> layer;
   for (unsigned i = 0; i < 256; ++i) layer.push_back(number(i));

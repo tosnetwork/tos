@@ -101,3 +101,47 @@ Accumulators explicitly fit unsigned 256 bits: the bigint backing storage may te
 Tests cover an operating-budget-to-custody transfer, total-preserving but wrong account allocation, omitted/reversed transfers, invalid amounts, missing accounts, extra-currency conservation and the accumulator boundary. The stub fails. Ignoring extra currencies independently fails their negative case; omitting per-account equality independently fails the total-preserving misallocation case. Restored block/admission CTest passes. Evidence: `measurements/uno-v2-value-flow-evidence.json`. A test-construction compile error was corrected and the stale binary result discarded.
 
 This is not completed independent Native value-flow acceptance: rows must still be extracted from independently rebuilt accounts and message records in the host. It does not authorize transfer edges, prove fee isolation, or establish the confidential backing invariant. No consensus entry point was changed; milestone review remains pending.
+
+## Native storage-participant wrapper (not activated)
+
+The `1010` TransactionDescr constructor carries a participant binding. Generated
+and handwritten parsers agree on its four bits and one reference. Preparation
+uses a real active Native Account, changes data under existing account limits,
+and runs no compute, storage, credit, action or bounce phase. Native value and
+fees are pinned; this is the storage-only participant primitive, not custody
+payout, coordinator fee settlement or account registration. Existing scope
+dispatch still rejects it in both scopes. The named version-16 construction
+floor does not activate it, change SUPPORTED_VERSION or replace the required
+authenticated multi-account policy gate.
+
+Claude reviewed this consensus-boundary change; the verbatim record is
+`~/memo/reviews/uno-v2-storage-participant-review.txt`. Disposition:
+
+| Finding | Disposition |
+|---|---|
+| M1 address mutation | Fixed using CellSlice contents comparison, including null checks. The suggested Cell hash API does not apply to CellSlice. |
+| M2 activation | Named construction floor and descriptor tag added. Deferred full capability/profile activation to the explicit multi-account host switch; no claim that a version bump authorizes this path. Both current scopes remain closed. |
+| M3 masked version test | Fixed with successful preparation at 16 followed by serialization at 15. Added field-specific mutation inputs for every new serialization clause. |
+| L1 unknown diagnostic | Deferred wording until the explicit profile switch; rejection classification and both closed scopes are unchanged. |
+| L2 exception contract | Documented source-aware caller responsibility for VmError, VmVirtError, CellCreateError and CellWriteError. A Status return is not a no-throw promise. |
+| L3 role/no-op checks | Deferred role authorization to the host's authenticated role map. This low-level Account wrapper cannot infer a coordinator address from an absent policy. Data equality alone also does not imply an unchanged Native account: last_trans changes. Exact permitted effects and participant coverage remain host checks, not authorization by this helper. |
+| L4 zero balance | Fixed: the positive fixture now preserves 1000 nanotomi. |
+| L5 comment placement | Fixed. |
+
+The initial unimplemented preparation failed its positive test. Independent
+removal of account binding, address comparison, serialization version check,
+code preservation, and the storage-specific cache guard each fails a real
+assertion after a successful rebuild. Raw logs, patches and artifact hashes
+are in `measurements/uno-v2-storage-participant-evidence.json`. These five manual
+mutations are not a CI mutation facility or removal coverage of every guard.
+The other field cases execute in the registered test, without that stronger
+mutation claim. Two test-construction compile errors were corrected; no stale
+binary result is used as evidence for those revisions.
+
+Additional integration prerequisite: Transaction exposes mutable staging fields
+and `commit()` copies them. Rechecking `serialize()` even with a cached root now
+detects guarded mutations, but this is not a seal on arbitrary post-serialization
+mutation followed directly by commit. The multi-account overlay must own these
+objects without engine access, reconstruct/finalize their native state, and
+publish once only after all wrappers and the actual dictionary diff pass. No
+Account is committed by this test, and I13c/I13d/I13e are not accepted yet.
