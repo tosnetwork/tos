@@ -22,6 +22,7 @@
 #include "block/block.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-participant-lt.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4372,7 +4373,8 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
 // value, charges fees separately, and never skips failures or drains the account.
 td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                               const ActionPhaseConfig& cfg,
-                                                              const CurrencyCollection& initial_balance) {
+                                                              const CurrencyCollection& initial_balance,
+                                                              bool preserve_vm_exceptions) {
   if (!cfg.workchains || cfg.max_actions < 0) {
     return td::Status::Error("missing batch native message configuration");
   }
@@ -4419,8 +4421,10 @@ td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell
     }
     return staged;
   } catch (vm::VmError&) {
+    if (preserve_vm_exceptions) throw;
     return td::Status::Error("invalid batch outbound message cells");
   } catch (vm::VmVirtError&) {
+    if (preserve_vm_exceptions) throw;
     return td::Status::Error("incomplete batch outbound message proof");
   }
 }
@@ -4534,6 +4538,77 @@ td::Status Transaction::prepare_workchain_batch(const WorkchainBlockInput& input
   batch_out_msgs = out_msgs;
   batch_end_lt = end_lt;
   return td::Status::OK();
+}
+
+td::Result<PricedWorkchainPayout> Transaction::price_workchain_payout(
+    const Account& custody, Ref<vm::Cell> request, tos::LogicalTime start_lt,
+    tos::UnixTime now, td::RefInt256 fee_budget, const ActionPhaseConfig& cfg) {
+  if (cfg.global_version < kStorageParticipantMinGlobalVersion || custody.status != Account::acc_active ||
+      custody.workchain < 0 || custody.is_special || custody.now_ != now ||
+      start_lt < custody.last_trans_end_lt_ || fee_budget.is_null() ||
+      !fee_budget->is_valid() || !fee_budget->unsigned_fits_bits(256)) {
+    return td::Status::Error("invalid payout pricing context");
+  }
+  TRY_RESULT(message_lt, participant_lt_detail::checked_add(start_lt, 1));
+  TRY_RESULT(expected_end_lt, participant_lt_detail::checked_add(message_lt, 1));
+  gen::MessageRelaxed::Record message;
+  gen::CommonMsgInfoRelaxed::Record_int_msg_info info;
+  gen::MsgAddressInt::Record_addr_std destination;
+  CurrencyCollection payment;
+  if (!gen::t_MessageRelaxed_Any.validate_ref(4096, request) ||
+      !tlb::type_unpack_cell(request, gen::t_MessageRelaxed_Any, message) ||
+      !tlb::csr_unpack(message.info, info) || !tlb::csr_unpack(info.dest, destination) ||
+      destination.anycast->size_ext() != 1 || !info.ihr_disabled || !info.bounce || info.bounced ||
+      !payment.unpack(info.value) || payment.tomis->sgn() <= 0) {
+    return td::Status::Error("invalid payout request profile");
+  }
+  auto flags = tlb::t_Tomis.as_integer(info.extra_flags);
+  auto requested_fee = tlb::t_Tomis.as_integer(info.fwd_fee);
+  if (flags.is_null() || td::cmp(flags, tol::EXTRA_FLAGS_RICH_BOUNCE) != 0 ||
+      requested_fee.is_null() || td::sgn(requested_fee) != 0) {
+    return td::Status::Error("payout must request rich bounce and native fee pricing");
+  }
+  CurrencyCollection principal_remainder, funded;
+  // Deliberate independent check: pricing must not succeed for principal the
+  // custody cannot fund, even before the two-account allocation is performed.
+  if (!CurrencyCollection::sub(custody.balance, payment, principal_remainder)) {
+    return td::Status::Error("payout exceeds custody principal");
+  }
+  const CurrencyCollection allowance(fee_budget);
+  if (!CurrencyCollection::add(payment, allowance, funded) || !funded.tomis->unsigned_fits_bits(256)) {
+    return td::Status::Error("payout plus fee budget out of bounds");
+  }
+  vm::Dictionary requests(15);
+  // A zero literal selects the pointer constructor, not an integer key.
+  td::BitArray<15> request_key;
+  request_key.set_zero();
+  if (!requests.set_ref(request_key, request, vm::Dictionary::SetMode::Add)) {
+    return td::Status::Error("cannot construct payout request dictionary");
+  }
+  Transaction scratch(custody, tr_workchain_batch, start_lt, now);
+  vm::CellBuilder encoded_requests;
+  if (!std::move(requests).append_dict_to_bool(encoded_requests)) {
+    return td::Status::Error("cannot wrap payout request dictionary");
+  }
+  TRY_RESULT(staged, scratch.stage_workchain_messages(encoded_requests.finalize(), cfg, funded, true));
+  if (staged.out_msgs.size() != 1 || staged.end_lt != expected_end_lt) {
+    return td::Status::Error("native payout differs from single-message schedule");
+  }
+  // The virtual fee allowance never becomes custody balance. Unspent allowance
+  // must exactly match what Native construction left after payment and fees.
+  CurrencyCollection unspent;
+  if (!CurrencyCollection::sub(CurrencyCollection(fee_budget), CurrencyCollection(staged.total_fwd_fees), unspent) ||
+      unspent != staged.remaining_balance) {
+    return td::Status::Error("native payout fee result differs from budget");
+  }
+  gen::CommonMsgInfo::Record_int_msg_info sent;
+  CurrencyCollection sent_payment, difference;
+  if (!tlb::unpack_cell_inexact(staged.out_msgs[0], sent) || !sent_payment.unpack(sent.value) ||
+      !CurrencyCollection::sub(payment, sent_payment, difference) || !difference.is_zero()) {
+    return td::Status::Error("native payout value differs from requested payment");
+  }
+  return PricedWorkchainPayout{staged.out_msgs[0], sent_payment, staged.total_fwd_fees,
+                               staged.total_action_fees, staged.end_lt};
 }
 
 td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,

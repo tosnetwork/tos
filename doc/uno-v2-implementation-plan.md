@@ -207,3 +207,68 @@ are publication-consistency controls, not independent removal coverage of
 every arithmetic guard. Raw manual evidence is in
 `measurements/uno-v2-payout-accounting-evidence.json`; ordinary tests are in
 CTest, mutation jobs are not. M1 review and full Native settlement remain due.
+
+### Native payout reconstruction and pricing (boundary reviewed)
+
+`Transaction::price_workchain_payout` reconstructs one mode-1 Native message in
+a private scratch transaction, using real configured forwarding prices. It
+returns the actual encoded payment, total fee, collected fee and end LT, without
+committing the custody account. A fee budget is only a ceiling: the test supplies
+500 and observes a fee of 102, not 500. Referenced body storage exercises the
+basechain price path: 256 bits and one cell produce 460 with a collected share
+of 230 under the fixture's price configuration. These are test prices, not
+production initial values. Principal affordability and funding arithmetic are
+checked before Native construction; LT additions are checked before entering
+the existing constructor and message increment paths.
+
+The request must use rich bounce, no anycast, no caller-quoted forwarding fee,
+and positive payment. The returned value is unpacked from the actual generated
+message and compared numerically. A zero extra entry passes generated syntax
+validation but fails Native's handwritten currency validator, which uses
+positive extra amounts before the send normalization path. Such requests remain
+rejected; this helper does not widen Native's admissible currency encodings.
+
+Claude Code's boundary review is retained at
+`~/memo/reviews/uno-v2-native-payout-pricing-review.txt`. Disposition:
+
+- Findings 1/2: fixed production-version feature flags in the fixture, added
+  referenced-body pricing, basechain lookup and surplus-budget assertions.
+- Findings 3/4: documented actual escaping exception types. The new path asks
+  the existing staging helper to preserve VM exceptions; its default remains
+  unchanged for old callers. Injected request-root load faults must propagate,
+  including faults during staging. This does not prove all descendant or
+  allocation failure paths. Disputed the claim that VmVirtError alone proves
+  a local fault: input provenance, not exception class alone, determines that.
+  The enclosing authenticated admission boundary still must classify failures.
+- Finding 5: added validly encoded profile negatives and context boundaries.
+  Independent removal controls cover the special-account guard and version
+  floor; no removal coverage is claimed for every guard or redundant check.
+- Finding 6: disputed the address interpretation: `-1:X` and `2:X` are different
+  addresses; the fee-paying coordinator is not necessarily the payout payee.
+  Added an actual `2:custody` to `0:payee` case, including destination checks,
+  configured workchain lookup, and rejection when that workchain is absent.
+- Finding 7: fixed returned-message value binding. Disputed that removing zero
+  entries from virtual funding would make the sample Native-sendable: the new
+  sample failed even with that attempted fix, because the existing handwritten
+  validator rejects it before send normalization. The attempted normalization
+  patch was withdrawn. The test explicitly checks both parser outcomes and
+  rejection; this is compatibility evidence, not a new independent guard.
+- Finding 8: documented the deliberately repeated principal check and fee
+  meanings, restored declaration/comment adjacency, and asserted the changed
+  collected share. Structural builder checks are not claimed as independent
+  security gates.
+
+Manual controls also disable exception propagation or return the maximum fee
+budget instead of the Native fee; each fails an exception/numeric assertion.
+Raw controls are in `measurements/uno-v2-native-payout-pricing-evidence.json`.
+They are not automated CI mutations. The ordinary test is in the registered
+block target. A zero-literal BitArray constructor initially selected a pointer
+conversion; explicit `set_zero()` avoids that construction bug.
+
+This helper does not authenticate role assignments, input policy or effects;
+it is not a payout-authorizing transaction wrapper. Its local version floor
+does not activate the multi-account profile. Effects-to-message binding,
+coordinator debit and custody wrapper construction, independent validator
+replay, and live shard publication remain M1 work. No retirement transition
+removes configuration 84, the descriptor or custody: economic settlement is
+not proof that Native messages no longer need those destinations.

@@ -445,14 +445,15 @@ TEST(WorkchainBlock, ParticipantLtExhaustion) {
 
 class PreflightObservedCell final : public vm::Cell {
  public:
-  PreflightObservedCell(td::Ref<vm::Cell> cell, unsigned* loads, bool unavailable = false)
-      : cell_(std::move(cell)), loads_(loads), unavailable_(unavailable) {
+  PreflightObservedCell(td::Ref<vm::Cell> cell, unsigned* loads, bool unavailable = false, unsigned throw_at = 0)
+      : cell_(std::move(cell)), loads_(loads), unavailable_(unavailable), throw_at_(throw_at) {
   }
   td::Status set_data_cell(td::Ref<vm::DataCell>&& cell) const override {
     return cell_->set_data_cell(std::move(cell));
   }
   td::Result<LoadedCell> load_cell() const override {
     ++*loads_;
+    if (*loads_ == throw_at_) throw vm::VmVirtError{1};
     if (unavailable_) return td::Status::Error("test input unavailable");
     return cell_->load_cell();
   }
@@ -467,6 +468,7 @@ class PreflightObservedCell final : public vm::Cell {
   td::Ref<vm::Cell> cell_;
   unsigned* loads_;
   bool unavailable_;
+  unsigned throw_at_;
 };
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
@@ -1589,6 +1591,170 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   tx.new_data = number(99);
   ASSERT_TRUE(!tx.serialize(cfg));
   ASSERT_TRUE(account.total_state->get_hash() == account.orig_total_state->get_hash());
+}
+
+TEST(WorkchainBlock, NativePayoutPricing) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto key = td::Bits256::zero();
+  auto operator_key = key;
+  operator_key.as_slice().back() = 1;
+  block::Account account(2, key.bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(key), 10, false));
+  auto old = account.total_state->get_hash();
+  vm::CellBuilder cb;
+  cb.store_long(6, 4).store_zeroes(2).store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+  ASSERT_TRUE(block::CurrencyCollection(100).store(cb));
+  ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(cb, td::make_refint(3)));
+  cb.store_zeroes(4).store_zeroes(96).store_zeroes(2).store_bits(operator_key.bits(), 256);
+  auto request = cb.finalize();
+  ASSERT_TRUE(block::gen::t_MessageRelaxed_Any.validate_ref(4096, request));
+  block::WorkchainSet workchains;
+  block::ActionPhaseConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_custom_fess = cfg.disable_anycast = true;
+  cfg.action_fine_enabled = cfg.bounce_on_fail_enabled = cfg.message_skip_enabled = cfg.extra_currency_v2 = true;
+  cfg.workchains = &workchains;
+  cfg.fwd_mc.lump_price = 100;
+  cfg.fwd_mc.first_frac = 32768;
+  using Transaction = block::transaction::Transaction;
+  auto priced = Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(100), cfg);
+  if (priced.is_error()) LOG(ERROR) << priced.error();
+  ASSERT_TRUE(priced.is_ok());
+  auto result = priced.move_as_ok();
+  ASSERT_EQ(result.total_fee->to_long(), 100);
+  ASSERT_EQ(result.collected_fee->to_long(), 50);
+  ASSERT_EQ(result.end_lt, 22u);
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  ASSERT_TRUE(tlb::unpack_cell_inexact(result.message, info));
+  ASSERT_EQ(info.created_lt, 21u);
+  ASSERT_EQ(block::tlb::t_Tomis.as_integer(info.fwd_fee)->to_long(), 50);
+  block::CurrencyCollection sent_value;
+  ASSERT_TRUE(sent_value.unpack(info.value) && sent_value == result.payment);
+  block::gen::MsgAddressInt::Record_addr_std src;
+  ASSERT_TRUE(tlb::csr_unpack(info.src, src));
+  ASSERT_EQ(src.workchain_id, 2);
+  ASSERT_TRUE(src.address == key);
+  auto settlement = block::account_workchain_payout(key, operator_key, account.balance,
+      block::CurrencyCollection(100), result.payment, result.total_fee, result.collected_fee, 100).move_as_ok();
+  ASSERT_TRUE(settlement.custody_after == block::CurrencyCollection(900));
+  ASSERT_TRUE(settlement.operator_after.is_zero());
+  ASSERT_TRUE(settlement.exported == block::CurrencyCollection(150));
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(99), cfg).is_error());
+  cfg.fwd_mc.lump_price = 102;
+  auto repriced = Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(102), cfg).move_as_ok();
+  ASSERT_EQ(repriced.total_fee->to_long(), 102);
+  ASSERT_EQ(repriced.collected_fee->to_long(), 51);
+  ASSERT_TRUE(repriced.message->get_hash() != result.message->get_hash());
+  auto surplus = Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(500), cfg).move_as_ok();
+  ASSERT_EQ(surplus.total_fee->to_long(), 102);
+  ASSERT_TRUE(surplus.message->get_hash() == repriced.message->get_hash());
+  vm::Dictionary zero_extra(32);
+  vm::CellBuilder zero_amount;
+  ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(zero_amount, *td::make_refint(0)));
+  ASSERT_TRUE(zero_extra.set_builder(operator_key.bits(), 32, zero_amount));
+  block::gen::MessageRelaxed::Record zero_request;
+  block::gen::CommonMsgInfoRelaxed::Record_int_msg_info zero_info;
+  ASSERT_TRUE(tlb::type_unpack_cell(request, block::gen::t_MessageRelaxed_Any, zero_request));
+  ASSERT_TRUE(tlb::csr_unpack(zero_request.info, zero_info));
+  ASSERT_TRUE(block::CurrencyCollection(100, zero_extra.get_root_cell()).pack_to(zero_info.value));
+  ASSERT_TRUE(tlb::csr_pack(zero_request.info, zero_info));
+  td::Ref<vm::Cell> zero_encoded;
+  ASSERT_TRUE(tlb::type_pack_cell(zero_encoded, block::gen::t_MessageRelaxed_Any, zero_request));
+  ASSERT_TRUE(block::gen::t_MessageRelaxed_Any.validate_ref(4096, zero_encoded));
+  // Generated syntax accepts zero entries; Native send's handwritten currency
+  // validator requires positive extra amounts before its normalization path.
+  ASSERT_TRUE(!block::tlb::t_CurrencyCollection.validate_csr(zero_info.value));
+  auto normalized = Transaction::price_workchain_payout(account, zero_encoded, 20, 10, td::make_refint(500), cfg);
+  ASSERT_TRUE(normalized.is_error());
+  auto old_cfg = cfg;
+  old_cfg.global_version = 15;
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(500), old_cfg).is_error());
+  account.is_special = true;
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(500), cfg).is_error());
+  account.is_special = false;
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, std::numeric_limits<std::uint64_t>::max(),
+      10, td::make_refint(500), cfg).is_error());
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 1, 10, td::make_refint(500), cfg).is_error());
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(-1), cfg).is_error());
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, {}, cfg).is_error());
+  for (unsigned field = 0; field < 8; ++field) {
+    block::gen::MessageRelaxed::Record altered;
+    block::gen::CommonMsgInfoRelaxed::Record_int_msg_info changed;
+    ASSERT_TRUE(tlb::type_unpack_cell(request, block::gen::t_MessageRelaxed_Any, altered));
+    ASSERT_TRUE(tlb::csr_unpack(altered.info, changed));
+    switch (field) {
+      case 0: changed.bounce = false; break;
+      case 1: changed.bounced = true; break;
+      case 2: ASSERT_TRUE(block::tlb::t_Tomis.pack_integer(changed.extra_flags, td::make_refint(0))); break;
+      case 3: ASSERT_TRUE(block::tlb::t_Tomis.pack_integer(changed.fwd_fee, td::make_refint(1))); break;
+      case 4: ASSERT_TRUE(block::CurrencyCollection(0).pack_to(changed.value)); break;
+      case 5: ASSERT_TRUE(block::CurrencyCollection(1001).pack_to(changed.value)); break;
+      case 6: changed.ihr_disabled = false; break;
+      case 7:
+        changed.dest = vm::load_cell_slice_ref(vm::CellBuilder().store_long(5, 3).store_long(1, 5)
+            .store_long(0, 1).store_long(-1, 8).store_zeroes(256).finalize());
+        break;
+    }
+    ASSERT_TRUE(tlb::csr_pack(altered.info, changed));
+    td::Ref<vm::Cell> bad_profile;
+    ASSERT_TRUE(tlb::type_pack_cell(bad_profile, block::gen::t_MessageRelaxed_Any, altered));
+    ASSERT_TRUE(block::gen::t_MessageRelaxed_Any.validate_ref(4096, bad_profile));
+    ASSERT_TRUE(Transaction::price_workchain_payout(account, bad_profile, 20, 10, td::make_refint(500), cfg).is_error());
+  }
+  block::gen::MessageRelaxed::Record expanded;
+  ASSERT_TRUE(tlb::type_unpack_cell(request, block::gen::t_MessageRelaxed_Any, expanded));
+  expanded.body = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1)
+      .store_ref(vm::CellBuilder().store_bits(operator_key.bits(), 256).finalize()).finalize());
+  block::gen::CommonMsgInfoRelaxed::Record_int_msg_info expanded_info;
+  ASSERT_TRUE(tlb::csr_unpack(expanded.info, expanded_info));
+  td::Bits256 payee(number(7)->get_hash().bits());
+  expanded_info.dest = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(0, 8)
+      .store_bits(payee.bits(), 256).finalize());
+  ASSERT_TRUE(tlb::csr_pack(expanded.info, expanded_info));
+  td::Ref<vm::Cell> basechain_request;
+  ASSERT_TRUE(tlb::type_pack_cell(basechain_request, block::gen::t_MessageRelaxed_Any, expanded));
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  basechain.write().addr_len_step = 0;
+  workchains.emplace(0, basechain);
+  cfg.fwd_std.lump_price = 200;
+  cfg.fwd_std.bit_price = 65536;
+  cfg.fwd_std.cell_price = 262144;
+  cfg.fwd_std.first_frac = 32768;
+  auto sized = Transaction::price_workchain_payout(account, basechain_request, 20, 10, td::make_refint(500), cfg).move_as_ok();
+  ASSERT_EQ(sized.total_fee->to_long(), 460);
+  ASSERT_EQ(sized.collected_fee->to_long(), 230);
+  ASSERT_TRUE(tlb::unpack_cell_inexact(sized.message, info));
+  block::gen::MsgAddressInt::Record_addr_std dest;
+  ASSERT_TRUE(tlb::csr_unpack(info.dest, dest));
+  ASSERT_EQ(dest.workchain_id, 0);
+  ASSERT_TRUE(dest.address == payee);
+  workchains.clear();
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, basechain_request, 20, 10, td::make_refint(500), cfg).is_error());
+  // Inject a virtualization exception at every request-root load, including
+  // loads inside Native staging. No load failure may become a priced result
+  // or an ordinary returned error. Classification itself belongs to the host.
+  unsigned loads = 0;
+  auto observed = td::Ref<PreflightObservedCell>{true, request, &loads};
+  ASSERT_TRUE(Transaction::price_workchain_payout(account, observed, 20, 10, td::make_refint(500), cfg).is_ok());
+  ASSERT_TRUE(loads > 1);
+  const auto total_loads = loads;
+  for (unsigned fail_at = 1; fail_at <= total_loads; ++fail_at) {
+    loads = 0;
+    auto faulty = td::Ref<PreflightObservedCell>{true, request, &loads, false, fail_at};
+    bool propagated = false;
+    try {
+      auto unexpected = Transaction::price_workchain_payout(account, faulty, 20, 10, td::make_refint(500), cfg);
+      (void)unexpected;
+    } catch (const vm::VmVirtError&) { propagated = true; }
+    ASSERT_TRUE(propagated);
+  }
+  ASSERT_TRUE(account.total_state->get_hash() == old);
+  ASSERT_TRUE(account.balance == block::CurrencyCollection(1000));
 }
 
 TEST(WorkchainBlock, BatchNativeMessageSettlement) {

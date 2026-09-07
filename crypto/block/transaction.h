@@ -46,6 +46,15 @@ struct WorkchainBlockInput;
 struct WorkchainBlockResult;
 
 namespace transaction {
+
+struct PricedWorkchainPayout {
+  Ref<vm::Cell> message;
+  CurrencyCollection payment;
+  // Current-transaction share is collected_fee; the remainder travels with
+  // the message. Both values come from Native construction, not the request.
+  td::RefInt256 total_fee, collected_fee;
+  tos::LogicalTime end_lt;
+};
 struct Transaction;
 }  // namespace transaction
 
@@ -426,7 +435,8 @@ struct Transaction {
   bool batch_storage_only{false};
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                   const ActionPhaseConfig& cfg,
-                                                  const CurrencyCollection& initial_balance);
+                                                  const CurrencyCollection& initial_balance,
+                                                  bool preserve_vm_exceptions = false);
   td::Result<CurrencyCollection> stage_workchain_credit(const WorkchainBlockInput& input,
                                                        const SerializeConfig& cfg) const;
  public:
@@ -485,6 +495,15 @@ struct Transaction {
   static constexpr int kStorageParticipantMinGlobalVersion = 16;
   td::Status prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                   const SerializeConfig& cfg);
+  // Reconstruct one mode-1 payout using Native pricing in private scratch state.
+  // Locally derived, admitted inputs only; this is not payout authorization.
+  // fee_budget is a maximum spend, not a quoted fee. No account is committed.
+  // VmError, VmVirtError, CellCreateError, CellWriteError, CombineError and
+  // allocation failures propagate. The enclosing host classifies by input
+  // provenance; neither an exception class nor Status alone establishes it.
+  static td::Result<PricedWorkchainPayout> price_workchain_payout(
+      const Account& custody, Ref<vm::Cell> request, tos::LogicalTime start_lt,
+      tos::UnixTime now, td::RefInt256 fee_budget, const ActionPhaseConfig& cfg);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;
