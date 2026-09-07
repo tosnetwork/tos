@@ -1568,3 +1568,21 @@ queue/metadata/actual-source FIFO obligations are in
 `uno-v2-disposal-allocation-overlay.md`; raw evidence and substitutions are in
 `measurements/uno-v2-disposal-overlay-evidence.json`. No live queue publication,
 validator address exception or M1 completion is claimed.
+
+### Disposal runner and replay (M1 integration, milestone review pending)
+
+The explicit runner now carries all materialized Native final imports through
+one account-engine invocation into the disposal overlay. Independent replay
+checks the full input before its own single invocation and reconstructs the
+Native roots and derived export caches. The strict existing runner is unchanged.
+Unsplit, distinct-role and pricing consistency failures occur before engine
+execution. These structural checks do not authenticate configuration.
+
+Ten rebuilt controls failed, including zero-call witnesses for the early checks.
+An additional positive payout regression exposed an unnecessarily broad initial
+guard; removing it preserves the existing no-foreign-input payout path. Combined
+custody payout and coordinator disposal remains the next settlement integration
+step, before live queue/validator activation. No input filtering is introduced.
+Restored five-test CTest regression and standalone header compilation passed.
+See `uno-v2-disposal-runner.md` and
+`measurements/uno-v2-disposal-runner-evidence.json`. M1 remains incomplete.

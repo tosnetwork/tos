@@ -89,4 +89,10 @@ inline td::Result<WorkchainNativeInboxPlan> plan_workchain_disposal_inbox(
   return native_inbox_detail::plan_inbox(root, workchain, nullptr, after_lt, max_inbound);
 }
 
+inline td::Result<WorkchainNativeInboxPlan> plan_workchain_disposal_envelopes(
+    const std::vector<td::Ref<vm::Cell>>& envelopes, tos::WorkchainId workchain,
+    std::uint64_t after_lt, std::uint64_t max_inbound) {
+  return native_inbox_detail::plan_envelopes(envelopes, workchain, nullptr, after_lt, max_inbound);
+}
+
 }  // namespace block

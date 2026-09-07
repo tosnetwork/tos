@@ -15,6 +15,8 @@ struct WorkchainAccountSettlement {
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
   WorkchainFinalImportEvidence imports;
+  // Disposal exports derived from transactions, not queue-ready envelopes.
+  std::vector<NewOutMsg> exports;
 };
 
 // One engine invocation followed by private Native materialization. No caller
@@ -22,9 +24,11 @@ struct WorkchainAccountSettlement {
 // This post-admission operation does not authenticate roles, resource policy,
 // old state or withdrawal authorization. The resolved engine must derive its
 // payout request from verified obligations, not forward an unverified request.
-// Registration and misdirected inbound disposal need additional Native record shapes.
-// Message-free internal allocations may share a batch with a priced payout.
-inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
+// Registration needs additional Native record shapes. The explicit disposal
+// runner preserves foreign destinations; the strict runner rejects them.
+// Joint disposal and custody payout settlement still needs integration.
+namespace account_settlement_detail {
+inline td::Result<WorkchainAccountSettlement> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
     const WorkchainAccountDeclarations& declarations,
@@ -32,15 +36,21 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells,
-    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    const WorkchainDisposalEntryContext* disposal) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
+  if (disposal && (identity.shard_id != tos::shardIdAll || coordinator == custody ||
+                   cfg.global_version != message_cfg.global_version)) {
+    return td::Status::Error("invalid resolved disposal settlement context");
+  }
   // Ownership is enforced by type. Queue authentication, aggregate admission
   // and role authorization are still enclosing-host obligations. Check final
   // import destinations before account acquisition or any engine invocation.
   std::vector<td::Bits256> recipients{coordinator, custody};
   std::sort(recipients.begin(), recipients.end());
-  TRY_RESULT(inbox, plan_workchain_native_envelopes(native_cells.roots(), identity.workchain_id,
-      recipients, identity.host_after_lt, max_inbound));
+  TRY_RESULT(inbox, disposal ? plan_workchain_disposal_envelopes(native_cells.roots(), identity.workchain_id,
+      identity.host_after_lt, max_inbound) : plan_workchain_native_envelopes(native_cells.roots(),
+      identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
       inbox.envelopes, max_reads, max_writes, max_inbound));
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
@@ -60,13 +70,20 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
   WorkchainFinalImportEvidence imports;
+  std::vector<NewOutMsg> exports;
   if (executed.effects.payout_request.is_null()) {
-    TRY_RESULT(allocated, build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
+    TRY_RESULT(allocated, disposal ? build_workchain_disposal_allocation_overlay(old_accounts, identity, executed.input,
+        effects_root, coordinator, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, *disposal) :
+        build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
         effects_root, coordinator, custody, max_reads, max_writes, max_transfers, max_inbound,
         extra_validation_cells, cfg));
     state = std::move(allocated.state);
     imports = std::move(allocated.imports);
+    exports = std::move(allocated.exports);
   } else {
+    // Preserve the existing payout path when there are no foreign imports.
+    // It validates the complete inbox and rejects foreign destinations; it
+    // never filters them. Joint payout/disposal still requires integration.
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
         executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
@@ -76,7 +93,35 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     imports = std::move(payout.imports);
   }
   return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
-                                    std::move(state), std::move(message), std::move(imports)};
+                                    std::move(state), std::move(message), std::move(imports), std::move(exports)};
+}
+}  // namespace account_settlement_detail
+
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
+    const WorkchainAccountDeclarations& declarations, const MaterializedNativeCells& native_cells,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
+    const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  return account_settlement_detail::execute(engine, old_accounts, identity, admitted, declarations, native_cells,
+      max_reads, max_writes, max_inbound, max_transfers, custody, coordinator, std::move(fee_budget),
+      extra_validation_cells, cfg, message_cfg, nullptr);
+}
+
+// Explicit post-admission disposal runner. Roles, limits and prices have one
+// source in context; native_cells owns the complete detached Native closures.
+// It is not registration, return authorization, or a final voting boundary.
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_disposal(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
+    const WorkchainAccountDeclarations& declarations, const MaterializedNativeCells& native_cells,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,
+    const td::Bits256& coordinator, td::RefInt256 fee_budget, int extra_validation_cells,
+    const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context) {
+  return account_settlement_detail::execute(engine, old_accounts, identity, admitted, declarations, native_cells,
+      max_reads, max_writes, context.max_inbound, max_transfers, context.custody, coordinator, std::move(fee_budget),
+      extra_validation_cells, cfg, context.messages, &context);
 }
 
 }  // namespace block

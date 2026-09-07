@@ -1633,6 +1633,83 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(build_overlay(insolvent_root).is_error());
   ASSERT_EQ(old.accounts->get_hash(), original_hash);
   ASSERT_TRUE(build_overlay(effects_root).move_as_ok().state.accounts->get_hash() == overlay.state.accounts->get_hash());
+  struct DisposalEngine final : block::WorkchainAccountEngine {
+    mutable std::uint64_t calls{0};
+    mutable td::Ref<vm::Cell> seen;
+    block::WorkchainAccountEffects effects;
+    td::Result<block::WorkchainAccountEffects> execute_accounts(
+        const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
+      TRY_RESULT(next, block::participant_lt_detail::checked_add(calls, 1));
+      calls = next;
+      seen = input;
+      for (const auto& update : effects.updates) {
+        TRY_RESULT(old, view.read(update.account));
+        if (old.is_null()) return td::Status::Error("missing disposal engine account");
+      }
+      return effects;
+    }
+  } engine;
+  engine.effects = effects;
+  const auto owned_inbox = own_native_fixture(inbox);
+  auto execute_disposal = [&](const block::WorkchainHostIdentity& id,
+                             const block::WorkchainDisposalEntryContext& resolved) {
+    return block::execute_and_settle_workchain_disposal(engine, old.accounts, id, admitted,
+        access, owned_inbox, 2, 2, 2, a, td::make_refint(0), 4096, cfg, resolved);
+  };
+  auto settled_result = execute_disposal(overlay_identity, context);
+  ASSERT_TRUE(settled_result.is_ok());
+  auto settled = settled_result.move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(engine.seen->get_hash(), overlay_input->get_hash());
+  ASSERT_EQ(settled.input->get_hash(), overlay_input->get_hash());
+  ASSERT_EQ(settled.effects->get_hash(), effects_root->get_hash());
+  ASSERT_EQ(settled.state.accounts->get_hash(), overlay.state.accounts->get_hash());
+  ASSERT_EQ(settled.state.account_blocks->get_hash(), overlay.state.account_blocks->get_hash());
+  ASSERT_EQ(settled.imports.in_msg_descr->get_hash(), overlay.imports.in_msg_descr->get_hash());
+  ASSERT_EQ(settled.exports.size(), 2u);
+  auto replay_disposal = [&](const block::WorkchainAccountSettlement& claim) {
+    engine.calls = 0;
+    return block::replay_workchain_disposal_settlement(engine, old.accounts, overlay_identity, admitted,
+        access, owned_inbox, 2, 2, 2, a, td::make_refint(0), 4096, cfg, context, claim);
+  };
+  ASSERT_TRUE(replay_disposal(settled).is_ok());
+  ASSERT_EQ(engine.calls, 1u);
+  auto absent_cache = settled;
+  absent_cache.exports.clear();
+  auto rebuilt_cache = replay_disposal(absent_cache).move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(rebuilt_cache.exports.size(), 2u);
+  for (unsigned field = 0; field < 6; ++field) {
+    LOG(INFO) << "disposal runner replay case=" << field;
+    auto wrong = settled;
+    if (field == 0) wrong.input = input; // Valid encoding of another identity.
+    if (field == 1) wrong.effects = insolvent_root;
+    if (field == 2) wrong.state.accounts = old.accounts;
+    if (field == 3) wrong.state.account_blocks = number(10);
+    if (field == 4) wrong.imports.in_msg_descr = number(11);
+    if (field == 5) wrong.state.end_lt = 23;
+    ASSERT_TRUE(replay_disposal(wrong).is_error());
+    ASSERT_EQ(engine.calls, field == 0 ? 0u : 1u);
+  }
+  for (unsigned fault = 0; fault < 4; ++fault) {
+    auto id = overlay_identity;
+    auto limited = context;
+    auto prices = messages;
+    if (fault == 0) id.shard_id = UINT64_MAX;
+    if (fault == 1) limited.custody = a;
+    if (fault == 2) limited.max_inbound = 4;
+    if (fault == 3) prices.global_version = 15;
+    block::WorkchainDisposalEntryContext resolved{limited.custody, prices, workchains, profile,
+        limited.max_inbound, limited.max_outbound};
+    engine.calls = 0;
+    ASSERT_TRUE(execute_disposal(id, resolved).is_error());
+    ASSERT_EQ(engine.calls, 0u);
+  }
+  engine.calls = 0;
+  ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, old.accounts, overlay_identity, admitted,
+      access, owned_inbox, 2, 2, 5, 2, b, a, td::make_refint(0), 4096, cfg, messages).is_error());
+  ASSERT_EQ(engine.calls, 0u);
+  ASSERT_EQ(old.accounts->get_hash(), original_hash);
   auto mismatched_prices = messages;
   mismatched_prices.global_version = 15;
   block::WorkchainDisposalEntryContext mismatch{b, mismatched_prices, workchains, profile, 5, 2};
@@ -2372,6 +2449,27 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_TRUE(settled.is_ok());
     ASSERT_EQ(engine.calls, 1u);
     const auto& value = settled.ok();
+    // Enabling disposal must not disable the existing no-foreign-input payout
+    // path. Compare full artifacts under the same unsplit identity.
+    auto unsplit = identity;
+    unsplit.shard_id = tos::shardIdAll;
+    block::NativeDisposalProfile disposal_profile{block::NativeDisposalSource::OriginalDestination,
+        {0, -block::ComputePhase::sk_no_state, {}}, false};
+    block::WorkchainDisposalEntryContext disposal_context{a, pricing, workchains, disposal_profile, 0, 1};
+    engine.calls = 0;
+    auto enabled = block::execute_and_settle_workchain_disposal(engine, state.accounts, unsplit, admitted,
+        declarations, own_native_fixture({}), 2, 2, 2, b, td::make_refint(500), 4096, cfg, disposal_context);
+    ASSERT_TRUE(enabled.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    auto strict = block::execute_and_settle_workchain_accounts(engine, state.accounts, unsplit, admitted,
+        declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 4096, cfg, pricing).move_as_ok();
+    ASSERT_EQ(engine.calls, 2u);
+    ASSERT_EQ(enabled.ok().input->get_hash(), strict.input->get_hash());
+    ASSERT_EQ(enabled.ok().state.accounts->get_hash(), strict.state.accounts->get_hash());
+    ASSERT_EQ(enabled.ok().state.account_blocks->get_hash(), strict.state.account_blocks->get_hash());
+    ASSERT_EQ(enabled.ok().imports.in_msg_descr->get_hash(), strict.imports.in_msg_descr->get_hash());
+    ASSERT_EQ(enabled.ok().message.not_null(), with_payout);
+    if (with_payout) ASSERT_EQ(enabled.ok().message->get_hash(), strict.message->get_hash());
     auto expected_input = block::encode_workchain_host_input(identity, admitted, declarations, {}, 2, 2, 0).move_as_ok();
     ASSERT_TRUE(value.input->get_hash() == expected_input->get_hash());
     ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, value.effects));
