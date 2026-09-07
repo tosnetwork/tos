@@ -4738,6 +4738,17 @@ td::Status Transaction::prepare_workchain_allocation_participant(
   return td::Status::OK();
 }
 
+td::Status Transaction::prepare_workchain_import_participant(
+    Ref<vm::Cell> binding, Ref<vm::Cell> input, Ref<vm::Cell> effects, Ref<vm::Cell> data,
+    const SerializeConfig& cfg, std::uint64_t max_transfers, int extra_validation_cells) {
+  TRY_STATUS(prepare_workchain_entry(binding, std::move(input), std::move(effects), std::move(data),
+                                    cfg, max_transfers, extra_validation_cells));
+  batch_description = vm::CellBuilder()
+      .store_long(tlb::TransactionDescr::trans_workchain_settlement_participant_v3, 4)
+      .store_ref(binding).finalize();
+  return td::Status::OK();
+}
+
 td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                                Ref<vm::Cell> effects, Ref<vm::Cell> data,
                                                const SerializeConfig& cfg, std::uint64_t max_transfers,
@@ -4770,9 +4781,10 @@ td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::C
   if (update.is_null() || update->get_hash() != data->get_hash()) {
     return td::Status::Error("entry data differs from account effects");
   }
-  // There is one entry per batch. This ordered scan binds the physical entry
-  // index; it is not repeated for each storage participant. Effects closures
-  // and traversal work require admission before calling this factory.
+  // This ordered scan binds the physical record index. Importing participants
+  // reuse this validation; storage-only participants do not. Effects closures
+  // and repeated traversal work require admission before calling this factory.
+  // The enclosing host must still publish exactly one full tag-12 entry.
   std::uint64_t index = 0;
   bool matched_index = false;
   if (!updates.check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr key, int width) {

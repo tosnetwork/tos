@@ -1109,3 +1109,37 @@ After exact source restoration, all five regression targets and standalone
 header compilation pass. Logs, substitutions and source/binary identities are
 in `measurements/uno-v2-native-inbox-evidence.json`. These are manual controls,
 not a recurring mutation CI gate or completed Native inbox/payout integration.
+
+### Importing participant and remaining inbound settlement work
+
+The restricted import participant reuses entry validation of full input/effects,
+the old account, its write/index and data, then stores only its tag-11 binding.
+It applies its own Native message credit and internal allocations without an
+engine invocation, ordinary phases or outputs. The unique coordinator entry
+retains the full roots. The importing pair test reconstructs actual final InMsg
+records and serialized account/transaction balances before checking independent
+value flow. Boundary review prompted twelve negative input/context/access/budget
+fixtures at the import wrapper, a cached direct-input rejection, and three
+perturbed import-flow rows. All seventeen manual removal controls rebuilt and
+failed; restored five-target regression and standalone header compilation pass.
+See `uno-v2-import-participant-review-disposition.md` and
+`measurements/uno-v2-import-participant-evidence.json`. These are manual evidence,
+not mutation CI, production custody authorization or completed M1 acceptance.
+
+The next integration must cover both coordinator and custody receiving roles
+in non-payout materialization, and the same two roles in payout materialization.
+Full input admission and the shared inbox LT plan precede transaction creation.
+In the payout pair, imported values and the committed allocation graph must be
+applied before debiting payout principal and forwarding fees. The separate old
+custody authorization envelope must not be enlarged by those imports. Actual
+InMsg augmentation, actual outputs and serialized account/transaction balances
+must supply independent value flow, and replay must compare the reconstructed
+InMsg root as well as accounts, AccountBlocks, output and LT. A participant's
+local credit selection never licenses omission of another envelope.
+
+The complete runner's nonempty-inbox restriction remains until every supported
+role and the mandatory disposal paths are integrated. Mechanical credit is not
+proof of queue provenance, Deposit admission or authenticated bounce matching.
+Repeated full-context validation must be included in admission costs. Retirement
+does not remove the descriptor, parameter 84 or custody; this work makes no new
+claim about message termination or a finite network delivery deadline.

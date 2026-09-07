@@ -522,6 +522,15 @@ struct Transaction {
   td::Status prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                     Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
                                     std::uint64_t max_transfers, int extra_validation_cells);
+  // Restricted import/allocation record sharing the entry's full-context
+  // validation, but storing only its participant binding. No engine call or
+  // output is permitted. The enclosing host must authorize this receiving role,
+  // materialize the unique full entry and all other participants, and rebuild
+  // complete Native InMsg evidence and value flow; this primitive does not
+  // authenticate queue membership or authorize a Deposit/return.
+  td::Status prepare_workchain_import_participant(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+      Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+      std::uint64_t max_transfers, int extra_validation_cells);
   // Reconstruct one mode-1 payout using Native pricing in private scratch state.
   // Locally derived, admitted inputs only; this is not payout authorization.
   // fee_budget is a maximum spend, not a quoted fee. No account is committed.

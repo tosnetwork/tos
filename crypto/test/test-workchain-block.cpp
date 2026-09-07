@@ -1070,6 +1070,105 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(second_tx.prepare_workchain_entry(two_binding, two_input, two_root, number(321), cfg, 2, 4096).is_ok());
   ASSERT_TRUE(second_tx.balance == block::CurrencyCollection(1100));
 
+  // One complete entry and one importing participant, with the same context.
+  auto import_effects = two_effects;
+  import_effects.native_transfers = {{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(10)}};
+  auto import_root = block::encode_workchain_account_effects(import_effects, 2, 2, 4096).move_as_ok();
+  auto import_bindings = block::build_workchain_participant_records(td::Bits256(two_input->get_hash().bits()),
+      td::Bits256(import_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  Transaction importing_entry(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  Transaction importing_record(second, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(importing_entry.prepare_workchain_entry(import_bindings[0], two_input, import_root,
+      number(321), cfg, 2, 4096).is_ok());
+  ASSERT_TRUE(importing_record.prepare_workchain_import_participant(import_bindings[1], two_input, import_root,
+      number(321), cfg, 2, 4096).is_ok());
+  ASSERT_TRUE(importing_record.balance == block::CurrencyCollection(1227));
+  ASSERT_TRUE(importing_entry.balance == block::CurrencyCollection(1073));
+  ASSERT_TRUE(importing_entry.serialize(cfg) && importing_record.serialize(cfg));
+  ASSERT_TRUE(!importing_record.storage_phase && !importing_record.compute_phase &&
+      !importing_record.action_phase && !importing_record.bounce_phase);
+  ASSERT_TRUE(importing_record.out_msgs.empty() && importing_record.total_fees.is_zero());
+  for (unsigned field = 0; field < 12; ++field) {
+    LOG(INFO) << "import participant rejection case=" << field;
+    auto rejected_identity = identity;
+    auto rejected_access = two;
+    auto rejected_data = number(321);
+    if (field == 3) rejected_data = number(322);
+    if (field == 4) rejected_identity.workchain_id = 0;
+    if (field == 5) rejected_identity.gen_utime = 11;
+    if (field == 6) rejected_identity.host_after_lt = 21;
+    if (field == 7) rejected_access.reads[1].old_account_hash = hash;
+    if (field == 8) rejected_access.writes.pop_back();
+    if (field == 9) {
+      rejected_access.reads.push_back({hash, std::nullopt});
+      rejected_access.writes.push_back(hash);
+      std::sort(rejected_access.reads.begin(), rejected_access.reads.end(),
+          [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+      std::sort(rejected_access.writes.begin(), rejected_access.writes.end());
+    }
+    auto rejected_input = block::encode_workchain_host_input(rejected_identity, admitted,
+        rejected_access, inbox, 3, 3, 3).move_as_ok();
+    auto rejected_binding = block::build_workchain_participant_records(
+        field == 0 ? hash : td::Bits256(rejected_input->get_hash().bits()),
+        field == 1 ? hash : td::Bits256(import_root->get_hash().bits()), {a, b}, 2).move_as_ok()[1];
+    if (field == 2) {
+      block::gen::UnoV2HostRecord::Record bad_index;
+      ASSERT_TRUE(tlb::unpack_cell(rejected_binding, bad_index));
+      bad_index.effect_index = 0;
+      ASSERT_TRUE(tlb::pack_cell(rejected_binding, bad_index));
+    }
+    Transaction rejected(second, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_import_participant(rejected_binding, rejected_input,
+        import_root, rejected_data, cfg, field == 10 ? 1 : 2, field == 11 ? 0 : 4096).is_error());
+    ASSERT_TRUE(rejected.root.is_null() && rejected.new_total_state.is_null());
+    ASSERT_TRUE(second.balance == block::CurrencyCollection(1000));
+  }
+  block::gen::Transaction::Record imported_tx;
+  ASSERT_TRUE(tlb::unpack_cell(importing_record.root, imported_tx));
+  auto imported_description = vm::load_cell_slice(imported_tx.description);
+  ASSERT_EQ(imported_description.fetch_ulong(4), 11u);
+  ASSERT_TRUE(imported_description.fetch_ref()->get_hash() == import_bindings[1]->get_hash());
+  ASSERT_TRUE(imported_description.empty_ext());
+  ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, importing_record.root));
+  ASSERT_TRUE(block::tlb::t_Transaction.validate_ref(4096, importing_record.root));
+  block::tlb::MsgEnvelope::Record_std unexpected_direct_import;
+  ASSERT_TRUE(tlb::unpack_cell(inbox[2], unexpected_direct_import));
+  importing_record.in_msg = unexpected_direct_import.msg;
+  ASSERT_TRUE(!importing_record.serialize(cfg));
+  importing_record.in_msg.clear();
+  ASSERT_TRUE(importing_record.serialize(cfg));
+  std::map<td::Bits256, td::Ref<vm::Cell>> import_transactions{{a, importing_entry.root}, {b, importing_record.root}};
+  auto import_evidence = block::build_workchain_final_imports(2, 16, inbox, import_transactions,
+      3, 2, 4096).move_as_ok();
+  ASSERT_TRUE(import_evidence.account_credits.at(a) == block::CurrencyCollection(200));
+  ASSERT_TRUE(import_evidence.account_credits.at(b) == block::CurrencyCollection(100));
+  ASSERT_TRUE(import_evidence.value_imported == block::CurrencyCollection(501));
+  ASSERT_TRUE(import_evidence.fees_collected == block::CurrencyCollection(201));
+  std::vector<block::WorkchainAccountValueFlow> imported_rows;
+  for (const auto* built : {&importing_entry, &importing_record}) {
+    block::gen::Account::Record_account old_account, new_account;
+    block::gen::AccountStorage::Record old_storage, new_storage;
+    block::gen::Transaction::Record native_tx;
+    block::CurrencyCollection before, after, fees;
+    ASSERT_TRUE(tlb::unpack_cell(built->account.total_state, old_account));
+    ASSERT_TRUE(tlb::unpack_cell(built->new_total_state, new_account));
+    ASSERT_TRUE(tlb::csr_unpack(old_account.storage, old_storage) && tlb::csr_unpack(new_account.storage, new_storage));
+    ASSERT_TRUE(tlb::unpack_cell(built->root, native_tx));
+    ASSERT_TRUE(before.unpack(old_storage.balance) && after.unpack(new_storage.balance) && fees.unpack(native_tx.total_fees));
+    ASSERT_TRUE(native_tx.r1.in_msg->prefetch_ulong(1) == 0);
+    ASSERT_TRUE(native_tx.r1.out_msgs->prefetch_ulong(1) == 0 && native_tx.outmsg_cnt == 0);
+    imported_rows.push_back({native_tx.account_addr, before, import_evidence.account_credits.at(native_tx.account_addr),
+                            after, block::CurrencyCollection(0), fees});
+  }
+  ASSERT_TRUE(block::verify_workchain_value_flow(imported_rows, import_effects.native_transfers, 2, 2, 4096).is_ok());
+  for (unsigned field = 0; field < 3; ++field) {
+    auto wrong_rows = imported_rows;
+    if (field < 2) wrong_rows[field].imported = block::CurrencyCollection(0);
+    else std::swap(wrong_rows[0].imported, wrong_rows[1].imported);
+    ASSERT_TRUE(block::verify_workchain_value_flow(wrong_rows, import_effects.native_transfers, 2, 2, 4096).is_error());
+  }
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000) && second.balance == block::CurrencyCollection(1000));
+
   // One entry plus one restricted allocation record, sharing a batch binding.
   // Unlike the isolated entry-role fixtures, the second record imports no
   // message and stores only its binding, never the full input/effects closure.
