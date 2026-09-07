@@ -1950,7 +1950,8 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
       TRY_RESULT(new_ingress, decode_workchain_native_ingress_table(new_ingress_root));
       for (const auto& [id, policy] : old_ingress) {
         auto next = new_ingress.find(id);
-        if (next == new_ingress.end() || next->second.executor_address != policy.executor_address) {
+        if (next == new_ingress.end() || next->second.executor_address != policy.executor_address ||
+            next->second.custody_address != policy.custody_address) {
           return td::Status::Error("native ingress destination changed without an explicit migration rule");
         }
       }

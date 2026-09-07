@@ -93,6 +93,9 @@ struct WorkchainNativeIngressPolicy {
   std::uint32_t descriptor_version{0};
   tos::StdSmcAddress executor_address;
   td::Ref<vm::Cell> engine_configuration;
+  // Present only in the versioned dual-entry format. This is transport admission,
+  // not authorization to credit a deposit or match a withdrawal return.
+  std::optional<tos::StdSmcAddress> custody_address;
 };
 td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const WorkchainNativeIngressPolicy& policy);
 td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root);
@@ -108,7 +111,7 @@ td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(co
 inline constexpr int kWorkchainNativeIngressConfigParam = 84;
 td::Status validate_native_ingress_presence(vm::Dictionary& configuration);
 td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration);
-td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(
+td::Result<std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>>> resolve_native_ingress_destinations(
     const block::Config& configuration);
 WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecutionDescriptor& descriptor);
 td::Status validate_workchain_execution_descriptor_transitions(

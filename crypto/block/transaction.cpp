@@ -3277,7 +3277,7 @@ bool rewrite_native_destination(Ref<vm::CellSlice>& dest_addr, const ActionPhase
   }
   auto ingress = cfg.native_ingress_destinations.find(rec.workchain_id);
   if (ingress != cfg.native_ingress_destinations.end() &&
-      (rec.addr_len != 256 || td::Bits256(rec.address->bits()) != ingress->second)) {
+      (rec.addr_len != 256 || !ingress->second.count(td::Bits256(rec.address->bits())))) {
     return false;
   }
   if (is_mc) {

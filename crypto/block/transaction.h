@@ -19,6 +19,7 @@
 */
 #pragma once
 #include <ostream>
+#include <set>
 
 #include "block/block-auto.h"
 #include "block/block.h"
@@ -216,7 +217,7 @@ struct ActionPhaseConfig {
   MsgPrices fwd_mc;  // from/to masterchain
   SizeLimitsConfig size_limits;
   const WorkchainSet* workchains{nullptr};
-  std::map<tos::WorkchainId, tos::StdSmcAddress> native_ingress_destinations;
+  std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>> native_ingress_destinations;
   bool action_fine_enabled{false};
   bool bounce_on_fail_enabled{false};
   bool message_skip_enabled{false};

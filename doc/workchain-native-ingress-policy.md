@@ -1,8 +1,8 @@
 # Native ingress policy for block-transition workchains
 
-Status: entry/table codecs, configuration lookup and destination admission implemented;
-activation/configuration transition enforcement pending.
-Not an activated consensus rule.
+Status: entry/table codecs, configuration lookup, destination admission and
+conservative transition checks implemented. Multi-account engine activation and
+authenticated migration remain incomplete; this is not production readiness.
 
 ## Implemented entry codec
 
@@ -26,7 +26,52 @@ so closing admission does not invalidate an otherwise unchanged policy binding.
 This record does not replace descriptor finality or bind a masterchain state by
 itself. Development ConfigParam 84 owns the table. Lookup requires global
 version >= 15 and capBlockTransition; below either gate, admission is unchanged.
-Once enabled, a missing table is rejected (an explicit empty table is valid).
+Once enabled, a missing table resolves to no ingress restrictions. A local block
+engine still requires its own explicit, matching table entry before execution.
+
+## Dual-entry extension
+
+`workchain_native_ingress_v2` adds a custody address after the executor address.
+The executor slot names the coordinator in this format. Both addresses must be
+distinct. The root is 737 bits with one engine-configuration reference. Its
+implicit tag `0x4abd5ab4` is the compiler's CRC32 of:
+
+```
+workchain_native_ingress_v2 workchain_id:int32 extended:Bool engine_selector:int64 vm_mode:uint64 descriptor_version:uint32 executor_address:bits256 custody_address:bits256 engine_configuration:^Cell = WorkchainNativeIngressPolicy
+```
+
+Schema compilation checks union tag collisions. The generated decoder/encoder
+and handwritten codec are cross-checked in `DualNativeIngressCodecAndVersion`.
+The old v1 encoding and its singleton destination remain unchanged.
+
+Dual-entry policy requires global version 16 (the storage-participant boundary)
+and capBlockTransition. Both configuration-presence validation and the public
+reader enforce that version. Senders resolve the exact two-address set without
+loading a foreign engine; both ordinary sends and bounce construction reuse
+Native destination rewriting. Address admission does not authorize balance
+credit, prove a return's identity, or bypass receiver-side disposal rules.
+
+The existing single-account engine resolver rejects this format. A registered
+multi-account engine and complete validator replay are still required before
+opening admission. No test genesis is switched to this profile. Unsupported
+execution is not permission to silently use the old engine or drop messages.
+
+This dual-entry unit is an owner-authorized development snapshot, not a safe
+deployment milestone. `SUPPORTED_VERSION` does not prevent installation: its
+collator/validator checks only log a warning. The sole configuration-installation
+code gate is `valid_config_data`; passing its v16 and capability checks does not
+prove that a binary has the required executor. Do not enable this profile's v16
+and capBlockTransition configuration before complete multi-account execution
+support is broadly deployed with auditable readiness evidence. A release dry-run
+must exercise the counterexample of enabling v16 before that deployment. This
+snapshot neither implements that rollout gate nor changes global version-warning
+behavior. See `uno-v2-dual-ingress-review-disposition.md` for the disposition.
+
+The transition predicate preserves both addresses, including optional custody
+presence: adding/removing custody on an existing entry or replacing it is not an
+implicit migration. A new descriptor/entry must still start with admission
+closed. Retiring economic obligations does not authorize removal of the table,
+descriptor or a Native message destination.
 
 The table codec has tag `0x57495431` followed by a HashmapE with 32-bit workchain
 keys and reference-valued policy entries. Its root is 33 bits and zero/one

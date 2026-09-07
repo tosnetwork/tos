@@ -20,6 +20,7 @@ td::Status check_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
   // This policy promises addr_std ingress, whose workchain field is int8.
   if (policy.workchain_id < 0 || policy.workchain_id > 127 || policy.engine_configuration.is_null() ||
       (!basic && !extended) ||
+      (policy.custody_address && *policy.custody_address == policy.executor_address) ||
       (basic && (policy.engine_key.selector < std::numeric_limits<std::int32_t>::min() ||
                  policy.engine_key.selector > std::numeric_limits<std::int32_t>::max())) ||
       (extended && (policy.engine_key.selector < 0 ||
@@ -32,11 +33,13 @@ td::Status check_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
 
 td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
   TRY_STATUS(check_ingress_policy(policy));
-  return vm::CellBuilder().store_long(0x57495031, 32).store_long(policy.workchain_id, 32)
+  vm::CellBuilder cb;
+  cb.store_long(policy.custody_address ? 0x4abd5ab4 : 0x57495031, 32).store_long(policy.workchain_id, 32)
       .store_long(policy.engine_key.format == WorkchainFormat::Extended, 1)
       .store_long(policy.engine_key.selector, 64).store_long(policy.vm_mode, 64)
-      .store_long(policy.descriptor_version, 32).store_bits(policy.executor_address.bits(), 256)
-      .store_ref(policy.engine_configuration).finalize();
+      .store_long(policy.descriptor_version, 32).store_bits(policy.executor_address.bits(), 256);
+  if (policy.custody_address) cb.store_bits(policy.custody_address->bits(), 256);
+  return cb.store_ref(policy.engine_configuration).finalize();
 }
 
 td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root) {
@@ -46,9 +49,12 @@ td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(
   try {
     bool special = false;
     auto cs = vm::load_cell_slice_special(root, special);
-    if (special || cs.size() != 481 || cs.size_refs() != 1 || cs.fetch_ulong(32) != 0x57495031) {
+    if (special || cs.size_refs() != 1 ||
+        !((cs.size() == 481 && cs.prefetch_ulong(32) == 0x57495031) ||
+          (cs.size() == 737 && cs.prefetch_ulong(32) == 0x4abd5ab4))) {
       return td::Status::Error("invalid native ingress policy encoding");
     }
+    const bool dual_entry = cs.fetch_ulong(32) == 0x4abd5ab4;
     WorkchainNativeIngressPolicy policy;
     policy.workchain_id = static_cast<std::int32_t>(cs.fetch_long(32));
     policy.engine_key.format = cs.fetch_ulong(1) ? WorkchainFormat::Extended : WorkchainFormat::Basic;
@@ -57,6 +63,11 @@ td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(
     policy.descriptor_version = static_cast<std::uint32_t>(cs.fetch_ulong(32));
     if (!cs.fetch_bits_to(policy.executor_address)) {
       return td::Status::Error("incomplete native ingress executor address");
+    }
+    if (dual_entry) {
+      policy.custody_address.emplace();
+      // Exact 737-bit shape was checked above; 256 bits remain here.
+      cs.fetch_bits_to(*policy.custody_address);
     }
     policy.engine_configuration = cs.fetch_ref();
     TRY_STATUS(check_ingress_policy(policy));
@@ -155,6 +166,13 @@ td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {
       version.version < kBlockTransitionMinGlobalVersion || !(version.capabilities & tos::capBlockTransition)) {
     return td::Status::Error("native ingress parameter requires activated host version and capability");
   }
+  TRY_RESULT(table, decode_workchain_native_ingress_table(
+      configuration.lookup_ref(td::BitArray<32>{kWorkchainNativeIngressConfigParam})));
+  for (const auto& [id, policy] : table) {
+    if (policy.custody_address && version.version < transaction::Transaction::kStorageParticipantMinGlobalVersion) {
+      return td::Status::Error("dual native ingress requires the multi-account host version");
+    }
+  }
   return td::Status::OK();
 }
 
@@ -170,13 +188,20 @@ td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(cons
   if (root.is_null()) {
     return WorkchainNativeIngressTable{};
   }
-  return decode_workchain_native_ingress_table(root);
+  TRY_RESULT(table, decode_workchain_native_ingress_table(root));
+  for (const auto& [id, policy] : table) {
+    if (policy.custody_address &&
+        configuration.get_global_version() < transaction::Transaction::kStorageParticipantMinGlobalVersion) {
+      return td::Status::Error("dual native ingress requires the multi-account host version");
+    }
+  }
+  return table;
 }
 
-td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingress_destinations(
+td::Result<std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>>> resolve_native_ingress_destinations(
     const block::Config& configuration) {
   TRY_RESULT(table, load_workchain_native_ingress_table(configuration));
-  std::map<tos::WorkchainId, tos::StdSmcAddress> destinations;
+  std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>> destinations;
   for (const auto& [id, policy] : table) {
     auto it = configuration.get_workchain_list().find(id);
     if (it == configuration.get_workchain_list().end() || it->second.is_null()) {
@@ -184,7 +209,9 @@ td::Result<std::map<tos::WorkchainId, tos::StdSmcAddress>> resolve_native_ingres
     }
     TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
     TRY_STATUS(validate_workchain_native_ingress_binding(policy, descriptor));
-    destinations.emplace(id, policy.executor_address);
+    auto& allowed = destinations[id];
+    allowed.insert(policy.executor_address);
+    if (policy.custody_address) allowed.insert(*policy.custody_address);
   }
   return destinations;
 }
@@ -409,6 +436,9 @@ td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_
     return td::Status::Error("block workchain has no public native ingress policy");
   }
   TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  if (ingress->second.custody_address) {
+    return td::Status::Error("single-account block engine cannot execute a dual-entry policy");
+  }
   TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
                                                            ingress->second.engine_configuration));
   if (!config) {

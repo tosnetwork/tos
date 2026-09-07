@@ -226,6 +226,16 @@ TEST(ConfigTransition, ingress_destination_continuity) {
   expect_ok(block::valid_config_transition(original, with_policies({extra, policy})));
   ASSERT_TRUE(block::valid_config_transition(original, with_policies({extra, changed})).is_error());
   ASSERT_TRUE(original->get_hash() == hash);
+  auto dual = policy;
+  dual.custody_address = td::Bits256::ones();
+  auto dual_config = with_policies({dual});
+  expect_ok(block::valid_config_transition(dual_config, dual_config));
+  // Neither direction is an implicit migration, even with unchanged coordinator.
+  ASSERT_TRUE(block::valid_config_transition(original, dual_config).is_error());
+  ASSERT_TRUE(block::valid_config_transition(dual_config, original).is_error());
+  dual.custody_address = td::Bits256::zero();
+  dual.custody_address->as_slice()[0] = 1;
+  ASSERT_TRUE(block::valid_config_transition(dual_config, with_policies({dual})).is_error());
 }
 
 TEST(ConfigTransition, existing_workchain_cannot_add_ingress_restriction) {

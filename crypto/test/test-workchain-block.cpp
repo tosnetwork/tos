@@ -5889,6 +5889,71 @@ TEST(WorkchainBlock, PublicIngressRequiresStandardWorkchainRange) {
   }
 }
 
+TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+  policy.executor_address = td::Bits256::zero();
+  policy.custody_address = td::Bits256::ones();
+  policy.engine_configuration = vm::CellBuilder().finalize();
+  auto encoded = block::encode_workchain_native_ingress_policy(policy);
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  ASSERT_EQ(vm::load_cell_slice(root).size(), 737u);
+  ASSERT_TRUE(block::gen::t_WorkchainNativeIngressPolicy.validate_ref(10000, root));
+  // The generated CRC tag and field encoder are independent of the hand codec.
+  block::gen::WorkchainNativeIngressPolicy::Record_workchain_native_ingress_v2 record;
+  ASSERT_TRUE(tlb::unpack_cell(root, record));
+  ASSERT_TRUE(record.custody_address == *policy.custody_address);
+  td::Ref<vm::Cell> repacked;
+  ASSERT_TRUE(tlb::pack_cell(repacked, record));
+  ASSERT_TRUE(repacked->get_hash() == root->get_hash());
+  auto decoded = block::decode_workchain_native_ingress_policy(repacked);
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_TRUE(decoded.ok().custody_address == policy.custody_address);
+  auto same_role = policy;
+  same_role.custody_address = policy.executor_address;
+  ASSERT_TRUE(block::encode_workchain_native_ingress_policy(same_role).is_error());
+  record.custody_address = policy.executor_address;
+  ASSERT_TRUE(tlb::pack_cell(repacked, record));
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(repacked).is_error());
+  auto trailing = vm::CellBuilder().append_cellslice(vm::load_cell_slice(root)).store_long(0, 1).finalize();
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(trailing).is_error());
+  auto truncated = vm::CellBuilder().store_long(0x4abd5ab4, 32).store_zeroes(449)
+      .store_ref(policy.engine_configuration).finalize();
+  ASSERT_TRUE(block::decode_workchain_native_ingress_policy(truncated).is_error());
+
+  for (unsigned version : {15u, 16u}) {
+    vm::Dictionary config(32);
+    vm::CellBuilder cfg_version;
+    ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(cfg_version, version, tos::capBlockTransition));
+    ASSERT_TRUE(config.set_ref(td::BitArray<32>{8}, cfg_version.finalize()));
+    ASSERT_TRUE(config.set_ref(td::BitArray<32>{84},
+        block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+    ASSERT_EQ(block::validate_native_ingress_presence(config).is_ok(), version == 16);
+    auto unpacked = block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+                                                block::Config::needCapabilities);
+    ASSERT_TRUE(unpacked.is_ok());
+    ASSERT_EQ(block::load_workchain_native_ingress_table(*unpacked.ok()).is_ok(), version == 16);
+    if (version == 16) {
+      block::WorkchainExecutionRegistry registry;
+      ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+      block::WorkchainExecutionDescriptor descriptor;
+      descriptor.workchain_id = 2;
+      descriptor.active = true;
+      descriptor.vm_version = 0x434e5431;
+      ASSERT_TRUE(registry.resolve_block(descriptor, *unpacked.ok()).is_error());
+      policy.custody_address.reset();
+      ASSERT_TRUE(config.set_ref(td::BitArray<32>{84},
+          block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+      auto legacy = block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+                                               block::Config::needCapabilities);
+      ASSERT_TRUE(legacy.is_ok());
+      ASSERT_TRUE(registry.resolve_block(descriptor, *legacy.ok()).is_ok());
+    }
+  }
+}
+
 TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
   block::WorkchainNativeIngressPolicy first;
   first.workchain_id = 2;
@@ -5962,11 +6027,20 @@ TEST(WorkchainBlock, NativeDestinationRouting) {
   ASSERT_EQ(decoded.fetch_ulong(3), 5u);
   ASSERT_EQ(decoded.fetch_ulong(5), 1u);
   ASSERT_EQ(decoded.fetch_ulong(1), 1u); // Actual sender prefix, not the old zero.
-  cfg.native_ingress_destinations.emplace(2, sender);
+  cfg.native_ingress_destinations.emplace(2, std::set<tos::StdSmcAddress>{sender});
   ASSERT_TRUE(!block::transaction::rewrite_native_destination(canonical, cfg, sender));
   ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender));
-  cfg.native_ingress_destinations.at(2) = td::Bits256::zero();
+  cfg.native_ingress_destinations.at(2) = {td::Bits256::zero()};
   ASSERT_TRUE(block::transaction::rewrite_native_destination(canonical, cfg, sender));
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender));
+  cfg.native_ingress_destinations.at(2).insert(sender);
+  auto custody = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
+      .store_bits(sender.bits(), 256).finalize());
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(custody, cfg, sender));
+  ASSERT_TRUE(block::transaction::rewrite_native_destination(canonical, cfg, sender));
+  auto foreign = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
+      .store_bits(td::Bits256::ones().bits(), 256).finalize());
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(foreign, cfg, sender));
   ASSERT_TRUE(!block::transaction::rewrite_native_destination(anycast, cfg, sender));
 }
 
@@ -5988,7 +6062,7 @@ TEST(WorkchainBlock, NativeSenderEnforcesPublicExecutorAddress) {
   ASSERT_TRUE(sender.unpack(accounts.lookup(td::Bits256::zero()), 10, false));
   block::ActionPhaseConfig cfg;
   cfg.workchains = &workchains;
-  cfg.native_ingress_destinations.emplace(2, td::Bits256::zero());
+  cfg.native_ingress_destinations.emplace(2, std::set<tos::StdSmcAddress>{td::Bits256::zero()});
   cfg.fwd_std = cfg.fwd_mc = block::MsgPrices(0, 0, 0, 0, 0, 0);
   auto address = [](bool wrong) {
     return vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
@@ -6178,10 +6252,11 @@ TEST(WorkchainBlock, SenderResolvesIngressWithoutForeignEngine) {
   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
   policy.executor_address = td::Bits256::ones();
   policy.engine_configuration = number(0);
-  auto configuration = [&](td::Ref<vm::Cell> table, bool include_descriptor, unsigned descriptor_version = 0) {
+  auto configuration = [&](td::Ref<vm::Cell> table, bool include_descriptor, unsigned descriptor_version = 0,
+                           unsigned global_version = 15) {
     vm::Dictionary config(32);
     vm::CellBuilder version;
-    CHECK(block::gen::t_GlobalVersion.pack_capabilities(version, 15, tos::capBlockTransition));
+    CHECK(block::gen::t_GlobalVersion.pack_capabilities(version, global_version, tos::capBlockTransition));
     CHECK(config.set_ref(td::BitArray<32>{8}, version.finalize()));
     if (table.not_null()) {
       CHECK(config.set_ref(td::BitArray<32>{84}, table));
@@ -6207,7 +6282,7 @@ TEST(WorkchainBlock, SenderResolvesIngressWithoutForeignEngine) {
   ASSERT_TRUE(!block::default_workchain_execution_registry().execution_scope(policy.engine_key).has_value());
   auto destinations = block::resolve_native_ingress_destinations(*good).move_as_ok();
   ASSERT_EQ(destinations.size(), 1u);
-  ASSERT_TRUE(destinations.at(2) == policy.executor_address);
+  ASSERT_TRUE(destinations.at(2) == std::set<tos::StdSmcAddress>{policy.executor_address});
   auto missing_descriptor = configuration(table, false);
   ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_descriptor).is_error());
   auto wrong_version = configuration(table, true, 1);
@@ -6216,6 +6291,27 @@ TEST(WorkchainBlock, SenderResolvesIngressWithoutForeignEngine) {
   ASSERT_TRUE(block::resolve_native_ingress_destinations(*missing_table).move_as_ok().empty());
   auto empty = configuration(block::encode_workchain_native_ingress_table({}).move_as_ok(), true);
   ASSERT_TRUE(block::resolve_native_ingress_destinations(*empty).move_as_ok().empty());
+  policy.custody_address = td::Bits256::zero();
+  auto dual = configuration(block::encode_workchain_native_ingress_table({policy}).move_as_ok(), true, 0, 16);
+  auto resolved_dual = block::resolve_native_ingress_destinations(*dual);
+  ASSERT_TRUE(resolved_dual.is_ok());
+  ASSERT_EQ(resolved_dual.ok().size(), 1u);
+  ASSERT_EQ(resolved_dual.ok().at(2).size(), 2u);
+  ASSERT_EQ(resolved_dual.ok().at(2).count(policy.executor_address), 1u);
+  ASSERT_EQ(resolved_dual.ok().at(2).count(*policy.custody_address), 1u);
+  block::ActionPhaseConfig action_config;
+  action_config.workchains = &dual->get_workchain_list();
+  action_config.native_ingress_destinations = resolved_dual.move_as_ok();
+  for (const auto& account : {policy.executor_address, *policy.custody_address}) {
+    auto destination = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
+        .store_bits(account.bits(), 256).finalize());
+    ASSERT_TRUE(block::transaction::rewrite_native_destination(destination, action_config, td::Bits256::zero()));
+  }
+  auto unknown_account = td::Bits256::zero();
+  unknown_account.as_slice()[0] = 1;
+  auto destination = vm::load_cell_slice_ref(vm::CellBuilder().store_long(4, 3).store_long(2, 8)
+      .store_bits(unknown_account.bits(), 256).finalize());
+  ASSERT_TRUE(!block::transaction::rewrite_native_destination(destination, action_config, td::Bits256::zero()));
 }
 
 TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
