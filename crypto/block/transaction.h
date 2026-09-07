@@ -537,12 +537,16 @@ struct Transaction {
   // No live account is committed, no role or effects authorization is implied.
   // Same admitted-input exception contract as price_workchain_payout applies.
   // Currency traversal uses an explicit resolved budget, not a storage limit.
+  // Supplying both input/effects makes the coordinator the full batch entry.
+  // Explicitly passing two null roots selects the low-level participant primitive.
+  // The entry profile currently excludes inbox and additional allocations.
   static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
       const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
       Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
       Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
       td::RefInt256 fee_budget, int extra_validation_cells,
-      const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg);
+      const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+      Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects);
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

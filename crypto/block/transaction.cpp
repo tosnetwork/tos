@@ -4627,7 +4627,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
     Ref<vm::Cell> request, tos::LogicalTime start_lt, tos::UnixTime now,
     td::RefInt256 fee_budget, int extra_validation_cells,
-    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
   if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
   if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
@@ -4639,6 +4640,26 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
       first.effect_index == second.effect_index) {
     return td::Status::Error("payout pair bindings belong to different batches");
   }
+  if (entry_input.is_null() != entry_effects.is_null()) {
+    return td::Status::Error("payout entry requires both input and effects");
+  }
+  if (entry_input.not_null()) {
+    gen::UnoV2HostInput::Record input;
+    gen::UnoV2HostEffects::Record effects;
+    gen::UnoV2NativeEffects::Record native;
+    if (first.input_hash != entry_input->get_hash().bits() || first.effects_hash != entry_effects->get_hash().bits() ||
+        !tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects) ||
+        !tlb::unpack_cell(effects.native, native) || input.inbox->prefetch_ulong(1) != 0 ||
+        native.transfers->prefetch_ulong(1) != 0 || native.payout->prefetch_ulong(1) != 1 ||
+        request.is_null() || native.payout->prefetch_ref()->get_hash() != request->get_hash()) {
+      return td::Status::Error("payout entry context or request mismatch");
+    }
+    vm::Dictionary updates(effects.updates, 256);
+    auto expected = updates.lookup_ref(custody.addr);
+    if (expected.is_null() || custody_data.is_null() || expected->get_hash() != custody_data->get_hash()) {
+      return td::Status::Error("payout custody data differs from effects");
+    }
+  }
   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
   TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, custody.balance,
       coordinator.balance, priced.payment, priced.total_fee, priced.collected_fee,
@@ -4649,7 +4670,16 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   pair.push_back(std::make_unique<Transaction>(custody, tr_workchain_batch, start_lt, now));
   pair.push_back(std::make_unique<Transaction>(coordinator, tr_workchain_batch, start_lt, now));
   TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
-  TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
+  if (entry_input.not_null()) {
+    // Zero extra transfers is the restricted profile above, not a default
+    // production resource policy. Preparation binds the full entry metadata.
+    TRY_STATUS(pair[1]->prepare_workchain_entry(coordinator_binding, entry_input, entry_effects,
+        coordinator_data, cfg, 0, extra_validation_cells));
+    // The profile excludes both credit sources: inbox and extra transfers.
+    // Entry preparation therefore preserves opening funds before fee funding.
+  } else {
+    TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
+  }
   pair[0]->balance = allocation.custody_after;
   pair[1]->balance = allocation.operator_after;
   pair[0]->total_fees = CurrencyCollection(priced.collected_fee);
@@ -4657,9 +4687,11 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   pair[0]->end_lt = priced.end_lt;
   for (std::size_t i = 0; i < pair.size(); ++i) {
     auto& tx = *pair[i];
-    tx.batch_description = vm::CellBuilder()
+    if (i == 0 || entry_input.is_null()) {
+      tx.batch_description = vm::CellBuilder()
         .store_long(tlb::TransactionDescr::trans_workchain_settlement_participant_v3, 4)
         .store_ref(i == 0 ? custody_binding : coordinator_binding).finalize();
+    }
     tx.batch_balance = tx.balance;
     tx.batch_fees = tx.total_fees;
     tx.batch_out_msgs = tx.out_msgs;

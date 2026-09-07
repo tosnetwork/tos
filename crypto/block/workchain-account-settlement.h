@@ -30,7 +30,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
   if (!authenticated_inbox.empty()) {
-    return td::Status::Error("inbound Native settlement requires the coordinator entry path");
+    return td::Status::Error("nonempty Native inbox settlement is not yet integrated");
   }
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
@@ -62,7 +62,8 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   } else {
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
-        executed.effects.payout_request, fee_budget, max_writes, extra_validation_cells, cfg, message_cfg));
+        executed.effects.payout_request, fee_budget, max_reads, max_writes, extra_validation_cells, cfg, message_cfg,
+        executed.input, effects_root));
     state = std::move(payout.state);
     message = std::move(payout.message);
   }

@@ -861,7 +861,7 @@ This is not M1 completion or a production conservation gate. Nonempty Native
 inbox settlement, allocations combined with payouts, the revised aggregate
 custody fee-settlement path, registration, production admission/classification,
 and live collate/validate publication remain open. The older payout-only helper
-still needs integration with the single full entry. No message is dropped to
+was subsequently connected to the single full entry below. No message is dropped to
 make any of those cases fit this message-free path. Milestone review remains
 pending; this unit changes no named production consensus-judgement file and
 adds no error-origin classification.
@@ -975,9 +975,9 @@ with the same currency budget and an account-storage setting above the signed
 integer range. This is a width/independence probe, not a proposed storage limit.
 The tests do not claim that each repeated defensive check is indispensable.
 
-This prerequisite does not yet integrate a full coordinator entry into the
-payout pair, combined allocations/payouts or custody inbound settlement. Those
-remain M1 work; existing scopes still reject the inactive participant formats.
+At this prerequisite stage the full coordinator entry was not integrated; the
+following unit connects it. Combined allocations/payouts and custody inbound
+settlement remain M1 work; scopes still reject the inactive participant formats.
 
 The consensus-boundary review prompted extra overlay/replay fixtures, explicit
 zero-load ordering assertions at invalid budgets, a persisted-balance decode,
@@ -992,3 +992,37 @@ regression are archived with substitutions and hashes in
 `measurements/uno-v2-payout-budget-evidence.json`. They are manual evidence, not
 mutation CI. The boundary review is complete for this substitution and its
 test repairs; the full M1 milestone review and production integration remain open.
+
+### Full coordinator entry on the payout path (M1 integration)
+
+The settlement runner now passes the complete committed input and effects
+through payout materialization and replay. The coordinator is a tag-12 entry
+with the full roots; custody remains the restricted tag-11 payout record and
+other storage participants remain tag 10. The pair checks both context roots,
+their binding hashes, the payout request and custody data. Entry preparation
+binds coordinator data/access/context. The supported profile still excludes
+Native inbox and extra allocations before any credit can be overwritten.
+
+There are no default context arguments. Low-level tests explicitly select two
+null roots for the participant-only primitive; this is not a live batch mode.
+The full-context overlay verifies committed writes, every update, supplied old
+hashes and every authenticated read, including read-only accounts, under an
+explicit read bound. It verifies each serialized descriptor independently,
+including its role, exact refs and full context. Replay rebuilds Native roots
+with the same explicit profile. Nothing is published or written to CellDb.
+
+Tests cover a third changed participant and a separate read-only participant,
+incorrect third-account data, a conflicting supplied old hash, a conflicting
+host LT boundary, missing writes and an invalid read-only hash. They also check
+the actual coordinator description and full-root replay. Boundary review and
+its corrections are recorded in `uno-v2-payout-entry-review-disposition.md`.
+Combined allocations/payouts, custody imports, disposal, aggregate operation-fee
+settlement and production admission/publication remain unfinished M1 work.
+
+Thirteen rebuilt failing controls cover runner/replay profile propagation,
+partial context, inbox exclusion, request/custody/third-account data bindings,
+supplied old hashes, the host LT boundary, entry preservation, read-only state
+authentication and the two composite hash contracts. Restored five-target
+regression and standalone-header compilation pass. Logs, substitutions and
+source/binary hashes are in `measurements/uno-v2-payout-entry-evidence.json`.
+These are manual controls, not mutation CI or exhaustive guard coverage.

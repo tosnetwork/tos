@@ -1,6 +1,7 @@
 #pragma once
 
 #include "block/workchain-storage-overlay.h"
+#include "block/workchain-account-access-codec.h"
 
 namespace block {
 
@@ -26,8 +27,9 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     std::uint64_t after_lt, const td::Bits256& input_hash, const td::Bits256& effects_hash,
     const std::vector<WorkchainStorageWrite>& writes, const td::Bits256& custody,
     const td::Bits256& coordinator, td::Ref<vm::Cell> request, td::RefInt256 fee_budget,
-    std::uint64_t max_participants, int extra_validation_cells,
-    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    std::uint64_t max_reads, std::uint64_t max_participants, int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    td::Ref<vm::Cell> entry_input, td::Ref<vm::Cell> entry_effects) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout overlay currency budget");
   if (workchain < 0 || writes.empty() || writes.size() > max_participants || custody == coordinator) {
     return td::Status::Error("invalid payout overlay domain or count");
@@ -44,15 +46,51 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
   if (custody_index == writes.size() || coordinator_index == writes.size()) {
     return td::Status::Error("payout roles absent from write set");
   }
-  TRY_RESULT(access, WorkchainAccountAccess::create(reads, keys, max_participants, max_participants));
+  if (entry_input.is_null() != entry_effects.is_null()) {
+    return td::Status::Error("payout overlay requires both context roots");
+  }
+  if (entry_input.not_null()) {
+    gen::UnoV2HostInput::Record input;
+    gen::UnoV2HostEffects::Record effects;
+    gen::UnoV2HostIdentity::Record identity;
+    gen::UnoV2HostDomain::Record domain;
+    gen::UnoV2HostContext::Record context;
+    if (!tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects) ||
+        !tlb::unpack_cell(input.identity, identity) || !tlb::unpack_cell(identity.domain, domain) ||
+        !tlb::unpack_cell(identity.context, context) || domain.workchain_id != workchain ||
+        context.gen_utime != now || context.host_after_lt != after_lt) {
+      return td::Status::Error("payout overlay context differs from host");
+    }
+    TRY_RESULT(declarations, decode_workchain_account_declarations(input.access, max_reads, max_participants));
+    if (declarations.writes != keys) return td::Status::Error("payout writes differ from committed access");
+    reads = std::move(declarations.reads);
+    vm::Dictionary updates(effects.updates, 256);
+    std::uint64_t seen = 0;
+    if (!updates.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {
+          if (seen >= writes.size() || bits != 256 || td::Bits256(key) != writes[seen].account ||
+              value->size_ext() != 0x10000 || writes[seen].data.is_null() ||
+              value->prefetch_ref()->get_hash() != writes[seen].data->get_hash()) return false;
+          auto next = participant_lt_detail::checked_add(seen, 1);
+          if (next.is_error()) return false;
+          seen = next.move_as_ok();
+          return true;
+        }) || seen != writes.size()) return td::Status::Error("payout data differs from committed effects");
+  }
+  TRY_RESULT(access, WorkchainAccountAccess::create(reads, keys, max_reads, max_participants));
+  for (const auto& write : writes) {
+    TRY_RESULT(expected, access.expected_read(write.account));
+    if (!expected || *expected != write.old_account_hash) {
+      return td::Status::Error("payout write old hash differs from committed read");
+    }
+  }
   TRY_RESULT(bindings, build_workchain_participant_records(input_hash, effects_hash, keys, max_participants));
   WorkchainAccountDictionary original(old_accounts);
+  for (const auto& read : reads) TRY_STATUS(original.verify_old_read(access, read.account));
   vm::AugmentedDictionary staged(vm::load_cell_slice_ref(old_accounts), 256, tlb::aug_ShardAccounts);
   vm::AugmentedDictionary blocks(256, tlb::aug_ShardAccountBlocks);
   std::vector<std::unique_ptr<Account>> accounts;
   std::vector<WorkchainParticipantTiming> timing;
   for (const auto& write : writes) {
-    TRY_STATUS(original.verify_old_read(access, write.account));
     auto account = std::make_unique<Account>(workchain, write.account.bits());
     if (!account->unpack(staged.lookup(write.account), now, false)) {
       throw vm::VmError{vm::Excno::dict_err, "invalid authenticated payout account"};
@@ -64,7 +102,8 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
   using Transaction = transaction::Transaction;
   TRY_RESULT(pair, Transaction::build_workchain_payout_pair(*accounts[custody_index], *accounts[coordinator_index],
       bindings[custody_index], bindings[coordinator_index], writes[custody_index].data, writes[coordinator_index].data,
-      request, schedule.start_lt, now, fee_budget, extra_validation_cells, cfg, message_cfg));
+      request, schedule.start_lt, now, fee_budget, extra_validation_cells, cfg, message_cfg,
+      entry_input, entry_effects));
   std::vector<std::unique_ptr<Transaction>> transactions(writes.size());
   transactions[custody_index] = std::move(pair.transactions[0]);
   transactions[coordinator_index] = std::move(pair.transactions[1]);
@@ -94,6 +133,17 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
         next_storage.last_trans_lt != tx.end_lt || record.r1.in_msg->prefetch_ulong(1) != 0 ||
         record.outmsg_cnt != (i == custody_index ? 1 : 0)) {
       return td::Status::Error("invalid payout overlay native artifacts");
+    }
+    auto description = vm::load_cell_slice(record.description);
+    bool is_entry = entry_input.not_null() && i == coordinator_index;
+    auto tag = is_entry ? tlb::TransactionDescr::trans_workchain_entry_v3 :
+        (i == custody_index || i == coordinator_index ? tlb::TransactionDescr::trans_workchain_settlement_participant_v3 :
+                                                       tlb::TransactionDescr::trans_workchain_storage_participant_v3);
+    if (description.fetch_ulong(4) != static_cast<unsigned>(tag) || description.size_refs() != (is_entry ? 3u : 1u) ||
+        description.fetch_ref()->get_hash() != bindings[i]->get_hash() ||
+        (is_entry && (description.fetch_ref()->get_hash() != entry_input->get_hash() ||
+                   description.fetch_ref()->get_hash() != entry_effects->get_hash())) || !description.empty_ext()) {
+      return td::Status::Error("payout serialized entry or participant differs from context");
     }
     auto hashes = vm::load_cell_slice(record.state_update);
     td::Bits256 old_hash, new_hash;
@@ -150,14 +200,16 @@ inline td::Result<WorkchainPayoutOverlay> replay_workchain_payout_overlay(
     std::uint64_t after_lt, const td::Bits256& input_hash, const td::Bits256& effects_hash,
     const std::vector<WorkchainStorageWrite>& writes, const td::Bits256& custody,
     const td::Bits256& coordinator, td::Ref<vm::Cell> request, td::RefInt256 fee_budget,
-    std::uint64_t max_participants, int extra_validation_cells,
+    std::uint64_t max_reads, std::uint64_t max_participants, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
-    const ClaimedWorkchainPayoutOverlay& claimed) {
+    const ClaimedWorkchainPayoutOverlay& claimed,
+    td::Ref<vm::Cell> entry_input, td::Ref<vm::Cell> entry_effects) {
   if (claimed.accounts.is_null() || claimed.account_blocks.is_null() || claimed.message.is_null()) {
     return td::Status::Error("missing claimed payout overlay artifact");
   }
   TRY_RESULT(rebuilt, build_workchain_payout_overlay(old_accounts, workchain, now, after_lt, input_hash, effects_hash,
-      writes, custody, coordinator, request, fee_budget, max_participants, extra_validation_cells, cfg, message_cfg));
+      writes, custody, coordinator, request, fee_budget, max_reads, max_participants, extra_validation_cells, cfg, message_cfg,
+      entry_input, entry_effects));
   if (claimed.accounts->get_hash() != rebuilt.state.accounts->get_hash()) {
     return td::Status::Error("claimed payout accounts differ from replay");
   }
