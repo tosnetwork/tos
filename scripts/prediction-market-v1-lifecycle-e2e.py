@@ -14,6 +14,11 @@ withdraw.  Every post-transition view must agree byte-for-byte across all
 three JSON-RPC nodes.  All files, the encrypted local Vault, and validator
 databases are removed when the process exits.
 
+The harness gives its freshly-created ordinary localnet a one-day bootstrap
+ConfigParam 34 lifetime.  That is deliberately explicit: the ordinary
+one-hour localnet default is insufficient for this real-time lifecycle, and
+an existing localnet cannot be retroactively changed by this setting.
+
 The reporter outcome is a deliberately controlled protocol input.  These
 scenarios prove that the on-chain YES, NO, and INVALID accounting branches
 execute over real nodes; they do not claim to prove an external fact.  The
@@ -50,6 +55,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 TOS = 1_000_000_000
 OPERATION_BUDGET = TOS
+PREDICTION_BOOTSTRAP_VALIDATOR_SET_VALID_FOR = 86_400
 WALLET_NAMES = ("owner", "normal_one", "normal_two", "appeal_one", "appeal_two", "reserve")
 NORMAL_SCENARIO_FUNDED_WALLETS = ("owner", "normal_one", "normal_two", "reserve")
 MATCH_SCENARIO_FUNDED_WALLETS = NORMAL_SCENARIO_FUNDED_WALLETS
@@ -1295,6 +1301,8 @@ def main() -> int:
         sys.executable, str(REPO / "scripts/localnet-jsonrpc.py"), "--validators", "3",
         "--rpc", f"127.0.0.1:{rpc_port}", "--control", f"127.0.0.1:{control_port}",
         "--base-port", str(args.base_port), "--workdir", str(workdir / "network"),
+        "--bootstrap-validator-set-valid-for",
+        str(PREDICTION_BOOTSTRAP_VALIDATOR_SET_VALID_FOR),
         "--boot-timeout", "180",
     ]
     localnet = subprocess.Popen(command, cwd=REPO, env=dict(os.environ), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
