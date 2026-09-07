@@ -1550,3 +1550,21 @@ liability still belong to the engine. An ordinary Status is not a voting
 classification; source-aware configuration and exception adaptation remain
 production prerequisites. Review disposition and scope:
 `uno-v2-disposal-entry-review-disposition.md`. No M1 completion is claimed.
+
+### Disposal allocation overlay (M1 integration, milestone review pending)
+
+The reviewed disposal entry now feeds the private multi-account overlay. The
+coordinator is prepared once before the output-aware LT schedule is finalized;
+participants, actual exported value, AccountBlocks and routed final imports are
+then reconstructed together. Replay compares every returned root and the end LT,
+and returns reconstructed output caches rather than caller-provided caches.
+The old strict entry remains strict; the explicit disposal entry requires an
+unsplit shard. A third untouched account and a later insolvent participant are
+included in the integration fixture.
+
+Ten rebuilt manual removal controls turned red; restored five-test CTest
+regression and standalone header compilation passed. Scope and remaining Native
+queue/metadata/actual-source FIFO obligations are in
+`uno-v2-disposal-allocation-overlay.md`; raw evidence and substitutions are in
+`measurements/uno-v2-disposal-overlay-evidence.json`. No live queue publication,
+validator address exception or M1 completion is claimed.

@@ -11,24 +11,30 @@ namespace block {
 struct WorkchainInboundAllocationOverlay {
   WorkchainStorageOverlay state;
   WorkchainFinalImportEvidence imports;
+  // Derived from serialized transactions. The Native host must still assign
+  // metadata and apply per-source DispatchQueue/FIFO rules before enqueueing.
+  std::vector<NewOutMsg> exports;
 };
 
 // Existing-account, internal-transfer materialization. The single entry carries
 // the full committed input/effects; other records carry only their binding.
 // Standard final imports may address the coordinator or custody. At most these
 // two roles use full-context credit validation; all other participants use the
-// allocation plan. Both traversals must be accounted for by admission. Disposal,
-// queue provenance, return authorization and payout remain separate host
-// work; unsupported messages are rejected, never filtered out of the inbox.
+// allocation plan. All traversals must be accounted for by admission. The
+// strict entry rejects foreign destinations; the explicit disposal entry routes
+// them to the coordinator. Queue provenance, return authorization and payout
+// remain separate host work. No message is filtered out of the inbox.
 // Roles, input, effects, policy and old-state provenance require admission and
 // authentication before this call. Exceptions retain that source at the caller.
 // No mutable account escapes and no CellDb write occurs, including on failure.
-inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_allocation_overlay(
+namespace allocation_overlay_detail {
+inline td::Result<WorkchainInboundAllocationOverlay> build(
     td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
     td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
     const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers, std::uint64_t max_inbound,
-    int extra_validation_cells, const SerializeConfig& cfg) {
+    int extra_validation_cells, const SerializeConfig& cfg,
+    const WorkchainDisposalEntryContext* disposal) {
   gen::UnoV2HostInput::Record decoded;
   gen::UnoV2HostEffects::Record output;
   gen::UnoV2NativeEffects::Record native;
@@ -48,8 +54,9 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
   }
   std::vector<td::Bits256> recipients{coordinator, custody};
   std::sort(recipients.begin(), recipients.end());
-  TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, identity.workchain_id, recipients,
-      identity.host_after_lt, max_inbound));
+  TRY_RESULT(inbox, disposal ? plan_workchain_disposal_inbox(inbox_root, identity.workchain_id,
+      identity.host_after_lt, max_inbound) : plan_workchain_native_inbox(inbox_root,
+      identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
   TRY_RESULT(declarations, decode_workchain_account_declarations(decoded.access, max_reads, max_writes));
   TRY_RESULT(plan, plan_workchain_native_allocations(output, max_writes, max_transfers, extra_validation_cells));
   std::vector<td::Bits256> keys;
@@ -78,14 +85,37 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     accounts.push_back(std::move(account));
   }
   TRY_RESULT(schedule, plan_workchain_participant_lts(inbox.after_lt, timing, max_writes, 0));
+  // Prepare the entry once, privately, to determine the actual output count.
+  // Outputs extend only its end LT, not the common authenticated start LT.
+  std::unique_ptr<transaction::Transaction> prepared_entry;
+  if (disposal) {
+    // The exact write-set check above proves coordinator is in sorted keys,
+    // so this iterator distance is nonnegative and strictly below keys.size().
+    auto position = std::lower_bound(keys.begin(), keys.end(), coordinator);
+    auto index = static_cast<std::size_t>(position - keys.begin());
+    prepared_entry = std::make_unique<transaction::Transaction>(*accounts[index],
+        transaction::Transaction::tr_workchain_batch, schedule.start_lt, identity.gen_utime);
+    TRY_STATUS(prepared_entry->prepare_workchain_disposal_entry(bindings[index], input, effects,
+        updates.lookup_ref(coordinator), cfg, max_transfers, extra_validation_cells, *disposal));
+    timing[index].outbound_count = prepared_entry->out_msgs.size();
+    TRY_RESULT(with_outputs, plan_workchain_participant_lts(inbox.after_lt, timing,
+        max_writes, disposal->max_outbound));
+    schedule = std::move(with_outputs);
+  }
   std::vector<WorkchainAccountValueFlow> rows;
+  std::vector<NewOutMsg> exports;
   std::vector<td::Bits256> participants;
   std::map<td::Bits256, td::Ref<vm::Cell>> transactions;
   for (std::size_t i = 0; i < keys.size(); ++i) {
     auto& account = *accounts[i];
-    transaction::Transaction tx(account, transaction::Transaction::tr_workchain_batch,
-                                schedule.start_lt, identity.gen_utime);
-    if (keys[i] == coordinator) {
+    const bool is_prepared = disposal && keys[i] == coordinator;
+    auto owned_tx = is_prepared ? std::move(prepared_entry) :
+        std::make_unique<transaction::Transaction>(account, transaction::Transaction::tr_workchain_batch,
+                                                  schedule.start_lt, identity.gen_utime);
+    auto& tx = *owned_tx;
+    if (is_prepared) {
+      // The same private transaction is serialized and committed below.
+    } else if (keys[i] == coordinator) {
       TRY_STATUS(tx.prepare_workchain_entry(bindings[i], input, effects, updates.lookup_ref(keys[i]),
                                            cfg, max_transfers, extra_validation_cells));
     } else if (keys[i] == custody) {
@@ -101,19 +131,43 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     }
     // Derive balances and fees from serialized Native artifacts, not the plan
     // or mutable transaction cache. Imports are filled below from the actual
-    // InMsg dictionary. No payout and empty Native out_msgs prove zero exports.
+    // InMsg dictionary. Exports below are decoded from the actual out_msgs.
     gen::Transaction::Record record;
     gen::Account::Record_account old_record, next_record;
     gen::AccountStorage::Record old_storage, next_storage;
-    CurrencyCollection before, after, fees;
+    CurrencyCollection before, after, fees, exported(0);
     if (!tlb::unpack_cell(tx.root, record) || record.account_addr != account.addr ||
         record.prev_trans_hash != account.last_trans_hash_ || record.prev_trans_lt != account.last_trans_lt_ ||
         !tlb::unpack_cell(account.total_state, old_record) || !tlb::csr_unpack(old_record.storage, old_storage) ||
         !tlb::unpack_cell(tx.new_total_state, next_record) || !tlb::csr_unpack(next_record.storage, next_storage) ||
         !before.unpack(old_storage.balance) || !after.unpack(next_storage.balance) || !fees.unpack(record.total_fees) ||
-        !fees.is_zero() || next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
-        record.r1.in_msg->prefetch_ulong(1) != 0 || record.r1.out_msgs->prefetch_ulong(1) != 0 || record.outmsg_cnt != 0) {
+        (!is_prepared && !fees.is_zero()) || next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
+        record.r1.in_msg->prefetch_ulong(1) != 0 ||
+        static_cast<std::uint64_t>(record.outmsg_cnt) != schedule.participants[i].outbound_count) {
       return td::Status::Error("invalid allocation overlay native artifacts");
+    }
+    vm::Dictionary messages(record.r1.out_msgs, 15);
+    std::uint64_t count = 0;
+    if (!messages.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int width) {
+      gen::CommonMsgInfo::Record_int_msg_info info;
+      CurrencyCollection payment, with_fee, next;
+      if (width != 15 || key.get_uint(15) != count || value->size_ext() != 0x10000 ||
+          !tlb::unpack_cell_inexact(value->prefetch_ref(), info) || !info.ihr_disabled ||
+          !payment.validate_unpack(info.value, extra_validation_cells)) return false;
+      auto lt = schedule.participants[i].message_lt(count);
+      if (lt.is_error() || info.created_lt != lt.ok() || info.created_at != identity.gen_utime) return false;
+      auto forwarding = tlb::t_Tomis.as_integer(info.fwd_fee);
+      if (forwarding.is_null() || !CurrencyCollection::add(payment, CurrencyCollection(forwarding), with_fee) ||
+          !CurrencyCollection::add(exported, with_fee, next) || !next.tomis->unsigned_fits_bits(256)) return false;
+      exported = std::move(next);
+      // Count is a validated 15-bit dictionary index, hence fits unsigned.
+      exports.emplace_back(info.created_lt, value->prefetch_ref(), tx.root, static_cast<unsigned>(count));
+      auto incremented = participant_lt_detail::checked_add(count, 1);
+      if (incremented.is_error()) return false;
+      count = incremented.move_as_ok();
+      return true;
+    }) || count != static_cast<std::uint64_t>(record.outmsg_cnt)) {
+      return td::Status::Error("invalid allocation overlay outbound artifacts");
     }
     auto hashes = vm::load_cell_slice(record.state_update);
     td::Bits256 old_hash, new_hash;
@@ -122,7 +176,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
         new_hash != tx.new_total_state->get_hash().bits()) {
       return td::Status::Error("allocation overlay state hash mismatch");
     }
-    rows.push_back({account.addr, before, CurrencyCollection(0), after, CurrencyCollection(0), fees});
+    rows.push_back({account.addr, before, CurrencyCollection(0), after, exported, fees});
     transactions.emplace(account.addr, tx.root);
     // Commit only private objects. A later participant failure cannot publish
     // these dictionary roots or mutate the caller's authenticated old root.
@@ -140,7 +194,9 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
     TRY_STATUS(access.record_write(account.addr));
     participants.push_back(account.addr);
   }
-  TRY_RESULT(imports, build_workchain_final_imports(identity.workchain_id, cfg.global_version,
+  TRY_RESULT(imports, disposal ? build_workchain_routed_final_imports(identity.workchain_id, cfg.global_version,
+      inbox.envelopes, transactions, coordinator, custody, max_inbound, max_writes, extra_validation_cells) :
+      build_workchain_final_imports(identity.workchain_id, cfg.global_version,
       inbox.envelopes, transactions, max_inbound, max_writes, extra_validation_cells));
   for (auto& row : rows) {
     auto credit = imports.account_credits.find(row.account);
@@ -152,7 +208,51 @@ inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_all
   TRY_RESULT(changed, original.changed_accounts(next, max_writes));
   TRY_STATUS(access.finish(changed, participants));
   return WorkchainInboundAllocationOverlay{
-      {next_root, blocks.get_wrapped_dict_root(), schedule.end_lt}, std::move(imports)};
+      {next_root, blocks.get_wrapped_dict_root(), schedule.end_lt}, std::move(imports), std::move(exports)};
+}
+}  // namespace allocation_overlay_detail
+
+inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_inbound_allocation_overlay(
+    td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
+    td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    const td::Bits256& custody, std::uint64_t max_reads, std::uint64_t max_writes,
+    std::uint64_t max_transfers, std::uint64_t max_inbound, int extra_validation_cells, const SerializeConfig& cfg) {
+  return allocation_overlay_detail::build(old_accounts, identity, input, effects, coordinator, custody,
+      max_reads, max_writes, max_transfers, max_inbound, extra_validation_cells, cfg, nullptr);
+}
+
+// Post-admission, unsplit-shard disposal variant. Context is resolved upstream;
+// it is not a certificate of configuration or queue authentication. Payout and
+// return authorization remain separate; this does not authorize bucket sweeps.
+inline td::Result<WorkchainInboundAllocationOverlay> build_workchain_disposal_allocation_overlay(
+    td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
+    td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,
+    int extra_validation_cells, const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context) {
+  if (identity.shard_id != tos::shardIdAll) return td::Status::Error("disposal requires an unsplit shard");
+  return allocation_overlay_detail::build(old_accounts, identity, input, effects, coordinator, context.custody,
+      max_reads, max_writes, max_transfers, context.max_inbound, extra_validation_cells, cfg, &context);
+}
+
+// Replay reconstructs all transaction/account/import artifacts. Exports are
+// derived caches of those transactions, never independently trusted claims.
+inline td::Result<WorkchainInboundAllocationOverlay> replay_workchain_disposal_allocation_overlay(
+    td::Ref<vm::Cell> old_accounts, const WorkchainHostIdentity& identity,
+    td::Ref<vm::Cell> input, td::Ref<vm::Cell> effects, const td::Bits256& coordinator,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,
+    int extra_validation_cells, const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context,
+    const WorkchainInboundAllocationOverlay& claimed) {
+  if (claimed.state.accounts.is_null() || claimed.state.account_blocks.is_null() ||
+      claimed.imports.in_msg_descr.is_null()) return td::Status::Error("missing claimed disposal artifacts");
+  TRY_RESULT(rebuilt, build_workchain_disposal_allocation_overlay(old_accounts, identity, input, effects,
+      coordinator, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, context));
+  if (rebuilt.state.accounts->get_hash() != claimed.state.accounts->get_hash() ||
+      rebuilt.state.account_blocks->get_hash() != claimed.state.account_blocks->get_hash() ||
+      rebuilt.state.end_lt != claimed.state.end_lt ||
+      rebuilt.imports.in_msg_descr->get_hash() != claimed.imports.in_msg_descr->get_hash()) {
+    return td::Status::Error("claimed disposal artifacts differ from replay");
+  }
+  return rebuilt;
 }
 
 // Existing message-free API keeps its zero-inbox boundary until the enclosing

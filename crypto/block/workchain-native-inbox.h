@@ -21,12 +21,14 @@ struct WorkchainNativeInboxPlan {
 // planner has no exception conversion: a Result signature is not a no-throw
 // guarantee, including when invoked with an active VM state interface. The
 // source-aware enclosing host must contain acquisition/VM failures separately.
-inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_envelopes(
+namespace native_inbox_detail {
+inline td::Result<WorkchainNativeInboxPlan> plan_envelopes(
     const std::vector<td::Ref<vm::Cell>>& envelopes, tos::WorkchainId workchain,
-    const std::vector<td::Bits256>& recipients, std::uint64_t after_lt,
+    const std::vector<td::Bits256>* recipients, std::uint64_t after_lt,
     std::uint64_t max_inbound) {
-  if (workchain < 0 || recipients.empty() || !std::is_sorted(recipients.begin(), recipients.end()) ||
-      std::adjacent_find(recipients.begin(), recipients.end()) != recipients.end()) {
+  if (workchain < 0 || (recipients && (recipients->empty() ||
+      !std::is_sorted(recipients->begin(), recipients->end()) ||
+      std::adjacent_find(recipients->begin(), recipients->end()) != recipients->end()))) {
     return td::Status::Error("invalid native inbox role set");
   }
   if (envelopes.size() > max_inbound) return td::Status::Error("native inbox exceeds admitted count");
@@ -38,7 +40,7 @@ inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_envelopes(
     if (!tlb::unpack_cell(cell, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
         !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
         destination.workchain_id != workchain ||
-        !std::binary_search(recipients.begin(), recipients.end(), destination.address)) {
+        (recipients && !std::binary_search(recipients->begin(), recipients->end(), destination.address))) {
       return td::Status::Error("native inbox destination is not an allowed final-import role");
     }
     plan.after_lt = std::max<std::uint64_t>(plan.after_lt, info.created_lt);
@@ -48,11 +50,11 @@ inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_envelopes(
   return plan;
 }
 
-inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_inbox(
+inline td::Result<WorkchainNativeInboxPlan> plan_inbox(
     td::Ref<vm::Cell> root, tos::WorkchainId workchain,
-    const std::vector<td::Bits256>& recipients, std::uint64_t after_lt,
+    const std::vector<td::Bits256>* recipients, std::uint64_t after_lt,
     std::uint64_t max_inbound) {
-  TRY_RESULT(empty_plan, plan_workchain_native_envelopes({}, workchain, recipients, after_lt, max_inbound));
+  TRY_RESULT(empty_plan, plan_envelopes({}, workchain, recipients, after_lt, max_inbound));
   if (root.is_null()) return empty_plan;
   // This is a count precheck only; prior admission must bound the full closure
   // and derived wrappers before semantic decoding traverses the dictionary.
@@ -63,7 +65,28 @@ inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_inbox(
     return td::Status::Error("native inbox exceeds admitted count or profile");
   }
   TRY_RESULT(envelopes, decode_workchain_batch_inbound(root));
-  return plan_workchain_native_envelopes(envelopes, workchain, recipients, after_lt, max_inbound);
+  return plan_envelopes(envelopes, workchain, recipients, after_lt, max_inbound);
+}
+}  // namespace native_inbox_detail
+
+inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_envelopes(
+    const std::vector<td::Ref<vm::Cell>>& envelopes, tos::WorkchainId workchain,
+    const std::vector<td::Bits256>& recipients, std::uint64_t after_lt, std::uint64_t max_inbound) {
+  return native_inbox_detail::plan_envelopes(envelopes, workchain, &recipients, after_lt, max_inbound);
+}
+
+inline td::Result<WorkchainNativeInboxPlan> plan_workchain_native_inbox(
+    td::Ref<vm::Cell> root, tos::WorkchainId workchain, const std::vector<td::Bits256>& recipients,
+    std::uint64_t after_lt, std::uint64_t max_inbound) {
+  return native_inbox_detail::plan_inbox(root, workchain, &recipients, after_lt, max_inbound);
+}
+
+// Explicit disposal entry: preserve every final message, including destinations
+// outside the entry roles. The caller must dispose of these, never filter them.
+// This does not admit transit messages, anycast, or another workchain.
+inline td::Result<WorkchainNativeInboxPlan> plan_workchain_disposal_inbox(
+    td::Ref<vm::Cell> root, tos::WorkchainId workchain, std::uint64_t after_lt, std::uint64_t max_inbound) {
+  return native_inbox_detail::plan_inbox(root, workchain, nullptr, after_lt, max_inbound);
 }
 
 }  // namespace block

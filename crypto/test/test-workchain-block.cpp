@@ -1462,7 +1462,7 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
       17, 9, 2, 1, hash, 1, 10, 20, number(1)};
   block::gen::ShardStateUnsplit::Record old;
-  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), old));
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3, false, 0, 40, false, 1000), old));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
   block::Account coordinator(2, a.bits()), custody(2, b.bits());
   ASSERT_TRUE(coordinator.unpack(accounts.lookup(a), 10, false));
@@ -1564,6 +1564,75 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
         after, exported, fees});
   }
   ASSERT_TRUE(block::verify_workchain_value_flow(rows, effects.native_transfers, 2, 2, 4096).is_ok());
+  // Exercise the same transactions through the private multi-account overlay,
+  // not just entry preparation. The actual shard is unsplit; bind that identity.
+  auto overlay_identity = identity;
+  overlay_identity.shard_id = tos::shardIdAll;
+  auto overlay_input = block::encode_workchain_host_input(overlay_identity, admitted, access, inbox, 2, 2, 5).move_as_ok();
+  const auto original_hash = old.accounts->get_hash();
+  auto build_overlay = [&](td::Ref<vm::Cell> resolved_effects) {
+    return block::build_workchain_disposal_allocation_overlay(old.accounts, overlay_identity, overlay_input,
+        resolved_effects, a, 2, 2, 2, 4096, cfg, context);
+  };
+  auto overlay_result = build_overlay(effects_root);
+  ASSERT_TRUE(overlay_result.is_ok());
+  auto overlay = overlay_result.move_as_ok();
+  ASSERT_EQ(overlay.state.end_lt, 24u);
+  ASSERT_EQ(overlay.exports.size(), 2u);
+  ASSERT_TRUE(overlay.imports.account_credits.at(a) == block::CurrencyCollection(800));
+  vm::AugmentedDictionary next_accounts(vm::load_cell_slice_ref(overlay.state.accounts), 256, block::tlb::aug_ShardAccounts);
+  const td::Bits256 untouched(number(2)->get_hash().bits());
+  ASSERT_EQ(next_accounts.lookup(untouched)->prefetch_ref()->get_hash(), accounts.lookup(untouched)->prefetch_ref()->get_hash());
+  block::Account next_coordinator(2, a.bits()), next_custody(2, b.bits());
+  ASSERT_TRUE(next_coordinator.unpack(next_accounts.lookup(a), 10, false));
+  ASSERT_TRUE(next_custody.unpack(next_accounts.lookup(b), 10, false));
+  ASSERT_TRUE(next_coordinator.balance == block::CurrencyCollection(1073));
+  ASSERT_TRUE(next_custody.balance == block::CurrencyCollection(1227));
+  ASSERT_EQ(next_coordinator.last_trans_end_lt_, 24u);
+  ASSERT_EQ(next_custody.last_trans_end_lt_, 22u);
+  for (unsigned i = 0; i < 2; ++i) {
+    const auto& out = overlay.exports[i];
+    ASSERT_EQ(out.msg_idx, i);
+    ASSERT_EQ(out.lt, i == 0 ? 22u : 23u);
+    ASSERT_EQ(out.msg->get_hash(), entry.out_msgs[i]->get_hash());
+    ASSERT_EQ(td::Bits256(out.trans->get_hash().bits()), next_coordinator.last_trans_hash_);
+    ASSERT_TRUE(!out.metadata && out.msg_env_from_dispatch_queue.is_null());
+  }
+  auto replay_overlay = [&](const block::WorkchainInboundAllocationOverlay& claim) {
+    return block::replay_workchain_disposal_allocation_overlay(old.accounts, overlay_identity, overlay_input,
+        effects_root, a, 2, 2, 2, 4096, cfg, context, claim);
+  };
+  ASSERT_TRUE(replay_overlay(overlay).is_ok());
+  for (unsigned fault = 0; fault < 4; ++fault) {
+    LOG(INFO) << "disposal overlay replay artifact case=" << fault;
+    auto wrong = overlay;
+    if (fault == 0) wrong.state.accounts = old.accounts;
+    if (fault == 1) wrong.state.account_blocks = number(8);
+    if (fault == 2) wrong.state.end_lt = 23;
+    if (fault == 3) wrong.imports.in_msg_descr = number(9);
+    ASSERT_TRUE(replay_overlay(wrong).is_error());
+  }
+  auto cache_only = overlay;
+  cache_only.exports.clear();
+  cache_only.imports.account_credits.clear();
+  auto derived = replay_overlay(cache_only).move_as_ok();
+  ASSERT_EQ(derived.exports.size(), 2u);
+  ASSERT_TRUE(derived.imports.account_credits.at(a) == block::CurrencyCollection(800));
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, overlay_identity, overlay_input,
+      effects_root, a, b, 2, 2, 2, 5, 4096, cfg).is_error());
+  auto split_identity = overlay_identity;
+  split_identity.shard_id = UINT64_MAX;
+  auto split_input = block::encode_workchain_host_input(split_identity, admitted, access, inbox, 2, 2, 5).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_disposal_allocation_overlay(old.accounts, split_identity, split_input,
+      effects_root, a, 2, 2, 2, 4096, cfg, context).is_error());
+  // The later custody participant fails only after the private entry was
+  // committed. Neither dictionary updates nor output caches may be published.
+  auto insolvent = effects;
+  insolvent.native_transfers[1].value = block::CurrencyCollection(2000);
+  auto insolvent_root = block::encode_workchain_account_effects(insolvent, 2, 2, 4096).move_as_ok();
+  ASSERT_TRUE(build_overlay(insolvent_root).is_error());
+  ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  ASSERT_TRUE(build_overlay(effects_root).move_as_ok().state.accounts->get_hash() == overlay.state.accounts->get_hash());
   auto mismatched_prices = messages;
   mismatched_prices.global_version = 15;
   block::WorkchainDisposalEntryContext mismatch{b, mismatched_prices, workchains, profile, 5, 2};
