@@ -20,6 +20,11 @@ caches are reconstructed, never taken from the caller.
 
 ## Compatibility and incomplete integration
 
+The following describes the original runner unit. Joint payout/disposal is now
+connected through the full write-set overlay; see
+`uno-v2-joint-payout-overlay.md`. Production queue and validator integration
+remains incomplete.
+
 An initial blanket rejection of payouts in disposal mode was unnecessarily
 restrictive. A positive regression failed with that guard present. Removing it
 preserves the existing payout path when there are no foreign imports. Both

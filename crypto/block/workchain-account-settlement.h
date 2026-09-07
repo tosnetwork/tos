@@ -81,16 +81,16 @@ inline td::Result<WorkchainAccountSettlement> execute(
     imports = std::move(allocated.imports);
     exports = std::move(allocated.exports);
   } else {
-    // Preserve the existing payout path when there are no foreign imports.
-    // It validates the complete inbox and rejects foreign destinations; it
-    // never filters them. Joint payout/disposal still requires integration.
+    // Materialize the complete write set and all outputs without re-executing
+    // the engine. Strict callers retain the original recipient policy.
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
         executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
-        executed.input, effects_root, max_inbound));
+        executed.input, effects_root, max_inbound, disposal));
     state = std::move(payout.state);
     message = std::move(payout.message);
     imports = std::move(payout.imports);
+    exports = std::move(payout.exports);
   }
   return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
                                     std::move(state), std::move(message), std::move(imports), std::move(exports)};

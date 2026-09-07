@@ -1750,6 +1750,78 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   for (unsigned i = 0; i < 2; ++i) {
     ASSERT_EQ(pair[1]->out_msgs[i]->get_hash(), entry.out_msgs[i]->get_hash());
   }
+  engine.effects = joint_effects;
+  engine.calls = 0;
+  auto joint_settled_result = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+      overlay_identity, admitted, access, owned_inbox, 2, 2, 2, a, td::make_refint(100), 4096, cfg, joint_context);
+  if (joint_settled_result.is_error()) LOG(ERROR) << "joint overlay failed: " << joint_settled_result.error();
+  ASSERT_TRUE(joint_settled_result.is_ok());
+  auto joint_settled = joint_settled_result.move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(joint_settled.exports.size(), 3u);
+  ASSERT_EQ(joint_settled.state.end_lt, 24u);
+  ASSERT_EQ(joint_settled.message->get_hash(), pair[0]->out_msgs[0]->get_hash());
+  for (const auto& output : joint_settled.exports) {
+    bool found = false;
+    for (const auto& transaction : pair) {
+      for (const auto& expected : transaction->out_msgs) {
+        if (output.msg->get_hash() == expected->get_hash()) {
+          ASSERT_EQ(output.trans->get_hash(), transaction->root->get_hash());
+          found = true;
+        }
+      }
+    }
+    ASSERT_TRUE(found);
+  }
+  engine.calls = 0;
+  auto joint_claim = joint_settled;
+  joint_claim.exports.clear();
+  auto joint_replay = block::replay_workchain_disposal_settlement(engine, old.accounts, overlay_identity,
+      admitted, access, owned_inbox, 2, 2, 2, a, td::make_refint(100), 4096, cfg, joint_context, joint_claim);
+  ASSERT_TRUE(joint_replay.is_ok());
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(joint_replay.ok().exports.size(), 3u);
+  ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  // A touched storage participant is not another Native receiving role.
+  // Its misdirected import belongs to the coordinator, even in this write set.
+  const td::Bits256 third(number(2)->get_hash().bits());
+  block::Account third_account(2, third.bits());
+  ASSERT_TRUE(third_account.unpack(accounts.lookup(third), 10, false));
+  auto expanded_access = access;
+  expanded_access.reads.push_back({third, td::Bits256(third_account.total_state->get_hash().bits())});
+  expanded_access.writes.push_back(third);
+  std::sort(expanded_access.reads.begin(), expanded_access.reads.end(),
+      [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+  std::sort(expanded_access.writes.begin(), expanded_access.writes.end());
+  auto expanded_effects = joint_effects;
+  expanded_effects.updates.push_back({third, number(323)});
+  std::sort(expanded_effects.updates.begin(), expanded_effects.updates.end(),
+      [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+  auto expanded_inbox = inbox;
+  expanded_inbox.push_back(inbound_envelope(6, 6, {}, third, block::CurrencyCollection(100)));
+  const auto expanded_owned = own_native_fixture(expanded_inbox);
+  auto expanded_context = joint_context;
+  expanded_context.max_inbound = 6;
+  engine.effects = expanded_effects;
+  engine.calls = 0;
+  auto expanded_result = block::execute_and_settle_workchain_disposal(engine, old.accounts, overlay_identity,
+      admitted, expanded_access, expanded_owned, 3, 3, 2, a, td::make_refint(100), 4096, cfg, expanded_context);
+  if (expanded_result.is_error()) LOG(ERROR) << "expanded joint overlay failed: " << expanded_result.error();
+  ASSERT_TRUE(expanded_result.is_ok());
+  auto expanded = expanded_result.move_as_ok();
+  ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(expanded.exports.size(), 3u);
+  vm::AugmentedDictionary expanded_accounts(vm::load_cell_slice_ref(expanded.state.accounts), 256,
+      block::tlb::aug_ShardAccounts);
+  block::Account next_third(2, third.bits()), expanded_coordinator(2, a.bits());
+  ASSERT_TRUE(next_third.unpack(expanded_accounts.lookup(third), 10, false));
+  ASSERT_TRUE(expanded_coordinator.unpack(expanded_accounts.lookup(a), 10, false));
+  ASSERT_TRUE(next_third.balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(expanded_coordinator.balance == block::CurrencyCollection(1073));
+  ASSERT_EQ(next_third.data->get_hash(), number(323)->get_hash());
+  ASSERT_EQ(next_third.last_trans_lt_, 21u);
+  ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  engine.effects = joint_effects;
   auto insufficient_outputs = joint_context;
   insufficient_outputs.max_outbound = 2;
   ASSERT_TRUE(joint(insufficient_outputs, 100).is_error());
