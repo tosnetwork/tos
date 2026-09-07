@@ -10,6 +10,7 @@
 #include "block/workchain-allocation-plan.h"
 #include "block/workchain-import-evidence.h"
 #include "block/workchain-native-inbox.h"
+#include "block/native-bounce-body.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
@@ -652,6 +653,143 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, NativeBounceBody) {
+  auto child = number(55);
+  auto original = vm::CellBuilder().store_long(0x1234, 16).store_zeroes(304).store_ref(child).finalize();
+  auto body = vm::load_cell_slice_ref(original);
+  vm::CellBuilder value_builder;
+  ASSERT_TRUE(block::CurrencyCollection(123).store(value_builder));
+  auto value = vm::load_cell_slice_ref(value_builder.finalize());
+  auto encode = [&](bool rich, bool full, int bits, const block::NativeBounceDiagnostics& diagnostics) {
+    vm::CellBuilder encoded;
+    block::store_native_bounce_body(encoded, rich, full, bits, *body, body, value, 77, 99, diagnostics);
+    return encoded.finalize();
+  };
+  block::NativeBounceDiagnostics skipped{0, -1, {}};
+  bool exhausted = false;
+  try {
+    vm::CellBuilder output;
+    output.store_zeroes(1020);
+    block::store_native_bounce_body(output, false, false, 1, *body, body, value, 77, 99, skipped);
+  } catch (const vm::CellBuilder::CellCreateError&) {
+    exhausted = true;
+  }
+  ASSERT_TRUE(exhausted);
+  auto empty = vm::load_cell_slice(encode(false, false, 0, skipped));
+  ASSERT_TRUE(empty.empty_ext());
+  for (int bits : {256, 512}) {
+    auto legacy = vm::load_cell_slice(encode(false, false, bits, skipped));
+    ASSERT_EQ(legacy.size(), bits == 256 ? 288u : 352u);
+    ASSERT_EQ(legacy.size_refs(), 0u);
+    ASSERT_EQ(legacy.fetch_ulong(32), 0xffffffffu);
+    ASSERT_EQ(legacy.fetch_ulong(16), 0x1234u);
+    while (legacy.size()) ASSERT_EQ(legacy.fetch_ulong(1), 0u);
+  }
+  for (bool full : {false, true}) {
+    for (unsigned phase = 0; phase < 3; ++phase) {
+      block::NativeBounceDiagnostics diagnostics{phase, phase == 0 ? -1 : 42, {}};
+      if (phase != 0) diagnostics.compute = block::NativeBounceComputeInfo{123456, 654321};
+      auto root = encode(true, full, 256, diagnostics);
+      ASSERT_TRUE(block::gen::t_NewBounceBody.validate_ref(4096, root));
+      auto rich = vm::load_cell_slice(root);
+      ASSERT_EQ(rich.fetch_ulong(32), 0xfffffffeu);
+      auto returned_body = rich.fetch_ref();
+      auto returned_info = vm::load_cell_slice(rich.fetch_ref());
+      auto returned = vm::load_cell_slice(returned_body);
+      ASSERT_EQ(returned.size(), 320u);
+      ASSERT_EQ(returned.size_refs(), full ? 1u : 0u);
+      ASSERT_EQ(returned.fetch_ulong(16), 0x1234u);
+      while (returned.size()) ASSERT_EQ(returned.fetch_ulong(1), 0u);
+      if (full) {
+        ASSERT_TRUE(returned_body->get_hash() == original->get_hash());
+        ASSERT_TRUE(returned.fetch_ref()->get_hash() == child->get_hash());
+      }
+      block::CurrencyCollection recovered;
+      ASSERT_TRUE(recovered.fetch(returned_info));
+      ASSERT_TRUE(recovered == block::CurrencyCollection(123));
+      ASSERT_EQ(returned_info.fetch_ulong(64), 77u);
+      ASSERT_EQ(returned_info.fetch_ulong(32), 99u);
+      ASSERT_TRUE(returned_info.empty_ext());
+      ASSERT_EQ(rich.fetch_ulong(8), phase);
+      ASSERT_EQ(rich.fetch_long(32), phase == 0 ? -1 : 42);
+      ASSERT_EQ(rich.fetch_ulong(1), phase == 0 ? 0u : 1u);
+      if (phase != 0) {
+        ASSERT_EQ(rich.fetch_ulong(32), 123456u);
+        ASSERT_EQ(rich.fetch_ulong(32), 654321u);
+      }
+      ASSERT_TRUE(rich.empty_ext());
+    }
+  }
+  // Exercise the ordinary transaction caller, not only the extracted encoder.
+  // This ties format selection and phase diagnostics to actual bounce output.
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto address = td::Bits256::zero();
+  block::Account account(2, address.bits());
+  ASSERT_TRUE(account.unpack(accounts.lookup(address), 100, false));
+  block::ActionPhaseConfig config;
+  config.global_version = 16;
+  config.extra_currency_v2 = true;
+  config.bounce_msg_body = 256;
+  config.fwd_mc = block::MsgPrices(0, 0, 0, 0, 0, 0);
+  config.fwd_std = block::MsgPrices(0, 0, 0, 0, 0, 0);
+  for (int legacy_bits : {0, 256}) {
+    config.bounce_msg_body = legacy_bits;
+    for (unsigned flags : {0u, 1u, 2u, 3u}) {
+      for (unsigned phase = 0; phase < 3; ++phase) {
+        vm::CellBuilder incoming;
+        incoming.store_long(6, 4)
+            .store_long(4, 3)
+            .store_long(-1, 8)
+            .store_zeroes(256)
+            .store_long(4, 3)
+            .store_long(2, 8)
+            .store_zeroes(256);
+        ASSERT_TRUE(block::CurrencyCollection(123).store(incoming));
+        ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(incoming, td::make_refint(flags)));
+        auto message = incoming.store_zeroes(4)
+                           .store_long(77, 64)
+                           .store_long(99, 32)
+                           .store_long(0, 1)
+                           .store_long(1, 1)
+                           .store_ref(original)
+                           .finalize();
+        block::transaction::Transaction transaction(account, block::transaction::Transaction::tr_ord, 100, 100);
+        transaction.in_msg = message;
+        ASSERT_TRUE(transaction.unpack_input_msg(false, &config));
+        transaction.compute_phase = std::make_unique<block::ComputePhase>();
+        transaction.compute_phase->skip_reason =
+            phase == 0 ? block::ComputePhase::sk_no_state : block::ComputePhase::sk_none;
+        transaction.compute_phase->success = phase == 2;
+        transaction.compute_phase->exit_code = 42;
+        transaction.compute_phase->gas_used = 123456;
+        transaction.compute_phase->vm_steps = 654321;
+        if (phase == 2) {
+          transaction.action_phase = std::make_unique<block::ActionPhase>();
+          transaction.action_phase->result_code = 7;
+        }
+        ASSERT_TRUE(transaction.prepare_bounce_phase(config));
+        ASSERT_TRUE(transaction.bounce_phase && transaction.bounce_phase->ok);
+        ASSERT_EQ(transaction.out_msgs.size(), 1u);
+        block::gen::Message::Record bounced;
+        ASSERT_TRUE(tlb::type_unpack_cell(transaction.out_msgs[0], block::gen::t_Message_Any, bounced));
+        vm::CellSlice encoded_body{*bounced.body};
+        td::Ref<vm::Cell> actual;
+        if (encoded_body.fetch_ulong(1))
+          actual = encoded_body.fetch_ref();
+        else
+          actual = vm::CellBuilder().append_cellslice(encoded_body).finalize();
+        block::NativeBounceDiagnostics expected{phase, phase == 0 ? -1 : phase == 2 ? 7 : 42, {}};
+        if (phase != 0)
+          expected.compute = block::NativeBounceComputeInfo{123456, 654321};
+        ASSERT_TRUE(actual->get_hash() ==
+                    encode((flags & 1u) != 0, (flags & 2u) != 0, legacy_bits, expected)->get_hash());
+      }
+    }
+  }
 }
 
 TEST(WorkchainBlock, NativeInboxPlan) {

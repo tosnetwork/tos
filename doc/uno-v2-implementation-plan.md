@@ -1217,3 +1217,26 @@ hashes are in `measurements/uno-v2-inbound-payout-evidence.json`; these are manu
 controls, not recurring CI. This is not M1 acceptance. The complete runner still rejects nonempty inboxes;
 disposal, authenticated return/withdrawal authorization, aggregate operation-fee
 output, production classification/publication and synchronization remain open.
+
+### Shared Native bounce body encoding (M1, shared encoding component)
+
+The ordinary bounce caller now delegates body encoding to a stateless helper
+that writes only its caller-owned CellBuilder. Format and phase selection stay
+in the ordinary caller; address rewriting, pricing, debit and queue publication
+are unchanged. This is a prerequisite for sharing bounce construction with
+batch disposal, not a second fee algorithm and not completed disposal.
+
+The new test directly decodes legacy prefix/truncation, rich body with and
+without references, original value/LT/time and diagnostics. Twenty-four actual
+ordinary calls cover flags 0/1/2/3, legacy lengths 0/256 and three phase
+outcomes. The reviewed fixture gap is fixed: action result 7 differs from
+compute exit 42. Five rebuilt controls fail for source selection, full-body
+refs, original LT, truncation and swapped compute counters. A separate
+capacity fixture first exposed an ignored prefix-write result; the throwing
+store now propagates CellCreateError. The initial catch named the wrong class
+and was corrected against runtime and ensure_throw, not hidden from evidence.
+Explicit price initialization also fixes an earlier fixture failure, which is
+not mutation evidence. Review disposition is in
+`uno-v2-native-bounce-body-review-disposition.md`; logs and hashes are in
+`measurements/uno-v2-native-bounce-body-evidence.json`. This remains an encoding
+component, not full pricing, disposal or production activation.

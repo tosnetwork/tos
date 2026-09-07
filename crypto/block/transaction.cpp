@@ -21,6 +21,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/transaction.h"
+#include "block/native-bounce-body.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
@@ -4025,42 +4026,23 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
     cs = vm::load_cell_slice(cs.prefetch_ref());
   }
 
-  vm::CellBuilder body;
+  NativeBounceDiagnostics diagnostics{0, 0, {}};
   if (new_bounce_format) {
-    body.store_long(0xfffffffeU, 32);   // new_bounce_body#fffffffe
-    if (new_bounce_format_full_body) {  // original_body:^Cell
-      body.store_ref(vm::CellBuilder().append_cellslice(in_msg_body).finalize_novm());
-    } else {
-      body.store_ref(vm::CellBuilder().store_bits(in_msg_body->as_bitslice()).finalize_novm());
-    }
-    body.store_ref(vm::CellBuilder()
-                       .append_cellslice(in_msg_info.value)     // value:CurrencyCollection
-                       .store_long(in_msg_info.created_lt, 64)  // created_lt:uint64
-                       .store_long(in_msg_info.created_at, 32)  // created_at:uint32
-                       .finalize_novm());                       // original_info:^NewBounceOriginalInfo
     if (compute_phase->skip_reason != ComputePhase::sk_none) {
-      body.store_long(0, 8);                             // bounced_by_phase:uint8
-      body.store_long(-compute_phase->skip_reason, 32);  // exit_code:int32
-    } else if (!compute_phase->success) {
-      body.store_long(1, 8);                          // bounced_by_phase:uint8
-      body.store_long(compute_phase->exit_code, 32);  // exit_code:int32
+      diagnostics.phase = 0;
+      diagnostics.exit_code = -compute_phase->skip_reason;
     } else {
-      body.store_long(2, 8);                           // bounced_by_phase:uint8
-      body.store_long(action_phase->result_code, 32);  // exit_code:int32
+      diagnostics.phase = compute_phase->success ? 2u : 1u;
+      diagnostics.exit_code = compute_phase->success ? action_phase->result_code : compute_phase->exit_code;
+      diagnostics.compute = NativeBounceComputeInfo{compute_phase->gas_used, compute_phase->vm_steps};
     }
-    // compute_phase:(Maybe NewBounceComputePhaseInfo)
-    if (compute_phase->skip_reason != ComputePhase::sk_none) {
-      body.store_long(0, 1);
-    } else {
-      body.store_long(1, 1);
-      body.store_long(compute_phase->gas_used, 32);  // gas_used:uint32
-      body.store_long(compute_phase->vm_steps, 32);  // vm_steps:uint32
-    }
-  } else if (cfg.bounce_msg_body) {
-    int body_bits = std::min((int)cs.size(), cfg.bounce_msg_body);
-    body.store_long_bool(-1, 32);                       // 0xffffffff tag
-    body.append_bitslice(cs.prefetch_bits(body_bits));  // truncated message body
   }
+  vm::CellBuilder body;
+  // Legacy encoding has no dependency on rich-only original-info fields.
+  store_native_bounce_body(body, new_bounce_format, new_bounce_format_full_body,
+      cfg.bounce_msg_body, cs, in_msg_body, in_msg_info.value,
+      new_bounce_format ? in_msg_info.created_lt : 0,
+      new_bounce_format ? in_msg_info.created_at : 0, diagnostics);
 
   info.ihr_disabled = true;
   info.bounce = false;
