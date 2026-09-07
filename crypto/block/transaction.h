@@ -45,6 +45,19 @@ struct Account;
 class WorkchainExecutionRegistry;
 struct WorkchainBlockInput;
 struct WorkchainBlockResult;
+struct NativeDisposalProfile;
+struct ActionPhaseConfig;
+
+// Inputs requiring authentication by the enclosing host, not a certificate of
+// that authentication and not local policy defaults.
+// References are borrowed only for synchronous transaction preparation.
+struct WorkchainDisposalEntryContext {
+  td::Bits256 custody;
+  const ActionPhaseConfig& messages;
+  const WorkchainSet& workchains;
+  const NativeDisposalProfile& profile;
+  std::uint64_t max_inbound, max_outbound;
+};
 
 namespace transaction {
 
@@ -452,6 +465,10 @@ struct Transaction {
   td::Result<CurrencyCollection> stage_workchain_credit(const WorkchainBlockInput& input,
                                                        const SerializeConfig& cfg,
                                                        bool select_destination = false) const;
+  td::Status prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+      Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+      std::uint64_t max_transfers, int extra_validation_cells,
+      const WorkchainDisposalEntryContext* disposal);
  public:
   Ref<vm::Cell> new_total_state;
   Ref<vm::CellSlice> new_storage;
@@ -529,6 +546,19 @@ struct Transaction {
   td::Status prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                     Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
                                     std::uint64_t max_transfers, int extra_validation_cells);
+  // Explicit coordinator variant: settle foreign final destinations from the
+  // committed inbox, retaining original messages and deterministic bounce LTs.
+  // Custody arrivals remain that participant's obligation. Complete detached
+  // closures, roles/configuration and bucket-data authorization belong to the
+  // host; gross credit is not backing. No ordinary phase or live commit occurs.
+  // Same source-aware exception contract; failure never authorizes credit.
+  // Plain Status here is not a voting classification. The enclosing adapter
+  // must validate resolved configuration and contain source-specific failures;
+  // it must not feed every nonlocal-coded Status to candidate rejection.
+  td::Status prepare_workchain_disposal_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+      Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+      std::uint64_t max_transfers, int extra_validation_cells,
+      const WorkchainDisposalEntryContext& disposal);
   // Restricted import/allocation record sharing the entry's full-context
   // validation, but storing only its participant binding. No engine call or
   // output is permitted. The enclosing host must authorize this receiving role,

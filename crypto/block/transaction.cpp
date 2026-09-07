@@ -28,6 +28,7 @@
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-native-allocation.h"
+#include "block/workchain-native-disposal.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4718,10 +4719,29 @@ td::Status Transaction::prepare_workchain_import_participant(
   return td::Status::OK();
 }
 
+td::Status Transaction::prepare_workchain_disposal_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+    Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+    std::uint64_t max_transfers, int extra_validation_cells,
+    const WorkchainDisposalEntryContext& disposal) {
+  if (disposal.custody == account.addr || disposal.messages.global_version != cfg.global_version) {
+    return td::Status::Error("invalid coordinator disposal role or pricing version");
+  }
+  return prepare_workchain_entry_impl(std::move(binding), std::move(input), std::move(effects),
+      std::move(data), cfg, max_transfers, extra_validation_cells, &disposal);
+}
+
 td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                                Ref<vm::Cell> effects, Ref<vm::Cell> data,
                                                const SerializeConfig& cfg, std::uint64_t max_transfers,
                                                int extra_validation_cells) {
+  return prepare_workchain_entry_impl(std::move(binding), std::move(input), std::move(effects),
+      std::move(data), cfg, max_transfers, extra_validation_cells, nullptr);
+}
+
+td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<vm::Cell> input,
+    Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
+    std::uint64_t max_transfers, int extra_validation_cells,
+    const WorkchainDisposalEntryContext* disposal) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid entry allocation validation budget");
   gen::UnoV2HostRecord::Record record;
   gen::UnoV2HostInput::Record decoded;
@@ -4780,18 +4800,69 @@ td::Status Transaction::prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::C
   }
   WorkchainBlockInput credit;
   if (decoded.inbox->prefetch_ulong(1) != 0) credit.inbound_messages = decoded.inbox->prefetch_ref();
+  std::vector<Ref<vm::Cell>> envelopes, disposed_messages;
+  if (disposal && credit.inbound_messages.not_null()) {
+    TRY_RESULT(inbound, decode_workchain_batch_inbound(credit.inbound_messages));
+    if (inbound.size() > disposal->max_inbound) return td::Status::Error("disposal inbox exceeds admitted count");
+    envelopes = std::move(inbound);
+  }
   TRY_RESULT(credited, stage_workchain_credit(credit, cfg, true));
+  CurrencyCollection disposal_fees(0);
+  auto disposal_end_lt = end_lt;
+  for (const auto& root : envelopes) {
+    tlb::MsgEnvelope::Record_std envelope;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    gen::MsgAddressInt::Record_addr_std destination;
+    if (!tlb::unpack_cell(root, envelope) || !tlb::unpack_cell_inexact(envelope.msg, info) ||
+        !gen::csr_unpack(info.dest, destination) || destination.anycast->size() != 1 ||
+        destination.workchain_id != account.workchain || info.created_lt >= start_lt ||
+        info.created_at > now || (envelope.emitted_lt && envelope.emitted_lt.value() >= start_lt)) {
+      return td::Status::Error("invalid disposal final-import context");
+    }
+    if (destination.address == account.addr || destination.address == disposal->custody) continue;
+    TRY_RESULT(planned, plan_workchain_native_disposal(envelope.msg, account.workchain,
+        destination.address, account.addr, credited, disposal_end_lt, now, disposal->messages,
+        disposal->workchains, extra_validation_cells, disposal->profile));
+    credited = std::move(planned.row.new_balance);
+    if (planned.branch == NativeDisposalBranch::Bounce) {
+      // The decoded inbox is uint15-sized and each item emits at most once,
+      // establishing Native outmsg_cnt representability. The resolved budget
+      // can be smaller and must be checked independently.
+      if (disposed_messages.size() >= disposal->max_outbound) {
+        return td::Status::Error("disposal outputs exceed admitted count");
+      }
+      TRY_RESULT(next_lt, participant_lt_detail::checked_add(disposal_end_lt, 1));
+      CurrencyCollection next_fees;
+      // At most 32767 fee addends, each below 2^120, currently imply a sum
+      // below 2^135. Keep checked money operations as a defensive type bound;
+      // this is not a separately reachable overflow case under that profile.
+      if (!CurrencyCollection::add(disposal_fees, planned.row.fees, next_fees) ||
+          !next_fees.tomis->unsigned_fits_bits(256)) return td::Status::Error("disposal fee accumulation overflow");
+      disposal_fees = std::move(next_fees);
+      disposed_messages.push_back(std::move(planned.bounce));
+      disposal_end_lt = next_lt;
+    }
+  }
   TRY_RESULT(allocated, allocate_workchain_native_balance(account.addr, credited, output,
       max_transfers, extra_validation_cells));
+  // Allocate both private output vectors before sealing the transaction. On
+  // failure no account or queue has been published; the caller discards it.
+  auto sealed_messages = disposed_messages;
   auto description = vm::CellBuilder().store_long(tlb::TransactionDescr::trans_workchain_entry_v3, 4)
       .store_ref(binding).store_ref(input).store_ref(effects).finalize();
   TRY_STATUS(prepare_workchain_storage_participant(binding, std::move(data), cfg));
   batch_description = std::move(description);
-  // Own imported message values plus incoming allocations minus outgoing
+  // Own imports and retained disposal value plus incoming allocations minus outgoing
   // allocations determine this balance. Remaining forwarding fees belong to
   // independently rebuilt Native InMsg value flow, not this account's credit.
   balance = std::move(allocated);
   batch_balance = balance;
+  total_fees = std::move(disposal_fees);
+  batch_fees = total_fees;
+  out_msgs = std::move(disposed_messages);
+  batch_out_msgs = std::move(sealed_messages);
+  end_lt = disposal_end_lt;
+  batch_end_lt = end_lt;
   return td::Status::OK();
 }
 

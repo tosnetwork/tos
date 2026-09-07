@@ -1522,3 +1522,31 @@ Subsequent manual controls and regression evidence are recorded in
 `measurements/uno-v2-routed-import-evidence.json`; scope and arithmetic are in
 `uno-v2-routed-final-imports.md`. These controls are not recurring mutation CI.
 This helper-only unit awaits M1 milestone review and is not milestone closure.
+
+### Coordinator disposal transaction (M1, boundary reviewed)
+
+The explicit disposal entry now shares the strict entry's full input/effects,
+read/write, ordinal and data checks, then reconstructs foreign final-import
+disposal through the Native planner. Own and custody entries are not consumed
+twice. The transaction retains unexpected value, applies internal allocations,
+serializes its actual balance and fees, and seals all bounce messages with
+checked LTs. Existing strict entry and importing-participant behavior is
+unchanged. The work still does not publish a queue or accept a live address
+exception.
+
+The new two-account fixture is stronger than the preceding record-shape
+fixture: the transactions actually prepare against this same committed inbox.
+It checks value flow from decoded account balances, serialized out-messages and
+fees, and reconstructed InMsg credits. It also exercises an unaffordable bounce
+as economic credit with a zero-output budget, one-bounce LT overflow without a
+later message masking it, context limits and sealed-output mutation. The
+unimplemented factory first failed the success assertion after a build.
+
+Immediate consensus-boundary review ran both the new test and all 82 block
+tests. Follow-up adds five isolated custody-context witnesses and a transfer
+whose funding depends on retained credit. The latter pins Native cash ordering,
+not bucket-spend authorization: preservation and authorized movement of that
+liability still belong to the engine. An ordinary Status is not a voting
+classification; source-aware configuration and exception adaptation remain
+production prerequisites. Review disposition and scope:
+`uno-v2-disposal-entry-review-disposition.md`. No M1 completion is claimed.

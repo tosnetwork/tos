@@ -1446,6 +1446,205 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   ASSERT_TRUE(decode(malformed).is_error());
 }
 
+TEST(WorkchainBlock, NativeDisposalEntry) {
+  using Transaction = block::transaction::Transaction;
+  const auto a = td::Bits256::zero();
+  const td::Bits256 b(number(1)->get_hash().bits());
+  const auto foreign = td::Bits256::ones();
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(policy));
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(admission.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 10, 20, number(1)};
+  block::gen::ShardStateUnsplit::Record old;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), old));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account coordinator(2, a.bits()), custody(2, b.bits());
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(a), 10, false));
+  ASSERT_TRUE(custody.unpack(accounts.lookup(b), 10, false));
+  block::WorkchainAccountDeclarations access{{
+      {a, td::Bits256(coordinator.total_state->get_hash().bits())},
+      {b, td::Bits256(custody.total_state->get_hash().bits())}}, {a, b}};
+  auto bounce_envelope = [&](std::uint64_t lt) {
+    block::tlb::MsgEnvelope::Record_std env;
+    ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(lt, lt, {}, foreign, block::CurrencyCollection(300)), env));
+    auto message = vm::load_cell_slice(env.msg);
+    ASSERT_EQ(message.fetch_ulong(4), 4u);
+    env.msg = vm::CellBuilder().store_long(6, 4).append_cellslice(message).finalize();
+    td::Ref<vm::Cell> root;
+    ASSERT_TRUE(tlb::pack_cell(root, env));
+    return root;
+  };
+  std::vector<td::Ref<vm::Cell>> inbox{inbound_envelope(1, 1, {}, a), inbound_envelope(2, 2, {}, b),
+      inbound_envelope(3, 3, {}, foreign), bounce_envelope(4), bounce_envelope(5)};
+  block::WorkchainAccountEffects effects;
+  effects.updates = {{a, number(321)}, {b, number(322)}};
+  effects.native_transfers = {{a, b, block::CurrencyCollection(137)}, {b, a, block::CurrencyCollection(10)}};
+  auto effects_root = block::encode_workchain_account_effects(effects, 2, 2, 4096).move_as_ok();
+  auto input = block::encode_workchain_host_input(identity, admitted, access, inbox, 2, 2, 5).move_as_ok();
+  auto bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = true;
+  block::ActionPhaseConfig messages;
+  messages.global_version = 16;
+  messages.bounce_msg_body = 256;
+  messages.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
+  block::WorkchainSet workchains;
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  basechain.write().addr_len_step = 0;
+  workchains.emplace(0, basechain);
+  block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
+      {0, -block::ComputePhase::sk_no_state, {}}, false};
+  block::WorkchainDisposalEntryContext context{b, messages, workchains, profile, 5, 2};
+  auto prepare = [&](Transaction& tx, const block::WorkchainDisposalEntryContext& resolved) {
+    return tx.prepare_workchain_disposal_entry(bindings[0], input, effects_root, number(321), cfg, 2, 4096, resolved);
+  };
+  Transaction entry(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(prepare(entry, context).is_ok());
+  ASSERT_TRUE(entry.balance == block::CurrencyCollection(1073));
+  ASSERT_TRUE(entry.total_fees == block::CurrencyCollection(100));
+  ASSERT_EQ(entry.end_lt, 24u);
+  ASSERT_EQ(entry.out_msgs.size(), 2u);
+  ASSERT_TRUE(!entry.storage_phase && !entry.credit_phase && !entry.compute_phase &&
+      !entry.action_phase && !entry.bounce_phase);
+  ASSERT_TRUE(entry.serialize(cfg));
+  Transaction participant(custody, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(participant.prepare_workchain_import_participant(bindings[1], input, effects_root, number(322),
+      cfg, 2, 4096).is_ok());
+  ASSERT_TRUE(participant.serialize(cfg));
+  auto imports = block::build_workchain_routed_final_imports(2, 16, inbox,
+      {{a, entry.root}, {b, participant.root}}, a, b, 5, 2, 4096).move_as_ok();
+  ASSERT_TRUE(imports.account_credits.at(a) == block::CurrencyCollection(800));
+  ASSERT_TRUE(imports.account_credits.at(b) == block::CurrencyCollection(100));
+  ASSERT_TRUE(imports.value_imported == block::CurrencyCollection(1235));
+  ASSERT_TRUE(imports.fees_collected == block::CurrencyCollection(335));
+  std::vector<block::WorkchainAccountValueFlow> rows;
+  for (const auto* tx : {&entry, &participant}) {
+    block::gen::Transaction::Record rec;
+    block::gen::Account::Record_account encoded;
+    block::gen::AccountStorage::Record storage;
+    block::CurrencyCollection after, fees, exported(0);
+    ASSERT_TRUE(tlb::unpack_cell(tx->root, rec));
+    ASSERT_TRUE(tlb::unpack_cell(tx->new_total_state, encoded) && tlb::csr_unpack(encoded.storage, storage));
+    ASSERT_TRUE(after.unpack(storage.balance) && fees.unpack(rec.total_fees));
+    ASSERT_EQ(storage.last_trans_lt, tx == &entry ? 24u : 22u);
+    ASSERT_EQ(rec.outmsg_cnt, tx == &entry ? 2 : 0);
+    vm::Dictionary outputs(rec.r1.out_msgs, 15);
+    std::uint64_t count = 0;
+    ASSERT_TRUE(outputs.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr, int width) {
+      block::gen::CommonMsgInfo::Record_int_msg_info out;
+      block::gen::MsgAddressInt::Record_addr_std src;
+      block::CurrencyCollection payment, with_fee, next;
+      if (width != 15 || value->size_ext() != 0x10000 || !tlb::unpack_cell_inexact(value->prefetch_ref(), out) ||
+          !tlb::csr_unpack(out.src, src) || !payment.unpack(out.value)) return false;
+      ASSERT_TRUE(out.bounced && !out.bounce && src.address == foreign && src.workchain_id == 2);
+      ASSERT_EQ(out.created_lt, count == 0 ? 22u : 23u);
+      ASSERT_TRUE(payment == block::CurrencyCollection(100));
+      auto remaining = block::tlb::t_Tomis.as_integer(out.fwd_fee);
+      ASSERT_TRUE(remaining.not_null() && block::CurrencyCollection(remaining) == block::CurrencyCollection(150));
+      if (!block::CurrencyCollection::add(payment, block::CurrencyCollection(remaining), with_fee) ||
+          !block::CurrencyCollection::add(exported, with_fee, next)) return false;
+      exported = std::move(next);
+      auto next_count = block::participant_lt_detail::checked_add(count, 1);
+      ASSERT_TRUE(next_count.is_ok());
+      count = next_count.move_as_ok();
+      return true;
+    }));
+    rows.push_back({rec.account_addr, block::CurrencyCollection(1000), imports.account_credits.at(rec.account_addr),
+        after, exported, fees});
+  }
+  ASSERT_TRUE(block::verify_workchain_value_flow(rows, effects.native_transfers, 2, 2, 4096).is_ok());
+  auto mismatched_prices = messages;
+  mismatched_prices.global_version = 15;
+  block::WorkchainDisposalEntryContext mismatch{b, mismatched_prices, workchains, profile, 5, 2};
+  Transaction wrong_version(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(prepare(wrong_version, mismatch).is_error());
+  auto unaffordable_prices = messages;
+  unaffordable_prices.fwd_std.lump_price = 301;
+  block::WorkchainDisposalEntryContext no_outputs{b, unaffordable_prices, workchains, profile, 5, 0};
+  Transaction only_credit(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(prepare(only_credit, no_outputs).is_ok());
+  ASSERT_TRUE(only_credit.balance == block::CurrencyCollection(1673));
+  ASSERT_TRUE(only_credit.out_msgs.empty() && only_credit.total_fees.is_zero());
+  ASSERT_EQ(only_credit.end_lt, 22u);
+  ASSERT_TRUE(only_credit.serialize(cfg));
+  // Only one bounce: after an unchecked wrap no later message can mask it.
+  auto one_input = block::encode_workchain_host_input(identity, admitted, access, {inbox.back()}, 2, 2, 1).move_as_ok();
+  auto one_bindings = block::build_workchain_participant_records(td::Bits256(one_input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  Transaction overflow(coordinator, Transaction::tr_workchain_batch, UINT64_MAX - 1, 10);
+  ASSERT_TRUE(overflow.prepare_workchain_disposal_entry(one_bindings[0], one_input, effects_root, number(321),
+      cfg, 2, 4096, context).is_error());
+  // Only a custody message: neither own-credit checks nor the disposal helper
+  // may mask the full-inbox context checks of the coordinator transaction.
+  for (unsigned fault = 0; fault < 5; ++fault) {
+    LOG(INFO) << "disposal entry envelope context case=" << fault;
+    block::tlb::MsgEnvelope::Record_std envelope;
+    ASSERT_TRUE(tlb::unpack_cell(inbox[1], envelope));
+    block::gen::Message::Record message;
+    block::gen::CommonMsgInfo::Record_int_msg_info info;
+    block::gen::MsgAddressInt::Record_addr_std destination;
+    ASSERT_TRUE(tlb::type_unpack_cell(envelope.msg, block::gen::t_Message_Any, message));
+    ASSERT_TRUE(tlb::csr_unpack(message.info, info) && tlb::csr_unpack(info.dest, destination));
+    if (fault == 0) destination.anycast = vm::load_cell_slice_ref(
+        vm::CellBuilder().store_long(33, 6).store_long(0, 1).finalize());
+    if (fault == 1) destination.workchain_id = 0;
+    if (fault == 2) info.created_lt = 21;
+    if (fault == 3) info.created_at = 11;
+    if (fault == 4) envelope.emitted_lt = 21;
+    ASSERT_TRUE(tlb::csr_pack(info.dest, destination) && tlb::csr_pack(message.info, info));
+    ASSERT_TRUE(tlb::type_pack_cell(envelope.msg, block::gen::t_Message_Any, message));
+    td::Ref<vm::Cell> altered;
+    ASSERT_TRUE(tlb::pack_cell(altered, envelope));
+    auto altered_input = block::encode_workchain_host_input(identity, admitted, access, {altered}, 2, 2, 1).move_as_ok();
+    auto altered_bindings = block::build_workchain_participant_records(td::Bits256(altered_input->get_hash().bits()),
+        td::Bits256(effects_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(rejected.prepare_workchain_disposal_entry(altered_bindings[0], altered_input, effects_root,
+        number(321), cfg, 2, 4096, context).is_error());
+    ASSERT_TRUE(rejected.root.is_null() && rejected.new_total_state.is_null());
+  }
+  // This is Native cash allocation, NOT authorization to spend an unexpected
+  // bucket. The enclosing engine must maintain its liability and authorize any
+  // sweep. Make the retained 100 load-bearing: 1150 exceeds 1000+100+10.
+  auto funded_effects = effects;
+  funded_effects.native_transfers[0].value = block::CurrencyCollection(1150);
+  auto funded_root = block::encode_workchain_account_effects(funded_effects, 2, 2, 4096).move_as_ok();
+  auto funded_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(funded_root->get_hash().bits()), {a, b}, 2).move_as_ok();
+  Transaction funded(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(funded.prepare_workchain_disposal_entry(funded_bindings[0], input, funded_root, number(321),
+      cfg, 2, 4096, context).is_ok());
+  ASSERT_TRUE(funded.balance == block::CurrencyCollection(60));
+  ASSERT_TRUE(funded.serialize(cfg));
+  for (auto bad : {0u, 1u, 2u, 3u}) {
+    LOG(INFO) << "disposal entry bound case=" << bad;
+    auto limited = context;
+    if (bad == 0) limited.custody = a;
+    if (bad == 1) limited.max_inbound = 4;
+    if (bad == 2) limited.max_outbound = 1;
+    if (bad == 3) limited.max_outbound = 0;
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(prepare(rejected, limited).is_error());
+    ASSERT_TRUE(rejected.root.is_null() && rejected.new_total_state.is_null());
+  }
+  // A caller cannot alter an already serialized, sealed message list.
+  entry.out_msgs[0] = number(7);
+  ASSERT_TRUE(!entry.serialize(cfg));
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
+}
+
 TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
