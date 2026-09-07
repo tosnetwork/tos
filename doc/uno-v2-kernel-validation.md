@@ -10,7 +10,7 @@ The crate's README gives the native build and CTest entry points. The opt-in
 parent configuration must enable `TOS_UNO_CRYPTO_PROTOTYPE_TESTS`.
 On the Linux x86-64 build, all six `test-uno-crypto-` CTest entries passed.
 One is the retained V0 mock adapter; it is not evidence for the new kernel.
-The Rust suite has eleven tests, including SEND and all COLLECT k=1..8 shapes,
+The Rust suite has thirteen tests, including SEND and all COLLECT k=1..8 shapes,
 frozen bytes, per-field mutations, shared-response equations and FFI recovery.
 
 The following mutation runners operate only on disposable source copies:
@@ -25,10 +25,17 @@ python3 uno/crypto/tests/run-boundary-controls.py \
   --archive /absolute/current/libtos_uno_crypto_prototype.a
 ```
 
-Forty-seven mutation-runner checks passed after review, including positive/restored
-controls. The earlier 32-control record is retained as historical pre-review evidence.
+Forty-eight mutation-runner checks passed after the follow-up, including
+positive/restored controls and removal of the internal policy ceiling.
+The earlier 32- and 47-control records are retained as historical evidence.
 The recorded logs and source hashes are retained in
 [the evidence archive](measurements/uno-v2-kernel-evidence.tar.gz).
+The later F1-F5 run, including the 48-control result and checkout-status negative
+control, is in [the follow-up archive](measurements/uno-v2-kernel-followup-evidence.tar.gz).
+Use its `uno-kernel-f1-f5-final-mutations` directory for the corrected standalone
+unknown-kind control; the earlier run is retained to show the incidental-test
+failure identified by the focused review. Final boundary controls are in
+`uno-kernel-f1-f5-final-boundaries`.
 The baseline plus source hashes identify the uncommitted implementation tested;
 the record does not claim that historical local logs automatically match a future HEAD.
 Each of 21 possible Sigma equation positions was independently bypassed and
@@ -40,6 +47,8 @@ Boundary controls separately removed the lexical gate, unwind containment and
 runtime entropy trap; each produced an observable failing test.
 Post-review controls also disabled the actual vendor file-set and hash checks;
 the added-file and changed-file tests failed respectively.
+The follow-up also removes the checkout-status gate: the actual untracked-build
+script test fails. These runners remain manual evidence, not registered CTest jobs.
 
 ## Sanitizer scope and firing controls
 

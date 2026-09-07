@@ -47,6 +47,14 @@ def validate_vendor(directory):
             raise ValueError(f"vendored source drift: {path}")
 
 
+def validate_checkout_status(directory):
+    status = subprocess.check_output(["git", "-C", str(directory), "status", "--porcelain=v1",
+                                      "--untracked-files=all", "--ignored"], text=True).splitlines()
+    # Only the package manager's extraction marker is permitted outside Git.
+    if any(line not in {"?? .cargo-ok", "!! .cargo-ok"} for line in status):
+        raise ValueError(f"git dependency checkout drift: {status}")
+
+
 class KernelGates(unittest.TestCase):
     def test_annotated_tag_objects_bind_the_commits(self):
         for name, (tag_object, commit) in TAGS.items():
@@ -109,10 +117,18 @@ class KernelGates(unittest.TestCase):
             directory = Path(package["manifest_path"]).parent
             revision = subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"], text=True).strip()
             self.assertEqual(revision, PINS[package["name"]][1])
-            subprocess.run(["git", "-C", str(directory), "diff", "--exit-code", "HEAD", "--"], check=True, capture_output=True)
-            untracked = subprocess.check_output(["git", "-C", str(directory), "ls-files", "--others"], text=True).splitlines()
-            # The package manager's empty extraction marker is not compilable source.
-            self.assertFalse(set(untracked) - {".cargo-ok"}, untracked)
+            validate_checkout_status(directory)
+
+    def test_checkout_status_rejects_untracked_build_script(self):
+        with tempfile.TemporaryDirectory(prefix="uno-checkout-control-") as scratch:
+            directory=Path(scratch)
+            subprocess.run(["git", "init", "--quiet", str(directory)], check=True)
+            validate_checkout_status(directory)
+            (directory / ".cargo-ok").write_bytes(b"")
+            validate_checkout_status(directory)
+            (directory / "build.rs").write_text("fn main() {}")
+            with self.assertRaises(ValueError):
+                validate_checkout_status(directory)
 
     def test_vendored_source_manifest_and_tamper_control(self):
         manifest = json.loads((ROOT / "vendor/bulletproofs/SOURCE_MANIFEST.json").read_text())

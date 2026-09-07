@@ -159,12 +159,35 @@ fn admission_predicates_have_independent_witnesses() {
     let mut p=f.limits;p.max_proof_bytes=f.proof.len().checked_sub(1).expect("nonempty proof");
     assert_eq!(check(&p,&f.context,&f.points),Err(UNO_CRYPTO_DECODE));
     p.max_proof_bytes=f.proof.len();assert_eq!(check(&p,&f.context,&f.points),Ok(()));
-    assert!(shapes(99,0).is_err());
     assert!(shapes(UNO_RELATION_SEND,1).is_err());
     assert!(shapes(UNO_RELATION_COLLECT,0).is_err());
     let aligned=&f.limits as *const KernelLimits as usize;
     let misaligned=aligned.checked_add(1).expect("test pointer");
     assert!(!bounded_span(misaligned as *const VerifyRequest,1));
+}
+
+#[test]
+fn unknown_relation_kind_is_not_collect() {
+    assert_eq!(shapes(UNO_RELATION_COLLECT,1),Ok((9,7,6,8)));
+    assert_eq!(shapes(99,1),Err(UNO_CRYPTO_DECODE));
+}
+
+#[test]
+fn internal_collect_ceiling_rejects_unsupported_policy_before_input() {
+    let mut f=fixture(1);
+    f.limits.max_collect=64;
+    assert_eq!(f.verify(),Ok(()));
+    assert_eq!(unsafe{uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_OK as u32);
+    f.limits.max_collect=65;
+    assert_eq!(f.verify(),Err(UNO_CRYPTO_ARGUMENTS));
+    assert_eq!(unsafe{uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_ARGUMENTS as u32);
+    f.limits.max_collect=usize::MAX;
+    assert_eq!(validate_limits(&f.limits),Err(UNO_CRYPTO_ARGUMENTS));
+    // A candidate violating a supported policy is still invalid input, not a
+    // local configuration error. Shape/limit checks precede slice construction.
+    f.limits.max_collect=64;
+    let mut request=f.request();request.receipt_count=65;request.receipt_ids=std::ptr::null();
+    assert_eq!(unsafe{uno_crypto_verify_v1(&request)},UNO_CRYPTO_DECODE as u32);
 }
 
 #[test]

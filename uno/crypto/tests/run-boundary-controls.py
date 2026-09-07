@@ -35,6 +35,11 @@ def main():
         "KernelGates.test_verifier_entry_closure_and_negative_controls"], 1, "FAILED (failures=")
     gate.write_text(original)
 
+    gate.write_text(original.replace('if any(line not in {"?? .cargo-ok", "!! .cargo-ok"} for line in status):', 'if False:'))
+    run("removed-checkout-status-gate", ["python3", str(gate),
+        "KernelGates.test_checkout_status_rejects_untracked_build_script"], 1, "FAILED (failures=")
+    gate.write_text(original)
+
     gate.write_text(original.replace('if actual != set(manifest["sha256"]) | {"SOURCE_MANIFEST.json"}:', 'if False:'))
     run("removed-vendor-file-set", ["python3", str(gate),
         "KernelGates.test_vendored_source_manifest_and_tamper_control"], 1, "FAILED (failures=")

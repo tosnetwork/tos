@@ -65,10 +65,18 @@ complete RustSec audit; cargo-audit was not installed on the build host.
 
 ## What the gates establish
 
-- Full revision/version identity, cached git checkout tracked-source integrity.
+For first-party formatting, use `cargo fmt -p tos-uno-crypto-prototype`, not
+`cargo fmt --all`: the latter traverses path dependencies and can rewrite the
+vendored source. Vendored formatting is retained exactly as authenticated by its
+manifest; formatting changes there require the same explicit source review and
+manifest update as other dependency changes. Formatting is not a reason to bypass
+the source-integrity gate. No blanket formatting of the dependency is authorized.
+
+- Full revision/version identity and cached git checkout status, including
+  untracked and ignored files; only Cargo's `.cargo-ok` marker is exempted.
 - Every locked registry archive checksum, plus extracted source bytes compared
   with the authenticated archive used by Cargo.
-- Exact vendored source set and byte hashes, including new files.
+- Exact vendored file set and source byte hashes, including new files.
 - No rand/getrandom provider in the normal runtime graph; rand_core traits are
   not themselves an entropy source. Build/prover-test dependencies are separate.
 - Conservative lexical checks on kernel entry/independent range code, combined

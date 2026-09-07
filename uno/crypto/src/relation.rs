@@ -34,6 +34,9 @@ pub(crate) fn range_size(m: usize) -> Result<usize, Error> {
 }
 
 pub(crate) fn validate_limits(limits: &KernelLimits) -> Result<(), Error> {
+    // A policy beyond this implementation ceiling is unsupported, not a
+    // candidate-invalid result. This bounds the dense matrix before allocation.
+    if limits.max_collect > 64 { return Err(Error::UNO_CRYPTO_ARGUMENTS); }
     // Nonzero max_value <= max_balance implies nonzero max_balance.
     if limits.max_value == 0 || limits.max_value > limits.max_balance
         || limits.max_collect == 0 || limits.max_context_bytes == 0 || limits.max_proof_bytes == 0 {

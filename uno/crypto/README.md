@@ -16,6 +16,8 @@ Old Note history fixtures are historical measurement data, not kernel vectors.
 - COLLECT has 2k+5 equations and 2k+4 shared witnesses/range objects, padded to
   a power of two. The caller supplies the permitted K; tests cover 1 through 8.
   Eight is a research candidate, not a production constant or default.
+  This implementation rejects host policies above 64 before allocation; that
+  capability ceiling is not a production resource-budget recommendation.
 - Each Sigma equation and both range residuals are checked separately.
   Exact MSM remains available within each equation. No verifier RNG is used.
 - The reference prover is test-only and retains random masks. No production

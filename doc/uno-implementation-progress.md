@@ -13,6 +13,8 @@ The kernel milestone received independent review and the accepted fixes were
 retested. See [the disposition](uno-v2-kernel-review-disposition.md) and
 [validation evidence](uno-v2-kernel-validation.md). This does not transfer V1
 milestone completion to V2 or close the remaining host/activation gates.
+Mutation-runner evidence is manual and archived, not a CI rerun guarantee;
+only the explicitly registered CTest checks are recurring gates when enabled.
 
 Branch: `feature/uno-privacy-workchain-v1`.
 

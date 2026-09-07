@@ -43,6 +43,8 @@ def main():
             file.write_text(original)
 
     command("baseline", "", True)
+    mutation("drop-internal-collect-ceiling", "src/relation.rs", "limits.max_collect > 64", "false",
+             "internal_collect_ceiling_rejects_unsupported_policy_before_input")
     path = "vendor/bulletproofs/src/range_proof/deterministic.rs"
     for name, replacement in (("drop-ip", "poly.is_identity()"), ("drop-poly", "ip.is_identity()"),
                               ("allow-cancellation", "(ip + poly).is_identity()")):
@@ -83,10 +85,11 @@ def main():
         ("empty-context", "context.is_empty()"),
         ("context-ceiling", "context.len() > limits.max_context_bytes"),
         ("proof-ceiling", "range_size(m)? > limits.max_proof_bytes"),
-        ("unknown-kind", "kind != UNO_RELATION_COLLECT"),
     ):
         mutation("drop-" + name, "src/relation.rs", before, "false",
                  "admission_predicates_have_independent_witnesses")
+    mutation("drop-unknown-kind", "src/relation.rs", "kind != UNO_RELATION_COLLECT", "false",
+             "unknown_relation_kind_is_not_collect")
     mutation("send-with-receipts", "src/relation.rs", "kind == UNO_RELATION_SEND && k == 0",
              "kind == UNO_RELATION_SEND", "admission_predicates_have_independent_witnesses")
     mutation("empty-collect", "src/relation.rs", "kind != UNO_RELATION_COLLECT || k == 0",

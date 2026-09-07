@@ -12,6 +12,11 @@ OOM abort, process termination and invalid caller allocations are not
 recoverable panics. No mutable verifier cache or partially initialized key is
 retained. Generator construction is currently per call.
 
+The unsafe raw-pointer borrows have caller-chosen lifetimes. Allocation lifetime
+and absence of retention are caller-contract and reviewed call-site obligations,
+not a type-system proof that arbitrary raw pointers are valid. All current borrows
+are consumed synchronously before return; the helper does not authenticate memory.
+
 The caller supplies initialized immutable allocations valid until return.
 Null is permitted for an empty receipt-ID array only; numeric checks do not
 establish allocation validity. Arrays contain canonical 32-byte compressed
@@ -57,7 +62,13 @@ point matrix and performs that many scalar/point terms across its Sigma checks:
 its matrix storage and this work are O(k squared), not a linear K budget.
 Generator derivation adds O(64m) work per request. The exercised K=8 is not
 evidence for large configured K. A future policy must admit worst-case allocation
-and work before enabling it; this kernel installs no unapproved internal ceiling.
+and work before enabling it. The kernel rejects `max_collect > 64` with ARGUMENTS
+before reading candidate slices or allocating the matrix, independently of what
+the host permits. This is an implementation capability ceiling, not production K.
+A candidate exceeding a supported policy still returns DECODE, not ARGUMENTS.
+At K=64 the dense matrix has 17,556 points (about 2.8 MB on the measured backend);
+the ceiling is not a whole-call memory/WCET guarantee. If large K becomes necessary,
+sparse rows can make the Sigma storage and group-operation term count linear.
 
 ## Results and caller obligations
 
