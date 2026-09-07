@@ -1,8 +1,12 @@
 #pragma once
 
+#include <algorithm>
+
 #include "block/workchain-account-effects.h"
 #include "block/workchain-payout-overlay.h"
 #include "block/workchain-allocation-overlay.h"
+#include "block/workchain-native-materialization.h"
+#include "block/workchain-native-inbox.h"
 
 namespace block {
 
@@ -18,23 +22,27 @@ struct WorkchainAccountSettlement {
 // This post-admission operation does not authenticate roles, resource policy,
 // old state or withdrawal authorization. The resolved engine must derive its
 // payout request from verified obligations, not forward an unverified request.
-// Registration and inbound settlement need additional Native record shapes.
+// Registration and misdirected inbound disposal need additional Native record shapes.
 // Message-free internal allocations may share a batch with a priced payout.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
     const WorkchainAccountDeclarations& declarations,
-    const std::vector<td::Ref<vm::Cell>>& authenticated_inbox,
+    const MaterializedNativeCells& native_cells,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
-  if (!authenticated_inbox.empty()) {
-    return td::Status::Error("nonempty Native inbox settlement is not yet integrated");
-  }
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
+  // Ownership is enforced by type. Queue authentication, aggregate admission
+  // and role authorization are still enclosing-host obligations. Check final
+  // import destinations before account acquisition or any engine invocation.
+  std::vector<td::Bits256> recipients{coordinator, custody};
+  std::sort(recipients.begin(), recipients.end());
+  TRY_RESULT(inbox, plan_workchain_native_envelopes(native_cells.roots(), identity.workchain_id,
+      recipients, identity.host_after_lt, max_inbound));
   TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
-      authenticated_inbox, max_reads, max_writes, max_inbound));
+      inbox.envelopes, max_reads, max_writes, max_inbound));
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
       extra_validation_cells));
   std::vector<WorkchainStorageWrite> writes;
@@ -54,7 +62,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
   WorkchainFinalImportEvidence imports;
   if (executed.effects.payout_request.is_null()) {
     TRY_RESULT(allocated, build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
-        effects_root, coordinator, custody, max_reads, max_writes, max_transfers, 0,
+        effects_root, coordinator, custody, max_reads, max_writes, max_transfers, max_inbound,
         extra_validation_cells, cfg));
     state = std::move(allocated.state);
     imports = std::move(allocated.imports);
@@ -62,7 +70,7 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
         identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
         executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
-        executed.input, effects_root, 0));
+        executed.input, effects_root, max_inbound));
     state = std::move(payout.state);
     message = std::move(payout.message);
     imports = std::move(payout.imports);

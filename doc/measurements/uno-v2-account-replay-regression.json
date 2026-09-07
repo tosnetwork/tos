@@ -1,0 +1,26 @@
+{
+  "scope": "Final checkpoint regression after replay mutations and review hygiene corrections.",
+  "hashes": {
+    "chunk_id": "48845e",
+    "wall_time_seconds": 0.000012676,
+    "exit_code": 0,
+    "original_token_count": 209,
+    "output": "8f30fc38d3168e7c153c0ca68ae910fb01b91c9e8cfd430064a07ab9fb1f6bb5  crypto/block/workchain-native-materialization.h\n6396c9449736010f588161e0698b508ec76f9d02bbabc148bf75716e35270724  crypto/block/workchain-native-inbox.h\n3e53c0c1f034bef38e53f08da0ea8d19c9b88509706a1ce5b51d6cfd68287dc7  crypto/block/workchain-account-settlement.h\n81753fc56b8d01a135f8576642808b713acdb3b7383090f2674e956636ec3b1e  crypto/block/workchain-account-replay.h\n6f229642e4ca3dd4683d62f5a4cac95d3f75d923a3c7f546e74e36c05d853f60  crypto/test/test-workchain-admission.cpp\n817264c2656a20571162eab0c24bbf077f067cc5ffa2b153e97e1dd989e74388  crypto/test/test-workchain-block.cpp\nb0e02329a9353a13ac7eb5be4faa7ecd6b04672345306f4f880228613dc4229b  build/test-workchain-admission\n1f5c04ec91dc0d6e89264fc4ff846d2c087f48cd3d323c3cef04fde338245aa4  build/test-workchain-block\n"
+  },
+  "header": {
+    "cmd": "printf '#include \"block/workchain-native-materialization.h\"\\n#include \"block/workchain-account-replay.h\"\\n' | /usr/bin/clang++-21 -DSODIUM_STATIC -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I/home/tomi/tos/crypto -I/home/tomi/tos/crypto/.. -I/home/tomi/tos/build/third-party/secp256k1/include -I/home/tomi/tos/build/third-party/sodium/include -I/home/tomi/tos/tdutils -I/home/tomi/tos/build/tdutils -I/home/tomi/tos/tddb -I/home/tomi/tos/tdactor -I/home/tomi/tos/crypto/block -I/home/tomi/tos/tl -I/home/tomi/tos/tl/.. -I/home/tomi/tos/tl/../crypto -I/home/tomi/tos/tl/generate -isystem /home/tomi/tos/build/third-party/openssl/include -isystem /home/tomi/tos/third-party/abseil-cpp -march=x86-64 -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIE -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -x c++ -fsyntax-only -",
+    "chunk_id": "99b73d",
+    "wall_time_seconds": 0.000004675,
+    "session_id": 89427,
+    "original_token_count": 0,
+    "output": "",
+    "exit_code": 0
+  },
+  "regression": {
+    "chunk_id": "057765",
+    "wall_time_seconds": 0.000006289,
+    "exit_code": 0,
+    "original_token_count": 145,
+    "output": "1/5 Test #21: test-counter-native-sender .......   Passed    1.03 sec\n    Start 37: test-workchain-block\n2/5 Test #37: test-workchain-block .............   Passed    3.09 sec\n    Start 38: test-workchain-admission\n3/5 Test #38: test-workchain-admission .........   Passed    0.00 sec\n    Start 41: test-uno-native-amount\n4/5 Test #41: test-uno-native-amount ...........   Passed    0.01 sec\n    Start 63: test-config-transition\n5/5 Test #63: test-config-transition ...........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 5\n\nTotal Test time (real) =   4.15 sec\n"
+  }
+}

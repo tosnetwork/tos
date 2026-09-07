@@ -1370,3 +1370,68 @@ five-target CTest and standalone-header compilation pass. These are manually
 run controls, not recurring mutation CI or exhaustive branch coverage. Evidence:
 `measurements/uno-v2-native-disposal-evidence.json`; disposition:
 `uno-v2-native-disposal-review-disposition.md`. M1 acceptance remains open.
+
+### Detached Native closure acquisition (M1, boundary reviewed)
+
+NativeCellMaterializer constructs an owned DataCell DAG before Native parsing
+or legacy NoVm pricing. It preserves encoded special cells and all significant
+hashes/depths, never executes library references, and never replaces an encoded
+pruned branch with an imagined complete subtree. Virtualized acquisition,
+unavailable data, mismatched metadata and builder/allocation failures are local
+failures. Resource exhaustion has a separate NativeClosureLimit result; it is
+not authorization to discard a queued message or declare its contents invalid.
+
+The result has a private constructor and contains no lazy descendants. A fresh
+call is a new acquisition attempt; no partial result is published on failure.
+These are physical acquisition counters, not V2's final logical-root definition.
+Production admission must allocate a budget from authenticated policy, account
+for the shared candidate/inbox/witness union and derived wrappers, and establish
+queue provenance and completeness separately. Zero limits permit empty input.
+No configuration fields, defaults, production gate or message profile are
+installed by this component. The post-admission multi-account runner now accepts
+owned Native input, checks allowed destinations before invoking the engine, and
+passes the inbound bound through allocation and payout settlement. This is not
+integration into the live collator or validator. Misdelivery disposal, complete
+admission and production version gates remain open.
+
+Manual rebuilt controls and their source snapshots are recorded in
+`measurements/uno-v2-native-materialization-evidence.json`. All 22 closure
+controls failed as intended (21 runtime controls and one constructor compile
+control); restoration passed all nine admission tests. The five runner controls
+precede the final closure exception-test additions; their snapshots are recorded
+separately. These controls are not recurring mutation CI or M1 acceptance.
+
+Retirement remains migration without removal of ConfigParam 84 entries, the
+workchain descriptor or custody. Economic settlement does not establish that no
+Native message still needs the old destination. Complete workchain removal needs
+a separately authorized message-termination design; a failed bounce constructor
+must not be interpreted as successful degraded delivery.
+
+### Unified account settlement replay (M1, not live)
+
+`workchain-account-replay.h` reconstructs the input from the separately supplied
+admitted context and checks the claimed input before acquiring old accounts or
+calling the engine. It then invokes the full settlement runner once in this
+independent validation context, rebuilding effects, accounts, AccountBlocks,
+InMsg evidence, end LT and the optional outgoing message. Each artifact is
+compared, not merely a batch digest. Returned import totals and account credits
+are reconstructed caches, never adopted from the claim.
+
+This remains post-admission code: complete source authentication, claimed-cell
+materialization, physical/semantic budgets and source-aware error containment
+belong to the enclosing host. The preliminary input reconstruction and the
+runner's reconstruction are both work that admission must cover. It neither
+publishes state nor enables the multi-account consensus version. Missing
+misdelivery and operation-fee settlement paths are not made supported by replay.
+
+The positive fixture first failed against an unimplemented replay stub, then
+passed for payout and no-payout with a two-role inbox. Ten rebuilt removal
+controls fail independently, covering input, effects, accounts, AccountBlocks,
+InMsg, end LT, message presence/content, reconstructed caches and missing claims.
+The restored positive passes. Raw evidence and the exact replay source are in
+`measurements/uno-v2-account-replay-evidence.json`. These are manual controls,
+not recurring mutation CI. This new replay integration awaits milestone review;
+the preceding materialization boundary review does not cover this later file.
+Final checkpoint regression passes all five related CTest targets and standalone
+compilation of both new headers. Commands and final source/binary identities:
+`measurements/uno-v2-account-replay-regression.json`.

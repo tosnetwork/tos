@@ -26,6 +26,7 @@
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
 #include "block/workchain-account-settlement.h"
+#include "block/workchain-account-replay.h"
 #include "block/workchain-input-preflight.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/tests.h"
@@ -519,6 +520,13 @@ class PreflightObservedCell final : public vm::Cell {
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
+}
+
+block::MaterializedNativeCells own_native_fixture(const std::vector<td::Ref<vm::Cell>>& roots) {
+  // Explicit fixture-only physical acquisition allowance, not a protocol default.
+  auto result = block::NativeCellMaterializer::run(roots, {1000, 1000000, 8});
+  ASSERT_TRUE(std::holds_alternative<block::MaterializedNativeCells>(result));
+  return std::get<block::MaterializedNativeCells>(std::move(result));
 }
 
 using CounterEngine = block::test::CounterEngine;
@@ -1972,6 +1980,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   }
   struct Engine final : block::WorkchainAccountEngine {
     mutable unsigned calls{0};
+    mutable td::Ref<vm::Cell> seen_input;
     td::Bits256 a, b;
     bool bad_read{false}, omit_write{false}, wrong_key{false}, null_data{false}, with_transfer{false};
     bool reverse_transfer{false};
@@ -1980,6 +1989,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     td::Result<block::WorkchainAccountEffects> execute_accounts(
         const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
       ++calls;
+      seen_input = input;
       if (bad_read) {
         auto ignored = view.read(td::Bits256(number(999)->get_hash().bits()));
         // Deliberately ignore the error and return otherwise valid effects.
@@ -2034,11 +2044,11 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   pricing.action_fine_enabled = pricing.bounce_on_fail_enabled = pricing.message_skip_enabled = true;
   block::WorkchainSet workchains;
   pricing.workchains = &workchains;
-  pricing.fwd_mc.lump_price = 100;
-  pricing.fwd_mc.first_frac = 16384;
+  pricing.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  pricing.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
   auto settle = [&]() {
     return block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
+        declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
   };
   for (bool with_payout : {false, true}) {
     if (with_payout) {
@@ -2377,7 +2387,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     auto independent_storage = cfg;
     independent_storage.size_limits.max_acc_state_cells = std::numeric_limits<unsigned>::max();
     auto wide = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-        declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, independent_storage, pricing).move_as_ok();
+        declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 4096, independent_storage, pricing).move_as_ok();
     ASSERT_TRUE(wide.state.accounts->get_hash() == value.state.accounts->get_hash());
     ASSERT_TRUE(wide.state.account_blocks->get_hash() == value.state.account_blocks->get_hash());
   }
@@ -2412,6 +2422,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   ASSERT_EQ(engine.calls, 1u);
   engine.reverse_transfer = false;
   engine.transfer_value = 1;
+  const auto saved_payout = engine.payout;
   engine.payout.clear();
   engine.calls = 0;
   const auto old_accounts_hash = state.accounts->get_hash();
@@ -2640,15 +2651,122 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   // The allocation currency traversal budget is independent of this storage
   // field. This is an API-width test, not a proposed production storage limit.
   ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-      declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 4096, wide_storage_cfg, pricing).is_ok());
+      declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 4096, wide_storage_cfg, pricing).is_ok());
   engine.with_transfer = false;
   engine.calls = 0;
   ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-      declarations, {}, 2, 2, 0, 2, a, b, td::make_refint(500), 0, cfg, pricing).is_error());
+      declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 0, cfg, pricing).is_error());
   ASSERT_EQ(engine.calls, 0u);
   auto unhandled_inbox = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
-      declarations, {inbound_envelope(5)}, 2, 2, 1, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
+      declarations, own_native_fixture({inbound_envelope(5, 0, {}, untouched)}), 2, 2, 1, 2, a, b,
+      td::make_refint(500), 4096, cfg, pricing);
   ASSERT_TRUE(unhandled_inbox.is_error());
+  ASSERT_EQ(engine.calls, 0u);
+  std::vector<td::Ref<vm::Cell>> incoming{
+      inbound_envelope(30, 1, {}, a, block::CurrencyCollection(17)),
+      inbound_envelope(5, 2, 40, b, block::CurrencyCollection(23))};
+  const auto owned = own_native_fixture(incoming);
+  for (bool payout : {false, true}) {
+    engine.payout = payout ? saved_payout : td::Ref<vm::Cell>{};
+    engine.calls = 0;
+    auto result = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+        declarations, owned, 2, 2, 2, 2, a, b, td::make_refint(500), 4096, cfg, pricing).move_as_ok();
+    ASSERT_EQ(engine.calls, 1u);
+    auto expected = block::encode_workchain_host_input(identity, admitted, declarations, incoming, 2, 2, 2).move_as_ok();
+    ASSERT_TRUE(result.input->get_hash() == expected->get_hash());
+    ASSERT_TRUE(engine.seen_input->get_hash() == expected->get_hash());
+    ASSERT_TRUE(result.imports.value_imported == block::CurrencyCollection(174));
+    ASSERT_TRUE(result.imports.fees_collected == block::CurrencyCollection(134));
+    ASSERT_TRUE(result.imports.account_credits.at(a) == block::CurrencyCollection(17));
+    ASSERT_TRUE(result.imports.account_credits.at(b) == block::CurrencyCollection(23));
+    ASSERT_EQ(result.message.not_null(), payout);
+    block::tlb::InMsgDescr import_schema(cfg.global_version);
+    ASSERT_TRUE(import_schema.validate_ref(4096, result.imports.in_msg_descr));
+    vm::AugmentedDictionary imports(vm::load_cell_slice_ref(result.imports.in_msg_descr), 256, import_schema.aug);
+    for (const auto& cell : incoming) {
+      block::tlb::MsgEnvelope::Record_std envelope;
+      ASSERT_TRUE(tlb::unpack_cell(cell, envelope));
+      ASSERT_TRUE(imports.lookup(envelope.msg->get_hash().bits(), 256).not_null());
+    }
+    vm::AugmentedDictionary next(vm::load_cell_slice_ref(result.state.accounts), 256, block::tlb::aug_ShardAccounts);
+    for (auto key : {a, b}) {
+      block::Account account(2, key.bits());
+      ASSERT_TRUE(account.unpack(next.lookup(key), identity.gen_utime, false));
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == a ? (payout ? 880 : 1017) : (payout ? 923 : 1023)));
+      ASSERT_TRUE(account.last_trans_lt_ > 40);
+    }
+    ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
+    auto reversed = own_native_fixture({incoming[1], incoming[0]});
+    auto replay = block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+        declarations, reversed, 2, 2, 2, 2, a, b, td::make_refint(500), 4096, cfg, pricing).move_as_ok();
+    ASSERT_EQ(engine.calls, 2u); // Exactly once in each independent execution context.
+    ASSERT_TRUE(replay.input->get_hash() == result.input->get_hash());
+    ASSERT_TRUE(replay.state.accounts->get_hash() == result.state.accounts->get_hash());
+    ASSERT_TRUE(replay.state.account_blocks->get_hash() == result.state.account_blocks->get_hash());
+    ASSERT_TRUE(replay.imports.in_msg_descr->get_hash() == result.imports.in_msg_descr->get_hash());
+    auto verify_claim = [&](const auto& claim) {
+      return block::replay_workchain_account_settlement(engine, state.accounts, identity, admitted,
+          declarations, owned, 2, 2, 2, 2, a, b, td::make_refint(500), 4096, cfg, pricing, claim);
+    };
+    engine.calls = 0;
+    auto checked = verify_claim(result);
+    ASSERT_TRUE(checked.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_TRUE(checked.ok().state.accounts->get_hash() == result.state.accounts->get_hash());
+    // Derived caches are not independent wire claims and cannot replace replay.
+    auto poisoned = result;
+    poisoned.imports.value_imported = block::CurrencyCollection(999);
+    poisoned.imports.fees_collected = block::CurrencyCollection(998);
+    poisoned.imports.account_credits.clear();
+    auto recovered = verify_claim(poisoned).move_as_ok();
+    ASSERT_TRUE(recovered.imports.value_imported == block::CurrencyCollection(174));
+    ASSERT_TRUE(recovered.imports.fees_collected == block::CurrencyCollection(134));
+    ASSERT_TRUE(recovered.imports.account_credits.at(a) == block::CurrencyCollection(17));
+    for (unsigned field = 0; field < 8; ++field) {
+      if (field == 7 && !payout) continue;
+      LOG(INFO) << "full settlement replay mismatch payout=" << payout << " field=" << field;
+      auto claim = result;
+      if (field == 0) claim.input = allocated.input;
+      if (field == 1) claim.effects = allocated.effects;
+      if (field == 2) claim.state.accounts = state.accounts;
+      if (field == 3) claim.state.account_blocks = allocated.state.account_blocks;
+      if (field == 4) claim.imports.in_msg_descr = allocated.imports.in_msg_descr;
+      if (field == 5) claim.state.end_lt = 0;
+      if (field == 6) claim.message = payout ? td::Ref<vm::Cell>{} : number(1);
+      if (field == 7) {
+        block::tlb::MsgEnvelope::Record_std other;
+        ASSERT_TRUE(tlb::unpack_cell(incoming[0], other));
+        claim.message = other.msg; // A different, structurally valid Native message.
+      }
+      // The no-payout fixture has unchanged effects; select a distinct but
+      // valid encoded effects cell for this field rather than testing equality.
+      if (field == 1 && !payout) {
+        auto altered = block::WorkchainAccountEffects{};
+        altered.updates = {{a, number(900)}, {b, number(901)}};
+        std::sort(altered.updates.begin(), altered.updates.end(),
+            [](const auto& lhs, const auto& rhs) { return lhs.account < rhs.account; });
+        claim.effects = block::encode_workchain_account_effects(altered, 2, 2, 4096).move_as_ok();
+      }
+      engine.calls = 0;
+      ASSERT_TRUE(verify_claim(claim).is_error());
+      ASSERT_EQ(engine.calls, field == 0 ? 0u : 1u);
+      ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
+    }
+    for (unsigned field = 0; field < 5; ++field) {
+      auto claim = result;
+      if (field == 0) claim.input.clear();
+      if (field == 1) claim.effects.clear();
+      if (field == 2) claim.state.accounts.clear();
+      if (field == 3) claim.state.account_blocks.clear();
+      if (field == 4) claim.imports.in_msg_descr.clear();
+      engine.calls = 0;
+      ASSERT_TRUE(verify_claim(claim).is_error());
+      ASSERT_EQ(engine.calls, 0u);
+    }
+  }
+  engine.calls = 0;
+  ASSERT_TRUE(block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
+      declarations, owned, 2, 2, 1, 2, a, b, td::make_refint(500), 4096, cfg, pricing).is_error());
   ASSERT_EQ(engine.calls, 0u);
 }
 
