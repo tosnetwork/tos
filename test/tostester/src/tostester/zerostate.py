@@ -48,6 +48,12 @@ class NetworkConfig:
         default_factory=SimplexConsensusConfig
     )  # Simplex enabled
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
+    # TEST-ONLY: normally a one-validator local chain uses a one-hour
+    # bootstrap validator set.  Long-running acceptance tests without a
+    # validator-election exercise must opt in to a longer set explicitly;
+    # otherwise their signatures cease to have an active ConfigParam 34
+    # backing after that hour.  None preserves the historical genesis bytes.
+    bootstrap_validator_set_valid_for: int | None = None
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
     # TEST-ONLY: an accelerated validator-election application experiment may
@@ -405,6 +411,20 @@ def create_zerostate(
 ) -> Zerostate:
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
+    bootstrap_valid_for = config.bootstrap_validator_set_valid_for
+    if bootstrap_valid_for is not None:
+        if config.validator_economics_profile:
+            raise ValueError(
+                "bootstrap validator-set lifetime override is only for the ordinary local profile"
+            )
+        if (
+            isinstance(bootstrap_valid_for, bool)
+            or not isinstance(bootstrap_valid_for, int)
+            or not 0 < bootstrap_valid_for <= 0xFFFF_FFFF
+        ):
+            raise ValueError(
+                "bootstrap validator-set lifetime must be a positive uint32 duration in seconds"
+            )
     experiment_faucet_balance = config.validator_election_experiment_faucet_balance_nanotos
     if experiment_faucet_balance is not None:
         if not config.validator_election_stage_a_profile:
@@ -495,6 +515,8 @@ def create_zerostate(
             "shard_validators_per_group": config.shard_validators,
             "original_vset_valid_for": 3600,
         }
+        if bootstrap_valid_for is not None:
+            profile["original_vset_valid_for"] = bootstrap_valid_for
 
     profile["punishment_params"] = _punishment_params(profile["election_params"])
 
