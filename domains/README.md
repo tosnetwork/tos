@@ -5,7 +5,7 @@ living in-tree at `domains/`. Consumes the contract ABI of the `.tos`
 contracts under `crypto/smartcont/dns/` and the shared vector corpus;
 **never defines auction rules, holds owner keys, or carries naming
 authority** — finalized TOS chain state is the only authority
-(see `doc/tos-blockchain/DNS.md` in `tosnetwork/doc`).
+(see `doc/tos-blockchain/DNS.md` in `tosnetwork/constitution`).
 
 ## Layout
 

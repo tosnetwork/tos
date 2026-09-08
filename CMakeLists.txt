@@ -1083,7 +1083,7 @@ add_custom_target(tos_report_bond_oracle_contract
 add_executable(test-emulator
         test/test-td-main.cpp
         emulator/test/emulator-tests.cpp
-        # Slice 1 conformance fixtures (https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6
+        # Slice 1 conformance fixtures (https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/tos-message-policy.md v6
         # §3.4 / §6.2 / §10.1).
         emulator/test/slice-1-account-state-fixtures.cpp
         emulator/test/slice-1-failure-phase-fixtures.cpp

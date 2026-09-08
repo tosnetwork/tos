@@ -1067,7 +1067,7 @@ chan_data$_ config:^ChanConfig state:^ChanState = ChanData;
 
 //
 // SLICE 6 — DELIVERY SLA AND DEAD-LETTER TYPES
-// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-delivery-sla-policy.md v0.2
+// https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/tos-delivery-sla-policy.md v0.2
 //
 // These types are protocol scaffold types. They are consensus-normative
 // in layout for Slice 6 fixtures, but are not yet wired into the block

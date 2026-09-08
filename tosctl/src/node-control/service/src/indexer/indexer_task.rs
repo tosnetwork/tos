@@ -141,7 +141,7 @@ fn new_service_request_id_range(
 }
 /// How far back to rewind and rescan when a reorg is detected at the
 /// checkpoint boundary. Reorgs are a real, documented hazard on this chain
-/// (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
+/// (see `https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
 /// theoretical one; this bounds how much already-indexed data can go stale
 /// from a single detected divergence rather than only ever checking the one
 /// block at the checkpoint itself.

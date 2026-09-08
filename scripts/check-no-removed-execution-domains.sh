@@ -6,7 +6,7 @@ set -euo pipefail
 # The former independent-asset and shielded-pool implementations remain banned.
 # Bridge exclusions apply to the execution-domain scan, not the retired-symbol
 # scan. Public execution-registry policy:
-# https://github.com/tosnetwork/doc/blob/main/tos-blockchain/workchain-execution-registry.md
+# https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/workchain-execution-registry.md
 exec python3 - "${1:-.}" <<'PY'
 import fnmatch
 from pathlib import Path

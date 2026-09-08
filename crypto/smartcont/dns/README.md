@@ -5,7 +5,7 @@ Smart contracts of the `.tos` zone, vendored in-tree at
 at pinned commit `d08131031fb659d2826cccc417ddd9b98476f814` with **zero
 semantic divergence** in the auction, renewal, release, and resolution state
 machine. The upstream repository identity and parity rules are recorded in
-`doc/tos-blockchain/DNS.md` §6.1 (in `tosnetwork/doc`); this directory is
+`doc/tos-blockchain/DNS.md` §6.1 (in `tosnetwork/constitution`); this directory is
 the sole home of the `.tos` contracts.
 
 ## Contracts

@@ -161,8 +161,8 @@ mod tests {
     /// Regression test for the canonical mainnet genesis template: under the
     /// validator-led bootstrap economics, genesis mints exactly 101,000 TOS —
     /// a bounded 100,000-TOS validator-bootstrap main wallet plus 500 TOS
-    /// each for the elector and config contracts (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Currency.md,
-    /// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Zerostate.md). No premine, treasury, or team allocation exists;
+    /// each for the elector and config contracts (see https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/Currency.md,
+    /// https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/Zerostate.md). No premine, treasury, or team allocation exists;
     /// the long-run 5 B TOS figure is a creation target reached through
     /// validator block rewards, not a genesis balance.
     #[test]

@@ -47,21 +47,21 @@ and formatting rules.
 - `validator-engine/` — validator node process and JSON-RPC server
 - `lite-client/` — command-line chain client
 - `tosctl/` — Rust operator and node-control tooling
-- [`tosnetwork/doc`](https://github.com/tosnetwork/doc/tree/main/tos-blockchain) — protocol, configuration, operator, and development documentation
+- [`tosnetwork/constitution`](https://github.com/tosnetwork/constitution/tree/main/tos-blockchain) — protocol, configuration, operator, and development documentation
 - `third-party/` — vendored dependencies
 
 ## Documentation
 
 Blockchain documentation is maintained in the
-[`tosnetwork/doc`](https://github.com/tosnetwork/doc/tree/main/tos-blockchain)
+[`tosnetwork/constitution`](https://github.com/tosnetwork/constitution/tree/main/tos-blockchain)
 repository.
 
-- [Documentation index](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/README.md)
+- [Documentation index](https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/README.md)
 - [Build guide](BUILD.md)
-- [Validator guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Validator.md)
-- [Full-node guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/FullNode.md)
-- [Lite Client guide](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/LiteClient.md)
-- [Configuration parameters](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ConfigParam.md)
+- [Validator guide](https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/Validator.md)
+- [Full-node guide](https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/FullNode.md)
+- [Lite Client guide](https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/LiteClient.md)
+- [Configuration parameters](https://github.com/tosnetwork/constitution/blob/main/tos-blockchain/ConfigParam.md)
 
 ## License
 
