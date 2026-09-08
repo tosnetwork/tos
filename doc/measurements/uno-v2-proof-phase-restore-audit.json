@@ -1,0 +1,124 @@
+{
+  "scope": "Full-file reconstruction from the restored tree, not truncated tool output. All 17 archived mutant file hashes reproduced exactly.",
+  "controls": [
+    {
+      "name": "disposal-double-inspection",
+      "source": "crypto/block/workchain-account-replay.h",
+      "restored_sha256": "e5f40c2a337f619eb81a66c0e77ec2e9e87f59a940d87e7cf78b7fc15e1472f0",
+      "reconstructed_mutant_sha256": "264162ea09b4858be76f9450caad5a910633d98fc513d164d4830290487d09ff",
+      "recorded_mutant_sha256": "264162ea09b4858be76f9450caad5a910633d98fc513d164d4830290487d09ff"
+    },
+    {
+      "name": "account-double-inspection",
+      "source": "crypto/block/workchain-account-replay.h",
+      "restored_sha256": "e5f40c2a337f619eb81a66c0e77ec2e9e87f59a940d87e7cf78b7fc15e1472f0",
+      "reconstructed_mutant_sha256": "645788c9201054bce8193817cfd0aeb7fb35c59956dd47a43d5b5b15a18a8a79",
+      "recorded_mutant_sha256": "645788c9201054bce8193817cfd0aeb7fb35c59956dd47a43d5b5b15a18a8a79"
+    },
+    {
+      "name": "state-policy",
+      "source": "crypto/block/workchain-account-engine.h",
+      "restored_sha256": "2008d20a1ba7566f2a011878df0df27f0cc58b1fdc8d14d298044c90c8b3124f",
+      "reconstructed_mutant_sha256": "3efc0b22a6254199dc78b8d0297e73953f50421ff2da5f276d2dbc49cdb2e897",
+      "recorded_mutant_sha256": "3efc0b22a6254199dc78b8d0297e73953f50421ff2da5f276d2dbc49cdb2e897"
+    },
+    {
+      "name": "hash-observer",
+      "source": "crypto/test/test-workchain-block.cpp",
+      "restored_sha256": "47afff5737990a7a2be06448920e449f4d69ef5d83221707ee737d0c9708899b",
+      "reconstructed_mutant_sha256": "5606375c2d11f9f8e5545163f83956ac12c4a263d91226143e9c06c7f21ad75a",
+      "recorded_mutant_sha256": "5606375c2d11f9f8e5545163f83956ac12c4a263d91226143e9c06c7f21ad75a"
+    },
+    {
+      "name": "omit-local-context-matching-message-version",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "953fc7aca139d89c4e6bee02eb280953c7d1ee8bd6be4fa094742a972dc93013",
+      "recorded_mutant_sha256": "953fc7aca139d89c4e6bee02eb280953c7d1ee8bd6be4fa094742a972dc93013"
+    },
+    {
+      "name": "omit-local-context-distinct-roles",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "73decf0cbfd4301136a4b9180a9c528a430708a70a1780b19fc87fb42aa026a6",
+      "recorded_mutant_sha256": "73decf0cbfd4301136a4b9180a9c528a430708a70a1780b19fc87fb42aa026a6"
+    },
+    {
+      "name": "omit-local-context-unsplit-shard",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "1076356ed747bca8332f4dc1eb23e06a41dfdadc9f81a85de4382ee814e8e8ff",
+      "recorded_mutant_sha256": "1076356ed747bca8332f4dc1eb23e06a41dfdadc9f81a85de4382ee814e8e8ff"
+    },
+    {
+      "name": "omit-local-context-inbound-cut",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "39bd9849ac8d23b24f0c872f42012dafb533d687126d9c241336ed505a3e5c18",
+      "recorded_mutant_sha256": "39bd9849ac8d23b24f0c872f42012dafb533d687126d9c241336ed505a3e5c18"
+    },
+    {
+      "name": "omit-settlement-engine-guard",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "199d7870815c9da0181a51ccdaca22e7c0b89567b1ee9afa058e3c66dda0f983",
+      "recorded_mutant_sha256": "199d7870815c9da0181a51ccdaca22e7c0b89567b1ee9afa058e3c66dda0f983"
+    },
+    {
+      "name": "omit-runner-engine-guard",
+      "source": "crypto/block/workchain-account-engine.h",
+      "restored_sha256": "2008d20a1ba7566f2a011878df0df27f0cc58b1fdc8d14d298044c90c8b3124f",
+      "reconstructed_mutant_sha256": "0a4c42d6de54f98d61eb464dcc136d1d8b9a2b743e4f47e694a11b0f02022ea8",
+      "recorded_mutant_sha256": "0a4c42d6de54f98d61eb464dcc136d1d8b9a2b743e4f47e694a11b0f02022ea8"
+    },
+    {
+      "name": "omit-metadata-observer",
+      "source": "crypto/test/test-workchain-block.cpp",
+      "restored_sha256": "47afff5737990a7a2be06448920e449f4d69ef5d83221707ee737d0c9708899b",
+      "reconstructed_mutant_sha256": "1004525e2a7671f5af8bc12eaed0ac1c6fac6f2c396db943a92025125abcfd0f",
+      "recorded_mutant_sha256": "1004525e2a7671f5af8bc12eaed0ac1c6fac6f2c396db943a92025125abcfd0f"
+    },
+    {
+      "name": "account-replay-commitment-before-preflight",
+      "source": "crypto/block/workchain-account-replay.h",
+      "restored_sha256": "e5f40c2a337f619eb81a66c0e77ec2e9e87f59a940d87e7cf78b7fc15e1472f0",
+      "reconstructed_mutant_sha256": "6bd0a8b2138ba3092d3b126641ac8e4aebb3d84611fd4a76f11a332b6194805c",
+      "recorded_mutant_sha256": "6bd0a8b2138ba3092d3b126641ac8e4aebb3d84611fd4a76f11a332b6194805c"
+    },
+    {
+      "name": "disposal-replay-commitment-before-preflight",
+      "source": "crypto/block/workchain-account-replay.h",
+      "restored_sha256": "e5f40c2a337f619eb81a66c0e77ec2e9e87f59a940d87e7cf78b7fc15e1472f0",
+      "reconstructed_mutant_sha256": "c25aa91f7b0c46386f0775af41afbe4e7aa4742309d8ecae5cb0d2a872d5be05",
+      "recorded_mutant_sha256": "c25aa91f7b0c46386f0775af41afbe4e7aa4742309d8ecae5cb0d2a872d5be05"
+    },
+    {
+      "name": "accounts-settlement-inbox-before-preflight",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "eb926cff78e6c1dbd8e3da649969b8c3f8274c56b293b22a83d7800ff741c5d2",
+      "recorded_mutant_sha256": "eb926cff78e6c1dbd8e3da649969b8c3f8274c56b293b22a83d7800ff741c5d2"
+    },
+    {
+      "name": "disposal-settlement-inbox-before-preflight",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "20ff1edce09b68ce5dd123e4bd48138c249f7ee6305b6105c2857c4538fc472f",
+      "recorded_mutant_sha256": "20ff1edce09b68ce5dd123e4bd48138c249f7ee6305b6105c2857c4538fc472f"
+    },
+    {
+      "name": "omit-local-context-null-old-source",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "98e103557a06ce9d40c7199fdde629dacd22dac17bdf3dbb610a037415690e5f",
+      "recorded_mutant_sha256": "98e103557a06ce9d40c7199fdde629dacd22dac17bdf3dbb610a037415690e5f"
+    },
+    {
+      "name": "omit-local-context-currency-cells",
+      "source": "crypto/block/workchain-account-settlement.h",
+      "restored_sha256": "8a85fb5ec3d2d8f0a9bf24877b03598c9600c24d1a2c5c25455f1610d9d70183",
+      "reconstructed_mutant_sha256": "a2afbbcbfcf2fe0a90d15d0b0549ef0bbe002748e86785a679ced0649567d333",
+      "recorded_mutant_sha256": "a2afbbcbfcf2fe0a90d15d0b0549ef0bbe002748e86785a679ced0649567d333"
+    }
+  ]
+}

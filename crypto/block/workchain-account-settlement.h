@@ -47,6 +47,28 @@ namespace account_settlement_detail {
 // be used for candidate decoding or translated into candidate invalidity.
 struct UnadmittedStateRead {};
 
+// Cheap host-context checks only: no candidate parsing, state loads, allocation
+// of usage trees or engine callback. Apply before shape inspection; these
+// programming/configuration faults cannot become candidate rejections.
+template <class Admission>
+inline td::Status validate_batch_context(
+    const Admission& input, const td::Ref<vm::Cell>& old_accounts,
+    const WorkchainHostIdentity& identity, const td::Bits256& custody,
+    const td::Bits256& coordinator, int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    const WorkchainDisposalEntryContext* disposal) {
+  static_assert(std::is_same_v<Admission, AdmittedBatchInput> ||
+                std::is_same_v<Admission, ProofAdmittedBatchInput>);
+  if (old_accounts.is_null() || extra_validation_cells <= 0 ||
+      (disposal && (disposal->max_inbound != input.policy().resources().input.max_inbound ||
+                    identity.shard_id != tos::shardIdAll || coordinator == custody ||
+                    cfg.global_version != message_cfg.global_version))) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "invalid local batch settlement context");
+  }
+  return td::Status::OK();
+}
+
 // Source-specific helpers: callers must pass only locally rebuilt output or
 // engine-effects closures, never a parser for untrusted candidate wire data.
 inline td::Status charge_closure(std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
@@ -114,7 +136,7 @@ template <class Admission>
 inline td::Result<WorkchainAccountSettlement> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const Admission& admitted,
-    std::conditional_t<std::is_same_v<Admission, AdmittedBatchInput>, std::nullptr_t,
+    std::conditional_t<std::is_same_v<Admission, ProofAdmittedBatchInput>, std::nullptr_t,
                        const WorkchainAccountDeclarations&> prototype_declarations,
     const MaterializedNativeCells& native_cells,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
@@ -122,10 +144,16 @@ inline td::Result<WorkchainAccountSettlement> execute(
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const WorkchainDisposalEntryContext* disposal) {
-  static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, AdmittedBatchInput>);
+  static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, ProofAdmittedBatchInput>);
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+    if (!admitted.inspected_by(engine)) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "settlement proof admission belongs to another engine");
+    }
+  }
   std::shared_ptr<vm::CellUsageTree> state_usage_tree;
   vm::CellUsageTree::NodePtr state_usage_node;
-  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
     if (old_accounts.is_null()) {
       return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                "authenticated settlement state missing");
@@ -147,7 +175,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
   // helper. Decode once and use the same object for execution and settlement.
   WorkchainAccountDeclarations batch_declarations;
   gen::UnoV2HostInput::Record batch_input;
-  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
     // The session locally finalizes this ordinary root; it is not a virtualized
     // state root. Structural counts already passed the same authenticated limits.
     if (!tlb::unpack_cell(admitted.root(), batch_input)) {
@@ -157,7 +185,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
     batch_declarations = std::move(decoded);
   }
   const auto& declarations = [&]() -> const WorkchainAccountDeclarations& {
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) return batch_declarations;
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) return batch_declarations;
     else return prototype_declarations;
   }();
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
@@ -174,7 +202,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
       identity.host_after_lt, max_inbound) : plan_workchain_native_envelopes(native_cells.roots(),
       identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
   auto run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       const auto& input = batch_input;
       TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
       if (input.identity->get_hash() != expected_identity->get_hash()) {
@@ -198,7 +226,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
     }
   };
   auto guarded_run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       bool nested_read = false;
       // The private owner above or the synchronous caller owns this live node.
       // Both callbacks are nonempty. Invalid observer construction is therefore
@@ -227,7 +255,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
   TRY_RESULT(executed, guarded_run());
   bool unadmitted_read = false;
   std::optional<vm::CellUsageTree::ScopedReadObserver> state_observer;
-  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
     if (!executed.state_admission) {
       return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                "settlement lacks old-state admission");
@@ -246,7 +274,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
   }
   auto settle = [&]() -> td::Result<WorkchainAccountSettlement> {
     std::optional<NativeStateReadMeter> effect_meter;
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       const auto& bounds = admitted.policy().resources().work_output;
       effect_meter.emplace(bounds.max_effect_cells, bounds.max_effect_bits);
     }
@@ -261,7 +289,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
       return charge_closure(effect_meter, std::move(root), "effects closure exceeds authenticated budget",
                             "engine effects content unavailable");
     };
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       // execute() already matched updates one-for-one to the bounded write set.
       // Transfers have no such earlier check: bound them before this walk.
       if (executed.effects.native_transfers.size() > max_transfers) {
@@ -323,7 +351,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
       exports = std::move(payout.exports);
     }
     std::shared_ptr<const NativeStateReadMeter> output_snapshot;
-    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       const auto& limits = admitted.policy().resources();
       // Only rebuilt outputs, decoded declaration keys and immutable limits
       // enter this scope. There is no direct engine/candidate-parser capture;
@@ -420,10 +448,12 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // repeated work, remaining usage paths and complete output still need admission.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
-    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const WorkchainHostIdentity& identity, const ProofAdmittedBatchInput& admitted,
     const MaterializedNativeCells& native_cells,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      custody, coordinator, extra_validation_cells, cfg, message_cfg, nullptr));
   const auto& limits = admitted.policy().resources();
   return account_settlement_detail::execute(engine, std::move(old_accounts), identity, admitted,
       nullptr, native_cells, limits.input.max_reads, limits.input.max_writes,
@@ -443,6 +473,21 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
       extra_validation_cells, cfg, message_cfg, nullptr);
 }
 
+// Convenience entry for structurally admitted input. Inspection precedes any
+// semantic inbox processing; replay uses the already-inspected overload.
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const MaterializedNativeCells& native_cells,
+    const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      custody, coordinator, extra_validation_cells, cfg, message_cfg, nullptr));
+  TRY_RESULT(preflight, ProofAdmittedBatchInput::admit(engine, admitted));
+  return execute_and_settle_workchain_accounts(engine, std::move(old_accounts), identity, preflight,
+      native_cells, custody, coordinator, std::move(fee_budget), extra_validation_cells, cfg, message_cfg);
+}
+
 // Explicit post-admission disposal runner. Roles, limits and prices have one
 // source in context; native_cells owns the complete detached Native closures.
 // It is not registration, return authorization, or a final voting boundary.
@@ -451,10 +496,12 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
 // a second local allowance. Other context authentication remains the host's job.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_disposal(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
-    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const WorkchainHostIdentity& identity, const ProofAdmittedBatchInput& admitted,
     const MaterializedNativeCells& native_cells, const td::Bits256& coordinator,
     td::RefInt256 fee_budget, int extra_validation_cells,
     const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      context.custody, coordinator, extra_validation_cells, cfg, context.messages, &context));
   const auto& limits = admitted.policy().resources();
   if (context.max_inbound != limits.input.max_inbound) {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
@@ -476,6 +523,19 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_dispo
   return account_settlement_detail::execute(engine, old_accounts, identity, admitted, declarations, native_cells,
       max_reads, max_writes, context.max_inbound, max_transfers, context.custody, coordinator, std::move(fee_budget),
       extra_validation_cells, cfg, context.messages, &context);
+}
+
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_disposal(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const MaterializedNativeCells& native_cells, const td::Bits256& coordinator,
+    td::RefInt256 fee_budget, int extra_validation_cells,
+    const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      context.custody, coordinator, extra_validation_cells, cfg, context.messages, &context));
+  TRY_RESULT(preflight, ProofAdmittedBatchInput::admit(engine, admitted));
+  return execute_and_settle_workchain_disposal(engine, std::move(old_accounts), identity, preflight,
+      native_cells, coordinator, std::move(fee_budget), extra_validation_cells, cfg, context);
 }
 
 }  // namespace block

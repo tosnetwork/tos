@@ -2853,3 +2853,126 @@ the proof callback catch-all allows VmError to escape settlement itself. It is
 not evidence that some outer settlement catch will contain engine exceptions.
 The natural admitted-envelope decode guard's untyped error remains a separate
 inventory item; this unit removed the duplicate decode, not that natural site.
+
+### Proof-work inventory after independent review of `6034b6aaf`
+
+- Actual cost correspondence is not enforced. Closing it requires an actual
+  verification-work meter using the same unit definitions as shape inspection,
+  charging before expensive backend calls, and checking actual attempted work
+  against the admitted declaration. A post-execution assertion alone discovers
+  an undercount only after paying its CPU cost. Failed proof attempts count too;
+  an engine's effects.usage report is not an independent measurement. The
+  production integration must distinguish an engine counting-contract failure
+  from an invalid cryptographic proof, without inferring provenance from an
+  untyped backend error.
+- Block-level proof-work acceptance is not implemented. The current limit is
+  per batch, with no cross-batch accumulator. I13a requires exactly one logical
+  batch per block; only independent enforcement of that live invariant can make
+  the one-batch allowance also bound a block. A test must attempt multiple
+  individually within-limit batches and demonstrate rejection before additional
+  verification. If multiple verification phases are needed for the one batch,
+  their attempted work must share its meter, not reset at each phase. D32 fee
+  aggregation does not supply this proof-work budget. Neither a live uniqueness
+  proof nor a block-total counter is claimed by `6034b6aaf`.
+- Preflight complexity itself is not enforced by its returned proof units.
+  Because shape inspection belongs before commitment, even a bad commitment
+  can demand one inspection. Production engine registration must declare an
+  upper-bound function for inspection operations and auxiliary memory in terms
+  of admitted physical cells/bits and bounded logical objects. It must provide
+  worst-shape tests, including deeply shared DAGs, repeated encodings and
+  maximum object counts; bounded input alone does not rule out quadratic or
+  exponential expansion. The implementation and its work counters must support
+  that bound, and minimum-hardware acceptance must include the resulting total.
+  A timing sample is not a WCET proof, a contract comment is not enforcement,
+  and `max_proof_units` is not an inspection timeout. This C3 obligation is
+  separate from C1 actual verification work and C2 whole-block acceptance.
+
+### Private proof admission phase transition
+
+This cut separates declared proof-work admission from the runner. A privately
+constructed ProofAdmittedBatchInput retains the same owned structural input and
+inspecting engine; replay can inspect before commitment, then carry that result
+through semantic inbox processing and execution without repeating inspection.
+The raw-root prototype remains separate. The boundary follow-up review passed;
+this is not live host ordering evidence and does not close any of the three
+inventory items above. No production weights or numeric limits are introduced.
+
+First-review guard coverage is strengthened without freezing diagnostic text.
+The settlement guard is tested while the runner guard remains intact: removing
+only the former makes the old-state metadata observer count one access instead
+of zero. The runner guard has a separate direct-entry control that does not pass
+through the settlement guard; removing only it makes two state reads instead
+of zero. A matching-engine successful settlement must produce both state and
+metadata reads. Removing only the metadata callback makes that positive
+assertion fail, so an inert observer cannot satisfy the zero-read test silently.
+These controls are part of 17 runtime mutations, each compiled successfully and
+failed at its intended behavior/type assertion. Each source edit was restored
+before the next mutation. The record is
+`doc/measurements/uno-v2-proof-phase-controls.json`. For the two large test-file
+mutations, restoration is supported by full-file SHA-256, not the controller's
+truncated text capture. `doc/measurements/uno-v2-proof-phase-restore-audit.json`
+independently reconstructs all 17 complete mutated files from the restored tree
+and reproduces every recorded hash. No mutation is represented as a CI job.
+
+Final regression (`doc/measurements/uno-v2-proof-phase-final-checks.json`): three
+targets built, 111 block tests, 30 admission tests, disk binding-readiness test,
+removed-domain scan and whitespace check passed. The follow-up review was
+read-only: its author inspected code and archived evidence, not independently
+executed the mutations or regression. It closed first-review B1/B2/B3 and D1
+without blockers. Its statements that regression was pending were superseded
+by the completed final-check artifact, not by a new acceptance claim.
+
+Nonblocking follow-up disposition: the stale progress text is fixed here.
+The inner null-source guard is retained for direct calls to the detail helper;
+public wrappers already enforce it. The duplicate typed-disposal inbound check
+is acknowledged as redundant, not counted as independent protection. Pointer
+versus reference spelling and the less precise "before execution" comment are
+not behavioral fixes; the token factory/precondition is documented above and
+in its type. Additional per-entry local-context controls remain a coverage
+limitation: the six disjuncts are tested through disposal, while source inspection
+confirms the other wrappers invoke the same helper. No claim is made that this
+proves every future call site. These nonblocking cleanups do not justify delaying
+the authorized connectivity smoke with another private-helper expansion.
+
+The first review's proposed error-message comparison is not adopted: counters
+and disjoint entry paths identify the responsible guard without turning prose
+into a protocol contract. Likewise, tests do not freeze the private Native
+parser's current untyped error code. They assert the preflight invocation and
+execution counts around malformed inbox input. Local scalar context is checked
+before invoking the engine; resource admission before commitment follows the
+required phase order. A local preflight failure therefore abstains even if a
+later commitment check could have rejected the claim. This does not certify
+the unchecked claim.
+
+Observer scope remains a separate boundary: the five production-header factory
+call sites (the direct engine convenience entry, two settlement convenience
+entries, and two replay entries) inspect before the settlement runner installs
+either old-state observer. The factory supplies no authenticated state view,
+but this is not a sandbox against a trusted engine accessing ambient objects.
+Its exception containment returns LocalUnavailable, never an admitted token,
+if an observer or other callback throws. An enclosing sticky observer must
+retain its own failure state; catching its signal must not clear that state.
+The generic public factory does not prove that arbitrary future callers install
+no observer. Live integration must preserve the current ordering and the pure
+inspection contract, rather than treating the token as such a proof.
+
+### Next integration boundary: connectivity before deeper admission work
+
+After the current proof-admission unit completes its controls, full regression,
+follow-up review and commit, the next cut is a thin end-to-end connectivity
+smoke through account-engine registration, live dispatch and replay. Keep the
+capability/execution gates closed: this does not enable workchain 2, weaken
+I13, or supply milestone acceptance evidence. Exercise real entry interfaces
+to expose type, lifetime and failure-provenance mismatches. A failed connection
+is a useful result to document and resolve, not a reason to relax a gate. Then
+resume the remaining D31 obligations.
+
+M2 also returns to the work cycle. First evaluate the narrowest safe optional
+node-build linkage for the existing verifier, with the existing CI gates and
+default disabled. Build/link availability must not imply engine registration
+or execution permission. If linking the prototype ABI is premature, record the
+concrete obstacle and use the smallest integration step that tests that seam
+without opening execution. Wallet prover work remains separate. Neither this
+scheduling change nor a successful link closes the outstanding differential or
+supply-chain acceptance requirements. Mutation controls, byte-exact restoration,
+full regression and independent review remain required for each completed unit.

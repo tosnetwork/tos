@@ -52,8 +52,10 @@ inline td::Result<WorkchainAccountSettlement> replay(
 }
 }  // namespace account_replay_detail
 
-// Complete-input replay checks the claimed commitment before semantic inbox
-// reconstruction, old-account acquisition or execution. It returns independently
+// Complete-input replay checks local context, admits proof work, then checks
+// the claimed commitment before semantic inbox reconstruction, old-account
+// acquisition or execution. A preflight local fault can therefore precede a
+// bad claim; it does not certify that claim as valid. Replay returns independently
 // rebuilt artifacts, never proposer caches. The enclosing live host still owes
 // state/proof/output admission and source-aware failure classification.
 inline td::Result<WorkchainAccountSettlement> replay_workchain_account_settlement(
@@ -63,15 +65,18 @@ inline td::Result<WorkchainAccountSettlement> replay_workchain_account_settlemen
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const WorkchainAccountSettlement& claimed) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      custody, coordinator, extra_validation_cells, cfg, message_cfg, nullptr));
+  TRY_RESULT(preflight, ProofAdmittedBatchInput::admit(engine, admitted));
   if (claimed.input.is_null() || claimed.effects.is_null() || claimed.state.accounts.is_null() ||
       claimed.state.account_blocks.is_null() || claimed.imports.in_msg_descr.is_null()) {
     return td::Status::Error("missing claimed account settlement artifacts");
   }
-  if (claimed.input->get_hash() != admitted.root()->get_hash()) {
+  if (claimed.input->get_hash() != preflight.root()->get_hash()) {
     return td::Status::Error("claimed account settlement input differs from admitted input");
   }
   TRY_RESULT(rebuilt, execute_and_settle_workchain_accounts(engine, std::move(old_accounts), identity,
-      admitted, native_cells, custody, coordinator, std::move(fee_budget), extra_validation_cells, cfg, message_cfg));
+      preflight, native_cells, custody, coordinator, std::move(fee_budget), extra_validation_cells, cfg, message_cfg));
   TRY_STATUS(account_replay_detail::compare_rebuilt(rebuilt, claimed));
   return rebuilt;
 }
@@ -96,15 +101,18 @@ inline td::Result<WorkchainAccountSettlement> replay_workchain_disposal_settleme
     td::RefInt256 fee_budget, int extra_validation_cells,
     const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context,
     const WorkchainAccountSettlement& claimed) {
+  TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
+      context.custody, coordinator, extra_validation_cells, cfg, context.messages, &context));
+  TRY_RESULT(preflight, ProofAdmittedBatchInput::admit(engine, admitted));
   if (claimed.input.is_null() || claimed.effects.is_null() || claimed.state.accounts.is_null() ||
       claimed.state.account_blocks.is_null() || claimed.imports.in_msg_descr.is_null()) {
     return td::Status::Error("missing claimed disposal settlement artifacts");
   }
-  if (claimed.input->get_hash() != admitted.root()->get_hash()) {
+  if (claimed.input->get_hash() != preflight.root()->get_hash()) {
     return td::Status::Error("claimed disposal input differs from admitted input");
   }
   TRY_RESULT(rebuilt, execute_and_settle_workchain_disposal(engine, std::move(old_accounts), identity,
-      admitted, native_cells, coordinator, std::move(fee_budget), extra_validation_cells, cfg, context));
+      preflight, native_cells, coordinator, std::move(fee_budget), extra_validation_cells, cfg, context));
   TRY_STATUS(account_replay_detail::compare_rebuilt(rebuilt, claimed));
   return rebuilt;
 }

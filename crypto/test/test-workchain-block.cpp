@@ -756,8 +756,10 @@ td::Ref<vm::Cell> number(std::uint64_t value) {
 
 class StateReadCallbackCell final : public vm::Cell {
  public:
-  StateReadCallbackCell(td::Ref<vm::Cell> source, std::function<void()> callback)
-      : source_(std::move(source)), callback_(std::move(callback)) {}
+  StateReadCallbackCell(td::Ref<vm::Cell> source, std::function<void()> callback,
+                        std::function<void()> hash_callback = {}, std::function<void()> node_callback = {})
+      : source_(std::move(source)), callback_(std::move(callback)), hash_callback_(std::move(hash_callback)),
+        node_callback_(std::move(node_callback)) {}
   td::Status set_data_cell(td::Ref<vm::DataCell>&& cell) const override {
     return source_->set_data_cell(std::move(cell));
   }
@@ -767,13 +769,21 @@ class StateReadCallbackCell final : public vm::Cell {
   }
   bool is_virtualized() const override { return source_->is_virtualized(); }
   bool is_loaded() const override { return source_->is_loaded(); }
-  vm::CellUsageTree::NodePtr get_tree_node() const override { return source_->get_tree_node(); }
+  vm::CellUsageTree::NodePtr get_tree_node() const override {
+    if (node_callback_) node_callback_();
+    return source_->get_tree_node();
+  }
   LevelMask get_level_mask() const override { return source_->get_level_mask(); }
  private:
-  const Hash do_get_hash(td::uint32 level) const override { return source_->get_hash(level); }
+  const Hash do_get_hash(td::uint32 level) const override {
+    if (hash_callback_) hash_callback_();
+    return source_->get_hash(level);
+  }
   td::uint16 do_get_depth(td::uint32 level) const override { return source_->get_depth(level); }
   td::Ref<vm::Cell> source_;
   std::function<void()> callback_;
+  std::function<void()> hash_callback_;
+  std::function<void()> node_callback_;
 };
 
 TEST(WorkchainBlock, ScopedStateReadObserver) {
@@ -2938,6 +2948,141 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
         ASSERT_EQ(engine.work_calls, 1u);
       }
       engine.work_fault = 0;
+      {
+        // Preflight must precede even commitment hashing, and the succeeding
+        // replay must not re-inspect after crossing into semantic processing.
+        td::uint64 commitment_hashes = 0;
+        auto claimed = complete_result.ok();
+        claimed.input = td::Ref<StateReadCallbackCell>{true, claimed.input, [] {}, [&] {
+          commitment_hashes = block::participant_lt_detail::checked_add(commitment_hashes, 1).move_as_ok();
+        }};
+        engine.work_fault = 13;
+        engine.calls = engine.work_calls = 0;
+        auto refused = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
+            full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claimed);
+        ASSERT_TRUE(refused.is_error());
+        ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        ASSERT_EQ(commitment_hashes, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.calls, 0u);
+        engine.work_fault = 0;
+        engine.calls = engine.work_calls = 0;
+        auto replayed = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
+            full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claimed);
+        ASSERT_TRUE(replayed.is_ok());
+        ASSERT_TRUE(commitment_hashes > 0);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.calls, 1u);
+        ASSERT_EQ(replayed.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
+
+        commitment_hashes = 0;
+        engine.work_fault = 13;
+        engine.calls = engine.work_calls = 0;
+        auto account_refused = block::replay_workchain_account_settlement(engine, old.accounts, complete_identity,
+            full, owned_inbox, joint_context.custody, a, td::make_refint(100), 4096, cfg,
+            joint_context.messages, claimed);
+        ASSERT_EQ(commitment_hashes, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_TRUE(account_refused.is_error());
+        ASSERT_EQ(account_refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        engine.work_fault = 0;
+        engine.calls = engine.work_calls = 0;
+        auto account_later = block::replay_workchain_account_settlement(engine, old.accounts, complete_identity,
+            full, owned_inbox, joint_context.custody, a, td::make_refint(100), 4096, cfg,
+            joint_context.messages, claimed);
+        // This fixture includes foreign destinations: the strict inbox path
+        // rejects them, but only after passing the commitment boundary.
+        ASSERT_TRUE(account_later.is_error());
+        ASSERT_TRUE(commitment_hashes > 0);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.calls, 0u);
+
+        // Owned but malformed Native envelope, not a candidate wire error.
+        // It distinguishes semantic inbox processing from shape admission:
+        // preflight failure wins; with preflight allowed the parser refuses.
+        auto malformed_inbox = own_native_fixture({number(999)});
+        for (unsigned entry = 0; entry < 4; ++entry) {
+          auto invoke = [&]() -> td::Result<block::WorkchainAccountSettlement> {
+            if (entry == 0) return block::execute_and_settle_workchain_accounts(engine, old.accounts,
+                complete_identity, full, malformed_inbox, joint_context.custody, a, td::make_refint(100),
+                4096, cfg, joint_context.messages);
+            if (entry == 1) return block::execute_and_settle_workchain_disposal(engine, old.accounts,
+                complete_identity, full, malformed_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+            if (entry == 2) return block::replay_workchain_account_settlement(engine, old.accounts,
+                complete_identity, full, malformed_inbox, joint_context.custody, a, td::make_refint(100),
+                4096, cfg, joint_context.messages, complete_result.ok());
+            return block::replay_workchain_disposal_settlement(engine, old.accounts,
+                complete_identity, full, malformed_inbox, a, td::make_refint(100), 4096, cfg,
+                joint_context, complete_result.ok());
+          };
+          engine.work_fault = 13;
+          engine.calls = engine.work_calls = 0;
+          auto before_parser = invoke();
+          ASSERT_EQ(engine.work_calls, 1u);
+          ASSERT_EQ(engine.calls, 0u);
+          ASSERT_TRUE(before_parser.is_error());
+          ASSERT_EQ(before_parser.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+          engine.work_fault = 0;
+          engine.calls = engine.work_calls = 0;
+          auto parser_refused = invoke();
+          ASSERT_EQ(engine.work_calls, 1u);
+          ASSERT_EQ(engine.calls, 0u);
+          ASSERT_TRUE(parser_refused.is_error());
+        }
+
+        for (unsigned fault = 0; fault < 6; ++fault) {
+          auto old_source = old.accounts;
+          auto local_identity = complete_identity;
+          auto local_context = joint_context;
+          auto local_cfg = cfg;
+          int currency_cells = 4096;
+          if (fault == 0) old_source.clear();
+          if (fault == 1) currency_cells = 0;
+          if (fault == 2) local_context.max_inbound = 0;
+          if (fault == 3) local_identity.shard_id = 0;
+          if (fault == 4) local_context.custody = a;
+          if (fault == 5) local_cfg.global_version = 0;
+          engine.calls = engine.work_calls = 0;
+          auto invalid_context = block::execute_and_settle_workchain_disposal(engine, old_source,
+              local_identity, full, owned_inbox, a, td::make_refint(100), currency_cells, local_cfg, local_context);
+          ASSERT_EQ(engine.work_calls, 0u);
+          ASSERT_EQ(engine.calls, 0u);
+          ASSERT_TRUE(invalid_context.is_error());
+          ASSERT_EQ(invalid_context.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        }
+
+        // Admission cannot be moved from one registered executor to another.
+        auto inspected = block::ProofAdmittedBatchInput::admit(engine, full);
+        ASSERT_TRUE(inspected.is_ok());
+        DisposalEngine other = engine;
+        other.calls = other.work_calls = 0;
+        td::uint64 reads = 0, metadata_reads = 0;
+        td::Ref<vm::Cell> observed_old{td::Ref<StateReadCallbackCell>{true, old.accounts, [&] {
+          reads = block::participant_lt_detail::checked_add(reads, 1).move_as_ok();
+        }, [] {}, [&] {
+          metadata_reads = block::participant_lt_detail::checked_add(metadata_reads, 1).move_as_ok();
+        }}};
+        auto wrong_engine = block::execute_and_settle_workchain_disposal(other, observed_old, complete_identity,
+            inspected.ok(), owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+        ASSERT_TRUE(wrong_engine.is_error());
+        ASSERT_EQ(wrong_engine.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        ASSERT_EQ(reads, 0u);
+        ASSERT_EQ(metadata_reads, 0u);
+        ASSERT_EQ(other.calls, 0u);
+        ASSERT_EQ(other.work_calls, 0u);
+        auto direct_wrong_engine = block::account_engine_detail::execute(other, observed_old, inspected.ok(),
+            access, full.policy().resources().input.max_reads, full.policy().resources().input.max_writes);
+        ASSERT_EQ(reads, 0u);
+        ASSERT_EQ(other.calls, 0u);
+        ASSERT_TRUE(direct_wrong_engine.is_error());
+        ASSERT_EQ(direct_wrong_engine.error().code(),
+            static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        auto matching = block::execute_and_settle_workchain_disposal(engine, observed_old, complete_identity,
+            inspected.ok(), owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+        ASSERT_TRUE(matching.is_ok());
+        ASSERT_TRUE(reads > 0);
+        ASSERT_TRUE(metadata_reads > 0);
+      }
     }
     {
       block::tlb::Aug_OutMsgDescr augmentation(16);
@@ -4585,8 +4730,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
         declaration_root, batch_identity, inbox);
     ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(oversized_session.evaluate()));
     engine.calls = 0;
-    auto oversized_policy = block::account_engine_detail::execute(engine, state.accounts,
-        std::get<block::AdmittedBatchInput>(oversized_session.evaluate()), declarations, 2, 2);
+    auto oversized_policy = block::execute_workchain_account_engine(engine, state.accounts,
+        std::get<block::AdmittedBatchInput>(oversized_session.evaluate()));
     ASSERT_TRUE(oversized_policy.is_error());
     ASSERT_EQ(oversized_policy.error().code(),
         static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
