@@ -820,7 +820,17 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     if (id_val.type() == td::JsonValue::Type::String) {
       req_id = PSTRING() << td::JsonString(td::Slice(id_val.get_string()));
     } else if (id_val.type() == td::JsonValue::Type::Number) {
-      req_id = id_val.get_number().str();  // numeric literal, no quotes
+      // The scanner accepts any run of number-ish characters, so "." and
+      // "1e+-.3" arrive here as Numbers. The value is spliced into the
+      // reply unquoted, and echoing one of those verbatim produces a body
+      // no client can parse -- an answer lost to a malformed id rather
+      // than an error reported for one.
+      req_id = id_val.get_number().str();
+      if (!is_valid_json_number(req_id)) {
+        promise.set_value(make_json_rpc_error(-32600, "Invalid Request: malformed 'id' number", "null",
+                                              opts_.cors_origin));
+        return;
+      }
     } else {
       // Null id, missing id, or non-stringy/numeric id → echo as JSON
       // null per spec.  Note: in single-request mode this still emits

@@ -98,7 +98,11 @@ std::string extract_text_comment(td::Ref<vm::CellSlice> body) {
     bool special = false;
     try {
       cs = vm::load_cell_slice_special(cs.prefetch_ref(), special);
-    } catch (vm::VmError &) {
+    } catch (...) {
+      // The loader signals a virtualization-level mismatch with a type that
+      // is not related to VmError, so naming one exception left the other
+      // to unwind out of a synchronous handler. Everything here is
+      // best-effort decoration of an event: any failure means no comment.
       return {};
     }
     if (special) {

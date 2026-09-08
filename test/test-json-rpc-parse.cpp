@@ -167,3 +167,23 @@ TEST(JsonRpcParse, restricted_wallet_start_at_rejects_null_and_exotic) {
   ASSERT_TRUE(tos::parse_restricted_wallet_start_at({}).is_error());
   ASSERT_TRUE(tos::parse_restricted_wallet_start_at(make_library_cell()).is_error());
 }
+
+// A request id of type Number is echoed into the reply unquoted, so it has
+// to satisfy the grammar the client's parser applies. The scanner that
+// produced it is more permissive than that grammar.
+TEST(JsonRpcParse, json_number_grammar_accepts_valid) {
+  for (const char* s : {"0", "-0", "1", "-1", "42", "1.5", "-1.5", "1e10", "1E10",
+                        "1e+10", "1e-10", "0.5", "-0.5", "123456789012345678901234567890",
+                        "1.5e-10"}) {
+    ASSERT_TRUE(tos::is_valid_json_number(s));
+  }
+}
+
+TEST(JsonRpcParse, json_number_grammar_rejects_malformed) {
+  // Every one of these is accepted by the scanner as a Number and would be
+  // spliced into the reply as-is.
+  for (const char* s : {".", "--", "1e+-.3", "", "-", "+1", "1.", ".5", "1e", "1e+",
+                        "01", "-01", "1..2", "1e1e1", "1 2", " 1", "1 ", "0x1", "nan"}) {
+    ASSERT_TRUE(!tos::is_valid_json_number(s));
+  }
+}

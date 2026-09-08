@@ -159,36 +159,46 @@ void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string
   td::actor::send_closure(
       validator_manager_, &validator::ValidatorManagerInterface::get_last_liteserver_state_block,
       td::PromiseCreator::lambda(
-          [this, req_id = std::move(req_id), promise = std::move(promise)](
+          [self_id = actor_id(this), cors = opts_.cors_origin, req_id = std::move(req_id),
+           promise = std::move(promise)](
               td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R) mutable {
-        // This continuation runs on the manager's callback, not inside
-        // dispatch_method, so the boundary guard there does not reach it.
+        // This continuation is fulfilled inside the validator manager, on
+        // its thread and outside this actor's lock, so it must not touch
+        // this server's members or call its helpers -- hence the actor id
+        // and the copied origin rather than `this`, and the hop back below
+        // for anything that reads or writes state.
         guard_handler("getConsensusBlock continuation", [&] {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getConsensusBlock: " << R.error(), req_id));
+                PSTRING() << "getConsensusBlock: " << R.error(), req_id, cors));
             return;
           }
           auto [state, block_id] = R.move_as_ok();
-          td::uint32 seqno = block_id.seqno();
-          if (consensus_block_seqno_ != seqno) {
-            consensus_block_seqno_ = seqno;
-            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-          } else if (consensus_block_timestamp_ == 0) {
-            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-          }
-
-          td::StringBuilder sb;
-          sb << "{\"@type\":\"ext.blocks.consensusBlock\""
-             << ",\"consensus_block\":" << consensus_block_seqno_
-             << ",\"timestamp\":" << consensus_block_timestamp_;
-          if (state.not_null()) {
-            sb << ",\"last_block_utime\":" << state->get_unix_time();
-          }
-          sb << "}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          td::uint32 last_block_utime = state.not_null() ? state->get_unix_time() : 0;
+          td::actor::send_closure(self_id, &JsonRpcServer::finish_getConsensusBlock, block_id.seqno(),
+                                  last_block_utime, state.not_null(), std::move(req_id), std::move(promise));
         });
       }));
+}
+
+void JsonRpcServer::finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_block_utime, bool have_state,
+                                             std::string req_id, td::Promise<HttpReturn> promise) {
+  if (consensus_block_seqno_ != seqno) {
+    consensus_block_seqno_ = seqno;
+    consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+  } else if (consensus_block_timestamp_ == 0) {
+    consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+  }
+
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"ext.blocks.consensusBlock\""
+     << ",\"consensus_block\":" << consensus_block_seqno_
+     << ",\"timestamp\":" << consensus_block_timestamp_;
+  if (have_state) {
+    sb << ",\"last_block_utime\":" << last_block_utime;
+  }
+  sb << "}";
+  promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
 }
 
 // ─── shards ──────────────────────────────────────────────────────────

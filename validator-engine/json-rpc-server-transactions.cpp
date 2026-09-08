@@ -85,7 +85,12 @@ void append_transaction_messages(td::StringBuilder &sb,
   sb << ",\"out_msgs\":[";
   vm::Dictionary dictionary{tx.r1.out_msgs, 15};
   bool first = true;
-  for (int index = 0; index < tx.outmsg_cnt; ++index) {
+  // The field is 15 bits wide, and this runs once per transaction in a
+  // page of up to 256, so the count is bounded only by a consensus limit
+  // declared elsewhere. Cap it here, matching the sibling loop over the
+  // same dictionary.
+  constexpr int kMaxRenderedOutMessages = 100;
+  for (int index = 0; index < tx.outmsg_cnt && index < kMaxRenderedOutMessages; ++index) {
     auto message = dictionary.lookup_ref(td::BitArray<15>{index});
     if (message.is_null()) {
       continue;
@@ -706,7 +711,10 @@ void JsonRpcServer::handle_getTransactions(td::JsonObject &params, std::string r
             return;
           }
 
-          td::Bits256 last_hash;
+          // Zeroed explicitly: the decode below leaves it untouched on
+          // failure, and an indeterminate value would be sent as a query
+          // parameter.
+          auto last_hash = td::Bits256::zero();
           auto hash_dec = td::base64_decode(ps.last_trans_hash_b64);
           if (hash_dec.is_ok() && hash_dec.ok().size() == 32) {
             last_hash.as_slice().copy_from(hash_dec.ok());
@@ -1541,7 +1549,10 @@ void JsonRpcServer::handle_getTransactionsStd(td::JsonObject &params, std::strin
             return;
           }
 
-          td::Bits256 last_hash;
+          // Zeroed explicitly: the decode below leaves it untouched on
+          // failure, and an indeterminate value would be sent as a query
+          // parameter.
+          auto last_hash = td::Bits256::zero();
           auto hash_dec = td::base64_decode(ps.last_trans_hash_b64);
           if (hash_dec.is_ok() && hash_dec.ok().size() == 32) {
             last_hash.as_slice().copy_from(hash_dec.ok());

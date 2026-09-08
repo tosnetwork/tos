@@ -338,6 +338,11 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — block/chain read APIs
   void handle_getMasterchainInfo(td::JsonObject &params, std::string req_id,
                                  td::Promise<HttpReturn> promise);
+  // Completion for handle_getConsensusBlock, invoked back on this actor:
+  // the manager fulfils that promise on its own thread, so the bookkeeping
+  // and the reply belong here rather than in the continuation.
+  void finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_block_utime, bool have_state,
+                                std::string req_id, td::Promise<HttpReturn> promise);
   void handle_getConsensusBlock(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
   void handle_lookupBlock(td::JsonObject &params, std::string req_id,

@@ -91,7 +91,13 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
         if (tlb::csr_unpack(account.storage, storage)) {
           auto balance_cs = storage.balance.write();
           auto coins = block::tlb::t_Tomis.as_integer_skip(balance_cs);
-          if (coins.not_null()) res.balance = coins->to_long();
+          if (coins.not_null()) {
+            res.balance_dec = coins->to_dec_string();
+            // to_long() answers INT64_MIN for anything that does not fit,
+            // so an unchecked conversion turns a large balance into a
+            // large negative one.
+            res.balance = coins->fits_bits(63, false) ? coins->to_long() : std::numeric_limits<td::int64>::max();
+          }
           res.extra_currencies_cell = storage.balance->prefetch_ref();
 
           auto tag = block::gen::t_AccountState.get_tag(*storage.state);
@@ -131,7 +137,7 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
 std::string ParsedAccountState::to_address_info_json() const {
   return PSTRING()
       << "{\"@type\":\"raw.fullAccountState\""
-      << ",\"balance\":" << td::JsonString(td::Slice(PSTRING() << balance))
+      << ",\"balance\":" << td::JsonString(td::Slice(balance_dec))
       << ",\"code\":" << td::JsonString(td::Slice(code_b64))
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
@@ -464,7 +470,7 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
         return;
       }
       promise_inner.set_value(make_json_ok(
-          PSTRING() << "\"" << parsed.ok().balance << "\"", req_id_inner, cors));
+          PSTRING() << "\"" << parsed.ok().balance_dec << "\"", req_id_inner, cors));
     }));
   };
 
