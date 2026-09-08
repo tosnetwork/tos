@@ -65,6 +65,9 @@ jobs:
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
+      env:
+        # aarch64 UNO crypto gates have not yet been measured on CI.
+        TOS_UNO_CRYPTO_PROTOTYPE_TESTS: 'OFF'
       run: |
         cp assembly/native/build-ubuntu-shared.sh .
         chmod +x build-ubuntu-shared.sh

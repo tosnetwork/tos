@@ -45,6 +45,16 @@ else
 fi
 
 CMAKE_EXTRA_ARGS=()
+if [ -n "${TOS_UNO_CRYPTO_PROTOTYPE_TESTS+x}" ]; then
+  case "${TOS_UNO_CRYPTO_PROTOTYPE_TESTS}" in
+    AUTO|ON|OFF) ;;
+    *)
+      echo "TOS_UNO_CRYPTO_PROTOTYPE_TESTS must be AUTO, ON, or OFF"
+      exit 1
+      ;;
+  esac
+  CMAKE_EXTRA_ARGS+=("-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=${TOS_UNO_CRYPTO_PROTOTYPE_TESTS}")
+fi
 if [ -n "${TOS_ARCH}" ]; then
   CMAKE_EXTRA_ARGS+=(-DTOS_ARCH=${TOS_ARCH})
 fi
