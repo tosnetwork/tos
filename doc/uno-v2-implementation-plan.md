@@ -28,6 +28,55 @@ The specification separately authorizes a payout and one aggregate operation-fee
 
 ## Current integration boundary and next sequence
 
+### Revalidated dependency frontier at `31e6ad1f5`
+
+The following source check supersedes historical component-level next-step
+statements, including the final joint-pair paragraph below. The full mixed
+payout/disposal overlay already exists in `workchain-payout-overlay.h`:
+preparation runs once, the coordinator's actual output count feeds the final
+LT schedule, and all reconstructed participant messages enter the export list.
+`NativeDisposalEntry` in `test-workchain-block.cpp` exercises the runner,
+independent replay and private outbound queue construction for three outputs;
+it also checks actual-source deferral. Reimplementing that connection would not
+advance M1.
+
+The remaining dependency frontier is:
+
+1. Authenticated resource policy and whole-input admission. V2 section 12 still
+   explicitly leaves the multi-account logical-root interpretation unconfirmed.
+   The proposal at
+   `/home/tomi/memo/UNO_V2_AUTHENTICATED_RESOURCE_POLICY_PROPOSAL.md`
+   separates input, old-state, proof-work and output limits. It is a proposal,
+   not a configuration decoder, an assigned wire tag or installed defaults.
+   D28 billing units must not silently become proof-work units.
+2. D24 aggregate operation-fee settlement. `WorkchainAccountEffects` currently
+   has one optional `payout_request`; existing custody payout construction and
+   Native allocation edges do not implement the separately authorized aggregate
+   fee output. Its bound amount, component destinations, cost funding and
+   effects authorization must be independently reconstructed, not inferred from
+   the ordinary payout test or a larger output-count limit.
+3. Live execution, independent replay and atomic publication. The validator
+   still resolves the singleton scoped variant and enforces exactly its
+   executor AccountBlock before `replay_resolved_workchain_account_block`.
+   Private multi-account helpers and a successfully built queue are not a live
+   replacement. Keep that singleton guard until an explicit new path exists.
+
+The pending policy questions block the corresponding production admission
+connection, not all development. In particular, do not invent currency-count
+limits to make the D29 bucket appear bounded, or treat missing authenticated
+state as an invalid candidate. These boundaries are recorded in
+`/home/tomi/memo/UNO_V2_D28_D29_IMPLEMENTATION_CHECK.md`.
+
+This is a source-level dependency correction, not a new implementation or a
+milestone acceptance. No resource values, TL-B definitions, exception classes
+or live consensus predicates are changed by this update.
+
+Revalidation on 2026-09-08: rebuilding `test-workchain-block` with `-j48`
+and running `--filter +NativeDisposalEntry --verbosity 0` passed one existing
+test (9.7073 ms reported by the harness). This is only the private integration
+fixture, not network synchronization, live publication or a capacity benchmark.
+No new test or new mutation evidence is claimed by this documentation update.
+
 Source audit at `df73ed000`, after the reviewed dual-ingress development
 snapshot; this section supersedes older per-component "next step" statements
 below where later components already exist.
