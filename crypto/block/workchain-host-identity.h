@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "common/bitstring.h"
 #include "block/workchain-input-admission.h"
@@ -32,22 +33,29 @@ struct WorkchainHostIdentity {
 
 // Local fields have fixed widths; finality is a separately admitted reference.
 // Construction and allocation failures propagate to the provenance-aware host.
-inline td::Result<td::Ref<vm::Cell>> encode_workchain_host_identity(const WorkchainHostIdentity& value) {
+inline td::Result<td::Ref<vm::Cell>> encode_workchain_host_identity(
+    const WorkchainHostIdentity& value,
+    const std::function<td::Status(const td::Ref<vm::Cell>&)>& admit_derived = {}) {
   if (value.finality.is_null()) return td::Status::Error("missing host finality context");
   auto domain = vm::CellBuilder().store_long(0x5ab37c9a, 32)
       .store_long(value.global_id, 32).store_bits(value.genesis_hash.bits(), 256)
       .store_bits(value.instance_id.bits(), 256).store_long(value.workchain_id, 32)
       .store_long(value.shard_id, 64).finalize();
+  if (admit_derived) TRY_STATUS(admit_derived(domain));
   auto policy = vm::CellBuilder().store_long(0xf704b16c, 32)
       .store_bits(value.configuration_hash.bits(), 256).store_long(value.extended, 1)
       .store_long(value.engine_selector, 64).store_long(value.vm_mode, 64)
       .store_long(value.descriptor_version, 32).store_long(value.admission_version, 32).finalize();
+  if (admit_derived) TRY_STATUS(admit_derived(policy));
   auto context = vm::CellBuilder().store_long(0x8a4ca5dc, 32)
       .store_bits(value.previous_shard_hash.bits(), 256).store_long(value.height, 32)
       .store_long(value.gen_utime, 32).store_long(value.host_after_lt, 64)
       .store_ref(value.finality).finalize();
-  return vm::CellBuilder().store_long(0x7d71caf4, 32).store_ref(domain)
+  if (admit_derived) TRY_STATUS(admit_derived(context));
+  auto root = vm::CellBuilder().store_long(0x7d71caf4, 32).store_ref(domain)
       .store_ref(policy).store_ref(context).finalize();
+  if (admit_derived) TRY_STATUS(admit_derived(root));
+  return root;
 }
 
 // Keep admission and commitment on the same resolved configuration cut.

@@ -92,3 +92,72 @@ physical closure; bounded inbox construction; state, proof-work and output
 budgets; finality representation; full M1 stage-order and atomicity tests.
 Fee units must not substitute for proof-work units. Codec tests do not close
 any of those live integration gates.
+
+The inbox structural builder now takes `ResolvedBatchInputPolicy` and checks
+its `max_inbound` before allocating the sorting vector or loading envelopes.
+An explicit allocator lets the tests observe the vector's actual allocation,
+not a proxy callback. Native canonical dictionary construction admits each
+finalized node before constructing its parent. At most one finalized node is
+awaiting admission; rejection stops construction and releases the partial tree.
+For N distinct messages, there are exactly 2*N final nodes including the wrapper,
+with N bounded by both the authenticated count and the 15-bit wire encoding.
+Sorting entries, at most 257 recursive builders, and the caller's union-dedup
+map are separate memory objects, not hidden inside the one-node allowance.
+This is a construction boundary, not the complete shared input-union session.
+The legacy encoder retains its loader/error behavior and full semantic decode;
+its wire-only count cap is not an authenticated V2 policy default.
+
+Review follow-up: the new wire-count failure has the candidate-invalid category,
+while the legacy API preserves its original code. Uniform zero/one hash-prefix
+fixtures exercise canonical same-bit labels independently of random coverage.
+The source uses fixed-width geometric bounds rather than an unreachable generic
+cell-write guard. Both paths are host construction, not interpreter execution.
+Installation/transition compatibility with required system-message progress,
+including zero `max_inbound`, remains an activation prerequisite. This unit
+does not declare all representable resource combinations safe to install, nor
+turn an authenticated zero limit into a local acquisition failure or a default.
+
+Batch-session structural-boundary review disposition: the claim that removing the
+session's logical-root guard leaves its test green is disputed by a rebuilt
+negative control (exit 1, typed-category assertion). The materializer receives
+the derived `logical_roots`, not the configured `limits.roots`. Its vector has
+exactly that derived length, so its generic root-limit check is unreachable on
+this call path. The session guard is the only comparison to the authenticated
+root limit. This mechanism, rather than the historical test run alone, explains
+why the guard must remain. The raw control is recorded in
+`measurements/uno-v2-batch-root-mutation.json`.
+
+The shared-declaration expansion finding is accepted. Structural input admission
+must not enumerate the full key set or reconstruct it before commitment. The
+new shallow inspection caches `(cell hash, remaining key width)` separately for
+read and write trees: at most 257 times the acquired physical closure's cell
+count per role, with at most 257 recursive frames. Each shared edge contributes
+its cached logical count; checked sums enforce the same authenticated read/write
+limits. It does not impose a new ratio between logical keys and physical cells.
+Full canonical encoding and write-subset validation remain required after
+commitment, before any execution permission is issued. This shallow result does
+not close those semantic checks or the later state/work/output admission gates.
+
+Follow-up review confirmed the pre-commitment expansion is removed and identified
+a tighter structural argument: within each role, a subtree can finish at only
+one remaining width, because forks have two refs while read/write leaves have
+one/zero. The completed cache therefore has at most one entry per physical cell,
+plus at most 257 active frames on the first failing path. The 257-times bound
+above is conservative, not the expected reachable footprint. Logical count
+limits apply on unwinding; this structural bound, not a small count limit,
+protects the traversal itself.
+
+Session-level tests now cover nonempty reads and writes, zero leaf allowances,
+malformed read/write leaves, thrown label errors and local acquisition failure.
+A shared cell reached at two widths must reject: collapsing the cache key to
+hash-only makes that test accept and fail (exit 1). Changing the candidate
+dictionary VmError catch to a local failure also fails its typed-category test
+(exit 1). Raw controls are in `measurements/uno-v2-declaration-width-mutation.json`
+and `measurements/uno-v2-declaration-category-mutation.json`; these are manual
+controls, not recurring CI mutation jobs. Removing the zero leaf allowance guard
+or disabling write-leaf shape validation independently makes the same session
+test incorrectly admit input and exit 1. Their raw outputs are recorded in
+`measurements/uno-v2-declaration-leaf-mutations.json`. These close the follow-up
+review's requested session controls; they do not establish live D31 acceptance.
+The live collection, provenance, old-state, proof-work and ordering requirements
+remain unchecked in `uno-v2-implementation-plan.md`.

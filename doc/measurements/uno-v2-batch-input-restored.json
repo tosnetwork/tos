@@ -1,0 +1,17 @@
+{
+  "scope": "Restored structural batch-input boundary. D31 live wiring remains incomplete. Manual mutations are not recurring CI mutation jobs.",
+  "source_sha256": "08bcbecf2bd08affe005c8582ec61b2daf9baa9ba4f4cef97af69219948cfa69  crypto/block/workchain-account-access-codec.h\n23884d137c9fbfdf00ded67e737db3c250f102318944a659c2b58f173cafb630  crypto/block/workchain-block-execution.cpp\nb87c3f031638339c753dc7abb2e078de38ec84ddadad41ebebfabc165a6df36b  crypto/block/workchain-block-execution.h\n704f2bdc798109dba84a03d3715c76bfc31d91ad01d8abe6a20e0cfc8e32c422  crypto/block/workchain-host-identity.h\nb1961d0849246054fd0d033b5e0533c9a1e0a75708a350b2e61c29d93cacb0b4  crypto/block/workchain-host-input.h\n27f35f6f91a05d25dcc4b8713528044aceb428e1178aa69e98e2b0987bda5f8c  crypto/test/test-workchain-block.cpp\n",
+  "build": "cmake --build build --target test-workchain-block test-workchain-admission -- -j48",
+  "regression": {
+    "chunk_id": "93e380",
+    "wall_time_seconds": 2.692054242,
+    "exit_code": 0,
+    "original_token_count": 98,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 37: test-workchain-block\n1/2 Test #37: test-workchain-block .............   Passed    2.81 sec\n    Start 38: test-workchain-admission\n2/2 Test #38: test-workchain-admission .........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 2\n\nTotal Test time (real) =   2.82 sec\n"
+  },
+  "reviews": [
+    "uno-v2-a-d31-batch-input-review-20260908.txt",
+    "uno-v2-a-d31-shallow-input-followup-20260908.txt"
+  ],
+  "review_location": "Internal review archive; source disposition is in doc/uno-v2-resource-policy-wire.md."
+}

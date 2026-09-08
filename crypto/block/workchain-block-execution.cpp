@@ -2,6 +2,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/transaction.h"
+#include "block/workchain-resource-policy.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 #include "td/utils/port/Clocks.h"
@@ -16,6 +17,56 @@ constexpr std::uint32_t outputs_tag = 0x57424f31;
 
 bool same_cell(const td::Ref<vm::Cell>& a, const td::Ref<vm::Cell>& b) {
   return a.not_null() && b.not_null() && a->get_hash() == b->get_hash();
+}
+
+// Canonical Hashmap label selection, with all widths bounded by a 256-bit key.
+// No policy arithmetic occurs here: admission charges finalized nodes by hash.
+// A fresh builder receives at most 267 label bits and two refs; no cell-write
+// overflow is reachable from these widths. No generic VM exception guard is
+// needed to hide a different CellWriteError type.
+void store_inbox_label(vm::CellBuilder& cb, td::ConstBitPtr bits, int length, int remaining) {
+  int width = 0;
+  for (int n = remaining; n; n >>= 1) ++width;
+  const bool same = length > 0 &&
+      static_cast<int>(td::bitstring::bits_memscan(bits, length, *bits)) == length;
+  if (same && length > 1 && width < 2 * length - 1) {
+    cb.store_long(6 + *bits, 3).store_long(length, width);
+    return;
+  }
+  if (width < length) cb.store_long(2, 2).store_long(length, width);
+  else cb.store_long(0, 1).store_long(-2, length + 1);
+  cb.store_bits(bits, length);
+}
+
+struct InboxEntry {
+  td::Bits256 key;
+  td::Ref<vm::Cell> envelope;
+};
+
+td::Result<td::Ref<vm::Cell>> build_inbox_trie(
+    td::Span<InboxEntry> entries, int prefix,
+    const std::function<td::Status(const td::Ref<vm::Cell>&)>& admit_derived) {
+  // Nonempty sorted distinct keys; 0 <= prefix <= 256. Each fork consumes at
+  // least one remaining bit, bounding recursion by key width, not inbox count.
+  const int remaining = 256 - prefix;
+  int common = 0;
+  while (common < remaining &&
+         entries.front().key.cbits()[prefix + common] == entries.back().key.cbits()[prefix + common]) ++common;
+  vm::CellBuilder cb;
+  store_inbox_label(cb, entries.front().key.cbits() + prefix, common, remaining);
+  if (entries.size() == 1) {
+    cb.store_ref(entries.front().envelope);
+  } else {
+    // Distinct sorted endpoints imply common < remaining and a nonempty split.
+    std::size_t split = 0;
+    while (split < entries.size() && !entries[split].key.cbits()[prefix + common]) ++split;
+    TRY_RESULT(left, build_inbox_trie(entries.substr(0, split), prefix + common + 1, admit_derived));
+    TRY_RESULT(right, build_inbox_trie(entries.substr(split), prefix + common + 1, admit_derived));
+    cb.store_ref(std::move(left)).store_ref(std::move(right));
+  }
+  auto node = cb.finalize_novm();
+  TRY_STATUS(admit_derived(node));
+  return node;
 }
 
 }  // namespace
@@ -73,26 +124,71 @@ td::Result<std::vector<td::Ref<vm::Cell>>> decode_workchain_batch_inbound(const 
   }
 }
 
-td::Result<td::Ref<vm::Cell>> encode_workchain_batch_inbound(const std::vector<td::Ref<vm::Cell>>& envelopes) {
+static td::Result<td::Ref<vm::Cell>> build_inbound_structure(
+    const std::vector<td::Ref<vm::Cell>>& envelopes,
+    std::uint64_t max_inbound,
+    const std::function<td::Status(const td::Ref<vm::Cell>&)>& admit_derived,
+    std::pmr::memory_resource& workspace, bool legacy_loader) {
   if (envelopes.empty() || envelopes.size() > 32767) {
-    return td::Status::Error("batch inbound count must be between 1 and 32767");
+    return td::Status::Error(legacy_loader ? 0 : static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                             "batch inbound count must be between 1 and 32767");
   }
-  vm::Dictionary dict(256);
+  if (envelopes.size() > max_inbound) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                             "batch inbox exceeds authenticated count");
+  }
+  if (!admit_derived) return td::Status::Error(
+      static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), "missing derived inbox admission");
+  const auto malformed = [&](const char* reason) {
+    return td::Status::Error(legacy_loader ? 0 : static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                             td::CSlice(reason));
+  };
+  std::pmr::vector<InboxEntry> entries{&workspace};
+  entries.reserve(envelopes.size());
   for (unsigned index = 0; index < envelopes.size(); ++index) {
     block::tlb::MsgEnvelope::Record_std envelope;
-    if (envelopes[index].is_null() || !tlb::unpack_cell(envelopes[index], envelope)) {
-      return td::Status::Error("cannot encode batch inbound entry");
+    if (envelopes[index].is_null()) return malformed("missing batch inbound envelope");
+    // Preserve the singleton loader behavior; the new path deliberately keeps
+    // acquisition exceptions visible to its provenance-aware admission caller.
+    bool unpacked;
+    if (legacy_loader) {
+      unpacked = tlb::unpack_cell(envelopes[index], envelope);
+    } else {
+      bool special = false;
+      auto slice = vm::load_cell_slice_special(envelopes[index], special);
+      unpacked = !special && block::tlb::t_MsgEnvelope.unpack(slice, envelope) && slice.empty_ext();
     }
-    if (!dict.set_ref(envelope.msg->get_hash().bits(), 256, envelopes[index], vm::Dictionary::SetMode::Add)) {
-      return td::Status::Error("duplicate batch inbound message");
+    if (!unpacked) {
+      return malformed("cannot encode batch inbound entry");
+    }
+    entries.push_back({envelope.msg->get_hash().bits(), envelopes[index]});
+  }
+  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
+  for (std::size_t i = 1; i < entries.size(); ++i) {
+    if (entries[i - 1].key == entries[i].key) {
+      return malformed("duplicate batch inbound message");
     }
   }
+  TRY_RESULT(dictionary, build_inbox_trie(td::Span<InboxEntry>{entries.data(), entries.size()}, 0, admit_derived));
   vm::CellBuilder cb;
-  cb.store_long(0x57494e31, 32).store_long(envelopes.size(), 15);
-  if (!std::move(dict).append_dict_to_bool(cb)) {
-    return td::Status::Error("cannot encode batch inbound dictionary");
-  }
-  auto root = cb.finalize();
+  cb.store_long(0x57494e31, 32).store_long(envelopes.size(), 15).store_long(1, 1).store_ref(dictionary);
+  auto root = cb.finalize_novm();
+  TRY_STATUS(admit_derived(root));
+  return root;
+}
+
+td::Result<td::Ref<vm::Cell>> build_workchain_batch_inbound_structure(
+    const std::vector<td::Ref<vm::Cell>>& envelopes, const ResolvedBatchInputPolicy& policy,
+    const std::function<td::Status(const td::Ref<vm::Cell>&)>& admit_derived,
+    std::pmr::memory_resource& workspace) {
+  return build_inbound_structure(envelopes, policy.resources().input.max_inbound, admit_derived, workspace, false);
+}
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_batch_inbound(const std::vector<td::Ref<vm::Cell>>& envelopes) {
+  // The legacy singleton entry point retains full validation. Multiaccount
+  // admission uses structural construction first and validates only afterwards.
+  TRY_RESULT(root, build_inbound_structure(envelopes, 32767, [](const auto&) { return td::Status::OK(); },
+                                          *std::pmr::get_default_resource(), true));
   TRY_RESULT(checked, decode_workchain_batch_inbound(root));
   return root;
 }

@@ -917,6 +917,403 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   return envelope;
 }
 
+block::ResolvedBatchInputPolicy inbox_test_policy(
+    std::uint32_t max_inbound, block::WorkchainInputLimits limits = {100000, 100000000, 100000},
+    std::uint32_t max_reads = 16, std::uint32_t max_writes = 16) {
+  block::WorkchainResourcePolicy resources{2, {limits.cells, limits.bits, limits.roots, max_reads, max_writes, max_inbound},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+  block::InputPolicyIdentity identity{vm::CellHash{}, false, 0x434e5431, 7, 5, 2};
+  auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
+  return std::get<block::ResolvedBatchInputPolicy>(result);
+}
+
+block::WorkchainHostIdentity batch_test_identity(td::Ref<vm::Cell> finality) {
+  auto zero = td::Bits256::zero();
+  return {0, zero, zero, 2, UINT64_C(0x8000000000000000), zero, false,
+          0x434e5431, 7, 5, 2, zero, 1, 1, 1, std::move(finality)};
+}
+
+TEST(WorkchainBlock, BatchInputUnionExactBounds) {
+  auto declarations = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  std::vector<td::Ref<vm::Cell>> inbox;
+  auto identity = batch_test_identity(declarations);
+  block::BatchInputAdmissionSession generous(inbox_test_policy(8), declarations, declarations, identity, inbox);
+  const auto& result = generous.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(result));
+  const auto& admitted = std::get<block::AdmittedBatchInput>(result);
+  const auto usage = admitted.usage();
+  ASSERT_EQ(usage.roots, 3u);
+  ASSERT_EQ(usage.cells, 6u);  // One shared input cell, four identity cells, one wrapper.
+  std::vector<td::Ref<vm::Cell>> final_roots{admitted.root()};
+  auto oracle = block::NativeCellMaterializer::run(final_roots, {100000, 100000000, 1});
+  ASSERT_TRUE(std::holds_alternative<block::MaterializedNativeCells>(oracle));
+  const auto& full = std::get<block::MaterializedNativeCells>(oracle).physical_usage();
+  ASSERT_EQ(usage.cells, full.cells);
+  ASSERT_EQ(usage.bits, full.bits);
+  block::BatchInputAdmissionSession exact(inbox_test_policy(8, {usage.cells, usage.bits, 3}),
+                                         declarations, declarations, identity, inbox);
+  const auto& exact_result = exact.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(exact_result));
+  ASSERT_EQ(std::get<block::AdmittedBatchInput>(exact_result).root()->get_hash(), admitted.root()->get_hash());
+  ASSERT_TRUE(&exact_result == &exact.evaluate());
+  for (unsigned bound = 0; bound < 3; ++bound) {
+    block::WorkchainInputLimits limits{usage.cells, usage.bits, 3};
+    ASSERT_TRUE(limits.cells > 0 && limits.bits > 0 && limits.roots > 1);
+    if (bound == 0) --limits.cells;
+    if (bound == 1) --limits.bits;
+    if (bound == 2) --limits.roots;
+    block::BatchInputAdmissionSession rejected(inbox_test_policy(8, limits), declarations, declarations, identity, inbox);
+    const auto& failure = rejected.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(failure));
+    ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(failure).category,
+              block::WorkchainExecutionFailure::CandidateInvalid);
+    ASSERT_TRUE(&failure == &rejected.evaluate());
+  }
+}
+
+TEST(WorkchainBlock, BatchInputRootCountPrecedesAcquisition) {
+  auto declarations = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  unsigned loads = 0;
+  td::Ref<vm::Cell> observed{td::Ref<PreflightObservedCell>{true, declarations, &loads}};
+  std::vector<td::Ref<vm::Cell>> inbox{observed, observed};
+  block::BatchInputAdmissionSession session(inbox_test_policy(8, {100, 10000, 4}),
+                                           observed, declarations, batch_test_identity(declarations), inbox);
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+  ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+            block::WorkchainExecutionFailure::CandidateInvalid);
+  ASSERT_EQ(loads, 0u);  // 3+2 roots, even when both inbox references are identical.
+  ASSERT_TRUE(&result == &session.evaluate());
+  ASSERT_EQ(loads, 0u);
+}
+
+TEST(WorkchainBlock, DeclarationShapeCountsSharedSubtreesWithoutExpansion) {
+  for (unsigned depth : {12u, 20u}) {
+  auto record = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
+  // Fixed depths below 32 keep both the shift and 256-depth in range.
+  const std::uint64_t entries = UINT64_C(1) << depth;
+  auto node = vm::CellBuilder().store_long(6, 3).store_long(256 - depth, 8).store_ref(record).finalize();
+  for (unsigned i = 0; i < depth; ++i) {
+    node = vm::CellBuilder().store_long(0, 2).store_ref(node).store_ref(node).finalize();
+  }
+  auto root = vm::CellBuilder().store_long(0x7bc07a6d, 32).store_long(1, 1).store_ref(node)
+      .store_long(0, 1).finalize();
+  auto shape = block::inspect_workchain_account_declarations(root, entries, 0);
+  ASSERT_TRUE(shape.is_ok());
+  ASSERT_EQ(shape.ok().reads, entries);
+  ASSERT_EQ(shape.ok().writes, 0u);
+  ASSERT_EQ(shape.ok().inspected_nodes, depth + 1u);
+  ASSERT_TRUE(entries > 0);
+  auto rejected = block::inspect_workchain_account_declarations(root, entries - 1, 0);
+  ASSERT_TRUE(rejected.is_error());
+  // Independent semantic decoder agrees on the modest positive fixture.
+  if (depth == 12) {
+    auto decoded = block::decode_workchain_account_declarations(root, entries, 0);
+    ASSERT_TRUE(decoded.is_ok());
+    ASSERT_EQ(decoded.ok().reads.size(), shape.ok().reads);
+  }
+  }
+}
+
+TEST(WorkchainBlock, BatchInputNativeSpecialAndFailureProvenance) {
+  auto declarations = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  auto library = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  block::tlb::MsgEnvelope::Record_std envelope;
+  block::gen::Message::Record message;
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(1), envelope));
+  ASSERT_TRUE(tlb::type_unpack_cell(envelope.msg, block::gen::t_Message_Any, message));
+  auto body = vm::CellBuilder().store_ref(library).finalize();
+  message.body = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(body).finalize());
+  ASSERT_TRUE(tlb::type_pack_cell(envelope.msg, block::gen::t_Message_Any, message));
+  ASSERT_TRUE(block::gen::t_Message_Any.validate_ref(4096, envelope.msg));
+  td::Ref<vm::Cell> packed;
+  ASSERT_TRUE(tlb::pack_cell(packed, envelope));
+  block::tlb::MsgEnvelope::Record_std second_envelope;
+  block::gen::Message::Record second_message;
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(2), second_envelope));
+  ASSERT_TRUE(tlb::type_unpack_cell(second_envelope.msg, block::gen::t_Message_Any, second_message));
+  second_message.body = message.body;
+  ASSERT_TRUE(tlb::type_pack_cell(second_envelope.msg, block::gen::t_Message_Any, second_message));
+  td::Ref<vm::Cell> second;
+  ASSERT_TRUE(tlb::pack_cell(second, second_envelope));
+  std::vector<td::Ref<vm::Cell>> inbox{packed, second};
+  auto identity = batch_test_identity(body);
+  block::BatchInputAdmissionSession valid(inbox_test_policy(8), declarations, declarations, identity, inbox);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(valid.evaluate()));
+  const auto& accepted = std::get<block::AdmittedBatchInput>(valid.evaluate());
+  const auto usage = accepted.usage();
+  ASSERT_EQ(usage.roots, 5u);
+  std::vector<td::Ref<vm::Cell>> final_roots{accepted.root()};
+  auto oracle = block::NativeCellMaterializer::run(final_roots, {100000, 100000000, 1});
+  ASSERT_TRUE(std::holds_alternative<block::MaterializedNativeCells>(oracle));
+  const auto& full = std::get<block::MaterializedNativeCells>(oracle).physical_usage();
+  ASSERT_EQ(usage.cells, full.cells);
+  ASSERT_EQ(usage.bits, full.bits);
+  std::reverse(inbox.begin(), inbox.end());
+  block::BatchInputAdmissionSession reversed(inbox_test_policy(8, {usage.cells, usage.bits, usage.roots}),
+                                             declarations, declarations, identity, inbox);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(reversed.evaluate()));
+  ASSERT_EQ(std::get<block::AdmittedBatchInput>(reversed.evaluate()).root()->get_hash(), accepted.root()->get_hash());
+  block::BatchInputAdmissionSession forbidden(inbox_test_policy(8), body, declarations, identity, inbox);
+  const auto& bad = forbidden.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(bad));
+  ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(bad).category,
+            block::WorkchainExecutionFailure::CandidateInvalid);
+  unsigned loads = 0;
+  td::Ref<vm::Cell> unavailable{td::Ref<PreflightObservedCell>{true, declarations, &loads, true}};
+  block::BatchInputAdmissionSession missing(inbox_test_policy(8), unavailable, declarations, identity, inbox);
+  const auto& local = missing.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(local));
+  ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(local).category,
+            block::WorkchainExecutionFailure::LocalUnavailable);
+  ASSERT_EQ(loads, 1u);
+  ASSERT_TRUE(&local == &missing.evaluate());
+  ASSERT_EQ(loads, 1u);
+}
+
+TEST(WorkchainBlock, BatchInputHostMismatchAndCorruptInbox) {
+  auto declarations = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  const std::vector<td::Ref<vm::Cell>> empty;
+  for (unsigned field = 0; field < 6; ++field) {
+    auto identity = batch_test_identity(declarations);
+    if (field == 0) identity.configuration_hash = td::Bits256::ones();
+    if (field == 1) identity.extended = true;
+    if (field == 2) identity.engine_selector = 1;
+    if (field == 3) identity.vm_mode = 1;
+    if (field == 4) identity.descriptor_version = 1;
+    if (field == 5) identity.admission_version = 1;
+    block::BatchInputAdmissionSession session(inbox_test_policy(8), declarations, declarations, identity, empty);
+    const auto& result = session.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+    ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+              block::WorkchainExecutionFailure::LocalUnavailable);
+  }
+  auto envelope = inbound_envelope(1);
+  for (const auto& inbox : {std::vector<td::Ref<vm::Cell>>{envelope, envelope},
+                            std::vector<td::Ref<vm::Cell>>{declarations}}) {
+    block::BatchInputAdmissionSession session(inbox_test_policy(8), declarations, declarations,
+                                             batch_test_identity(declarations), inbox);
+    const auto& result = session.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+    ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+              block::WorkchainExecutionFailure::AuthenticatedStateCorrupt);
+  }
+}
+
+TEST(WorkchainBlock, BatchInputDeclarationSemanticsAndProvenance) {
+  const std::vector<td::Ref<vm::Cell>> inbox;
+  auto empty = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  const auto declaration = [](td::Ref<vm::Cell> reads, td::Ref<vm::Cell> writes) {
+    vm::CellBuilder cb;
+    cb.store_long(0x7bc07a6d, 32);
+    CHECK(cb.store_maybe_ref(reads) && cb.store_maybe_ref(writes));
+    return cb.finalize();
+  };
+  auto record = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
+  auto read_leaf = vm::CellBuilder().store_long(6, 3).store_long(256, 9).store_ref(record).finalize();
+  auto write_leaf = vm::CellBuilder().store_long(6, 3).store_long(256, 9).finalize();
+  auto valid = declaration(read_leaf, write_leaf);
+  block::BatchInputAdmissionSession positive(inbox_test_policy(8, {100, 10000, 3}, 1, 1),
+                                             empty, valid, batch_test_identity(empty), inbox);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(positive.evaluate()));
+  for (unsigned fault = 0; fault < 5; ++fault) {
+    auto root = valid;
+    auto reads = 1u, writes = 1u;
+    if (fault == 0) reads = 0;
+    if (fault == 1) writes = 0;
+    if (fault == 2) root = declaration(read_leaf, read_leaf);  // Write leaf must have no refs.
+    if (fault == 3) root = declaration(vm::CellBuilder().finalize(), {});  // Truncated label throws VmError.
+    if (fault == 4) root = declaration(vm::CellBuilder().store_long(6, 3).store_long(256, 9)
+                                      .store_ref(empty).finalize(), {});  // Bad read record returns Status.
+    block::BatchInputAdmissionSession session(inbox_test_policy(8, {100, 10000, 3}, reads, writes),
+                                              empty, root, batch_test_identity(empty), inbox);
+    const auto& result = session.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+    ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+              block::WorkchainExecutionFailure::CandidateInvalid);
+  }
+  unsigned loads = 0;
+  td::Ref<vm::Cell> missing{td::Ref<PreflightObservedCell>{true, valid, &loads, true}};
+  block::BatchInputAdmissionSession unavailable(inbox_test_policy(8), empty, missing,
+                                                batch_test_identity(empty), inbox);
+  const auto& result = unavailable.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+  ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+            block::WorkchainExecutionFailure::LocalUnavailable);
+  ASSERT_EQ(loads, 1u);
+}
+
+TEST(WorkchainBlock, BatchInputDeclarationCacheBindsRemainingWidth) {
+  auto record = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
+  auto leaf = vm::CellBuilder().store_long(6, 3).store_long(253, 8).store_ref(record).finalize();
+  const auto fork = [](td::Ref<vm::Cell> a, td::Ref<vm::Cell> b) {
+    return vm::CellBuilder().store_long(0, 2).store_ref(a).store_ref(b).finalize();
+  };
+  auto shared = fork(leaf, leaf);
+  auto left = fork(shared, shared);
+  auto right = vm::CellBuilder().store_long(0, 1).store_long(-2, 2).store_long(0, 1)
+      .store_ref(shared).store_ref(shared).finalize();
+  auto root = vm::CellBuilder().store_long(0x7bc07a6d, 32).store_long(1, 1)
+      .store_ref(fork(left, right)).store_long(0, 1).finalize();
+  const std::vector<td::Ref<vm::Cell>> inbox;
+  auto empty = block::encode_workchain_account_declarations({}, 16, 16).move_as_ok();
+  block::BatchInputAdmissionSession session(inbox_test_policy(8), empty, root, batch_test_identity(empty), inbox);
+  const auto& result = session.evaluate();
+  ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
+  ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
+            block::WorkchainExecutionFailure::CandidateInvalid);
+}
+
+class InboxWorkspaceProbe final : public std::pmr::memory_resource {
+ public:
+  unsigned allocations{0};
+ private:
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+    ++allocations;
+    return std::pmr::new_delete_resource()->allocate(bytes, alignment);
+  }
+  void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override {
+    std::pmr::new_delete_resource()->deallocate(pointer, bytes, alignment);
+  }
+  bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override { return this == &other; }
+};
+
+TEST(WorkchainBlock, BoundedInboxCountBeforeWorkspace) {
+  auto policy = inbox_test_policy(1);
+  InboxWorkspaceProbe workspace;
+  unsigned calls = 0;
+  auto callback = [&](const auto&) { ++calls; return td::Status::OK(); };
+  // Null entries also distinguish early count rejection from envelope parsing.
+  std::vector<td::Ref<vm::Cell>> excess(32767);
+  auto rejected = block::build_workchain_batch_inbound_structure(excess, policy, callback, workspace);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+  ASSERT_EQ(workspace.allocations, 0u);
+  ASSERT_EQ(calls, 0u);
+  // A permissive policy does not replace the wire bound; its failure has the
+  // same candidate category, while the legacy API retains its original code.
+  std::vector<td::Ref<vm::Cell>> outside_wire(32768);
+  auto wire_rejected = block::build_workchain_batch_inbound_structure(
+      outside_wire, inbox_test_policy(UINT32_MAX), callback, workspace);
+  ASSERT_TRUE(wire_rejected.is_error());
+  ASSERT_EQ(wire_rejected.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+  auto legacy_rejected = block::encode_workchain_batch_inbound(outside_wire);
+  ASSERT_TRUE(legacy_rejected.is_error());
+  ASSERT_EQ(legacy_rejected.error().code(), 0);
+  ASSERT_EQ(workspace.allocations, 0u);
+  ASSERT_EQ(calls, 0u);
+  auto accepted = block::build_workchain_batch_inbound_structure({inbound_envelope(1)}, policy, callback, workspace);
+  ASSERT_TRUE(accepted.is_ok());
+  ASSERT_EQ(workspace.allocations, 1u);
+  ASSERT_EQ(calls, 2u);
+}
+
+TEST(WorkchainBlock, BoundedInboxStructureMatchesNativeDictionary) {
+  for (unsigned count : {1u, 2u, 3u, 8u, 64u, 257u}) {
+    std::vector<td::Ref<vm::Cell>> envelopes;
+    vm::Dictionary expected(256);
+    for (unsigned i = 0; i < count; ++i) {
+      auto envelope = inbound_envelope(1, i);
+      block::tlb::MsgEnvelope::Record_std record;
+      ASSERT_TRUE(tlb::unpack_cell(envelope, record));
+      ASSERT_TRUE(expected.set_ref(record.msg->get_hash().bits(), 256, envelope));
+      envelopes.push_back(envelope);
+    }
+    vm::CellBuilder wrapper;
+    wrapper.store_long(0x57494e31, 32).store_long(count, 15);
+    ASSERT_TRUE(std::move(expected).append_dict_to_bool(wrapper));
+    const auto expected_hash = wrapper.finalize()->get_hash();
+    for (bool reverse : {false, true}) {
+      if (reverse) std::reverse(envelopes.begin(), envelopes.end());
+      unsigned derived = 0;
+      auto result = block::build_workchain_batch_inbound_structure(envelopes, inbox_test_policy(count), [&](const auto&) {
+        ++derived;  // Test fixture count <= 257, hence <= 514 final nodes.
+        return td::Status::OK();
+      }, *std::pmr::get_default_resource());
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_EQ(result.ok()->get_hash(), expected_hash);
+      ASSERT_EQ(derived, 2 * count);
+      ASSERT_TRUE(block::decode_workchain_batch_inbound(result.ok()).is_ok());
+    }
+  }
+}
+
+TEST(WorkchainBlock, BoundedInboxUniformPrefixLabels) {
+  for (unsigned length = 1; length <= 12; ++length) {
+    for (bool bit : {false, true}) {
+      td::Ref<vm::Cell> selected[2];
+      // Deterministic bounded fixture search. The two real message hashes share
+      // exactly the chosen uniform prefix, then fork on the next bit.
+      for (unsigned nonce = 0; nonce < (1u << 20) && (selected[0].is_null() || selected[1].is_null()); ++nonce) {
+        auto message = vm::CellBuilder().store_long(nonce, 32).finalize_novm();
+        auto key = message->get_hash().bits();
+        unsigned matched = 0;
+        while (matched < length && key[matched] == bit) ++matched;
+        if (matched == length) selected[key[length] ? 1 : 0] = message;
+      }
+      ASSERT_TRUE(selected[0].not_null());
+      ASSERT_TRUE(selected[1].not_null());
+      std::vector<td::Ref<vm::Cell>> envelopes;
+      vm::Dictionary expected(256);
+      for (const auto& message : selected) {
+        block::tlb::MsgEnvelope::Record_std record{0x60, 0x60, td::make_refint(67), message, {}, {}};
+        td::Ref<vm::Cell> envelope;
+        ASSERT_TRUE(tlb::pack_cell(envelope, record));
+        ASSERT_TRUE(expected.set_ref(message->get_hash().bits(), 256, envelope));
+        envelopes.push_back(envelope);
+      }
+      vm::CellBuilder wrapper;
+      wrapper.store_long(0x57494e31, 32).store_long(2, 15);
+      ASSERT_TRUE(std::move(expected).append_dict_to_bool(wrapper));
+      const auto expected_hash = wrapper.finalize()->get_hash();
+      auto result = block::build_workchain_batch_inbound_structure(envelopes, inbox_test_policy(2),
+          [](const auto&) { return td::Status::OK(); }, *std::pmr::get_default_resource());
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_EQ(result.ok()->get_hash(), expected_hash);
+    }
+  }
+}
+
+TEST(WorkchainBlock, BoundedInboxStopsBeforeSemanticDecode) {
+  std::vector<td::Ref<vm::Cell>> envelopes;
+  // Valid envelope framing, intentionally invalid message bodies. Structural
+  // admission must not decode the messages, even when all derived nodes fit.
+  for (unsigned i = 0; i < 8; ++i) {
+    auto message = vm::CellBuilder().store_long(i, 8).finalize();
+    block::tlb::MsgEnvelope::Record_std record{0x60, 0x60, td::make_refint(67), message, {}, {}};
+    td::Ref<vm::Cell> envelope;
+    ASSERT_TRUE(tlb::pack_cell(envelope, record));
+    envelopes.push_back(envelope);
+  }
+  for (unsigned allowance = 0; allowance <= 16; ++allowance) {
+    unsigned calls = 0;
+    // This standalone test runs synchronously, with no concurrent Cell users.
+    // Measure allocations independently of the callback count: batching all
+    // construction ahead of callbacks must fail even if callbacks still stop.
+    const auto baseline = vm::DataCell::get_total_data_cells();
+    ASSERT_TRUE(baseline >= 0);
+    auto result = block::build_workchain_batch_inbound_structure(envelopes, inbox_test_policy(8), [&](const auto&) {
+      const auto live = vm::DataCell::get_total_data_cells();
+      ASSERT_TRUE(live >= baseline);  // Both nonnegative; subtraction cannot overflow.
+      ASSERT_EQ(live - baseline, calls + 1);
+      if (calls++ >= allowance) return td::Status::Error(1234, "test derived budget");
+      return td::Status::OK();
+    }, *std::pmr::get_default_resource());
+    if (allowance < 16) {
+      ASSERT_TRUE(result.is_error());
+      ASSERT_EQ(result.error().code(), 1234);
+      ASSERT_EQ(calls, allowance + 1);
+      ASSERT_EQ(vm::DataCell::get_total_data_cells(), baseline);
+    } else {
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_EQ(calls, 16u);
+      ASSERT_TRUE(block::decode_workchain_batch_inbound(result.ok()).is_error());
+    }
+  }
+  ASSERT_TRUE(block::encode_workchain_batch_inbound(envelopes).is_error());
+}
+
 TEST(WorkchainBlock, NativeDisposalPlan) {
   block::ActionPhaseConfig cfg;
   cfg.global_version = 16;

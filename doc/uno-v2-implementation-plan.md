@@ -54,6 +54,41 @@ advance M1.
 
 The remaining dependency frontier is:
 
+#### Live wiring: required evidence in the same delivery
+
+These are acceptance obligations, not assertions that the private components
+already satisfy the live path. Do not defer their tests until after wiring.
+
+- [ ] Bound inbound collection using the same authenticated `max_inbound`
+  before growing the caller's array. For a source with a known excessive count,
+  observe zero collection-workspace allocations and demonstrate failure when
+  the check moves after allocation. For streaming discovery, state and test the
+  separate bounds on retained entries and probing the first excess item; do not
+  claim zero total allocation when earlier entries were legitimately collected.
+- [ ] Encode source provenance in distinct candidate/ authenticated-inbox types,
+  with restricted construction at the authentication boundary. A candidate's
+  `InMsgDescr` is not authenticated state merely because it parses. Passing it
+  directly to an authenticated-inbox API must fail to compile, or fail an
+  explicit provenance check with a demonstrated negative control. Malformed
+  candidate data must reject, not produce an abstention or authenticated-state
+  corruption alert. An installed unsupported profile remains a different case:
+  local execution unavailability, not an invalid candidate.
+- [ ] Admit old-state closures and proof work independently from the authenticated
+  policy. Sharing does not relax per-account closure limits. Input logical roots
+  are not a state budget; `max_proof_units` is not the D28 fee-unit schedule.
+- [ ] Exercise nonempty declarations through the session itself: count/leaf
+  rejection, thrown parser errors, and write-role constraints, with typed
+  results and runnable mutations. Standalone inspector tests do not prove this
+  connection. The current new fixtures are in flight, not accepted live evidence.
+- [ ] Demonstrate the section 9.3 order in both live paths: bounded parsing and
+  admission, commitment, complete inbox, state, proofs, ordered execution,
+  wrapper/value-flow reconstruction, atomic publication. Move checks across a
+  boundary and observe failures using actual loads/allocations/engine calls,
+  not only error wording. Shallow declaration counts do not certify canonical
+  encoding, write-subset semantics, or permission to execute.
+
+The dependency order below remains unchanged.
+
 1. Authenticated resource policy and whole-input admission. D31 in V2 section 12
    approves the three resource groups and `3 + N_inbound` logical roots. The
    accepted structure is described at

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory_resource>
 #include <vector>
 
 #include "td/utils/Status.h"
@@ -13,6 +14,7 @@ namespace block {
 
 struct SerializeConfig;
 struct ActionPhaseConfig;
+class ResolvedBatchInputPolicy;
 
 enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1 };
 
@@ -71,6 +73,31 @@ td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
 // Engines may apply their own authenticated source-locator order afterwards.
 // These helpers do not authenticate message delivery.
 td::Result<td::Ref<vm::Cell>> encode_workchain_batch_inbound(const std::vector<td::Ref<vm::Cell>>& envelopes);
+// Structural construction only, after bounded acquisition of envelope closures.
+// Every final derived dictionary node and wrapper passes admit_derived before
+// further construction. The caller uses its shared physical union meter; this
+// callback does not charge logical roots. No message-body decoding occurs here.
+// At most ONE finalized derived Cell awaits admission at any instant: both
+// children pass their callbacks before their parent is finalized. The first
+// rejection stops construction, so finalizations <= successful callbacks + 1.
+// Each provisional Cell has at most 1023 bits and four refs (not a bound on
+// allocator overhead). Separately, sorting retains O(N) entries and recursion
+// retains at most 257 builders for 256-bit keys. With N distinct messages there
+// are exactly 2*N finalizations including the wrapper; N <= 32767 by wire.
+// Successful duplicate-hash callbacks still count toward this work bound,
+// even when the union meter charges no new cells/bits. Count/closure admission
+// must precede entry; the caller must independently bound its deduplication map.
+// The authenticated max_inbound check precedes all sorting-workspace allocation
+// and envelope loads. The allocator is explicit; its failures remain local.
+// Construction is a host operation outside a VM interpreter; finalize_novm
+// deliberately does not charge interpreter cell-creation gas.
+// Callback errors and loader exceptions retain their caller-defined provenance.
+// Successful construction is NOT full inbox validation or authentication.
+td::Result<td::Ref<vm::Cell>> build_workchain_batch_inbound_structure(
+    const std::vector<td::Ref<vm::Cell>>& envelopes,
+    const ResolvedBatchInputPolicy& policy,
+    const std::function<td::Status(const td::Ref<vm::Cell>&)>& admit_derived,
+    std::pmr::memory_resource& workspace);
 td::Result<std::vector<td::Ref<vm::Cell>>> decode_workchain_batch_inbound(const td::Ref<vm::Cell>& root);
 // Membership only. The caller separately validates the complete list and transaction.
 bool workchain_batch_inbound_contains(const td::Ref<vm::Cell>& root, const td::Ref<vm::Cell>& message);
