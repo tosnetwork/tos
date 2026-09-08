@@ -330,3 +330,53 @@ TEST(WalletIndex, LegacySeqnoOnlyMarkerNotSurfaced) {
 
   td::rmrf(path).ignore();
 }
+
+// Every workchain-zero transaction adds an event row holding the whole
+// transaction, and nothing removed one: the index grew for the life of the
+// node and outlived the archive retention bounding everything else. The
+// bound is per account and drops the oldest, so a caller reading recent
+// history never notices it, and rows written before the bound existed are
+// reached too -- they are found by the same account prefix, not by a
+// companion index they do not have.
+TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
+  auto path = std::string("test-wallet-index-db-trim");
+  auto db = open_fresh_db(path);
+  tos_wallet_index::HashKey account = td::Bits256::zero();
+  account.as_slice()[31] = 0x77;
+
+  constexpr uint64_t kWritten = 10400;
+  for (uint64_t lt = 1; lt <= kWritten; lt++) {
+    vm::CellBuilder builder;
+    builder.store_long(static_cast<long long>(lt), 64);
+    ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+  }
+
+  size_t retained = 0;
+  uint64_t newest = 0;
+  uint64_t oldest = std::numeric_limits<uint64_t>::max();
+  db->for_each_event(account, kWritten * 2, [&](uint64_t lt, td::Ref<vm::Cell>) {
+    retained++;
+    newest = std::max(newest, lt);
+    oldest = std::min(oldest, lt);
+    return td::Status::OK();
+  }).ensure();
+
+  // Fewer rows than were written, and the ones kept are the recent ones.
+  ASSERT_TRUE(retained < kWritten);
+  ASSERT_EQ(newest, kWritten);
+  ASSERT_TRUE(oldest > 1);
+
+  // A second account keeps its own history: the bound is per account, not
+  // a global cap that one busy address could spend on behalf of others.
+  tos_wallet_index::HashKey other = td::Bits256::zero();
+  other.as_slice()[31] = 0x78;
+  vm::CellBuilder builder;
+  builder.store_long(1, 64);
+  ASSERT_TRUE(db->put_event(other, 1, builder.finalize()).is_ok());
+  size_t other_rows = 0;
+  db->for_each_event(other, 10, [&](uint64_t, td::Ref<vm::Cell>) {
+    other_rows++;
+    return td::Status::OK();
+  }).ensure();
+  ASSERT_EQ(other_rows, 1u);
+}

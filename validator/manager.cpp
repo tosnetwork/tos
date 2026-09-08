@@ -61,6 +61,12 @@
 #include "import-db-slice.hpp"
 #include "manager.h"
 #include "manager.hpp"
+
+#include "validator/consensus/db-path.h"
+#include "td/db/RocksDb.h"
+#include "td/utils/PathView.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/path.h"
 #include "shard.hpp"
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
@@ -2335,7 +2341,45 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
+  sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
+}
+
+void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
+  // A group's database is removed by the live actor that owns it, and the
+  // record that the session was destroyed is written before that removal
+  // finishes. A crash in between leaves the directory behind, and because
+  // the record survives, the group is never recreated -- so nothing will
+  // ever own that directory again, and nothing else deletes it.
+  //
+  // Reclaim those here, once, before any group starts. Only directories
+  // whose session is already recorded as destroyed are touched; a name
+  // this cannot parse belongs to something else and is left alone.
+  auto root = consensus::consensus_db_root(db_root_);
+  size_t reclaimed = 0;
+  td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
+    if (type != td::WalkPath::Type::EnterDir) {
+      return td::WalkPath::Action::Continue;
+    }
+    auto name = td::PathView(path).file_name().str();
+    if (name.empty() || path.str() == root || path.str() + "/" == root) {
+      return td::WalkPath::Action::Continue;
+    }
+    auto session_id = consensus::consensus_db_session_id(name);
+    if (!session_id || !destroyed_validator_sessions_.contains(session_id.value())) {
+      // Not ours, or still live: do not descend into a database we are
+      // about to open.
+      return td::WalkPath::Action::SkipDir;
+    }
+    auto full = path.str();
+    td::RocksDb::destroy(full + "/db/").ignore();
+    td::rmrf(full).ignore();
+    reclaimed++;
+    return td::WalkPath::Action::SkipDir;
+  }).ignore();
+  if (reclaimed > 0) {
+    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a destroyed session";
+  }
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {

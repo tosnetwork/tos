@@ -754,6 +754,11 @@ target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
 target_link_libraries(test-config-transition PRIVATE tos_block tos_crypto tdutils)
 
+add_executable(test-consensus-db-path test/test-td-main.cpp test/test-consensus-db-path.cpp)
+target_include_directories(test-consensus-db-path PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-db-path PRIVATE tos_crypto_core tdutils)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 
@@ -1110,6 +1115,7 @@ tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-consensus-db-path)
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)

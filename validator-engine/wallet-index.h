@@ -62,6 +62,11 @@ class WalletIndexDb {
   // Keys store the bitwise complement of lt so RocksDB's ascending iteration
   // yields newest events first and `limit` bounds the scan to the most recent.
   td::Status put_event(const HashKey& account, uint64_t lt, td::Ref<vm::Cell> value);
+  // Drops the oldest events of an account once it holds more than the
+  // retained history. Called on the write path, so it does bounded work.
+  td::Status trim_events(const HashKey& account);
+  td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
+                                      std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.
   td::Status for_each_event(
       const HashKey& account, size_t limit,

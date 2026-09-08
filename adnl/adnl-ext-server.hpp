@@ -116,6 +116,17 @@ class AdnlExtServerImpl : public AdnlExtServer {
   // Bound parked and executing requests across connections. The per-IP limit
   // stays below the validator execution budget so one address cannot monopolize it.
   std::shared_ptr<ExtServerQueryLimits> query_limits_ = std::make_shared<ExtServerQueryLimits>(4096, 256);
+
+  // A refused connection is the flood this limiter exists to absorb, so a
+  // line per refusal is a line per packet the sender chose to send, into
+  // log files that have no size bound of their own. Report the running
+  // total once per interval instead: it says the same thing and cannot be
+  // driven faster than the clock.
+  void note_refused_connection(td::Slice reason);
+
+  static constexpr double REFUSAL_LOG_INTERVAL = 60.0;
+  td::uint64 connections_refused_{0};
+  td::Timestamp next_refusal_log_;
 };
 
 }  // namespace adnl
