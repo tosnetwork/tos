@@ -534,10 +534,27 @@ endfunction()
 
 enable_testing()
 
-option(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "Build isolated UNO crypto ABI tests (no node activation)" OFF)
-if (TOS_UNO_CRYPTO_PROTOTYPE_TESTS)
-  add_subdirectory(uno/crypto)
+# AUTO enables the isolated UNO crypto checks when their pinned native toolchain
+# is available. Preserve existing BOOL cache entries as explicit ON/OFF choices.
+get_property(_tos_uno_crypto_tests_cache_type CACHE TOS_UNO_CRYPTO_PROTOTYPE_TESTS PROPERTY TYPE)
+if (_tos_uno_crypto_tests_cache_type STREQUAL "BOOL")
+  if (TOS_UNO_CRYPTO_PROTOTYPE_TESTS)
+    set(_tos_uno_crypto_tests_legacy_value ON)
+  else()
+    set(_tos_uno_crypto_tests_legacy_value OFF)
+  endif()
+  set(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "${_tos_uno_crypto_tests_legacy_value}" CACHE STRING
+      "UNO crypto tests: AUTO, ON, or OFF" FORCE)
+elseif (NOT _tos_uno_crypto_tests_cache_type)
+  set(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "AUTO" CACHE STRING "UNO crypto tests: AUTO, ON, or OFF")
+else()
+  set(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "${TOS_UNO_CRYPTO_PROTOTYPE_TESTS}" CACHE STRING
+      "UNO crypto tests: AUTO, ON, or OFF")
 endif()
+set_property(CACHE TOS_UNO_CRYPTO_PROTOTYPE_TESTS PROPERTY STRINGS AUTO ON OFF)
+unset(_tos_uno_crypto_tests_cache_type)
+unset(_tos_uno_crypto_tests_legacy_value)
+add_subdirectory(uno/crypto)
 
 set(TDUTILS_MIME_TYPE OFF CACHE BOOL "Generate mime type conversion")
 add_subdirectory(tdutils)
