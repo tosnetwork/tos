@@ -80,13 +80,13 @@ if [ "$with_tests" = true ]; then
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \
   toslib toslibjson toslib-cli validator-engine func tol fift \
   lite-client validator-engine-console generate-random-id json2tlo dht-server dht-ping-servers dht-resolve \
-  http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork tlbc emulator proxy-liteserver all-tests install
+  http-proxy rldp-http-proxy create-state create-hardfork tlbc emulator proxy-liteserver all-tests install
   test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \
   toslib toslibjson toslib-cli validator-engine func tol fift \
   lite-client validator-engine-console generate-random-id json2tlo dht-server dht-ping-servers dht-resolve \
-  http-proxy rldp-http-proxy adnl-proxy create-state create-hardfork tlbc emulator proxy-liteserver
+  http-proxy rldp-http-proxy create-state create-hardfork tlbc emulator proxy-liteserver
   test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 fi
 
@@ -117,7 +117,7 @@ if [ "$with_artifacts" = true ]; then
   cp build/utils/generate-random-id artifacts/
   cp build/utils/json2tlo artifacts/
   cp build/utils/proxy-liteserver artifacts/
-  cp build/adnl/adnl-proxy artifacts/
+  cp artifacts/
   cp build/emulator/libemulator.dylib artifacts/
   cp -R crypto/smartcont artifacts/
   cp -R crypto/fift/lib artifacts/
