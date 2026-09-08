@@ -59,12 +59,27 @@ class PerIpRateGate {
     auto it = budgets_.find(source);
     if (it == budgets_.end()) {
       if (max_sources_ > 0 && budgets_.size() >= max_sources_) {
-        auto oldest = std::min_element(budgets_.begin(), budgets_.end(), [](const auto &a, const auto &b) {
-          return a.second.last_seen.at() < b.second.last_seen.at();
-        });
-        if (oldest != budgets_.end()) {
-          budgets_.erase(oldest);
+        // Reclaim only a source whose window holds nothing: check(now,
+        // limit_) is true exactly when its full budget is available, so
+        // dropping it and re-creating it later gives the same result.
+        // Evicting a source that has spent budget would hand it a fresh
+        // window, which is how rotating addresses could clear a spent one.
+        // Among the reclaimable, take the least recently seen.
+        auto victim = budgets_.end();
+        for (auto cand = budgets_.begin(); cand != budgets_.end(); ++cand) {
+          if (!cand->second.window.check(now, static_cast<size_t>(limit_))) {
+            continue;  // still holds spent budget -- must not be reset
+          }
+          if (victim == budgets_.end() || cand->second.last_seen.at() < victim->second.last_seen.at()) {
+            victim = cand;
+          }
         }
+        if (victim == budgets_.end()) {
+          // Every tracked source still has budget in flight. Refuse the
+          // newcomer rather than reset a valid window.
+          return false;
+        }
+        budgets_.erase(victim);
       }
       Budget budget;
       budget.window = td::RateLimiterWindow{window_, static_cast<size_t>(limit_)};

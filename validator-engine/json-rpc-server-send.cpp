@@ -676,6 +676,8 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
 
 void JsonRpcServer::finish_transaction_intent(InitialIntentInput input, std::string req_id,
                                               td::Promise<HttpReturn> promise) {
+    // This is a member function invoked on the actor, so it may call
+    // members directly -- no self_id hop, no cors capture.
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
       if (!addr.parse_addr(td::Slice(input.address))) {
@@ -701,6 +703,10 @@ void JsonRpcServer::finish_transaction_intent(InitialIntentInput input, std::str
           PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
       return;
     }
+    // The success response for the ordinary (non-delegation) path. Extracting
+    // this function from a lambda dropped this line, so a legitimate intent
+    // request completed the message build and then answered nothing.
+    promise.set_value(make_json_ok(build_transaction_intent_json(input), req_id));
 }
 
 void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
@@ -829,24 +835,28 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
   // Continuation: build and return the signing payload.  Extracted as a
   // shared lambda so both the sync and async-discovery paths converge here.
   auto self_id = actor_id(this);
-  auto do_finish = [cors = opts_.cors_origin, this, self_id](InitialIntentInput input, std::string req_id,
+  // No raw `this`: this lambda is invoked from a liteserver reply, which
+  // can arrive after the server actor is gone. The two member calls below
+  // go through self_id, so a reply that arrives too late is a dropped
+  // message (the client gets an error) rather than a use-after-free.
+  auto do_finish = [cors = opts_.cors_origin, self_id](InitialIntentInput input, std::string req_id,
                                    td::Promise<HttpReturn> promise) mutable {
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
       if (!addr.parse_addr(td::Slice(input.address))) {
-        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id, cors));
         return;
       }
       auto msg_r = build_external_message_cell(input);
       if (msg_r.is_error()) {
         promise.set_value(make_json_error(-32602,
-            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id, cors));
         return;
       }
       auto payload_b64_r = serialize_cell_b64(msg_r.ok());
       if (payload_b64_r.is_error()) {
         promise.set_value(make_json_error(-32603,
-            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id, cors));
         return;
       }
       auto intent_json = PSTRING()
@@ -858,7 +868,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
           << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
           << ",\"mode\":\"contract_defined\"}"
           << "}";
-      validate_delegation_and_return_intent(
+      td::actor::send_closure(self_id, &JsonRpcServer::validate_delegation_and_return_intent,
           addr, input.address, input.delegation_ref,
           std::move(intent_json), std::move(req_id), std::move(promise));
       return;
@@ -867,13 +877,13 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
     auto msg_r = build_external_message_cell(input);
     if (msg_r.is_error()) {
       promise.set_value(make_json_error(-32602,
-          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id, cors));
       return;
     }
     auto payload_b64_r = serialize_cell_b64(msg_r.ok());
     if (payload_b64_r.is_error()) {
       promise.set_value(make_json_error(-32603,
-          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id, cors));
       return;
     }
 
@@ -882,7 +892,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
-    send_liteserver_query(std::move(mc_query),
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(mc_query),
         [cors, self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
          req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {

@@ -217,6 +217,16 @@ void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
     return;
   }
 
+  // Cache is stale. Coalesce: at most one backend query runs at a time,
+  // and every request that arrives while it is in flight waits for its
+  // result. Without this, a burst arriving on a cold cache each launches
+  // its own query -- the cache bounds the steady rate but not a burst.
+  readyz_waiters_.push_back(std::move(promise));
+  if (readyz_query_in_flight_) {
+    return;
+  }
+  readyz_query_in_flight_ = true;
+
   auto inner = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfoExt>(0), true);
   auto query = tos::serialize_tl_object(
@@ -225,25 +235,25 @@ void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
   auto threshold = opts_.readyz_threshold;
   auto cors = opts_.cors_origin;
   send_liteserver_query(std::move(query),
-      [self_id = actor_id(this), promise = std::move(promise), threshold, cors](
-          td::Result<td::BufferSlice> R) mutable {
-        auto make_readyz_response = [&](int status_code, std::string status_text, std::string body) -> HttpReturn {
-          td::actor::send_closure(self_id, &JsonRpcServer::cache_readyz_answer, status_code, status_text, body);
-          return build_readyz_response(status_code, std::move(status_text), std::move(body), cors);
+      [self_id = actor_id(this), threshold](td::Result<td::BufferSlice> R) mutable {
+        // Deliver the outcome to the actor, which caches it and answers
+        // every waiter with the same result -- one query, many replies.
+        auto deliver = [&](int status_code, std::string status_text, std::string body) {
+          td::actor::send_closure(self_id, &JsonRpcServer::finish_readyz, status_code,
+                                  std::move(status_text), std::move(body));
         };
 
         if (R.is_error()) {
-          promise.set_value(make_readyz_response(503, "Service Unavailable",
+          deliver(503, "Service Unavailable",
               PSTRING() << "{\"ready\":false,\"error\":"
-                        << td::JsonString(td::Slice(PSTRING() << R.error())) << "}"));
+                        << td::JsonString(td::Slice(PSTRING() << R.error())) << "}");
           return;
         }
 
         auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfoExt>(
             R.move_as_ok(), true);
         if (mc_r.is_error()) {
-          promise.set_value(make_readyz_response(503, "Service Unavailable",
-              "{\"ready\":false,\"error\":\"parse error\"}"));
+          deliver(503, "Service Unavailable", "{\"ready\":false,\"error\":\"parse error\"}");
           return;
         }
         auto mc = mc_r.move_as_ok();
@@ -261,11 +271,18 @@ void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
             << ",\"last_block\":" << format_block_id_json(*mc->last_)
             << "}";
 
-        promise.set_value(make_readyz_response(
-            ready ? 200 : 503,
-            ready ? "OK" : "Service Unavailable",
-            std::move(body)));
+        deliver(ready ? 200 : 503, ready ? "OK" : "Service Unavailable", std::move(body));
       });
+}
+
+void JsonRpcServer::finish_readyz(int status_code, std::string status_text, std::string body) {
+  cache_readyz_answer(status_code, status_text, body);
+  readyz_query_in_flight_ = false;
+  auto waiters = std::move(readyz_waiters_);
+  readyz_waiters_.clear();
+  for (auto &waiter : waiters) {
+    waiter.set_value(build_readyz_response(status_code, status_text, body, opts_.cors_origin));
+  }
 }
 
 }  // namespace tos

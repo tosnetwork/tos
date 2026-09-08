@@ -485,6 +485,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                          const std::string &cors_origin);
   void cache_readyz_answer(int status_code, std::string status_text, std::string body);
   void handle_readyz(td::Promise<HttpReturn> promise);
+  // Completion for handle_readyz: caches the answer and drains every
+  // waiter that arrived while the query was in flight.
+  void finish_readyz(int status_code, std::string status_text, std::string body);
 
   // Send a TL-serialized liteserver query to the validator manager
   void send_liteserver_query(td::BufferSlice query,
@@ -616,6 +619,10 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   int readyz_cached_status_{0};
   std::string readyz_cached_status_text_;
   std::string readyz_cached_body_;
+  // Concurrent probes on a stale cache share one backend query: the flag
+  // marks a query in flight, the waiters all receive its result.
+  bool readyz_query_in_flight_{false};
+  std::vector<td::Promise<HttpReturn>> readyz_waiters_;
 
   std::atomic<td::uint64> cache_hits_{0};
   std::atomic<td::uint64> cache_misses_{0};

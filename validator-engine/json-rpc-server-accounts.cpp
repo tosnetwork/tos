@@ -135,8 +135,11 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
 }
 
 std::string ParsedAccountState::to_address_info_json() const {
-  return PSTRING()
-      << "{\"@type\":\"raw.fullAccountState\""
+  // Growable builder, not PSTRING: code and data are contract BOCs that
+  // can exceed the fixed logger buffer, and truncating them here cannot
+  // be undone by the caller's outer growable wrapper.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"raw.fullAccountState\""
       << ",\"balance\":" << td::JsonString(td::Slice(balance_dec))
       << ",\"code\":" << td::JsonString(td::Slice(code_b64))
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
@@ -154,11 +157,14 @@ std::string ParsedAccountState::to_address_info_json() const {
       << ",\"state\":" << td::JsonString(td::Slice(state_str))
       << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash))
       << "}";
+  return sb.as_cslice().str();
 }
 
 std::string ParsedAccountState::to_extended_info_json(const std::string& addr_str) const {
-  return PSTRING()
-      << "{\"@type\":\"fullAccountState\""
+  // Growable, for the same reason as to_address_info_json: the account
+  // state carries code and data that can outgrow the fixed buffer.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"fullAccountState\""
       << ",\"address\":{\"@type\":\"accountAddress\",\"account_address\":"
       << td::JsonString(td::Slice(addr_str)) << "}"
       // Unquoted, so the wire type stays a JSON number, but written from
@@ -182,6 +188,7 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
       << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash)) << "}"
       << ",\"revision\":0}";
+  return sb.as_cslice().str();
 }
 
 // ─── getAddressInformation ──────────────────────────────────────────────

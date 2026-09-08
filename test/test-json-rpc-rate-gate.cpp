@@ -67,36 +67,67 @@ TEST(JsonRpcRateGate, one_source_cannot_spend_anothers_budget) {
   ASSERT_TRUE(gate.consume("203.0.113.9", at(1000.0)));
 }
 
-TEST(JsonRpcRateGate, table_is_bounded_and_evicts_least_recently_seen) {
+TEST(JsonRpcRateGate, table_is_bounded_and_reclaims_only_spent_slots) {
+  // A generous per-source limit so the three occupants keep budget in
+  // their windows -- none is reclaimable while its window is active.
   tos::PerIpRateGate gate(10.0, 100, 3);
 
-  // Three addresses fill the table; the first is the quietest.
   ASSERT_TRUE(gate.consume("198.51.100.1", at(1000.0)));
   ASSERT_TRUE(gate.consume("198.51.100.2", at(1001.0)));
   ASSERT_TRUE(gate.consume("198.51.100.3", at(1002.0)));
   ASSERT_EQ(3u, gate.tracked_sources());
 
-  // A fourth address must not grow the table past its ceiling.
-  ASSERT_TRUE(gate.consume("198.51.100.4", at(1003.0)));
+  // A fourth address arriving while all three still hold budget is
+  // refused -- the table never resets a valid window to make room -- and
+  // the table stays at its ceiling.
+  ASSERT_TRUE(!gate.consume("198.51.100.4", at(1003.0)));
+  ASSERT_EQ(3u, gate.tracked_sources());
+
+  // Once the earliest occupant's window has rolled over, its slot is
+  // reclaimable and the newcomer is admitted, still without growing past
+  // the ceiling.
+  ASSERT_TRUE(gate.consume("198.51.100.4", at(1011.0)));
   ASSERT_EQ(3u, gate.tracked_sources());
 }
 
 TEST(JsonRpcRateGate, rotating_sources_cannot_clear_a_spent_window) {
-  // The table holds two addresses. An attacker that has spent its own
-  // budget must not be able to reclaim it by cycling other addresses
-  // through the table: the entry it keeps touching is never the least
-  // recently seen one.
+  // The real threat, which the previous version of this test missed by
+  // keeping the attacker's entry most-recently-seen: an attacker spends
+  // its budget, then goes quiet while a flood of other sources arrives.
+  // If eviction dropped the least-recently-seen entry regardless of its
+  // budget, the attacker's now-oldest entry would be evicted, and it
+  // would return with a fresh window. It must stay refused within the
+  // window no matter how many other sources cycle through the table.
   tos::PerIpRateGate gate(10.0, 1, 2);
 
-  ASSERT_TRUE(gate.consume("198.51.100.7", at(1000.0)));
-  ASSERT_TRUE(!gate.consume("198.51.100.7", at(1000.1)));
+  ASSERT_TRUE(gate.consume("198.51.100.7", at(1000.0)));   // spends its one token
+  ASSERT_TRUE(!gate.consume("198.51.100.7", at(1000.1)));  // over budget
 
-  for (int i = 0; i < 8; i++) {
-    std::string filler = "203.0.113." + std::to_string(i);
-    gate.consume(filler, at(1001.0 + i));
-    // Keep the attacker's entry the most recently seen of the two.
-    ASSERT_TRUE(!gate.consume("198.51.100.7", at(1001.5 + i)));
+  // A flood of distinct sources, none of which the attacker touches.
+  // These are more than the table holds, so eviction runs repeatedly.
+  for (int i = 0; i < 20; i++) {
+    gate.consume("203.0.113." + std::to_string(i), at(1001.0 + i * 0.1));
   }
+
+  // Still inside the 10 s window: the attacker must not have regained a
+  // token. Before the fix, the flood evicted its spent entry and this
+  // returned true.
+  ASSERT_TRUE(!gate.consume("198.51.100.7", at(1005.0)));
+
+  // Past the window it legitimately gets a fresh token again.
+  ASSERT_TRUE(gate.consume("198.51.100.7", at(1020.0)));
+}
+
+TEST(JsonRpcRateGate, full_table_of_active_budgets_refuses_newcomers) {
+  // When every tracked source still holds budget in its window, a new
+  // source is refused rather than resetting someone. Two sources, both
+  // spend a token, a third arrives within the window.
+  tos::PerIpRateGate gate(10.0, 1, 2);
+  ASSERT_TRUE(gate.consume("a", at(1000.0)));
+  ASSERT_TRUE(gate.consume("b", at(1000.0)));
+  ASSERT_TRUE(!gate.consume("c", at(1000.0)));  // table full, all active -> refused
+  // Once a spends its window out, its slot becomes reclaimable.
+  ASSERT_TRUE(gate.consume("c", at(1011.0)));
 }
 
 TEST(JsonRpcRateGate, unattributed_source_is_admitted) {

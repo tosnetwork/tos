@@ -826,7 +826,14 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   {
     auto id_val = obj.extract_field("id");
     if (id_val.type() == td::JsonValue::Type::String) {
-      req_id = PSTRING() << td::JsonString(td::Slice(id_val.get_string()));
+      {
+        // Growable, not PSTRING: a string id is echoed into the reply, and
+        // the fixed buffer would truncate a large one into malformed JSON.
+        // Its size is already bounded by the request body cap.
+        td::StringBuilder id_sb;
+        id_sb << td::JsonString(td::Slice(id_val.get_string()));
+        req_id = id_sb.as_cslice().str();
+      }
     } else if (id_val.type() == td::JsonValue::Type::Number) {
       // The scanner accepts any run of number-ish characters, so "." and
       // "1e+-.3" arrive here as Numbers. The value is spliced into the
@@ -999,7 +1006,11 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
           for (auto &fv : obj.field_values_) {
             if (fv.first != "id") continue;
             if (fv.second.type() == td::JsonValue::Type::String) {
-              elem_id = PSTRING() << td::JsonString(td::Slice(fv.second.get_string()));
+              {
+                td::StringBuilder id_sb;
+                id_sb << td::JsonString(td::Slice(fv.second.get_string()));
+                elem_id = id_sb.as_cslice().str();
+              }
             } else if (fv.second.type() == td::JsonValue::Type::Number) {
               // Same grammar check as the dispatch path: this literal is
               // spliced into the reply unquoted, and an element that never

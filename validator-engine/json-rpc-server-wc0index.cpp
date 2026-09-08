@@ -55,11 +55,30 @@ constexpr size_t kMaxIndexPageRows = 100;
 // cursor lets the caller continue from there.
 constexpr size_t kMaxIndexPageBytes = 4u << 20;
 
+// Jetton and NFT lists have no continuation cursor, so a caller cannot
+// page past a truncated result -- capping them at the event-feed page
+// size silently hid assets an account really holds. They get their own,
+// far larger ceiling: high enough that a real account is returned whole,
+// bounded so the scan is still finite, and cheap per row (two hashes,
+// not a full transaction). A proper cursor is the long-term fix; until
+// then this restores complete results without a new pagination API.
+constexpr size_t kMaxCursorlessListRows = 10000;
+
 size_t parse_limit_param(td::JsonObject &params) {
   size_t limit = kMaxIndexPageRows;
   auto limit_r = params.get_optional_int_field("limit");
   if (limit_r.is_ok() && limit_r.ok() > 0) {
     limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), kMaxIndexPageRows);
+  }
+  return limit;
+}
+
+// For the cursorless jetton/NFT lists: same shape, larger ceiling.
+size_t parse_cursorless_list_limit(td::JsonObject &params) {
+  size_t limit = kMaxCursorlessListRows;
+  auto limit_r = params.get_optional_int_field("limit");
+  if (limit_r.is_ok() && limit_r.ok() > 0) {
+    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), kMaxCursorlessListRows);
   }
   return limit;
 }
@@ -228,7 +247,7 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     return;
   }
   auto addr = addr_r.move_as_ok();
-  auto limit = parse_limit_param(params);
+  auto limit = parse_cursorless_list_limit(params);
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
@@ -384,7 +403,7 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
     return;
   }
   auto addr = addr_r.move_as_ok();
-  auto limit = parse_limit_param(params);
+  auto limit = parse_cursorless_list_limit(params);
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {

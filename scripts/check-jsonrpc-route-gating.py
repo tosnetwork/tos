@@ -57,10 +57,20 @@ def check_no_raw_this_captures() -> int:
     forms are an actor id plus a hop back, or a shared owner for whatever
     the callback actually needs.
     """
+    # A bare `this` token inside a lambda capture list, wherever it sits:
+    # `[this`, `[x, this]`, `[a = b, this, c]`. The earlier check keyed on
+    # the literal `[this` and so missed `this` in any position but the
+    # first -- which let a real raw capture through. The safe idiom
+    # `actor_id(this)` has `this` inside parentheses, not as a capture, so
+    # it is excluded by requiring the token to be bounded by a capture-list
+    # separator (`[`, `,`) and a terminator (`,`, `]`, `=`).
+    capture_this = re.compile(r"\[[^\]]*(?:\[|,|\s)this\s*(?:,|\]|=)")
     offenders = []
     for path in sorted(SERVER.parent.glob("json-rpc-server*.cpp")):
         for number, line in enumerate(path.read_text().splitlines(), 1):
-            if "[this" in line:
+            # `[this` at the very start of a capture list, or `this` after a
+            # separator; either way not `actor_id(this)` (a `(` precedes it).
+            if re.search(r"\[\s*this\s*(?:,|\]|=)", line) or capture_this.search(line):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     if offenders:
         print("FAIL: lambda(s) capturing a bare `this`:")
