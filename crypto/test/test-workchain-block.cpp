@@ -146,6 +146,29 @@ TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
   }
 }
 
+// A permissive test decoder isolates the ordinary-cell contract from today's
+// generated tags. It is not an additional resource-policy wire constructor.
+struct ResourcePolicyDecoderProbe {
+  bool entered{false};
+  struct type_class {
+    bool unpack(vm::CellSlice& cs, ResourcePolicyDecoderProbe& record) const {
+      record.entered = true;
+      return cs.advance(264);
+    }
+  };
+};
+
+TEST(WorkchainBlock, ResourcePolicyRejectsSpecialBeforeDecoder) {
+  auto ordinary = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize();
+  auto special = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  ResourcePolicyDecoderProbe accepted;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(ordinary, accepted));
+  ASSERT_TRUE(accepted.entered);
+  ResourcePolicyDecoderProbe rejected;
+  ASSERT_TRUE(!block::resource_policy_detail::unpack_exact(special, rejected));
+  ASSERT_TRUE(!rejected.entered);
+}
+
 TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
   auto resource = block::encode_workchain_resource_policy(value).move_as_ok();

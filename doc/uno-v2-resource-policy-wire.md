@@ -45,10 +45,16 @@ decoding is a separate engine responsibility. Exact consumption is required.
 It uses generated field/tag unpacking, not the generated quiet cell loader.
 Malformed encoding returns an error; acquisition/allocation exceptions remain
 exceptions for the provenance-aware caller. There is no new consensus error
-category or blanket catch. Special-cell type bytes cannot equal any of these
-constructor prefixes, so tag validation excludes them without a redundant
-special guard. The ordinary/special-aware loader never resolves a library ref
+category or blanket catch. An explicit special-cell check precedes generated
+decoding; this contract does not depend on current or future CRC32 tag values.
+The ordinary/special-aware loader never resolves a library ref
 as code to execute.
+
+`ResourcePolicyRejectsSpecialBeforeDecoder` uses a test-only permissive decoder
+to isolate this boundary from tag rejection: ordinary bytes reach the decoder,
+but the same bytes in an encoded library-reference cell must not. Without the
+explicit special check, the test fails on acceptance, independently of error
+wording. This probe introduces no additional wire constructor.
 
 The in-memory `InputPolicyIdentity` admission_version is widened to uint32,
 matching the existing 32-bit host commitment field. High-bit values must remain
@@ -62,6 +68,14 @@ identity from the same Config root and descriptor. A corrupt authenticated
 resource payload is not a candidate-invalid result; unsupported local execution
 capability remains local unavailability. The singleton policy type is separate.
 This does not yet validate all resource-limit combinations or business parameters.
+
+Adding a future admission profile creates an installation compatibility
+boundary: a binary supporting only version 2 rejects a version-3 configuration
+that an upgraded binary may accept. Deployment readiness must precede profile
+activation, with an explicit first effective block and an upgrade-sequence
+dry-run covering mixed support. The advisory global-version ceiling does not
+enforce this deployment ordering. At execution time, lack of support for an
+already authenticated profile remains LocalUnavailable, not CandidateInvalid.
 
 The complete test configuration exercises `valid_config_data`, including its
 mandatory Native parameters and matching descriptor. Removing its resource-gate

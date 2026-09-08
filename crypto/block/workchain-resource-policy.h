@@ -76,9 +76,9 @@ bool unpack_exact(const td::Ref<vm::Cell>& root, Record& record) {
   if (root.is_null()) return false;
   bool special = false;
   auto cs = vm::load_cell_slice_special(root, special);
+  if (special) return false;
   typename Record::type_class type;
-  // Every constructor's first byte is outside the special-cell type space.
-  // The generated tag check therefore also excludes encoded special cells.
+  // Enforce the ordinary profile independently of generated constructor tags.
   return type.unpack(cs, record) && cs.empty_ext();
 }
 }  // namespace resource_policy_detail
