@@ -148,6 +148,16 @@ TEST(WorkchainAdmission, ConfigurationFailureIsSeparate) {
             block::LocalUnavailableCode::UnsupportedAdmissionVersion);
 }
 
+TEST(WorkchainAdmission, AdmissionVersionIsNotTruncated) {
+  block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 1};
+  for (std::uint32_t version : {0x10001u, 0x80000001u, UINT32_MAX}) {
+    identity.admission_version = version;
+    auto result = block::ResolvedInputPolicy::from_resolved_fields({1, 1, 1}, identity);
+    ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+    ASSERT_EQ(identity.admission_version, version);
+  }
+}
+
 TEST(WorkchainAdmission, WireSpecialAndLocalViewHaveDifferentProvenance) {
   auto pruned = vm::CellBuilder::do_create_pruned_branch(leaf(), 1, 0);
   auto bytes = vm::std_boc_serialize(pruned).move_as_ok();

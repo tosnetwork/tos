@@ -172,6 +172,18 @@ td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {
     if (policy.custody_address && version.version < transaction::Transaction::kStorageParticipantMinGlobalVersion) {
       return td::Status::Error("dual native ingress requires the multi-account host version");
     }
+    if (policy.custody_address) {
+      // Configuration installation, not candidate admission: never reinterpret
+      // an unknown metering profile using the singleton prototype's rules.
+      TRY_RESULT(parameters, decode_workchain_engine_parameters(policy.engine_configuration));
+      if (!workchain_batch_admission_version_supported(parameters.resources.admission_version)) {
+        return td::Status::Error("unsupported multi-account admission version in configuration");
+      }
+      if (!workchain_batch_input_bounds_nonzero(parameters.resources)) {
+        return td::Status::Error("zero multi-account input bound in configuration");
+      }
+      // Business parameters remain opaque here and are validated by the engine.
+    }
   }
   return td::Status::OK();
 }
@@ -412,10 +424,35 @@ td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_
     return td::Status::Error("multi-account engine requires dual native ingress");
   }
   TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  auto decoded_parameters = decode_workchain_engine_parameters(ingress->second.engine_configuration);
+  if (decoded_parameters.is_error()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                             "authenticated engine configuration cannot be decoded");
+  }
+  auto parameters = decoded_parameters.move_as_ok();
+  auto configuration_root = configuration.get_root_cell();
+  if (configuration_root.is_null()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "missing authenticated configuration root");
+  }
+  const auto& resources = parameters.resources;
+  auto input_policy = ResolvedBatchInputPolicy::from_resolved_fields(resources,
+      {configuration_root->get_hash(), descriptor.format == WorkchainFormat::Extended,
+       ingress->second.engine_key.selector, descriptor.vm_mode, descriptor.version, resources.admission_version});
+  if (std::holds_alternative<ConfigInvalid>(input_policy)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                             "invalid authenticated input resource limits");
+  }
+  if (std::holds_alternative<LocalUnavailable>(input_policy)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "unsupported authenticated admission version");
+  }
   TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
                                                            ingress->second.engine_configuration));
   if (!config) return td::Status::Error("account engine returned null configuration");
-  return ResolvedWorkchainAccountBinding{it->second.get(), descriptor, ingress->second, std::move(config)};
+  return ResolvedWorkchainAccountBinding{it->second.get(), descriptor, ingress->second, std::move(config),
+                                         std::move(configuration_root),
+                                         std::get<ResolvedBatchInputPolicy>(std::move(input_policy))};
 }
 
 td::Status WorkchainExecutionRegistry::register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine) {

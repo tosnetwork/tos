@@ -1,4 +1,15 @@
 unit$_ = Unit;
+uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64
+  max_reads:uint32 max_writes:uint32 max_inbound:uint32 = UnoV2ResourceInput;
+uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64
+  max_account_bits:uint64 max_account_depth:uint16 = UnoV2ResourceState;
+uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
+  max_effect_bits:uint64 max_output_cells:uint64 max_output_bits:uint64
+  max_transfers:uint32 = UnoV2ResourceWorkOutput;
+uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
+  state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
+uno_v2_engine_configuration resource_policy:^UnoV2ResourcePolicy
+  parameters:^Cell = UnoV2EngineConfiguration;
 uno_v2_host_domain global_id:int32 genesis_hash:bits256 instance_id:bits256
   workchain_id:int32 shard_id:uint64 = UnoV2HostDomain;
 uno_v2_host_policy configuration_hash:bits256 extended:Bool engine_selector:int64

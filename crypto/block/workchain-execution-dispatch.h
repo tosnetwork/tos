@@ -21,6 +21,8 @@
 #include "block/mc-config.h"
 #include "block/workchain-block-execution.h"
 #include "block/workchain-account-engine.h"
+#include "block/workchain-input-admission.h"
+#include "block/workchain-resource-policy.h"
 #include "td/utils/Status.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
@@ -277,6 +279,8 @@ struct ResolvedWorkchainAccountBinding {
   WorkchainExecutionDescriptor descriptor;
   WorkchainNativeIngressPolicy ingress;
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
+  td::Ref<vm::Cell> authenticated_configuration;
+  ResolvedBatchInputPolicy input_policy;
 };
 
 td::Result<WorkchainBlockResult> execute_resolved_workchain_block(

@@ -4,9 +4,21 @@ Scope: implement the V2 specification in `/home/tomi/memo/TOS_UNO_PRIVACY_WORKCH
 
 ## Authority and current decisions
 
-The owner now delegates necessary design decisions to the implementer. Decisions must be explicit, derived from conservation, deterministic execution and bounded resources, and must not be hidden local defaults. Real-value deployment and irreversible external operations remain separate from coding.
+The owner-fixed D31/D32/D33 mechanisms govern implementation. Byte encoding and
+tags within those decisions are authorized; different mechanisms and hidden
+local defaults are not. Real-value deployment and irreversible external
+operations remain separate from coding.
 
-Current specification/decision baseline: memo `1b2be223`; the earlier component work used `274258e5`. Operation fees now follow D24/D25: no public payer, user-authorized confidential debits flow through custody, with at most one aggregate operation-fee settlement per batch. D26 congestion allocation remains an activation obligation, not a property of fixed fees or admission limits. Process the authenticated inbox against open withdrawals before closing remaining expired records. Rich bounce messages return original logical time for scoped matching. Retirement does not remove the workchain configuration or custody while the native message lifecycle remains unresolved.
+Current specification/decision baseline: memo `7bc71109`, including D31-D33
+and the delegated Deposit-bound clarification; earlier component work used
+`274258e5`. Operation fees now follow D24/D25/D32: no public payer,
+user-authorized confidential debits flow through custody, with at most one
+aggregate accounting settlement per batch and no fee message. D26 congestion
+allocation remains an activation obligation, not a property of fixed fees or
+admission limits. Process the authenticated inbox against open withdrawals
+before closing remaining expired records. Rich bounce messages return original
+logical time for scoped matching. Retirement does not remove the workchain
+configuration or custody while the native message lifecycle remains unresolved.
 
 `created_lt` must be determined before committing effects. Allocate one transaction per affected account, with a common start strictly beyond authenticated host/inbox timing and every affected account's previous transaction end. Within each account, assign outgoing message times in canonical order. The native wrapper must reproduce those values, never fill an uncommitted identity into state afterward.
 
@@ -42,17 +54,24 @@ advance M1.
 
 The remaining dependency frontier is:
 
-1. Authenticated resource policy and whole-input admission. V2 section 12 still
-   explicitly leaves the multi-account logical-root interpretation unconfirmed.
-   The proposal at
+1. Authenticated resource policy and whole-input admission. D31 in V2 section 12
+   approves the three resource groups and `3 + N_inbound` logical roots. The
+   accepted structure is described at
    `/home/tomi/memo/UNO_V2_AUTHENTICATED_RESOURCE_POLICY_PROPOSAL.md`
-   separates input, old-state, proof-work and output limits. It is a proposal,
-   not a configuration decoder, an assigned wire tag or installed defaults.
+   and separates input, old-state, proof-work and output limits. The resource
+   object codec and derived tags are covered in
+   [the wire boundary](uno-v2-resource-policy-wire.md); it remains unresolved
+   wire data. The configuration boundary now checks framing, supported admission
+   version and three nonzero input limits through valid_config_data, with a
+   complete-config mutation control. Binding derives the typed policy and its
+   identity from the same Config cut. Full limit compatibility and live whole-input
+   admission remain unfinished; this is not completion of D31.
    D28 billing units must not silently become proof-work units.
-2. D24 aggregate operation-fee settlement. `WorkchainAccountEffects` currently
+2. D24/D32 aggregate operation-fee settlement. `WorkchainAccountEffects` currently
    has one optional `payout_request`; existing custody payout construction and
    Native allocation edges do not implement the separately authorized aggregate
-   fee output. Its bound amount, component destinations, cost funding and
+   accounting operation. D32 directs S internally to coordinator and C+T into
+   Native fees_collected, with zero fee messages. Its bound amount, cost funding and
    effects authorization must be independently reconstructed, not inferred from
    the ordinary payout test or a larger output-count limit.
 3. Live execution, independent replay and atomic publication. The validator
@@ -61,8 +80,8 @@ The remaining dependency frontier is:
    Private multi-account helpers and a successfully built queue are not a live
    replacement. Keep that singleton guard until an explicit new path exists.
 
-The pending policy questions block the corresponding production admission
-connection, not all development. In particular, do not invent currency-count
+The approved mechanisms no longer block resource wire work. Full authenticated
+admission and legal configuration transitions remain required. Do not invent currency-count
 limits to make the D29 bucket appear bounded, or treat missing authenticated
 state as an invalid candidate. These boundaries are recorded in
 `/home/tomi/memo/UNO_V2_D28_D29_IMPLEMENTATION_CHECK.md`.

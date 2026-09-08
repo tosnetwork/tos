@@ -34,7 +34,7 @@ struct InputPolicyIdentity {
   std::int64_t engine_selector;
   std::uint64_t vm_mode;
   std::uint32_t descriptor_version;
-  std::uint16_t admission_version;
+  std::uint32_t admission_version;
 };
 
 class CandidateAdmissionSession;
