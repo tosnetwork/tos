@@ -1,0 +1,35 @@
+{
+  "post_review_regression": {"change":"Follow-up review G1: use _Exit after counter write to avoid actor-scheduler teardown races. Mutation records above refer to pre-review source; they are not claimed rerun after this test-only shutdown change.","source_sha256":"e5f01933c4a9a3b50578713101221e5011c0a3a0ad55d189b0bf74384f496e5b","binary_sha256":"3a8d3ad0e470ad47790dba55d9436f84cf7c14afebf2a88471b8ac45509a3a60","test_output":"Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 16: test-counter-disk-integration\n1/4 Test #16: test-counter-disk-integration ............   Passed    1.09 sec\n    Start 17: test-counter-account-binding-readiness\n2/4 Test #17: test-counter-account-binding-readiness ...   Passed    0.31 sec\n    Start 38: test-workchain-block\n3/4 Test #38: test-workchain-block .....................   Passed    3.34 sec\n    Start 39: test-workchain-admission\n4/4 Test #39: test-workchain-admission .................   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 4\n\nTotal Test time (real) =   4.75 sec\n","exit_code":0},
+  "base": "54a6fc9ac",
+  "scope": "In-flight live collator readiness fixture. No validator-import, account-read counter, same-input cross-binary singleton byte comparison, multi-account execution or D31 completion claim. Counter controls are manual; positive readiness fixture is registered in CTest.",
+  "early_collator_gate_removed": {
+    "chunk_id": "fbeaf1",
+    "wall_time_seconds": 0.196265177,
+    "exit_code": 8,
+    "original_token_count": 251,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 17: test-counter-account-binding-readiness\n1/1 Test #17: test-counter-account-binding-readiness ...***Failed    0.32 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-1048f518c84b\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:221 (message):\n  Account binding refusal crossed the earliest gate: config=2\n\n  execute=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-1048f518c84b\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.33 sec\n\nThe following tests FAILED:\n\t 17 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+  },
+  "execution_counter_omitted": {
+    "chunk_id": "52b916",
+    "wall_time_seconds": 0.126132793,
+    "exit_code": 8,
+    "original_token_count": 254,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 17: test-counter-account-binding-readiness\n1/1 Test #17: test-counter-account-binding-readiness ...***Failed    0.25 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-48b1c0600d58\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:214 (message):\n  Account invocation instrument did not observe a real engine call: config=0\n\n  execute=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-48b1c0600d58\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.26 sec\n\nThe following tests FAILED:\n\t 17 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+  },
+  "restored_regression": {
+    "chunk_id": "fcceb6",
+    "wall_time_seconds": 1.001435611,
+    "original_token_count": 68,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 16: test-counter-disk-integration\n1/4 Test #16: test-counter-disk-integration ............   Passed    1.12 sec\n    Start 17: test-counter-account-binding-readiness\n2/4 Test #17: test-counter-account-binding-readiness ...   Passed    0.32 sec\n    Start 38: test-workchain-block\n3/4 Test #38: test-workchain-block .....................   Passed    2.83 sec\n    Start 39: test-workchain-admission\n4/4 Test #39: test-workchain-admission .................   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 4\n\nTotal Test time (real) =   4.28 sec\n",
+    "exit_code": 0
+  },
+  "restored_sha256": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311  crypto/block/workchain-execution-dispatch.cpp\n4985a3efed37adc32b733860a98af052c31d16ac16d936d456f3ffda4e4d5c18  crypto/block/workchain-execution-dispatch.h\n8ea348de87ef50fd9ba72d4bea30003207c099557aab93f0d3cdcb54204ceba2  crypto/test/test-workchain-block.cpp\n53dfacbf3d4bdf5de328880a67857974e76ffa29b19de1cc7cd76f83692ddb02  validator/impl/collator.cpp\n06ecfc5f97e964bfe248f1743c04b1f09cb70138ca49df9e36b904eb1fbcdb0a  validator/impl/validate-query.cpp\ndd70c36f314a6580142817569f39866c65338bcf1346e39867cec1e2c3a8e6c3  test/test-tos-collator.cpp\nba38fb3aec72ffdc5a25b4b14214d3c2d4f9e4954194a8519a6334244e23959a  test/test-counter-disk-integration.cmake\n4caf6ced66bd4386ad962988332db80b730bf1015ee0176d5914c538f7e843d7  test/counter-fixture-lifecycle.cmake\nd059762f4a47b114663287933e1e6bb4ade33c56ead4f419086c3b106adc6b80  CMakeLists.txt\n4a01e0f1d7f230da42877702ad6abbc9b701f008840b962efd1af0f0023183c9  build/test-workchain-block\nf09eb574bae4f0b1ba862f4492df1a08067db67f2e362cc1368e5b4cd71c20b5  build/test-tos-collator\n8769af6488cbe44218a41f3996801c92f55a318f2d02c30fb975129172dd52ee  build/validator-engine/validator-engine\n",
+  "excluded_observation": "An initial manual fixture ran while rebuilding test-tos-collator and saw config=2. It is excluded as timing-ambiguous. The recorded gate-removal CTest ran only after the mutation build completed.",
+  "mutations": {
+    "early_collator_gate": "  if (execution_res.ok()) {\n    auto ready = std::visit(td::overloaded(\n        [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },\n        [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },\n        [](const block::ResolvedWorkchainAccountBinding&) {\n          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                                   \"multi-account admission and replay are not connected\");\n        }), *execution_res.ok());\n    if (ready.is_error()) return fatal_error(std::move(ready));\n  }\n",
+    "probe_counter": {
+      "before": "++execute_calls_;",
+      "after": "// Mutation: omit the execution observation."
+    }
+  }
+}

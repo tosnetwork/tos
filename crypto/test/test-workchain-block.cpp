@@ -6854,7 +6854,6 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   ASSERT_EQ(observed->execute_calls, 0u);
   // Binding a local implementation is not admission or live host integration.
   ASSERT_TRUE(registry.resolve_block(descriptor, *config).is_error());
-  ASSERT_TRUE(registry.resolve_scoped(descriptor, *config).is_error());
   ASSERT_TRUE(registry.resolve(descriptor, *config).is_error());
   for (auto version : {15u, 16u}) {
     for (auto caps : {td::uint64{0}, td::uint64{tos::capBlockTransition}}) {
@@ -6973,7 +6972,40 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
     ASSERT_EQ(resolved.ok().input_policy.identity().vm_mode, changed.vm_mode);
     ASSERT_TRUE(resolved.ok().input_policy.identity().configuration_hash == cut->get_root_cell()->get_hash());
     ASSERT_TRUE(resolved.ok().authenticated_configuration->get_hash() == cut->get_root_cell()->get_hash());
+    auto live_binding = registry.resolve_scoped_workchain(2, *cut);
+    ASSERT_TRUE(live_binding.is_ok() && live_binding.ok().has_value());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainAccountBinding>(*live_binding.ok()));
+    const auto& live = std::get<block::ResolvedWorkchainAccountBinding>(*live_binding.ok());
+    ASSERT_EQ(live.input_policy.limits().cells, cells);
+    ASSERT_TRUE(live.authenticated_configuration->get_hash() == cut->get_root_cell()->get_hash());
+    block::LocalWorkchainRoleSet required;
+    required.required_workchains.insert(2);
+    auto readiness = registry.validate_required_workchains(cut->get_workchain_list(), *cut, required);
+    if (readiness.is_ok()) {
+      // Model the caller continuing past the role gate with the registered
+      // engine, not a registry-empty or missing-engine negative fixture.
+      block::WorkchainAccountReadView view({});
+      auto unexpected = observed->execute_accounts({}, view);
+      ASSERT_TRUE(unexpected.is_error());
+    }
+    ASSERT_EQ(observed->execute_calls, 0u);
+    ASSERT_TRUE(readiness.is_error());
+    ASSERT_EQ(readiness.code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
   }
+  for (unsigned kind : {1u, 2u}) {
+    observed->throw_kind = kind;
+    auto cut = configuration(16, tos::capBlockTransition, &changed);
+    auto fault = registry.resolve_scoped_workchain(2, *cut);
+    ASSERT_TRUE(fault.is_error());
+    ASSERT_EQ(fault.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    block::LocalWorkchainRoleSet required;
+    required.required_workchains.insert(2);
+    auto role_fault = registry.validate_required_workchains(cut->get_workchain_list(), *cut, required);
+    ASSERT_TRUE(role_fault.is_error());
+    ASSERT_EQ(role_fault.code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(observed->execute_calls, 0u);
+  }
+  observed->throw_kind = 0;
   const auto before_invalid_policy = observed->config_calls;
   for (unsigned kind : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
     resource_policy.input.max_cells = kind == 0 ? 0 : 64;
@@ -6993,6 +7025,9 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
     ASSERT_EQ(refused.error().code(), static_cast<int>(kind != 3
         ? block::WorkchainExecutionFailure::AuthenticatedStateCorrupt
         : block::WorkchainExecutionFailure::LocalUnavailable));
+    auto live_refused = registry.resolve_scoped_workchain(2, *invalid_cut);
+    ASSERT_TRUE(live_refused.is_error());
+    ASSERT_EQ(live_refused.error().code(), refused.error().code());
     ASSERT_EQ(observed->config_calls, before_invalid_policy);
   }
   policy.engine_configuration = vm::CellBuilder().finalize();

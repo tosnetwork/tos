@@ -83,6 +83,27 @@ foreach(script ${genesis_scripts})
     set(script_path "${fixture}/activation-genesis.fif")
     file(WRITE "${script_path}" "${genesis}")
   endif()
+  if(script STREQUAL "counter-masterchain-genesis" AND ACCOUNT_BINDING_ONLY)
+    file(READ "${script_path}" genesis)
+    set(old_ingress "{ dup <b x{57495031} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,\n  0 32 u, 0 256 u, empty_cell ref, b>")
+    string(FIND "${genesis}" "${old_ingress}" marker)
+    if(marker EQUAL -1)
+      message(FATAL_ERROR "Missing singleton ingress marker for account binding fixture")
+    endif()
+    set(new_ingress [=[
+// Test-only limits, not production defaults; generated schema tags.
+<b x{c5defa2a} s, 64 64 u, 4096 64 u, 8 64 u, 16 32 u, 16 32 u, 5 32 u, b> constant probe_input
+<b x{90aef2dd} s, 256 64 u, 16384 64 u, 128 64 u, 8192 64 u, 64 16 u, b> constant probe_state
+<b x{7a310b92} s, 32 64 u, 128 64 u, 8192 64 u, 256 64 u, 16384 64 u, 16 32 u, b> constant probe_work
+<b x{bbd8a9ec} s, 2 32 u, probe_input ref, probe_state ref, probe_work ref, b> constant probe_resources
+<b x{b7226bea} s, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+{ dup <b x{4abd5ab4} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
+  0 32 u, 0 256 u, 256 1<<1- 256 u, probe_config ref, b>]=])
+    string(REPLACE "${old_ingress}" "${new_ingress}" genesis "${genesis}")
+    string(REPLACE "15 capCreateStats" "16 capCreateStats" genesis "${genesis}")
+    set(script_path "${fixture}/account-binding-genesis.fif")
+    file(WRITE "${script_path}" "${genesis}")
+  endif()
   execute_process(COMMAND "${CMAKE_COMMAND}" -E env "SOURCE_DATE_EPOCH=${epoch}"
     "${CREATE_STATE}" -I "${includes}" "${script_path}"
     WORKING_DIRECTORY "${fixture}" RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
@@ -182,6 +203,29 @@ file(READ "${fixture}/counter-state.rhash" counter_root HEX)
 file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
 set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
 set(zero_block "${previous}")
+if(ACCOUNT_BINDING_ONLY)
+  execute_process(COMMAND "${COLLATOR}" --account-binding-probe-selftest "${fixture}/instrument.txt"
+    RESULT_VARIABLE instrument_status OUTPUT_VARIABLE instrument_out ERROR_VARIABLE instrument_err TIMEOUT 30)
+  if(NOT instrument_status STREQUAL "0")
+    message(FATAL_ERROR "Account invocation instrument failed: ${instrument_out}${instrument_err}")
+  endif()
+  file(READ "${fixture}/instrument.txt" instrument)
+  if(NOT instrument STREQUAL "config=0\nexecute=1\n")
+    message(FATAL_ERROR "Account invocation instrument did not observe a real engine call: ${instrument}")
+  endif()
+  run_node(account_binding_refused 2 "multi-account admission and replay are not connected"
+    --account-binding-probe "${fixture}/calls.txt" -w 2 -T "${previous}"
+    --export-candidate "${fixture}/unexpected-candidate.bin")
+  file(READ "${fixture}/calls.txt" calls)
+  if(NOT calls STREQUAL "config=1\nexecute=0\n")
+    message(FATAL_ERROR "Account binding refusal crossed the earliest gate: ${calls}")
+  endif()
+  if(EXISTS "${fixture}/unexpected-candidate.bin")
+    message(FATAL_ERROR "Refused account binding reached candidate publication")
+  endif()
+  message(STATUS "Live account binding: one config callback, zero engine calls, no candidate export")
+  return()
+endif()
 if(IDLE_ONLY)
   # A zero increment is an explicit empty-action candidate, not a missing
   # execution witness. Both databases start without incoming or outgoing work.

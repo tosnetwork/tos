@@ -1140,11 +1140,17 @@ bool ValidateQuery::fetch_config_params() {
       return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
     }
     if (resolved_execution.ok().has_value()) {
-      custom_workchain = std::visit(td::overloaded(
-          [](const block::ResolvedWorkchainExecution& account) {
+      auto custom = std::visit(td::overloaded(
+          [](const block::ResolvedWorkchainExecution& account) -> td::Result<bool> {
             return block::resolved_workchain_execution_is_custom(account);
           },
-          [](const block::ResolvedWorkchainBlockExecution&) { return false; }), *resolved_execution.ok());
+          [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
+          [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
+            return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                     "multi-account admission and replay are not connected");
+          }), *resolved_execution.ok());
+      if (custom.is_error()) return fatal_error(custom.move_as_error());
+      custom_workchain = custom.move_as_ok();
     }
 
     if (custom_workchain) {
@@ -1280,6 +1286,16 @@ bool ValidateQuery::check_this_shard_mc_info() {
       workchain(), *config_);
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot validate configured workchain: "));
+  }
+  if (execution_res.ok()) {
+    auto ready = std::visit(td::overloaded(
+        [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
+        [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
+        [](const block::ResolvedWorkchainAccountBinding&) {
+          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                   "multi-account admission and replay are not connected");
+        }), *execution_res.ok());
+    if (ready.is_error()) return fatal_error(std::move(ready));
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return reject_query(PSTRING() << "cannot create new block for workchain " << workchain()
@@ -6500,11 +6516,18 @@ bool ValidateQuery::check_transactions() {
   }
   // Exhaustiveness is a compile-time obligation for every new execution family.
   // Only the explicit account alternative (or no binding) may reach the ordinary loop.
-  const auto* singleton = resolved.ok().has_value() ? std::visit(td::overloaded(
-      [](const block::ResolvedWorkchainExecution&) -> const block::ResolvedWorkchainBlockExecution* {
+  using BlockPointer = const block::ResolvedWorkchainBlockExecution*;
+  auto selected = resolved.ok().has_value() ? std::visit(td::overloaded(
+      [](const block::ResolvedWorkchainExecution&) -> td::Result<BlockPointer> {
         return nullptr;
       },
-      [](const block::ResolvedWorkchainBlockExecution& block) { return &block; }), *resolved.ok()) : nullptr;
+      [](const block::ResolvedWorkchainBlockExecution& block) -> td::Result<BlockPointer> { return &block; },
+      [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<BlockPointer> {
+        return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                 "multi-account admission and replay are not connected");
+      }), *resolved.ok()) : td::Result<BlockPointer>(nullptr);
+  if (selected.is_error()) return fatal_error(selected.move_as_error());
+  const auto* singleton = selected.move_as_ok();
   if (singleton) {
     const auto& execution = *singleton;
     // Candidate-origin records remain candidate data, not local authenticated

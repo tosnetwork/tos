@@ -687,7 +687,12 @@ td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
 td::Result<ResolvedScopedWorkchainExecution> WorkchainExecutionRegistry::resolve_scoped(
     const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
   TRY_RESULT(ingress, load_workchain_native_ingress_table(configuration));
-  if (ingress.count(descriptor.workchain_id) ||
+  auto policy = ingress.find(descriptor.workchain_id);
+  if (policy != ingress.end() && policy->second.custody_address) {
+    TRY_RESULT(binding, resolve_account_binding(descriptor, configuration));
+    return ResolvedScopedWorkchainExecution{std::move(binding)};
+  }
+  if (policy != ingress.end() ||
       execution_scope(workchain_engine_key_from_descriptor(descriptor)) == WorkchainExecutionScope::BlockTransition) {
     TRY_RESULT(resolved, resolve_block(descriptor, configuration));
     return ResolvedScopedWorkchainExecution{std::move(resolved)};
@@ -796,7 +801,13 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
               return validate_account_execution_policy_supported(
                   account.executor->account_policy(account.descriptor, *account.engine_config));
             },
-            [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); }), *resolved);
+            [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
+            [](const ResolvedWorkchainAccountBinding&) {
+              // Engine registration and successful configuration parsing do not
+              // establish that this binary can admit and replay account batches.
+              return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                       "multi-account admission and replay are not connected");
+            }), *resolved);
         if (status.is_error()) {
           return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), status.message());
         }

@@ -299,7 +299,9 @@ td::Status replay_resolved_workchain_account_block(
     const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& account_block,
     std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg = nullptr);
 
-using ResolvedScopedWorkchainExecution = std::variant<ResolvedWorkchainExecution, ResolvedWorkchainBlockExecution>;
+// A resolved binding carries authenticated policy, not permission to execute.
+using ResolvedScopedWorkchainExecution = std::variant<ResolvedWorkchainExecution, ResolvedWorkchainBlockExecution,
+                                                     ResolvedWorkchainAccountBinding>;
 
 bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution);
 
@@ -319,8 +321,8 @@ class WorkchainExecutionRegistry {
   bool has_engine(const WorkchainEngineKey& key) const;
   td::Status register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine);
   td::Status register_account_engine(std::unique_ptr<RegisteredWorkchainAccountEngine> engine);
-  // Explicit staging path only. Generic scoped dispatch must not start accepting
-  // multi-account execution until admission and complete replay are connected.
+  // Scoped dispatch may return this binding, but live execution remains gated
+  // until complete admission and replay are connected.
   // Configuration acquisition/engine exceptions propagate to a source-aware
   // enclosing boundary. A plain Status here is not a candidate voting verdict;
   // neither successful binding nor execution_scope proves resource admission.

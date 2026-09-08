@@ -53,9 +53,50 @@
 #include <unistd.h>
 #endif
 #include <iostream>
+#include <limits>
+#include <mutex>
 #include <sstream>
 
 int verbosity;
+
+// Disk-test instrumentation only; never registered by validator-engine.
+class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine {
+ public:
+  explicit AccountBindingProbe(std::string path) : path_(std::move(path)) { save(); }
+  block::WorkchainEngineKey engine_key() const override {
+    return {block::WorkchainFormat::Basic, 0x434e5431};
+  }
+  td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+      const block::WorkchainExecutionDescriptor&, const block::Config&,
+      const td::Ref<vm::Cell>& payload) const override {
+    TRY_RESULT(parsed, block::decode_workchain_engine_parameters(payload));
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(parsed.parameters, special);
+    if (special || cs.size_ext() != 32 || cs.fetch_ulong(32) != 0x50524231) {
+      return td::Status::Error("invalid account probe parameters");
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (config_calls_ == std::numeric_limits<td::uint64>::max()) return td::Status::Error("probe count overflow");
+    ++config_calls_;
+    save();
+    return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
+  }
+  td::Result<block::WorkchainAccountEffects> execute_accounts(
+      const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (execute_calls_ == std::numeric_limits<td::uint64>::max()) return td::Status::Error("probe count overflow");
+    ++execute_calls_;
+    save();
+    return td::Status::Error("account probe must not execute through the live host");
+  }
+ private:
+  void save() const {
+    td::write_file(path_, PSLICE() << "config=" << config_calls_ << "\nexecute=" << execute_calls_ << "\n").ensure();
+  }
+  const std::string path_;
+  mutable std::mutex mutex_;
+  mutable td::uint64 config_calls_{0}, execute_calls_{0};
+};
 
 struct IntError {
   std::string err_msg;
@@ -82,6 +123,8 @@ class TestNode : public td::actor::Actor {
   std::string global_config_;
   td::Ref<vm::Cell> block_candidate_;
   std::string export_candidate_, import_candidate_;
+  std::string account_probe_path_;
+  bool account_probe_selftest_{false};
   td::Ref<tos::validator::ValidatorManagerOptions> opts_;
 
   tos::ZeroStateIdExt zero_id_;
@@ -97,6 +140,11 @@ class TestNode : public td::actor::Actor {
   tos::ShardIdFull shard_{tos::masterchainId, tos::shardIdAll};
 
  public:
+  void set_account_probe(std::string path, bool selftest) {
+    account_probe_path_ = std::move(path);
+    account_probe_selftest_ = selftest;
+    block_candidate_ = block::test::counter_number(0);
+  }
   void set_counter_increment(td::uint64 increment) {
     block_candidate_ = block::test::counter_number(increment);
   }
@@ -292,13 +340,22 @@ class TestNode : public td::actor::Actor {
   }
 
   void run() {
+    if (account_probe_selftest_) {
+      AccountBindingProbe probe(account_probe_path_);
+      block::WorkchainAccountReadView view({});
+      auto result = probe.execute_accounts({}, view);
+      std::_Exit(result.is_error() ? 0 : 2);
+    }
     if (block_candidate_.not_null()) {
       if (shard_ != tos::ShardIdFull{2, tos::shardIdAll} && shard_ != tos::ShardIdFull{3, tos::shardIdAll}) {
         std::cerr << "fatal: Counter collation requires the unsplit workchain 2 or 3.\n";
         std::_Exit(2);
       }
-      auto status = block::default_workchain_execution_registry().register_block_engine(
-          std::make_unique<block::test::CounterEngine>(block::WorkchainBlockResourceUsage{8, 1, 3}, 1, shard_.workchain));
+      auto status = account_probe_path_.empty()
+          ? block::default_workchain_execution_registry().register_block_engine(
+              std::make_unique<block::test::CounterEngine>(block::WorkchainBlockResourceUsage{8, 1, 3}, 1, shard_.workchain))
+          : block::default_workchain_execution_registry().register_account_engine(
+              std::make_unique<AccountBindingProbe>(account_probe_path_));
       if (status.is_error()) {
         LOG(ERROR) << status;
         std::_Exit(2);
@@ -471,6 +528,10 @@ int main(int argc, char *argv[]) {
                          td::actor::send_closure(x, &TestNode::set_counter_increment, increment);
                          return td::Status::OK();
                        });
+  p.add_option(0, "account-binding-probe", "test-only: register an account engine and write invocation counters",
+               [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_account_probe, path.str(), false); });
+  p.add_option(0, "account-binding-probe-selftest", "test-only: exercise the account engine counter instrument",
+               [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_account_probe, path.str(), true); });
   p.add_checked_option(0, "counter-send-increment", "test-only: increment Counter and send two native messages",
                        [&](td::Slice arg) {
                          TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));

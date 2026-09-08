@@ -89,6 +89,58 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+In-flight account-binding dispatch now selects the dual-ingress family from
+the authenticated policy, resolves its resource identity from that same Config,
+and returns a distinct ResolvedWorkchainAccountBinding. It is not a singleton
+execution or an admission permit. The required-role path explicitly refuses
+execution readiness even when an account engine is registered and accepts its
+configuration. All six live resolution sites now explicitly refuse this
+family rather than selecting AccountCompute, including the two early shard-info
+checks that previously discarded a successful resolved value. These temporary refusals must be
+replaced by the full admitted path, not deleted to enable a placeholder engine.
+
+The registered-engine role control removes that refusal and observes a real
+fixture-engine call (1 rather than 0) in a test continuation. This establishes
+the role API gate, not live actor side-effect containment: the continuation is
+test code, and later live consumers still have their own explicit refusals.
+Configuration decoding and callbacks already perform reads and allocations.
+No zero-total-allocation or zero-total-state-read claim is made. The registered
+disk-test probe now reaches the real collator, records one successful engine
+configuration callback and zero execution calls, and checks that no candidate
+archive is exported. Removing the earliest collator refusal observes a second
+configuration callback and fails CTest; omitting the execution-counter update
+fails the probe's separate self-test. The positive fixture runs in CTest, while
+these mutations are manual. This is not validator-import coverage, an account
+read counter, or a same-input cross-binary singleton byte comparison; those
+remain required before this cut's full acceptance. Existing singleton disk
+regression alone does not prove that stronger comparison. The initial probe run
+overlapped a rebuild and is excluded as ambiguous; the archived removal control
+waited for the build to finish. Evidence is in
+`measurements/uno-v2-account-binding-live-controls.json`; the earlier in-flight
+artifact records only unit controls.
+
+First binding review disposition: the ignored-value entry points (F1) now visit
+the returned family explicitly. Account callback VmError/VmVirtError are now
+tested through both live resolution and required-role checking (F3), rather
+than borrowing the singleton fault sweep. The role wrapper deliberately assigns
+local classification to policy failures: its public code assertion does not
+pin the internal arm's original code (F2), and no such mutation coverage is
+claimed. Do not replace that assertion with error-text-only evidence. The
+duplicate table lookup is removed (F6). Configuration work is measured, not
+called free (F4); missing-account-engine diagnostics and duplicated temporary
+refusal text are not security findings (F5/F7). The removed direct scoped-error
+assertion is replaced by successful Config-only binding coverage through that
+same descriptor resolver, not an assertion that the old failure remains (F8).
+
+Follow-up review found no correctness defect in the dispatch and disk probe.
+Its scheduler-shutdown observation is fixed: the instrument self-test uses
+_Exit, as the surrounding actor tool does, after the counter file is written.
+Validator-import coverage remains open (G2). The fixture's version substitution
+still relies on successful authenticated configuration resolution and the exact
+positive callback count rather than a separate textual marker guard (G3); this
+is not claimed as independently mutated marker validation. Final regressions
+are rerun after the shutdown change.
+
 The reviewed live configuration-source boundary obtains both the descriptor
 and policy from one caller-authenticated Config. Classification follows that
 source, not a callback's error-code name: CandidateInvalid returned by a
@@ -106,8 +158,9 @@ including a different Config with matching descriptor contents. Low-level
 descriptor resolvers remain test/component APIs, not provenance certificates.
 The separate AccountCompute resolve_workchain path remains in transaction.cpp
 and ext-message-checker.cpp; this change does not claim to convert those Native
-paths to V2 admission. Multi-account resolve_account_binding remains component
-code without a live caller. Re-enumerate all callers when installing the next
+paths to V2 admission. Multi-account resolve_account_binding now has live scoped
+callers, but all consumers explicitly refuse execution readiness as described
+above. Re-enumerate all callers when installing the next
 boundary; this inventory is not permission for a future unguarded overload.
 
 Follow-up controls separately reach the AccountCompute policy callback in the
@@ -146,15 +199,16 @@ enabling such an engine on a deployed network requires the agreed deployment
 and first-effective-block discipline; logging a newer global version does not
 enforce readiness.
 
-Before introducing the multi-account execution alternative, four live dispatch
+At `54a6fc9ac`, before introducing the multi-account execution alternative, four live dispatch
 sites (two collator and two validator) and the earlier required-role policy
 dispatch now use exhaustive typed visitors. There is no generic visitor that
 can send an unknown family to AccountCompute. A manual control adds a third
 variant: all three production translation units fail compilation at all five
 visitors. This is deliberately a compile-time control, not a failed runtime
 test or a new wire variant. Singleton replay and its exact AccountBlock guard
-remain unchanged. Explicit handling of the forthcoming account binding, early
-authenticated input admission and multi-account execution remain unfinished.
+remained unchanged. The binding handlers described above supersede that cut's
+pending dispatch work; early authenticated input admission and multi-account
+execution remain unfinished.
 
 Boundary review found no blocking behavior change. The control uses unrelated
 `std::monostate`, not a type implicitly convertible to an existing alternative.

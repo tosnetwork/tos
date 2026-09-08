@@ -1593,6 +1593,16 @@ bool Collator::check_this_shard_mc_info() {
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));
   }
+  if (execution_res.ok()) {
+    auto ready = std::visit(td::overloaded(
+        [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
+        [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
+        [](const block::ResolvedWorkchainAccountBinding&) {
+          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                   "multi-account admission and replay are not connected");
+        }), *execution_res.ok());
+    if (ready.is_error()) return fatal_error(std::move(ready));
+  }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return fatal_error(PSTRING() << "cannot create new block for workchain " << workchain()
                                  << " which is not enabled yet");
@@ -2279,11 +2289,17 @@ bool Collator::fetch_config_params() {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    custom_workchain = std::visit(td::overloaded(
-        [](const block::ResolvedWorkchainExecution& account) {
+    auto custom = std::visit(td::overloaded(
+        [](const block::ResolvedWorkchainExecution& account) -> td::Result<bool> {
           return block::resolved_workchain_execution_is_custom(account);
         },
-        [](const block::ResolvedWorkchainBlockExecution&) { return false; }), *resolved_execution.ok());
+        [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
+        [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
+          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                   "multi-account admission and replay are not connected");
+        }), *resolved_execution.ok());
+    if (custom.is_error()) return fatal_error(custom.move_as_error());
+    custom_workchain = custom.move_as_ok();
   }
 
   if (custom_workchain) {
@@ -2426,11 +2442,18 @@ td::actor::Task<> Collator::do_collate_inner() {
   auto execution = execution_result.move_as_ok();
   // No generic visitor: a new execution family must choose its own live path,
   // rather than silently inheriting ordinary account execution.
-  const auto* block_execution = execution.has_value() ? std::visit(td::overloaded(
-      [](const block::ResolvedWorkchainExecution&) -> const block::ResolvedWorkchainBlockExecution* {
+  using BlockPointer = const block::ResolvedWorkchainBlockExecution*;
+  auto selected = execution.has_value() ? std::visit(td::overloaded(
+      [](const block::ResolvedWorkchainExecution&) -> td::Result<BlockPointer> {
         return nullptr;
       },
-      [](const block::ResolvedWorkchainBlockExecution& block) { return &block; }), *execution) : nullptr;
+      [](const block::ResolvedWorkchainBlockExecution& block) -> td::Result<BlockPointer> { return &block; },
+      [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<BlockPointer> {
+        return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                 "multi-account admission and replay are not connected");
+      }), *execution) : td::Result<BlockPointer>(nullptr);
+  if (selected.is_error()) co_return selected.move_as_error();
+  const auto* block_execution = selected.move_as_ok();
   if (block_execution && params_.workchain_block_candidate.is_null() &&
       params_.collator_opts->workchain_candidate_source) {
     auto candidate = params_.collator_opts->workchain_candidate_source(params_.shard);
