@@ -57,6 +57,20 @@ struct WorkchainAccountEffects {
 class WorkchainAccountEngine {
  public:
   virtual ~WorkchainAccountEngine() = default;
+  // Deterministic, bounded shape inspection only: no proof verification, RNG,
+  // account access or side effects. Units are defined by the engine/admission
+  // profile, not by fees. No implicit zero-work implementation is provided.
+  // The result must be a pure function of candidate bytes and this identity:
+  // no local configuration, clock, thread ordering, ambient VM state or entropy.
+  // It must conservatively bound all subsequent proof verification for that
+  // candidate under the same profile, including every verification branch.
+  // A shape counter unrelated to the backend cost does not meet this contract.
+  // candidate is the materialized candidate component, not the host envelope
+  // containing authenticated Native input. Malformed shapes return an explicit
+  // CandidateInvalid; local failures return LocalUnavailable. Throwing is a
+  // local contract failure, never a substitute for a candidate verdict.
+  virtual td::Result<std::uint64_t> proof_work(
+      const td::Ref<vm::Cell>& candidate, const InputPolicyIdentity& identity) const = 0;
   // Input is the committed host envelope; no shard dictionary or mutable
   // Account/Transaction/CellDb handle is exposed. Read closures and Native inbox
   // have their own admitted profiles; candidate-only rules do not apply to them.
@@ -82,23 +96,61 @@ namespace account_engine_detail {
 // callback retain their existing exception behaviour. This does not authenticate
 // the caller's source or contain the whole execution/settlement frame.
 // Count bounds alone are not state traversal or execution-work limits.
+template <class Input>
 inline td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
-    td::Ref<vm::Cell> input,
+    const Input& source,
     const WorkchainAccountDeclarations& declarations,
-    std::uint64_t max_reads, std::uint64_t max_writes,
-    const gen::UnoV2ResourceState::Record* state_policy = nullptr) {
+    std::uint64_t max_reads, std::uint64_t max_writes) {
+  static_assert(std::is_same_v<Input, AdmittedBatchInput> || std::is_same_v<Input, td::Ref<vm::Cell>>);
+  td::Ref<vm::Cell> input = [&]() {
+    if constexpr (std::is_same_v<Input, AdmittedBatchInput>) return source.root();
+    else return source;
+  }();
+  const ResolvedBatchInputPolicy* batch_policy = [&]() -> const ResolvedBatchInputPolicy* {
+    if constexpr (std::is_same_v<Input, AdmittedBatchInput>) return &source.policy();
+    else return nullptr;  // Only the explicitly retained raw-root prototype.
+  }();
+  const auto* state_policy = batch_policy ? &batch_policy->resources().state : nullptr;
+  if (state_policy && (!state_policy->max_cells || !state_policy->max_bits || !state_policy->max_account_cells ||
+      !state_policy->max_account_bits || state_policy->max_account_depth <= 0 ||
+      state_policy->max_account_depth > UINT16_MAX)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "installed state policy cannot admit account state");
+  }
   TRY_RESULT(access, WorkchainAccountAccess::create(declarations.reads, declarations.writes,
                                                    max_reads, max_writes));
+  if constexpr (std::is_same_v<Input, AdmittedBatchInput>) {
+    // Isolate candidate-only inspection from authenticated account acquisition.
+    // In particular, neither snapshots nor the inbox is passed to the callback.
+    auto inspect = [&engine, candidate = source.candidate(),
+                    identity = batch_policy->identity()]() -> td::Result<std::uint64_t> {
+      try {
+        auto work = engine.proof_work(candidate, identity);
+        if (work.is_error() &&
+            work.error().code() != static_cast<int>(WorkchainExecutionFailure::CandidateInvalid) &&
+            work.error().code() != static_cast<int>(WorkchainExecutionFailure::LocalUnavailable)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                   "proof preflight returned an invalid failure category");
+        }
+        return work;
+      } catch (...) {
+        // Includes the non-std Native VM/CellBuilder exceptions, allocation
+        // failures and other contract throws. This scope supplies only a
+        // detached candidate and scalar identity, no authenticated read view.
+      }
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "proof preflight local failure");
+    };
+    TRY_RESULT(work, inspect());
+    if (work > batch_policy->resources().work_output.max_proof_units) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                               "proof work exceeds authenticated batch allowance");
+    }
+  }
   std::optional<NativeStateReadMeter> state_meter;
   std::optional<vm::AugmentedDictionary> prototype_accounts;
   if (state_policy) {
-    if (!state_policy->max_cells || !state_policy->max_bits || !state_policy->max_account_cells ||
-        !state_policy->max_account_bits || state_policy->max_account_depth <= 0 ||
-        state_policy->max_account_depth > UINT16_MAX) {
-      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                               "installed state policy cannot admit account state");
-    }
     state_meter.emplace(state_policy->max_cells, state_policy->max_bits);
   } else {
     // Only the retained singleton prototype uses this unmetered path.
@@ -228,8 +280,10 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
 // Consume the complete structurally admitted input without rebuilding it or
 // accepting another policy/declaration cut. This remains a post-admission
 // runner: the enclosing host must check commitment, authenticate the complete
-// inbox, and admit proof work BEFORE invoking it. This runner admits old-state
-// paths/closures before the engine, not later settlement reads. Structural input
+// inbox BEFORE invoking it. This runner invokes the bounded proof-shape
+// preflight before old-state acquisition and execution, using the same
+// authenticated resource policy. It does not implement engine-specific units.
+// It admits old-state paths/closures before the engine, not later settlement reads. Structural input
 // alone does not grant live execution readiness.
 inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
@@ -240,8 +294,8 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engin
   }
   const auto& limits = admitted.policy().resources().input;
   TRY_RESULT(declarations, decode_workchain_account_declarations(input.access, limits.max_reads, limits.max_writes));
-  return account_engine_detail::execute(engine, std::move(old_accounts), admitted.root(), declarations,
-                                        limits.max_reads, limits.max_writes, &admitted.policy().resources().state);
+  return account_engine_detail::execute(engine, std::move(old_accounts), admitted, declarations,
+                                        limits.max_reads, limits.max_writes);
 }
 
 // Retained prototype settlement callers only. Do not route the live batch

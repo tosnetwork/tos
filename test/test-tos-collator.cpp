@@ -62,6 +62,11 @@ int verbosity;
 // Disk-test instrumentation only; never registered by validator-engine.
 class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine {
  public:
+  td::Result<std::uint64_t> proof_work(
+      const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&) const override {
+    return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                             "account binding probe must not inspect proofs");
+  }
   explicit AccountBindingProbe(std::string path) : path_(std::move(path)) { save(); }
   block::WorkchainEngineKey engine_key() const override {
     return {block::WorkchainFormat::Basic, 0x434e5431};

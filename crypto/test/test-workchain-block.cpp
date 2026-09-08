@@ -2533,6 +2533,34 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(build_overlay(effects_root).move_as_ok().state.accounts->get_hash() == overlay.state.accounts->get_hash());
   struct DisposalEngine final : block::WorkchainAccountEngine {
     mutable std::uint64_t calls{0};
+    mutable std::uint64_t work_calls{0};
+    std::uint64_t requested_work{0};
+    unsigned work_fault{0};
+    mutable td::Ref<vm::Cell> inspected_candidate;
+    mutable std::optional<block::InputPolicyIdentity> work_identity;
+    td::Result<std::uint64_t> proof_work(
+        const td::Ref<vm::Cell>& candidate, const block::InputPolicyIdentity& identity) const override {
+      work_calls = block::participant_lt_detail::checked_add(work_calls, 1).move_as_ok();
+      inspected_candidate = candidate;
+      work_identity = identity;
+      if (work_fault == 1) return td::Status::Error(
+          static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid), "invalid fixture proof shape");
+      if (work_fault == 2) throw vm::VmError{vm::Excno::cell_und};
+      if (work_fault == 3) throw vm::CellBuilder::CellCreateError{};
+      if (work_fault == 4) throw vm::CellBuilder::CellWriteError{};
+      if (work_fault == 5) return td::Status::Error("invalid fixture error category");
+      if (work_fault == 6) throw vm::VmVirtError{1};
+      if (work_fault == 7) throw vm::VmNoGas{};
+      if (work_fault == 8) throw vm::VmFatal{};
+      if (work_fault == 9) throw std::bad_alloc{};
+      if (work_fault == 10) throw std::length_error("injected proof preflight length");
+      if (work_fault == 11) throw 17;
+      if (work_fault == 12) return td::Status::Error(
+          static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt), "invalid preflight source claim");
+      if (work_fault == 13) return td::Status::Error(
+          static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable), "declared fixture local failure");
+      return requested_work;  // Fixture has no cryptographic backend.
+    }
     mutable td::Ref<vm::Cell> seen;
     block::WorkchainAccountEffects effects;
     td::Result<block::WorkchainAccountEffects> execute_accounts(
@@ -2558,6 +2586,7 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(settled_result.is_ok());
   auto settled = settled_result.move_as_ok();
   ASSERT_EQ(engine.calls, 1u);
+  ASSERT_EQ(engine.work_calls, 0u);  // Retained prototype does not acquire the batch preflight.
   ASSERT_EQ(engine.seen->get_hash(), overlay_input->get_hash());
   ASSERT_EQ(settled.input->get_hash(), overlay_input->get_hash());
   ASSERT_EQ(settled.effects->get_hash(), effects_root->get_hash());
@@ -2780,19 +2809,26 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     }
     LOG(INFO) << "complete record output: cells=" << output_size.cells << " bits=" << output_size.bits;
     ASSERT_TRUE(output_size.cells > 1 && output_size.bits > 1);
+    td::uint64 settlement_state_loads = 0;
     auto with_output_limits = [&](std::uint64_t cells, std::uint64_t bits,
-        std::optional<block::gen::UnoV2ResourceState::Record> account_bounds = std::nullopt) {
+        std::optional<block::gen::UnoV2ResourceState::Record> account_bounds = std::nullopt,
+        std::optional<std::uint64_t> proof_units = std::nullopt) {
       auto resources = policy.resources();
       resources.work_output.max_output_cells = cells;
       resources.work_output.max_output_bits = bits;
+      if (proof_units) resources.work_output.max_proof_units = *proof_units;
       if (account_bounds) resources.state = *account_bounds;
       auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy.identity());
       ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved));
       block::BatchInputAdmissionSession bounded(std::get<block::ResolvedBatchInputPolicy>(resolved),
           candidate, declaration_root, complete_identity, inbox);
       ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(bounded.evaluate()));
+      settlement_state_loads = 0;
+      td::Ref<vm::Cell> observed_accounts{td::Ref<StateReadCallbackCell>{true, old.accounts, [&] {
+        settlement_state_loads = block::participant_lt_detail::checked_add(settlement_state_loads, 1).move_as_ok();
+      }}};
       return block::execute_and_settle_workchain_disposal(engine,
-          vm::UsageCell::create(old.accounts, settlement_tree->root_ptr()), complete_identity,
+          vm::UsageCell::create(observed_accounts, settlement_tree->root_ptr()), complete_identity,
           std::get<block::AdmittedBatchInput>(bounded.evaluate()), owned_inbox, a,
           td::make_refint(100), 4096, cfg, joint_context);
     };
@@ -2802,6 +2838,107 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_TRUE(exact_output.ok().output_admission != nullptr);
     ASSERT_EQ(exact_output.ok().output_admission->usage().cells, output_size.cells);
     ASSERT_EQ(exact_output.ok().output_admission->usage().bits, output_size.bits);
+    {
+      for (std::uint64_t limit : {0u, 1u}) {
+        engine.requested_work = limit;
+        engine.calls = engine.work_calls = 0;
+        auto exact = with_output_limits(256, 65536, std::nullopt, limit);
+        ASSERT_TRUE(exact.is_ok());
+        ASSERT_TRUE(settlement_state_loads > 0);
+        ASSERT_EQ(engine.calls, 1u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.inspected_candidate->get_hash(), candidate->get_hash());
+        ASSERT_TRUE(engine.work_identity.has_value());
+        ASSERT_EQ(engine.work_identity->configuration_hash, policy.identity().configuration_hash);
+        ASSERT_EQ(engine.work_identity->admission_version, policy.identity().admission_version);
+        ASSERT_EQ(engine.work_identity->engine_selector, policy.identity().engine_selector);
+        ASSERT_EQ(engine.work_identity->vm_mode, policy.identity().vm_mode);
+        ASSERT_EQ(engine.work_identity->descriptor_version, policy.identity().descriptor_version);
+        ASSERT_EQ(engine.work_identity->extended, policy.identity().extended);
+        ASSERT_EQ(exact.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
+        engine.requested_work = block::participant_lt_detail::checked_add(limit, 1).move_as_ok();
+        engine.calls = engine.work_calls = 0;
+        auto excess = with_output_limits(256, 65536, std::nullopt, limit);
+        ASSERT_TRUE(excess.is_error());
+        ASSERT_EQ(excess.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+        ASSERT_EQ(engine.calls, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(settlement_state_loads, 0u);
+        auto limited_resources = policy.resources();
+        limited_resources.work_output.max_proof_units = limit;
+        auto limited_policy = block::ResolvedBatchInputPolicy::from_resolved_fields(
+            limited_resources, policy.identity());
+        ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(limited_policy));
+        block::BatchInputAdmissionSession limited_session(
+            std::get<block::ResolvedBatchInputPolicy>(limited_policy),
+            candidate, declaration_root, complete_identity, inbox);
+        ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(limited_session.evaluate()));
+        td::uint64 state_loads = 0;
+        td::Ref<vm::Cell> observed_state{td::Ref<StateReadCallbackCell>{true, old.accounts, [&] {
+          state_loads = block::participant_lt_detail::checked_add(state_loads, 1).move_as_ok();
+        }}};
+        engine.calls = engine.work_calls = 0;
+        auto early = block::execute_workchain_account_engine(engine, observed_state,
+            std::get<block::AdmittedBatchInput>(limited_session.evaluate()));
+        ASSERT_TRUE(early.is_error());
+        ASSERT_EQ(early.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+        ASSERT_EQ(state_loads, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.calls, 0u);
+        engine.requested_work = limit;
+        auto allowed = block::execute_workchain_account_engine(engine, observed_state,
+            std::get<block::AdmittedBatchInput>(limited_session.evaluate()));
+        ASSERT_TRUE(allowed.is_ok());
+        ASSERT_TRUE(state_loads > 0);
+      }
+      engine.requested_work = 0;
+      {
+        unsigned source_loads = 0;
+        td::Ref<PreflightObservedCell> source{true, candidate, &source_loads};
+        block::BatchInputAdmissionSession owned(policy, source, declaration_root, complete_identity, inbox);
+        ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(owned.evaluate()));
+        ASSERT_TRUE(source_loads > 0);
+        source->set_unavailable(true);
+        source_loads = 0;
+        const auto& admitted_candidate = std::get<block::AdmittedBatchInput>(owned.evaluate()).candidate();
+        ASSERT_TRUE(admitted_candidate->load_cell().is_ok());
+        ASSERT_EQ(admitted_candidate->get_hash(), candidate->get_hash());
+        ASSERT_EQ(source_loads, 0u);
+      }
+      {
+        auto invalid_state = policy.resources().state;
+        invalid_state.max_account_depth = 70000;
+        engine.requested_work = 1;
+        engine.calls = engine.work_calls = 0;
+        auto invalid = with_output_limits(256, 65536, invalid_state, 0);
+        ASSERT_TRUE(invalid.is_error());
+        ASSERT_EQ(invalid.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        ASSERT_EQ(engine.work_calls, 0u);
+        ASSERT_EQ(engine.calls, 0u);
+        engine.requested_work = 0;
+      }
+      for (unsigned fault = 1; fault <= 13; ++fault) {
+        engine.work_fault = fault;
+        engine.calls = engine.work_calls = 0;
+        auto refused = with_output_limits(256, 65536, std::nullopt, 0);
+        ASSERT_TRUE(refused.is_error());
+        ASSERT_EQ(refused.error().code(), static_cast<int>(fault == 1
+            ? block::WorkchainExecutionFailure::CandidateInvalid : block::WorkchainExecutionFailure::LocalUnavailable));
+        ASSERT_EQ(engine.calls, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        block::BatchInputAdmissionSession direct_session(policy, candidate, declaration_root, complete_identity, inbox);
+        ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(direct_session.evaluate()));
+        engine.calls = engine.work_calls = 0;
+        auto direct = block::execute_workchain_account_engine(engine, old.accounts,
+            std::get<block::AdmittedBatchInput>(direct_session.evaluate()));
+        ASSERT_TRUE(direct.is_error());
+        ASSERT_EQ(direct.error().code(), static_cast<int>(fault == 1
+            ? block::WorkchainExecutionFailure::CandidateInvalid : block::WorkchainExecutionFailure::LocalUnavailable));
+        ASSERT_EQ(engine.calls, 0u);
+        ASSERT_EQ(engine.work_calls, 1u);
+      }
+      engine.work_fault = 0;
+    }
     {
       block::tlb::Aug_OutMsgDescr augmentation(16);
       vm::AugmentedDictionary descriptors(256, augmentation);
@@ -4370,6 +4507,10 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     declarations.writes.push_back(key);
   }
   struct Engine final : block::WorkchainAccountEngine {
+    td::Result<std::uint64_t> proof_work(
+        const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&) const override {
+      return 0;  // This fixture performs no proof verification.
+    }
     mutable unsigned calls{0};
     mutable td::Ref<vm::Cell> seen_input;
     td::Bits256 a, b;
@@ -4434,11 +4575,18 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_TRUE(engine.seen_input->get_hash() != candidate->get_hash());
     ASSERT_EQ(complete.ok().effects.updates[1].data->get_hash(), number(102)->get_hash());
 
-    auto oversized_state_policy = full.policy().resources().state;
-    oversized_state_policy.max_account_depth = 70000;
+    auto oversized_resources = full.policy().resources();
+    oversized_resources.state.max_account_depth = 70000;
+    auto oversized_resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(
+        oversized_resources, full.policy().identity());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(oversized_resolved));
+    block::BatchInputAdmissionSession oversized_session(
+        std::get<block::ResolvedBatchInputPolicy>(oversized_resolved), candidate,
+        declaration_root, batch_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(oversized_session.evaluate()));
     engine.calls = 0;
-    auto oversized_policy = block::account_engine_detail::execute(engine, state.accounts, full.root(),
-        declarations, 2, 2, &oversized_state_policy);
+    auto oversized_policy = block::account_engine_detail::execute(engine, state.accounts,
+        std::get<block::AdmittedBatchInput>(oversized_session.evaluate()), declarations, 2, 2);
     ASSERT_TRUE(oversized_policy.is_error());
     ASSERT_EQ(oversized_policy.error().code(),
         static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
@@ -8236,6 +8384,11 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
 
 TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   struct Engine final : block::RegisteredWorkchainAccountEngine {
+    td::Result<std::uint64_t> proof_work(
+        const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&) const override {
+      return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                               "binding must not invoke proof preflight");
+    }
     block::WorkchainEngineKey key{block::WorkchainFormat::Basic, 0x434e5431};
     mutable unsigned config_calls = 0, execute_calls = 0;
     mutable td::Ref<vm::Cell> seen;

@@ -17,13 +17,15 @@ class BatchInputAdmissionSession;
 class AdmittedBatchInput {
  public:
   const td::Ref<vm::Cell>& root() const { return root_; }
+  const td::Ref<vm::Cell>& candidate() const { return candidate_; }
   const WorkchainInputUsage& usage() const { return usage_; }
   const ResolvedBatchInputPolicy& policy() const { return policy_; }
  private:
   friend class BatchInputAdmissionSession;
-  AdmittedBatchInput(td::Ref<vm::Cell> root, WorkchainInputUsage usage, ResolvedBatchInputPolicy policy)
-      : root_(std::move(root)), usage_(usage), policy_(std::move(policy)) {}
-  td::Ref<vm::Cell> root_;
+  AdmittedBatchInput(td::Ref<vm::Cell> root, td::Ref<vm::Cell> candidate,
+                     WorkchainInputUsage usage, ResolvedBatchInputPolicy policy)
+      : root_(std::move(root)), candidate_(std::move(candidate)), usage_(usage), policy_(std::move(policy)) {}
+  td::Ref<vm::Cell> root_, candidate_;
   WorkchainInputUsage usage_;
   ResolvedBatchInputPolicy policy_;
 };
@@ -189,7 +191,7 @@ class BatchInputAdmissionSession {
     auto root = wrapper.finalize_novm();
     auto charged = charge(root);
     if (charged.is_error()) return classify(charged);
-    return AdmittedBatchInput(std::move(root), usage, policy_);
+    return AdmittedBatchInput(std::move(root), roots[0], usage, policy_);
   }
 
   ResolvedBatchInputPolicy policy_;

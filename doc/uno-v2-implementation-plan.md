@@ -2757,3 +2757,99 @@ reads between that move and observer destruction; inserting one would invalidate
 the observer's reference to an intact meter. Such a change must instead end the
 observer's scope before moving the snapshot. No extra meter copy or public API
 is introduced for a read that the current path does not perform.
+
+### Private proof-work preflight connection (reviewed; live D31 incomplete)
+
+The account runner now receives the admitted batch object rather than separate
+root/state-policy arguments. Both private batch call sites retain that same cut;
+the retained prototype explicitly passes its raw root through the other template
+instantiation. The admission session retains the detached candidate reference
+used in its wrapper, so preflight needs neither a second candidate argument nor
+another envelope decode. A mandatory engine `proof_work(candidate, identity)` method
+performs bounded shape inspection only; there is no default zero implementation.
+The runner compares its result with authenticated `max_proof_units` before
+acquiring old state or calling execution. The prototype overload remains outside
+this batch preflight. All four concrete engine fixtures, including the disk
+binding probe, explicitly implement the new contract.
+
+No production work weights or SEND/COLLECT formula are installed here. They
+remain engine/admission-profile semantics, distinct from D28 fees; the test
+engine's zero/one units are fixture values with no cryptographic backend.
+Explicit malformed-shape errors are candidate failures. Exceptions and unknown
+error categories escaping the trusted preflight callback are local contract
+failures, not inferred candidate verdicts. Actual engine decoders must return
+candidate errors for malformed proof encodings, not throw across this boundary.
+The callback receives neither snapshots nor authenticated Native inbox data;
+this is an interface restriction, not a sandbox against arbitrary engine code.
+
+Positive tests cover zero/exact/one-over allowances, zero state-source reads and
+zero execution calls on overrun, candidate and policy identity, retained prototype
+isolation, and thirteen error/exception cases through both settlement and direct
+runner. The final expanded tree passes 111 block tests, 30 admission tests and
+the disk account-binding readiness test. Boundary follow-up review accepts this
+private interface and caller cut, not the complete D31 requirement.
+Live ordering before commitment and complete inbox, production unit definitions,
+actual crypto-backend accounting, and the live gates remain unimplemented. The
+private runner currently begins after its caller's inbox reconstruction, so its
+early state refusal alone cannot certify the complete section 9.3 ordering.
+
+Initial boundary-review disposition: the contract now explicitly requires a
+pure function of candidate bytes and authenticated profile identity and a
+conservative bound on every subsequent verification branch. This is not proved
+by a programmable test fixture: the production engine must establish cost
+correspondence and cross-build determinism before live acceptance. Duplicate
+envelope decoding was removed rather than adding a test for an unreachable
+error. The zero-read control now asserts one inspection and zero execution and
+also exercises successful reads with the same fixture at the allowed boundary.
+Known and unknown callback throws are contained in one catch-all; its scope
+passes no authenticated state view. A custom non-std throw and an invalid
+AuthenticatedStateCorrupt status exercise those contract failures.
+
+The requested zero-value distinction already appears in the resource-field
+inventory above: max_proof_units is mandatory on wire; zero is an explicit
+allowance for zero work, not omission or an unlimited default. The host does not
+infer engine-policy compatibility from that allowance. Installation of a
+production policy must still prove mandatory progress remains possible. No new
+owner numeric decision or default is installed by this private connection.
+
+Ten rebuilt one-site controls now fail and restore byte-exact, recorded in
+`measurements/uno-v2-proof-work-controls.json`: omitted allowance, rejecting an
+exact allowance, one premature state read (1 != 0), skipped inspection (0 != 1),
+lost identity (admission version 0 != 2), escaping callback exception, passing
+an unclassified status, hiding bad installed policy behind candidate overrun,
+retaining the original candidate source, and passing declarations as candidate.
+The source-owner control makes the original source unavailable after admission;
+the detached candidate remains readable without touching that original source.
+Identity fields are compared, but the single identity mutation is demonstrated
+at admission_version, not independently at every identity field. Each recorded
+substitution was recomputed in memory against the restored source and reproduced
+its archived mutant hash. These are manual controls, not automatic CI mutation
+jobs. The earlier final-checks artifact and ten controls retain their earlier
+test-file hash; they are not evidence that the later test additions were run at
+that hash.
+
+Follow-up review's test refinements are now included. A separate instrument
+counts settlement-entry state reads, with positive reads on successful execution
+and zero reads on overrun. The immutable old-root hash assertion was removed:
+it could not observe a premature read. Fault 13 explicitly returns
+LocalUnavailable rather than reaching that category only through normalization
+or exception containment. Two additional manual controls, recorded in
+`measurements/uno-v2-proof-work-followup-controls.json`, fail after successful
+compilation: inserting a settlement-entry read produces 1 != 0, and turning
+the explicit local status into CandidateInvalid produces -7200 != -7201.
+Each complete source file was restored byte-exact before the next mutation.
+
+`measurements/uno-v2-proof-work-followup-final-checks.json` records the expanded
+test source, final binaries, all three build targets, both suites, the disk
+readiness test and final source checks. All twelve substitutions are individually
+recomputed against the restored headers before submission. These results do not
+install production proof weights or open the live execution gates. The trusted
+engine's cost correspondence and deterministic shape decoder remain obligations
+of production registration; a programmable fixture cannot establish them.
+
+The follow-up review also correctly identified the escaping-exception control's
+mechanism: settlement's guarded_run catches only UnadmittedStateRead, so removing
+the proof callback catch-all allows VmError to escape settlement itself. It is
+not evidence that some outer settlement catch will contain engine exceptions.
+The natural admitted-envelope decode guard's untyped error remains a separate
+inventory item; this unit removed the duplicate decode, not that natural site.

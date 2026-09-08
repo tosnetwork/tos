@@ -190,8 +190,8 @@ inline td::Result<WorkchainAccountSettlement> execute(
           (expected_inbox.not_null() && claimed_inbox->get_hash() != expected_inbox->get_hash())) {
         return td::Status::Error("settlement inbox differs from admitted input");
       }
-      return account_engine_detail::execute(engine, old_accounts, admitted.root(), declarations,
-                                             max_reads, max_writes, &admitted.policy().resources().state);
+      return account_engine_detail::execute(engine, old_accounts, admitted, declarations,
+                                             max_reads, max_writes);
     } else {
       return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
           inbox.envelopes, max_reads, max_writes, max_inbound);
@@ -416,7 +416,8 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // preadmitted content-hash union. New full accounts also obey those per-account
 // limits. Their closures, AccountBlocks, final imports and export records share
 // a separate output meter, retained for later queue/shard update admission.
-// Repeated work, usage paths, proof units and complete output still need admission.
+// Declared proof work is checked before execution. Backend cost correspondence,
+// repeated work, remaining usage paths and complete output still need admission.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
