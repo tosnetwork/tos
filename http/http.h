@@ -219,13 +219,16 @@ class HttpRequest {
   static constexpr size_t low_watermark() {
     return 1 << 14;  // 16 KiB
   }
-  // A consumer that waits for the whole body before draining any of it
-  // deadlocks against this: the reader stops here for a consumer that is
-  // waiting for the reader. Anything reading a request body in one piece
-  // must therefore refuse bodies larger than this watermark before it
-  // starts waiting -- see kJsonRpcMaxRequestBodyBytes.
+  // Must equal max_payload_size(). The JSON-RPC consumer drains a request
+  // body only once it has fully arrived, so the reader must be allowed to
+  // buffer the whole declared maximum before it pauses here -- otherwise a
+  // body between the watermark and the Content-Length limit stalls the
+  // reader against a consumer that is waiting for the reader, the exact
+  // connection-pinning deadlock the Content-Length gate exists to prevent.
+  // Keeping the two equal makes the gate's threshold and the stall point
+  // coincide: every body the gate admits can be read to completion.
   static constexpr size_t high_watermark() {
-    return 1 << 17;  // 128 KiB
+    return 1 << 20;  // 1 MiB, == max_payload_size()
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
@@ -317,6 +320,13 @@ class HttpRequest {
   std::vector<HttpHeader> options_;
   std::string peer_ip_;
 };
+
+// The Content-Length gate admits bodies up to max_payload_size, and the
+// reader can buffer up to high_watermark before it pauses for the
+// consumer; if the gate admitted more than the reader can hold, a body in
+// the gap would stall forever. Keeping them equal is what prevents that.
+static_assert(HttpRequest::high_watermark() == HttpRequest::max_payload_size(),
+              "request high watermark must equal max payload, or admitted bodies can stall the reader");
 
 class HttpResponse {
  public:
