@@ -55,7 +55,16 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
   as.proof = f->proof_.clone();
   as.state = f->state_.clone();
   auto info_r = as.validate(blk_id, addr);
-  if (info_r.is_ok()) {
+  // A proof that does not check out is a failure to answer, not an answer.
+  // Falling through would hand back the default-constructed state, which
+  // reads as a real account holding nothing: a caller cannot tell that
+  // apart from an address that has never been used. An account that
+  // genuinely does not exist validates successfully with an empty root
+  // and still reaches the caller as "uninitialized".
+  if (info_r.is_error()) {
+    return info_r.move_as_error_prefix("account state proof did not validate: ");
+  }
+  {
     auto info = info_r.move_as_ok();
     res.last_trans_lt = info.last_trans_lt;
     res.last_trans_hash_b64 = td::base64_encode(info.last_trans_hash.as_slice());

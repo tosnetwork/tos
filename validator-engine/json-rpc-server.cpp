@@ -1390,9 +1390,14 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
   // TVM convention: `{ok, jsonrpc, id, result}`. The `ok` field is a
   // convenience wrapper the Python/JS test suite depends on; standards-
   // compliant JSON-RPC clients ignore unknown fields.
-  std::string body = PSTRING()
-      << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"result\":" << result_json << "}";
+  // A growable builder, not PSTRING: that one writes into a fixed
+  // 128 KiB stack buffer and silently stops there, so any result past
+  // that size was delivered cut in half — a body no client can parse,
+  // reported as success.
+  td::StringBuilder sb;
+  sb << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"result\":" << result_json << "}";
+  std::string body = sb.as_cslice().str();
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
@@ -1415,10 +1420,13 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
   // (test/json-rpc/*.py) asserts on both `ok` and the HTTP status.
   // For JSON-RPC envelope errors use `make_json_rpc_error` instead. It
   // emits the JSON-RPC 2.0 nested error shape with HTTP 200.
-  std::string body = PSTRING()
-      << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"error\":" << td::JsonString(td::Slice(message))
-      << ",\"code\":" << code << "}";
+  // Growable: an error message can carry echoed request content, and a
+  // fixed buffer would cut the escaped string mid-way.
+  td::StringBuilder sb;
+  sb << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"error\":" << td::JsonString(td::Slice(message))
+     << ",\"code\":" << code << "}";
+  std::string body = sb.as_cslice().str();
 
   int http_status = 200;
   std::string http_status_text = "OK";
@@ -1470,10 +1478,11 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
   if (id.empty()) id = "null";
   // JSON-RPC 2.0 error: `{jsonrpc, id, error:{code, message}}`, HTTP
   // 200 always.
-  std::string body = PSTRING()
-      << "{\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"error\":{\"code\":" << code
-      << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+  td::StringBuilder sb;
+  sb << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"error\":{\"code\":" << code
+     << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+  std::string body = sb.as_cslice().str();
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});

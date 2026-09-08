@@ -41,11 +41,25 @@ namespace {
 // Optional "limit" param: default 100, clamped to [1, 1000]. The index can be
 // inflated by third parties (anyone can send notification/spam transactions at
 // an account), so responses must stay bounded regardless of index size.
+// Rows a single index query may return. Each row is read from the index,
+// unpacked and re-serialized, and that work happens before anything else
+// on this thread can run, so the ceiling is a bound on how long one
+// caller can hold the server -- not just on how much it receives. A
+// caller that wants more pages for them through the continuation cursor.
+constexpr size_t kMaxIndexPageRows = 100;
+
+// Byte budget for the rows of one page. Row size is driven by the
+// account's own history, so a row count alone does not bound the work:
+// a hundred large transactions is a far bigger response than a hundred
+// small ones. Whichever ceiling is reached first ends the page, and the
+// cursor lets the caller continue from there.
+constexpr size_t kMaxIndexPageBytes = 4u << 20;
+
 size_t parse_limit_param(td::JsonObject &params) {
-  size_t limit = 100;
+  size_t limit = kMaxIndexPageRows;
   auto limit_r = params.get_optional_int_field("limit");
   if (limit_r.is_ok() && limit_r.ok() > 0) {
-    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), 1000);
+    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), kMaxIndexPageRows);
   }
   return limit;
 }
@@ -292,6 +306,13 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     auto append = [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
       ++seen;
       if (seen > limit) {
+        return td::Status::OK();
+      }
+      // Stop on the byte budget the same way as on the row count: mark
+      // the page short so the cursor below points at the last row that
+      // did fit, and the caller continues from there.
+      if (sb.as_cslice().size() >= kMaxIndexPageBytes) {
+        limit = seen - 1;
         return td::Status::OK();
       }
       if (!first) {

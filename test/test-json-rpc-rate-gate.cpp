@@ -18,6 +18,7 @@
 */
 #include "validator-engine/json-rpc-rate-gate.h"
 
+#include "td/utils/StringBuilder.h"
 #include "td/utils/tests.h"
 
 #include <string>
@@ -112,4 +113,21 @@ TEST(JsonRpcRateGate, zero_limit_or_window_disables_the_gate) {
     ASSERT_TRUE(no_limit.consume("198.51.100.7", at(1000.0)));
     ASSERT_TRUE(no_window.consume("198.51.100.7", at(1000.0)));
   }
+}
+
+// The response builders assemble bodies with a growable builder. The
+// fixed-buffer alternative in this codebase stops at 128 KiB and reports
+// no error, so a large result was delivered cut in half and answered
+// with "ok": a body no client can parse, presented as success.
+TEST(JsonRpcResponseBody, large_result_is_not_truncated) {
+  std::string payload(200 * 1024, 'x');
+
+  // PSTRING() here instead of the growable builder is what the fix
+  // replaced; swapping it back makes this test fail.
+  td::StringBuilder sb;
+  sb << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"" << payload << "\"}";
+  std::string body = sb.as_cslice().str();
+
+  ASSERT_TRUE(body.size() > payload.size());
+  ASSERT_TRUE(body.size() >= 2 && body.compare(body.size() - 2, 2, "\"}") == 0);
 }
