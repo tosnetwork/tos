@@ -2299,3 +2299,48 @@ The next step is integrating the pair into the full write-set overlay with
 multi-emitter scheduling and Native queue reconstruction. The old payout overlay
 still accepts only its existing single-emitter shape; no mixed-batch publication
 or M1 completion is claimed.
+
+### Complete admission for mixed disposal and payout (boundary reviewed)
+
+The existing mixed settlement and replay now have `AdmittedBatchInput` overloads.
+They derive read/write/inbound/transfer limits from that permit and retain its
+old-state meter; they accept no second declarations root. A duplicated Native
+context inbound allowance must match before any state load or engine invocation.
+Context mismatch is a local contract failure, not a candidate verdict. Context
+authentication and Native queue authentication remain enclosing host obligations.
+
+The integration fixture produces three outputs in one engine invocation and
+reconstructs an erased export cache. Five rebuilt removal controls fail: context
+classification, input commitment, Native inbox equality, authenticated old-state
+budget, and independently rebuilt effects. The context control changes the
+error class; the other four cause erroneous acceptance. Substitutions and logs
+are in `measurements/uno-v2-complete-disposal-controls.json`. These are one-time
+controls, not recurring mutation CI. Restored WorkchainBlock regression passes
+111 tests and the removed-domain scan passes. The production validator-engine
+target also builds. Prototype overloads remain intact.
+This closes a private call-chain gap, not live I13c/I13d: complete provenance,
+proof/output admission, D31 completion, D32 and live atomic publication remain
+outstanding.
+
+Review disposition (raw review is working material outside this repository):
+
+- Finding 1 accepted as a live prerequisite, not closed: `max_outbound` is still
+  supplied by the Native context and has no field in this admitted policy.
+  It must have a single authenticated or protocol-derived source before live
+  use. `max_transfers` is a different quantity and must not substitute for it.
+  This delivery adds neither a field nor a local/default numeric allowance.
+- Finding 2 accepted: the old-state acquisition scope is contained, but the
+  whole settlement/engine/encoding frame is not. Known exception classes must
+  be tested at their source-aware boundary before live authorization; a broad
+  candidate-error catch is not a fix. The present overloads retain this limit.
+- Finding 3 accepted for the provenance gap; a blanket reclassification is not
+  justified. Mismatch alone cannot identify which side is wrong. A wrong
+  candidate inbox and a missing authenticated host inbox need different
+  treatment. The new test proves early rejection and zero state/engine calls,
+  not authentication or a final source-specific verdict for this mismatch.
+- Finding 4 fixed above: D31 explicitly remains unfinished. The reviewer
+  independently ran all 111 tests and matched the three source hashes; the
+  production build was run by the implementer, not by the reviewer.
+
+All three residuals are prerequisites to opening the live execution gate; no
+private helper signature or passing replay fixture discharges them.

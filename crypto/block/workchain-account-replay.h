@@ -91,6 +91,26 @@ inline td::Result<WorkchainAccountSettlement> replay_workchain_account_settlemen
 
 inline td::Result<WorkchainAccountSettlement> replay_workchain_disposal_settlement(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const MaterializedNativeCells& native_cells, const td::Bits256& coordinator,
+    td::RefInt256 fee_budget, int extra_validation_cells,
+    const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context,
+    const WorkchainAccountSettlement& claimed) {
+  if (claimed.input.is_null() || claimed.effects.is_null() || claimed.state.accounts.is_null() ||
+      claimed.state.account_blocks.is_null() || claimed.imports.in_msg_descr.is_null()) {
+    return td::Status::Error("missing claimed disposal settlement artifacts");
+  }
+  if (claimed.input->get_hash() != admitted.root()->get_hash()) {
+    return td::Status::Error("claimed disposal input differs from admitted input");
+  }
+  TRY_RESULT(rebuilt, execute_and_settle_workchain_disposal(engine, std::move(old_accounts), identity,
+      admitted, native_cells, coordinator, std::move(fee_budget), extra_validation_cells, cfg, context));
+  TRY_STATUS(account_replay_detail::compare_rebuilt(rebuilt, claimed));
+  return rebuilt;
+}
+
+inline td::Result<WorkchainAccountSettlement> replay_workchain_disposal_settlement(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
     const WorkchainAccountDeclarations& declarations, const MaterializedNativeCells& native_cells,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers,

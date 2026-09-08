@@ -261,6 +261,26 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
 // Explicit post-admission disposal runner. Roles, limits and prices have one
 // source in context; native_cells owns the complete detached Native closures.
 // It is not registration, return authorization, or a final voting boundary.
+// Complete admission supplies every resource argument available in that cut.
+// The duplicated inbound count in the Native context must agree, not become
+// a second local allowance. Other context authentication remains the host's job.
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_disposal(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const MaterializedNativeCells& native_cells, const td::Bits256& coordinator,
+    td::RefInt256 fee_budget, int extra_validation_cells,
+    const SerializeConfig& cfg, const WorkchainDisposalEntryContext& context) {
+  const auto& limits = admitted.policy().resources();
+  if (context.max_inbound != limits.input.max_inbound) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "disposal context differs from admitted inbound policy");
+  }
+  return account_settlement_detail::execute(engine, std::move(old_accounts), identity, admitted,
+      nullptr, native_cells, limits.input.max_reads, limits.input.max_writes,
+      limits.input.max_inbound, limits.work_output.max_transfers, context.custody, coordinator,
+      std::move(fee_budget), extra_validation_cells, cfg, context.messages, &context);
+}
+
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_disposal(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedInput& admitted,

@@ -2678,6 +2678,82 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_EQ(engine.calls, 1u);
   ASSERT_EQ(joint_replay.ok().exports.size(), 3u);
   {
+    // The mixed payout/disposal path must consume the complete admission cut,
+    // not silently return to singleton permits or caller-supplied state limits.
+    auto complete_identity = batch_test_identity(number(1));
+    complete_identity.gen_utime = overlay_identity.gen_utime;
+    complete_identity.host_after_lt = overlay_identity.host_after_lt;
+    auto declaration_root = block::encode_workchain_account_declarations(access, 2, 2).move_as_ok();
+    auto policy = inbox_test_policy(5, {1000, 1000000, 8}, 2, 2);
+    block::BatchInputAdmissionSession session(policy, candidate, declaration_root, complete_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(session.evaluate()));
+    const auto& full = std::get<block::AdmittedBatchInput>(session.evaluate());
+    unsigned source_loads = 0;
+    td::Ref<vm::Cell> observed{td::Ref<StateReadCallbackCell>{true, old.accounts, [&] { ++source_loads; }}};
+    engine.calls = 0;
+    auto complete_result = block::execute_and_settle_workchain_disposal(engine, observed,
+        complete_identity, full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+    if (complete_result.is_error()) LOG(ERROR) << complete_result.error();
+    ASSERT_TRUE(complete_result.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_TRUE(source_loads > 0);
+    ASSERT_EQ(engine.seen->get_hash(), full.root()->get_hash());
+    ASSERT_EQ(complete_result.ok().exports.size(), 3u);
+    auto claim = complete_result.ok();
+    claim.exports.clear();
+    engine.calls = 0;
+    auto replayed = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
+        full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claim);
+    ASSERT_TRUE(replayed.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(replayed.ok().exports.size(), 3u);
+    ASSERT_EQ(replayed.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
+    ASSERT_EQ(replayed.ok().state.account_blocks->get_hash(), complete_result.ok().state.account_blocks->get_hash());
+    auto wrong_artifacts = complete_result.ok();
+    wrong_artifacts.effects = number(88);
+    engine.calls = 0;
+    auto wrong_effects = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
+        full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, wrong_artifacts);
+    ASSERT_TRUE(wrong_effects.is_error());
+    ASSERT_TRUE(!block::workchain_execution_requires_local_failure(wrong_effects.error()));
+    ASSERT_EQ(engine.calls, 1u);
+    auto wrong_context = joint_context;
+    wrong_context.max_inbound = 6;
+    engine.calls = source_loads = 0;
+    auto mismatch = block::execute_and_settle_workchain_disposal(engine, observed, complete_identity,
+        full, owned_inbox, a, td::make_refint(100), 4096, cfg, wrong_context);
+    ASSERT_TRUE(mismatch.is_error());
+    ASSERT_EQ(mismatch.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(engine.calls, 0u);
+    ASSERT_EQ(source_loads, 0u);
+    claim.input = number(99);
+    auto wrong_commitment = block::replay_workchain_disposal_settlement(engine, observed, complete_identity,
+        full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claim);
+    ASSERT_TRUE(wrong_commitment.is_error());
+    ASSERT_TRUE(!block::workchain_execution_requires_local_failure(wrong_commitment.error()));
+    ASSERT_EQ(engine.calls, 0u);
+    ASSERT_EQ(source_loads, 0u);
+    auto empty_native = own_native_fixture({});
+    auto missing_inbox = block::execute_and_settle_workchain_disposal(engine, observed, complete_identity,
+        full, empty_native, a, td::make_refint(100), 4096, cfg, joint_context);
+    ASSERT_TRUE(missing_inbox.is_error());
+    ASSERT_EQ(engine.calls, 0u);
+    ASSERT_EQ(source_loads, 0u);
+    auto resources = policy.resources();
+    resources.state.max_cells = 1;
+    auto bounded = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy.identity());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(bounded));
+    block::BatchInputAdmissionSession limited(std::get<block::ResolvedBatchInputPolicy>(bounded),
+        candidate, declaration_root, complete_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(limited.evaluate()));
+    auto refused = block::execute_and_settle_workchain_disposal(engine, observed, complete_identity,
+        std::get<block::AdmittedBatchInput>(limited.evaluate()), owned_inbox, a, td::make_refint(100),
+        4096, cfg, joint_context);
+    ASSERT_TRUE(refused.is_error());
+    ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+    ASSERT_EQ(engine.calls, 0u);
+  }
+  {
     // Exercise real Native dictionary/envelope encodings with simultaneous
     // emitters. The processing account and actual bounce source differ.
     block::tlb::Aug_OutMsgDescr augmentation(16);
