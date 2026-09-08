@@ -1113,20 +1113,23 @@ TEST(WorkchainBlock, BatchInputDeclarationSemanticsAndProvenance) {
   auto record = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
   auto read_leaf = vm::CellBuilder().store_long(6, 3).store_long(256, 9).store_ref(record).finalize();
   auto write_leaf = vm::CellBuilder().store_long(6, 3).store_long(256, 9).finalize();
+  auto short_read = vm::CellBuilder().store_long(6, 3).store_long(255, 8).store_ref(record).finalize();
+  auto short_write = vm::CellBuilder().store_long(6, 3).store_long(255, 8).finalize();
+  auto two_reads = vm::CellBuilder().store_long(0, 2).store_ref(short_read).store_ref(short_read).finalize();
+  auto two_writes = vm::CellBuilder().store_long(0, 2).store_ref(short_write).store_ref(short_write).finalize();
   auto valid = declaration(read_leaf, write_leaf);
   block::BatchInputAdmissionSession positive(inbox_test_policy(8, {100, 10000, 3}, 1, 1),
                                              empty, valid, batch_test_identity(empty), inbox);
   ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(positive.evaluate()));
   for (unsigned fault = 0; fault < 5; ++fault) {
     auto root = valid;
-    auto reads = 1u, writes = 1u;
-    if (fault == 0) reads = 0;
-    if (fault == 1) writes = 0;
+    if (fault == 0) root = declaration(two_reads, write_leaf);
+    if (fault == 1) root = declaration(read_leaf, two_writes);
     if (fault == 2) root = declaration(read_leaf, read_leaf);  // Write leaf must have no refs.
     if (fault == 3) root = declaration(vm::CellBuilder().finalize(), {});  // Truncated label throws VmError.
     if (fault == 4) root = declaration(vm::CellBuilder().store_long(6, 3).store_long(256, 9)
                                       .store_ref(empty).finalize(), {});  // Bad read record returns Status.
-    block::BatchInputAdmissionSession session(inbox_test_policy(8, {100, 10000, 3}, reads, writes),
+    block::BatchInputAdmissionSession session(inbox_test_policy(8, {100, 10000, 3}, 1, 1),
                                               empty, root, batch_test_identity(empty), inbox);
     const auto& result = session.evaluate();
     ASSERT_TRUE(std::holds_alternative<block::BatchInputAdmissionFailure>(result));
@@ -1142,6 +1145,19 @@ TEST(WorkchainBlock, BatchInputDeclarationSemanticsAndProvenance) {
   ASSERT_EQ(std::get<block::BatchInputAdmissionFailure>(result).category,
             block::WorkchainExecutionFailure::LocalUnavailable);
   ASSERT_EQ(loads, 1u);
+}
+
+TEST(WorkchainBlock, DeclarationSingleLeafZeroAllowance) {
+  auto record = vm::CellBuilder().store_long(0x439e6964, 32).store_long(0, 1).finalize();
+  auto leaf = vm::CellBuilder().store_long(6, 3).store_long(256, 9).store_ref(record).finalize();
+  vm::CellBuilder cb;
+  cb.store_long(0x7bc07a6d, 32);
+  ASSERT_TRUE(cb.store_maybe_ref(leaf) && cb.store_maybe_ref({}));
+  auto root = cb.finalize();
+  auto positive = block::inspect_workchain_account_declarations(root, 1, 0);
+  ASSERT_TRUE(positive.is_ok());
+  ASSERT_EQ(positive.ok().reads, 1u);
+  ASSERT_TRUE(block::inspect_workchain_account_declarations(root, 0, 0).is_error());
 }
 
 TEST(WorkchainBlock, BatchInputDeclarationCacheBindsRemainingWidth) {
@@ -6635,6 +6651,18 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2);
     ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2);
   }
+  // Every semantic zero is rejected at installation, before candidate admission.
+  for (unsigned field = 0; field < 3; ++field) {
+    block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
+        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+    if (field == 0) resources.input.max_reads = 0;
+    if (field == 1) resources.input.max_writes = 0;
+    if (field == 2) resources.input.max_inbound = 0;
+    policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
+    ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
+        block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+    ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()));
+  }
   // Missing either mandatory reference is rejected by the installation gate.
   for (unsigned refs = 0; refs < 2; ++refs) {
     vm::CellBuilder malformed;
@@ -6886,10 +6914,13 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
     ASSERT_TRUE(resolved.ok().authenticated_configuration->get_hash() == cut->get_root_cell()->get_hash());
   }
   const auto before_invalid_policy = observed->config_calls;
-  for (unsigned kind : {0u, 1u, 2u, 3u}) {
+  for (unsigned kind : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
     resource_policy.input.max_cells = kind == 0 ? 0 : 64;
     resource_policy.input.max_bits = kind == 1 ? 0 : 4096;
     resource_policy.input.max_roots = kind == 2 ? 0 : 8;
+    resource_policy.input.max_reads = kind == 4 ? 0 : 16;
+    resource_policy.input.max_writes = kind == 5 ? 0 : 16;
+    resource_policy.input.max_inbound = kind == 6 ? 0 : 5;
     resource_policy.admission_version = kind == 3 ? 0x10002 : 2;
     policy.engine_configuration = engine_parameters(37);
     auto invalid_cut = configuration(16, tos::capBlockTransition, &changed);

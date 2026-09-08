@@ -18,7 +18,11 @@ struct WorkchainResourcePolicy {
 };
 
 inline bool workchain_batch_input_bounds_nonzero(const WorkchainResourcePolicy& resources) {
-  return resources.input.max_cells && resources.input.max_bits && resources.input.max_roots;
+  // An executable batch profile must permit state access, state progress and
+  // Native ingress. Zero budgets are not a pause/retirement control. This is a
+  // necessary installation condition, not proof of full budget compatibility.
+  return resources.input.max_cells && resources.input.max_bits && resources.input.max_roots &&
+         resources.input.max_reads && resources.input.max_writes && resources.input.max_inbound;
 }
 
 inline bool workchain_batch_admission_version_supported(std::uint32_t version) {

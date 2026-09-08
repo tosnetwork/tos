@@ -89,6 +89,18 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+M6 minimum-hardware accounting must include auxiliary admission memory, not
+only retained input bits/cells: materializer source/detached graphs, map nodes
+and allocator overhead, traversal stacks, inbox sorting and collection arrays,
+and declaration memoization. Per declaration role there is at most one completed
+cache entry per physical trie cell plus 257 active frames; the more conservative
+257-times-cell bound must not be confused with observed reachable occupancy.
+Read/write caches are processed sequentially. Measure actual allocator/RSS
+peaks together with the other simultaneously live objects and worker concurrency
+before accepting authenticated max_cells on minimum hardware. Physical counting
+does constrain these structures indirectly; it does not itself establish a safe
+byte budget or justify a hidden local rejection threshold.
+
 1. Authenticated resource policy and whole-input admission. D31 in V2 section 12
    approves the three resource groups and `3 + N_inbound` logical roots. The
    accepted structure is described at
@@ -97,7 +109,7 @@ The dependency order below remains unchanged.
    object codec and derived tags are covered in
    [the wire boundary](uno-v2-resource-policy-wire.md); it remains unresolved
    wire data. The configuration boundary now checks framing, supported admission
-   version and three nonzero input limits through valid_config_data, with a
+   version and six nonzero input limits through valid_config_data, with a
    complete-config mutation control. Binding derives the typed policy and its
    identity from the same Config cut. Full limit compatibility and live whole-input
    admission remain unfinished; this is not completion of D31.
@@ -129,7 +141,9 @@ Revalidation on 2026-09-08: rebuilding `test-workchain-block` with `-j48`
 and running `--filter +NativeDisposalEntry --verbosity 0` passed one existing
 test (9.7073 ms reported by the harness). This is only the private integration
 fixture, not network synchronization, live publication or a capacity benchmark.
-No new test or new mutation evidence is claimed by this documentation update.
+That historical documentation-only update claimed no new mutation evidence.
+Subsequent implementation evidence is recorded separately below and in the
+resource-policy wire boundary document.
 
 Source audit at `df73ed000`, after the reviewed dual-ingress development
 snapshot; this section supersedes older per-component "next step" statements

@@ -1,0 +1,14 @@
+{
+  "scope": "Restored implementation; all six input limits nonzero. Necessary condition only, not complete configuration compatibility or live D31 acceptance.",
+  "source_sha256": "86e787c8e18e9e711b422f5a7789121d4c23182ae506b5a15564f96aad4ee46a  crypto/block/workchain-resource-policy.h\nde85ff9d03831af196350f649bc7ce17e6f7bcc7d53a5647b57807ee6ecde4d1  crypto/block/workchain-account-access-codec.h\n586a8be4f9ff42ca5e7435ea78f6bb0722cd5bdb2d3fc0f434b907e60b39dc85  crypto/test/test-workchain-admission.cpp\nb62a3f41c093c3cb23b93e6dfbcb6ad58432f624eec997ceea8957e2be61226a  crypto/test/test-workchain-block.cpp\n",
+  "regression": {
+    "chunk_id": "674da8",
+    "wall_time_seconds": 2.764932414,
+    "exit_code": 0,
+    "original_token_count": 98,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 37: test-workchain-block\n1/2 Test #37: test-workchain-block .............   Passed    2.88 sec\n    Start 38: test-workchain-admission\n2/2 Test #38: test-workchain-admission .........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 2\n\nTotal Test time (real) =   2.89 sec\n"
+  },
+  "negative_control_archive": "uno-v2-semantic-zero-config-red.json",
+  "negative_controls": "Three test-first failures on original implementation, not automated mutation CI.",
+  "direct_utility_control": "uno-v2-direct-zero-leaf-mutation.json"
+}

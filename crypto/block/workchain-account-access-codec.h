@@ -20,9 +20,11 @@ struct WorkchainDeclarationShape {
 // Shallow structural admission over an already acquired ordinary closure.
 // Do not enumerate keys here: a shared DAG can encode exponentially many keys.
 // Cache by hash AND remaining key width, separately for read/write semantics.
-// A successful subtree has one valid remaining width: forks require two refs,
-// read leaves one ref and write leaves zero. Reusing it at a different width
-// must fail at a leaf. Thus each role caches at most closure_cells completed
+// A successful subtree has one valid remaining width. Exact label consumption
+// makes child width strictly increase with parent width for a fixed fork cell;
+// exact leaf profiles pin one width, so uniqueness follows by induction.
+// Fork/leaf reference profiles must also remain disjoint. Thus each role caches
+// at most closure_cells completed
 // states, plus at most 257 active frames on the first failing path. A looser
 // bound independent of that disjointness is 257 * closure_cells states.
 // Logical multiplicity is still counted at both edges of a shared fork.

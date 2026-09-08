@@ -1,6 +1,7 @@
 #include <type_traits>
 
 #include "block/workchain-input-admission.h"
+#include "block/workchain-resource-policy.h"
 #include "block/workchain-native-materialization.h"
 #include "block/native-bounce-storage.h"
 #include "td/utils/tests.h"
@@ -147,6 +148,24 @@ TEST(WorkchainAdmission, ConfigurationFailureIsSeparate) {
   ASSERT_EQ(std::get<block::LocalUnavailable>(unsupported).code,
             block::LocalUnavailableCode::UnsupportedAdmissionVersion);
 }
+
+void check_batch_semantic_zero(unsigned field) {
+  block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+  block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 2};
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(
+      block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity)));
+  if (field == 0) resources.input.max_reads = 0;
+  if (field == 1) resources.input.max_writes = 0;
+  if (field == 2) resources.input.max_inbound = 0;
+  auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
+  ASSERT_TRUE(std::holds_alternative<block::ConfigInvalid>(result));
+  ASSERT_EQ(std::get<block::ConfigInvalid>(result).code, block::ConfigInvalidCode::ZeroLimit);
+}
+
+TEST(WorkchainAdmission, BatchZeroReadsIsConfigurationFailure) { check_batch_semantic_zero(0); }
+TEST(WorkchainAdmission, BatchZeroWritesIsConfigurationFailure) { check_batch_semantic_zero(1); }
+TEST(WorkchainAdmission, BatchZeroInboundIsConfigurationFailure) { check_batch_semantic_zero(2); }
 
 TEST(WorkchainAdmission, AdmissionVersionIsNotTruncated) {
   block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 1};

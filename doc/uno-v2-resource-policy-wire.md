@@ -112,10 +112,15 @@ while the legacy API preserves its original code. Uniform zero/one hash-prefix
 fixtures exercise canonical same-bit labels independently of random coverage.
 The source uses fixed-width geometric bounds rather than an unreachable generic
 cell-write guard. Both paths are host construction, not interpreter execution.
-Installation/transition compatibility with required system-message progress,
-including zero `max_inbound`, remains an activation prerequisite. This unit
-does not declare all representable resource combinations safe to install, nor
-turn an authenticated zero limit into a local acquisition failure or a default.
+Installation/transition compatibility with required system-message progress
+remains an activation prerequisite. Executable admission version 2 now rejects
+zero in all six input fields, including reads, writes and inbound: disabling
+state access or Native ingress is not a substitute for lifecycle controls.
+The wire codec still represents zero for diagnosis; installation rejects it,
+policy construction returns ConfigInvalid, and an already authenticated bad
+cut is AuthenticatedStateCorrupt at registry binding, not CandidateInvalid.
+Positivity is necessary, not proof that every positive combination can serve
+the required messages, wrappers and state changes.
 
 Batch-session structural-boundary review disposition: the claim that removing the
 session's logical-root guard leaves its test green is disputed by a rebuilt
@@ -140,24 +145,46 @@ not close those semantic checks or the later state/work/output admission gates.
 
 Follow-up review confirmed the pre-commitment expansion is removed and identified
 a tighter structural argument: within each role, a subtree can finish at only
-one remaining width, because forks have two refs while read/write leaves have
-one/zero. The completed cache therefore has at most one entry per physical cell,
+one remaining width. This needs both disjoint fork/leaf reference profiles and
+exact label consumption, not reference counts alone. Let m be remaining width,
+n the encoded label length and k=ceil(log2(m+1)). Short labels fix n independently
+of m. For a fork, exact bit consumption fixes k for same labels (and then n);
+for long labels it fixes k+n, so increasing m cannot decrease m-n-1. In fact
+the child width strictly increases. Induction from leaves then excludes a fork
+succeeding at two widths. Leaves require n=m: short labels fix m, same labels
+fix k and encoded n, and long-label size 2+k+m strictly increases with m.
+Relaxing exact label consumption or the leaf profile requires re-proving this
+bound. The completed cache therefore has at most one entry per physical cell,
 plus at most 257 active frames on the first failing path. The 257-times bound
 above is conservative, not the expected reachable footprint. Logical count
 limits apply on unwinding; this structural bound, not a small count limit,
 protects the traversal itself.
 
-Session-level tests now cover nonempty reads and writes, zero leaf allowances,
+At d2af972ec, session-level tests covered nonempty reads and writes, zero leaf allowances,
 malformed read/write leaves, thrown label errors and local acquisition failure.
 A shared cell reached at two widths must reject: collapsing the cache key to
 hash-only makes that test accept and fail (exit 1). Changing the candidate
 dictionary VmError catch to a local failure also fails its typed-category test
 (exit 1). Raw controls are in `measurements/uno-v2-declaration-width-mutation.json`
 and `measurements/uno-v2-declaration-category-mutation.json`; these are manual
-controls, not recurring CI mutation jobs. Removing the zero leaf allowance guard
-or disabling write-leaf shape validation independently makes the same session
-test incorrectly admit input and exit 1. Their raw outputs are recorded in
+controls, not recurring CI mutation jobs. At that commit, removing the zero leaf
+allowance guard or disabling write-leaf shape validation independently made the
+same session test incorrectly admit input and exit 1. Their raw outputs are recorded in
 `measurements/uno-v2-declaration-leaf-mutations.json`. These close the follow-up
 review's requested session controls; they do not establish live D31 acceptance.
+The zero-leaf session controls above describe commit d2af972ec, where zero
+semantic limits were representable as resolved policies. With the stricter
+configuration gate, session count controls instead use two keys under a legal
+limit of one; separate typed configuration tests reject each semantic zero.
+Their three test-first failures are in `measurements/uno-v2-semantic-zero-config-red.json`.
+The direct utility still accepts an explicit zero allowance as an argument and
+must reject a nonempty leaf under it. Its dedicated control fails when the leaf
+guard is removed: `measurements/uno-v2-direct-zero-leaf-mutation.json`.
+Zero inbound still permits internal reads/writes. Its rejection is deliberately
+a V2 service-profile restriction: lifecycle pause/retirement must preserve Native
+system-message service, not emulate closure through a zero admission allowance.
+It is not the same no-state-progress argument as zero reads or writes.
+The historical artifacts remain unchanged and must not be cited as tests of
+the newer configuration policy.
 The live collection, provenance, old-state, proof-work and ordering requirements
 remain unchecked in `uno-v2-implementation-plan.md`.
