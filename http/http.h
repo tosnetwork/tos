@@ -194,14 +194,6 @@ class HttpRequest {
   // whole request-header window; parse() enforces max_header_size() here.
   size_t total_headers_size_ = 0;
 
-  // Round 152 HIGH fix: bumped from 1 MiB to 4 MiB to match
-  // kJsonRpcMaxRequestBodyBytes in validator-engine/json-rpc-server.
-  // cpp.  Pre-fix a legitimate uno_sendTransfer payload (~2.3 MiB
-  // hex+JSON for a 4/4 worst-case shape) exceeded the HTTP-layer
-  // payload max but the JSON-RPC layer accepted it; bodies in
-  // (1 MiB, 4 MiB] never completed because the HTTP reader paused
-  // at the prior 1 MiB watermark and the application "too large"
-  // path never fired — pinning connections.  The new
   // Back to the upstream sizes. These were raised for payloads that no
   // longer exist: a hex-encoded STARK proof and a worst-case transfer from
   // the custom workchains, both removed with those workchains. What
