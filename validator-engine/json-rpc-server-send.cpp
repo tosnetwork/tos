@@ -44,7 +44,7 @@ namespace tos {
 static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
 
 void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
-                                   td::Promise<HttpReturn> promise) {
+                                   const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -68,7 +68,7 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -630,7 +630,7 @@ static std::string build_submission_result_json(bool accepted, const std::string
 // ─── sendBocReturnHash ──────────────────────────────────────────────────
 
 void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
-                                             td::Promise<HttpReturn> promise) {
+                                             const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -663,7 +663,7 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -1049,7 +1049,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
 // (not the RPC layer) is the authoritative enforcer of signature and
 // permission checks.
 void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
-                                                   td::Promise<HttpReturn> promise) {
+                                                   const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto signed_b64_r = extract_signed_artifact_b64(params);
   if (signed_b64_r.is_error()) {
     promise.set_value(make_json_error(-32602,
@@ -1085,7 +1085,7 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), hash_b64 = std::move(hash_b64), signer = std::move(signer),
        submitter = std::move(submitter), fee_payer = std::move(fee_payer),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
@@ -1113,7 +1113,7 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
 // Build external message from address + body + optional init, then send
 
 void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
-                                     td::Promise<HttpReturn> promise) {
+                                     const std::string &source_ip, td::Promise<HttpReturn> promise) {
   // Parse destination address
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
@@ -1173,6 +1173,15 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     promise.set_value(make_json_error(-32603, "Failed to serialize message", req_id));
     return;
   }
+  // The parts were each checked against the ceiling on the way in, but this
+  // is the message that actually goes to the network, and assembling the
+  // parts makes it larger than any of them. Check what is being sent.
+  if (msg_boc_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(
+        -32602, PSTRING() << "Assembled message too large: " << msg_boc_r.ok().size() << " bytes, max " << kMaxBocSize,
+        req_id));
+    return;
+  }
 
   // Compute message hash
   auto msg_hash_b64 = td::base64_encode(msg_cell->get_hash(0).as_slice());
@@ -1183,7 +1192,7 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -1465,7 +1474,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 // The hash is still computed and included even on failure.
 
 void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std::string req_id,
-                                                    td::Promise<HttpReturn> promise) {
+                                                    const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -1498,7 +1507,7 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {

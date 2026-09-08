@@ -144,7 +144,14 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
  public:
   struct Options {
     bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery/submitSignedTransaction
-    std::string cors_origin = "*";   // Access-Control-Allow-Origin value
+    // Access-Control-Allow-Origin value; empty emits no header at all,
+    // which is the default. A wildcard lets any page the operator visits
+    // read this node's replies, and on the loopback deployment that
+    // listen() blesses for write access it lets that page drive the
+    // write methods too: a plain-text POST is a simple request, so no
+    // preflight stands in the way. Operators who want browser access
+    // name the origin they mean.
+    std::string cors_origin;
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
@@ -315,7 +322,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                             td::Promise<HttpReturn> promise);
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
-                      td::Promise<HttpReturn> promise);
+                      const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,
@@ -362,9 +369,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   // Method handlers — send family
   void handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
-                                td::Promise<HttpReturn> promise);
+                                const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_sendQuery(td::JsonObject &params, std::string req_id,
-                        td::Promise<HttpReturn> promise);
+                        const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_estimateFee(td::JsonObject &params, std::string req_id,
                           td::Promise<HttpReturn> promise);
 
@@ -410,7 +417,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void handle_getSigningPayload(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
   void handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
-                                      td::Promise<HttpReturn> promise);
+                                      const std::string &source_ip, td::Promise<HttpReturn> promise);
 
   // Method handlers — account/permission lifecycle surfaces
   void handle_grantAccountDelegation(td::JsonObject &params, std::string req_id,
@@ -446,7 +453,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void handle_runGetMethodStd(td::JsonObject &params, std::string req_id,
                               td::Promise<HttpReturn> promise);
   void handle_sendBocReturnHashNoError(td::JsonObject &params, std::string req_id,
-                                       td::Promise<HttpReturn> promise);
+                                       const std::string &source_ip, td::Promise<HttpReturn> promise);
 
   // Readiness probe (async — queries liteserver for sync state)
   void handle_readyz(td::Promise<HttpReturn> promise);
@@ -454,6 +461,15 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Send a TL-serialized liteserver query to the validator manager
   void send_liteserver_query(td::BufferSlice query,
                              td::Promise<td::BufferSlice> promise);
+  // As above, attributing the query to a source so the mempool's
+  // per-origin external-message window applies. Read paths do not need
+  // this; message submission does. Named apart from the overload above so
+  // taking a member pointer for send_closure stays unambiguous.
+  void send_attributed_liteserver_query(td::BufferSlice query, adnl::AdnlNodeIdShort source,
+                                        td::Promise<td::BufferSlice> promise);
+  // Stable per-client id derived from the caller's address, used only as
+  // the attribution above.
+  static adnl::AdnlNodeIdShort submission_source_id(const std::string &source_ip);
 
   // Utility: build JSON-RPC responses.
   //

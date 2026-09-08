@@ -6492,7 +6492,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "json-rpc-readonly", "disable write methods (sendBoc, sendQuery) on JSON-RPC server", [&]() {
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
   });
-  p.add_checked_option('\0', "json-rpc-cors-origin", "CORS origin for JSON-RPC server (default: *)", [&](td::Slice arg) {
+  p.add_checked_option('\0', "json-rpc-cors-origin",
+                       "CORS origin for the JSON-RPC server (default: unset, no CORS header is sent)",
+                       [&](td::Slice arg) {
     std::string origin{arg.data(), arg.size()};
     acts.push_back([&x, origin] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin); });
     return td::Status::OK();

@@ -292,24 +292,12 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
-  if (!is_loopback && opts_.cors_origin == "*" && !opts_.readonly) {
-    LOG(WARNING) << "JSON-RPC: serving non-loopback address " << addr
-                 << " with CORS Access-Control-Allow-Origin=\"*\" while write "
-                 << "methods are enabled. Set --json-rpc-cors-origin to a "
-                 << "specific origin in production.";
-  }
-  if (!is_loopback && opts_.cors_origin != "*") {
-    // Warn that the configured restrictive
-    // origin is not enforced on every response path — many handlers still
-    // emit Access-Control-Allow-Origin: * via the static helper defaults.
-    // See JsonRpcServer::make_* doc-comment in the header. Until that
-    // migration lands, treat this server's responses as world-readable from
-    // any browser origin.
-    LOG(WARNING) << "JSON-RPC: --json-rpc-cors-origin is set to \""
-                 << opts_.cors_origin << "\", but the response helpers still "
-                 << "default to \"*\" on most call sites. Browsers from any "
-                 << "origin can read responses until the threading migration "
-                 << "is complete (see header comment on JsonRpcServer::make_*).";
+  if (opts_.cors_origin == "*") {
+    LOG(WARNING) << "JSON-RPC: --json-rpc-cors-origin is \"*\", so any web page "
+                 << "the operator visits can read this node's replies"
+                 << (opts_.readonly ? "." : " and drive its write methods.")
+                 << " Name the origin you mean, or leave it unset to send no "
+                 << "CORS header at all.";
   }
 }
 
@@ -478,7 +466,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
     auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
     response->add_header({"Content-Type", "application/json"});
-    response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
+    if (!opts_.cors_origin.empty()) {
+      response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
+    }
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
 
@@ -1205,7 +1195,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
 
   // Existing methods
   if (method == "sendBoc") {
-    handle_sendBoc(params, std::move(req_id), std::move(promise));
+    handle_sendBoc(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "getConfigParam") {
     handle_getConfigParam(params, std::move(req_id), std::move(promise));
   } else if (method == "getAddressInformation") {
@@ -1267,9 +1257,9 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     handle_getShardBlockProof(params, std::move(req_id), std::move(promise));
   // Send family
   } else if (method == "sendBocReturnHash") {
-    handle_sendBocReturnHash(params, std::move(req_id), std::move(promise));
+    handle_sendBocReturnHash(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "sendQuery") {
-    handle_sendQuery(params, std::move(req_id), std::move(promise));
+    handle_sendQuery(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "estimateFee") {
     handle_estimateFee(params, std::move(req_id), std::move(promise));
   } else if (method == "buildTransactionIntent") {
@@ -1277,7 +1267,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   } else if (method == "getSigningPayload") {
     handle_getSigningPayload(params, std::move(req_id), std::move(promise));
   } else if (method == "submitSignedTransaction") {
-    handle_submitSignedTransaction(params, std::move(req_id), std::move(promise));
+    handle_submitSignedTransaction(params, std::move(req_id), source_ip, std::move(promise));
   // Convenience / address APIs
   } else if (method == "getAddressBalance") {
     handle_getAddressBalance(params, std::move(req_id), std::move(promise));
@@ -1314,7 +1304,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   } else if (method == "runGetMethodStd") {
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
-    handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
+    handle_sendBocReturnHashNoError(params, std::move(req_id), source_ip, std::move(promise));
   }
   else {
     // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
@@ -1326,8 +1316,28 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
 
 // ─── Liteserver query forwarding ──────────────────────────────────────────
 
+adnl::AdnlNodeIdShort JsonRpcServer::submission_source_id(const std::string &source_ip) {
+  // The mempool throttles external messages per originating peer, and it
+  // reads that peer from the query's source id. A query forwarded with no
+  // source is admitted unthrottled, so submissions arriving over HTTP were
+  // exempt from a limit the ADNL path has always had. Give each client
+  // address a stable id of its own so it meets the same window; an
+  // unattributed caller keeps the historical zero id.
+  if (source_ip.empty()) {
+    return adnl::AdnlNodeIdShort::zero();
+  }
+  td::Bits256 digest;
+  td::sha256(td::Slice("json-rpc-submission:" + source_ip), digest.as_slice());
+  return adnl::AdnlNodeIdShort{digest};
+}
+
 void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
                                           td::Promise<td::BufferSlice> promise) {
+  send_attributed_liteserver_query(std::move(query), adnl::AdnlNodeIdShort::zero(), std::move(promise));
+}
+
+void JsonRpcServer::send_attributed_liteserver_query(td::BufferSlice query, adnl::AdnlNodeIdShort source,
+                                                     td::Promise<td::BufferSlice> promise) {
   // Innermost layer: translate liteserver errors and run the handler's
   // continuation. The continuation parses data that ultimately comes from
   // the chain (account data, get-method results, proofs), and the cell and
@@ -1366,7 +1376,7 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
   }
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
-                          adnl::AdnlNodeIdShort::zero(), std::move(query), std::move(promise));
+                          source, std::move(query), std::move(promise));
 }
 
 // ─── JSON response construction ───────────────────────────────────────────
@@ -1375,7 +1385,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::strin
                                                                 const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
   auto payload = response->create_empty_payload().move_as_ok();
@@ -1401,7 +1413,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1448,7 +1462,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
 
   auto response = http::HttpResponse::create("HTTP/1.1", http_status, std::move(http_status_text), false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1462,7 +1478,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
 JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1486,7 +1504,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1499,7 +1519,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Content-Length", "0"});
   response->complete_parse_header();
 
@@ -1513,7 +1535,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string bo
                                                                    const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1538,7 +1562,9 @@ std::string JsonRpcServer::extract_response_body(HttpReturn& ret) {
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Access-Control-Allow-Methods", "POST, GET, OPTIONS"});
   response->add_header({"Access-Control-Allow-Headers", "Content-Type, X-API-Key"});
   response->add_header({"Access-Control-Max-Age", "86400"});
@@ -1558,7 +1584,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code,
   auto response = http::HttpResponse::create("HTTP/1.1", status_code,
                                              std::move(status_text), false, false).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1577,7 +1605,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::strin
   auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized",
                                              false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
