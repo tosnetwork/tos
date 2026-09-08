@@ -700,6 +700,7 @@ class PreflightObservedCell final : public vm::Cell {
   bool is_virtualized() const override { return cell_->is_virtualized(); }
   vm::CellUsageTree::NodePtr get_tree_node() const override { return {}; }
   bool is_loaded() const override { return !unavailable_; }
+  void set_unavailable(bool value) const { unavailable_ = value; }
   LevelMask get_level_mask() const override { return cell_->get_level_mask(); }
 
  private:
@@ -707,7 +708,7 @@ class PreflightObservedCell final : public vm::Cell {
   td::uint16 do_get_depth(td::uint32 level) const override { return cell_->get_depth(level); }
   td::Ref<vm::Cell> cell_;
   unsigned* loads_;
-  bool unavailable_;
+  mutable bool unavailable_;
   unsigned throw_at_;
 };
 
@@ -738,6 +739,163 @@ TEST(WorkchainBlock, ResourcePolicyLocalLoadFailure) {
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
+}
+
+TEST(WorkchainBlock, StateReadMeterProofTracking) {
+  auto leaf = number(9);
+  auto left = vm::CellBuilder().store_long(1, 8).store_ref(leaf).finalize();
+  auto right = vm::CellBuilder().store_long(2, 8).store_ref(leaf).finalize();
+  auto root = vm::CellBuilder().store_ref(left).store_ref(right).store_ref(number(99)).finalize();
+  auto read_proof = [&](bool metered) {
+    vm::MerkleProofBuilder proof(root);
+    block::NativeStateReadMeter meter(4, 80);
+    unsigned callbacks = 0;
+    proof.set_cell_load_callback([&](const vm::LoadedCell&) { ++callbacks; });
+    auto load = [&](const td::Ref<vm::Cell>& cell) -> td::Ref<vm::CellSlice> {
+      if (!metered) return vm::load_cell_slice_ref(cell);
+      auto result = meter.load_ordinary(cell);
+      ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(result));
+      return std::get<td::Ref<vm::CellSlice>>(std::move(result));
+    };
+    auto top = load(proof.root());
+    for (unsigned i : {0u, 1u, 0u}) {
+      auto branch = load(top->prefetch_ref(i));
+      ASSERT_EQ(branch->prefetch_ulong(8), i + 1);
+      ASSERT_EQ(load(branch->prefetch_ref())->prefetch_ulong(64), 9u);
+    }
+    if (metered) {
+      ASSERT_EQ(meter.usage().cells, 4u);
+      ASSERT_EQ(meter.usage().bits, 80u);
+    }
+    auto encoded = proof.extract_proof_boc();
+    ASSERT_TRUE(encoded.is_ok());
+    return std::make_pair(encoded.move_as_ok(), callbacks);
+  };
+  auto unmetered = read_proof(false);
+  auto metered = read_proof(true);
+  ASSERT_EQ(unmetered.first.as_slice(), metered.first.as_slice());
+  // Root, two branches, two paths to the same leaf. Check proof bytes first:
+  // dropping usage provenance must be caught as a changed consensus artifact.
+  ASSERT_EQ(unmetered.second, 5u);
+  ASSERT_EQ(metered.second, 5u);
+
+  vm::MerkleProofBuilder accounting_proof(root);
+  std::vector<vm::CellHash> visit_order;
+  accounting_proof.set_cell_load_callback([&](const vm::LoadedCell& cell) {
+    visit_order.push_back(cell.data_cell->get_hash());
+  });
+  block::NativeStateReadMeter accounting_meter(5, 144);
+  auto accounting = block::read_workchain_account_closure(accounting_proof.root(), accounting_meter, 5, 144, 2);
+  ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(accounting));
+  const std::vector<vm::CellHash> expected_order{
+      root->get_hash(), left->get_hash(), leaf->get_hash(), right->get_hash(), number(99)->get_hash()};
+  ASSERT_EQ(visit_order.size(), expected_order.size());
+  for (std::size_t i = 0; i < expected_order.size(); ++i) ASSERT_EQ(visit_order[i], expected_order[i]);
+
+  unsigned loads = 0;
+  td::Ref<PreflightObservedCell> observed{true, leaf, &loads};
+  block::NativeStateReadMeter no_cells(0, 64);
+  auto cell_denied = no_cells.load_ordinary(observed);
+  ASSERT_TRUE(std::holds_alternative<block::NativeClosureLimit>(cell_denied));
+  ASSERT_EQ(std::get<block::NativeClosureLimit>(cell_denied), block::NativeClosureLimit::Cells);
+  ASSERT_EQ(loads, 0u);
+  ASSERT_EQ(std::get<block::NativeClosureLimit>(no_cells.load_ordinary(root)), block::NativeClosureLimit::Cells);
+  block::NativeStateReadMeter no_bits(1, 63);
+  auto bit_denied = no_bits.load_ordinary(observed);
+  ASSERT_TRUE(std::holds_alternative<block::NativeClosureLimit>(bit_denied));
+  ASSERT_EQ(std::get<block::NativeClosureLimit>(bit_denied), block::NativeClosureLimit::Bits);
+  ASSERT_EQ(loads, 1u);
+  ASSERT_EQ(std::get<block::NativeClosureLimit>(no_bits.load_ordinary(observed)), block::NativeClosureLimit::Bits);
+  ASSERT_EQ(loads, 1u);
+  block::NativeStateReadMeter repeat(1, 64);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(repeat.load_ordinary(observed)));
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(repeat.load_ordinary(observed)));
+  ASSERT_EQ(loads, 3u);  // Deduplicated charging must not cache source loads.
+  ASSERT_EQ(repeat.usage().cells, 1u);
+  ASSERT_EQ(repeat.usage().bits, 64u);
+  td::Ref<PreflightObservedCell> interrupted{true, leaf, &loads, false, 4};
+  block::NativeStateReadMeter failing(1, 64);
+  bool threw = false;
+  try { (void)failing.load_ordinary(interrupted); } catch (const vm::VmVirtError&) { threw = true; }
+  ASSERT_TRUE(threw);
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(failing.load_ordinary(interrupted)));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(failing.load_ordinary(interrupted)).code,
+            block::LocalUnavailableCode::CellUnavailable);
+  ASSERT_EQ(loads, 4u);
+  auto proof = vm::MerkleProof::generate(root, [&](const td::Ref<vm::Cell>& node) {
+    return node->get_hash() == left->get_hash();
+  }).move_as_ok();
+  auto virtual_root = vm::MerkleProof::virtualize(proof).move_as_ok();
+  auto pruned = vm::load_cell_slice(virtual_root).prefetch_ref(0);
+  block::NativeStateReadMeter missing_content(100, 10000);
+  auto missing = missing_content.load_encoded(pruned);
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(missing));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(missing).code, block::LocalUnavailableCode::CellUnavailable);
+  auto library = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  block::NativeStateReadMeter opaque(1, 264), ordinary_only(1, 264);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(opaque.load_encoded(library)));
+  ASSERT_EQ(std::get<block::LocalUnavailable>(ordinary_only.load_ordinary(library)).code,
+            block::LocalUnavailableCode::CellIdentity);
+
+  auto encoded_proof = vm::MerkleProof::generate(root, [](const td::Ref<vm::Cell>&) { return true; }).move_as_ok();
+  bool is_special = false;
+  auto native_proof = vm::load_cell_slice_special(encoded_proof, is_special);
+  ASSERT_TRUE(is_special);
+  auto encoded_stub = native_proof.prefetch_ref();
+  auto native_stub = vm::load_cell_slice_special(encoded_stub, is_special);
+  ASSERT_TRUE(is_special);
+  ASSERT_EQ(native_stub.special_type(), vm::Cell::SpecialType::PrunnedBranch);
+  ASSERT_EQ(native_stub.size_refs(), 0u);
+  ASSERT_EQ(native_proof.size(), 280u);
+  ASSERT_EQ(native_stub.size(), 288u);
+  block::NativeStateReadMeter encoded_meter(2, 568);
+  auto encoded_closure = block::read_workchain_account_closure(encoded_proof, encoded_meter, 2, 568, 1);
+  ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(encoded_closure));
+  ASSERT_EQ(encoded_meter.usage().cells, 2u);
+  ASSERT_EQ(encoded_meter.usage().bits, 568u);
+  // Virtualizing the same proof requests hidden content, not encoded storage.
+  auto hidden_root = vm::MerkleProof::virtualize(encoded_proof).move_as_ok();
+  block::NativeStateReadMeter hidden_meter(2, 568);
+  auto hidden = hidden_meter.load_encoded(hidden_root);
+  ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(hidden));
+  ASSERT_EQ(hidden_meter.usage().cells, 0u);
+
+  block::NativeStateReadMeter total(3, 80);
+  for (const auto& account : {left, right}) {
+    auto read = block::read_workchain_account_closure(account, total, 2, 72, 1);
+    ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(read));
+    ASSERT_EQ(std::get<block::WorkchainInputUsage>(read).cells, 2u);
+    ASSERT_EQ(std::get<block::WorkchainInputUsage>(read).bits, 72u);
+  }
+  ASSERT_EQ(total.usage().cells, 3u);
+  ASSERT_EQ(total.usage().bits, 80u);
+  auto local_cells = block::read_workchain_account_closure(right, total, 1, 72, 1);
+  ASSERT_EQ(std::get<block::WorkchainAccountClosureLimit>(local_cells).kind,
+            block::WorkchainAccountClosureLimit::Cells);
+  auto local_bits = block::read_workchain_account_closure(right, total, 2, 71, 1);
+  ASSERT_EQ(std::get<block::WorkchainAccountClosureLimit>(local_bits).kind,
+            block::WorkchainAccountClosureLimit::Bits);
+  auto local_depth = block::read_workchain_account_closure(right, total, 2, 72, 0);
+  ASSERT_EQ(std::get<block::WorkchainAccountClosureLimit>(local_depth).kind,
+            block::WorkchainAccountClosureLimit::Depth);
+  for (unsigned depth : {12u, 20u}) {
+    auto diamond = number(9);
+    for (unsigned i = 0; i < depth; ++i) diamond = vm::CellBuilder().store_ref(diamond).store_ref(diamond).finalize();
+    vm::MerkleProofBuilder tracked(diamond);
+    unsigned visits = 0;
+    tracked.set_cell_load_callback([&](const vm::LoadedCell&) { ++visits; });
+    // Fixture depths are at most 20, so depth + 1 is representable.
+    block::NativeStateReadMeter bounded(depth + 1, 64);
+    auto closure = block::read_workchain_account_closure(tracked.root(), bounded, depth + 1, 64, 20);
+    ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(closure));
+    ASSERT_EQ(visits, depth + 1);
+    ASSERT_EQ(std::get<block::WorkchainInputUsage>(closure).cells, depth + 1);
+    // Proof generation closes the visited set by content hash, not usage path.
+    // Read the opposite edge at every level, although accounting first took 0.
+    auto reconstructed = vm::MerkleProof::virtualize(tracked.extract_proof().move_as_ok()).move_as_ok();
+    for (unsigned i = 0; i < depth; ++i) reconstructed = vm::load_cell_slice(reconstructed).prefetch_ref(1);
+    ASSERT_EQ(vm::load_cell_slice(reconstructed).prefetch_ulong(64), 9u);
+  }
 }
 
 block::MaterializedNativeCells own_native_fixture(const std::vector<td::Ref<vm::Cell>>& roots) {
@@ -3282,6 +3440,56 @@ TEST(WorkchainBlock, NativeCoordinatorEntry) {
   ASSERT_TRUE(interrupted.balance == coordinator.balance);
 }
 
+TEST(WorkchainBlock, MeteredAccountLookupProof) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3, false, 0, 40, false, 1000), state));
+  const std::vector<td::Bits256> keys{td::Bits256::zero(), td::Bits256(number(1)->get_hash().bits()),
+                                     td::Bits256(number(999)->get_hash().bits()), td::Bits256::zero()};
+  auto run = [&](bool metered) {
+    vm::MerkleProofBuilder proof(state.accounts);
+    block::NativeStateReadMeter meter(100, 100000);
+    std::set<vm::CellHash> loaded_hashes;
+    proof.set_cell_load_callback([&](const vm::LoadedCell& loaded) {
+      loaded_hashes.insert(loaded.data_cell->get_hash());
+    });
+    std::vector<td::Ref<vm::CellSlice>> values;
+    for (const auto& key : keys) {
+      if (metered) {
+        auto result = block::lookup_workchain_account_metered(proof.root(), key, meter);
+        ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(result));
+        values.push_back(std::get<td::Ref<vm::CellSlice>>(std::move(result)));
+      } else {
+        vm::AugmentedDictionary original(vm::load_cell_slice_ref(proof.root()), 256, block::tlb::aug_ShardAccounts);
+        values.push_back(original.lookup(key));
+      }
+    }
+    ASSERT_TRUE(values[0].not_null());
+    ASSERT_TRUE(values[1].not_null());
+    ASSERT_TRUE(values[2].is_null());
+    ASSERT_TRUE(values[3]->contents_equal(*values[0]));
+    if (metered) {
+      // Native may reload admitted edges. Compare sets, not callback counts:
+      // no semantic lookup may fetch content outside the prewalk's allowance.
+      ASSERT_EQ(loaded_hashes.size(), meter.charged_hashes().size());
+      for (const auto& hash : loaded_hashes) ASSERT_TRUE(meter.charged_hashes().count(hash) == 1);
+    }
+    return std::make_pair(proof.extract_proof_boc().move_as_ok(), std::move(values));
+  };
+  auto ordinary = run(false);
+  auto metered = run(true);
+  ASSERT_EQ(ordinary.first.as_slice(), metered.first.as_slice());
+  for (unsigned i : {0u, 1u, 3u}) ASSERT_TRUE(ordinary.second[i]->contents_equal(*metered.second[i]));
+
+  vm::MerkleProofBuilder stopped(state.accounts);
+  unsigned loads = 0;
+  stopped.set_cell_load_callback([&](const vm::LoadedCell&) { ++loads; });
+  block::NativeStateReadMeter root_only(1, 100000);
+  auto rejected = block::lookup_workchain_account_metered(stopped.root(), keys[0], root_only);
+  ASSERT_TRUE(std::holds_alternative<block::NativeClosureLimit>(rejected));
+  ASSERT_EQ(std::get<block::NativeClosureLimit>(rejected), block::NativeClosureLimit::Cells);
+  ASSERT_EQ(loads, 1u);  // Root wrapper loaded; first dictionary edge not loaded.
+}
+
 TEST(WorkchainBlock, AccountEngineExecution) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
@@ -3367,6 +3575,91 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(complete.ok().input->get_hash(), full.root()->get_hash());
     ASSERT_TRUE(engine.seen_input->get_hash() != candidate->get_hash());
     ASSERT_EQ(complete.ok().effects.updates[1].data->get_hash(), number(102)->get_hash());
+
+    auto oversized_state_policy = full.policy().resources().state;
+    oversized_state_policy.max_account_depth = 70000;
+    engine.calls = 0;
+    auto oversized_policy = block::account_engine_detail::execute(engine, state.accounts, full.root(),
+        declarations, 2, 2, &oversized_state_policy);
+    ASSERT_TRUE(oversized_policy.is_error());
+    ASSERT_EQ(oversized_policy.error().code(),
+        static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(engine.calls, 0u);
+
+    for (unsigned bound = 0; bound < 5; ++bound) {
+      auto resources = full.policy().resources();
+      switch (bound) {
+        case 0: resources.state.max_cells = 1; break;
+        case 1: resources.state.max_bits = 1; break;
+        case 2: resources.state.max_account_cells = 1; break;
+        case 3: resources.state.max_account_bits = 1; break;
+        case 4: resources.state.max_account_depth = 1; break;
+      }
+      auto policy = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, full.policy().identity());
+      ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(policy));
+      block::BatchInputAdmissionSession bounded(std::get<block::ResolvedBatchInputPolicy>(policy),
+          candidate, declaration_root, batch_identity, inbox);
+      ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(bounded.evaluate()));
+      engine.calls = 0;
+      auto denied = block::execute_workchain_account_engine(engine, state.accounts,
+          std::get<block::AdmittedBatchInput>(bounded.evaluate()));
+      ASSERT_TRUE(denied.is_error());
+      ASSERT_EQ(engine.calls, 0u);
+      const auto expected = bound < 2 ? block::WorkchainExecutionFailure::CandidateInvalid :
+                                       block::WorkchainExecutionFailure::AuthenticatedStateCorrupt;
+      ASSERT_EQ(denied.error().code(), static_cast<int>(expected));
+    }
+
+    // Missing lookup data and missing closure data are distinct reached paths.
+    unsigned missing_loads = 0;
+    td::Ref<PreflightObservedCell> missing_root{true, state.accounts, &missing_loads, true};
+    engine.calls = 0;
+    auto missing_lookup = block::execute_workchain_account_engine(engine, missing_root, full);
+    ASSERT_TRUE(missing_lookup.is_error());
+    ASSERT_EQ(missing_lookup.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(missing_loads, 1u);
+    ASSERT_EQ(engine.calls, 0u);
+
+    auto entry = accounts.lookup(declarations.reads.front().account);
+    vm::CellSlice prior(*entry);
+    auto prior_account = prior.fetch_ref();
+    unsigned account_loads = 0;
+    td::Ref<PreflightObservedCell> missing_account{true, prior_account, &account_loads};
+    vm::CellBuilder replaced;
+    replaced.store_ref(missing_account).append_cellslice(prior);
+    vm::AugmentedDictionary with_missing(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    ASSERT_TRUE(with_missing.set_builder(declarations.reads.front().account, replaced));
+    auto missing_state = with_missing.get_wrapped_dict_root();
+    ASSERT_EQ(missing_state->get_hash(), state.accounts->get_hash());
+    missing_account->set_unavailable(true);
+    account_loads = 0;
+    engine.calls = 0;
+    auto missing_closure = block::execute_workchain_account_engine(engine, missing_state, full);
+    ASSERT_TRUE(missing_closure.is_error());
+    ASSERT_EQ(missing_closure.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(account_loads, 1u);
+    ASSERT_EQ(engine.calls, 0u);
+
+    block::NativeStateReadMeter path_meter(256, 16384);
+    auto path = block::lookup_workchain_account_metered(state.accounts, declarations.reads.front().account, path_meter);
+    ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(path));
+    auto resources = full.policy().resources();
+    resources.state.max_cells = path_meter.usage().cells;
+    auto closure_policy = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, full.policy().identity());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(closure_policy));
+    block::BatchInputAdmissionSession closure_limited(std::get<block::ResolvedBatchInputPolicy>(closure_policy),
+        candidate, declaration_root, batch_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(closure_limited.evaluate()));
+    account_loads = 0;
+    engine.calls = 0;
+    auto exhausted_closure = block::execute_workchain_account_engine(engine, missing_state,
+        std::get<block::AdmittedBatchInput>(closure_limited.evaluate()));
+    ASSERT_TRUE(exhausted_closure.is_error());
+    ASSERT_EQ(exhausted_closure.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+    // The entire lookup fits; the next account Cell is refused before its
+    // unavailable loader can run. This distinguishes closure from lookup limits.
+    ASSERT_EQ(account_loads, 0u);
+    ASSERT_EQ(engine.calls, 0u);
 
     auto mismatched = declarations;
     mismatched.reads[0].old_account_hash = hash;
@@ -6812,12 +7105,17 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2);
   }
   // Every semantic zero is rejected at installation, before candidate admission.
-  for (unsigned field = 0; field < 3; ++field) {
+  for (unsigned field = 0; field < 8; ++field) {
     block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
     if (field == 0) resources.input.max_reads = 0;
     if (field == 1) resources.input.max_writes = 0;
     if (field == 2) resources.input.max_inbound = 0;
+    if (field == 3) resources.state.max_cells = 0;
+    if (field == 4) resources.state.max_bits = 0;
+    if (field == 5) resources.state.max_account_cells = 0;
+    if (field == 6) resources.state.max_account_bits = 0;
+    if (field == 7) resources.state.max_account_depth = 0;
     policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));

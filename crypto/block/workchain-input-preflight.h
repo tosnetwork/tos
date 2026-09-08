@@ -68,6 +68,9 @@ class WorkchainInputPreflight {
       if (data.is_null() || data->is_special()) {
         return td::Status::Error("input preflight requires complete ordinary cells");
       }
+      // Invariant: usage_.bits <= limits_.bits. Usage starts at zero; these
+      // private fields have no external mutator, and add() increases bits only
+      // after this remainder check. Any failed add() prevents further progress.
       if (data->get_bits() > limits_.bits - usage_.bits) {
         return td::Status::Error("input preflight bit limit");
       }

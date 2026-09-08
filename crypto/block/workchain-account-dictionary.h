@@ -6,10 +6,107 @@
 
 #include "block/block-parse.h"
 #include "block/workchain-account-access.h"
+#include "block/workchain-native-materialization.h"
 #include "vm/cellslice.h"
 #include "vm/dict.h"
 
 namespace block {
+
+struct WorkchainAccountClosureLimit {
+  enum Kind { Cells, Bits, Depth } kind;
+};
+using WorkchainAccountClosureRead = std::variant<WorkchainInputUsage, NativeClosureLimit,
+                                               WorkchainAccountClosureLimit, LocalUnavailable>;
+
+// Per-account closure limits are independent of the shared physical meter.
+// Iterative traversal retains at most four pending edges per charged local
+// cell plus its initial root; no recursive C++ walk and no detached cell copy.
+// A failed account must end the enclosing batch acquisition attempt. These
+// outcomes are not final voting classifications: an oversized persisted account
+// and a candidate exceeding its aggregate allowance have different provenance.
+// Deterministic accounting order is depth-first, lower reference index first;
+// all replaying nodes must use this order, including the first path chosen for
+// each shared hash. Dedup marks representative paths; the Native proof builder
+// closes its visited set by content hash, so other paths to that same content
+// are not necessarily pruned. Subsequent engine/settlement reads must still
+// retain the original usage tree: this pass covers declared account closures,
+// not every state read needed for a complete block proof.
+inline WorkchainAccountClosureRead read_workchain_account_closure(
+    const td::Ref<vm::Cell>& account, NativeStateReadMeter& total,
+    std::uint64_t max_cells, std::uint64_t max_bits, std::uint16_t max_depth) {
+  if (account.is_null()) return LocalUnavailable{LocalUnavailableCode::CellUnavailable};
+  if (account->get_depth() > max_depth) return WorkchainAccountClosureLimit{WorkchainAccountClosureLimit::Depth};
+  WorkchainInputUsage usage{0, 0, 1};  // One account closure, not an input logical root.
+  std::set<vm::CellHash> seen;
+  std::vector<td::Ref<vm::Cell>> pending{account};
+  while (!pending.empty()) {
+    auto node = std::move(pending.back());
+    pending.pop_back();
+    // Defensive only: the initial root was checked, and prefetch_ref below
+    // uses indices strictly below size_refs(), which guarantees non-null refs.
+    if (node.is_null()) return LocalUnavailable{LocalUnavailableCode::CellUnavailable};
+    const auto hash = node->get_hash();
+    if (seen.find(hash) != seen.end()) continue;
+    if (usage.cells >= max_cells) return WorkchainAccountClosureLimit{WorkchainAccountClosureLimit::Cells};
+    auto result = total.load_encoded(node);
+    if (auto* limit = std::get_if<NativeClosureLimit>(&result)) return *limit;
+    if (auto* local = std::get_if<LocalUnavailable>(&result)) return *local;
+    auto slice = std::get<td::Ref<vm::CellSlice>>(std::move(result));
+    const auto bits = slice->size();
+    // Establish the remainder before addition; cells < max_cells was checked
+    // before the source load. Shared global cells still charge this local set.
+    // The aggregate may already be charged; any local failure ends the batch
+    // attempt, so that partially charged meter must never be reused.
+    if (usage.bits > max_bits || bits > max_bits - usage.bits) {
+      return WorkchainAccountClosureLimit{WorkchainAccountClosureLimit::Bits};
+    }
+    seen.emplace(hash);
+    ++usage.cells;
+    usage.bits += bits;
+    for (unsigned i = slice->size_refs(); i > 0; --i) pending.push_back(slice->prefetch_ref(i - 1));
+  }
+  return usage;
+}
+
+// Admit the exact lookup/absence path before invoking the Native dictionary.
+// The Native implementation remains the semantic decoder and validates root
+// augmentation. Its extra-value skip reads only the current slice, not a child
+// currency dictionary. The root edge is included even for a prefix mismatch.
+// Both passes preserve the original usage tree. This bounds physical state
+// reads, not the selected Account closure (which needs separate admission).
+// The source must be immutable authenticated state, never candidate InMsgDescr.
+// Native parse exceptions retain that provenance at the enclosing boundary.
+inline NativeMeteredRead lookup_workchain_account_metered(
+    const td::Ref<vm::Cell>& shard_accounts, const td::Bits256& account, NativeStateReadMeter& meter) {
+  auto root_result = meter.load_ordinary(shard_accounts);
+  if (!std::holds_alternative<td::Ref<vm::CellSlice>>(root_result)) return root_result;
+  auto root = std::get<td::Ref<vm::CellSlice>>(std::move(root_result));
+  if (!root->have(1)) {
+    throw vm::VmError{vm::Excno::dict_err, "invalid authenticated ShardAccounts root"};
+  }
+  if (root->prefetch_ulong(1)) {
+    auto node = root->prefetch_ref();
+    auto key = account.bits();
+    int remaining = 256;
+    while (true) {
+      auto node_result = meter.load_ordinary(node);
+      if (!std::holds_alternative<td::Ref<vm::CellSlice>>(node_result)) return node_result;
+      auto slice = std::get<td::Ref<vm::CellSlice>>(std::move(node_result));
+      vm::dict::LabelParser label{std::move(slice), remaining, vm::dict::LabelParser::chk_size};
+      if (!label.is_prefix_of(key, remaining)) break;
+      // LabelParser validates 0 <= l_bits <= remaining. A continued edge
+      // consumes one more key bit, so at most 257 nodes precede termination.
+      remaining -= label.l_bits;
+      if (!remaining) break;
+      key += label.l_bits;
+      const bool branch = *key++;
+      --remaining;
+      node = label.remainder->prefetch_ref(branch);
+    }
+  }
+  vm::AugmentedDictionary native(root, 256, tlb::aug_ShardAccounts);
+  return native.lookup(account);
+}
 
 // The root is the complete ShardAccounts field of an authenticated shard state,
 // or of a candidate whose structure has passed bounded admission. This class

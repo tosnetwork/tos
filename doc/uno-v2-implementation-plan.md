@@ -97,6 +97,143 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+Old-state acquisition is in flight. NativeStateReadMeter preserves the complete
+LoadedCell and always calls the source loader, even when its content hash was
+already charged. A shared/repeated-read MerkleProof fixture produces identical
+serialized bytes with and without this meter. Clearing the loaded usage node
+makes that byte comparison fail; evidence is in
+`measurements/uno-v2-state-read-usage-control.json`. That first control alone
+does not establish a real collator block-state proof comparison, ShardAccounts
+lookup admission, or per-account closure limits. The latter two now have the
+private-path connections described below; live proof comparison remains open.
+The Native dictionary first validates its root augmentation, which loads
+the dictionary root edge; admission must cover that load as well as lookup
+branches. A second UsageCell wrapper must not replace the existing proof tree.
+The metered lookup now prewalks the key path before calling the unchanged
+Native semantic decoder. Its two-account fixture compares existing, absent and
+repeated lookup results and proof bytes with the Native-only path. Removing
+the prewalk accepts a lookup that only has budget for the wrapper; the typed
+limit assertion fails. This control is recorded separately in
+`measurements/uno-v2-state-lookup-control.json`. The complete-input private
+runner and strict settlement now pass the admitted policy's state record into
+this acquisition path. Per-account closures use independent visited sets and
+limits while sharing the aggregate physical meter. Aggregate exhaustion is a
+candidate rejection; a persisted account outside its installed closure policy
+is AuthenticatedStateCorrupt (local failure). Prototype singleton callers remain unchanged. These
+connections are in flight; proof-work admission and live authorization are not
+granted by them.
+
+State-reader review follow-up: ordinary dictionary reads and opaque encoded
+Native closure reads now have explicit entry points. Both reject virtualized
+pruned stubs as unavailable content before charging or returning them. This
+does not impose the ordinary-candidate profile on all Native state. Interrupted
+loads retain the same local code as their exception boundary; physical usage
+has only cells/bits, with no misleading zero logical-root field. Closure
+traversal visits each local content hash once; depth-12 and depth-20 diamond
+fixtures produce 13 and 21 loads. Usage-tree memory depends on bounded path
+visits and at most four child pointers per visited node, not merely on global
+distinct hashes. The removal and cache-introduction controls and focused review
+are recorded below; none is live execution authorization.
+
+The restored private-state unit currently passes the block, admission, disk
+integration and account-binding readiness CTests (4/4), and the removed-domain
+scan. `measurements/uno-v2-state-admission-controls.json` records the exact
+restored source/binary hashes, those results, and three independently rebuilt
+negative controls. They remove state-policy forwarding, virtual-pruned content
+rejection, and per-account DAG dedup respectively. Each builds successfully and
+then fails a behavior/type assertion. This is evidence for those particular
+guards, not a claim that every new failure branch has mutation coverage.
+
+Live settlement must also account for reads after engine execution. The private
+runner's state meter ends before the allocation/payout overlay, whose Native
+dictionary lookups and independent `scan_diff` still use their original read
+interfaces. Pre-admitting declared account closures does not alone prove that
+every overlay/augmentation/difference read is inside the admitted union or
+that all traversal work is bounded. Closing that boundary (including proof
+tracking) remains required before enabling the live path; an engine-entry
+budget test is not evidence for the complete settlement lifetime.
+
+Second-reader O5 needs a narrower interpretation. In `CellSlice.cpp`,
+`load_cell_slice_impl` performs the virtual-pruned availability check first,
+then accepts encoded special cells when `can_be_special` is supplied. The
+later "trying to load prunned cell" rejection belongs only to ordinary loads.
+The state meter follows the encoded branch: it counts the actual encoded
+pruned Cell, never the hidden subtree it commits to, and follows present refs
+with Native effective-level semantics. This is storage acquisition, not proof
+verification or permission for the engine to read unavailable content. Calling
+special cells "opaque" meant no interpretation/library resolution, not omission
+of their present child refs; that wording needs to be explicit in the API.
+A proof-shaped-cell fixture now exercises this distinction: two encoded Cells
+use 568 bits, while virtualized hidden content returns local unavailability.
+
+Second-reader B1's specific alternate-path failure claim is disputed after a
+direct Native-code check and counterexample: `MerkleProofImpl::dfs_usage_tree`
+collects visited content hashes and `dfs` uses that set, rather than pruning
+independently by usage-tree path. The depth-12 and depth-20 accounting fixtures
+now extract a proof and read reference 1 at every level although accounting
+first visited reference 0; both reach the expected leaf value 9. The test passed
+after rebuilding. The proposed failure does not occur on this shared DAG.
+The fixed traversal order remains explicit and mutation-tested, and this result
+does not claim all later block-state accesses were admitted or tracked. A
+dedicated missing-proof negative control now fails the alternate-path read.
+
+Follow-up controls now exercise the three previously unexecuted runner verdicts:
+lookup-local failure, closure-local failure, and aggregate exhaustion reached
+only after the lookup fits. Each one-branch error-code mutation builds and fails
+its own code assertion, with zero engine calls. Persisted-state/policy mismatch
+is separately reported as AuthenticatedStateCorrupt, not merged with missing
+local content. Five state zero fields now fail resolution and installation;
+each new resolution test failed before the predicate was extended.
+
+`uno-v2-state-traversal-order-control.json`,
+`uno-v2-state-classification-branch-controls.json`,
+`uno-v2-state-meter-boundary-controls.json` and
+`uno-v2-state-special-proof-controls.json` under `measurements/` record the
+follow-up evidence. The special-proof controls reject a blanket ban on encoded
+pruned cells and fail when the alternate-path proof is replaced by unavailable
+content; both were restored and rebuilt successfully. Meter source caching
+reduces callbacks from five to four and fails the test; removing sticky failure
+increases source loads from one to two and fails. Cell/bit controls were rerun
+with explicit variant assertions rather than incidental bad_variant_access
+diagnostics; both fail at those assertions. The restored final tree builds the
+block/admission/collator/validator targets, passes all four selected CTests and
+the domain scan. Exact hashes and output are in
+`measurements/uno-v2-state-final-admission-controls.json`. Focused disposition
+review closed B1-B3 and withdrew the alternate-path and encoded-pruned claims
+after checking Native source. That archive binds the reviewed cut; subsequent
+R1/R2 controls will carry their own final hashes. No live readiness gate is
+removed by this unit.
+
+Review follow-up adds a direct raw-policy depth-70000 witness (local failure,
+zero engine calls), and compares the successful lookup's distinct loaded hashes
+against the meter's read-only charged set. Repeated Native loads are permitted;
+an uncharged additional load is not. Removing the raw-policy depth guard accepts
+the depth-70000 request and fails its error assertion; introducing an extra
+unmetered account read makes loaded/charged sets differ (7 versus 5). Both
+controls build successfully and fail with exit 1, then are restored. Final R1/R2
+evidence, source hashes (including the legacy invariant comment), four-target
+build, four passing CTests and domain scan are in
+`measurements/uno-v2-state-review-residual-controls.json`. The five added installation zero cases
+passed, but their failure sensitivity is derived from the shared predicate's
+five resolution controls, not separately measured installation mutations.
+
+Per-account liveness requires every output wrapper to obey the same closure
+bounds and configuration installation/migration to preserve readability of all
+persisted accounts. These enforcement paths remain open. Classifying an
+already-persisted oversized account as authenticated-state corruption prevents
+a false candidate rejection; it does not restore liveness or prove such a
+state cannot be installed. Old-state provenance types, the full eight-class
+outer exception boundary, whole-settlement metering, proof/output admission and
+real collator block-proof comparison also remain live activation obligations.
+
+The reader review's proposed shared arithmetic refactor is deferred, not a
+confirmed underflow fix: legacy WorkchainInputPreflight starts usage at zero,
+keeps limits/usage private, and increases bits only after a remainder check.
+Those operations preserve usage.bits <= limits.bits. A future change could
+break that invariant, but no current reachable counterexample was supplied.
+Likewise, the ordered hash set is retained until its actual memory cost is
+measured; replacing it with an unmeasured container is not this boundary's fix.
+
 The complete-input adaptation now reaches the existing private account runner,
 strict Native settlement and independent replay. The new overloads take
 AdmittedBatchInput without a second caller-supplied declaration set or resource

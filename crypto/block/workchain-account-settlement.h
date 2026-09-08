@@ -90,7 +90,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
         return td::Status::Error("settlement inbox differs from admitted input");
       }
       return account_engine_detail::execute(engine, old_accounts, admitted.root(), declarations,
-                                             max_reads, max_writes);
+                                             max_reads, max_writes, &admitted.policy().resources().state);
     } else {
       return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
           inbox.envelopes, max_reads, max_writes, max_inbound);
@@ -144,12 +144,13 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // Complete-input path: declaration and resource arguments cannot be supplied
 // independently of the admitted cut. Identity and authenticated inbox are
 // compared before account reads or engine invocation. Enclosing commitment,
-// state/proof budgets and Native authentication are still required; this is a
+// proof budgets and Native authentication are still required; this is a
 // private settlement runner, not live execution authorization.
 // Enforced here: input read/write/inbound counts and output transfer count.
-// State cells/bits/per-account depth, proof units, effect cells/bits and output
-// cells/bits require independent admission; merely carrying the policy is not
-// enforcement of those fields.
+// The engine's old-account acquisition enforces aggregate state cells/bits and
+// per-account cells/bits/depth. Later overlay reads, proof units, effect cells/
+// bits and output cells/bits still require admission; carrying the policy does
+// not enforce those remaining costs.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,

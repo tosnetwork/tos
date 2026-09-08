@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <stdexcept>
 
 #include "block/workchain-input-admission.h"
@@ -15,6 +16,108 @@ struct NativeClosureLimits {
   std::uint64_t cells, bits, roots;
 };
 enum class NativeClosureLimit { Cells, Bits, Roots };
+
+using NativeMeteredRead = std::variant<td::Ref<vm::CellSlice>, NativeClosureLimit, LocalUnavailable>;
+struct NativeStateReadUsage { std::uint64_t cells, bits; };
+
+// Read-through physical meter for selected authenticated state paths. Unlike
+// materialization below, this preserves LoadedCell::tree_node and effective
+// level. Every requested read calls the source, even on a charged hash: two
+// paths with identical content can belong to different usage-tree nodes. The
+// meter must not cache LoadedCell. A caller may deduplicate its accounting walk,
+// but that walk's usage tree alone is not a proof of all subsequent reads.
+// Limits bound distinct cells/bits, not call count or per-account closures.
+// The enclosing bounded dictionary traversal must bound those independently.
+// A cell-limit failure precedes loading; a bit-limit failure needs at most the
+// current cell's load (at most 1023 bits and four refs), with no child loads.
+// The hash set has at most limits.cells entries. No source closure is retained.
+// This is not a bound on CellUsageTree: the caller must also bound path visits
+// (key width for lookups, per-account visited hashes for closure traversal).
+// Native exceptions propagate to the source-aware boundary; any interrupted
+// read leaves this attempt failed, so retry cannot bypass accounting.
+class NativeStateReadMeter {
+ public:
+  NativeStateReadMeter(std::uint64_t cells, std::uint64_t bits) : cells_(cells), bits_(bits) {}
+  const NativeStateReadUsage& usage() const { return usage_; }
+  // Read-only accounting evidence; callers cannot precharge or clear entries.
+  const std::set<vm::CellHash>& charged_hashes() const { return seen_; }
+
+  NativeMeteredRead load_ordinary(const td::Ref<vm::Cell>& cell) {
+    auto result = load_encoded(cell);
+    if (auto* slice = std::get_if<td::Ref<vm::CellSlice>>(&result); slice && (*slice)->is_special()) {
+      return fail(LocalUnavailable{LocalUnavailableCode::CellIdentity});
+    }
+    return result;
+  }
+
+  // Read encoded Native special cells without interpreting proofs or resolving
+  // libraries. Closure traversal follows present refs with Native effective
+  // levels; a stored pruned Cell counts only its encoding, not hidden content.
+  // A virtual pruned branch is missing content, not a complete encoded closure.
+  NativeMeteredRead load_encoded(const td::Ref<vm::Cell>& cell) {
+    try {
+      return read(cell);
+    } catch (const vm::VmVirtError&) {
+      failure_ = LocalUnavailable{LocalUnavailableCode::CellUnavailable};
+      throw;
+    } catch (const std::bad_alloc&) {
+      failure_ = LocalUnavailable{LocalUnavailableCode::Allocation};
+      throw;
+    } catch (const std::length_error&) {
+      failure_ = LocalUnavailable{LocalUnavailableCode::Allocation};
+      throw;
+    } catch (const vm::CellBuilder::CellCreateError&) {
+      failure_ = LocalUnavailable{LocalUnavailableCode::Construction};
+      throw;
+    } catch (const vm::CellBuilder::CellWriteError&) {
+      failure_ = LocalUnavailable{LocalUnavailableCode::Construction};
+      throw;
+    }
+    // VmError, VmNoGas and VmFatal propagate with the ExecutionFault marker
+    // installed before the read. The outer boundary must contain all of them.
+  }
+
+ private:
+  NativeMeteredRead read(const td::Ref<vm::Cell>& cell) {
+    if (auto* limit = std::get_if<NativeClosureLimit>(&failure_)) return *limit;
+    if (auto* local = std::get_if<LocalUnavailable>(&failure_)) return *local;
+    failure_ = LocalUnavailable{LocalUnavailableCode::ExecutionFault};
+    if (cell.is_null()) return fail(LocalUnavailable{LocalUnavailableCode::CellUnavailable});
+    const auto hash = cell->get_hash();
+    const bool fresh = seen_.find(hash) == seen_.end();
+    if (fresh && usage_.cells >= cells_) return fail(NativeClosureLimit::Cells);
+    auto result = cell->load_cell();
+    if (result.is_error()) return fail(LocalUnavailable{LocalUnavailableCode::CellUnavailable});
+    auto loaded = result.move_as_ok();
+    if (loaded.data_cell.is_null()) return fail(LocalUnavailable{LocalUnavailableCode::CellUnavailable});
+    if (loaded.data_cell->special_type() == vm::Cell::SpecialType::PrunnedBranch &&
+        loaded.effective_level < loaded.data_cell->get_level()) {
+      return fail(LocalUnavailable{LocalUnavailableCode::CellUnavailable});
+    }
+    if (fresh) {
+      const auto bits = loaded.data_cell->get_bits();
+      // usage.bits <= bits_ holds after every successful read; establish it
+      // explicitly before subtraction, then bound both counter additions.
+      if (usage_.bits > bits_ || bits > bits_ - usage_.bits) return fail(NativeClosureLimit::Bits);
+      seen_.emplace(hash);
+      ++usage_.cells;  // usage.cells < cells_ was checked before loading.
+      usage_.bits += bits;
+    }
+    td::Ref<vm::CellSlice> slice{true, std::move(loaded)};
+    failure_ = std::monostate{};
+    return slice;
+  }
+
+ private:
+  template <class Failure> NativeMeteredRead fail(Failure failure) {
+    failure_ = failure;
+    return failure;
+  }
+  const std::uint64_t cells_, bits_;
+  NativeStateReadUsage usage_{0, 0};
+  std::set<vm::CellHash> seen_;
+  std::variant<std::monostate, NativeClosureLimit, LocalUnavailable> failure_;
+};
 
 class NativeCellMaterializer;
 class MaterializedNativeCells {

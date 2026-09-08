@@ -3,6 +3,7 @@
 #include "block/workchain-account-dictionary.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-value-flow.h"
+#include "block/workchain-execution-errors.h"
 
 namespace block {
 
@@ -70,25 +71,53 @@ struct ExecutedWorkchainAccountBatch {
 
 namespace account_engine_detail {
 // Post-admission execution, not an authentication certificate. The enclosing
-// host must bind old_accounts to the authenticated previous shard and bound its
-// read closures before calling. Native source exceptions propagate unchanged;
+// host must bind old_accounts to the authenticated previous shard. Batch calls
+// admit lookup paths and account closures with state_policy; prototype callers
+// retain their separate admission obligation. Native exceptions propagate unchanged;
 // this helper never reclassifies missing local data as a candidate mismatch.
 // Count bounds alone are not state traversal or execution-work limits.
 inline td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     td::Ref<vm::Cell> input,
     const WorkchainAccountDeclarations& declarations,
-    std::uint64_t max_reads, std::uint64_t max_writes) {
+    std::uint64_t max_reads, std::uint64_t max_writes,
+    const gen::UnoV2ResourceState::Record* state_policy = nullptr) {
   TRY_RESULT(access, WorkchainAccountAccess::create(declarations.reads, declarations.writes,
                                                    max_reads, max_writes));
-  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(std::move(old_accounts)), 256,
-                                  tlb::aug_ShardAccounts);
+  std::optional<NativeStateReadMeter> state_meter;
+  std::optional<vm::AugmentedDictionary> prototype_accounts;
+  if (state_policy) {
+    if (!state_policy->max_cells || !state_policy->max_bits || !state_policy->max_account_cells ||
+        !state_policy->max_account_bits || state_policy->max_account_depth <= 0 ||
+        state_policy->max_account_depth > UINT16_MAX) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "installed state policy cannot admit account state");
+    }
+    state_meter.emplace(state_policy->max_cells, state_policy->max_bits);
+  } else {
+    // Only the retained singleton prototype uses this unmetered path.
+    prototype_accounts.emplace(vm::load_cell_slice_ref(old_accounts), 256, tlb::aug_ShardAccounts);
+  }
   std::vector<WorkchainAccountSnapshot> snapshots;
   snapshots.reserve(declarations.reads.size());
   for (const auto& read : declarations.reads) {
     auto expected = access.expected_read(read.account);
     if (expected.is_error()) return expected.move_as_error();
-    auto value = accounts.lookup(read.account);
+    td::Ref<vm::CellSlice> value;
+    if (state_meter) {
+      auto acquired = lookup_workchain_account_metered(old_accounts, read.account, *state_meter);
+      if (std::holds_alternative<NativeClosureLimit>(acquired)) {
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                 "declared account paths exceed batch state budget");
+      }
+      if (std::holds_alternative<LocalUnavailable>(acquired)) {
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                 "authenticated account path unavailable");
+      }
+      value = std::get<td::Ref<vm::CellSlice>>(std::move(acquired));
+    } else {
+      value = prototype_accounts->lookup(read.account);
+    }
     td::Ref<vm::Cell> state;
     std::optional<td::Bits256> actual;
     if (value.not_null()) {
@@ -100,6 +129,28 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
       actual = td::Bits256(state->get_hash().bits());
     }
     TRY_STATUS(access.record_old_read(read.account, actual));
+    if (state_meter && state.not_null()) {
+      auto closure = read_workchain_account_closure(state, *state_meter,
+          state_policy->max_account_cells, state_policy->max_account_bits,
+          static_cast<std::uint16_t>(state_policy->max_account_depth));
+      if (std::holds_alternative<NativeClosureLimit>(closure)) {
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                 "declared account closures exceed batch state budget");
+      }
+      if (std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
+        // A persisted account that cannot fit the installed per-account policy
+        // is not a bad candidate. Do not disguise it as candidate invalidity.
+        // Liveness requires output admission to enforce these same closure
+        // bounds and configuration migration to preserve readability of all
+        // persisted accounts. Neither obligation is implemented by this guard.
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                                 "authenticated account violates installed closure policy");
+      }
+      if (std::holds_alternative<LocalUnavailable>(closure)) {
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                 "authenticated account closure unavailable");
+      }
+    }
     snapshots.push_back({read.account, std::move(state)});
   }
   WorkchainAccountReadView view(std::move(snapshots));
@@ -124,8 +175,9 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
 // Consume the complete structurally admitted input without rebuilding it or
 // accepting another policy/declaration cut. This remains a post-admission
 // runner: the enclosing host must check commitment, authenticate the complete
-// inbox, and admit old-state closures and proof work BEFORE invoking it. A
-// structural input alone does not grant live execution readiness.
+// inbox, and admit proof work BEFORE invoking it. This runner admits old-state
+// paths/closures before the engine, not later settlement reads. Structural input
+// alone does not grant live execution readiness.
 inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const AdmittedBatchInput& admitted) {
@@ -136,7 +188,7 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engin
   const auto& limits = admitted.policy().resources().input;
   TRY_RESULT(declarations, decode_workchain_account_declarations(input.access, limits.max_reads, limits.max_writes));
   return account_engine_detail::execute(engine, std::move(old_accounts), admitted.root(), declarations,
-                                        limits.max_reads, limits.max_writes);
+                                        limits.max_reads, limits.max_writes, &admitted.policy().resources().state);
 }
 
 // Retained prototype settlement callers only. Do not route the live batch
