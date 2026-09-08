@@ -10,6 +10,7 @@
 #include "block/block-parse.h"
 #include "block/transaction.h"
 #include "td/utils/logging.h"
+#include "td/utils/overloaded.h"
 
 namespace block {
 
@@ -790,12 +791,14 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
       }
       TRY_RESULT(resolved, resolve_scoped_workchain(workchain_id, block_transition_config));
       if (resolved.has_value()) {
-        if (const auto* account = std::get_if<ResolvedWorkchainExecution>(&*resolved)) {
-          auto policy = account->executor->account_policy(account->descriptor, *account->engine_config);
-          auto status = validate_account_execution_policy_supported(policy);
-          if (status.is_error()) {
-            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), status.message());
-          }
+        auto status = std::visit(td::overloaded(
+            [](const ResolvedWorkchainExecution& account) {
+              return validate_account_execution_policy_supported(
+                  account.executor->account_policy(account.descriptor, *account.engine_config));
+            },
+            [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); }), *resolved);
+        if (status.is_error()) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), status.message());
         }
       }
     }

@@ -31,6 +31,7 @@
 #include "block/workchain-block-execution.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
+#include "td/utils/overloaded.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "tol/extra-flags-constants.h"
@@ -1139,9 +1140,11 @@ bool ValidateQuery::fetch_config_params() {
       return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
     }
     if (resolved_execution.ok().has_value()) {
-      if (const auto* account = std::get_if<block::ResolvedWorkchainExecution>(&*resolved_execution.ok())) {
-        custom_workchain = block::resolved_workchain_execution_is_custom(*account);
-      }
+      custom_workchain = std::visit(td::overloaded(
+          [](const block::ResolvedWorkchainExecution& account) {
+            return block::resolved_workchain_execution_is_custom(account);
+          },
+          [](const block::ResolvedWorkchainBlockExecution&) { return false; }), *resolved_execution.ok());
     }
 
     if (custom_workchain) {
@@ -6495,9 +6498,15 @@ bool ValidateQuery::check_transactions() {
   if (resolved.is_error()) {
     return fatal_error(resolved.move_as_error_prefix("cannot resolve transaction execution scope: "));
   }
-  if (resolved.ok().has_value() &&
-      std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
-    const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
+  // Exhaustiveness is a compile-time obligation for every new execution family.
+  // Only the explicit account alternative (or no binding) may reach the ordinary loop.
+  const auto* singleton = resolved.ok().has_value() ? std::visit(td::overloaded(
+      [](const block::ResolvedWorkchainExecution&) -> const block::ResolvedWorkchainBlockExecution* {
+        return nullptr;
+      },
+      [](const block::ResolvedWorkchainBlockExecution& block) { return &block; }), *resolved.ok()) : nullptr;
+  if (singleton) {
+    const auto& execution = *singleton;
     // Candidate-origin records remain candidate data, not local authenticated
     // state. Stream through the singleton wire cap before retaining envelopes;
     // do not first copy the entire InMsgDescr into an unbounded array.

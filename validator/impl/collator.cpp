@@ -34,6 +34,7 @@
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
 #include "td/utils/format.h"
+#include "td/utils/overloaded.h"
 #include "td/utils/Random.h"
 #include "tos/tos-shard.h"
 #include "vm/boc.h"
@@ -2278,9 +2279,11 @@ bool Collator::fetch_config_params() {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    if (const auto* account = std::get_if<block::ResolvedWorkchainExecution>(&*resolved_execution.ok())) {
-      custom_workchain = block::resolved_workchain_execution_is_custom(*account);
-    }
+    custom_workchain = std::visit(td::overloaded(
+        [](const block::ResolvedWorkchainExecution& account) {
+          return block::resolved_workchain_execution_is_custom(account);
+        },
+        [](const block::ResolvedWorkchainBlockExecution&) { return false; }), *resolved_execution.ok());
   }
 
   if (custom_workchain) {
@@ -2421,8 +2424,13 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return execution_result.move_as_error();
   }
   auto execution = execution_result.move_as_ok();
-  const auto* block_execution = execution.has_value()
-      ? std::get_if<block::ResolvedWorkchainBlockExecution>(&*execution) : nullptr;
+  // No generic visitor: a new execution family must choose its own live path,
+  // rather than silently inheriting ordinary account execution.
+  const auto* block_execution = execution.has_value() ? std::visit(td::overloaded(
+      [](const block::ResolvedWorkchainExecution&) -> const block::ResolvedWorkchainBlockExecution* {
+        return nullptr;
+      },
+      [](const block::ResolvedWorkchainBlockExecution& block) { return &block; }), *execution) : nullptr;
   if (block_execution && params_.workchain_block_candidate.is_null() &&
       params_.collator_opts->workchain_candidate_source) {
     auto candidate = params_.collator_opts->workchain_candidate_source(params_.shard);

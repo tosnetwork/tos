@@ -132,11 +132,50 @@ requirement. The unchanged descriptor identity consistency guard is not counted
 as a newly reachable tested guard under Config parser invariants.
 
 Final regression for this boundary passes the block/admission and singleton
-disk tests and builds validator-engine. The repository-wide removed-domain
-scan still fails on unchanged B-1 AUTO/ON/OFF build-wiring additions (three
-release workflows, the two additional native build scripts and root CMake cache
-migration lines). Those allowlist omissions require a separate guard revision;
-this unit does not report all CI gates green or silently broaden that guard.
+disk tests and builds validator-engine. At that commit the repository-wide
+removed-domain scan still failed on B-1 AUTO/ON/OFF build-wiring additions.
+The separate reviewed guard revision `a574c6406` closes those omissions without
+broadening the retired-symbol rules; six manual injection controls fail and the
+final tracked-file scan passes. This is not evidence that every CI gate passes.
+
+The configuration-source boundary changes two authenticated-configuration
+failures from candidate rejection to local abstention. This is a real verdict
+change, currently unreachable for a production non-test block engine because
+none is registered. It is not a general exemption from release/version gates:
+enabling such an engine on a deployed network requires the agreed deployment
+and first-effective-block discipline; logging a newer global version does not
+enforce readiness.
+
+Before introducing the multi-account execution alternative, four live dispatch
+sites (two collator and two validator) and the earlier required-role policy
+dispatch now use exhaustive typed visitors. There is no generic visitor that
+can send an unknown family to AccountCompute. A manual control adds a third
+variant: all three production translation units fail compilation at all five
+visitors. This is deliberately a compile-time control, not a failed runtime
+test or a new wire variant. Singleton replay and its exact AccountBlock guard
+remain unchanged. Explicit handling of the forthcoming account binding, early
+authenticated input admission and multi-account execution remain unfinished.
+
+Boundary review found no blocking behavior change. The control uses unrelated
+`std::monostate`, not a type implicitly convertible to an existing alternative.
+The archived compiler diagnostics identify all five visitor instantiations;
+diagnostic cascades are not five independent defects. Overload exhaustiveness
+does not enforce exact-type dispatch for a future derived/convertible type, nor
+prove a new handler correct. In particular, returning nullptr for an account
+binding would compile but incorrectly select the ordinary path: introducing
+that binding must also replace the binary pointer-dependent execution decisions
+and the producer's singleton-only resolution. The current variant cannot become
+valueless here: successful results are constructed and never assigned/emplaced
+before visitation; failed construction returns no value. No claim is made that
+an arbitrary future mutable variant retains this invariant.
+
+The review's out-of-scope candidate-enumerator exception observation needs
+source-specific verification at the next admission cut, not a blanket new catch:
+builder/allocation failures must not be turned into candidate rejection merely
+because they occur during enumeration. Existing callback classification and
+catch boundaries are unchanged in this unit. The restored block/admission and
+singleton disk CTests pass. Evidence:
+`measurements/uno-v2-exhaustive-dispatch-controls.json` (manual controls).
 
 The singleton validator collection path now streams candidate-origin InMsg
 slices instead of first allocating a cell and vector slot for every record.
