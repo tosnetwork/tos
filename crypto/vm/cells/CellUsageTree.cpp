@@ -20,18 +20,47 @@
 #include "vm/cells/CellUsageTree.h"
 
 #include "DataCell.h"
+#include <stdexcept>
 
 namespace vm {
 //
 // CellUsageTree::NodePtr
 //
-bool CellUsageTree::NodePtr::on_load(const Cell::LoadedCell& loaded_cell) const {
+td::Result<LoadedCell> CellUsageTree::NodePtr::load_cell(const Cell& cell) const {
+  // One lifetime lock serves both hooks. In particular, observers do not add
+  // another atomic weak-pointer lock to the ordinary proof-tracking path.
   auto tree = tree_weak_.lock();
-  if (!tree) {
-    return false;
+  if (tree) tree->before_load(cell);
+  TRY_RESULT(loaded, cell.load_cell());
+  if (tree) {
+    tree->on_load(node_id_, loaded);
+    CHECK(loaded.tree_node.empty());
+    loaded.tree_node = *this;
   }
-  tree->on_load(node_id_, loaded_cell);
-  return true;
+  return loaded;
+}
+
+CellUsageTree::ScopedReadObserver::ScopedReadObserver(
+    const NodePtr& node, std::function<void(const Cell&)> observe)
+    : tree_(node.tree_weak_.lock()), observe_(std::move(observe)), previous_(nullptr) {
+  if (!tree_ || !node.node_id_ || !observe_) {
+    throw std::invalid_argument("read observer requires a live tree and callback");
+  }
+  previous_ = tree_->read_observer_;
+  tree_->read_observer_ = this;
+}
+
+CellUsageTree::ScopedReadObserver::~ScopedReadObserver() {
+  // Lexical scopes must unwind in reverse order; this is a local lifetime
+  // contract, not a condition derived from serialized input.
+  CHECK(tree_->read_observer_ == this);
+  tree_->read_observer_ = previous_;
+}
+
+void CellUsageTree::before_load(const Cell& cell) {
+  for (auto* observer = read_observer_; observer; observer = observer->previous_) {
+    observer->observe_(cell);
+  }
 }
 
 CellUsageTree::NodePtr CellUsageTree::NodePtr::create_child(unsigned ref_id) const {

@@ -752,6 +752,100 @@ td::Ref<vm::Cell> number(std::uint64_t value) {
   return vm::CellBuilder().store_long(value, 64).finalize();
 }
 
+class StateReadCallbackCell final : public vm::Cell {
+ public:
+  StateReadCallbackCell(td::Ref<vm::Cell> source, std::function<void()> callback)
+      : source_(std::move(source)), callback_(std::move(callback)) {}
+  td::Status set_data_cell(td::Ref<vm::DataCell>&& cell) const override {
+    return source_->set_data_cell(std::move(cell));
+  }
+  td::Result<LoadedCell> load_cell() const override {
+    callback_();
+    return source_->load_cell();
+  }
+  bool is_virtualized() const override { return source_->is_virtualized(); }
+  bool is_loaded() const override { return source_->is_loaded(); }
+  vm::CellUsageTree::NodePtr get_tree_node() const override { return source_->get_tree_node(); }
+  LevelMask get_level_mask() const override { return source_->get_level_mask(); }
+ private:
+  const Hash do_get_hash(td::uint32 level) const override { return source_->get_hash(level); }
+  td::uint16 do_get_depth(td::uint32 level) const override { return source_->get_depth(level); }
+  td::Ref<vm::Cell> source_;
+  std::function<void()> callback_;
+};
+
+TEST(WorkchainBlock, ScopedStateReadObserver) {
+  auto child = number(700);
+  auto root = vm::CellBuilder().store_ref(child).finalize();
+  auto run = [&](bool observe) {
+    unsigned source_loads = 0, first_loads = 0, observations = 0;
+    td::Ref<vm::Cell> counted{td::Ref<PreflightObservedCell>{true, root, &source_loads}};
+    auto tree = std::make_shared<vm::CellUsageTree>();
+    auto tracked = vm::UsageCell::create(counted, tree->root_ptr());
+    tree->set_cell_load_callback([&](const vm::LoadedCell&) { ++first_loads; });
+    (void)vm::load_cell_slice(tracked);  // Loaded before observer installation.
+    ASSERT_EQ(source_loads, 1u);
+    {
+      std::optional<vm::CellUsageTree::ScopedReadObserver> scope;
+      if (observe) scope.emplace(tree->root_ptr(), [&](const vm::Cell&) { ++observations; });
+      auto slice = vm::load_cell_slice(tracked);
+      (void)vm::load_cell_slice(slice.prefetch_ref());
+      tree->set_ignore_loads(true);
+      (void)vm::load_cell_slice(tracked);
+      tree->set_ignore_loads(false);
+    }
+    ASSERT_EQ(observations, observe ? 3u : 0u);
+    ASSERT_EQ(first_loads, 2u);
+    (void)vm::load_cell_slice(tracked);
+    ASSERT_EQ(observations, observe ? 3u : 0u);  // Observer removed at scope exit.
+    ASSERT_EQ(source_loads, 4u);
+    if (observe) {
+      bool refused = false;
+      try {
+        vm::CellUsageTree::ScopedReadObserver deny(tree->root_ptr(), [](const vm::Cell&) { throw 17; });
+        (void)vm::load_cell_slice(tracked);
+      } catch (int code) {
+        ASSERT_EQ(code, 17);
+        refused = true;
+      }
+      ASSERT_TRUE(refused);
+      ASSERT_EQ(source_loads, 4u);  // Refusal precedes the source's load.
+      (void)vm::load_cell_slice(tracked);
+      ASSERT_EQ(source_loads, 5u);  // Exception unwinding removed the observer.
+    }
+    return vm::std_boc_serialize(vm::MerkleProof::generate(counted, tree.get()).move_as_ok()).move_as_ok();
+  };
+  ASSERT_EQ(run(false).as_slice(), run(true).as_slice());
+}
+
+TEST(WorkchainBlock, StateReadRefusalLeavesProofUnchanged) {
+  // Native preserves loaded leaves instead of replacing them with pruned
+  // branches. Use a non-leaf so an unmarked child really hides a subtree.
+  auto child = vm::CellBuilder().store_long(701, 64).store_ref(number(702)).finalize();
+  auto root = vm::CellBuilder().store_ref(child).finalize();
+  vm::MerkleProofBuilder proof(root);
+  auto child_view = vm::load_cell_slice(proof.root()).prefetch_ref();
+  auto before = proof.extract_proof_boc().move_as_ok();
+  bool refused = false;
+  try {
+    vm::CellUsageTree::ScopedReadObserver deny(proof.root()->get_tree_node(), [](const vm::Cell&) { throw 19; });
+    (void)vm::load_cell_slice(child_view);
+  } catch (int code) {
+    ASSERT_EQ(code, 19);
+    refused = true;
+  }
+  ASSERT_TRUE(refused);
+  ASSERT_EQ(before.as_slice(), proof.extract_proof_boc().move_as_ok().as_slice());
+  auto view = vm::MerkleProof::virtualize(proof.extract_proof().move_as_ok()).move_as_ok();
+  bool pruned = false;
+  try {
+    (void)vm::load_cell_slice(vm::load_cell_slice(view).prefetch_ref());
+  } catch (const vm::VmVirtError&) {
+    pruned = true;
+  }
+  ASSERT_TRUE(pruned);
+}
+
 TEST(WorkchainBlock, StateReadMeterProofTracking) {
   auto leaf = number(9);
   auto left = vm::CellBuilder().store_long(1, 8).store_ref(leaf).finalize();
@@ -3645,6 +3739,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     bool reverse_transfer{false};
     unsigned transfer_value{1};
     td::Ref<vm::Cell> payout;
+    std::function<void()> finish;
     td::Result<block::WorkchainAccountEffects> execute_accounts(
         const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view) const override {
       ++calls;
@@ -3668,6 +3763,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       result.receipts = number(103);
       result.events = number(104);
       result.usage = {7, 8, 9};
+      if (finish) finish();
       return result;
     }
   } engine;
@@ -3868,6 +3964,67 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(settled.ok().input->get_hash(), complete.root()->get_hash());
     ASSERT_TRUE(settled.ok().state.accounts->get_hash() != state.accounts->get_hash());
     ASSERT_EQ(engine.seen_input->get_hash(), complete.root()->get_hash());
+    {
+      // The private tree must not remain live in returned artifacts. A caller
+      // can start a fresh proof and load an untouched account without nesting.
+      vm::MerkleProofBuilder fresh(settled.ok().state.accounts);
+      vm::AugmentedDictionary result_accounts(vm::load_cell_slice_ref(fresh.root()), 256,
+                                              block::tlb::aug_ShardAccounts);
+      block::tlb::ShardAccount::Record untouched;
+      ASSERT_TRUE(untouched.unpack(result_accounts.lookup(td::Bits256(number(2)->get_hash().bits()))));
+      (void)vm::load_cell_slice(untouched.account);
+    }
+    {
+      vm::MerkleProofBuilder foreign(state.accounts);
+      auto mixed = vm::CellBuilder().append_cellslice(vm::load_cell_slice(foreign.root())).finalize();
+      ASSERT_TRUE(mixed->get_tree_node().empty());
+      ASSERT_TRUE(!vm::load_cell_slice(mixed).prefetch_ref()->get_tree_node().empty());
+      engine.calls = 0;
+      auto refused = block::execute_and_settle_workchain_accounts(engine, mixed,
+          complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing);
+      ASSERT_TRUE(refused.is_error());
+      ASSERT_EQ(engine.calls, 0u);
+      ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      ASSERT_EQ(refused.error().message(), "authenticated settlement source has nested tracking");
+    }
+    {
+      vm::MerkleProofBuilder tracked(state.accounts);
+      engine.calls = 0;
+      auto success = block::execute_and_settle_workchain_accounts(engine, tracked.root(),
+          complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing);
+      ASSERT_TRUE(success.is_ok());
+      ASSERT_EQ(engine.calls, 1u);
+      ASSERT_EQ(success.ok().state.accounts->get_hash(), settled.ok().state.accounts->get_hash());
+      ASSERT_EQ(success.ok().state.account_blocks->get_hash(), settled.ok().state.account_blocks->get_hash());
+    }
+    {
+      vm::MerkleProofBuilder tracked(state.accounts);
+      vm::AugmentedDictionary tracked_accounts(vm::load_cell_slice_ref(tracked.root()), 256,
+                                               block::tlb::aug_ShardAccounts);
+      const td::Bits256 third(number(2)->get_hash().bits());
+      block::tlb::ShardAccount::Record third_record;
+      ASSERT_TRUE(third_record.unpack(tracked_accounts.lookup(third)));
+      // Preload this unrelated account: a first-load-only observer would miss
+      // the later unauthorized access, despite sharing the same proof tree.
+      (void)vm::load_cell_slice(third_record.account);
+      bool armed = false, injected = false;
+      engine.finish = [&] { armed = true; };
+      td::Ref<vm::Cell> observed{td::Ref<StateReadCallbackCell>{true, tracked.root(), [&] {
+        if (armed && !injected) {
+          injected = true;
+          (void)vm::load_cell_slice(third_record.account);
+        }
+      }}};
+      engine.calls = 0;
+      auto refused = block::execute_and_settle_workchain_accounts(engine, observed,
+          complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing);
+      engine.finish = {};
+      ASSERT_TRUE(injected);
+      ASSERT_EQ(engine.calls, 1u);
+      ASSERT_TRUE(refused.is_error());
+      ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      ASSERT_EQ(refused.error().message(), "settlement read outside admitted old-state footprint");
+    }
     auto replay_complete = [&](const block::WorkchainAccountSettlement& claim) {
       return block::replay_workchain_account_settlement(engine, state.accounts,
           complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing, claim);

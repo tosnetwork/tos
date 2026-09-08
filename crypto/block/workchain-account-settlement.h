@@ -8,6 +8,7 @@
 #include "block/workchain-allocation-overlay.h"
 #include "block/workchain-native-materialization.h"
 #include "block/workchain-native-inbox.h"
+#include "vm/cells/UsageCell.h"
 
 namespace block {
 
@@ -29,6 +30,10 @@ struct WorkchainAccountSettlement {
 // runner preserves foreign destinations; the strict runner rejects them.
 // Joint disposal and custody payout settlement still needs integration.
 namespace account_settlement_detail {
+// Raised only by the authenticated old-state read observer below. It must not
+// be used for candidate decoding or translated into candidate invalidity.
+struct UnadmittedStateRead {};
+
 template <class Admission>
 inline td::Result<WorkchainAccountSettlement> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
@@ -42,6 +47,26 @@ inline td::Result<WorkchainAccountSettlement> execute(
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const WorkchainDisposalEntryContext* disposal) {
   static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, AdmittedBatchInput>);
+  std::shared_ptr<vm::CellUsageTree> state_usage_tree;
+  vm::CellUsageTree::NodePtr state_usage_node;
+  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if (old_accounts.is_null()) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "authenticated settlement state missing");
+    }
+    state_usage_node = old_accounts->get_tree_node();
+    if (state_usage_node.empty()) {
+      // Private-source tree ownership stays in this frame. Returned Native
+      // cells may retain weak usage nodes; do not export a strong owner of this
+      // tree or those wrappers would remain active in a caller's new proof.
+      // Existing caller-owned trees retain their ordinary Native lifetime.
+      // An expired wrapper is also empty: its load no longer sets a tree node,
+      // so wrapping it in this fresh tree does not create live nested tracking.
+      state_usage_tree = std::make_shared<vm::CellUsageTree>();
+      old_accounts = vm::UsageCell::create(std::move(old_accounts), state_usage_tree->root_ptr());
+      state_usage_node = old_accounts->get_tree_node();
+    }
+  }
   // Batch callers cannot supply a second declaration cut, even to this private
   // helper. Decode once and use the same object for execution and settlement.
   WorkchainAccountDeclarations batch_declarations;
@@ -96,48 +121,105 @@ inline td::Result<WorkchainAccountSettlement> execute(
           inbox.envelopes, max_reads, max_writes, max_inbound);
     }
   };
-  TRY_RESULT(executed, run());
-  TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
-      extra_validation_cells));
-  std::vector<WorkchainStorageWrite> writes;
-  writes.reserve(executed.effects.updates.size());
-  for (const auto& update : executed.effects.updates) {
-    auto read = std::lower_bound(declarations.reads.begin(), declarations.reads.end(), update.account,
-        [](const auto& entry, const auto& key) { return entry.account < key; });
-    if (read == declarations.reads.end() || read->account != update.account || !read->old_account_hash) {
-      return td::Status::Error("account creation requires a registration participant");
+  auto guarded_run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
+    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+      bool nested_read = false;
+      // The private owner above or the synchronous caller owns this live node.
+      // Both callbacks are nonempty. Invalid observer construction is therefore
+      // a host lifetime/contract violation, not a serialized-input condition.
+      // This scope ends before the post-execution observer is installed; their
+      // shared exception type has exactly one installing handler at a time.
+      vm::CellUsageTree::ScopedReadObserver source_guard(state_usage_node, [&](const vm::Cell& cell) {
+        // A bare root says nothing about descendants. Stop an encountered
+        // nested UsageCell before its load can reach Native's anti-nesting CHECK.
+        if (nested_read || !cell.get_tree_node().empty()) {
+          nested_read = true;
+          throw UnadmittedStateRead{};
+        }
+      });
+      try {
+        auto result = run();
+        if (!nested_read) return result;
+      } catch (const UnadmittedStateRead&) {
+      }
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "authenticated settlement source has nested tracking");
+    } else {
+      return run();
     }
-    writes.push_back({update.account, *read->old_account_hash, update.data});
+  };
+  TRY_RESULT(executed, guarded_run());
+  bool unadmitted_read = false;
+  std::optional<vm::CellUsageTree::ScopedReadObserver> state_observer;
+  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    if (!executed.state_admission) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "settlement lacks old-state admission");
+    }
+    // Observe the existing tree; never nest another UsageCell around its root,
+    // cache LoadedCell, or replace its proof callback. Repeated reads are checked
+    // too: proof tracking's first-load bit is not this batch's admission evidence.
+    // The same synchronous owner must remain live through this second scope.
+    state_observer.emplace(state_usage_node, [&](const vm::Cell& cell) {
+      if (unadmitted_read || !cell.get_tree_node().empty() ||
+          !executed.state_admission->charged_hashes().count(cell.get_hash())) {
+        unadmitted_read = true;
+        throw UnadmittedStateRead{};
+      }
+    });
   }
-  const td::Bits256 input_hash(executed.input->get_hash().bits());
-  const td::Bits256 effects_hash(effects_root->get_hash().bits());
-  WorkchainStorageOverlay state;
-  td::Ref<vm::Cell> message;
-  WorkchainFinalImportEvidence imports;
-  std::vector<NewOutMsg> exports;
-  if (executed.effects.payout_request.is_null()) {
-    TRY_RESULT(allocated, disposal ? build_workchain_disposal_allocation_overlay(old_accounts, identity, executed.input,
-        effects_root, coordinator, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, *disposal) :
-        build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
-        effects_root, coordinator, custody, max_reads, max_writes, max_transfers, max_inbound,
-        extra_validation_cells, cfg));
-    state = std::move(allocated.state);
-    imports = std::move(allocated.imports);
-    exports = std::move(allocated.exports);
-  } else {
-    // Materialize the complete write set and all outputs without re-executing
-    // the engine. Strict callers retain the original recipient policy.
-    TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
-        identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
-        executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
-        executed.input, effects_root, max_inbound, disposal));
-    state = std::move(payout.state);
-    message = std::move(payout.message);
-    imports = std::move(payout.imports);
-    exports = std::move(payout.exports);
+  auto settle = [&]() -> td::Result<WorkchainAccountSettlement> {
+    TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
+        extra_validation_cells));
+    std::vector<WorkchainStorageWrite> writes;
+    writes.reserve(executed.effects.updates.size());
+    for (const auto& update : executed.effects.updates) {
+      auto read = std::lower_bound(declarations.reads.begin(), declarations.reads.end(), update.account,
+          [](const auto& entry, const auto& key) { return entry.account < key; });
+      if (read == declarations.reads.end() || read->account != update.account || !read->old_account_hash) {
+        return td::Status::Error("account creation requires a registration participant");
+      }
+      writes.push_back({update.account, *read->old_account_hash, update.data});
+    }
+    const td::Bits256 input_hash(executed.input->get_hash().bits());
+    const td::Bits256 effects_hash(effects_root->get_hash().bits());
+    WorkchainStorageOverlay state;
+    td::Ref<vm::Cell> message;
+    WorkchainFinalImportEvidence imports;
+    std::vector<NewOutMsg> exports;
+    if (executed.effects.payout_request.is_null()) {
+      TRY_RESULT(allocated, disposal ? build_workchain_disposal_allocation_overlay(old_accounts, identity, executed.input,
+          effects_root, coordinator, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, *disposal) :
+          build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,
+          effects_root, coordinator, custody, max_reads, max_writes, max_transfers, max_inbound,
+          extra_validation_cells, cfg));
+      state = std::move(allocated.state);
+      imports = std::move(allocated.imports);
+      exports = std::move(allocated.exports);
+    } else {
+      // Materialize the complete write set and all outputs without re-executing
+      // the engine. Strict callers retain the original recipient policy.
+      TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
+          identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
+          executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
+          executed.input, effects_root, max_inbound, disposal));
+      state = std::move(payout.state);
+      message = std::move(payout.message);
+      imports = std::move(payout.imports);
+      exports = std::move(payout.exports);
+    }
+    return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
+                                      std::move(state), std::move(message), std::move(imports), std::move(exports)};
+  };
+  try {
+    auto result = settle();
+    if (!unadmitted_read) return result;
+  } catch (const UnadmittedStateRead&) {
+    // This is an incomplete host footprint, not an invalid candidate. No
+    // private result may escape, even if an intermediate callee swallowed it.
   }
-  return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
-                                    std::move(state), std::move(message), std::move(imports), std::move(exports)};
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "settlement read outside admitted old-state footprint");
 }
 }  // namespace account_settlement_detail
 
@@ -148,9 +230,9 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // private settlement runner, not live execution authorization.
 // Enforced here: input read/write/inbound counts and output transfer count.
 // The engine's old-account acquisition enforces aggregate state cells/bits and
-// per-account cells/bits/depth. Later overlay reads, proof units, effect cells/
-// bits and output cells/bits still require admission; carrying the policy does
-// not enforce those remaining costs.
+// per-account cells/bits/depth. Tracked overlay reads must remain in that
+// preadmitted content-hash union. Repeated work, usage paths, proof units,
+// effect cells/bits and output cells/bits still need independent admission.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,

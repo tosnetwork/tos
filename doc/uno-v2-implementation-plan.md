@@ -179,14 +179,41 @@ See `measurements/uno-v2-state-replacement-deep-control.json` and
 `measurements/uno-v2-state-replacement-review-controls.json`. These are manual
 one-shot controls, not recurring mutation CI or a complete host CPU bound.
 
-Live settlement must also account for reads after engine execution. The private
-runner's state meter ends before the allocation/payout overlay, whose Native
+Live settlement must also account for reads after engine execution. Before the
+observer cut below, the private meter ended before the allocation/payout overlay, whose Native
 dictionary lookups and independent `scan_diff` still use their original read
 interfaces. Pre-admitting declared account closures does not alone prove that
 every overlay/augmentation/difference read is inside the admitted union or
 that all traversal work is bounded. Closing that boundary (including proof
 tracking) remains required before enabling the live path; an engine-entry
 budget test is not evidence for the complete settlement lifetime.
+
+The next in-flight cut retains the private engine's state meter through
+settlement and installs a stack-scoped observer on its existing CellUsageTree
+(or creates one only for an otherwise untracked private source). The observer
+checks every old-source read against that union before the underlying load,
+including nodes loaded before the scope and loads ignored by proof marking.
+It does not replace the first-load callback or nest UsageCell wrappers on an
+already tracked root. An out-of-footprint access aborts the private attempt as
+LocalUnavailable, not CandidateInvalid; no settlement artifacts escape.
+The admitted union is by content hash, not by usage path. A separate
+pre-acquisition observer detects encountered nested live wrappers, including
+tracked descendants below an untracked root, before Native's nesting CHECK.
+The observer interface no longer exposes a mutable tree owner. Private tree
+ownership must remain local; returned weak usage nodes go inert when it ends.
+
+This is enforcement of the pre-admitted physical footprint, not a new allowance
+for late reads or a CPU-work budget. The observer retains no Cell cache, allocates
+no per-read state, and uses the existing ordered admitted-hash set. One private
+settlement installs one observer. Existing Native algorithms must preserve the
+source usage nodes; reads deliberately stripped of tracking are not made safe
+by this observer. Full-block proof comparison, source authentication types and
+the remaining exception boundary are still live-enablement obligations.
+Focused re-review closed the first review's M1-M5 findings. Four follow-up
+controls plus direct final-source union/hook controls reached their expected
+failures; the final restored regression is recorded with source hashes. No live
+acceptance change is claimed. First review findings and current follow-up
+status are in `uno-v2-settlement-read-observer-review-disposition.md`.
 
 Second-reader O5 needs a narrower interpretation. In `CellSlice.cpp`,
 `load_cell_slice_impl` performs the virtual-pruned availability check first,

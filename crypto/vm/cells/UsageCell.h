@@ -42,12 +42,7 @@ class UsageCell : public Cell {
   }
   // load interface
   td::Result<LoadedCell> load_cell() const override {
-    TRY_RESULT(loaded_cell, cell_->load_cell());
-    if (tree_node_.on_load(loaded_cell)) {
-      CHECK(loaded_cell.tree_node.empty());
-      loaded_cell.tree_node = tree_node_;
-    }
-    return std::move(loaded_cell);
+    return tree_node_.load_cell(*cell_);
   }
   Ref<Cell> virtualize(td::uint32 effective_level) const override {
     auto virtualized_cell = cell_->virtualize(effective_level);

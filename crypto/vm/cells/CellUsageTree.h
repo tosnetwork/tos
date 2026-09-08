@@ -23,16 +23,19 @@
 
 #include "td/utils/int_types.h"
 #include "td/utils/logging.h"
+#include "td/utils/Status.h"
 #include "vm/cells/CellTraits.h"
 
 namespace vm {
 
 class DataCell;
+class Cell;
 struct LoadedCell;
 
 class CellUsageTree : public std::enable_shared_from_this<CellUsageTree> {
  public:
   using NodeId = td::uint32;
+  class ScopedReadObserver;
 
   struct NodePtr {
    public:
@@ -44,14 +47,39 @@ class CellUsageTree : public std::enable_shared_from_this<CellUsageTree> {
       return node_id_ == 0 || tree_weak_.expired();
     }
 
-    bool on_load(const LoadedCell& loaded_cell) const;
+    td::Result<LoadedCell> load_cell(const Cell& cell) const;
     NodePtr create_child(unsigned ref_id) const;
     bool mark_path(CellUsageTree* master_tree) const;
     bool is_from_tree(const CellUsageTree* master_tree) const;
 
    private:
+    friend class ScopedReadObserver;
     std::weak_ptr<CellUsageTree> tree_weak_;
     NodeId node_id_{0};
+  };
+
+  // Synchronous, stack-scoped observation of every source read, including
+  // repeated and ignored proof-tracking reads. It neither marks nodes nor
+  // replaces the existing first-load callback. Observers may refuse a read by
+  // throwing before the underlying source is loaded. Notifications describe
+  // attempted reads, including reads whose underlying load later fails.
+  // The installing frame must catch every exception type its observer throws;
+  // a Result-returning load does not contain observer exceptions. Like this tree itself,
+  // observer installation and reads are confined to one execution thread.
+  class ScopedReadObserver {
+   public:
+    ScopedReadObserver(const NodePtr& node, std::function<void(const Cell&)> observe);
+    ~ScopedReadObserver();
+    ScopedReadObserver(const ScopedReadObserver&) = delete;
+    ScopedReadObserver& operator=(const ScopedReadObserver&) = delete;
+    ScopedReadObserver(ScopedReadObserver&&) = delete;
+    ScopedReadObserver& operator=(ScopedReadObserver&&) = delete;
+
+   private:
+    friend class CellUsageTree;
+    std::shared_ptr<CellUsageTree> tree_;
+    std::function<void(const Cell&)> observe_;
+    ScopedReadObserver* previous_;
   };
 
   NodePtr root_ptr();
@@ -86,7 +114,9 @@ class CellUsageTree : public std::enable_shared_from_this<CellUsageTree> {
   bool use_mark_{false};
   std::vector<Node> nodes_{2};
   std::function<void(const LoadedCell&)> cell_load_callback_;
+  ScopedReadObserver* read_observer_{nullptr};
 
+  void before_load(const Cell& cell);
   void on_load(NodeId node_id, const LoadedCell& loaded_cell);
   NodeId create_node(NodeId parent);
   int ignore_loads_ = 0;

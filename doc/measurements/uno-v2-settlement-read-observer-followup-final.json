@@ -1,0 +1,39 @@
+{
+  "base": "4cffaede1f2322a6b91f10031c67769763ca73b1",
+  "scope": "Historical restored follow-up source before focused review comments and direct-control reruns. Hashes identify that cut, not the final committed source. Private runner and Native regression only; no live M1 acceptance.",
+  "build": {
+    "command": "cmake --build build --target test-workchain-block test-workchain-admission test-cells test-vm test-vm-exception-hardening validator-engine -j48",
+    "exit_code": 0
+  },
+  "disk_build": {
+    "command": "cmake --build build --target test-tos-collator -j48",
+    "exit_code": 0
+  },
+  "tests": {
+    "command": "ctest --test-dir build --output-on-failure -R '^(test-workchain-block|test-workchain-admission|test-cells|test-vm|test-vm-exception-hardening)$'",
+    "result": {
+      "chunk_id": "3371a2",
+      "wall_time_seconds": 0.000008165,
+      "exit_code": 0,
+      "original_token_count": 143,
+      "output": "1/5 Test #35: test-vm ..........................   Passed   32.33 sec\n    Start 37: test-cells\n2/5 Test #37: test-cells .......................   Passed    0.06 sec\n    Start 38: test-workchain-block\n3/5 Test #38: test-workchain-block .............   Passed    2.78 sec\n    Start 39: test-workchain-admission\n4/5 Test #39: test-workchain-admission .........   Passed    0.01 sec\n    Start 68: test-vm-exception-hardening\n5/5 Test #68: test-vm-exception-hardening ......   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 5\n\nTotal Test time (real) =  35.19 sec\n"
+    }
+  },
+  "disk_tests": {
+    "command": "ctest --test-dir build --output-on-failure -R '^(test-counter-disk-integration|test-counter-account-binding-readiness)$'",
+    "first_test": "test-counter-disk-integration Passed 1.04 sec",
+    "result": {
+      "chunk_id": "9924c8",
+      "wall_time_seconds": 0.000007769,
+      "exit_code": 0,
+      "original_token_count": 40,
+      "output": "2/2 Test #17: test-counter-account-binding-readiness ...   Passed    0.31 sec\n\n100% tests passed, 0 tests failed out of 2\n\nTotal Test time (real) =   1.36 sec\n"
+    }
+  },
+  "source_and_binary_sha256": "0331f5af68b5c58dd6d37c59a27d62915fdd4de20d2a62a72a899a48f3c501fd  crypto/block/workchain-account-engine.h\n42f1f029032cd4e2648e882d4853980b9eb0f2dbfefb391df6a32cf6ce19784a  crypto/block/workchain-account-settlement.h\n8694f487343e92448aaa825041bddc2d14f284ec187f810a9aca9ba427b8b2fe  crypto/test/test-workchain-block.cpp\n46c0cd275317419db9f6cd63848048331d83d3ff4880f0c8d570858b7b65dee5  crypto/vm/cells/CellUsageTree.cpp\nf1954d877f2c259d01fb0207f0177189f51047b0fd3b92cc2ea8c53c1fbf2c2e  crypto/vm/cells/CellUsageTree.h\n79af23abcfe05423d7c1526540a7d61911c95e85d626b1bfcd682c8cdeeeb9c7  crypto/vm/cells/UsageCell.h\n883093d24e0889718c39e95dea9cb8738256e09621fdc2e3ea4d89a2cdbfb347  build/test-workchain-block\n0768932e8de64202a5b14646c4ea4b8b03616414fba5aac0baf9909a46e27f2d  build/validator-engine/validator-engine\n",
+  "guard": {
+    "command": "bash scripts/check-no-removed-execution-domains.sh",
+    "exit_code": 0,
+    "output": "removed-execution-domain scan passed: 5261 text files, 378 binary files and 0 directories skipped"
+  }
+}

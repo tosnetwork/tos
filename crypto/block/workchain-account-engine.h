@@ -67,6 +67,10 @@ class WorkchainAccountEngine {
 struct ExecutedWorkchainAccountBatch {
   td::Ref<vm::Cell> input;
   WorkchainAccountEffects effects;
+  // Retain the old-state content-hash union for private settlement. It does not
+  // bound the number of paths to shared content in the Native usage tree.
+  // An absent meter belongs only to the retained prototype path.
+  std::optional<NativeStateReadMeter> state_admission;
 };
 
 namespace account_engine_detail {
@@ -170,7 +174,7 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
   }
   // This checks engine claims only. The settlement overlay must independently
   // check actual Native account differences and physical participant coverage.
-  return ExecutedWorkchainAccountBatch{std::move(input), std::move(effects)};
+  return ExecutedWorkchainAccountBatch{std::move(input), std::move(effects), std::move(state_meter)};
 }
 }  // namespace account_engine_detail
 
