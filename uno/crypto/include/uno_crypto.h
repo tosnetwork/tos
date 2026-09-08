@@ -31,6 +31,23 @@ enum UnoCryptoStatus
 typedef uint32_t UnoCryptoStatus;
 #endif // __cplusplus
 
+/**
+ * Fixed-width encoded public inputs. Numeric policy and domain provenance
+ * must be resolved by the host; ABI version is not a network activation gate.
+ */
+typedef struct {
+  uint32_t abi_version;
+  uint8_t domain[80];
+  uint8_t deposit_id[32];
+  uint8_t recipient[32];
+  uint64_t amount;
+} UnoCryptoSystemEncryptionRequest;
+
+typedef struct {
+  uint8_t commitment[32];
+  uint8_t handle[32];
+} UnoCryptoSystemCiphertext;
+
 typedef struct {
   uint64_t max_balance;
   uint64_t max_value;
@@ -60,6 +77,28 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * Construct a public system ciphertext. Output is untouched unless successful.
+ *
+ * # Safety
+ * Request must be initialized and readable; output must be aligned, writable
+ * and disjoint from request for the entire call. No pointer is retained.
+ * Numeric span checks do not prove allocation validity. Pending-only use and
+ * deposit authentication are host obligations, not implied by success.
+ */
+uint32_t uno_crypto_system_encrypt_v1(const UnoCryptoSystemEncryptionRequest *request,
+                                      UnoCryptoSystemCiphertext *output);
+
+/**
+ * Reconstruct and compare both canonical ciphertext components without writes.
+ *
+ * # Safety
+ * Non-null arguments must be initialized, aligned and readable for the call.
+ * This call does not authorize issuance, bind an account or consume a message.
+ */
+uint32_t uno_crypto_system_verify_v1(const UnoCryptoSystemEncryptionRequest *request,
+                                     const UnoCryptoSystemCiphertext *supplied);
 
 /**
  * Verify borrowed fields without retaining pointers or transferring ownership.

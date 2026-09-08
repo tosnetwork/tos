@@ -1,0 +1,198 @@
+{
+  "baseline": "a62c650bf",
+  "revision_note": "Historical pre-review evidence only. The stub and first run cover intermediate helpers that were later removed. The 14 controls and restored hashes cover the pre-review 84-byte-domain implementation, not the corrected 80-byte domain or subsequent review fixes. New evidence is required before claiming those fixes verified. The stub is a red witness only for the positive construction test, not all four final tests.",
+  "scope": "D33 manual rebuilt runtime mutations, not recurring CI mutations or full host acceptance",
+  "stub": {
+    "chunk_id": "851203",
+    "wall_time_seconds": 0.000007816,
+    "exit_code": 101,
+    "original_token_count": 429,
+    "output": "warning: multiple fields are never read\n  --> src/system_encryption.rs:6:9\n   |\n 5 | pub(crate) struct Domain {\n   |                   ------ fields in this struct\n 6 |     pub engine: u16,\n   |         ^^^^^^\n 7 |     pub relation: u16,\n   |         ^^^^^^^^\n 8 |     pub wire: u16,\n   |         ^^^^\n 9 |     pub proof: u16,\n   |         ^^^^^\n10 |     pub network: u32,\n   |         ^^^^^^^\n11 |     pub global_id: i32,\n   |         ^^^^^^^^^\n12 |     pub genesis: [u8; 32],\n   |         ^^^^^^^\n13 |     pub workchain: i32,\n   |         ^^^^^^^^^\n14 |     pub instance: [u8; 32],\n   |         ^^^^^^^^\n   |\n   = note: `Domain` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `tos-uno-crypto-prototype` (lib test) generated 1 warning\n    Finished `release` profile [optimized] target(s) in 2.52s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\ntest system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s\n\n\nthread 'system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount' (14884) panicked at src/system_encryption.rs:39:14:\nvalid public system encryption must succeed: UNO_CRYPTO_ARGUMENTS\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `--lib`\n"
+  },
+  "first_implementation_run": {
+    "chunk_id": "a9c90e",
+    "wall_time_seconds": 0.000006499,
+    "exit_code": 0,
+    "original_token_count": 344,
+    "output": "    Finished `release` profile [optimized] target(s) in 1.69s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 5 tests\ntest system_encryption::tests::system_domain_has_fixed_little_endian_encoding ... ok\nD33_VECTOR b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100 a6a8c74e904946028921711fb1221eb555594e5fb2b995697cb3c8c58393fc70 94f94890d14caa4981acf274d62a6778e62cca17f8c3d5c420db75186e5af201\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... ok\ntest system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount ... ok\n\nthread 'system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components' (18814) panicked at src/ffi.rs:72:34:\ninjected system encryption unwind\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\nthread 'system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components' (18814) panicked at src/ffi.rs:72:34:\ninjected system encryption unwind\ntest system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components ... ok\ntest system_encryption::tests::system_encryption_binds_every_public_field ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s\n\n"
+  },
+  "mutations": [
+    {
+      "name": "domain",
+      "path": "src/system_encryption.rs",
+      "before": "    transcript.append_message(b\"protocol-domain\", domain);",
+      "after": "",
+      "filter": "system_encryption_binds",
+      "chunk_id": "8a76a1",
+      "wall_time_seconds": 0.66429611,
+      "exit_code": 101,
+      "original_token_count": 394,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\nwarning: unused variable: `domain`\n --> src/system_encryption.rs:9:31\n  |\n9 | pub(crate) fn encrypt_encoded(domain: &[u8; 84], id: &[u8; 32], recipient: &[u8; 32],\n  |                               ^^^^^^ help: if this is intentional, prefix it with an underscore: `_domain`\n  |\n  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `tos-uno-crypto-prototype` (lib test) generated 1 warning (run `cargo fix --lib -p tos-uno-crypto-prototype --tests` to apply 1 suggestion)\n    Finished `release` profile [optimized] target(s) in 1.78s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_binds_every_public_field' (22899) panicked at src/system_encryption.rs:134:13:\nassertion `left != right` failed: domain byte 0 must affect the ciphertext\n  left: [[148, 88, 85, 8, 119, 118, 206, 52, 56, 135, 107, 23, 171, 240, 97, 40, 87, 146, 250, 219, 100, 16, 206, 137, 53, 188, 11, 92, 236, 109, 242, 126], [2, 133, 230, 181, 221, 145, 112, 54, 170, 3, 159, 33, 30, 237, 23, 42, 23, 97, 233, 52, 187, 118, 47, 188, 98, 248, 203, 227, 45, 69, 216, 60]]\n right: [[148, 88, 85, 8, 119, 118, 206, 52, 56, 135, 107, 23, 171, 240, 97, 40, 87, 146, 250, 219, 100, 16, 206, 137, 53, 188, 11, 92, 236, 109, 242, 126], [2, 133, 230, 181, 221, 145, 112, 54, 170, 3, 159, 33, 30, 237, 23, 42, 23, 97, 233, 52, 187, 118, 47, 188, 98, 248, 203, 227, 45, 69, 216, 60]]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_binds_every_public_field ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_binds_every_public_field\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "id",
+      "path": "src/system_encryption.rs",
+      "before": "    transcript.append_message(b\"deposit-id\", id);",
+      "after": "",
+      "filter": "system_encryption_binds",
+      "chunk_id": "2ffad4",
+      "wall_time_seconds": 0.463805407,
+      "exit_code": 101,
+      "original_token_count": 386,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\nwarning: unused variable: `id`\n --> src/system_encryption.rs:9:50\n  |\n9 | pub(crate) fn encrypt_encoded(domain: &[u8; 84], id: &[u8; 32], recipient: &[u8; 32],\n  |                                                  ^^ help: if this is intentional, prefix it with an underscore: `_id`\n  |\n  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `tos-uno-crypto-prototype` (lib test) generated 1 warning (run `cargo fix --lib -p tos-uno-crypto-prototype --tests` to apply 1 suggestion)\n    Finished `release` profile [optimized] target(s) in 1.56s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\ntest system_encryption::tests::system_encryption_binds_every_public_field ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_binds_every_public_field\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s\n\n\nthread 'system_encryption::tests::system_encryption_binds_every_public_field' (23187) panicked at src/system_encryption.rs:137:9:\nassertion `left != right` failed\n  left: [[196, 105, 191, 207, 161, 213, 236, 86, 136, 134, 238, 253, 199, 9, 81, 31, 25, 15, 194, 98, 100, 135, 247, 202, 64, 23, 252, 204, 54, 255, 44, 51], [188, 124, 28, 169, 50, 135, 169, 72, 107, 55, 6, 54, 119, 36, 83, 184, 205, 222, 221, 47, 52, 248, 215, 224, 146, 222, 205, 34, 132, 160, 197, 90]]\n right: [[196, 105, 191, 207, 161, 213, 236, 86, 136, 134, 238, 253, 199, 9, 81, 31, 25, 15, 194, 98, 100, 135, 247, 202, 64, 23, 252, 204, 54, 255, 44, 51], [188, 124, 28, 169, 50, 135, 169, 72, 107, 55, 6, 54, 119, 36, 83, 184, 205, 222, 221, 47, 52, 248, 215, 224, 146, 222, 205, 34, 132, 160, 197, 90]]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "recipient",
+      "path": "src/system_encryption.rs",
+      "before": "    transcript.append_message(b\"recipient-P\", recipient);",
+      "after": "",
+      "filter": "system_encryption_binds",
+      "chunk_id": "70e5ff",
+      "wall_time_seconds": 0.511782566,
+      "exit_code": 101,
+      "original_token_count": 272,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.62s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_binds_every_public_field' (23488) panicked at src/system_encryption.rs:141:9:\nassertion `left != right` failed\n  left: [102, 161, 126, 113, 25, 200, 231, 25, 98, 69, 245, 229, 64, 240, 47, 125, 84, 35, 207, 161, 207, 182, 140, 119, 247, 74, 2, 198, 145, 7, 19, 22]\n right: [102, 161, 126, 113, 25, 200, 231, 25, 98, 69, 245, 229, 64, 240, 47, 125, 84, 35, 207, 161, 207, 182, 140, 119, 247, 74, 2, 198, 145, 7, 19, 22]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_binds_every_public_field ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_binds_every_public_field\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "amount",
+      "path": "src/system_encryption.rs",
+      "before": "    transcript.append_message(b\"amount\", &amount.to_le_bytes());",
+      "after": "",
+      "filter": "system_encryption_binds",
+      "chunk_id": "6c7a55",
+      "wall_time_seconds": 0.42808243,
+      "exit_code": 101,
+      "original_token_count": 273,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.53s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_binds_every_public_field' (23769) panicked at src/system_encryption.rs:144:9:\nassertion `left != right` failed\n  left: [140, 220, 116, 26, 78, 131, 154, 68, 116, 50, 112, 241, 56, 61, 230, 125, 67, 14, 23, 185, 96, 184, 18, 227, 82, 80, 225, 51, 226, 108, 198, 117]\n right: [140, 220, 116, 26, 78, 131, 154, 68, 116, 50, 112, 241, 56, 61, 230, 125, 67, 14, 23, 185, 96, 184, 18, 227, 82, 80, 225, 51, 226, 108, 198, 117]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_binds_every_public_field ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_binds_every_public_field\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "zero-limit",
+      "path": "src/system_encryption.rs",
+      "before": "    if max_value == 0 { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "after": "",
+      "filter": "system_encryption_rejects",
+      "chunk_id": "45f0aa",
+      "wall_time_seconds": 0.50312406,
+      "exit_code": 101,
+      "original_token_count": 213,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.62s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_rejects_each_invalid_input' (24049) panicked at src/system_encryption.rs:117:9:\nassertion `left == right` failed\n  left: Err(UNO_CRYPTO_DECODE)\n right: Err(UNO_CRYPTO_ARGUMENTS)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_rejects_each_invalid_input\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "zero-amount",
+      "path": "src/system_encryption.rs",
+      "before": "    if amount == 0 || amount > max_value { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "after": "    if amount > max_value { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "filter": "system_encryption_rejects",
+      "chunk_id": "b8f15a",
+      "wall_time_seconds": 0.49298791,
+      "exit_code": 101,
+      "original_token_count": 284,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.61s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_rejects_each_invalid_input' (24353) panicked at src/system_encryption.rs:118:9:\nassertion `left == right` failed\n  left: Ok([[166, 21, 212, 207, 206, 103, 99, 248, 182, 19, 186, 122, 120, 237, 213, 48, 190, 115, 209, 134, 128, 220, 42, 243, 244, 159, 40, 210, 41, 207, 70, 91], [166, 21, 212, 207, 206, 103, 99, 248, 182, 19, 186, 122, 120, 237, 213, 48, 190, 115, 209, 134, 128, 220, 42, 243, 244, 159, 40, 210, 41, 207, 70, 91]])\n right: Err(UNO_CRYPTO_DECODE)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_rejects_each_invalid_input\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "over-limit",
+      "path": "src/system_encryption.rs",
+      "before": "    if amount == 0 || amount > max_value { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "after": "    if amount == 0 { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "filter": "system_encryption_rejects",
+      "chunk_id": "6498b2",
+      "wall_time_seconds": 0.497646491,
+      "exit_code": 101,
+      "original_token_count": 284,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.62s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_rejects_each_invalid_input' (24633) panicked at src/system_encryption.rs:119:9:\nassertion `left == right` failed\n  left: Ok([[74, 21, 246, 229, 83, 114, 130, 154, 59, 170, 49, 192, 251, 171, 109, 215, 191, 150, 207, 132, 172, 255, 222, 78, 12, 137, 172, 230, 252, 34, 242, 113], [50, 140, 186, 15, 249, 171, 223, 204, 170, 149, 7, 147, 146, 22, 174, 248, 66, 59, 111, 78, 72, 226, 164, 164, 54, 192, 190, 210, 114, 67, 179, 122]])\n right: Err(UNO_CRYPTO_DECODE)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_rejects_each_invalid_input\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "identity",
+      "path": "src/system_encryption.rs",
+      "before": "    if p.is_identity() { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "after": "",
+      "filter": "system_encryption_rejects",
+      "chunk_id": "c0f510",
+      "wall_time_seconds": 0.522674874,
+      "exit_code": 101,
+      "original_token_count": 307,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\nwarning: unused import: `traits::IsIdentity`\n --> src/system_encryption.rs:4:80\n  |\n4 | use curve25519_dalek::{Scalar, RistrettoPoint, ristretto::CompressedRistretto, traits::IsIdentity};\n  |                                                                                ^^^^^^^^^^^^^^^^^^\n  |\n  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `tos-uno-crypto-prototype` (lib test) generated 1 warning (run `cargo fix --lib -p tos-uno-crypto-prototype --tests` to apply 1 suggestion)\n    Finished `release` profile [optimized] target(s) in 1.64s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_rejects_each_invalid_input' (24913) panicked at src/system_encryption.rs:121:9:\nassertion `left == right` failed\n  left: Ok([[120, 52, 100, 184, 52, 231, 3, 139, 155, 30, 189, 69, 170, 103, 212, 129, 120, 184, 204, 137, 12, 165, 136, 175, 15, 146, 177, 26, 76, 164, 202, 23], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])\n right: Err(UNO_CRYPTO_DECODE)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_rejects_each_invalid_input\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "zero-scalar",
+      "path": "src/system_encryption.rs",
+      "before": "    if r == Scalar::ZERO { return Err(Error::UNO_CRYPTO_DECODE); }",
+      "after": "",
+      "filter": "system_encryption_rejects",
+      "chunk_id": "4b810d",
+      "wall_time_seconds": 0.361283686,
+      "exit_code": 101,
+      "original_token_count": 270,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.48s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_encryption_rejects_each_invalid_input' (25216) panicked at src/system_encryption.rs:123:9:\nassertion `left == right` failed\n  left: Ok([[226, 242, 174, 10, 106, 188, 78, 113, 168, 132, 169, 97, 197, 0, 81, 95, 88, 227, 11, 106, 165, 130, 221, 141, 182, 166, 89, 69, 224, 141, 45, 118], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])\n right: Err(UNO_CRYPTO_DECODE)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_encryption_rejects_each_invalid_input ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_encryption_rejects_each_invalid_input\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "domain-label",
+      "path": "src/system_encryption.rs",
+      "before": "    let mut transcript = Transcript::new(b\"uno-v2/system-encryption\");",
+      "after": "    let mut transcript = Transcript::new(b\"uno-v2/system-encryption-wrong\");",
+      "filter": "system_ciphertext_decrypts",
+      "chunk_id": "1f5131",
+      "wall_time_seconds": 0.366055081,
+      "exit_code": 101,
+      "original_token_count": 236,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.49s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount' (25496) panicked at src/system_encryption.rs:65:9:\nassertion `left == right` failed\n  left: \"bcf487e6c9f97210a399e90c708cfcad2b4ba3dff3f111636cddf83fb2046158\"\n right: \"a6a8c74e904946028921711fb1221eb555594e5fb2b995697cb3c8c58393fc70\"\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "wide-high-half",
+      "path": "src/system_encryption.rs",
+      "before": "    let r = Scalar::from_bytes_mod_order_wide(wide);",
+      "after": "    let mut narrow = *wide; narrow[32..].fill(0);\n    let r = Scalar::from_bytes_mod_order_wide(&narrow);",
+      "filter": "system_ciphertext_decrypts",
+      "chunk_id": "4b2070",
+      "wall_time_seconds": 0.542429809,
+      "exit_code": 101,
+      "original_token_count": 236,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.66s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount' (25776) panicked at src/system_encryption.rs:66:9:\nassertion `left == right` failed\n  left: \"2ec28925e006f34de5edf504939326538105341d3cc9ec12576c2a74ca4a0771\"\n right: \"a6a8c74e904946028921711fb1221eb555594e5fb2b995697cb3c8c58393fc70\"\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "omit-handle-comparison",
+      "path": "src/ffi.rs",
+      "before": "        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+      "after": "        if expected.commitment != unsafe { (*supplied).commitment } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+      "filter": "system_abi_checks",
+      "chunk_id": "fe9f3b",
+      "wall_time_seconds": 0.516237375,
+      "exit_code": 101,
+      "original_token_count": 215,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.64s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components' (26081) panicked at src/system_encryption.rs:92:13:\nassertion `left == right` failed\n  left: 0\n right: 3\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "omit-commitment-comparison",
+      "path": "src/ffi.rs",
+      "before": "        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+      "after": "        if expected.handle != unsafe { (*supplied).handle } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+      "filter": "system_abi_checks",
+      "chunk_id": "0b50cb",
+      "wall_time_seconds": 0.475462712,
+      "exit_code": 101,
+      "original_token_count": 215,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.59s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components' (26361) panicked at src/system_encryption.rs:90:13:\nassertion `left == right` failed\n  left: 0\n right: 3\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    },
+    {
+      "name": "abi-version",
+      "path": "src/ffi.rs",
+      "before": "    if r.abi_version != UNO_CRYPTO_ABI_VERSION { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }",
+      "after": "",
+      "filter": "system_abi_checks",
+      "chunk_id": "3a197c",
+      "wall_time_seconds": 0.421215536,
+      "exit_code": 101,
+      "original_token_count": 215,
+      "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `release` profile [optimized] target(s) in 1.54s\n     Running unittests src/lib.rs (/home/tomi/tos/build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-811c89d907253fc7)\n\nrunning 1 test\n\nthread 'system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components' (26642) panicked at src/system_encryption.rs:95:13:\nassertion `left == right` failed\n  left: 0\n right: 1\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components ... FAILED\n\nfailures:\n\nfailures:\n    system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+    }
+  ],
+  "restored_source_sha256": "e454e93e0900656d758adf3d7a7f9ff383d12ee0c4f5ddd0792f9597e73703e0  uno/crypto/src/system_encryption.rs\nd58618bd7593cbc019f7b14aa9eb1bb2e6ab7e84e9f14d8a5741191bf88753bb  uno/crypto/src/ffi.rs\n9f9aecb1e861d5c950960979abf4484c57f67fbdb825b07c51df8568f5d92227  uno/crypto/src/lib.rs\n33ec0c7333cbf6b1fe6e9a26bf2548a9583ac98d62e98589cde7f16036e5c34e  uno/crypto/tests/balance-abi.cpp\nc62c7d93851d63c32c41eb9a4ddde9b4cb3cb3e7cf74313b073d471099b78201  uno/crypto/include/uno_crypto.h\n0801dbc717ebf6d9ac37a8de80e73645cf0c010d1f92fba4a791f1255e66be05  uno/crypto/tests/kernel-gates.py\nb3c3834e0933d0c6c28ad62e57d658b861a43cce818049b6f39f4d1e662244a0  uno/crypto/tests/kernel-symbols.py\n",
+  "orchestration_note": "First mutation attempt had a restoration patch syntax error. Its single removal was restored explicitly; that attempt is not counted. All 14 recorded controls below were rerun individually with successful restoration.",
+  "restored_ctest": {
+    "chunk_id": "abb208",
+    "wall_time_seconds": 0.000009606,
+    "exit_code": 0,
+    "original_token_count": 148,
+    "output": "1/5 Test #92: test-uno-crypto-abi-real .........   Passed    1.09 sec\n    Start 93: test-uno-crypto-rust\n2/5 Test #93: test-uno-crypto-rust .............   Passed    4.16 sec\n    Start 94: test-uno-crypto-symbols\n3/5 Test #94: test-uno-crypto-symbols ..........   Passed    1.07 sec\n    Start 95: test-uno-crypto-kernel-gates\n4/5 Test #95: test-uno-crypto-kernel-gates .....   Passed    1.05 sec\n    Start 96: test-uno-crypto-header-guard\n5/5 Test #96: test-uno-crypto-header-guard .....   Passed    3.64 sec\n\n100% tests passed, 0 tests failed out of 5\n\nTotal Test time (real) =  11.03 sec\n"
+  }
+}

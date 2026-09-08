@@ -9,6 +9,116 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# These controls run on an isolated copy, not in the ordinary CTest job.
+# The underlying Rust regression tests do run in CTest.
+SYSTEM_MUTATIONS = [
+    [
+        "domain",
+        "src/system_encryption.rs",
+        "    transcript.append_message(b\"protocol-domain\", domain);",
+        "",
+        "system_encryption_binds"
+    ],
+    [
+        "id",
+        "src/system_encryption.rs",
+        "    transcript.append_message(b\"deposit-id\", id);",
+        "",
+        "system_encryption_binds"
+    ],
+    [
+        "recipient",
+        "src/system_encryption.rs",
+        "    transcript.append_message(b\"recipient-P\", recipient);",
+        "",
+        "system_encryption_binds"
+    ],
+    [
+        "amount",
+        "src/system_encryption.rs",
+        "    transcript.append_message(b\"amount\", &amount.to_le_bytes());",
+        "",
+        "system_encryption_binds"
+    ],
+    [
+        "zero-amount",
+        "src/system_encryption.rs",
+        "    if amount == 0 { return Err(Error::UNO_CRYPTO_DECODE); }",
+        "",
+        "system_encryption_rejects"
+    ],
+    [
+        "identity",
+        "src/system_encryption.rs",
+        "    if p.is_identity() { return Err(Error::UNO_CRYPTO_DECODE); }",
+        "",
+        "system_encryption_rejects"
+    ],
+    [
+        "zero-scalar",
+        "src/system_encryption.rs",
+        "    if r == Scalar::ZERO { return Err(Error::UNO_CRYPTO_DECODE); }",
+        "",
+        "system_encryption_rejects"
+    ],
+    [
+        "domain-label",
+        "src/system_encryption.rs",
+        "    let mut transcript = Transcript::new(b\"uno-v2/system-encryption\");",
+        "    let mut transcript = Transcript::new(b\"uno-v2/system-encryption-wrong\");",
+        "system_ciphertext_decrypts"
+    ],
+    [
+        "wide-high-half",
+        "src/system_encryption.rs",
+        "    let r = Scalar::from_bytes_mod_order_wide(wide);",
+        "    let mut narrow = *wide; narrow[32..].fill(0);\n    let r = Scalar::from_bytes_mod_order_wide(&narrow);",
+        "system_ciphertext_decrypts"
+    ],
+    [
+        "omit-handle-comparison",
+        "src/ffi.rs",
+        "        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+        "        if expected.commitment != unsafe { (*supplied).commitment } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+        "system_abi_checks"
+    ],
+    [
+        "omit-commitment-comparison",
+        "src/ffi.rs",
+        "        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+        "        if expected.handle != unsafe { (*supplied).handle } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }",
+        "system_abi_checks"
+    ],
+    [
+        "abi-version",
+        "src/ffi.rs",
+        "    if r.abi_version != UNO_CRYPTO_ABI_VERSION { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }",
+        "",
+        "system_abi_checks"
+    ],
+    [
+        "failure-atomicity",
+        "src/ffi.rs",
+        "        let ciphertext = unsafe { system_ciphertext(request)? };",
+        "        unsafe { output.write(SystemCiphertext { commitment: [0;32], handle: [0;32] }); }\n        let ciphertext = unsafe { system_ciphertext(request)? };",
+        "system_abi_checks"
+    ],
+    [
+        "invent-deposit-limit",
+        "src/system_encryption.rs",
+        "    if amount == 0 { return Err(Error::UNO_CRYPTO_DECODE); }",
+        "    if amount == 0 || amount > 1000 { return Err(Error::UNO_CRYPTO_DECODE); }",
+        "system_encryption_rejects"
+    ],
+    [
+        "verify-abi-version",
+        "src/ffi.rs",
+        "    if r.abi_version != UNO_CRYPTO_ABI_VERSION { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }",
+        "",
+        "system_verify_checks_request_version_independently"
+    ]
+]
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -43,6 +153,8 @@ def main():
             file.write_text(original)
 
     command("baseline", "", True)
+    for label, path, before, after, test in SYSTEM_MUTATIONS:
+        mutation("system-" + label, path, before, after, test)
     mutation("drop-internal-collect-ceiling", "src/relation.rs", "limits.max_collect > 64", "false",
              "internal_collect_ceiling_rejects_unsupported_policy_before_input")
     path = "vendor/bulletproofs/src/range_proof/deterministic.rs"

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -23,6 +24,9 @@
 static_assert(sizeof(UnoCryptoLimits) == 40);
 static_assert(sizeof(UnoCryptoVerifyRequest) == 144);
 static_assert(offsetof(UnoCryptoVerifyRequest, context) == 48);
+static_assert(sizeof(UnoCryptoSystemEncryptionRequest) == 160);
+static_assert(offsetof(UnoCryptoSystemEncryptionRequest, amount) == 152);
+static_assert(sizeof(UnoCryptoSystemCiphertext) == 64);
 using Word = std::array<uint8_t, 32>;
 static_assert(sizeof(Word) == 32);
 
@@ -130,7 +134,40 @@ void forbid_entropy() {
   require(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) == 0, "cannot install entropy trap");
 }
 
+void verify_system() {
+  UnoCryptoSystemEncryptionRequest request{};
+  request.abi_version = UNO_CRYPTO_ABI_VERSION;
+  const uint8_t prefix[] = {2,0,3,0,4,0,5,0,249,255,255,255};
+  std::memcpy(request.domain, prefix, sizeof(prefix));
+  std::memset(request.domain + 12, 8, 32);
+  request.domain[44] = 2;
+  std::memset(request.domain + 48, 9, 32);
+  std::memset(request.deposit_id, 10, 32);
+  auto recipient = bytes("b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100");
+  std::memcpy(request.recipient, recipient.data(), 32);
+  request.amount = 123;
+  auto c = bytes("5e24f609c9cd20bdee88a48bf0649613ff19d9dc6b8e57f690cf69d817dc5153");
+  auto d = bytes("34b2c6c8ec0f8028607358e6274d1165e6a79937a076567b2bcf0d67df7e6d01");
+  UnoCryptoSystemCiphertext output{};
+  require(uno_crypto_system_encrypt_v1(&request, &output) == UNO_CRYPTO_OK, "system encryption failed");
+  require(std::memcmp(output.commitment, c.data(), 32) == 0, "system commitment frozen vector differs");
+  require(std::memcmp(output.handle, d.data(), 32) == 0, "system handle frozen vector differs");
+  require(uno_crypto_system_verify_v1(&request, &output) == UNO_CRYPTO_OK, "system verification failed");
+  output.commitment[0] ^= 1;
+  require(uno_crypto_system_verify_v1(&request, &output) == UNO_CRYPTO_VERIFY, "altered system commitment accepted");
+  output.commitment[0] ^= 1;
+  output.handle[0] ^= 1;
+  require(uno_crypto_system_verify_v1(&request, &output) == UNO_CRYPTO_VERIFY, "altered system handle accepted");
+  auto sentinel = output;
+  request.amount = 0;
+  require(uno_crypto_system_encrypt_v1(&request, &output) == UNO_CRYPTO_DECODE, "zero system amount accepted");
+  require(std::memcmp(&output, &sentinel, sizeof(output)) == 0, "failed system encryption changed output");
+  require(uno_crypto_system_encrypt_v1(nullptr, &output) == UNO_CRYPTO_ARGUMENTS, "null system request accepted");
+  require(uno_crypto_system_verify_v1(&request, nullptr) == UNO_CRYPTO_ARGUMENTS, "null system ciphertext accepted");
+}
+
 void verify_all(const std::vector<Fixture>& fixtures) {
+  verify_system();
   for (const auto& f : fixtures) {
     auto request = f.request();
     require(uno_crypto_verify_v1(&request) == UNO_CRYPTO_OK, "real cross-language proof rejected");
@@ -168,7 +205,7 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < 4; ++i) threads.emplace_back([&] { verify_all(fixtures); });
     for (auto& thread : threads) thread.join();
     require(uno_crypto_verify_v1(nullptr) == UNO_CRYPTO_ARGUMENTS, "null ABI pointer accepted");
-    std::cout << "PASS: 9 full relations, C ABI, four workers, entropy trap and firing canary\n";
+    std::cout << "PASS: 9 full relations and system ciphertext, C ABI, four workers, entropy trap and firing canary\n";
     return 0;
   } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 2; }
 }

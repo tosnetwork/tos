@@ -52,14 +52,15 @@ def main(binary):
                 edges[current].add(relocations[int(got[1], 16)])
             else:
                 indirect[current] += 1
-    roots = [address for address, name in names.items() if name == "uno_crypto_verify_v1"]
-    assert len(roots) == 1, "missing or ambiguous verification root"
-    visited = reachable(edges, roots[0])
-    assert len(visited) > 10, "disassembly instrument did not traverse the verifier"
-    forbidden = [names[a] for a in visited if entropy_name(names.get(a, ""))]
-    assert not forbidden, forbidden
-    print(f"PASS: {len(visited)} direct/GOT nodes, no matched entropy target; "
-          f"{sum(indirect[a] for a in visited)} unresolved indirect sites REQUIRE source/runtime review")
+    for entry in ("uno_crypto_verify_v1", "uno_crypto_system_encrypt_v1", "uno_crypto_system_verify_v1"):
+        roots = [address for address, name in names.items() if name == entry]
+        assert len(roots) == 1, f"missing or ambiguous root: {entry}"
+        visited = reachable(edges, roots[0])
+        assert len(visited) > 10, f"instrument did not traverse {entry}"
+        forbidden = [names[a] for a in visited if entropy_name(names.get(a, ""))]
+        assert not forbidden, forbidden
+        print(f"PASS {entry}: {len(visited)} direct/GOT nodes, no matched entropy target; "
+              f"{sum(indirect[a] for a in visited)} unresolved indirect sites REQUIRE source/runtime review")
     print("Dormant runtime entropy symbols are not classified as reachable merely because they are linked.")
 
 

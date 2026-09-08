@@ -46,6 +46,72 @@ pub struct VerifyRequest {
     pub proof_bytes: usize,
 }
 
+/// Fixed-width encoded public inputs. Numeric policy and domain provenance
+/// must be resolved by the host; ABI version is not a network activation gate.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SystemEncryptionRequest {
+    pub abi_version: u32,
+    pub domain: [u8; 80],
+    pub deposit_id: [u8; 32],
+    pub recipient: [u8; 32],
+    pub amount: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemCiphertext {
+    pub commitment: [u8; 32],
+    pub handle: [u8; 32],
+}
+
+unsafe fn system_ciphertext(request: *const SystemEncryptionRequest) -> Result<SystemCiphertext, AbiStatus> {
+    #[cfg(test)]
+    INJECT_UNWIND.with(|flag| {
+        if flag.replace(false) { panic!("injected system encryption unwind"); }
+    });
+    if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+    let r = unsafe { &*request };
+    if r.abi_version != UNO_CRYPTO_ABI_VERSION { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+    let [commitment, handle] = crate::system_encryption::encrypt_encoded(
+        &r.domain, &r.deposit_id, &r.recipient, r.amount)?;
+    Ok(SystemCiphertext { commitment, handle })
+}
+
+/// Construct a public system ciphertext. Output is untouched unless successful.
+///
+/// # Safety
+/// Request must be initialized and readable; output must be aligned, writable
+/// and disjoint from request for the entire call. No pointer is retained.
+/// Numeric span checks do not prove allocation validity. Pending-only use and
+/// deposit authentication are host obligations, not implied by success.
+#[no_mangle]
+pub unsafe extern "C" fn uno_crypto_system_encrypt_v1(
+    request: *const SystemEncryptionRequest, output: *mut SystemCiphertext) -> u32 {
+    contain_unwind(|| {
+        if !bounded_span(output, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        let ciphertext = unsafe { system_ciphertext(request)? };
+        unsafe { output.write(ciphertext); }
+        Ok(())
+    })
+}
+
+/// Reconstruct and compare both canonical ciphertext components without writes.
+///
+/// # Safety
+/// Non-null arguments must be initialized, aligned and readable for the call.
+/// This call does not authorize issuance, bind an account or consume a message.
+#[no_mangle]
+pub unsafe extern "C" fn uno_crypto_system_verify_v1(
+    request: *const SystemEncryptionRequest, supplied: *const SystemCiphertext) -> u32 {
+    contain_unwind(|| {
+        if !bounded_span(supplied, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        let expected = unsafe { system_ciphertext(request)? };
+        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }
+        Ok(())
+    })
+}
+
 pub(crate) fn bounded_span<T>(pointer: *const T, count: usize) -> bool {
     !pointer.is_null()
         && (pointer as usize) % mem::align_of::<T>() == 0

@@ -1,5 +1,22 @@
 # Privacy workchain implementation progress
 
+## V2 public system-encryption primitive (2026-09-08)
+
+The kernel now constructs and independently recomputes deterministic public
+system ciphertexts through two additive C ABI entries. An 80-byte domain binds
+the approved versions, network/global_id, genesis, workchain and instance;
+the transcript also binds deposit ID, recipient and positive u64 amount.
+No local monetary maximum is installed by this primitive. The host MUST still
+enforce V_min <= x <= V_max because every pending entry must be collectible.
+Late-return slot-fee subtraction and admission are host responsibilities.
+
+This is not live Deposit admission or a completed M2/M1 gate. Deposit/COLLECT
+boundary tests, authenticated host domain encoding, SEND/COLLECT fee-debit
+equations, and multiaccount atomic integration remain required. See
+[the system-encryption disposition](uno-v2-system-encryption-review-disposition.md).
+The new Rust tests run in CTest; isolated mutation experiments are manual and
+must not be described as recurring CI mutation coverage.
+
 ## V2 kernel transition (2026-09-07)
 
 The active `uno/crypto` crate is being replaced by the experimental confidential

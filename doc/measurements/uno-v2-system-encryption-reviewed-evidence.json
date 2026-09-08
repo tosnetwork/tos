@@ -1,0 +1,68 @@
+{
+  "baseline": "a62c650bfc41fcfda22fc2aa4bc562c0946794fd",
+  "scope": "D33 corrected 80-byte domain, no primitive max_value; not host Deposit admission or recurring mutation CI",
+  "source_sha256": [
+    {
+      "path": "uno/crypto/ABI.md",
+      "sha256": "504c237a2d1a2e0b3536ea34af3ce31d143b8146cbb7728a9276b0bef9b89c3c"
+    },
+    {
+      "path": "uno/crypto/src/system_encryption.rs",
+      "sha256": "c1e1bbd2c975946f73c9e819b66d67e44eaf053c85d83e9860b706d55c0966cc"
+    },
+    {
+      "path": "uno/crypto/src/ffi.rs",
+      "sha256": "a253fa80db89c85de2c2809e5421e0c0f2528902213a6f6e047dbf0b2688aba1"
+    },
+    {
+      "path": "uno/crypto/src/lib.rs",
+      "sha256": "9f9aecb1e861d5c950960979abf4484c57f67fbdb825b07c51df8568f5d92227"
+    },
+    {
+      "path": "uno/crypto/include/uno_crypto.h",
+      "sha256": "60f03b1b7dbea1db55d6ae690fbf5c7cac3dbd886fb23d6c27f1c9f8ea0fa7da"
+    },
+    {
+      "path": "uno/crypto/cbindgen.toml",
+      "sha256": "565adb96ccbeb8bb35dbcab0c09c6947b320b2d16c0bd6efa030f7be10c74581"
+    },
+    {
+      "path": "uno/crypto/tests/balance-abi.cpp",
+      "sha256": "8f136101df69673e872000dfb5f6d46770f90ff149befb404e4443e20e4536c3"
+    },
+    {
+      "path": "uno/crypto/tests/run-mutations.py",
+      "sha256": "880d51fdc1f7f682575eba77974a977a3f441f886463fabd526c2e1de5b50ac0"
+    },
+    {
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "sha256": "0801dbc717ebf6d9ac37a8de80e73645cf0c010d1f92fba4a791f1255e66be05"
+    },
+    {
+      "path": "uno/crypto/tests/kernel-symbols.py",
+      "sha256": "b3c3834e0933d0c6c28ad62e57d658b861a43cce818049b6f39f4d1e662244a0"
+    }
+  ],
+  "archive": "uno-v2-system-encryption-reviewed-mutations.tar.gz",
+  "archive_sha256": "1d10cd993cc1e2f76e6b02179e2be473470f3e871283e87e002e89d935ec9ede",
+  "command": "python3 uno/crypto/tests/run-mutations.py --output <new-evidence-directory> --target-dir <isolated-cargo-target-directory>",
+  "results": {
+    "baseline": 0,
+    "negative_controls": 61,
+    "negative_exit_code": 101,
+    "d33_negative_controls": 15,
+    "restored": 0
+  },
+  "ctest": {
+    "command": "ctest --test-dir build --output-on-failure -R '^test-uno-crypto-(abi-real|rust|symbols|kernel-gates|header-guard)$'",
+    "passed": 5,
+    "total": 5,
+    "seconds": 11.57
+  },
+  "limitations": [
+    "Compilation failure is not counted as a negative control.",
+    "Raw logs and results.json are in the archive.",
+    "The older evidence.json describes the pre-review implementation and is not evidence for these hashes.",
+    "Host x=V_max COLLECT and x=V_max+1 bounce/state-unchanged checks remain required and are not tested here."
+  ]
+}

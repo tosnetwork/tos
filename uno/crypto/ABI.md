@@ -92,6 +92,81 @@ The kernel binds all supplied bytes but cannot determine their provenance or
 whether an application omitted a field. No production context codec has been
 selected, and these fixtures must not be deployed as a transaction format.
 
+## Deterministic public system ciphertexts
+
+The additive `uno_crypto_system_encrypt_v1` and
+`uno_crypto_system_verify_v1` entries implement the system-encryption mechanism,
+not deposit admission, account updates or public fee deductions in SEND/COLLECT.
+The existing verification request layout and symbols are unchanged.
+
+`UnoCryptoSystemEncryptionRequest` contains ABI version (u32), domain (80 bytes),
+deposit ID (32 bytes), recipient P (32 bytes), and amount (u64).
+On the supported 64-bit Linux ABI its size is 160 bytes and
+amount offset is 152. `UnoCryptoSystemCiphertext` is 64 bytes: commitment then
+decryption handle, both canonical compressed Ristretto encodings. These sizes
+are asserted on both sides. Native struct layout is not transaction wire.
+
+The fixed domain byte string has this layout. Unsigned integers and signed
+two's-complement integers use little endian; hashes are literal bytes.
+
+| Byte offsets | Field |
+|---|---|
+| 0..1 / 2..3 / 4..5 / 6..7 | engine / relation / wire / proof version, each u16 |
+| 8..11 | network/global_id, a single i32 |
+| 12..43 | genesis hash |
+| 44..47 | workchain, i32 |
+| 48..79 | instance ID |
+
+The kernel absorbs the full 80 bytes. It does not authenticate them or select
+network version values; the host must encode the actual resolved domain.
+There are no optional fields or implicit defaults. The transcript is:
+
+1. `Transcript::new(b"uno-v2/system-encryption")`.
+2. `append_message(b"protocol-domain", domain)`.
+3. `append_message(b"deposit-id", deposit_id)`.
+4. `append_message(b"recipient-P", recipient)`.
+5. `append_message(b"amount", amount.to_le_bytes())`.
+6. `challenge_bytes(b"r", 64 bytes)`, followed by wide scalar reduction.
+
+Reject zero r, zero amount, or a malformed/identity recipient with DECODE.
+The primitive accepts every positive u64 amount; it imposes no Deposit policy.
+The host MUST check V_min <= x <= V_max from the same authenticated policy
+slice: every pending item must later satisfy the COLLECT range relation.
+Ordinary over-limit deposits must follow the specified bounce path without
+creating obligations. Late returns use checked subtraction of the pending slot
+fee before the same upper-bound check; failed admission goes to the unexpected
+bucket, never a second bounce. These host paths are not implemented here.
+No retry, counter or resampling changes the derived r. A nonidentity P and
+nonzero r in a prime-order group ensure a nonidentity rP; there is no redundant
+second check whose removal would be masked by that invariant. The computed
+ciphertext is `(xG+rH, rP)` using the same fixed Pedersen generators as the
+balance kernel. Neither r nor any secret key is returned or retained.
+
+Wide reduction has negligible statistical bias, not exact uniformity; domain
+separation prevents transcript reuse, not mathematically all hash collisions.
+All derivation inputs are public. This mechanism does not conceal a deposit's
+amount and must only produce pending entries, never replace available balances.
+
+The construction call requires disjoint readable request and writable output
+allocations, and writes the output only after success. Verification borrows both
+inputs without writing; it recomputes and compares both complete canonical
+encodings. Any ciphertext mismatch returns VERIFY, including a noncanonical
+supplied encoding; no malformed encoding can equal the canonical output.
+PANIC is local unwind, never a proof failure. For an authenticated Native
+inbox the enclosing host must retain the source of DECODE/VERIFY rather than
+mechanically labeling the original queued message an invalid user candidate.
+All entries contain the entire operation in the existing unwind boundary.
+
+The fixed vector in Rust and C++ uses domain versions 2/3/4/5,
+network/global_id -7, genesis bytes 08, workchain 2, instance bytes 09, deposit-ID bytes
+0a and amount 123. Its recipient is generated from test secret
+11. It is a regression artifact, not an independent cryptographic audit. The
+separate decryption equation and per-public-byte mutation checks constrain its
+meaning; the C++ consumer runs both real entries under the entropy trap and
+four-thread test. Source, normal dependency graph and reachable-symbol gates
+cover the new module and entries. Runtime samples and lexical gates are not
+complete call-graph proofs.
+
 ## Header discipline
 
 `build.rs` generates the header with cbindgen and compares it byte for byte

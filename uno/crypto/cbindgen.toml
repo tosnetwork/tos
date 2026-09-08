@@ -16,3 +16,5 @@ item_types = ["constants", "enums", "structs", "functions"]
 VerifyRequest = "UnoCryptoVerifyRequest"
 AbiStatus = "UnoCryptoStatus"
 KernelLimits = "UnoCryptoLimits"
+SystemEncryptionRequest = "UnoCryptoSystemEncryptionRequest"
+SystemCiphertext = "UnoCryptoSystemCiphertext"
