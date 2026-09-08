@@ -45,6 +45,8 @@ namespace tos {
 
 namespace overlay {
 
+static constexpr size_t kMaxInFlightTwostepBroadcasts = 4096;
+
 constexpr int VERBOSITY_NAME(TWOSTEP_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(TWOSTEP_INFO) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(TWOSTEP_DEBUG) = verbosity_DEBUG;
@@ -478,6 +480,17 @@ void BroadcastsTwostep::gc(OverlayImpl *overlay) {
         bcast->debug.print_senders(sb);
       };
     }
+    CHECK(broadcasts_.erase(broadcast_id));
+    overlay->register_delivered_broadcast(broadcast_id);
+  }
+  // Absolute ceiling, as for FEC broadcasts: the 25 s window alone leaves
+  // the count unbounded under a flood. Far above any legitimate in-flight
+  // count; oldest dropped first. A conservative ceiling, not a measured
+  // one -- confirm against real overlay rates before relying on it.
+  while (broadcasts_.size() > kMaxInFlightTwostepBroadcasts) {
+    auto bcast = static_cast<BroadcastTwostep *>(lru_.prev);
+    CHECK(bcast);
+    auto broadcast_id = bcast->broadcast_id;
     CHECK(broadcasts_.erase(broadcast_id));
     overlay->register_delivered_broadcast(broadcast_id);
   }

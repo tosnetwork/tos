@@ -27,6 +27,10 @@ namespace tos {
 
 namespace overlay {
 
+// Conservative ceiling on concurrent in-flight FEC broadcasts; see gc().
+// Well above any legitimate count, so it fires only under a flood.
+static constexpr size_t kMaxInFlightFecBroadcasts = 4096;
+
 static Overlay::BroadcastHash compute_broadcast_id(PublicKeyHash source, const fec::FecType &fec_type,
                                                    Overlay::BroadcastDataHash data_hash, td::uint32 size,
                                                    td::uint32 flags) {
@@ -535,6 +539,7 @@ void BroadcastsFec::checked(OverlayImpl *overlay, Overlay::BroadcastHash &&hash,
 }
 
 void BroadcastsFec::gc(OverlayImpl *overlay) {
+  // Time-based eviction: anything past the assembly window is dropped.
   while (!broadcasts_.empty()) {
     auto bcast = BroadcastFec::from_list_node(lru_.prev);
     CHECK(bcast);
@@ -543,6 +548,21 @@ void BroadcastsFec::gc(OverlayImpl *overlay) {
     }
     auto hash = bcast->hash_;
     CHECK(broadcasts_.count(hash) == 1);
+    broadcasts_.erase(hash);
+    overlay->register_delivered_broadcast(hash);
+  }
+  // Absolute count ceiling. The time window alone lets an unauthenticated
+  // flood hold up to a full window's worth of in-flight FEC broadcasts,
+  // each up to the max broadcast size, with no bound on how many. This
+  // caps that at a level far above any legitimate in-flight count on a
+  // shard overlay, so it only fires under a flood; the oldest are dropped
+  // first, matching the time path. The value is a conservative ceiling,
+  // not a measured one -- the protocol team should confirm it against
+  // real shard-overlay broadcast rates before relying on it.
+  while (broadcasts_.size() > kMaxInFlightFecBroadcasts) {
+    auto bcast = BroadcastFec::from_list_node(lru_.prev);
+    CHECK(bcast);
+    auto hash = bcast->hash_;
     broadcasts_.erase(hash);
     overlay->register_delivered_broadcast(hash);
   }
