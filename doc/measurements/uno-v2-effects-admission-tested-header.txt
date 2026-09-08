@@ -176,9 +176,6 @@ inline td::Result<WorkchainAccountSettlement> execute(
     }
     // This counts an effects-only content union, not old-state or input usage.
     // Every walk has one root plus at most four pending edges per charged Cell.
-    // Spliced old-state subtrees are safe to revisit only because account
-    // acquisition admitted and usage-tracked each selected account's complete
-    // closure. Lazy/partial acquisition would require changing this boundary.
     // The engine has already produced its result: its own allocation/work bound
     // remains an independent pre-execution obligation, not proved by this walk.
     auto charge_effect = [&](td::Ref<vm::Cell> root) -> td::Status {
@@ -219,14 +216,9 @@ inline td::Result<WorkchainAccountSettlement> execute(
     }
     TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
         extra_validation_cells));
-    // Dictionary construction above is count-bounded, not incrementally charged.
-    // dict_set follows one path, decreasing key width each recursion, rebuilds
-    // one node per ancestor and finalizes at most three nodes at the insertion.
-    // A conservative cumulative bound is 259*U + 36*T + 2 finalized Cells:
-    // 256-bit update paths; 32-bit transfer paths plus one entry each; two
-    // outer wrappers. U <= max_writes and T <= max_transfers were checked above.
-    // This excludes already-produced engine data and is not zero overshoot of
-    // the final union budget. No runtime multiplication relies on this bound.
+    // Dictionary construction above is count-bounded (256/32-bit keys), not
+    // incrementally charged. Its temporary path copies have a separate bound
+    // from the final closure. Do not claim zero over-budget construction here.
     TRY_STATUS(charge_effect(effects_root));
     std::vector<WorkchainStorageWrite> writes;
     writes.reserve(executed.effects.updates.size());
@@ -285,12 +277,11 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // compared before account reads or engine invocation. Enclosing commitment,
 // proof budgets and Native authentication are still required; this is a
 // private settlement runner, not live execution authorization.
-// Enforced here: input read/write/inbound counts, output transfer count and
-// the complete encoded effects cells/bits union.
+// Enforced here: input read/write/inbound counts and output transfer count.
 // The engine's old-account acquisition enforces aggregate state cells/bits and
 // per-account cells/bits/depth. Tracked overlay reads must remain in that
 // preadmitted content-hash union. Repeated work, usage paths, proof units,
-// and output cells/bits still need independent admission.
+// effect cells/bits and output cells/bits still need independent admission.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,

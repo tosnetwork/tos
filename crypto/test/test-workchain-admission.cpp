@@ -163,6 +163,10 @@ void check_batch_semantic_zero(unsigned field) {
   if (field == 5) resources.state.max_account_cells = 0;
   if (field == 6) resources.state.max_account_bits = 0;
   if (field == 7) resources.state.max_account_depth = 0;
+  if (field == 8) resources.work_output.max_effect_cells = 0;
+  if (field == 9) resources.work_output.max_effect_bits = 0;
+  if (field == 10) resources.work_output.max_output_cells = 0;
+  if (field == 11) resources.work_output.max_output_bits = 0;
   auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
   ASSERT_TRUE(std::holds_alternative<block::ConfigInvalid>(result));
   ASSERT_EQ(std::get<block::ConfigInvalid>(result).code, block::ConfigInvalidCode::ZeroLimit);
@@ -176,6 +180,10 @@ TEST(WorkchainAdmission, BatchZeroStateBitsIsConfigurationFailure) { check_batch
 TEST(WorkchainAdmission, BatchZeroStateAccountCellsIsConfigurationFailure) { check_batch_semantic_zero(5); }
 TEST(WorkchainAdmission, BatchZeroStateAccountBitsIsConfigurationFailure) { check_batch_semantic_zero(6); }
 TEST(WorkchainAdmission, BatchZeroStateAccountDepthIsConfigurationFailure) { check_batch_semantic_zero(7); }
+TEST(WorkchainAdmission, BatchZeroEffectCellsIsConfigurationFailure) { check_batch_semantic_zero(8); }
+TEST(WorkchainAdmission, BatchZeroEffectBitsIsConfigurationFailure) { check_batch_semantic_zero(9); }
+TEST(WorkchainAdmission, BatchZeroOutputCellsIsConfigurationFailure) { check_batch_semantic_zero(10); }
+TEST(WorkchainAdmission, BatchZeroOutputBitsIsConfigurationFailure) { check_batch_semantic_zero(11); }
 
 TEST(WorkchainAdmission, AdmissionVersionIsNotTruncated) {
   block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 1};

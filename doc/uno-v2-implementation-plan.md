@@ -596,6 +596,63 @@ before accepting authenticated max_cells on minimum hardware. Physical counting
 does constrain these structures indirectly; it does not itself establish a safe
 byte budget or justify a hidden local rejection threshold.
 
+### M6 auxiliary-cost ledger (required aggregate acceptance)
+
+The following costs are additional to retained input/state cells and bits.
+Minimum-hardware acceptance must aggregate them with the main workload within
+each dimension, not perform independent checks against the same memory or CPU
+allowance. Neither table below is itself a column of byte costs to sum.
+
+| Resident object | Cardinality envelope (convert to bytes before aggregation) | Source and qualification |
+| --- | --- | --- |
+| Declaration shallow-parser memoization | Historical conservative envelope: `257 * input.max_cells`; current structural bound: one completed entry per physical trie cell per role, plus at most 257 active frames | `crypto/block/workchain-account-access-codec.h`: peak bytes include entry, map-node and allocator overhead. Read/write roles are sequential; do not multiply mutually exclusive live caches. Retain the conservative envelope until tighter occupancy is validated on the measured implementation. |
+| Inbox collection and sorting | `O(N_inbound)`, bounded by authenticated `max_inbound` before growth | `crypto/block/workchain-host-input.h` and the builder/collector in `crypto/block/workchain-block-execution.cpp`: peak bytes include collection and sorting arrays if simultaneously live, plus traversal/probe state; constructor-only bounds do not certify caller collection. |
+
+| Repeated work | Cumulative count (not peak memory) | Source and qualification |
+| --- | --- | --- |
+| State traversal while rebuilding writes | Scaling term `O(writes * 257 * admitted_state_cells)`, not a complete operation cap | Account replacement and tracked reads in `crypto/block/workchain-storage-overlay.h`, `crypto/block/workchain-account-dictionary.h` and `crypto/block/workchain-account-settlement.h`: a 256-bit path may contain 257 nodes including its leaf. Include augmentation/probe work and measured constant factors; count lookup and closure-validation work independently of retained-state deduplication. |
+| Effects dictionary construction | At most `259 * updates + 36 * transfers + 2` finalized cells | `encode_workchain_account_effects` in `crypto/block/workchain-account-effects.h`, dictionary `dict_set` path reconstruction, bound beside the encoder call in `crypto/block/workchain-account-settlement.h`. Use `updates <= max_writes` and `transfers <= max_transfers`; include simultaneously retained intermediate roots and allocator overhead separately in peak measurements. |
+
+For memory, sum simultaneously live byte costs (including materializer graphs,
+engine working sets and per-worker replication), then measure peak RSS. For CPU,
+sum repeated visits, construction, parsing and verification costs over the block
+and evaluate the longest dependency chain. Do not add byte counts to operation
+counts, or assume cumulative allocation equals peak memory. All evaluated bound
+arithmetic must be checked; overflow fails sizing, never wraps to a small budget.
+This ledger installs no additional local rejection limit and is not a hardware
+acceptance result. New auxiliary structures must extend it before M6 acceptance.
+
+### D31 complete resource-field zero-semantics inventory
+
+The three wire records contain 17 fields. Zero never means unlimited. This
+inventory distinguishes a necessary configuration condition from the still-open
+joint feasibility check (positive budgets can also be too small).
+
+| Record | Fields | Zero interpretation / required installation treatment |
+| --- | --- | --- |
+| `UnoV2ResourceInput` | `max_cells`, `max_bits`, `max_roots` | Invalid: a batch has mandatory input structure and three fixed logical roots. |
+| `UnoV2ResourceInput` | `max_reads`, `max_writes`, `max_inbound` | Invalid: an executable profile must allow state progress and Native ingress; zero is not a lifecycle pause. |
+| `UnoV2ResourceState` | `max_cells`, `max_bits`, `max_account_cells`, `max_account_bits`, `max_account_depth` | Invalid: authenticated account access and complete nonempty wrappers must be possible. |
+| `UnoV2ResourceWorkOutput` | `max_effect_cells`, `max_effect_bits` | Invalid: even empty business effects have mandatory encoded structure. Included in the current effects-boundary correction. |
+| `UnoV2ResourceWorkOutput` | `max_output_cells`, `max_output_bits` | Invalid: mandatory Native output records cannot fit zero. Included in this correction; independent typed-admission tests failed before the fix, then passed together with the real configuration-installation test. |
+| `UnoV2ResourceWorkOutput` | `max_transfers` | A zero cardinality allows no internal Native transfers, not unlimited transfers. It is distinct from payout/message counts; compatibility with required business operations remains an engine-policy check. |
+| `UnoV2ResourceWorkOutput` | `max_proof_units` | A zero work allowance allows only zero-proof-work operations, not unlimited proof work. The pending proof-work admission must reject positive work before verification; this inventory does not claim that wiring exists. |
+
+Configuration defects are rejected at installation; an unusable authenticated
+execution cut is not relabeled as a candidate defect. Meaningful zero allowances
+do not authorize silently disabling mandatory system progress. Compatibility
+between these allowances and engine parameters still requires full validation.
+In particular, the current effects encoder always emits two wrappers totaling
+261 bits even without payloads. Positive allowances below that structural floor
+are still not rejected by installation. This is a known pre-live compatibility
+gap, not a valid configuration shown by the zero tests. Mandatory input roots
+and account/output wrapper floors require the same compatibility audit.
+Output-zero evidence is `measurements/uno-v2-output-zero-budget-before-fix.json`
+and `measurements/uno-v2-output-zero-budget-restored.json`; this is configuration
+admission evidence, not proof that runtime output/proof-work admission is wired.
+Effect-zero pre-fix evidence is
+`measurements/uno-v2-effects-zero-budget-before-fix.json`.
+
 1. Authenticated resource policy and whole-input admission. D31 in V2 section 12
    approves the three resource groups and `3 + N_inbound` logical roots. The
    accepted structure is described at
@@ -2329,6 +2386,13 @@ Review disposition (raw review is working material outside this repository):
   It must have a single authenticated or protocol-derived source before live
   use. `max_transfers` is a different quantity and must not substitute for it.
   This delivery adds neither a field nor a local/default numeric allowance.
+  Do not promote `max_inbound + 1` into the complete engine's outbound policy:
+  that bound covers this private disposal/single-payout shape only. The approved
+  engine also has Native unexpected-bucket sweep outputs (`K_sweep`). It also
+  owes registration-deposit returns on account closure; do not assume their
+  physical route from the word "return". Enumerate the authorized physical
+  output shapes before deriving a whole-batch bound. Internal balance allocations
+  and aggregate fee accounting do not themselves emit Native messages.
 - Finding 2 accepted: the old-state acquisition scope is contained, but the
   whole settlement/engine/encoding frame is not. Known exception classes must
   be tested at their source-aware boundary before live authorization; a broad
@@ -2344,3 +2408,74 @@ Review disposition (raw review is working material outside this repository):
 
 All three residuals are prerequisites to opening the live execution gate; no
 private helper signature or passing replay fixture discharges them.
+
+The private effects-admission connection has completed its boundary review and
+implementer controls; it does not enable live execution. The batch
+settlement template now walks the engine's update, extra-currency, payout,
+receipt and event references before effects encoding, then charges the encoded
+effects root into the same effects-only cells/bits union before Native overlay.
+The prototype path remains unmetered. An independent `CellStorageStat` fixture
+accepts exact limits and rejects one-less limits for each dimension. Six rebuilt
+controls cover the final wrapper, cells, bits, pre-encoding receipt acquisition,
+local acquisition classification and transfer-count-before-read ordering.
+`measurements/uno-v2-effects-admission-inflight-controls.json` distinguishes
+earlier controls from that tested logic. The archived tested-header preimage
+allows comparison with the later construction-bound, closure-dependency and
+enforcement-summary comment corrections. The original restored artifact records
+that earlier stage's hashes, 111-test regression and passing scan, not the
+subsequent expanded tests or current-tree hashes. A production build also ran.
+
+This connection does not bound allocations already performed by the engine or
+claim incremental charging of dictionary path copies. The current encoder's
+cumulative construction bound is `259*U + 36*T + 2` Cells (U admitted updates,
+T admitted transfers); the code states the decreasing-key-width argument and
+the separate final-union budget. Complete output and proof-work admission,
+source-aware whole-frame exception containment and live authorization remain
+unfulfilled. The follow-up review was read-only, not an independent test run.
+
+Effects-boundary follow-up review disposition (2026-09-08):
+
+- Accepted: zero effects/output budgets must fail configuration installation,
+  and later authenticated-cut failures remain local. The 17-field inventory
+  above is not full positive-budget compatibility. The effects encoder's
+  two-cell/261-bit structural floor is an explicit remaining installation gap;
+  mandatory input/account/output floors also belong to that pre-live audit.
+- Accepted: prewalk witnesses need actual independent deletion runs, not merely
+  correct-looking assertions. Expanded tests cover all five reference groups,
+  count-before-read at transfer limits zero and one, both early quota dimensions,
+  and an opaque-receipt old-permit comparison. Assertions guard vector indexes
+  before access and log the active field/dimension. Ten additional independent
+  builds now fail their assertions and are restored in
+  `measurements/uno-v2-effects-admission-followup-controls.json`: five group
+  deletions, moving the transfer gate after acquisition, installing a meter on
+  the legacy permit, disabling each pre-encoding quota, and interpreting zero
+  transfers as unlimited. The older six-control artifact is not evidence for
+  these expanded witnesses. This is archived implementer-run mutation evidence,
+  not a claim that CI automatically reruns the mutations.
+- Disputed as a fix: rejecting only `max_proof_units == 0` would not supply the
+  missing proof-work enforcement. Positive values are equally unenforced today.
+  A source-text test pinning that absence would preserve the gap, not test the
+  intended operation. Keep the live gate closed and implement deterministic
+  proof-work admission with a zero-work/positive-work boundary control. No
+  implicit unlimited convention or numeric weight is installed here.
+- Accepted: meaningful `max_transfers == 0` needs a behavioral control; it must
+  reject a nonempty transfer vector before touching its payloads. This does not
+  prove compatibility between a chosen allowance and required engine actions.
+- Accepted: keep the historical artifact hashes historical. The tested-header
+  preimage establishes the old tested logic; later comment changes and expanded
+  tests require their own current-source evidence. The follow-up reviewer did
+  not build or execute tests. Its claim of no run is supported only as an
+  absence of a recorded run in the artifacts it inspected; implementer runs
+  outside those artifacts are not substituted for archived evidence.
+- Accepted: split the auxiliary ledger into resident-object and cumulative-work
+  tables with implementation sources; sum measured bytes and measured work in
+  their own dimensions, accounting for lifetimes and concurrency.
+
+These dispositions do not close the whole-frame exception boundary or authorize
+live execution. The new legacy receipt assertion was added after the follow-up
+review snapshot; its independent mutation is included in the ten-control
+artifact. It fails on an extra receipt load, not just a changed error message.
+The final restored-source hashes and complete 111-test block / 30-test admission
+runs, production validator build, scan and whitespace check are archived in
+`measurements/uno-v2-effects-admission-final.json`. This supersedes the earlier
+restored-stage artifact for the current tree, without rewriting that evidence.

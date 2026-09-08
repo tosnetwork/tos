@@ -2678,6 +2678,31 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_EQ(engine.calls, 1u);
   ASSERT_EQ(joint_replay.ok().exports.size(), 3u);
   {
+    // The legacy permit has no effects budget. Preserve its opaque receipt
+    // handling: wrapping identical content must add no acquisition or alter
+    // the effects, account or transaction bytes.
+    auto saved_effects = engine.effects;
+    engine.effects.receipts = number(98765);
+    auto plain = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+        overlay_identity, admitted, access, owned_inbox, 2, 2, 2, a,
+        td::make_refint(100), 4096, cfg, joint_context);
+    ASSERT_TRUE(plain.is_ok());
+    unsigned receipt_loads = 0;
+    engine.effects.receipts = td::Ref<PreflightObservedCell>{
+        true, engine.effects.receipts, &receipt_loads, true};
+    engine.calls = 0;
+    auto opaque = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+        overlay_identity, admitted, access, owned_inbox, 2, 2, 2, a,
+        td::make_refint(100), 4096, cfg, joint_context);
+    ASSERT_EQ(receipt_loads, 0u);
+    ASSERT_TRUE(opaque.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(opaque.ok().effects->get_hash(), plain.ok().effects->get_hash());
+    ASSERT_EQ(opaque.ok().state.accounts->get_hash(), plain.ok().state.accounts->get_hash());
+    ASSERT_EQ(opaque.ok().state.account_blocks->get_hash(), plain.ok().state.account_blocks->get_hash());
+    engine.effects = std::move(saved_effects);
+  }
+  {
     // The mixed payout/disposal path must consume the complete admission cut,
     // not silently return to singleton permits or caller-supplied state limits.
     auto complete_identity = batch_test_identity(number(1));
@@ -2699,6 +2724,96 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_TRUE(source_loads > 0);
     ASSERT_EQ(engine.seen->get_hash(), full.root()->get_hash());
     ASSERT_EQ(complete_result.ok().exports.size(), 3u);
+    vm::CellStorageStat effects_size;
+    ASSERT_TRUE(effects_size.compute_used_storage(complete_result.ok().effects).is_ok());
+    ASSERT_TRUE(effects_size.cells > 1 && effects_size.bits > 1);
+    auto with_effect_limits = [&](std::uint64_t cells, std::uint64_t bits,
+                                  std::optional<std::uint32_t> transfers = std::nullopt) {
+      auto resources = policy.resources();
+      resources.work_output.max_effect_cells = cells;
+      resources.work_output.max_effect_bits = bits;
+      if (transfers) resources.work_output.max_transfers = *transfers;
+      auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy.identity());
+      ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved));
+      block::BatchInputAdmissionSession measured(std::get<block::ResolvedBatchInputPolicy>(resolved),
+          candidate, declaration_root, complete_identity, inbox);
+      ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(measured.evaluate()));
+      return block::execute_and_settle_workchain_disposal(engine, old.accounts, complete_identity,
+          std::get<block::AdmittedBatchInput>(measured.evaluate()), owned_inbox, a,
+          td::make_refint(100), 4096, cfg, joint_context);
+    };
+    auto exact_effects = with_effect_limits(effects_size.cells, effects_size.bits);
+    ASSERT_TRUE(exact_effects.is_ok());
+    ASSERT_EQ(exact_effects.ok().effects->get_hash(), complete_result.ok().effects->get_hash());
+    ASSERT_EQ(exact_effects.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
+    for (unsigned field = 0; field < 5; ++field) {
+      auto saved_effects = engine.effects;
+      LOG(INFO) << "effects prewalk group " << field;
+      ASSERT_TRUE(!engine.effects.updates.empty());
+      ASSERT_TRUE(!engine.effects.native_transfers.empty());
+      unsigned effect_loads = 0;
+      td::Ref<vm::Cell> missing = td::Ref<PreflightObservedCell>{true, number(98765), &effect_loads, true};
+      if (field == 0) engine.effects.updates[0].data = missing;
+      if (field == 1) engine.effects.native_transfers[0].value.extra = missing;
+      if (field == 2) engine.effects.payout_request = missing;
+      if (field == 3) engine.effects.receipts = missing;
+      if (field == 4) engine.effects.events = missing;
+      // The encoder rejects this self-transfer before loading the selected
+      // reference. One load therefore witnesses acquisition before encoding,
+      // not the final closure walk masking removal of that group's prewalk.
+      ASSERT_TRUE(!engine.effects.native_transfers.empty());
+      engine.effects.native_transfers[0].to = engine.effects.native_transfers[0].from;
+      engine.calls = 0;
+      auto unavailable = with_effect_limits(128, 8192);
+      if (effect_loads != 1) LOG(ERROR) << "missing effects prewalk group " << field;
+      ASSERT_EQ(effect_loads, 1u);
+      ASSERT_TRUE(unavailable.is_error());
+      ASSERT_EQ(unavailable.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      ASSERT_EQ(engine.calls, 1u);
+      ASSERT_TRUE(engine.effects.native_transfers.size() > 1);
+      for (std::uint32_t transfer_limit : {0u, 1u}) {
+        LOG(INFO) << "effects transfer limit " << transfer_limit;
+        effect_loads = engine.calls = 0;
+        auto excessive_transfers = with_effect_limits(128, 8192, transfer_limit);
+        // Check the observable read before the error class: moving the count
+        // gate after acquisition must fail here, not at a later code assertion.
+        ASSERT_EQ(effect_loads, 0u);
+        ASSERT_TRUE(excessive_transfers.is_error());
+        ASSERT_EQ(excessive_transfers.error().code(),
+            static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+        ASSERT_EQ(engine.calls, 1u);
+      }
+      engine.effects = std::move(saved_effects);
+    }
+    for (unsigned dimension = 0; dimension < 2; ++dimension) {
+      LOG(INFO) << "effects early limit dimension " << dimension;
+      auto saved_effects = engine.effects;
+      ASSERT_TRUE(!engine.effects.updates.empty());
+      ASSERT_TRUE(!engine.effects.native_transfers.empty());
+      unsigned parent_loads = 0, child_loads = 0;
+      td::Ref<vm::Cell> child = td::Ref<PreflightObservedCell>{true, number(87654), &child_loads};
+      auto parent = vm::CellBuilder().store_long(3, 2).store_ref(child).finalize();
+      engine.effects.updates[0].data = td::Ref<PreflightObservedCell>{true, parent, &parent_loads};
+      engine.effects.native_transfers[0].to = engine.effects.native_transfers[0].from;
+      engine.calls = 0;
+      auto early_limit = with_effect_limits(dimension == 0 ? 1 : 128, dimension == 1 ? 1 : 8192);
+      ASSERT_TRUE(early_limit.is_error());
+      ASSERT_EQ(early_limit.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+      ASSERT_EQ(parent_loads, 1u);
+      ASSERT_EQ(child_loads, 0u);
+      ASSERT_EQ(engine.calls, 1u);
+      engine.effects = std::move(saved_effects);
+    }
+    // Both independent counts are positive above, so each subtraction is safe.
+    for (unsigned dimension = 0; dimension < 2; ++dimension) {
+      engine.calls = 0;
+      auto over = with_effect_limits(effects_size.cells - (dimension == 0),
+          effects_size.bits - (dimension == 1));
+      if (over.is_ok()) LOG(ERROR) << "effects limit bypass in dimension " << dimension;
+      ASSERT_TRUE(over.is_error());
+      ASSERT_EQ(over.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+      ASSERT_EQ(engine.calls, 1u);
+    }
     auto claim = complete_result.ok();
     claim.exports.clear();
     engine.calls = 0;
@@ -7640,7 +7755,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2);
   }
   // Every semantic zero is rejected at installation, before candidate admission.
-  for (unsigned field = 0; field < 8; ++field) {
+  for (unsigned field = 0; field < 12; ++field) {
     block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
     if (field == 0) resources.input.max_reads = 0;
@@ -7651,6 +7766,10 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     if (field == 5) resources.state.max_account_cells = 0;
     if (field == 6) resources.state.max_account_bits = 0;
     if (field == 7) resources.state.max_account_depth = 0;
+    if (field == 8) resources.work_output.max_effect_cells = 0;
+    if (field == 9) resources.work_output.max_effect_bits = 0;
+    if (field == 10) resources.work_output.max_output_cells = 0;
+    if (field == 11) resources.work_output.max_output_bits = 0;
     policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));

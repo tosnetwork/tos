@@ -24,7 +24,9 @@ inline bool workchain_batch_input_bounds_nonzero(const WorkchainResourcePolicy& 
   return resources.input.max_cells && resources.input.max_bits && resources.input.max_roots &&
          resources.input.max_reads && resources.input.max_writes && resources.input.max_inbound &&
          resources.state.max_cells && resources.state.max_bits && resources.state.max_account_cells &&
-         resources.state.max_account_bits && resources.state.max_account_depth > 0;
+         resources.state.max_account_bits && resources.state.max_account_depth > 0 &&
+         resources.work_output.max_effect_cells && resources.work_output.max_effect_bits &&
+         resources.work_output.max_output_cells && resources.work_output.max_output_bits;
 }
 
 inline bool workchain_batch_admission_version_supported(std::uint32_t version) {
