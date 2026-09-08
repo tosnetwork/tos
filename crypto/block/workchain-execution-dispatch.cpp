@@ -697,6 +697,10 @@ td::Result<ResolvedScopedWorkchainExecution> WorkchainExecutionRegistry::resolve
 
 td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRegistry::resolve_scoped_workchain(
     const block::WorkchainSet& workchains, tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  if (&workchains != &configuration.get_workchain_list()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "execution descriptor map is not owned by this configuration");
+  }
   if (workchain_id == tos::masterchainId) {
     return std::optional<ResolvedScopedWorkchainExecution>{};
   }
@@ -710,6 +714,34 @@ td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRe
   }
   TRY_RESULT(resolved, resolve_scoped(descriptor, configuration));
   return std::optional<ResolvedScopedWorkchainExecution>{std::move(resolved)};
+}
+
+td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRegistry::resolve_scoped_workchain(
+    tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  if (workchain_id == tos::masterchainId) return std::optional<ResolvedScopedWorkchainExecution>{};
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((configuration.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "execution resolution requires unpacked descriptors and capabilities");
+  }
+  try {
+    auto result = resolve_scoped_workchain(configuration.get_workchain_list(), workchain_id, configuration);
+    if (result.is_ok() || workchain_execution_requires_local_failure(result.error())) return result;
+    // Resolution consumes only the caller-authenticated Config and local engine
+    // registry. A plain failure here says nothing about candidate validity.
+    if (result.error().code() == static_cast<int>(WorkchainExecutionFailure::CandidateInvalid)) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               PSTRING() << "configuration callback incorrectly classified a local failure as candidate invalid: "
+                                         << result.error().message());
+    }
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             result.error().message());
+  } catch (...) {
+    // This boundary includes local engine configuration callbacks, whose C++
+    // exception types are not restricted to VmError. No candidate enters it.
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "authenticated execution configuration unavailable");
+  }
 }
 
 td::Result<std::optional<ResolvedWorkchainExecution>> WorkchainExecutionRegistry::resolve_workchain(
@@ -742,19 +774,38 @@ td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::re
 td::Status WorkchainExecutionRegistry::validate_required_workchains(
     const block::WorkchainSet& workchains, const block::Config& block_transition_config,
     const LocalWorkchainRoleSet& local_roles) const {
-  for (const auto& [workchain_id, info] : workchains) {
-    if (info.is_null() || !info->active || !local_roles.requires_local_execution(workchain_id)) {
-      continue;
-    }
-    TRY_RESULT(resolved, resolve_scoped_workchain(workchains, workchain_id, block_transition_config));
-    if (resolved.has_value()) {
-      if (const auto* account = std::get_if<ResolvedWorkchainExecution>(&*resolved)) {
-        auto policy = account->executor->account_policy(account->descriptor, *account->engine_config);
-        TRY_STATUS(validate_account_execution_policy_supported(policy));
+  if (&workchains != &block_transition_config.get_workchain_list()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "required-role descriptor map is not owned by this configuration");
+  }
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((block_transition_config.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "required-role resolution requires unpacked descriptors and capabilities");
+  }
+  try {
+    for (const auto& [workchain_id, info] : workchains) {
+      if (info.is_null() || !info->active || !local_roles.requires_local_execution(workchain_id)) {
+        continue;
+      }
+      TRY_RESULT(resolved, resolve_scoped_workchain(workchain_id, block_transition_config));
+      if (resolved.has_value()) {
+        if (const auto* account = std::get_if<ResolvedWorkchainExecution>(&*resolved)) {
+          auto policy = account->executor->account_policy(account->descriptor, *account->engine_config);
+          auto status = validate_account_execution_policy_supported(policy);
+          if (status.is_error()) {
+            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), status.message());
+          }
+        }
       }
     }
+    return td::Status::OK();
+  } catch (...) {
+    // Required-role checks run before candidate processing, including the
+    // engine's account-policy callback. No candidate data enters this scope.
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "authenticated required-role configuration unavailable");
   }
-  return td::Status::OK();
 }
 
 td::Status validate_account_execution_policy_supported(const AccountExecutionPolicy& policy) {

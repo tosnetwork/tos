@@ -1,0 +1,33 @@
+{
+  "scope": "Authenticated configuration callback and early required-role boundary; D31 remains incomplete",
+  "pre_fix": {
+    "command": "build/test-workchain-block --filter +MultiAccountRegistryBinding --verbosity 0",
+    "exit_code": 1,
+    "assertion": "Expectation failed: escaped is not equal to 0u (8 != 0)",
+    "evidence_kind": "Observed assertion excerpt, not a full execution log"
+  },
+  "post_fix": [
+    {
+      "chunk_id": "ced061",
+      "wall_time_seconds": 0.000009574,
+      "exit_code": 0,
+      "original_token_count": 25,
+      "output": "Running test Test_WorkchainBlock_MultiAccountRegistryBinding...\nPASS in 1281.5us\n1 test(s) passed\n"
+    },
+    {
+      "chunk_id": "bea917",
+      "wall_time_seconds": 0.000007486,
+      "exit_code": 0,
+      "original_token_count": 27,
+      "output": "Running test Test_WorkchainBlock_ScopedWorkchainConfigurationResolution...\nPASS in 317.4us\n1 test(s) passed\n"
+    }
+  ],
+  "discarded_run": {
+    "reason": "Two --filter flags selected zero tests; excluded from evidence",
+    "output": "0 test(s) passed"
+  },
+  "limitations": [
+    "Additional guard mutations and follow-up review remain pending.",
+    "Post-fix binary predates a whitespace-only indentation edit. No milestone acceptance claimed."
+  ]
+}

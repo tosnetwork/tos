@@ -1134,7 +1134,7 @@ bool ValidateQuery::fetch_config_params() {
 
     bool custom_workchain = false;
     auto resolved_execution = block::default_workchain_execution_registry().resolve_scoped_workchain(
-        config_->get_workchain_list(), workchain(), *config_);
+        workchain(), *config_);
     if (resolved_execution.is_error()) {
       return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
     }
@@ -1274,9 +1274,9 @@ bool ValidateQuery::check_this_shard_mc_info() {
     return reject_query(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
   auto execution_res = block::default_workchain_execution_registry().resolve_scoped_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+      workchain(), *config_);
   if (execution_res.is_error()) {
-    return reject_query(execution_res.move_as_error_prefix("cannot validate configured workchain: ").to_string());
+    return fatal_error(execution_res.move_as_error_prefix("cannot validate configured workchain: "));
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return reject_query(PSTRING() << "cannot create new block for workchain " << workchain()
@@ -6491,9 +6491,9 @@ bool ValidateQuery::check_account_failures() {
 bool ValidateQuery::check_transactions() {
   LOG(INFO) << "checking all transactions";
   auto resolved = block::default_workchain_execution_registry().resolve_scoped_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+      workchain(), *config_);
   if (resolved.is_error()) {
-    return reject_query(resolved.move_as_error_prefix("cannot resolve transaction execution scope: ").to_string());
+    return fatal_error(resolved.move_as_error_prefix("cannot resolve transaction execution scope: "));
   }
   if (resolved.ok().has_value() &&
       std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {

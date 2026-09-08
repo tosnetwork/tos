@@ -3,6 +3,7 @@
 #include <limits>
 #include <algorithm>
 #include <random>
+#include <stdexcept>
 #include <type_traits>
 #include "workchain-counter-engine.h"
 
@@ -7003,6 +7004,157 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   ASSERT_EQ(observed->config_calls, before_invalid_policy);
   ASSERT_EQ(observed->execute_calls, 0u);
 
+  // The live resolver derives descriptors from Config, not a caller-supplied map.
+  // Keep the singleton execution positive control while checking local failures.
+  policy.custody_address.reset();
+  policy.descriptor_version = descriptor.version;
+  policy.vm_mode = descriptor.vm_mode;
+  policy.engine_configuration = vm::CellBuilder().finalize();
+  auto singleton_cut = configuration(16, tos::capBlockTransition, &descriptor);
+  auto live = reverse.resolve_scoped_workchain(2, *singleton_cut);
+  ASSERT_TRUE(live.is_ok() && live.ok().has_value());
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*live.ok()));
+  auto produced = block::execute_resolved_workchain_block(
+      std::get<block::ResolvedWorkchainBlockExecution>(*live.ok()), input());
+  ASSERT_TRUE(produced.is_ok());
+  ASSERT_EQ(vm::load_cell_slice(produced.ok().new_engine_state).fetch_ulong(64), 42u);
+  auto other_cut = configuration(15, tos::capBlockTransition, &descriptor);
+  ASSERT_TRUE(singleton_cut->get_root_cell()->get_hash() != other_cut->get_root_cell()->get_hash());
+  auto own_map = reverse.resolve_scoped_workchain(singleton_cut->get_workchain_list(), 2, *singleton_cut);
+  ASSERT_TRUE(own_map.is_ok() && own_map.ok().has_value());
+  auto foreign_map = reverse.resolve_scoped_workchain(other_cut->get_workchain_list(), 2, *singleton_cut);
+  ASSERT_TRUE(foreign_map.is_error());
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(foreign_map.error()));
+  block::WorkchainExecutionRegistry unavailable;
+  auto unresolved = unavailable.resolve_scoped_workchain(2, *singleton_cut);
+  ASSERT_TRUE(unresolved.is_error());
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(unresolved.error()));
+  for (int mode : {0, block::Config::needCapabilities, block::Config::needWorkchainInfo}) {
+    auto incomplete = block::Config::unpack_config(singleton_cut->get_root_cell(), td::Bits256::zero(), mode)
+                          .move_as_ok();
+    auto refused = reverse.resolve_scoped_workchain(2, *incomplete);
+    ASSERT_TRUE(refused.is_error());
+    ASSERT_TRUE(block::workchain_execution_requires_local_failure(refused.error()));
+    auto master = reverse.resolve_scoped_workchain(tos::masterchainId, *incomplete);
+    ASSERT_TRUE(master.is_ok() && !master.ok().has_value());
+    block::LocalWorkchainRoleSet required_role;
+    required_role.required_workchains.insert(2);
+    auto role = reverse.validate_required_workchains(incomplete->get_workchain_list(), *incomplete, required_role);
+    ASSERT_TRUE(block::workchain_execution_requires_local_failure(role));
+  }
+  auto absent_scope = reverse.resolve_scoped_workchain(99, *singleton_cut);
+  ASSERT_TRUE(absent_scope.is_ok() && !absent_scope.ok().has_value());
+
+  struct FaultyConfigEngine final : block::RegisteredWorkchainBlockEngine {
+    unsigned kind;
+    mutable unsigned config_calls = 0;
+    explicit FaultyConfigEngine(unsigned value) : kind(value) {}
+    block::WorkchainEngineKey engine_key() const override { return CounterEngine().engine_key(); }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&, const td::Ref<vm::Cell>&) const override {
+      ++config_calls;
+      switch (kind) {
+        case 0: throw vm::VmError{vm::Excno::dict_err};
+        case 1: throw vm::VmVirtError{1};
+        case 2: throw vm::CellBuilder::CellCreateError{};
+        case 3: throw vm::CellBuilder::CellWriteError{};
+        case 4: throw vm::VmNoGas{};
+        case 5: throw vm::VmFatal{};
+        case 6: throw std::bad_alloc{};
+        case 7: throw std::runtime_error("local configuration callback failure");
+        default:
+          return td::Status::Error(static_cast<int>(kind == 8 ? block::WorkchainExecutionFailure::CandidateInvalid
+              : kind == 9 ? block::WorkchainExecutionFailure::AuthenticatedStateCorrupt
+                          : block::WorkchainExecutionFailure::LocalUnavailable), "typed configuration failure");
+      }
+    }
+    td::Result<block::WorkchainBlockPolicy> block_policy(
+        const block::WorkchainExecutionDescriptor&, const block::WorkchainEngineConfig&) const override {
+      return td::Status::Error("failed configuration must not reach policy");
+    }
+    td::Result<block::WorkchainBlockResult> execute_block(const block::WorkchainBlockInput&) const override {
+      return td::Status::Error("configuration resolution must not execute");
+    }
+  };
+  unsigned escaped = 0;
+  bool all_local = true;
+  block::LocalWorkchainRoleSet required;
+  required.required_workchains.insert(2);
+  for (unsigned kind = 0; kind != 11; ++kind) {
+    block::WorkchainExecutionRegistry faults;
+    auto faulty = std::make_unique<FaultyConfigEngine>(kind);
+    auto* counts = faulty.get();
+    ASSERT_TRUE(faults.register_block_engine(std::move(faulty)).is_ok());
+    try {
+      auto direct = faults.resolve_scoped_workchain(2, *singleton_cut);
+      bool local = direct.is_error() && block::workchain_execution_requires_local_failure(direct.error());
+      if (!local) LOG(ERROR) << "direct configuration fault kind " << kind << " was not local";
+      all_local &= local;
+      if (direct.is_error() && kind == 9) {
+        ASSERT_EQ(direct.error().code(), static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
+      }
+    } catch (...) {
+      LOG(ERROR) << "direct configuration fault kind " << kind << " escaped";
+      ++escaped;
+    }
+    try {
+      auto role = faults.validate_required_workchains(singleton_cut->get_workchain_list(), *singleton_cut, required);
+      bool local = block::workchain_execution_requires_local_failure(role);
+      if (!local) LOG(ERROR) << "required-role configuration fault kind " << kind << " was not local";
+      all_local &= local;
+    } catch (...) {
+      LOG(ERROR) << "required-role configuration fault kind " << kind << " escaped";
+      ++escaped;
+    }
+    ASSERT_EQ(counts->config_calls, 2u);
+  }
+  ASSERT_EQ(escaped, 0u);
+  ASSERT_TRUE(all_local);
+
+  struct PolicyEngine final : block::WorkchainEngine {
+    unsigned kind;
+    mutable unsigned config_calls = 0, policy_calls = 0;
+    explicit PolicyEngine(unsigned value) : kind(value) {}
+    block::WorkchainEngineKey engine_key() const override { return CounterEngine().engine_key(); }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&) const override {
+      ++config_calls;
+      return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
+    }
+    block::AccountExecutionPolicy account_policy(const block::WorkchainExecutionDescriptor&,
+        const block::WorkchainEngineConfig&) const override {
+      ++policy_calls;
+      if (kind == 2) throw vm::CellBuilder::CellCreateError{};
+      block::AccountExecutionPolicy result;
+      result.kind = kind == 1 ? block::AccountExecutionPolicyKind::ShardLocalExecutor
+                              : block::AccountExecutionPolicyKind::AnyAccount;
+      return result;
+    }
+    td::Result<block::WorkchainComputeOutput> run_compute(const block::WorkchainComputeInput&,
+        const block::WorkchainComputeContext&) const override {
+      return td::Status::Error("role checking must not execute");
+    }
+  };
+  // Disabled ingress activation leaves the registered AccountCompute path
+  // available. This is not a V2 multi-account execution fixture.
+  auto compute_cut = configuration(14, 0, &descriptor);
+  for (unsigned kind = 0; kind != 3; ++kind) {
+    block::WorkchainExecutionRegistry registry;
+    auto engine = std::make_unique<PolicyEngine>(kind);
+    auto* counts = engine.get();
+    registry.register_engine(std::move(engine));
+    unsigned policy_escaped = 0;
+    bool expected = false;
+    try {
+      auto result = registry.validate_required_workchains(compute_cut->get_workchain_list(), *compute_cut, required);
+      expected = kind == 0 ? result.is_ok() : block::workchain_execution_requires_local_failure(result);
+    } catch (...) { ++policy_escaped; }
+    if (!expected || policy_escaped) LOG(ERROR) << "account policy fault kind " << kind << " failed boundary";
+    ASSERT_EQ(counts->config_calls, 1u);
+    ASSERT_EQ(counts->policy_calls, 1u);
+    ASSERT_EQ(policy_escaped, 0u);
+    ASSERT_TRUE(expected);
+  }
 }
 
 TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
@@ -7369,6 +7521,10 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   block::WorkchainExecutionRegistry registry;
   ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
   auto configuration_owner = block_configuration();
+  // Satisfy the independent mode precondition so it cannot mask removal of
+  // the map provenance guard, even when no local role is requested.
+  configuration_owner = block::Config::unpack_config(configuration_owner->get_root_cell(), td::Bits256::zero(),
+      block::Config::needCapabilities | block::Config::needWorkchainInfo).move_as_ok();
   auto& configuration = *configuration_owner;
   td::Ref<block::WorkchainInfo> info{true};
   auto& value = info.write();
@@ -7383,36 +7539,16 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   value.min_addr_len = value.max_addr_len = 256;
   value.addr_len_step = 0;
   block::WorkchainSet workchains{{2, std::move(info)}};
-  auto scoped = registry.resolve_scoped_workchain(workchains, 2, configuration).move_as_ok();
-  ASSERT_TRUE(scoped.has_value());
-  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*scoped));
-  ASSERT_TRUE(!registry.resolve_scoped_workchain(workchains, tos::masterchainId, configuration).move_as_ok().has_value());
-  ASSERT_TRUE(!registry.resolve_scoped_workchain(workchains, 99, configuration).move_as_ok().has_value());
-  auto account = registry.resolve_workchain(workchains, 2, configuration);
-  ASSERT_TRUE(account.is_error());
-  ASSERT_EQ(account.error().message(), "block engine cannot execute through account compute");
+  // A separately assembled map is not an authenticated Config view, even if
+  // every individual descriptor is otherwise well-formed.
+  auto scoped = registry.resolve_scoped_workchain(workchains, 2, configuration);
+  ASSERT_TRUE(scoped.is_error());
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(scoped.error()));
   block::LocalWorkchainRoleSet roles;
   roles.required_workchains.insert(2);
-  ASSERT_TRUE(registry.validate_required_workchains(workchains, configuration, roles).is_ok());
-  block::WorkchainExecutionRegistry unsupported;
-  ASSERT_TRUE(unsupported.validate_required_workchains(workchains, configuration, {}).is_ok());
-  ASSERT_TRUE(unsupported.validate_required_workchains(workchains, configuration, roles).is_error());
-  ASSERT_TRUE(block::default_workchain_execution_registry()
-                  .validate_required_workchains(workchains, configuration, roles).is_error());
-  workchains[2].write().max_split = 1;
-  auto split = registry.resolve_scoped_workchain(workchains, 2, configuration);
-  ASSERT_TRUE(split.is_error());
-  ASSERT_EQ(split.error().message(), "native ingress policy differs from execution descriptor");
-  auto invalid_required = registry.validate_required_workchains(workchains, configuration, roles);
-  ASSERT_TRUE(invalid_required.is_error());
-  ASSERT_EQ(invalid_required.error().message(), "native ingress policy differs from execution descriptor");
-  workchains[2].write().max_split = 0;
-  workchains[2].write().workchain = 3;
-  auto mismatch = registry.resolve_scoped_workchain(workchains, 2, configuration);
-  ASSERT_TRUE(mismatch.is_error());
-  ASSERT_EQ(mismatch.error().message(), "workchain descriptor identity differs from configuration key");
-  workchains[2].write().workchain = 2;
-  workchains[2].write().vm_version = static_cast<std::int32_t>(block::tvm_workchain_engine_key().selector);
-  ASSERT_TRUE(block::default_workchain_execution_registry()
-                  .validate_required_workchains(workchains, configuration, roles).is_error());
+  auto required = registry.validate_required_workchains(workchains, configuration, roles);
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(required));
+  // An empty role set does not authorize mixing configuration sources.
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(
+      registry.validate_required_workchains(workchains, configuration, {})));
 }

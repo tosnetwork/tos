@@ -335,9 +335,17 @@ class WorkchainExecutionRegistry {
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
   td::Result<ResolvedScopedWorkchainExecution> resolve_scoped(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
+  // Compatibility entry: rejects maps not owned by this exact Config object.
+  // Identical contents in a second object's map do not establish provenance.
   td::Result<std::optional<ResolvedScopedWorkchainExecution>> resolve_scoped_workchain(
       const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
       const block::Config& configuration) const;
+  // Live execution boundary: the caller authenticates Config, and this overload
+  // derives descriptors from that same cut. No candidate data enters resolution.
+  // Failure means local unavailability, not an invalid candidate or permission
+  // to install a configuration. This does not enable multi-account execution.
+  td::Result<std::optional<ResolvedScopedWorkchainExecution>> resolve_scoped_workchain(
+      tos::WorkchainId workchain_id, const block::Config& configuration) const;
 
   td::Result<ResolvedWorkchainExecution> resolve(const WorkchainExecutionDescriptor& descriptor,
                                                  const block::Config& block_transition_config) const;

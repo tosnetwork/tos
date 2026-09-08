@@ -1588,7 +1588,7 @@ bool Collator::check_this_shard_mc_info() {
     return fatal_error(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
   auto execution_res = block::default_workchain_execution_registry().resolve_scoped_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+      workchain(), *config_);
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));
   }
@@ -2273,7 +2273,7 @@ bool Collator::fetch_config_params() {
 
   bool custom_workchain = false;
   auto resolved_execution = block::default_workchain_execution_registry().resolve_scoped_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+      workchain(), *config_);
   if (resolved_execution.is_error()) {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
@@ -2416,7 +2416,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot fetch required configuration parameters from masterchain state");
   }
   auto execution_result = block::default_workchain_execution_registry().resolve_scoped_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+      workchain(), *config_);
   if (execution_result.is_error()) {
     co_return execution_result.move_as_error();
   }

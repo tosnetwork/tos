@@ -89,6 +89,55 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+The reviewed live configuration-source boundary obtains both the descriptor
+and policy from one caller-authenticated Config. Classification follows that
+source, not a callback's error-code name: CandidateInvalid returned by a
+configuration callback is a local contract failure. Configuration installation
+remains a separate verdict boundary. Required-role checks run earlier and must
+use the same guarded resolution; guarding only the later six scoped calls is
+insufficient. A registered callback fault fixture observed eight escaping
+exception classes before correcting this early path.
+
+Caller inventory for this boundary: three collator and three validator scoped
+calls use Config-only resolution. Required-role checks have three production
+callers (collator, validator and validator-engine startup). The retained
+map-taking scoped entry rejects any map not owned by the supplied Config,
+including a different Config with matching descriptor contents. Low-level
+descriptor resolvers remain test/component APIs, not provenance certificates.
+The separate AccountCompute resolve_workchain path remains in transaction.cpp
+and ext-message-checker.cpp; this change does not claim to convert those Native
+paths to V2 admission. Multi-account resolve_account_binding remains component
+code without a live caller. Re-enumerate all callers when installing the next
+boundary; this inventory is not permission for a future unguarded overload.
+
+Follow-up controls separately reach the AccountCompute policy callback in the
+required-role checker: an unsupported policy stays local, and CellCreateError
+does not escape. The required-role mode precondition also runs before iterating
+the map. Removing each of these checks fails a behavioral assertion. A first
+role-map mutation incorrectly stayed green because the fixture lacked unpack
+modes; after satisfying that independent precondition, the same mutation fails.
+Do not count the earlier green run as protection. All mutations are restored;
+`measurements/uno-v2-config-source-controls.json` records substitutions, outputs,
+the corrected-fixture rerun and final source/binary hashes. Earlier in-flight
+captures are historical, not the final regression. Manual mutations are not CI.
+
+Review's ordinary-transaction missing-engine example is blocked first by this
+check_transactions resolver; singleton block replay returns before ordinary
+AccountCompute replay. This does not prove later repeated AccountCompute
+callbacks cannot fail locally after a successful first resolution. Their boolean
+transaction failure carrier and external-message admission remain separate
+follow-up scope, not certified V2 execution or a claim of complete local-fault
+containment. Keep actual reachability separate from the general classification
+requirement. The unchanged descriptor identity consistency guard is not counted
+as a newly reachable tested guard under Config parser invariants.
+
+Final regression for this boundary passes the block/admission and singleton
+disk tests and builds validator-engine. The repository-wide removed-domain
+scan still fails on unchanged B-1 AUTO/ON/OFF build-wiring additions (three
+release workflows, the two additional native build scripts and root CMake cache
+migration lines). Those allowlist omissions require a separate guard revision;
+this unit does not report all CI gates green or silently broaden that guard.
+
 The singleton validator collection path now streams candidate-origin InMsg
 slices instead of first allocating a cell and vector slot for every record.
 It applies the existing 15-bit final-envelope count before retaining the first

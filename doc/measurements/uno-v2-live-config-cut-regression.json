@@ -1,0 +1,20 @@
+{
+  "scope": "In-progress Config-source boundary. Review and independent guard mutations pending; not completed D31.",
+  "hashes": "22a75cd1ee65f74a030fa367f6be11673081ddce83093a7d2cb62ddfecae140d  crypto/block/workchain-execution-dispatch.cpp\n73818d8572f74bac1da699f8b4459f1fadc013f4cf20bf191541b84ae8ea0932  crypto/block/workchain-execution-dispatch.h\ncf85449b99ef04470efd171ed32d6003679cf38b327a6d1f10805afe18a7299f  crypto/test/test-workchain-block.cpp\n3b4d4dc5d513e9538fc3e20db7100e1efa316fd1503929fc0ed20fd946603987  validator/impl/collator.cpp\ne7155a8ab27f9de43fd8d6af57867cdc2b75544584c928d84aca4883e67f5e3d  validator/impl/validate-query.cpp\ne70abb1faedd5b71b3c49e3f154329e1bfdbea8504401536d4b5602e4fb057c8  build/test-workchain-block\n9c81bcc74b60c15fcfefd5393a91c0d3437279c1ba1a5120ed4bd168970790bc  build/test-tos-collator\n",
+  "build": "cmake --build build --target test-workchain-block test-tos-collator validator -- -j48",
+  "command": "ctest --test-dir build -R '^(test-workchain-block|test-workchain-admission|test-counter-disk-integration)$' --output-on-failure",
+  "start": {
+    "chunk_id": "31d7d1",
+    "wall_time_seconds": 1.001516533,
+    "session_id": 41177,
+    "original_token_count": 61,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 16: test-counter-disk-integration\n1/3 Test #16: test-counter-disk-integration ....   Passed    1.11 sec\n    Start 37: test-workchain-block\n"
+  },
+  "end": {
+    "chunk_id": "827a54",
+    "wall_time_seconds": 0.000006634,
+    "exit_code": 0,
+    "original_token_count": 65,
+    "output": "2/3 Test #37: test-workchain-block .............   Passed    3.17 sec\n    Start 38: test-workchain-admission\n3/3 Test #38: test-workchain-admission .........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 3\n\nTotal Test time (real) =   4.30 sec\n"
+  }
+}
