@@ -22,6 +22,7 @@
 #include <optional>
 
 #include "http/http-server.h"
+#include "json-rpc-rate-gate.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
@@ -174,6 +175,19 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // headers are ignored — a malicious direct client cannot
     // self-stamp `X-Forwarded-For` to rotate buckets.
     bool trust_proxy_headers = false;
+    // Per-source-IP request budget, consulted at dispatch. Sized well
+    // above what a single legitimate client sends so that ordinary
+    // wallet and explorer traffic never meets it, while a flood from
+    // one address still meets a ceiling: without this the only limits
+    // are global, so one source can consume the whole node's liteserver
+    // capacity and starve its ADNL peers too. A zero window or a zero
+    // budget disables the gate entirely.
+    double per_ip_rate_window = 10.0;
+    td::uint64 per_ip_rate_requests = 600;
+    // Upper bound on how many source addresses carry a live budget. The
+    // table is keyed by remote input, so it needs its own ceiling; past
+    // it the least recently seen entry is reclaimed.
+    std::size_t per_ip_rate_max_sources = 4096;
     // Optional explicit allow-list of trusted proxy IPs. Loopback
     // addresses (127.0.0.1, ::1) are always implicit. Each entry is a
     // single IPv4 / IPv6 address in textual form; CIDR ranges are not
@@ -271,7 +285,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // JSON-RPC 2.0 batch dispatch: array of element requests becomes an array
   // of element responses (notifications omitted).  See process_batch.
   struct BatchState;
+  // `body` is the buffer the elements were parsed from. td::JsonValue
+  // holds slices into it rather than owning its strings, so the buffer
+  // must outlive every element: the batch driver resumes on a later
+  // actor message, long after the caller's frame is gone.
   void process_batch(std::vector<td::JsonValue> elements,
+                     td::BufferSlice body,
                      std::string source_ip,
                      td::Promise<HttpReturn> promise);
   void process_batch_step(std::shared_ptr<BatchState> state);
@@ -520,10 +539,22 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   static const std::set<std::string> &cacheable_methods();
 
+  // Sliding-window request budget per source address. Consulted once per
+  // dispatched method, including each element of a batch, so a batch
+  // cannot buy a caller extra budget.
+  //
+  // `source` comes from resolve_source_ip, which returns the real TCP
+  // peer unless an operator-configured proxy is speaking. An empty
+  // source means there is no remote caller to attribute to (in-process
+  // and test callers) and is admitted without consuming budget.
+  bool consume_per_ip_token(const std::string &source);
+
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
   JsonRpcResponseCache cache_;
+  // Declared after opts_: it is constructed from the option values.
+  PerIpRateGate per_ip_gate_;
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
 

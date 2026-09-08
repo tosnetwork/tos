@@ -814,6 +814,10 @@ add_executable(test-json-rpc-handler-guard test/test-td-main.cpp test/test-json-
 target_include_directories(test-json-rpc-handler-guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-handler-guard PRIVATE tdactor tdutils tos_crypto)
 
+add_executable(test-json-rpc-rate-gate test/test-td-main.cpp test/test-json-rpc-rate-gate.cpp)
+target_include_directories(test-json-rpc-rate-gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-rate-gate PRIVATE tdutils)
+
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-metrics-label-bound PRIVATE metrics tdactor tdutils)

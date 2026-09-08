@@ -19,6 +19,7 @@
 #include "json-rpc-server-internal.h"
 #include "json-rpc-handler-guard.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -233,7 +234,8 @@ JsonRpcServer::JsonRpcServer(
     Options options)
     : validator_manager_(std::move(validator_manager)),
       opts_(std::move(options)),
-      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes) {
+      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes),
+      per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -666,11 +668,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                             "null", opts_.cors_origin));
           return;
         }
-        // Round 156 MEDIUM fix: thread source_ip through REST POST so
-        // POST /sendBoc and friends hit the per-IP rate gate that
-        // round-155 added on the JSON-RPC side.  Pre-fix the REST
-        // adapter passed std::string() and consume_per_ip_token
-        // bypassed the gate for any empty-source-ip caller.
+        // REST POST carries source_ip so its submissions meet the same
+        // per-IP budget as the JSON-RPC envelope path; an unattributed
+        // caller would otherwise be admitted without spending any.
         process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
                                std::move(source_ip), std::move(promise));
       } else {
@@ -800,7 +800,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     for (auto &e : arr) {
       elements.push_back(std::move(e));
     }
-    process_batch(std::move(elements), std::move(source_ip),
+    process_batch(std::move(elements), std::move(body), std::move(source_ip),
                   std::move(promise));
     return;
   }
@@ -900,6 +900,12 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
 
 struct JsonRpcServer::BatchState {
   std::vector<td::JsonValue> elements;
+  // Backing storage for `elements`. td::JsonValue stores slices into the
+  // buffer it was parsed from, so the buffer has to stay alive for as
+  // long as any element is still to be read. Elements after the first
+  // are reached from a later actor message, once the caller that owned
+  // the buffer has already returned.
+  td::BufferSlice body;
   std::vector<bool> is_notification;
   std::vector<std::string> responses;  // empty = notification, dropped
   std::size_t cursor{0};
@@ -920,6 +926,7 @@ struct JsonRpcServer::BatchState {
 };
 
 void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
+                                  td::BufferSlice body,
                                   std::string source_ip,
                                   td::Promise<HttpReturn> promise) {
   // Per-element notification flag.  A request is a notification iff its
@@ -944,6 +951,7 @@ void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
 
   auto state = std::make_shared<BatchState>();
   state->elements = std::move(elements);
+  state->body = std::move(body);
   state->is_notification = std::move(is_notification);
   state->responses.resize(state->elements.size());
   state->final_promise = std::move(promise);
@@ -1081,12 +1089,8 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
                                            std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
-  // Round 156 MEDIUM fix: REST POST now carries source_ip so per-IP
-  // rate gates fire on POST /sendBoc and friends.  Pre-fix this
-  // adapter passed std::string() and consume_per_ip_token bypassed
-  // the gate for any caller with no source attribution; that
-  // bypassed the round-155 JSON-RPC-layer protection for all REST
-  // submissions.
+  // source_ip is carried through so REST submissions spend the same
+  // per-IP budget as the JSON-RPC envelope path.
   if (body.empty()) {
     // Empty body → empty params
     td::JsonObject empty_obj;
@@ -1148,9 +1152,14 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   });
 }
 
+bool JsonRpcServer::consume_per_ip_token(const std::string &source) {
+  return per_ip_gate_.consume(source, td::Timestamp::now());
+}
+
 void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObject &params,
                                          std::string req_id, std::string source_ip,
                                          td::Promise<HttpReturn> promise) {
+
   // Track per-method request count
   requests_total_.fetch_add(1);
   active_requests_.fetch_add(1);
@@ -1685,6 +1694,19 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
                                            std::string req_id,
                                            std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
+  // Every entry point funnels through here: the JSON-RPC envelope, both
+  // REST adapters, and each element of a batch, so a caller cannot pick
+  // a route that skips its budget, and a batch cannot buy extra.
+  //
+  // The budget is spent before the cache is consulted. A served-from-cache
+  // reply is cheap, but admitting it for free would leave any cacheable
+  // method unmetered the moment an operator turns caching on.
+  if (!consume_per_ip_token(source_ip)) {
+    promise.set_value(make_json_rpc_error(-32005, "Rate limit exceeded (per-IP)",
+                                          std::move(req_id), opts_.cors_origin));
+    return;
+  }
+
   bool is_cacheable = opts_.cache_ttl > 0 && cacheable_methods().count(method);
 
   if (!is_cacheable) {
