@@ -28,6 +28,10 @@ struct WorkchainAccountSettlement {
   // A later stage copies this immutable snapshot before extending it; copied
   // settlement/claim objects cannot charge or reset one another's meter.
   std::shared_ptr<const NativeStateReadMeter> output_admission;
+  // Continue the same authenticated state union without extending a temporary
+  // proof tree's lifetime. A complete host owns the tree across all stages.
+  std::shared_ptr<const NativeStateReadMeter> state_admission;
+  vm::CellUsageTree::NodePtr state_usage_node;
 };
 
 // One engine invocation followed by private Native materialization. No caller
@@ -376,9 +380,17 @@ inline td::Result<WorkchainAccountSettlement> execute(
       TRY_RESULT(snapshot, contain_local_output_failure(admit_output));
       output_snapshot = std::move(snapshot);
     }
+    std::shared_ptr<const NativeStateReadMeter> state_snapshot;
+    if (executed.state_admission) {
+      TRY_RESULT(snapshot, contain_local_output_failure([&executed]()
+          -> td::Result<std::shared_ptr<const NativeStateReadMeter>> {
+        return std::make_shared<const NativeStateReadMeter>(*executed.state_admission);
+      }));
+      state_snapshot = std::move(snapshot);
+    }
     return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
                                       std::move(state), std::move(message), std::move(imports), std::move(exports),
-                                      std::move(output_snapshot)};
+                                      std::move(output_snapshot), std::move(state_snapshot), state_usage_node};
   };
   try {
     auto result = settle();

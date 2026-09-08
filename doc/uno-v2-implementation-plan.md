@@ -608,11 +608,13 @@ allowance. Neither table below is itself a column of byte costs to sum.
 | Declaration shallow-parser memoization | Historical conservative envelope: `257 * input.max_cells`; current structural bound: one completed entry per physical trie cell per role, plus at most 257 active frames | `crypto/block/workchain-account-access-codec.h`: peak bytes include entry, map-node and allocator overhead. Read/write roles are sequential; do not multiply mutually exclusive live caches. Retain the conservative envelope until tighter occupancy is validated on the measured implementation. |
 | Inbox collection and sorting | `O(N_inbound)`, bounded by authenticated `max_inbound` before growth | `crypto/block/workchain-host-input.h` and the builder/collector in `crypto/block/workchain-block-execution.cpp`: peak bytes include collection and sorting arrays if simultaneously live, plus traversal/probe state; constructor-only bounds do not certify caller collection. |
 | Private output admission | One union set bounded by `work_output.max_output_cells`, plus a per-account set bounded by `state.max_account_cells` and traversal workspaces | `crypto/block/workchain-account-settlement.h`: output roots share the union, but each new account closure is counted independently. Immutable continuation snapshots retain hashes, not cells; extending a copied snapshot temporarily retains both sets. Include set-node/allocator costs and simultaneous effects/state meters, not only the output cell payloads. This does not yet include queue/shard-update construction. |
+| Queue-state continuation | Prior immutable state set plus its private copy, each bounded by `state.max_cells`; one temporary probe slice at a time | `crypto/block/workchain-outbound-queues.h`: snapshots retain hashes rather than source cells. Include set-node/allocator overhead and simultaneous output snapshots; the weak usage node does not retain the original state tree. |
 
 | Repeated work | Cumulative count (not peak memory) | Source and qualification |
 | --- | --- | --- |
 | State traversal while rebuilding writes | Scaling term `O(writes * 257 * admitted_state_cells)`, not a complete operation cap | Account replacement and tracked reads in `crypto/block/workchain-storage-overlay.h`, `crypto/block/workchain-account-dictionary.h` and `crypto/block/workchain-account-settlement.h`: a 256-bit path may contain 257 nodes including its leaf. Include augmentation/probe work and measured constant factors; count lookup and closure-validation work independently of retained-state deduplication. |
 | Effects dictionary construction | At most `259 * updates + 36 * transfers + 2` finalized cells | `encode_workchain_account_effects` in `crypto/block/workchain-account-effects.h`, dictionary `dict_set` path reconstruction, bound beside the encoder call in `crypto/block/workchain-account-settlement.h`. Use `updates <= max_writes` and `transfers <= max_transfers`; include simultaneously retained intermediate roots and allocator overhead separately in peak measurements. |
+| Queue-state observer probes | At most one extra source load and one temporary CellSlice allocation per attempted tracked read | `crypto/block/workchain-outbound-queues.h`: physical hash deduplication does not remove repeated probes. Count dictionary-path revisits and allocator work separately; these are cumulative costs, not one retained slice per visit. Final Merkle-update reads remain outside this helper's scope. |
 
 For memory, sum simultaneously live byte costs (including materializer graphs,
 engine working sets and per-worker replication), then measure peak RSS. For CPU,
@@ -2661,3 +2663,97 @@ assertion that follows that comparison. Live provenance for prior Native records
 deterministic backlog derivation, queue update admission and the final shard
 update remain required. The Native maximum-output count is a separate per-call
 bound; the cells/bits union budget is the per-block bound described above.
+
+### Private outbound state-budget continuation (reviewed; live integration pending)
+
+Settlement now carries an immutable copy of its old-state meter and a weak
+usage-tree node. The complete host must keep that original tree alive; the result
+does not prolong a private temporary tree's lifetime. Outbound construction
+copies the same meter and installs a scoped observer on the existing tree.
+It does not nest UsageCells or cache LoadedCell values. Each observed source is
+probed before Native performs its original tracked read: at most one additional
+source load per attempted read, with the original read still marking its node.
+Quota refusal is CandidateInvalid; unavailable content and nested tracking are
+local failures. A private failed attempt returns no new snapshot and cannot
+mutate the preceding snapshot.
+
+The bound applies to reads which traverse the retained authenticated usage tree.
+The live adapter must still prove queue roots/backlog provenance and exclude
+untracked authenticated descendants; this helper alone cannot identify arbitrary
+bare references as old state. Before-load probes add repeated work independently
+of physical-content deduplication, and meter copies temporarily retain both hash
+sets. M6 must include both costs. This does not admit final Merkle-update reads
+or output proofs, and does not open live execution.
+
+The queue fixture is serialized/reopened to remove unrelated live wrappers.
+Independent first-load callbacks count observed physical cells/bits, retaining
+the prior account union. Exact and one-less state limits, a local queue-read
+exception, and byte equality of both queue-subtree MerkleUpdate and MerkleProof
+are checked. This is not a whole-shard proof or live I13 acceptance.
+
+Four independently rebuilt controls failed and were individually restored:
+omitted accounting gives 11 versus 15 cells; unwrapping the dispatch root hides
+subsequent reads from its UsageTree and fails the MerkleUpdate byte comparison;
+quota abstention fails at -7201 versus -7200; removing the outer boundary lets
+the injected VmError escape. The proof-control failure is at the first byte
+comparison, not independent evidence for the second comparison. Full-file
+restoration and all four mutant SHA256 values were independently recomputed.
+Evidence is in `measurements/uno-v2-queue-state-controls.json` and
+`measurements/uno-v2-queue-state-restored.json`; 111 block tests, 30 admission
+tests and the scan passed on that restored source. The archived validator build
+reported no work: neither changed header reaches a production validator
+translation unit yet. That command is not evidence for this implementation.
+Boundary review requested controls for missing tracking, nested tracking,
+propagation of an enclosing observer's signal, and the extra-read multiplier.
+The follow-up controls now cover them: removing the missing-meter predicate
+causes a null-source fault; removing nested-source refusal reaches Native's
+anti-nesting CHECK; consuming the outer signal fails the propagation assertion;
+a second probe produces three source loads instead of two. The measured source
+is the fixture's dispatch root, not every possible state source or a block-wide
+cost measurement. Empty and expired tree contexts also return LocalUnavailable;
+the lower observer constructor independently rejects them, so no claim is made
+that the upper empty-node predicate is uniquely load-bearing.
+`measurements/uno-v2-queue-state-followup-controls.json` records all four rebuilt
+failures and immediate byte-exact restores. It also records a stopped attempt
+whose partial-line restoration lost indentation: the full-file comparison caught
+it before a second mutation, the indentation was restored, and all controls were
+rerun with full-line substitutions. These are manual mutation records, not
+automated CI mutation jobs.
+
+The retained node identifies a live tree, not a subtree filter: its observer
+sees all reads in that tree. The live host must retain one original tree covering
+both accounts and queues. The reopened fixture deliberately tests only the queue
+subtree; its accumulated account hashes do not prove common live-tree provenance.
+The snapshot and node must be checked together, including for prototype results.
+Encoded-cell probing is deliberate: an observer cannot distinguish a dictionary
+path from legitimate special-cell closure content; Native dictionary decoding
+still validates the structure it consumes. No content is declared ordinary by
+this accounting probe.
+
+M6 must also count one transient CellSlice allocation per attempted successful
+probe, along with the extra source read, repeated traversal, and simultaneous
+meter hash sets. The auxiliary costs are additive, not independent allowances.
+
+Review qualifications retained: the observed-hash oracle alone cannot detect a
+read escaping tracking; the byte comparison is the instrument that caught that
+mutation. The second proof comparison is cheap corroboration, not independently
+controlled evidence. Snapshot immutability follows from the const-owned type;
+the unchanged-usage assertions are diagnostics, not a separate mutation proof.
+Successful account acquisition supplies a clean state meter: every non-slice
+read outcome exits acquisition as an error. No additional public meter-health
+API is introduced just to recheck that success-path invariant. The continuation
+still requires authenticated construction of that context before live use.
+
+Follow-up review accepts this private unit. The final expanded test source and
+binary are covered by `measurements/uno-v2-queue-state-final-checks.json`: 111
+block tests, 30 admission tests, the domain scan and whitespace check passed.
+The earlier restored-source artifact remains evidence for its earlier test-file
+hash, not for these added controls. All eight original header substitutions were
+reproduced from the final header, independently by the reviewer as well.
+
+One implementation constraint remains visible: the observer is still installed
+when the completed meter is moved into the result snapshot. There are no tracked
+reads between that move and observer destruction; inserting one would invalidate
+the observer's reference to an intact meter. Such a change must instead end the
+observer's scope before moving the snapshot. No extra meter copy or public API
+is introduced for a read that the current path does not perform.

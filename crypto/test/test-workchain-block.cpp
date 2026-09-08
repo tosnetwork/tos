@@ -2745,6 +2745,11 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     untouched_loads = 0;
     unsigned source_loads = 0;
     td::Ref<vm::Cell> observed{td::Ref<StateReadCallbackCell>{true, cold_accounts, [&] { ++source_loads; }}};
+    // The complete host, not the settlement result, owns proof tracking across
+    // account execution and outbound construction. Reuse the same immutable
+    // old-account source across the independent policy-boundary attempts.
+    auto settlement_tree = std::make_shared<vm::CellUsageTree>();
+    observed = vm::UsageCell::create(observed, settlement_tree->root_ptr());
     engine.calls = 0;
     auto complete_result = block::execute_and_settle_workchain_disposal(engine, observed,
         complete_identity, full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
@@ -2786,7 +2791,8 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
       block::BatchInputAdmissionSession bounded(std::get<block::ResolvedBatchInputPolicy>(resolved),
           candidate, declaration_root, complete_identity, inbox);
       ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(bounded.evaluate()));
-      return block::execute_and_settle_workchain_disposal(engine, old.accounts, complete_identity,
+      return block::execute_and_settle_workchain_disposal(engine,
+          vm::UsageCell::create(old.accounts, settlement_tree->root_ptr()), complete_identity,
           std::get<block::AdmittedBatchInput>(bounded.evaluate()), owned_inbox, a,
           td::make_refint(100), 4096, cfg, joint_context);
     };
@@ -2881,6 +2887,152 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
       ASSERT_EQ(resumed.ok().roots.descriptors->get_hash(), deferred.ok().roots.descriptors->get_hash());
       ASSERT_EQ(resumed.ok().output_admission->usage().cells, deferred_size.cells);
       ASSERT_EQ(resumed.ok().output_admission->usage().bits, deferred_size.bits);
+      // Persist/reopen the queue fixture to remove unrelated live wrappers.
+      // This is a queue-subtree proof comparison, not a complete shard proof.
+      vm::CellBuilder queue_container;
+      queue_container.store_ref(seeded.ok().roots.outgoing).store_ref(seeded.ok().roots.dispatch);
+      auto queue_bytes = vm::std_boc_serialize(queue_container.finalize()).move_as_ok();
+      auto queue_root = vm::std_boc_deserialize(queue_bytes.as_slice()).move_as_ok();
+      for (unsigned missing = 0; missing < 3; ++missing) {
+        auto local = remaining;
+        if (missing == 0) local.state_admission.reset();
+        if (missing == 1) local.state_usage_node = {};
+        if (missing == 2) {
+          auto expired = std::make_shared<vm::CellUsageTree>();
+          local.state_usage_node = expired->root_ptr();
+        }
+        auto refused = block::continue_workchain_outbound_queues(
+            seeded.ok().roots, local, deferred_choices, {foreign}, queue_policy);
+        ASSERT_TRUE(refused.is_error());
+        ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      }
+      {
+        auto inner = std::make_shared<vm::CellUsageTree>();
+        auto outer = std::make_shared<vm::CellUsageTree>();
+        auto raw = vm::load_cell_slice(queue_root);
+        auto nested = seeded.ok().roots;
+        nested.dispatch = vm::UsageCell::create(
+            vm::UsageCell::create(raw.prefetch_ref(1), inner->root_ptr()), outer->root_ptr());
+        auto local = remaining;
+        local.state_usage_node = outer->root_ptr();
+        auto refused = block::continue_workchain_outbound_queues(
+            nested, local, deferred_choices, {foreign}, queue_policy);
+        ASSERT_TRUE(refused.is_error());
+        ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        // An enclosing observer owns its refusal signal; the continuation must
+        // not reinterpret it as its own quota or local-failure verdict.
+        nested.dispatch = vm::UsageCell::create(raw.prefetch_ref(1), outer->root_ptr());
+        vm::CellUsageTree::ScopedReadObserver enclosing(outer->root_ptr(), [](const vm::Cell&) {
+          throw block::account_settlement_detail::UnadmittedStateRead{};
+        });
+        bool propagated = false;
+        try {
+          auto result = block::continue_workchain_outbound_queues(
+              nested, local, deferred_choices, {foreign}, queue_policy);
+          (void)result;
+        } catch (const block::account_settlement_detail::UnadmittedStateRead&) {
+          propagated = true;
+        }
+        ASSERT_TRUE(propagated);
+      }
+      block::NativeStateReadUsage queue_state_usage{0, 0};
+      td::uint64 queue_source_loads = 0;
+      auto trace_queue = [&](bool metered, const block::WorkchainAccountSettlement& settlement,
+                             std::optional<block::WorkchainExecutionFailure> failure = std::nullopt,
+                             bool fault = false) {
+        auto tree = std::make_shared<vm::CellUsageTree>();
+        std::map<vm::CellHash, unsigned> observed_cells;
+        tree->set_cell_load_callback([&](const vm::LoadedCell& cell) {
+          observed_cells.emplace(cell.data_cell->get_hash(), cell.data_cell->get_bits());
+        });
+        auto source_root = queue_root;
+        queue_source_loads = 0;
+        {
+          auto raw = vm::load_cell_slice(queue_root);
+          td::Ref<vm::Cell> broken{td::Ref<StateReadCallbackCell>{true, raw.prefetch_ref(1), [&] {
+            queue_source_loads = block::participant_lt_detail::checked_add(queue_source_loads, 1).move_as_ok();
+            if (fault) throw vm::VmError{vm::Excno::dict_err, "injected queue source fault"};
+          }}};
+          vm::CellBuilder container;
+          container.store_ref(raw.prefetch_ref(0)).store_ref(broken);
+          source_root = container.finalize();
+        }
+        auto tracked_root = vm::UsageCell::create(source_root, tree->root_ptr());
+        block::NativeStateReadMeter initial(*settlement.state_admission);
+        auto acquired = initial.load_encoded(tracked_root);
+        ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(acquired));
+        const auto& slice = std::get<td::Ref<vm::CellSlice>>(acquired);
+        block::WorkchainOutboundQueueRoots tracked_queues{seeded.ok().roots.descriptors,
+            slice->prefetch_ref(0), slice->prefetch_ref(1)};
+        auto local = settlement;
+        local.state_admission = std::make_shared<const block::NativeStateReadMeter>(initial);
+        local.state_usage_node = tree->root_ptr();
+        std::vector<block::WorkchainQueuedOutput> remaining_choices(independently_queued.begin() + 1,
+                                                                  independently_queued.end());
+        auto result = metered
+            ? block::continue_workchain_outbound_queues(tracked_queues, local, deferred_choices, {foreign}, queue_policy)
+            : block::build_workchain_outbound_queues(tracked_queues, remaining_choices, {foreign}, queue_policy);
+        if (failure) {
+          ASSERT_TRUE(result.is_error());
+          ASSERT_EQ(result.error().code(), static_cast<int>(*failure));
+          ASSERT_EQ(local.state_admission->usage().cells, initial.usage().cells);
+          ASSERT_EQ(local.state_admission->usage().bits, initial.usage().bits);
+          return std::make_pair(td::BufferSlice{}, td::BufferSlice{});
+        }
+        if (result.is_error()) LOG(ERROR) << result.error();
+        ASSERT_TRUE(result.is_ok());
+        ASSERT_EQ(result.ok().roots.outgoing->get_hash(), deferred.ok().roots.outgoing->get_hash());
+        ASSERT_EQ(result.ok().roots.dispatch->get_hash(), deferred.ok().roots.dispatch->get_hash());
+        // Capture construction loads before proof generation makes further reads.
+        const auto construction_loads = queue_source_loads;
+        if (metered) {
+          auto expected = settlement.state_admission->usage();
+          unsigned additional = 0;
+          for (const auto& [hash, bits] : observed_cells) {
+            if (settlement.state_admission->charged_hashes().count(hash)) continue;
+            expected.cells = block::participant_lt_detail::checked_add(expected.cells, 1).move_as_ok();
+            expected.bits = block::participant_lt_detail::checked_add(expected.bits, bits).move_as_ok();
+            ++additional;
+          }
+          ASSERT_TRUE(additional > 1);
+          ASSERT_TRUE(result.ok().state_admission != nullptr);
+          ASSERT_EQ(result.ok().state_admission->usage().cells, expected.cells);
+          ASSERT_EQ(result.ok().state_admission->usage().bits, expected.bits);
+          queue_state_usage = expected;
+          ASSERT_EQ(local.state_admission->usage().cells, initial.usage().cells);
+        }
+        vm::CellBuilder updated;
+        updated.store_ref(result.ok().roots.outgoing).store_ref(result.ok().roots.dispatch);
+        auto update = vm::MerkleUpdate::generate(tracked_root, updated.finalize(), tree.get()).move_as_ok();
+        auto proof = vm::MerkleProof::generate(tracked_root, tree.get()).move_as_ok();
+        queue_source_loads = construction_loads;
+        return std::make_pair(vm::std_boc_serialize(update).move_as_ok(), vm::std_boc_serialize(proof).move_as_ok());
+      };
+      auto unmetered_proof = trace_queue(false, remaining);
+      const auto unmetered_loads = queue_source_loads;
+      ASSERT_TRUE(unmetered_loads > 0);
+      auto metered_proof = trace_queue(true, remaining);
+      ASSERT_EQ(queue_source_loads,
+          block::participant_lt_detail::checked_add(unmetered_loads, unmetered_loads).move_as_ok());
+      ASSERT_EQ(unmetered_proof.first.as_slice(), metered_proof.first.as_slice());
+      ASSERT_EQ(unmetered_proof.second.as_slice(), metered_proof.second.as_slice());
+      const auto exact_queue_usage = queue_state_usage;
+      ASSERT_TRUE(exact_queue_usage.cells > remaining.state_admission->usage().cells);
+      ASSERT_TRUE(exact_queue_usage.bits > remaining.state_admission->usage().bits);
+      for (unsigned dimension = 0; dimension < 3; ++dimension) {
+        auto bounds = policy.resources().state;
+        // Positive measured totals exceed the already admitted account union.
+        bounds.max_cells = exact_queue_usage.cells - (dimension == 1 ? 1 : 0);
+        bounds.max_bits = exact_queue_usage.bits - (dimension == 2 ? 1 : 0);
+        auto bounded = with_output_limits(256, 65536, bounds);
+        ASSERT_TRUE(bounded.is_ok());
+        bounded.ok_ref().exports.erase(bounded.ok_ref().exports.begin());
+        LOG(INFO) << "queue state boundary dimension " << dimension;
+        auto proof = trace_queue(true, bounded.ok(), dimension == 0 ? std::nullopt :
+            std::optional{block::WorkchainExecutionFailure::CandidateInvalid});
+        if (dimension == 0) ASSERT_EQ(proof.first.as_slice(), metered_proof.first.as_slice());
+      }
+      (void)trace_queue(true, remaining, block::WorkchainExecutionFailure::LocalUnavailable, true);
     }
     {
       auto saved_effects = engine.effects;

@@ -32,6 +32,7 @@ struct WorkchainOutboundQueueResult {
   WorkchainOutboundQueueRoots roots;
   std::uint64_t queued = 0, deferred = 0;
   std::shared_ptr<const NativeStateReadMeter> output_admission;
+  std::shared_ptr<const NativeStateReadMeter> state_admission;
 };
 
 // Post-admission enqueue-only construction using Native queue encodings.
@@ -163,6 +164,10 @@ inline td::Result<WorkchainOutboundQueueResult> continue_workchain_outbound_queu
     const WorkchainOutboundQueueRoots& old, const WorkchainAccountSettlement& settlement,
     const std::vector<bool>& defer, const std::set<td::Bits256>& unprocessed_dispatch_sources,
     const WorkchainOutboundQueuePolicy& policy) {
+  if (!settlement.state_admission || settlement.state_usage_node.empty()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                            "outbound continuation requires live authenticated state tracking");
+  }
   auto construct = [&old, &settlement, &defer, &unprocessed_dispatch_sources, &policy]()
       -> td::Result<WorkchainOutboundQueueResult> {
     if (!settlement.output_admission) {
@@ -199,7 +204,42 @@ inline td::Result<WorkchainOutboundQueueResult> continue_workchain_outbound_queu
     result.output_admission = std::make_shared<const NativeStateReadMeter>(std::move(*meter));
     return result;
   };
-  return account_settlement_detail::contain_local_output_failure(construct);
+  auto tracked = [&settlement, &construct]() -> td::Result<WorkchainOutboundQueueResult> {
+    NativeStateReadMeter state_meter(*settlement.state_admission);
+    td::Status state_failure;
+    vm::CellUsageTree::ScopedReadObserver observer(settlement.state_usage_node, [&](const vm::Cell& cell) {
+      if (state_failure.is_error()) throw account_settlement_detail::UnadmittedStateRead{};
+      if (!cell.get_tree_node().empty()) {
+        state_failure = td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                         "nested authenticated queue tracking");
+      } else {
+        // The observer receives the unwrapped source before its tracked load.
+        // Ref retains that source, not a copy or cached LoadedCell. The quota
+        // probe therefore adds at most one source load per attempted read;
+        // only the original subsequent read marks the existing usage node.
+        auto read = state_meter.load_encoded(td::Ref<vm::Cell>(&cell));
+        if (std::holds_alternative<NativeClosureLimit>(read)) {
+          state_failure = td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                           "outbound reads exceed authenticated state budget");
+        } else if (std::holds_alternative<LocalUnavailable>(read)) {
+          state_failure = td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                           "authenticated outbound state unavailable");
+        }
+      }
+      if (state_failure.is_error()) throw account_settlement_detail::UnadmittedStateRead{};
+    });
+    try {
+      auto result = construct();
+      if (state_failure.is_error()) return state_failure.clone();
+      if (result.is_error()) return result.move_as_error();
+      result.ok_ref().state_admission = std::make_shared<const NativeStateReadMeter>(std::move(state_meter));
+      return result;
+    } catch (const account_settlement_detail::UnadmittedStateRead&) {
+      if (state_failure.is_error()) return state_failure.clone();
+      throw;  // A different enclosing footprint observer owns this signal.
+    }
+  };
+  return account_settlement_detail::contain_local_output_failure(tracked);
 }
 
 }  // namespace block
