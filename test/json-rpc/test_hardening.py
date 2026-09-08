@@ -129,24 +129,30 @@ class TestRequestId:
 
 class TestRateGate:
 
-    def test_readyz_consumes_the_budget(self, endpoint, headers):
-        """The readiness probe issues a liteserver query and bypasses the
-        dispatcher, so it needs the budget applied on its own route.
+    def test_probe_is_never_refused(self, endpoint, headers):
+        """A readiness probe must always answer ready or not ready.
 
-        Marked slow: proving the budget applies means spending it. Skipped
-        unless --run-rate-limit is passed, because exhausting it briefly
-        degrades the node for other tests.
+        Refusing one forces a wrong answer either way: "ready" keeps
+        traffic on a node that may be out of sync, "not ready" pulls a
+        healthy node out of rotation. Its cost is bounded by caching the
+        answer, so no probe rate may turn into a refusal.
         """
-        pytest.skip("run explicitly: spends the per-source budget for this address")
-
-    def test_probe_headroom_is_sane(self, endpoint, headers):
-        """A health checker polling steadily must not be rate-limited out.
-
-        Twenty probes in quick succession is far more than an orchestrator
-        sends and far less than the budget, so this stays green while
-        catching a budget set absurdly low.
-        """
-        for _ in range(20):
+        for _ in range(40):
             r = requests.get(endpoint + "readyz", headers=headers, timeout=10)
-            assert r.status_code != 429
+            assert r.status_code in (200, 503), r.text
             assert "Rate limit" not in r.text
+            assert "ready" in r.json()
+
+    def test_probe_answer_stays_truthful_under_load(self, endpoint, headers):
+        """Repeated probes must agree with each other within the cache window.
+
+        A cached answer is only acceptable while it is short-lived and
+        consistent; a probe that flips between ready and not ready under
+        no change of state would mean the cache is serving something
+        unrelated to readiness.
+        """
+        answers = set()
+        for _ in range(10):
+            r = requests.get(endpoint + "readyz", headers=headers, timeout=10)
+            answers.add(r.json().get("ready"))
+        assert len(answers) == 1, f"readiness flipped under repeated probing: {answers}"

@@ -461,6 +461,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                        const std::string &source_ip, td::Promise<HttpReturn> promise);
 
   // Readiness probe (async — queries liteserver for sync state)
+  static HttpReturn build_readyz_response(int status_code, std::string status_text, std::string body,
+                                         const std::string &cors_origin);
+  void cache_readyz_answer(int status_code, std::string status_text, std::string body);
   void handle_readyz(td::Promise<HttpReturn> promise);
 
   // Send a TL-serialized liteserver query to the validator manager
@@ -581,6 +584,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   // ── Statistics ───────────────────────────────────────────────────────
   td::Timestamp start_time_;
+  // Readiness answer held briefly so any probe rate costs at most one
+  // liteserver query per interval. A probe must never be refused: both
+  // "ready" and "not ready" are wrong answers to "you asked too often",
+  // and a health checker acts on either.
+  static constexpr double kReadyzCacheSeconds = 1.0;
+  td::Timestamp readyz_cached_until_;
+  int readyz_cached_status_{0};
+  std::string readyz_cached_status_text_;
+  std::string readyz_cached_body_;
+
   std::atomic<td::uint64> cache_hits_{0};
   std::atomic<td::uint64> cache_misses_{0};
   // Counters the per-request completion callback touches. A promise can

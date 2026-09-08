@@ -27,11 +27,24 @@ SERVER = pathlib.Path(__file__).resolve().parent.parent / "validator-engine" / "
 KNOWN_DIRECT_ROUTES = {
     "/healthcheck": "static reply, starts no work",
     "/api-info": "static literal, starts no work",
-    "/readyz": "gated: calls consume_per_ip_token before handle_readyz",
+    "/readyz": "bounded by its own short-lived answer cache, not by budget",
 }
 
 # Routes that must be seen applying the budget themselves.
-MUST_GATE = {"/readyz"}
+#
+# /readyz deliberately is not one of them: refusing a probe forces a wrong
+# answer either way -- "ready" keeps traffic on a node that may be out of
+# sync, "not ready" pulls a healthy one out of rotation -- so its cost is
+# bounded by caching the answer instead. A route that starts work and can
+# afford to be refused belongs here.
+MUST_GATE = set()
+
+# Routes bounded some other way, each with the mechanism named. A route
+# here must not simply be unbounded.
+# The marker is the assignment that arms the bound, not the name: a
+# declaration and a read survive deleting the mechanism, so matching
+# the name alone would keep passing after the bound is gone.
+MUST_BOUND_OTHERWISE = {"/readyz": "readyz_cached_until_ = td::Timestamp::in("}
 
 
 def main() -> int:
@@ -58,6 +71,12 @@ def main() -> int:
         print("Remove them from KNOWN_DIRECT_ROUTES so this check keeps its meaning.")
         return 1
 
+    for route, marker in sorted(MUST_BOUND_OTHERWISE.items()):
+        if marker not in source and marker not in (SERVER.parent / "json-rpc-server-utils.cpp").read_text():
+            print(f"FAIL: {route} is recorded as bounded by {marker}, which no longer exists.")
+            print("Either restore that bound or move the route into MUST_GATE.")
+            return 1
+
     for route in sorted(MUST_GATE):
         # The gate has to appear between this route's match and its handler.
         match = re.search(
@@ -73,7 +92,8 @@ def main() -> int:
             print("It bypasses cached_dispatch_method, so the budget has to be applied here.")
             return 1
 
-    print(f"OK: {len(found)} direct route(s) accounted for, {len(MUST_GATE)} gated.")
+    print(f"OK: {len(found)} direct route(s) accounted for, "
+          f"{len(MUST_GATE)} gated, {len(MUST_BOUND_OTHERWISE)} bounded otherwise.")
     return 0
 
 

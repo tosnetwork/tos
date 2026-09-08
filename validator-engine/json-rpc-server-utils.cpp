@@ -187,7 +187,36 @@ void JsonRpcServer::handle_detectHash(td::JsonObject &params, std::string req_id
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
 }
 
+JsonRpcServer::HttpReturn JsonRpcServer::build_readyz_response(int status_code, std::string status_text,
+                                                               std::string body, const std::string &cors_origin) {
+  auto response =
+      http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(std::move(body)));
+  payload->complete_parse();
+  return {std::move(response), std::move(payload)};
+}
+
+void JsonRpcServer::cache_readyz_answer(int status_code, std::string status_text, std::string body) {
+  readyz_cached_until_ = td::Timestamp::in(kReadyzCacheSeconds);
+  readyz_cached_status_text_ = std::move(status_text);
+  readyz_cached_body_ = std::move(body);
+  readyz_cached_status_ = status_code;
+}
+
 void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
+  if (readyz_cached_status_ != 0 && !readyz_cached_until_.is_in_past()) {
+    promise.set_value(build_readyz_response(readyz_cached_status_, readyz_cached_status_text_,
+                                            readyz_cached_body_, opts_.cors_origin));
+    return;
+  }
+
   auto inner = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfoExt>(0), true);
   auto query = tos::serialize_tl_object(
@@ -196,18 +225,11 @@ void JsonRpcServer::handle_readyz(td::Promise<HttpReturn> promise) {
   auto threshold = opts_.readyz_threshold;
   auto cors = opts_.cors_origin;
   send_liteserver_query(std::move(query),
-      [promise = std::move(promise), threshold, cors](td::Result<td::BufferSlice> R) mutable {
+      [self_id = actor_id(this), promise = std::move(promise), threshold, cors](
+          td::Result<td::BufferSlice> R) mutable {
         auto make_readyz_response = [&](int status_code, std::string status_text, std::string body) -> HttpReturn {
-          auto response = http::HttpResponse::create("HTTP/1.1", status_code,
-              std::move(status_text), false, false).move_as_ok();
-          response->add_header({"Content-Type", "application/json"});
-          response->add_header({"Access-Control-Allow-Origin", cors});
-          response->add_header({"Transfer-Encoding", "Chunked"});
-          response->complete_parse_header();
-          auto payload = response->create_empty_payload().move_as_ok();
-          payload->add_chunk(td::BufferSlice(std::move(body)));
-          payload->complete_parse();
-          return {std::move(response), std::move(payload)};
+          td::actor::send_closure(self_id, &JsonRpcServer::cache_readyz_answer, status_code, status_text, body);
+          return build_readyz_response(status_code, std::move(status_text), std::move(body), cors);
         };
 
         if (R.is_error()) {

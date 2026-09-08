@@ -485,15 +485,16 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;  // 401 already sent
   }
 
-  // GET /readyz — readiness probe (queries liteserver for sync state).
-  // It does not route through the method dispatcher, so it needs the
-  // budget applied here: it issues a liteserver query of its own, and an
-  // ungated route is an ungated route regardless of how cheap it looks.
+  // GET /readyz — readiness probe. It does not route through the method
+  // dispatcher, so the per-source budget never reaches it, and it issues
+  // a liteserver query of its own. Spending budget here is the wrong
+  // tool anyway: a refused probe has to answer either "ready" or "not
+  // ready", and both are wrong when the truth is "you asked too often" --
+  // one keeps traffic on a node that may be out of sync, the other pulls
+  // a healthy node out of rotation. The query is cached for a moment
+  // instead, so any probe rate costs at most one query per interval and
+  // every caller still gets the real answer.
   if (method == "GET" && (url == "/readyz" || url == "/readyz/")) {
-    if (!consume_per_ip_token(source_ip)) {
-      promise.set_value(make_json_rpc_error(-32005, "Rate limit exceeded (per-IP)", "null", opts_.cors_origin));
-      return;
-    }
     handle_readyz(std::move(promise));
     return;
   }
