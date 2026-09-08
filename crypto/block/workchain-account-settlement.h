@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <memory>
 #include <type_traits>
 
 #include "block/workchain-account-effects.h"
@@ -19,6 +20,13 @@ struct WorkchainAccountSettlement {
   WorkchainFinalImportEvidence imports;
   // Disposal exports derived from transactions, not queue-ready envelopes.
   std::vector<NewOutMsg> exports;
+  // Private continuation of the output content union. It is absent for the
+  // retained prototype and is never trusted from claimed replay artifacts.
+  // Queue/shard updates must extend this meter before live authorization;
+  // carrying it is not evidence that those remaining outputs were admitted.
+  // A later stage copies this immutable snapshot before extending it; copied
+  // settlement/claim objects cannot charge or reset one another's meter.
+  std::shared_ptr<const NativeStateReadMeter> output_admission;
 };
 
 // One engine invocation followed by private Native materialization. No caller
@@ -28,7 +36,7 @@ struct WorkchainAccountSettlement {
 // payout request from verified obligations, not forward an unverified request.
 // Registration needs additional Native record shapes. The explicit disposal
 // runner preserves foreign destinations; the strict runner rejects them.
-// Joint disposal and custody payout settlement still needs integration.
+// Live integration of joint disposal and custody payout settlement remains open.
 namespace account_settlement_detail {
 // Raised only by the authenticated old-state read observer below. It must not
 // be used for candidate decoding or translated into candidate invalidity.
@@ -181,28 +189,33 @@ inline td::Result<WorkchainAccountSettlement> execute(
     // closure. Lazy/partial acquisition would require changing this boundary.
     // The engine has already produced its result: its own allocation/work bound
     // remains an independent pre-execution obligation, not proved by this walk.
-    auto charge_effect = [&](td::Ref<vm::Cell> root) -> td::Status {
-      if (!effect_meter || root.is_null()) return td::Status::OK();
+    auto charge_closure = [&](std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
+                              const char* limit_message, const char* unavailable_message) -> td::Status {
+      if (!meter || root.is_null()) return td::Status::OK();
       std::vector<td::Ref<vm::Cell>> pending{std::move(root)};
       while (!pending.empty()) {
         auto cell = std::move(pending.back());
         pending.pop_back();
-        if (effect_meter->charged_hashes().count(cell->get_hash())) continue;
-        auto loaded = effect_meter->load_encoded(cell);
+        if (meter->charged_hashes().count(cell->get_hash())) continue;
+        auto loaded = meter->load_encoded(cell);
         if (std::holds_alternative<NativeClosureLimit>(loaded)) {
           return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                   "effects closure exceeds authenticated budget");
+                                   td::Slice(limit_message));
         }
         auto* slice = std::get_if<td::Ref<vm::CellSlice>>(&loaded);
         if (!slice) {
           return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                   "engine effects content unavailable");
+                                   td::Slice(unavailable_message));
         }
         for (unsigned i = 0; i < (*slice)->size_refs(); ++i) {
           pending.push_back((*slice)->prefetch_ref(i));
         }
       }
       return td::Status::OK();
+    };
+    auto charge_effect = [&](td::Ref<vm::Cell> root) {
+      return charge_closure(effect_meter, std::move(root), "effects closure exceeds authenticated budget",
+                            "engine effects content unavailable");
     };
     if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
       // execute() already matched updates one-for-one to the bounded write set.
@@ -265,8 +278,55 @@ inline td::Result<WorkchainAccountSettlement> execute(
       imports = std::move(payout.imports);
       exports = std::move(payout.exports);
     }
+    std::optional<NativeStateReadMeter> output_meter;
+    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+      const auto& limits = admitted.policy().resources();
+      output_meter.emplace(limits.work_output.max_output_cells, limits.work_output.max_output_bits);
+      // All three dictionary outputs use get_wrapped_dict_root(): even an
+      // empty dictionary yields a finalized cell; construction failure throws.
+      // Select only the independently rebuilt write set. Walking the whole
+      // ShardAccounts root would charge every untouched account as output.
+      // Lookup work remains bounded separately by write count and key width;
+      // account-dictionary/shard update proofs are a later output root group.
+      vm::AugmentedDictionary produced(vm::load_cell_slice_ref(state.accounts), 256, tlb::aug_ShardAccounts);
+      for (const auto& key : declarations.writes) {
+        auto value = produced.lookup(key);
+        tlb::ShardAccount::Record record;
+        if (value.is_null() || value->size_ext() != 0x10140 || !record.unpack(value)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                   "rebuilt account wrapper malformed");
+        }
+        // Acquisition validated this same immutable depth value as uint16
+        // before calling the engine; no second policy supplies this narrowing.
+        auto closure = read_workchain_account_closure(record.account, *output_meter,
+            limits.state.max_account_cells, limits.state.max_account_bits,
+            static_cast<std::uint16_t>(limits.state.max_account_depth));
+        if (std::holds_alternative<NativeClosureLimit>(closure) ||
+            std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
+          // This is newly proposed output, not an unreadable persisted account.
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                   "rebuilt account exceeds output or per-account budget");
+        }
+        if (std::holds_alternative<LocalUnavailable>(closure)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                   "rebuilt account content unavailable");
+        }
+      }
+      auto charge_output = [&](td::Ref<vm::Cell> root) {
+        return charge_closure(output_meter, std::move(root), "output closure exceeds authenticated budget",
+                              "rebuilt output content unavailable");
+      };
+      TRY_STATUS(charge_output(state.account_blocks));
+      TRY_STATUS(charge_output(imports.in_msg_descr));
+      for (const auto& output : exports) {
+        TRY_STATUS(charge_output(output.msg));
+        TRY_STATUS(charge_output(output.trans));
+      }
+    }
     return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
-                                      std::move(state), std::move(message), std::move(imports), std::move(exports)};
+                                      std::move(state), std::move(message), std::move(imports), std::move(exports),
+                                      output_meter ? std::make_shared<const NativeStateReadMeter>(
+                                          std::move(*output_meter)) : nullptr};
   };
   try {
     auto result = settle();
@@ -289,8 +349,10 @@ inline td::Result<WorkchainAccountSettlement> execute(
 // the complete encoded effects cells/bits union.
 // The engine's old-account acquisition enforces aggregate state cells/bits and
 // per-account cells/bits/depth. Tracked overlay reads must remain in that
-// preadmitted content-hash union. Repeated work, usage paths, proof units,
-// and output cells/bits still need independent admission.
+// preadmitted content-hash union. New full accounts also obey those per-account
+// limits. Their closures, AccountBlocks, final imports and export records share
+// a separate output meter, retained for later queue/shard update admission.
+// Repeated work, usage paths, proof units and complete output still need admission.
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,

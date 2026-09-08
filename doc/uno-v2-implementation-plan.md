@@ -607,6 +607,7 @@ allowance. Neither table below is itself a column of byte costs to sum.
 | --- | --- | --- |
 | Declaration shallow-parser memoization | Historical conservative envelope: `257 * input.max_cells`; current structural bound: one completed entry per physical trie cell per role, plus at most 257 active frames | `crypto/block/workchain-account-access-codec.h`: peak bytes include entry, map-node and allocator overhead. Read/write roles are sequential; do not multiply mutually exclusive live caches. Retain the conservative envelope until tighter occupancy is validated on the measured implementation. |
 | Inbox collection and sorting | `O(N_inbound)`, bounded by authenticated `max_inbound` before growth | `crypto/block/workchain-host-input.h` and the builder/collector in `crypto/block/workchain-block-execution.cpp`: peak bytes include collection and sorting arrays if simultaneously live, plus traversal/probe state; constructor-only bounds do not certify caller collection. |
+| Private output admission | One union set bounded by `work_output.max_output_cells`, plus a per-account set bounded by `state.max_account_cells` and traversal workspaces | `crypto/block/workchain-account-settlement.h`: output roots share the union, but each new account closure is counted independently. Immutable continuation snapshots retain hashes, not cells; extending a copied snapshot temporarily retains both sets. Include set-node/allocator costs and simultaneous effects/state meters, not only the output cell payloads. This does not yet include queue/shard-update construction. |
 
 | Repeated work | Cumulative count (not peak memory) | Source and qualification |
 | --- | --- | --- |
@@ -2479,3 +2480,78 @@ The final restored-source hashes and complete 111-test block / 30-test admission
 runs, production validator build, scan and whitespace check are archived in
 `measurements/uno-v2-effects-admission-final.json`. This supersedes the earlier
 restored-stage artifact for the current tree, without rewriting that evidence.
+
+### D31 private Native output-record admission (in progress)
+
+The existing complete-input settlement now walks the newly rebuilt Accounts,
+AccountBlocks, final InMsgDescr and exported message/transaction closures under
+one authenticated output cells/bits union. Each new Account independently obeys
+the same authenticated per-account cells/bits/depth bounds as state acquisition;
+sharing content with another account does not exempt its local closure. A new
+output exceeding policy is CandidateInvalid. Unavailable locally rebuilt content
+is LocalUnavailable, not a candidate defect or persisted-state corruption.
+
+Only validated write keys select new Accounts. The complete ShardAccounts tree
+is deliberately not treated as an output closure: untouched accounts are not
+new output. Native account-dictionary and shard/queue update evidence remains a
+later root group. An immutable private meter snapshot carries the accumulated
+union for that continuation; replay recomputes it and never trusts the claimed
+snapshot. Copying and extending a snapshot preserves limits and sticky failure
+without sharing mutable accounting state.
+
+This is post-construction record admission, not an allocation preflight or a
+final execution permit. Dictionary construction and repeated work still require
+their independent bounds. Proof-work admission, whole-frame source-aware
+exception handling and final queue/shard-update admission remain open. No live
+multi-account gate is opened and no I13 acceptance row changes here. The legacy
+singleton permit does not acquire the new meter.
+
+Review disposition:
+
+- Findings 1/7: full 111-case block and 30-case admission runs, production node
+  build and scan were completed while the reviewer was running, and archived in
+  `measurements/uno-v2-output-records-restored.json`. The reviewer did not run
+  tests; its absence claim applies to the artifacts it inspected. A subsequent
+  test rearrangement needs its own restored-tree run, not retroactive attribution
+  to that artifact. The before-fix record is an earlier draft of the first quota
+  assertion; the twelve-control record identifies the later tested source hashes.
+- Finding 2: accepted. The first whole-state mutation hit the old-state observer
+  before the separate cold-account test. Move the cold-account witness into the
+  first complete settlement, followed by a warm-source hash comparison. Record
+  an independent whole-state mutation against that arrangement. Whole-state
+  traversal is not merely overbilling: it can read tracked untouched content
+  outside the preadmitted state union. Queue/shard continuation must preserve and
+  satisfy that observer as well as output policy; increasing output limits alone
+  cannot make such reads admissible.
+- Finding 3: remove the unreachable null-root return; document that all three
+  dictionary outputs are finalized wrapped roots, including empty dictionaries.
+  Their construction failures throw and belong to the pending local boundary.
+- Finding 4: accepted. AccountBlocks reference transactions whose descriptions
+  reference host input and effects. Those closures are therefore included again
+  in the separate output union (deduplicated within that union). Admission under
+  an input/effects allowance does not exempt them from output limits. Joint
+  policy compatibility and minimum-hardware sizing must include this coupling;
+  this is not newly retained state or new physical allocation of every cell.
+- Finding 5: retained as an explicit pre-live obligation. Own-output dictionary
+  construction/lookup and allocation exceptions require a local-failure boundary;
+  no broad candidate-invalid catch is introduced around mixed sources here.
+- Finding 6: do not add a second unreachable range guard. The existing comment
+  identifies the checked runtime invariant: this same immutable policy passed
+  `account_engine_detail::execute`'s `0 < depth <= UINT16_MAX` check before the
+  output stage can run, including empty declarations. This is not reliance on a
+  numeric default. The authenticated output depth value is independently removed
+  in a failing control. Any future stage bypassing acquisition must establish its
+  own checked narrowing, not inherit this statement.
+
+The twelve independent red controls and their exact substitutions are in
+`measurements/uno-v2-output-record-controls.json`. They are archived one-time
+implementer runs, not an automatic mutation CI job. Production and test hashes
+remain tied to their actual run stage; later follow-ups do not rewrite them.
+
+The follow-up cold-account control now fails at the first unavailable-account
+settlement's success assertion after a whole-state walk triggers LocalUnavailable
+in the old-state observer. This demonstrates the cold-source noninterference
+requirement, not a claim that the observer permits an actual load of that account.
+The independent warm-source result has the same rebuilt account hash. Follow-up
+red and final restored regression evidence is archived in
+`measurements/uno-v2-output-record-review-followup.json`.

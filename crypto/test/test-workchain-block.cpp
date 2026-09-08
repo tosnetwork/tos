@@ -705,13 +705,14 @@ class PreflightObservedCell final : public vm::Cell {
   td::Result<LoadedCell> load_cell() const override {
     ++*loads_;
     if (*loads_ == throw_at_) throw vm::VmVirtError{1};
-    if (unavailable_) return td::Status::Error("test input unavailable");
+    if (unavailable_ || *loads_ == unavailable_at_) return td::Status::Error("test input unavailable");
     return cell_->load_cell();
   }
   bool is_virtualized() const override { return cell_->is_virtualized(); }
   vm::CellUsageTree::NodePtr get_tree_node() const override { return {}; }
   bool is_loaded() const override { return !unavailable_; }
   void set_unavailable(bool value) const { unavailable_ = value; }
+  void set_unavailable_at(unsigned value) const { unavailable_at_ = value; }
   LevelMask get_level_mask() const override { return cell_->get_level_mask(); }
 
  private:
@@ -721,6 +722,7 @@ class PreflightObservedCell final : public vm::Cell {
   unsigned* loads_;
   mutable bool unavailable_;
   unsigned throw_at_;
+  mutable unsigned unavailable_at_ = 0;
 };
 
 TEST(WorkchainBlock, ResourcePolicyLocalLoadFailure) {
@@ -2709,21 +2711,183 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     complete_identity.gen_utime = overlay_identity.gen_utime;
     complete_identity.host_after_lt = overlay_identity.host_after_lt;
     auto declaration_root = block::encode_workchain_account_declarations(access, 2, 2).move_as_ok();
-    auto policy = inbox_test_policy(5, {1000, 1000000, 8}, 2, 2);
+    auto initial_policy = inbox_test_policy(5, {1000, 1000000, 8}, 2, 2);
+    auto initial_resources = initial_policy.resources();
+    // Explicit fixture budget for complete Native records, not a host default.
+    initial_resources.work_output.max_output_bits = 65536;
+    auto resolved_initial = block::ResolvedBatchInputPolicy::from_resolved_fields(
+        initial_resources, initial_policy.identity());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved_initial));
+    auto policy = std::get<block::ResolvedBatchInputPolicy>(resolved_initial);
     block::BatchInputAdmissionSession session(policy, candidate, declaration_root, complete_identity, inbox);
     ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(session.evaluate()));
     const auto& full = std::get<block::AdmittedBatchInput>(session.evaluate());
+    // Exercise the very first complete settlement with an unavailable,
+    // untouched account, so an erroneous whole-state output traversal cannot
+    // fail an earlier warm fixture and mask this control.
+    vm::AugmentedDictionary sparse(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
+    const td::Bits256 untouched(number(2)->get_hash().bits());
+    auto untouched_entry = sparse.lookup(untouched);
+    ASSERT_TRUE(untouched_entry.not_null() && untouched_entry->size_ext() == 0x10140);
+    unsigned untouched_loads = 0;
+    td::Ref<PreflightObservedCell> unavailable_untouched{
+        true, untouched_entry->prefetch_ref(), &untouched_loads};
+    vm::CellSlice rest{*untouched_entry};
+    rest.fetch_ref();
+    vm::CellBuilder replacement;
+    replacement.append_cellslice(rest).store_ref(unavailable_untouched);
+    ASSERT_TRUE(sparse.set_builder(untouched, replacement, vm::Dictionary::SetMode::Replace));
+    auto cold_accounts = sparse.get_wrapped_dict_root();
+    ASSERT_EQ(cold_accounts->get_hash(), old.accounts->get_hash());
+    // Augmentation was built while available; the source becomes cold only
+    // after fixture construction, not during its own balance decoding.
+    unavailable_untouched->set_unavailable(true);
+    untouched_loads = 0;
     unsigned source_loads = 0;
-    td::Ref<vm::Cell> observed{td::Ref<StateReadCallbackCell>{true, old.accounts, [&] { ++source_loads; }}};
+    td::Ref<vm::Cell> observed{td::Ref<StateReadCallbackCell>{true, cold_accounts, [&] { ++source_loads; }}};
     engine.calls = 0;
     auto complete_result = block::execute_and_settle_workchain_disposal(engine, observed,
         complete_identity, full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+    LOG(INFO) << "unavailable untouched-account settlement";
     if (complete_result.is_error()) LOG(ERROR) << complete_result.error();
     ASSERT_TRUE(complete_result.is_ok());
+    ASSERT_EQ(untouched_loads, 0u);
     ASSERT_EQ(engine.calls, 1u);
     ASSERT_TRUE(source_loads > 0);
     ASSERT_EQ(engine.seen->get_hash(), full.root()->get_hash());
     ASSERT_EQ(complete_result.ok().exports.size(), 3u);
+    // Independent full-record closure oracle; do not include the whole
+    // ShardAccounts dictionary (its untouched accounts are not new output).
+    vm::CellStorageStat output_size;
+    vm::AugmentedDictionary new_accounts(vm::load_cell_slice_ref(complete_result.ok().state.accounts),
+        256, block::tlb::aug_ShardAccounts);
+    for (const auto& key : access.writes) {
+      auto value = new_accounts.lookup(key);
+      block::tlb::ShardAccount::Record record;
+      ASSERT_TRUE(value.not_null() && record.unpack(value));
+      ASSERT_TRUE(output_size.add_used_storage(record.account).is_ok());
+    }
+    ASSERT_TRUE(output_size.add_used_storage(complete_result.ok().state.account_blocks).is_ok());
+    ASSERT_TRUE(output_size.add_used_storage(complete_result.ok().imports.in_msg_descr).is_ok());
+    for (const auto& output : complete_result.ok().exports) {
+      ASSERT_TRUE(output_size.add_used_storage(output.msg).is_ok());
+      ASSERT_TRUE(output_size.add_used_storage(output.trans).is_ok());
+    }
+    LOG(INFO) << "complete record output: cells=" << output_size.cells << " bits=" << output_size.bits;
+    ASSERT_TRUE(output_size.cells > 1 && output_size.bits > 1);
+    auto with_output_limits = [&](std::uint64_t cells, std::uint64_t bits,
+        std::optional<block::gen::UnoV2ResourceState::Record> account_bounds = std::nullopt) {
+      auto resources = policy.resources();
+      resources.work_output.max_output_cells = cells;
+      resources.work_output.max_output_bits = bits;
+      if (account_bounds) resources.state = *account_bounds;
+      auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy.identity());
+      ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved));
+      block::BatchInputAdmissionSession bounded(std::get<block::ResolvedBatchInputPolicy>(resolved),
+          candidate, declaration_root, complete_identity, inbox);
+      ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(bounded.evaluate()));
+      return block::execute_and_settle_workchain_disposal(engine, old.accounts, complete_identity,
+          std::get<block::AdmittedBatchInput>(bounded.evaluate()), owned_inbox, a,
+          td::make_refint(100), 4096, cfg, joint_context);
+    };
+    auto exact_output = with_output_limits(output_size.cells, output_size.bits);
+    ASSERT_TRUE(exact_output.is_ok());
+    ASSERT_EQ(exact_output.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
+    ASSERT_TRUE(exact_output.ok().output_admission != nullptr);
+    ASSERT_EQ(exact_output.ok().output_admission->usage().cells, output_size.cells);
+    ASSERT_EQ(exact_output.ok().output_admission->usage().bits, output_size.bits);
+    {
+      auto saved_effects = engine.effects;
+      ASSERT_TRUE(!engine.effects.updates.empty());
+      unsigned output_loads = 0;
+      td::Ref<PreflightObservedCell> source{true, number(989898), &output_loads};
+      engine.effects.updates[0].data = source;
+      auto available = with_output_limits(256, 65536);
+      ASSERT_TRUE(available.is_ok());
+      const auto final_read = output_loads;
+      ASSERT_TRUE(final_read > 1);
+      output_loads = 0;
+      source->set_unavailable_at(final_read);
+      auto unavailable = with_output_limits(256, 65536);
+      ASSERT_EQ(output_loads, final_read);
+      ASSERT_TRUE(unavailable.is_error());
+      ASSERT_EQ(unavailable.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      engine.effects = std::move(saved_effects);
+    }
+    {
+      auto continuation = *exact_output.ok().output_admission;
+      ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(
+          continuation.load_encoded(exact_output.ok().state.account_blocks)));
+      ASSERT_EQ(continuation.usage().cells, output_size.cells);
+      auto extra = number(0x777777);
+      ASSERT_TRUE(!continuation.charged_hashes().count(extra->get_hash()));
+      auto exhausted = continuation.load_encoded(extra);
+      ASSERT_TRUE(std::holds_alternative<block::NativeClosureLimit>(exhausted));
+      ASSERT_EQ(std::get<block::NativeClosureLimit>(exhausted), block::NativeClosureLimit::Cells);
+      // Failing a copied continuation cannot poison the immutable snapshot.
+      auto separate = *exact_output.ok().output_admission;
+      ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(
+          separate.load_encoded(exact_output.ok().state.account_blocks)));
+    }
+    for (unsigned dimension = 0; dimension < 2; ++dimension) {
+      LOG(INFO) << "output admission dimension " << dimension;
+      // The independent counts were both proved positive before subtraction.
+      auto over_output = with_output_limits(output_size.cells - (dimension == 0),
+          output_size.bits - (dimension == 1));
+      ASSERT_TRUE(over_output.is_error());
+      ASSERT_EQ(over_output.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+    }
+    {
+      auto saved_effects = engine.effects;
+      ASSERT_EQ(engine.effects.updates.size(), 2u);
+      td::Ref<vm::Cell> shared = number(0x7788);
+      for (unsigned i = 0; i < 4; ++i) {
+        shared = vm::CellBuilder().store_long(i, 64).store_ref(shared).finalize();
+      }
+      engine.effects.updates[0].data = shared;
+      engine.effects.updates[1].data = vm::CellBuilder().store_long(0x77, 8).store_ref(shared).finalize();
+      auto enlarged = with_output_limits(256, 65536);
+      ASSERT_TRUE(enlarged.is_ok());
+      vm::AugmentedDictionary produced(vm::load_cell_slice_ref(enlarged.ok().state.accounts),
+          256, block::tlb::aug_ShardAccounts);
+      vm::AugmentedDictionary prior(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
+      std::uint64_t old_cells = 0, old_bits = 0, new_cells = 0, new_bits = 0;
+      unsigned old_depth = 0, new_depth = 0;
+      std::vector<std::uint64_t> per_account_cells;
+      for (const auto& key : access.writes) {
+        auto old_value = prior.lookup(key), new_value = produced.lookup(key);
+        block::tlb::ShardAccount::Record old_record, new_record;
+        ASSERT_TRUE(old_value.not_null() && old_record.unpack(old_value));
+        ASSERT_TRUE(new_value.not_null() && new_record.unpack(new_value));
+        vm::CellStorageStat old_size, new_size;
+        ASSERT_TRUE(old_size.compute_used_storage(old_record.account).is_ok());
+        ASSERT_TRUE(new_size.compute_used_storage(new_record.account).is_ok());
+        per_account_cells.push_back(new_size.cells);
+        old_cells = std::max<std::uint64_t>(old_cells, old_size.cells);
+        old_bits = std::max<std::uint64_t>(old_bits, old_size.bits);
+        old_depth = std::max<unsigned>(old_depth, old_record.account->get_depth());
+        new_cells = std::max<std::uint64_t>(new_cells, new_size.cells);
+        new_bits = std::max<std::uint64_t>(new_bits, new_size.bits);
+        new_depth = std::max<unsigned>(new_depth, new_record.account->get_depth());
+      }
+      ASSERT_TRUE(new_cells > old_cells && new_bits > old_bits && new_depth > old_depth);
+      ASSERT_EQ(per_account_cells.size(), 2u);
+      ASSERT_TRUE(per_account_cells[0] < per_account_cells[1]);
+      for (unsigned dimension = 0; dimension < 3; ++dimension) {
+        LOG(INFO) << "new account closure dimension " << dimension;
+        auto bounds = policy.resources().state;
+        // Strict growth above proves both positivity and old-state readability.
+        if (dimension == 0) bounds.max_account_cells = new_cells - 1;
+        if (dimension == 1) bounds.max_account_bits = new_bits - 1;
+        if (dimension == 2) bounds.max_account_depth = new_depth - 1;
+        engine.calls = 0;
+        auto rejected = with_output_limits(256, 65536, bounds);
+        ASSERT_EQ(engine.calls, 1u);
+        ASSERT_TRUE(rejected.is_error());
+        ASSERT_EQ(rejected.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+      }
+      engine.effects = std::move(saved_effects);
+    }
     vm::CellStorageStat effects_size;
     ASSERT_TRUE(effects_size.compute_used_storage(complete_result.ok().effects).is_ok());
     ASSERT_TRUE(effects_size.cells > 1 && effects_size.bits > 1);
@@ -2816,12 +2980,17 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     }
     auto claim = complete_result.ok();
     claim.exports.clear();
+    // A claimed accounting cache is not the rebuilt output allowance.
+    claim.output_admission = std::make_shared<const block::NativeStateReadMeter>(1, 1);
     engine.calls = 0;
     auto replayed = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
         full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claim);
     ASSERT_TRUE(replayed.is_ok());
     ASSERT_EQ(engine.calls, 1u);
     ASSERT_EQ(replayed.ok().exports.size(), 3u);
+    ASSERT_TRUE(replayed.ok().output_admission != nullptr);
+    ASSERT_EQ(replayed.ok().output_admission->usage().cells, output_size.cells);
+    ASSERT_EQ(replayed.ok().output_admission->usage().bits, output_size.bits);
     ASSERT_EQ(replayed.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
     ASSERT_EQ(replayed.ok().state.account_blocks->get_hash(), complete_result.ok().state.account_blocks->get_hash());
     auto wrong_artifacts = complete_result.ok();
