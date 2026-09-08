@@ -34,11 +34,23 @@ uno_paths = (
     "crypto/block/block.tlb", "scripts/m1-real-manager-sync.py",
     "crypto/block/block-parse.cpp", "crypto/block/transaction.cpp",
     "assembly/native/build-ubuntu-shared.sh",
+    "assembly/native/build-ubuntu-appimages.sh",
+    "assembly/native/build-ubuntu-portable.sh",
     "validator/impl/collator.cpp", "validator/impl/validate-query.cpp",
     "doc/workchain-native-ingress-policy.md",
     "scripts/measure-uno-audit-wave4.sh", "test/uno-snapshot-transport.*",
     ".github/workflows/build-tos-linux-x86-64-shared.yml",
+    ".github/workflows/build-tos-linux-arm64-shared.yml",
+    ".github/workflows/build-tos-linux-x86-64-appimage.yml",
+    ".github/workflows/build-tos-linux-arm64-appimage.yml",
 )
+# Exact cache-option help/comment lines; this does not exempt root build code.
+crypto_cache_lines = {
+    '# AUTO enables the isolated UNO crypto checks when their pinned native toolchain',
+    '"UNO crypto tests: AUTO, ON, or OFF" FORCE)',
+    '"UNO crypto tests: AUTO, ON, or OFF")',
+    'set(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "AUTO" CACHE STRING "UNO crypto tests: AUTO, ON, or OFF")',
+}
 # A path-and-word exception never suppresses another forbidden identifier.
 exceptions = {
     # Standard mnemonic dictionary data.
@@ -107,9 +119,11 @@ for raw in paths:
             remaining = re.sub(r"test/uno-snapshot-transport\.(?:cpp|h)|TOS_UNO_[A-Z0-9_]+|(?:test|measure)-uno-[A-Za-z0-9_$\{\}-]+"
                                r"|uno/[A-Za-z0-9_./$\{\}-]+|uno_split_shape|uno_large_snapshot"
                                r"|UNO_CONTEXT_VECTORS_PATH|UNO_SNAPSHOT_LARGE_TEST"
+                               r"|\b_tos_uno_crypto_tests_(?:cache_type|legacy_value)\b"
                                r'|LABELS "uno;[^"]*"', "", line)
             cmake_line = path == "CMakeLists.txt" and "/../" not in line and (
                 not uno.search(remaining) or
+                line.strip() in crypto_cache_lines or
                 bool(re.fullmatch(r'\s*option\(TOS_UNO_[A-Z0-9_]+ "[^"]*" (?:ON|OFF)\)\s*', line)))
             if uno.search(line) and not approved and not cmake_line:
                 reasons.append("Uno outside approved engine paths")
