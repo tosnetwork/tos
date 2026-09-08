@@ -48,6 +48,17 @@
 
 namespace {
 
+template <class Cell, class = void>
+struct AllowsImplicitAccountPathMode : std::false_type {};
+
+template <class Cell>
+struct AllowsImplicitAccountPathMode<Cell, std::void_t<decltype(block::lookup_workchain_account_metered(
+    std::declval<const Cell&>(), std::declval<const td::Bits256&>(),
+    std::declval<block::NativeStateReadMeter&>()))>> : std::true_type {};
+
+static_assert(!AllowsImplicitAccountPathMode<td::Ref<vm::Cell>>::value,
+              "Account lookup callers must explicitly choose Read or Replace");
+
 TEST(WorkchainBlock, ResourcePolicyWire) {
   block::WorkchainResourcePolicy policy{0x80010001u,
       {UINT64_MAX, 2, 3, UINT32_MAX, 5, 6},
@@ -3455,7 +3466,8 @@ TEST(WorkchainBlock, MeteredAccountLookupProof) {
     std::vector<td::Ref<vm::CellSlice>> values;
     for (const auto& key : keys) {
       if (metered) {
-        auto result = block::lookup_workchain_account_metered(proof.root(), key, meter);
+        auto result = block::lookup_workchain_account_metered(proof.root(), key, meter,
+            block::WorkchainAccountPathMode::Read);
         ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(result));
         values.push_back(std::get<td::Ref<vm::CellSlice>>(std::move(result)));
       } else {
@@ -3484,10 +3496,122 @@ TEST(WorkchainBlock, MeteredAccountLookupProof) {
   unsigned loads = 0;
   stopped.set_cell_load_callback([&](const vm::LoadedCell&) { ++loads; });
   block::NativeStateReadMeter root_only(1, 100000);
-  auto rejected = block::lookup_workchain_account_metered(stopped.root(), keys[0], root_only);
+  auto rejected = block::lookup_workchain_account_metered(stopped.root(), keys[0], root_only,
+      block::WorkchainAccountPathMode::Read);
   ASSERT_TRUE(std::holds_alternative<block::NativeClosureLimit>(rejected));
   ASSERT_EQ(std::get<block::NativeClosureLimit>(rejected), block::NativeClosureLimit::Cells);
   ASSERT_EQ(loads, 1u);  // Root wrapper loaded; first dictionary edge not loaded.
+}
+
+TEST(WorkchainBlock, AccountReplacementStateDependencies) {
+  for (bool branched : {false, true}) {
+    vm::AugmentedDictionary initial(256, block::tlb::aug_ShardAccounts);
+    std::vector<vm::CellHash> unrelated_accounts;
+    std::vector<td::Bits256> keys;
+    const unsigned count = branched ? 4 : 3;
+    const unsigned writes = branched ? 2 : 1;
+    for (unsigned i = 0; i < count; ++i) {
+      auto key = i ? td::Bits256(number(i)->get_hash().bits()) : td::Bits256::zero();
+      if (branched) {
+        key = td::Bits256::zero();
+        key.bits().store_uint(i, 2);  // Four distinct prefixes: 00, 01, 10, 11.
+      }
+      keys.push_back(key);
+      vm::Dictionary currencies(32);
+      vm::CellBuilder amount;
+      ASSERT_TRUE(block::tlb::t_VarUInteger_32.store_integer_value(amount, *td::make_refint(7)));
+      td::BitArray<32> currency_key;
+      currency_key.bits().store_uint(i + 1, 32);  // i < 4, so the identifier fits.
+      ASSERT_TRUE(currencies.set_builder(currency_key, amount));
+      if (branched) {
+        currency_key.bits().store_uint(100, 32);
+        ASSERT_TRUE(currencies.set_builder(currency_key, amount));
+      }
+      vm::CellBuilder account;
+      account.store_long(1, 1)
+          .store_long(4, 3)
+          .store_long(2, 8)
+          .store_bits(key.bits(), 256)
+          .store_zeroes(42)
+          .store_long(2, 64);
+      ASSERT_TRUE(block::CurrencyCollection(td::make_refint(1000), currencies.get_root_cell()).store(account));
+      account.store_zeroes(2);
+      auto root = account.finalize();
+      ASSERT_TRUE(block::gen::t_Account.validate_ref(10000, root));
+      if (i >= writes)
+        unrelated_accounts.push_back(root->get_hash());
+      vm::CellBuilder entry;
+      entry.store_ref(root).store_zeroes(256).store_long(1, 64);
+      ASSERT_TRUE(initial.set_builder(key, entry));
+    }
+    auto old = initial.get_wrapped_dict_root();
+    if (branched) {
+      auto edge = vm::load_cell_slice(old).prefetch_ref();
+      vm::dict::LabelParser top{vm::load_cell_slice_ref(edge), 256, vm::dict::LabelParser::chk_size};
+      ASSERT_EQ(top.l_bits, 0);
+      vm::dict::LabelParser sibling{vm::load_cell_slice_ref(top.remainder->prefetch_ref(1)), 255,
+                                    vm::dict::LabelParser::chk_size};
+      ASSERT_TRUE(sibling.l_bits < 255);
+      sibling.skip_label();
+      ASSERT_TRUE(sibling.remainder.write().advance_refs(2));
+      auto extra = block::tlb::aug_ShardAccounts.extract_extra(sibling.remainder);
+      ASSERT_TRUE(extra.not_null());
+      ASSERT_EQ(extra->size_refs(), 1u);
+      ASSERT_TRUE(vm::load_cell_slice(extra->prefetch_ref()).size_refs() > 0);
+      // A fork's extra occupies its entire remainder. Native must reject a
+      // trailing bit, and admission must reject it before following extra refs.
+      auto sibling_cell = top.remainder->prefetch_ref(1);
+      auto malformed = vm::CellBuilder().append_cellslice(vm::load_cell_slice(sibling_cell))
+          .store_long(0, 1).finalize();
+      vm::AugmentedDictionary decoder(malformed, 255, block::tlb::aug_ShardAccounts, false);
+      ASSERT_TRUE(decoder.get_root_extra().is_null());
+      block::NativeStateReadMeter malformed_meter(1000, 1000000);
+      bool rejected = false;
+      try {
+        auto result = block::admit_workchain_account_augmentation(malformed, 255, malformed_meter);
+        ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(result));
+      } catch (const vm::VmError&) {
+        rejected = true;
+      }
+      ASSERT_TRUE(rejected);
+      ASSERT_EQ(malformed_meter.charged_hashes().size(), 1u);
+    }
+    vm::MerkleProofBuilder tracked(old);
+    std::set<vm::CellHash> loaded;
+    tracked.set_cell_load_callback([&](const vm::LoadedCell& cell) { loaded.insert(cell.data_cell->get_hash()); });
+    block::NativeStateReadMeter meter(1000, 1000000);
+    std::vector<td::Ref<vm::Cell>> admitted_accounts;
+    for (unsigned i = 0; i < writes; ++i) {
+      const auto& key = keys[i];
+      auto acquired =
+          block::lookup_workchain_account_metered(tracked.root(), key, meter, block::WorkchainAccountPathMode::Replace);
+      ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(acquired));
+      block::tlb::ShardAccount::Record record;
+      ASSERT_TRUE(record.unpack(std::get<td::Ref<vm::CellSlice>>(acquired)));
+      auto closure = block::read_workchain_account_closure(record.account, meter, 1000, 1000000, 1024);
+      ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(closure));
+      admitted_accounts.push_back(record.account);
+    }
+    // Native replacement and independent difference computation run unchanged.
+    // Their source loads must stay in the admitted old-state union, including
+    // sibling currency augmentation but not unrelated account contents.
+    vm::AugmentedDictionary staged(vm::load_cell_slice_ref(tracked.root()), 256, block::tlb::aug_ShardAccounts);
+    for (unsigned i = 0; i < writes; ++i) {
+      vm::CellBuilder replacement;
+      replacement.store_ref(admitted_accounts[i]).store_zeroes(256).store_long(2, 64);
+      ASSERT_TRUE(staged.set_builder(keys[i], replacement, vm::Dictionary::SetMode::Replace));
+    }
+    block::WorkchainAccountDictionary before(tracked.root()), after(staged.get_wrapped_dict_root());
+    auto changes = before.changed_accounts(after, writes).move_as_ok();
+    ASSERT_EQ(changes.size(), writes);
+    for (unsigned i = 0; i < writes; ++i)
+      ASSERT_EQ(changes[i], keys[i]);
+    ASSERT_EQ(loaded.size(), meter.charged_hashes().size());
+    for (const auto& hash : loaded)
+      ASSERT_TRUE(meter.charged_hashes().count(hash) == 1);
+    for (const auto& hash : unrelated_accounts)
+      ASSERT_EQ(loaded.count(hash), 0u);
+  }
 }
 
 TEST(WorkchainBlock, AccountEngineExecution) {
@@ -3499,8 +3623,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(resolved));
   ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(admission.evaluate()));
   const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
-  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
-      17, 9, 2, 1, hash, 1, 1, 1, number(1)};
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2,    UINT64_MAX, hash, false, 17,
+                                        9,  2,    1,    hash, 1,          1,    1,     number(1)};
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3, false, 0, 40, false, 1000), state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
@@ -3586,6 +3710,30 @@ TEST(WorkchainBlock, AccountEngineExecution) {
         static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
     ASSERT_EQ(engine.calls, 0u);
 
+    block::NativeStateReadMeter reads_only(1000, 1000000);
+    for (const auto& read : declarations.reads) {
+      auto acquired = block::lookup_workchain_account_metered(state.accounts, read.account, reads_only,
+          block::WorkchainAccountPathMode::Read);
+      ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(acquired));
+      block::tlb::ShardAccount::Record account;
+      ASSERT_TRUE(account.unpack(std::get<td::Ref<vm::CellSlice>>(acquired)));
+      auto closure = block::read_workchain_account_closure(account.account, reads_only, 1000, 1000000, 1024);
+      ASSERT_TRUE(std::holds_alternative<block::WorkchainInputUsage>(closure));
+    }
+    auto write_resources = full.policy().resources();
+    write_resources.state.max_cells = reads_only.usage().cells;
+    auto write_policy = block::ResolvedBatchInputPolicy::from_resolved_fields(write_resources, full.policy().identity());
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(write_policy));
+    block::BatchInputAdmissionSession write_limited(std::get<block::ResolvedBatchInputPolicy>(write_policy),
+        candidate, declaration_root, batch_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(write_limited.evaluate()));
+    engine.calls = 0;
+    auto write_denied = block::execute_workchain_account_engine(engine, state.accounts,
+        std::get<block::AdmittedBatchInput>(write_limited.evaluate()));
+    ASSERT_TRUE(write_denied.is_error());
+    ASSERT_EQ(write_denied.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+    ASSERT_EQ(engine.calls, 0u);
+
     for (unsigned bound = 0; bound < 5; ++bound) {
       auto resources = full.policy().resources();
       switch (bound) {
@@ -3641,7 +3789,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(engine.calls, 0u);
 
     block::NativeStateReadMeter path_meter(256, 16384);
-    auto path = block::lookup_workchain_account_metered(state.accounts, declarations.reads.front().account, path_meter);
+    auto path = block::lookup_workchain_account_metered(state.accounts, declarations.reads.front().account, path_meter,
+        block::WorkchainAccountPathMode::Replace);
     ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(path));
     auto resources = full.policy().resources();
     resources.state.max_cells = path_meter.usage().cells;

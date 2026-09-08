@@ -144,6 +144,41 @@ rejection, and per-account DAG dedup respectively. Each builds successfully and
 then fails a behavior/type assertion. This is evidence for those particular
 guards, not a claim that every new failure branch has mutation coverage.
 
+The next in-flight connection pre-admits the old sibling augmentation needed
+by Native ShardAccounts replacement. A declared write selects replacement-path
+admission; a read-only declaration retains read-path admission. Each fork adds
+the opposite node's extra-value closure to the same physical state meter,
+excluding its account and child-dictionary references. The extra-value decoder
+does not load children before the meter; Native replacement and independent
+dictionary difference remain the semantic implementations.
+
+The new three-account, three-extra-currency fixture compares all observed old
+loads during admission/replacement/difference with charged hashes and separately
+requires unrelated account roots to remain unread. A full-input runner fixture
+allows all read-only paths/closures but not replacement dependencies and checks
+rejection before any engine invocation. These tests are in flight, not complete
+settlement or live acceptance. At most 256 sibling augmentations are requested
+per declared write; each extra closure uses a visited set bounded by the shared
+state-cell allowance. Repeated traversal work can still be proportional to
+writes times key width times the admitted state cells. Physical deduplication
+does not itself meter semantic currency arithmetic, temporary output allocation
+or justify a production CPU limit. Four rebuilt removal/substitution controls
+fail: omit siblings (loaded/charged 10/6), omit extra-reference closures (10/8),
+force read-only engine dispatch (over-budget batch accepted), and follow the
+entire sibling payload (unrelated account loaded). Restored four-target build,
+four selected CTests and domain scan pass; raw outputs and hashes are in
+`measurements/uno-v2-state-replacement-dependency-controls.json`. Focused review
+and the explicitly retained live-enablement blockers are recorded in
+`uno-v2-state-replacement-review-disposition.md`; this connection does not open
+the live execution gate. Follow-up retains that leaf fixture and adds a fork
+sibling, nested overlapping currency dictionaries and two sequential writes.
+Omitting deep-reference traversal fails on actual/charged counts 17/14.
+The fork-tail negative witness fails before the exact Native-compatible decode
+fix, and restoring the implicit Read default fails the compile-time assertion.
+See `measurements/uno-v2-state-replacement-deep-control.json` and
+`measurements/uno-v2-state-replacement-review-controls.json`. These are manual
+one-shot controls, not recurring mutation CI or a complete host CPU bound.
+
 Live settlement must also account for reads after engine execution. The private
 runner's state meter ends before the allocation/payout overlay, whose Native
 dictionary lookups and independent `scan_diff` still use their original read

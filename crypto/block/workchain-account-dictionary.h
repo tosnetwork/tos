@@ -24,7 +24,7 @@ using WorkchainAccountClosureRead = std::variant<WorkchainInputUsage, NativeClos
 // A failed account must end the enclosing batch acquisition attempt. These
 // outcomes are not final voting classifications: an oversized persisted account
 // and a candidate exceeding its aggregate allowance have different provenance.
-// Deterministic accounting order is depth-first, lower reference index first;
+// This account-closure traversal is depth-first, lower reference index first;
 // all replaying nodes must use this order, including the first path chosen for
 // each shared hash. Dedup marks representative paths; the Native proof builder
 // closes its visited set by content hash, so other paths to that same content
@@ -76,8 +76,63 @@ inline WorkchainAccountClosureRead read_workchain_account_closure(
 // reads, not the selected Account closure (which needs separate admission).
 // The source must be immutable authenticated state, never candidate InMsgDescr.
 // Native parse exceptions retain that provenance at the enclosing boundary.
+// A replacement also reads sibling augmentation when rebuilding parent edges.
+// Admit only that node's extra-value refs, never its account/subdictionary refs.
+// Label parsing and extra extraction do not load children. Extra-value closure
+// traversal is iterative, with a local visited set bounded by the aggregate
+// charged-cell allowance and at most four pending refs per visited cell.
+inline NativeMeteredRead admit_workchain_account_augmentation(
+    const td::Ref<vm::Cell>& node, int remaining, NativeStateReadMeter& meter) {
+  auto acquired = meter.load_ordinary(node);
+  if (!std::holds_alternative<td::Ref<vm::CellSlice>>(acquired)) return acquired;
+  vm::dict::LabelParser label{std::get<td::Ref<vm::CellSlice>>(std::move(acquired)), remaining,
+                              vm::dict::LabelParser::chk_size};
+  label.skip_label();
+  td::Ref<vm::CellSlice> extra;
+  if (label.l_bits != remaining) {
+    // chk_size validates the fork's two child references. Keep the advance
+    // checked locally; the extra must consume everything after those refs,
+    // exactly as Native get_node_extra requires for a fork (not for a leaf).
+    if (!label.remainder.write().advance_refs(2)) {
+      throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation fork"};
+    }
+    vm::CellSlice tail{*label.remainder};
+    if (!tlb::aug_ShardAccounts.skip_extra(tail) || !tail.empty_ext()) {
+      throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation fork extra"};
+    }
+    extra = std::move(label.remainder);
+  } else {
+    extra = tlb::aug_ShardAccounts.extract_extra(std::move(label.remainder));
+  }
+  if (extra.is_null()) {
+    throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation"};
+  }
+  std::vector<td::Ref<vm::Cell>> pending;
+  for (unsigned i = extra->size_refs(); i > 0; --i) pending.push_back(extra->prefetch_ref(i - 1));
+  std::set<vm::CellHash> seen;
+  while (!pending.empty()) {
+    auto cell = std::move(pending.back());
+    pending.pop_back();
+    const auto hash = cell->get_hash();
+    if (seen.find(hash) != seen.end()) continue;
+    auto loaded = meter.load_encoded(cell);
+    if (!std::holds_alternative<td::Ref<vm::CellSlice>>(loaded)) return loaded;
+    seen.emplace(hash);
+    auto slice = std::get<td::Ref<vm::CellSlice>>(std::move(loaded));
+    for (unsigned i = slice->size_refs(); i > 0; --i) pending.push_back(slice->prefetch_ref(i - 1));
+  }
+  return extra;
+}
+
+enum class WorkchainAccountPathMode { Read, Replace };
+
+// Lookup is top-down: charge the current path node, then (for Replace) its
+// opposite sibling's augmentation before descending into the selected child.
+// The sibling closure itself uses lower-reference-first DFS. The mode must be
+// explicit; a future write caller must not silently inherit read-only coverage.
 inline NativeMeteredRead lookup_workchain_account_metered(
-    const td::Ref<vm::Cell>& shard_accounts, const td::Bits256& account, NativeStateReadMeter& meter) {
+    const td::Ref<vm::Cell>& shard_accounts, const td::Bits256& account, NativeStateReadMeter& meter,
+    WorkchainAccountPathMode mode) {
   auto root_result = meter.load_ordinary(shard_accounts);
   if (!std::holds_alternative<td::Ref<vm::CellSlice>>(root_result)) return root_result;
   auto root = std::get<td::Ref<vm::CellSlice>>(std::move(root_result));
@@ -101,6 +156,10 @@ inline NativeMeteredRead lookup_workchain_account_metered(
       key += label.l_bits;
       const bool branch = *key++;
       --remaining;
+      if (mode == WorkchainAccountPathMode::Replace) {
+        auto sibling = admit_workchain_account_augmentation(label.remainder->prefetch_ref(!branch), remaining, meter);
+        if (!std::holds_alternative<td::Ref<vm::CellSlice>>(sibling)) return sibling;
+      }
       node = label.remainder->prefetch_ref(branch);
     }
   }

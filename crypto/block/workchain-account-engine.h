@@ -105,7 +105,9 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
     if (expected.is_error()) return expected.move_as_error();
     td::Ref<vm::CellSlice> value;
     if (state_meter) {
-      auto acquired = lookup_workchain_account_metered(old_accounts, read.account, *state_meter);
+      const auto mode = std::binary_search(declarations.writes.begin(), declarations.writes.end(), read.account)
+          ? WorkchainAccountPathMode::Replace : WorkchainAccountPathMode::Read;
+      auto acquired = lookup_workchain_account_metered(old_accounts, read.account, *state_meter, mode);
       if (std::holds_alternative<NativeClosureLimit>(acquired)) {
         return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
                                  "declared account paths exceed batch state budget");
